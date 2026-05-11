@@ -86,12 +86,20 @@ The same-day catalog always fires. The multi-day LLM catalog only fires at
 | --- | --- | --- | --- |
 | `authservice` | 02:15 | `error_rate` | Brute-force login surge — error rate jumps to 42%. |
 | `authservice` | 02:15 | `login_attempts` | Login attempts surge 5× to 1250/s. |
+| `database` | 04:00 | `connections` | Backup-window connection pile-up — 6,800 connections. |
+| `database` | 04:00 | `write_latency_ms` | Backup I/O contention — writes 45 ms. |
 | `cacheservice` | 06:00 | `hit_ratio` | Cache collapse — hit ratio drops to 5%. |
 | `apigateway` | 06:30 | `cpu_util_pct` | Gateway CPU saturates at 100%. |
+| `apigateway` | 09:00 | `requests_per_sec` | Monday-morning thundering herd — 2,200 RPS spike. |
+| `authservice` | 09:00 | `login_attempts` | Benign baseline shift — Monday-morning login burst at 1,400 attempts/s. |
 | `database` | 11:00 | `read_latency_ms` | Read latency skyrockets to 360 ms. |
 | `database` | 11:00 | `error_rate` | Backend errors rise to 23%. |
+| `mqservice` | 12:30 | `dead_letter_queue` | DLQ blow-up — 1,200 messages parked. |
 | `mqservice` | 14:30 | `pending_messages` | Queue jam — pending messages climb to 1,000,000. |
 | `mqservice` | 14:30 | `error_rate` | MQ error rate jumps to 10%. |
+| `cacheservice` | 17:00 | `memory_util_pct` | Memory pressure — 97% nearing eviction. |
+| `apigateway` | 21:45 | `error_rate` | 5xx burst from bad config push — 12%. |
+| `database` | 23:00 | `queries_per_sec` | Nightly batch kickoff — 55k QPS. |
 
 ### Same-day cascades (any `--duration-days`)
 
@@ -99,6 +107,8 @@ Cascades fire seconds-to-minutes after the triggering anomaly to mimic blast-rad
 propagation:
 
 - 02:15:15 — `apigateway.error_rate` rises to 28% (auth brute force → gateway).
+- 02:15:30 — `authservice.active_sessions` drops to ~35 (sessions invalidated post-brute-force).
+- 06:00:20 — `cacheservice.cache_misses` surges to ~2,400 (miss surge before DB cascade lands).
 - 06:00:30 — `database.queries_per_sec` spikes ~38k (cache collapse → DB load).
 - 06:00:45 — `database.read_latency_ms` ~45 ms (cache collapse → DB latency).
 - 06:30:12 — `authservice.error_rate` ~35% (gateway saturation → auth errors).
@@ -106,9 +116,11 @@ propagation:
 - 11:00:00 — `apigateway.backend_latency_ms` ~850 ms (DB stall → backend latency).
 - 11:00:05 — `apigateway.error_rate` ~19% (DB errors → gateway).
 - 11:00:10 — `authservice.avg_auth_latency_ms` ~420 ms (DB stall → slow auth).
+- 11:00:20 — `mqservice.pending_messages` ~250k (DB stall → MQ backpressure).
 - 14:31:30 — `apigateway.avg_response_time_ms` ~650 ms (MQ backlog → slow API).
 - 14:32:00 — `database.connections` ~8500 (MQ jam → connection buildup).
 - 14:32:05 — `database.write_latency_ms` ~85 ms (MQ backpressure → slow writes).
+- 14:32:30 — `authservice.avg_auth_latency_ms` ~280 ms (MQ jam delays session writes).
 
 ### Multi-day LLM catalog (`--duration-days >= 7`)
 

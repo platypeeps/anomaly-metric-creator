@@ -348,6 +348,12 @@ anoms_auth = [
         "metric": "login_attempts",
         "description": "Login attempts surge 5×",
         "generator": lambda ts,idx: 1250
+    },
+    {
+        "time_offset": 9*3600,                    # 09:00:00
+        "metric": "login_attempts",
+        "description": "Benign baseline shift: Monday morning login burst — 1,400 attempts/s",
+        "generator": lambda ts,idx: 1400
     }
 ]
 
@@ -357,6 +363,12 @@ anoms_cache = [
         "metric": "hit_ratio",
         "description": "Cache hit ratio drops to 5 %",
         "generator": lambda ts,idx: 5.0
+    },
+    {
+        "time_offset": 17*3600,                   # 17:00:00
+        "metric": "memory_util_pct",
+        "description": "Memory pressure — 97% nearing eviction",
+        "generator": lambda ts,idx: 97.0
     }
 ]
 
@@ -366,6 +378,18 @@ anoms_api = [
         "metric": "cpu_util_pct",
         "description": "CPU saturates at 100 %",
         "generator": lambda ts,idx: 100.0
+    },
+    {
+        "time_offset": 9*3600,                    # 09:00:00
+        "metric": "requests_per_sec",
+        "description": "Monday-morning thundering herd — 2,200 RPS spike",
+        "generator": lambda ts,idx: 2200
+    },
+    {
+        "time_offset": 21*3600 + 45*60,           # 21:45:00
+        "metric": "error_rate",
+        "description": "5xx burst from bad config push — 12 %",
+        "generator": lambda ts,idx: 0.12
     }
 ]
 
@@ -381,6 +405,24 @@ anoms_db = [
         "metric": "error_rate",
         "description": "Backend errors rise 23 %",
         "generator": lambda ts,idx: 0.23
+    },
+    {
+        "time_offset": 4*3600,                    # 04:00:00
+        "metric": "connections",
+        "description": "Backup-window connection pile-up — 6,800 connections",
+        "generator": lambda ts,idx: 6800
+    },
+    {
+        "time_offset": 4*3600,                    # 04:00:00
+        "metric": "write_latency_ms",
+        "description": "Backup I/O contention — writes 45 ms",
+        "generator": lambda ts,idx: 45.0
+    },
+    {
+        "time_offset": 23*3600,                   # 23:00:00
+        "metric": "queries_per_sec",
+        "description": "Nightly batch kickoff — 55k QPS",
+        "generator": lambda ts,idx: 55000
     }
 ]
 
@@ -396,6 +438,12 @@ anoms_mq = [
         "metric": "error_rate",
         "description": "Error rate jumps to 10 %",
         "generator": lambda ts,idx: 0.10
+    },
+    {
+        "time_offset": 12*3600 + 30*60,           # 12:30:00
+        "metric": "dead_letter_queue",
+        "description": "DLQ blow-up — 1,200 messages parked",
+        "generator": lambda ts,idx: 1200
     }
 ]
 
@@ -498,6 +546,20 @@ def register_default_cascades():
                      "Cascading: Auth failures cause API gateway errors",
                      lambda ts, idx: 0.28)
 
+    # Brute-force forces session invalidation
+    register_cascade("authservice",
+                     2*3600 + 15*60 + 30,
+                     "active_sessions",
+                     "Cascading: Sessions invalidated after brute-force detection",
+                     lambda ts, idx: 35)
+
+    # Cache failure → preceding miss surge before DB load lands
+    register_cascade("cacheservice",
+                     6*3600 + 20,
+                     "cache_misses",
+                     "Cascading: Cache miss surge before DB cascade lands",
+                     lambda ts, idx: 2400 + np.random.normal(0, 150))
+
     # Cache failure → Database sees increased load
     register_cascade("database",
                      6*3600 + 30,
@@ -543,6 +605,13 @@ def register_default_cascades():
                      "Cascading: Database issues slow auth queries",
                      lambda ts, idx: 420 + np.random.normal(0, 30))
 
+    # DB stall → MQ backpressure
+    register_cascade("mqservice",
+                     11*3600 + 20,
+                     "pending_messages",
+                     "Cascading: DB stall causes MQ backpressure",
+                     lambda ts, idx: 250000 + np.random.normal(0, 5000))
+
     # MQ service jam → cascades to API and Database
     register_cascade("apigateway",
                      14*3600 + 30*60 + 60,
@@ -561,6 +630,12 @@ def register_default_cascades():
                      "write_latency_ms",
                      "Cascading: MQ backpressure increases write latency",
                      lambda ts, idx: 85 + np.random.normal(0, 10))
+
+    register_cascade("authservice",
+                     14*3600 + 32*60 + 30,
+                     "avg_auth_latency_ms",
+                     "Cascading: MQ jam delays session writes",
+                     lambda ts, idx: 280 + np.random.normal(0, 15))
 
     # LLM viral surge → cascades to database and cache (multi-day)
     register_cascade("database",
