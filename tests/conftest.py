@@ -1,5 +1,8 @@
 import importlib.util
+import io
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +17,7 @@ def _load_amc():
     return module
 
 
-def _run(amc, out_dir, *, days, seed=42, drop_rate=None):
+def _run_capture(amc, out_dir, *, days, seed=42, drop_rate=None):
     args = [
         "--seed", str(seed),
         "--duration-days", str(days),
@@ -22,8 +25,14 @@ def _run(amc, out_dir, *, days, seed=42, drop_rate=None):
     ]
     if drop_rate is not None:
         args += ["--drop-rate", str(drop_rate)]
-    amc.main(args)
-    return out_dir
+    stderr_buf = io.StringIO()
+    real_stderr = sys.stderr
+    sys.stderr = stderr_buf
+    try:
+        amc.main(args)
+    finally:
+        sys.stderr = real_stderr
+    return SimpleNamespace(out_dir=out_dir, stderr=stderr_buf.getvalue())
 
 
 @pytest.fixture(scope="session")
@@ -34,19 +43,19 @@ def amc():
 @pytest.fixture(scope="session")
 def one_day_run_a(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("one_day_a")
-    return _run(amc, out, days=1)
+    return _run_capture(amc, out, days=1)
 
 
 @pytest.fixture(scope="session")
 def one_day_run_b(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("one_day_b")
-    return _run(amc, out, days=1)
+    return _run_capture(amc, out, days=1)
 
 
 @pytest.fixture(scope="session")
 def seven_day_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("seven_day")
-    return _run(amc, out, days=7)
+    return _run_capture(amc, out, days=7)
 
 
 COMPONENT_FIELDS = {

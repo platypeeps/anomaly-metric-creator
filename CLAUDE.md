@@ -49,6 +49,18 @@ Install numpy if needed:
 pip3 install numpy
 ```
 
+## Testing
+
+Dev dependencies (`pytest`, `numpy`) are declared in `pyproject.toml` under the `dev` extra. Python 3.11+ is the supported target.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest
+```
+
+Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite runs full 1-day and 7-day generations end-to-end via `main()` and currently lands around ~28s — under the 30s budget. If that grows, vectorize the per-second loop in `generate_component()` rather than trimming coverage.
+
 ## Architecture
 
 ### Core Generation Pattern
