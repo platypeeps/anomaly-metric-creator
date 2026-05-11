@@ -8,4 +8,6 @@ iot_logs
 .claude
 .venv
 .pytest_cache
+*.egg-info
+uv.lock
 
