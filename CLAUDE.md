@@ -59,7 +59,7 @@ python3 -m venv .venv
 .venv/bin/pytest
 ```
 
-Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite runs full 1-day and 7-day generations end-to-end via `main()` and currently lands around ~28s — under the 30s budget. If that grows, vectorize the per-second loop in `generate_component()` rather than trimming coverage.
+Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite runs full 1-day and 7-day generations end-to-end via `main()` and currently lands around ~28s — under the 30s budget. `generate_component()` is fully vectorized (one numpy op per metric column, anomalies applied as masked writes, CSV assembled via `np.char.add`); if runtime regresses, profile that path before trimming coverage.
 
 ## Architecture
 

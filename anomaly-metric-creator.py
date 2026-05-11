@@ -11,7 +11,6 @@ configured window are skipped with a warning on stderr.
 import argparse
 import csv
 import datetime
-import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,27 +53,36 @@ class MetricSpec:
     clip_min: float | None = None
 
 
-def _natural_value(spec: MetricSpec, ts: datetime.datetime, elapsed: int) -> float:
-    val = spec.base
+def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray) -> np.ndarray:
+    """Vectorized natural-value column. Multiplier/additive must accept arrays."""
+    col = np.full(elapsed.shape, spec.base, dtype=np.float64)
     if spec.multiplier is not None:
-        val *= spec.multiplier(ts, elapsed)
+        col *= spec.multiplier(ts_array, elapsed)
     if spec.additive is not None:
-        val += spec.additive(ts, elapsed)
+        col += spec.additive(ts_array, elapsed)
     if spec.std > 0:
-        val += np.random.normal(0, spec.std)
+        col += np.random.normal(0.0, spec.std, elapsed.shape[0])
     if spec.clip_min is not None:
-        val = max(spec.clip_min, val)
-    return val
+        np.maximum(col, spec.clip_min, out=col)
+    return col
 
 
 # ------------------------------------------------------------------
 # Core generator
 # ------------------------------------------------------------------
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
-                       *, base_dir, total_seconds, drop_rate):
+                       *, base_dir, total_seconds, drop_rate,
+                       ts_array=None, ts_strings=None):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
+
+    Vectorized: natural-value math is one numpy op per metric; anomaly overrides
+    are masked writes on the column arrays; packet loss is a single boolean mask
+    decided up front so a dropped second emits neither a CSV row nor a manifest
+    entry. ``ts_array``/``ts_strings`` are optional so callers can share them
+    across components (main() does this). The drop mask is drawn per call so
+    each component keeps its independent drop pattern.
     """
     file_path = base_dir / f"{component_name}.csv"
     fieldnames = [s.name for s in specs]
@@ -114,53 +122,87 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             f"Duplicate anomaly specs (component, metric, time_offset): {duplicates}"
         )
 
+    if ts_array is None or ts_strings is None:
+        ts_array, ts_strings = _build_timestamp_arrays(total_seconds)
+    drop_mask = np.random.random(total_seconds) < drop_rate
+
+    elapsed = np.arange(total_seconds, dtype=np.int64)
+
+    # Natural values: one column array per metric, computed in a single numpy op.
+    n_cols = len(specs)
+    values = np.empty((total_seconds, n_cols), dtype=np.float64)
+    for col, spec in enumerate(specs):
+        values[:, col] = _natural_column(spec, ts_array, elapsed)
+
+    # Apply anomaly overrides. Skip overrides at dropped seconds so manifest and
+    # CSV stay coherent (a dropped second has no row, so it must have no manifest
+    # entry either — the VER-5 invariant). Sort for a deterministic order of
+    # cascade RNG draws within a run.
+    name_to_col = {s.name: i for i, s in enumerate(specs)}
+    for aspec in sorted(all_anomalies, key=lambda s: (s["time_offset"], s["metric"])):
+        t = aspec["time_offset"]
+        if drop_mask[t]:
+            continue
+        col = name_to_col[aspec["metric"]]
+        ts_py = START + datetime.timedelta(seconds=t)
+        values[t, col] = aspec["generator"](ts_py, col)
+        anomalies.append({
+            "timestamp": str(ts_strings[t]),
+            "component": component_name,
+            "metric": aspec["metric"],
+            "description": aspec["description"],
+        })
+
+    np.round(values, 3, out=values)
+
+    keep_mask = ~drop_mask
+    kept_ts = ts_strings[keep_mask]
+    kept_vals = values[keep_mask]
+
+    # Format values to fixed 3 decimals. ``np.char.mod("%.3f", ...)`` is correct
+    # but spends ~80% of the run inside ``_vec_string``. Scaling to int + numpy
+    # string ops produces the same output ~2x faster.
+    str_vals = _format_fixed3(kept_vals)
+
+    # Assemble each row as ``ts,v0,v1,...,vk`` via vectorized numpy string adds,
+    # then join with newlines. Doing the column concat in numpy (C) and only the
+    # final newline-join in Python keeps the per-row Python work to one op.
+    rows = np.char.add(kept_ts, ",")
+    rows = np.char.add(rows, str_vals[:, 0])
+    for col in range(1, n_cols):
+        rows = np.char.add(rows, ",")
+        rows = np.char.add(rows, str_vals[:, col])
+
     with open(file_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["timestamp"] + fieldnames)
+        f.write("timestamp," + ",".join(fieldnames) + "\n")
+        f.write("\n".join(rows.tolist()))
+        f.write("\n")
 
-        # Pre-compute anomaly times for quick lookup
-        # Handle multiple anomalies at same time by grouping them
-        anomaly_map: dict[int, list[dict]] = {}
-        for spec in all_anomalies:
-            anomaly_map.setdefault(spec["time_offset"], []).append(spec)
 
-        for sec in range(total_seconds):
-            # Packet loss: a lost sample never arrives, so it produces no
-            # CSV row AND no manifest entry. Decide this first so the two
-            # outputs can never disagree on a dropped second.
-            if random.random() < drop_rate:
-                continue
+def _format_fixed3(arr: np.ndarray) -> np.ndarray:
+    """Format a float array as ``%.3f``-equivalent strings ~2x faster than
+    ``np.char.mod``. Scales to int64, then assembles ``sign + int + '.' + frac``
+    via vectorized numpy string ops.
+    """
+    scaled = np.round(arr * 1000).astype(np.int64)
+    sign = np.where(scaled < 0, "-", "")
+    absolute = np.abs(scaled)
+    int_part = (absolute // 1000).astype("<U16")
+    frac_part = np.char.zfill((absolute % 1000).astype("<U3"), 3)
+    out = np.char.add(sign, int_part)
+    out = np.char.add(out, ".")
+    return np.char.add(out, frac_part)
 
-            ts = START + datetime.timedelta(seconds=sec)
-            row = [ts.strftime("%Y-%m-%d %H:%M:%S")]
 
-            # Normal or anomaly?
-            if sec in anomaly_map:
-                aspecs = anomaly_map[sec]
-                # Add all anomalies to registry
-                for aspec in aspecs:
-                    anomalies.append({
-                        "timestamp": ts.strftime("%Y-%m-%d %H:%M:%S"),
-                        "component": component_name,
-                        "metric": aspec["metric"],
-                        "description": aspec["description"]
-                    })
+def _build_timestamp_arrays(total_seconds: int):
+    """Pre-compute the shared per-run timestamp arrays (numpy + formatted str).
 
-                # Build metric override map for this timestamp
-                metric_overrides = {aspec["metric"]: aspec["generator"] for aspec in aspecs}
-
-                # Inject anomaly values for affected metrics, natural for others
-                for idx, mspec in enumerate(specs):
-                    if mspec.name in metric_overrides:
-                        val = metric_overrides[mspec.name](ts, idx)
-                    else:
-                        val = _natural_value(mspec, ts, sec)
-                    row.append(round(val, 3))
-            else:
-                # Normal row
-                row += [round(_natural_value(mspec, ts, sec), 3) for mspec in specs]
-
-            writer.writerow(row)
+    Built once per run and reused across all six components — they're identical
+    by construction, so re-computing them per component is pure waste.
+    """
+    ts_array = np.datetime64(START) + np.arange(total_seconds, dtype="timedelta64[s]")
+    ts_strings = np.char.replace(np.datetime_as_string(ts_array, unit="s"), "T", " ")
+    return ts_array, ts_strings
 
 # ------------------------------------------------------------------
 # Cascade helper function
@@ -179,8 +221,19 @@ def register_cascade(target_component, time_offset, metric, description, generat
 # ------------------------------------------------------------------
 # Shared seasonality / shaping helpers used by COMPONENTS specs
 # ------------------------------------------------------------------
-def _llm_business_hours(ts: datetime.datetime, _elapsed: int) -> float:
-    """Daily business-hours load multiplier for LLM analytics."""
+def _llm_business_hours(ts, _elapsed):
+    """Daily business-hours load multiplier for LLM analytics.
+
+    Works on a single ``datetime.datetime`` (used by tests' natural_band helper)
+    and on a ``datetime64`` numpy array (used by the vectorized generator).
+    """
+    if isinstance(ts, np.ndarray):
+        hours = ((ts - ts.astype("datetime64[D]")) // np.timedelta64(1, "h")).astype(np.int64)
+        return np.select(
+            [(hours >= 8) & (hours < 18), (hours >= 18) & (hours < 22)],
+            [1.4, 1.1],
+            default=0.6,
+        )
     h = ts.hour
     if 8 <= h < 18:
         return 1.4
@@ -189,10 +242,10 @@ def _llm_business_hours(ts: datetime.datetime, _elapsed: int) -> float:
     return 0.6
 
 
-def _daily_sine(amplitude: float) -> Callable[[datetime.datetime, int], float]:
+def _daily_sine(amplitude: float) -> Callable:
     """Additive 24h sine shaped by the elapsed second so the curve has real
-    daily seasonality (the legacy version reset every minute)."""
-    def fn(_ts: datetime.datetime, elapsed: int) -> float:
+    daily seasonality. ``elapsed`` may be a scalar int or a numpy array."""
+    def fn(_ts, elapsed):
         return amplitude * np.sin(2 * np.pi * elapsed / SECONDS_PER_DAY)
     return fn
 
@@ -604,7 +657,6 @@ def main(argv=None):
     total_seconds = SECONDS_PER_DAY * args.duration_days
     args.output_dir.mkdir(exist_ok=True, parents=True)
     np.random.seed(args.seed)
-    random.seed(args.seed)
 
     # Reset module-level registries so repeated calls (e.g., from tests) don't accumulate.
     anomalies.clear()
@@ -620,11 +672,15 @@ def main(argv=None):
         "llm_analytics": anoms_llm,
     }
 
+    ts_array, ts_strings = _build_timestamp_arrays(total_seconds)
+
     for name, specs in COMPONENTS.items():
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
-                           drop_rate=args.drop_rate)
+                           drop_rate=args.drop_rate,
+                           ts_array=ts_array,
+                           ts_strings=ts_strings)
 
     with open(args.output_dir / "anomalies.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["timestamp", "component", "metric", "description"])
