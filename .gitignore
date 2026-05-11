@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+.vscode
+.idea
+__pycache__
+iot_logs
+.claude
+.venv
+.pytest_cache
+
