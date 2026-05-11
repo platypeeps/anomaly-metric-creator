@@ -13,7 +13,9 @@ import csv
 import datetime
 import random
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -34,21 +36,48 @@ anomalies = []
 cascading_anomalies = {}  # {component_name: [anomaly_specs]}
 
 # ------------------------------------------------------------------
-# Helper to create a blank line (to simulate a missing sample)
+# Per-metric schema. One MetricSpec per CSV column per component.
 # ------------------------------------------------------------------
-def blank_line(file):
-    file.write("\n")
+@dataclass(frozen=True)
+class MetricSpec:
+    """Config for one synthetic metric column.
+
+    Natural value is ``base * multiplier(ts, sec) + additive(ts, sec) + N(0, std)``,
+    optionally clipped at ``clip_min``. ``std=0`` skips the RNG draw entirely so
+    deterministic series do not perturb the shared numpy random stream.
+    """
+    name: str
+    base: float
+    std: float = 0.0
+    multiplier: Callable[[datetime.datetime, int], float] | None = None
+    additive: Callable[[datetime.datetime, int], float] | None = None
+    clip_min: float | None = None
+
+
+def _natural_value(spec: MetricSpec, ts: datetime.datetime, elapsed: int) -> float:
+    val = spec.base
+    if spec.multiplier is not None:
+        val *= spec.multiplier(ts, elapsed)
+    if spec.additive is not None:
+        val += spec.additive(ts, elapsed)
+    if spec.std > 0:
+        val += np.random.normal(0, spec.std)
+    if spec.clip_min is not None:
+        val = max(spec.clip_min, val)
+    return val
+
 
 # ------------------------------------------------------------------
 # Core generator
 # ------------------------------------------------------------------
-def generate_component(component_name, fieldnames, value_generators, anomaly_specs,
+def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate):
     """
-    value_generators: list of functions((ts, idx)) -> float
+    specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
     """
     file_path = base_dir / f"{component_name}.csv"
+    fieldnames = [s.name for s in specs]
 
     # Merge primary anomalies with cascading anomalies
     all_anomalies = list(anomaly_specs)
@@ -69,51 +98,67 @@ def generate_component(component_name, fieldnames, value_generators, anomaly_spe
         )
         all_anomalies = [s for s in all_anomalies if 0 <= s["time_offset"] < total_seconds]
 
+    # Fail loudly on duplicate (metric, time_offset) tuples — the previous
+    # ``metric_overrides = {spec["metric"]: spec["generator"] for spec in specs}``
+    # silently kept only the last one.
+    seen: dict[tuple[str, int], dict] = {}
+    duplicates: list[tuple[str, str, int]] = []
+    for spec in all_anomalies:
+        key = (spec["metric"], spec["time_offset"])
+        if key in seen:
+            duplicates.append((component_name, spec["metric"], spec["time_offset"]))
+        else:
+            seen[key] = spec
+    if duplicates:
+        raise ValueError(
+            f"Duplicate anomaly specs (component, metric, time_offset): {duplicates}"
+        )
+
     with open(file_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["timestamp"] + fieldnames)
 
         # Pre-compute anomaly times for quick lookup
         # Handle multiple anomalies at same time by grouping them
-        anomaly_map = {}
+        anomaly_map: dict[int, list[dict]] = {}
         for spec in all_anomalies:
             anomaly_map.setdefault(spec["time_offset"], []).append(spec)
 
         for sec in range(total_seconds):
+            # Packet loss: a lost sample never arrives, so it produces no
+            # CSV row AND no manifest entry. Decide this first so the two
+            # outputs can never disagree on a dropped second.
+            if random.random() < drop_rate:
+                continue
+
             ts = START + datetime.timedelta(seconds=sec)
             row = [ts.strftime("%Y-%m-%d %H:%M:%S")]
 
             # Normal or anomaly?
             if sec in anomaly_map:
-                specs = anomaly_map[sec]
+                aspecs = anomaly_map[sec]
                 # Add all anomalies to registry
-                for spec in specs:
+                for aspec in aspecs:
                     anomalies.append({
                         "timestamp": ts.strftime("%Y-%m-%d %H:%M:%S"),
                         "component": component_name,
-                        "metric": spec["metric"],
-                        "description": spec["description"]
+                        "metric": aspec["metric"],
+                        "description": aspec["description"]
                     })
 
                 # Build metric override map for this timestamp
-                metric_overrides = {spec["metric"]: spec["generator"] for spec in specs}
+                metric_overrides = {aspec["metric"]: aspec["generator"] for aspec in aspecs}
 
-                # Inject anomaly values for affected metrics, normal for others
-                for idx, fn in enumerate(value_generators):
-                    field = fieldnames[idx]
-                    if field in metric_overrides:
-                        val = metric_overrides[field](ts, idx)
+                # Inject anomaly values for affected metrics, natural for others
+                for idx, mspec in enumerate(specs):
+                    if mspec.name in metric_overrides:
+                        val = metric_overrides[mspec.name](ts, idx)
                     else:
-                        val = fn(ts, idx)
+                        val = _natural_value(mspec, ts, sec)
                     row.append(round(val, 3))
             else:
                 # Normal row
-                row += [round(fn(ts, idx), 3) for idx, fn in enumerate(value_generators)]
-
-            # Randomly drop a row to simulate packet loss
-            if random.random() < drop_rate:
-                blank_line(f)
-                continue
+                row += [round(_natural_value(mspec, ts, sec), 3) for mspec in specs]
 
             writer.writerow(row)
 
@@ -132,83 +177,82 @@ def register_cascade(target_component, time_offset, metric, description, generat
     })
 
 # ------------------------------------------------------------------
-# Value generators for each component
+# Shared seasonality / shaping helpers used by COMPONENTS specs
 # ------------------------------------------------------------------
-def va_auth(ts, idx):
-    # Baseline rates
-    if idx == 0:                 # active_sessions
-        return 200 + np.sin(idx + ts.second / 60) * 20
-    if idx == 1:                 # login_attempts
-        return 250 + np.random.normal(0, 15)
-    if idx == 2:                 # login_success_rate
-        return 97.0 + np.random.normal(0, 0.5)
-    if idx == 3:                 # avg_auth_latency_ms
-        return 110 + np.random.normal(0, 5)
-    if idx == 4:                 # cpu_util_pct
-        return 20 + np.random.normal(0, 3)
-    if idx == 5:                 # error_rate
-        return 0.2 + np.random.normal(0, 0.05)
+def _llm_business_hours(ts: datetime.datetime, _elapsed: int) -> float:
+    """Daily business-hours load multiplier for LLM analytics."""
+    h = ts.hour
+    if 8 <= h < 18:
+        return 1.4
+    if 18 <= h < 22:
+        return 1.1
+    return 0.6
 
-def va_cache(ts, idx):
-    if idx == 0: return 5000 + np.random.normal(0, 200)
-    if idx == 1: return 200 + np.random.normal(0, 20)
-    if idx == 2: return 95.0 + np.random.normal(0, 0.3)
-    if idx == 3: return 15 + np.random.normal(0, 1)
-    if idx == 4: return 70 + np.random.normal(0, 5)
-    if idx == 5: return 0.05 + np.random.normal(0, 0.02)
 
-def va_api(ts, idx):
-    if idx == 0: return 800 + np.random.normal(0, 50)
-    if idx == 1: return 180 + np.random.normal(0, 10)
-    if idx == 2: return 90 + np.random.normal(0, 8)
-    if idx == 3: return 1200 + np.random.normal(0, 60)
-    if idx == 4: return 22 + np.random.normal(0, 4)
-    if idx == 5: return 0.15 + np.random.normal(0, 0.04)
+def _daily_sine(amplitude: float) -> Callable[[datetime.datetime, int], float]:
+    """Additive 24h sine shaped by the elapsed second so the curve has real
+    daily seasonality (the legacy version reset every minute)."""
+    def fn(_ts: datetime.datetime, elapsed: int) -> float:
+        return amplitude * np.sin(2 * np.pi * elapsed / SECONDS_PER_DAY)
+    return fn
 
-def va_db(ts, idx):
-    if idx == 0: return 3000 + np.random.normal(0, 400)
-    if idx == 1: return 10 + np.random.normal(0, 2)
-    if idx == 2: return 12 + np.random.normal(0, 3)
-    if idx == 3: return 25000 + np.random.normal(0, 2000)
-    if idx == 4: return 18 + np.random.normal(0, 3)
-    if idx == 5: return 0.1 + np.random.normal(0, 0.05)
 
-def va_mq(ts, idx):
-    if idx == 0: return 45000 + np.random.normal(0, 3000)
-    if idx == 1: return 43000 + np.random.normal(0, 2500)
-    if idx == 2: return 70 + np.random.normal(0, 5)
-    if idx == 3: return 5 + np.random.normal(0, 1)
-    if idx == 4: return 55 + np.random.normal(0, 4)
-    if idx == 5: return 0.08 + np.random.normal(0, 0.02)
-
-def va_llm(ts, idx):
-    """
-    LLM Analytics Service with a daily business-hours pattern.
-    """
-    hour_of_day = ts.hour
-    if 8 <= hour_of_day < 18:        # Business hours
-        daily_multiplier = 1.4
-    elif 18 <= hour_of_day < 22:     # Evening
-        daily_multiplier = 1.1
-    else:                            # Night/early morning
-        daily_multiplier = 0.6
-
-    if idx == 0:  # input_tokens_per_sec
-        return 25000 * daily_multiplier + np.random.normal(0, 2000)
-    if idx == 1:  # output_tokens_per_sec
-        return 8000 * daily_multiplier + np.random.normal(0, 800)
-    if idx == 2:  # avg_context_window_size (tokens)
-        return 4500 + np.random.normal(0, 500)
-    if idx == 3:  # llm_requests_per_sec
-        return 45 * daily_multiplier + np.random.normal(0, 5)
-    if idx == 4:  # avg_llm_latency_ms
-        return 850 + np.random.normal(0, 80)
-    if idx == 5:  # token_limit_hits_per_min
-        return max(0, 2 * daily_multiplier + np.random.normal(0, 0.5))
-    if idx == 6:  # context_overflow_rate (percentage)
-        return max(0, 0.3 + np.random.normal(0, 0.1))
-    if idx == 7:  # llm_api_error_rate
-        return max(0, 0.05 + np.random.normal(0, 0.02))
+# ------------------------------------------------------------------
+# Per-component metric schemas. Add a metric by editing exactly one list.
+# ------------------------------------------------------------------
+COMPONENTS: dict[str, list[MetricSpec]] = {
+    "authservice": [
+        MetricSpec("active_sessions", 200, additive=_daily_sine(20)),
+        MetricSpec("login_attempts", 250, 15),
+        MetricSpec("login_success_rate", 97.0, 0.5),
+        MetricSpec("avg_auth_latency_ms", 110, 5),
+        MetricSpec("cpu_util_pct", 20, 3),
+        MetricSpec("error_rate", 0.2, 0.05),
+    ],
+    "cacheservice": [
+        MetricSpec("cache_hits", 5000, 200),
+        MetricSpec("cache_misses", 200, 20),
+        MetricSpec("hit_ratio", 95.0, 0.3),
+        MetricSpec("avg_cache_latency_ms", 15, 1),
+        MetricSpec("memory_util_pct", 70, 5),
+        MetricSpec("error_rate", 0.05, 0.02),
+    ],
+    "apigateway": [
+        MetricSpec("requests_per_sec", 800, 50),
+        MetricSpec("avg_response_time_ms", 180, 10),
+        MetricSpec("backend_latency_ms", 90, 8),
+        MetricSpec("active_connections", 1200, 60),
+        MetricSpec("cpu_util_pct", 22, 4),
+        MetricSpec("error_rate", 0.15, 0.04),
+    ],
+    "database": [
+        MetricSpec("connections", 3000, 400),
+        MetricSpec("read_latency_ms", 10, 2),
+        MetricSpec("write_latency_ms", 12, 3),
+        MetricSpec("queries_per_sec", 25000, 2000),
+        MetricSpec("cpu_util_pct", 18, 3),
+        MetricSpec("error_rate", 0.1, 0.05),
+    ],
+    "mqservice": [
+        MetricSpec("pending_messages", 45000, 3000),
+        MetricSpec("processed_messages", 43000, 2500),
+        MetricSpec("avg_latency_ms", 70, 5),
+        MetricSpec("dead_letter_queue", 5, 1),
+        MetricSpec("mem_util_pct", 55, 4),
+        MetricSpec("error_rate", 0.08, 0.02),
+    ],
+    "llm_analytics": [
+        MetricSpec("input_tokens_per_sec", 25000, 2000, multiplier=_llm_business_hours),
+        MetricSpec("output_tokens_per_sec", 8000, 800, multiplier=_llm_business_hours),
+        MetricSpec("avg_context_window_size", 4500, 500),
+        MetricSpec("llm_requests_per_sec", 45, 5, multiplier=_llm_business_hours),
+        MetricSpec("avg_llm_latency_ms", 850, 80),
+        MetricSpec("token_limit_hits_per_min", 2, 0.5,
+                   multiplier=_llm_business_hours, clip_min=0),
+        MetricSpec("context_overflow_rate", 0.3, 0.1, clip_min=0),
+        MetricSpec("llm_api_error_rate", 0.05, 0.02, clip_min=0),
+    ],
+}
 
 # ------------------------------------------------------------------
 # Anomaly specifications
@@ -567,36 +611,17 @@ def main(argv=None):
     cascading_anomalies.clear()
     register_default_cascades()
 
-    components = [
-        ("authservice",
-         ["active_sessions", "login_attempts", "login_success_rate",
-          "avg_auth_latency_ms", "cpu_util_pct", "error_rate"],
-         [va_auth] * 6, anoms_auth),
-        ("cacheservice",
-         ["cache_hits", "cache_misses", "hit_ratio",
-          "avg_cache_latency_ms", "memory_util_pct", "error_rate"],
-         [va_cache] * 6, anoms_cache),
-        ("apigateway",
-         ["requests_per_sec", "avg_response_time_ms", "backend_latency_ms",
-          "active_connections", "cpu_util_pct", "error_rate"],
-         [va_api] * 6, anoms_api),
-        ("database",
-         ["connections", "read_latency_ms", "write_latency_ms",
-          "queries_per_sec", "cpu_util_pct", "error_rate"],
-         [va_db] * 6, anoms_db),
-        ("mqservice",
-         ["pending_messages", "processed_messages", "avg_latency_ms",
-          "dead_letter_queue", "mem_util_pct", "error_rate"],
-         [va_mq] * 6, anoms_mq),
-        ("llm_analytics",
-         ["input_tokens_per_sec", "output_tokens_per_sec", "avg_context_window_size",
-          "llm_requests_per_sec", "avg_llm_latency_ms", "token_limit_hits_per_min",
-          "context_overflow_rate", "llm_api_error_rate"],
-         [va_llm] * 8, anoms_llm),
-    ]
+    component_anomalies = {
+        "authservice": anoms_auth,
+        "cacheservice": anoms_cache,
+        "apigateway": anoms_api,
+        "database": anoms_db,
+        "mqservice": anoms_mq,
+        "llm_analytics": anoms_llm,
+    }
 
-    for name, fields, gens, specs in components:
-        generate_component(name, fields, gens, specs,
+    for name, specs in COMPONENTS.items():
+        generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
                            drop_rate=args.drop_rate)
@@ -607,7 +632,7 @@ def main(argv=None):
         for a in anomalies:
             writer.writerow(a)
 
-    print(f"Done - {len(components)} log files + anomalies.csv written to {args.output_dir}")
+    print(f"Done - {len(COMPONENTS)} log files + anomalies.csv written to {args.output_dir}")
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Anomalies recorded: {len(anomalies)}")
 
