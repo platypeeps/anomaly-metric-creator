@@ -11,7 +11,7 @@ configured window are skipped with a warning on stderr.
 import argparse
 import csv
 import datetime
-import importlib.util
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -660,18 +660,95 @@ def parse_args(argv=None):
     return args
 
 
-def _load_combine_logs():
-    """Load the sibling ``combine_logs.py`` without requiring it on sys.path.
+# ------------------------------------------------------------------
+# Combine step: join per-component CSVs into a single unified CSV.
+# One row per timestamp; columns prefixed with the component name.
+# ------------------------------------------------------------------
+_NON_COMPONENT_FILES = {"anomalies.csv"}
 
-    The script is sometimes invoked from a working directory that doesn't contain
-    combine_logs.py on the import path; this anchors the load to the script file
-    so callers don't have to fiddle with PYTHONPATH.
+
+def discover_components(input_dir):
+    """Return the sorted list of component names found in ``input_dir``.
+
+    A component is any ``*.csv`` in ``input_dir`` that isn't the anomalies
+    manifest or one of this script's own combine outputs.
     """
-    path = Path(__file__).resolve().parent / "combine_logs.py"
-    spec = importlib.util.spec_from_file_location("combine_logs", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    components = []
+    for path in sorted(Path(input_dir).glob("*.csv")):
+        name = path.name
+        if name in _NON_COMPONENT_FILES:
+            continue
+        if name.startswith("combined_metrics_"):
+            continue
+        components.append(path.stem)
+    return components
+
+
+def combine_logs_unified(components, input_dir, output_file=None):
+    """Join the per-component CSVs in ``input_dir`` into a single unified CSV.
+
+    ``output_file`` defaults to ``input_dir/combined_metrics_unified.csv``.
+    Returns ``(total_rows, size_mb)``.
+    """
+    input_dir = Path(input_dir)
+    if output_file is None:
+        output_file = input_dir / "combined_metrics_unified.csv"
+    output_file = Path(output_file)
+
+    print("\nCreating UNIFIED format combined file...")
+    print(f"Components discovered: {', '.join(components)}")
+
+    data_by_timestamp = {}
+    component_metrics = {}
+
+    for component in components:
+        input_path = input_dir / f"{component}.csv"
+        print(f"Loading {component}.csv...")
+
+        with open(input_path, "r") as infile:
+            reader = csv.DictReader(infile)
+            metric_names = [f for f in reader.fieldnames if f != "timestamp"]
+            component_metrics[component] = metric_names
+
+            for row in reader:
+                timestamp = row["timestamp"]
+                bucket = data_by_timestamp.setdefault(timestamp, {})
+                bucket[component] = {metric: row[metric] for metric in metric_names}
+
+    fieldnames = ["timestamp"]
+    for component in components:
+        for metric in component_metrics[component]:
+            fieldnames.append(f"{component}_{metric}")
+
+    print(f"Total columns: {len(fieldnames)} (1 timestamp + {len(fieldnames) - 1} metrics)")
+
+    with open(output_file, "w", newline="") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for timestamp in sorted(data_by_timestamp.keys()):
+            row = {"timestamp": timestamp}
+            for component in components:
+                component_row = data_by_timestamp[timestamp].get(component, {})
+                for metric in component_metrics[component]:
+                    row[f"{component}_{metric}"] = component_row.get(metric, "")
+            writer.writerow(row)
+
+    total_rows = len(data_by_timestamp)
+    size_mb = os.path.getsize(output_file) / (1024 * 1024)
+    print(f"\nUnified format file created: {output_file}")
+    print(f"Total rows: {total_rows:,}")
+    print(f"File size: {size_mb:.2f} MB")
+    return total_rows, size_mb
+
+
+def combine_logs(input_dir):
+    """Discover components in ``input_dir`` and write the unified combined CSV."""
+    input_dir = Path(input_dir)
+    components = discover_components(input_dir)
+    if not components:
+        raise SystemExit(f"No component CSVs found in {input_dir}/")
+    return combine_logs_unified(components, input_dir)
 
 
 def main(argv=None):
@@ -681,7 +758,7 @@ def main(argv=None):
         if not args.output_dir.is_dir():
             raise SystemExit(f"--combine-only requires an existing --output-dir; "
                              f"{args.output_dir} does not exist")
-        _load_combine_logs().run(args.output_dir)
+        combine_logs(args.output_dir)
         return
 
     total_seconds = SECONDS_PER_DAY * args.duration_days
@@ -723,7 +800,7 @@ def main(argv=None):
     print(f"   Anomalies recorded: {len(anomalies)}")
 
     if args.combine:
-        _load_combine_logs().run(args.output_dir)
+        combine_logs(args.output_dir)
 
 
 if __name__ == "__main__":

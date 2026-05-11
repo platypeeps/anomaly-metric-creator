@@ -1,4 +1,4 @@
-"""``combine_logs.py`` integration: autodiscovery, llm_analytics inclusion,
+"""Combine-step integration: autodiscovery, llm_analytics inclusion,
 row preservation, and the synthetic-extra-component case (VER-6 guarantee).
 """
 
@@ -7,13 +7,13 @@ import shutil
 
 import pytest
 
-from conftest import COMPONENTS, load_combine_logs
+from conftest import COMPONENTS
 
 
 @pytest.fixture(scope="module")
-def combined_dir(one_day_run_a, tmp_path_factory):
+def combined_dir(amc, one_day_run_a, tmp_path_factory):
     """Stage a copy of the 1-day fixture into tmp/iot_logs, drop in a synthetic
-    extra component, point combine_logs.py at it, and run the join exactly once.
+    extra component, then run the inlined combine step against it exactly once.
 
     Module-scoped so the three assertions below share one combine pass.
     """
@@ -29,9 +29,8 @@ def combined_dir(one_day_run_a, tmp_path_factory):
         "2026-03-10 00:00:01,43,99.8\n"
     )
 
-    cl = load_combine_logs()
-    components = cl.discover_components(iot_logs)
-    cl.combine_logs_unified(components, iot_logs)
+    components = amc.discover_components(iot_logs)
+    amc.combine_logs_unified(components, iot_logs)
     return iot_logs, components
 
 

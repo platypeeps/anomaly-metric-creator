@@ -31,7 +31,7 @@ python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
 | `--seed`         | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`   | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 | `--drop-rate`    | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
-| `--combine`      | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Delegates to `combine_logs.py`. |
+| `--combine`      | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. The combine step lives inline in `anomaly-metric-creator.py` (`combine_logs()` / `combine_logs_unified()`). |
 | `--combine-only` | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
 
 Anomaly specs whose `time_offset >= total_seconds` are skipped with a `WARNING:` line on stderr that names the duration needed to include them. Same-day specs (auth/cache/api/db/mq + their cascades) always fire; the LLM viral/onboarding/batch/second-viral catalog only fires at `--duration-days >= 7`.

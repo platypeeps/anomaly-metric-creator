@@ -12,19 +12,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
-COMBINE_PATH = REPO_ROOT / "combine_logs.py"
 
 
 def _load_amc():
     spec = importlib.util.spec_from_file_location("anomaly_metric_creator", SCRIPT_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_combine_logs():
-    """Fresh import of combine_logs.py (caller monkeypatches INPUT_DIR / OUTPUT_FILE_UNIFIED)."""
-    spec = importlib.util.spec_from_file_location("combine_logs", COMBINE_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
