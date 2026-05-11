@@ -15,9 +15,7 @@ def combined_dir(one_day_run_a, tmp_path_factory):
     """Stage a copy of the 1-day fixture into tmp/iot_logs, drop in a synthetic
     extra component, point combine_logs.py at it, and run the join exactly once.
 
-    Module-scoped so the three assertions below share one combine pass; module
-    scope rules out ``monkeypatch``, so we mutate the freshly-imported module's
-    globals directly (no other tests import combine_logs).
+    Module-scoped so the three assertions below share one combine pass.
     """
     iot_logs = tmp_path_factory.mktemp("combine") / "iot_logs"
     iot_logs.mkdir()
@@ -32,10 +30,8 @@ def combined_dir(one_day_run_a, tmp_path_factory):
     )
 
     cl = load_combine_logs()
-    cl.INPUT_DIR = iot_logs
-    cl.OUTPUT_FILE_UNIFIED = iot_logs / "combined_metrics_unified.csv"
-    components = cl.discover_components()
-    cl.combine_logs_unified(components)
+    components = cl.discover_components(iot_logs)
+    cl.combine_logs_unified(components, iot_logs)
     return iot_logs, components
 
 
@@ -95,3 +91,36 @@ def test_unified_row_count_matches_timestamp_union(amc, combined_dir, one_day_ru
     assert rows_with_llm == llm_source_count, (
         f"unified has {rows_with_llm} llm_analytics rows; source has {llm_source_count}"
     )
+
+
+def test_combine_only_cli_produces_unified_csv(amc, one_day_run_a, tmp_path):
+    """End-to-end ``--combine-only`` CLI run produces the unified file against
+    an existing --output-dir without re-generating component CSVs.
+    """
+    staged = tmp_path / "iot_logs"
+    staged.mkdir()
+    for src in one_day_run_a.out_dir.iterdir():
+        shutil.copy2(src, staged / src.name)
+
+    component_mtimes_before = {
+        p.name: p.stat().st_mtime_ns for p in staged.iterdir()
+    }
+    combined = staged / "combined_metrics_unified.csv"
+    assert not combined.exists()
+
+    amc.main(["--combine-only", "--output-dir", str(staged)])
+
+    assert combined.exists(), "combine-only did not write the unified CSV"
+    with open(combined) as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fieldnames = reader.fieldnames
+    assert rows, "unified CSV is empty"
+    assert any(f.startswith("llm_analytics_") for f in fieldnames), (
+        "unified CSV missing llm_analytics_* columns"
+    )
+    # No regeneration: source component files must not have been rewritten.
+    for name, mtime in component_mtimes_before.items():
+        assert (staged / name).stat().st_mtime_ns == mtime, (
+            f"--combine-only rewrote source file {name}"
+        )

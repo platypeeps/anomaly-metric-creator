@@ -11,6 +11,7 @@ configured window are skipped with a warning on stderr.
 import argparse
 import csv
 import datetime
+import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -642,17 +643,46 @@ def parse_args(argv=None):
     p.add_argument("--drop-rate", type=float, default=DEFAULT_DROP_RATE,
                    help=f"Probability per row of writing a blank line to simulate packet loss "
                         f"(default: {DEFAULT_DROP_RATE}).")
+    p.add_argument("--combine", action="store_true",
+                   help="After generating logs, also write a unified combined CSV "
+                        "(combined_metrics_unified.csv) into --output-dir.")
+    p.add_argument("--combine-only", action="store_true",
+                   help="Skip generation; only run the combine step against an existing "
+                        "--output-dir. Useful for re-running the join without regenerating.")
     args = p.parse_args(argv)
 
     if args.duration_days < 1:
         p.error("--duration-days must be >= 1")
     if not 0.0 <= args.drop_rate <= 1.0:
         p.error("--drop-rate must be between 0 and 1")
+    if args.combine and args.combine_only:
+        p.error("--combine and --combine-only are mutually exclusive")
     return args
+
+
+def _load_combine_logs():
+    """Load the sibling ``combine_logs.py`` without requiring it on sys.path.
+
+    The script is sometimes invoked from a working directory that doesn't contain
+    combine_logs.py on the import path; this anchors the load to the script file
+    so callers don't have to fiddle with PYTHONPATH.
+    """
+    path = Path(__file__).resolve().parent / "combine_logs.py"
+    spec = importlib.util.spec_from_file_location("combine_logs", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def main(argv=None):
     args = parse_args(argv)
+
+    if args.combine_only:
+        if not args.output_dir.is_dir():
+            raise SystemExit(f"--combine-only requires an existing --output-dir; "
+                             f"{args.output_dir} does not exist")
+        _load_combine_logs().run(args.output_dir)
+        return
 
     total_seconds = SECONDS_PER_DAY * args.duration_days
     args.output_dir.mkdir(exist_ok=True, parents=True)
@@ -691,6 +721,9 @@ def main(argv=None):
     print(f"Done - {len(COMPONENTS)} log files + anomalies.csv written to {args.output_dir}")
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Anomalies recorded: {len(anomalies)}")
+
+    if args.combine:
+        _load_combine_logs().run(args.output_dir)
 
 
 if __name__ == "__main__":
