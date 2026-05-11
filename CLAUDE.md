@@ -1,125 +1,97 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project Overview
-
-This is a Python script that generates synthetic IoT-style metric logs for a SaaS stack with built-in anomalies. By default it creates **one day** of second-by-second metrics for six components (authservice, cacheservice, apigateway, database, mqservice, llm_analytics), along with an anomalies manifest. Duration is configurable via `--duration-days`.
-
-## Running the Script
-
-```bash
-# Default: 1 day (86,400 rows per component)
-python3 anomaly-metric-creator.py
-
-# Full week (604,800 rows per component); required to unlock the multi-day
-# LLM/cascade anomaly catalog (~46 specs vs ~19 same-day specs).
-python3 anomaly-metric-creator.py --duration-days 7
-
-# Coarser sampling: one row every 5 seconds (17,280 rows per component for 1 day).
-python3 anomaly-metric-creator.py --interval-seconds 5
-
-# Generate logs and produce the unified joined CSV in one shot:
-python3 anomaly-metric-creator.py --combine
-
-# Skip generation; only build the unified CSV from an existing output dir:
-python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
-```
-
-### CLI flags
-
-| Flag                | Default     | Notes                                                              |
-| ------------------- | ----------- | ------------------------------------------------------------------ |
-| `--duration-days`   | `1`         | Days to generate. Multi-day LLM/cascade specs require `>= 7`.      |
-| `--seed`            | `42`        | RNG seed for deterministic output.                                 |
-| `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
-| `--drop-rate`       | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
-| `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `> 0`. Anomalies map to the nearest row via `round(time_offset / interval)`. |
-| `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. The combine step lives inline in `anomaly-metric-creator.py` (`combine_logs()` / `combine_logs_unified()`). |
-| `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
-
-Anomaly specs whose `time_offset` falls outside `[0, total_seconds)` (or whose nearest row index falls outside `[0, n_rows)` at a coarse `--interval-seconds`) are skipped with a `WARNING:` line on stderr that names the duration needed to include them. Same-day specs (auth/cache/api/db/mq + their cascades) always fire; the LLM viral/onboarding/batch/second-viral catalog only fires at `--duration-days >= 7`.
-
-This generates CSV files in the output directory (default `iot_logs/`):
-- `authservice.csv`
-- `cacheservice.csv`
-- `apigateway.csv`
-- `database.csv`
-- `mqservice.csv`
-- `llm_analytics.csv`
-- `anomalies.csv` (manifest of all injected anomalies)
-
-## Dependencies
-
-The script requires:
-- Python 3.x
-- numpy
-- csv, datetime, random, os, pathlib (standard library)
-
-Install numpy if needed:
-```bash
-pip3 install numpy
-```
-
-## Testing
-
-Dev dependencies (`pytest`, `numpy`) are declared in `pyproject.toml` under the `dev` extra. Python 3.11+ is the supported target.
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest
-```
-
-Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite runs full 1-day and 7-day generations end-to-end via `main()` and currently lands around ~28s — under the 30s budget. `generate_component()` is fully vectorized (one numpy op per metric column, anomalies applied as masked writes, CSV assembled via `np.char.add`); if runtime regresses, profile that path before trimming coverage.
+Agent guide for `anomaly-metric-creator.py`. User-facing usage, install, CLI reference,
+output files, and the anomaly catalog live in [README.md](README.md). Read it first
+if you need to run the script or understand the failure modes it injects.
 
 ## Architecture
 
-### Core Generation Pattern
+### Core generation pattern
 
 The script uses a single generator function `generate_component()` that:
-1. Takes component name, field names, value generators, anomaly specs, and per-run config (`base_dir`, `total_seconds`, `drop_rate`)
-2. Generates `total_seconds` rows (default 86,400 = one day at 1-second resolution)
-3. Injects anomalies at specific time offsets; specs outside `[0, total_seconds)` are warned and skipped
-4. Randomly drops rows at `drop_rate` (default ~0.05%) to simulate packet loss
-5. Writes to CSV with timestamp + metric columns
+
+1. Takes a component name, a list of `MetricSpec` rows, anomaly specs, and per-run
+   config (`base_dir`, `total_seconds`, `drop_rate`, `interval`, pre-built timestamp
+   arrays).
+2. Builds `floor(total_seconds / interval)` rows. At `interval=1.0` this is one row
+   per second.
+3. Injects anomalies at their nearest row (`round(time_offset / interval)`). Specs
+   whose row index falls outside `[0, n_rows)` are warned on stderr and skipped.
+4. Randomly emits blank lines at `drop_rate` to simulate packet loss.
+5. Writes timestamp + metric columns to `{component}.csv`.
+
+`generate_component()` is fully vectorized: one numpy op per metric column, anomalies
+applied as masked writes, CSV assembled via `np.char.add`. The test suite drives full
+1-day and 7-day runs end-to-end through `main()` — keep that path numpy-vectorized when
+making changes.
 
 ### Entry point
 
-`main(argv=None)` is the entry point and is only invoked under `if __name__ == "__main__"`. Importing the module does not trigger generation — useful for tests and for ad-hoc reuse of `generate_component()`.
+`main(argv=None)` is the entry point and is only invoked under
+`if __name__ == "__main__"`. Importing the module does not trigger generation, which
+keeps tests and ad-hoc reuse of `generate_component()` cheap.
 
-### Value Generators
+### Metric specs (value generation)
 
-Each component has a value generator function (e.g., `va_auth`, `va_cache`) that produces normal baseline values using numpy random distributions and sine waves for natural variation. These functions take `(timestamp, idx)` and return metric values based on the field index.
+Each component's columns are declared in `COMPONENTS` as a list of `MetricSpec(name,
+base, jitter, multiplier=…, additive=…, clip_min=…)`. The baseline column is built by
+`_natural_column()`:
 
-### Anomaly Injection
+```
+value = (base + jitter * randn(n)) * multiplier(ts, elapsed) + additive(ts, elapsed)
+```
 
-Anomalies are defined as dictionaries with:
-- `time_offset`: Second of the day (e.g., `2*3600 + 15*60` = 02:15:00)
-- `metric`: Name of the metric field to affect
-- `description`: Human-readable description
-- `generator`: Lambda function returning the anomalous value
+`multiplier` and `additive` must accept numpy arrays so the whole column generates in
+one pass. Use `_daily_sine(amplitude)` for natural 24h variation and
+`_llm_business_hours` for the LLM business-hours envelope.
 
-Multiple anomalies can occur at the same timestamp across different metrics. The anomaly registry collects all anomalies for the manifest file.
+### Anomaly injection schema
 
-## Modifying the Script
+Anomaly specs are dicts with:
 
-### Adding New Metrics
+- `time_offset` — seconds from `START` (e.g., `2*3600 + 15*60` = 02:15:00, or
+  `N*SECONDS_PER_DAY + …` for multi-day).
+- `metric` — name of the metric field to overwrite at the matched row.
+- `description` — human-readable description; flows into `anomalies.csv`.
+- `generator` — `lambda ts, idx: value` returning the anomalous value.
 
-Add fields to the fieldnames list and extend the value generator function with the corresponding `idx` case.
+Multiple anomalies can fire at the same timestamp across different metrics. The
+anomaly registry is collected into the manifest file.
 
-### Adding New Components
+Cascades use `register_cascade(target_component, time_offset, metric, description,
+generator)` and are appended after the originating anomaly's time offset to simulate
+blast radius (auth → gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API).
 
-Call `generate_component()` with:
-1. Component name (becomes filename)
-2. List of metric field names
-3. List of value generator functions (one per field)
-4. List of anomaly spec dictionaries
+## Modifying the script
 
-### Changing Time Range
+### Adding new metrics
 
-Modify `START` (datetime) to shift when the synthetic day begins. To generate more than one day, pass `--duration-days N` rather than editing the `SECONDS_PER_DAY` constant — it is fixed at 86,400 by design.
+Append a `MetricSpec` to the relevant list in `COMPONENTS`. No other changes needed —
+the column flows through `_natural_column()` and `generate_component()` automatically.
 
-### Adjusting Anomaly Timing
+### Adding new components
 
-Time offsets are in seconds from `START`. Use expressions like `2*3600 + 15*60` for readability (2 hours 15 minutes). For multi-day specs use `N*SECONDS_PER_DAY + ...`. Any spec whose `time_offset` is `>= SECONDS_PER_DAY * duration_days` is skipped at run time with a stderr warning naming the duration required to include it — keep the spec, increase `--duration-days`, rather than silently truncating.
+Add a `COMPONENTS[name]` entry with the metric list, then add anomaly specs to the
+matching `anoms_*` list (or register cascades in `register_default_cascades()`). The
+runner picks up new components without further wiring.
+
+### Changing time range
+
+Modify `START` (datetime) to shift when the synthetic day begins. To generate more
+than one day, pass `--duration-days N` rather than editing the `SECONDS_PER_DAY`
+constant — it is fixed at 86,400 by design.
+
+### Adjusting anomaly timing
+
+Time offsets are in seconds from `START`. Use expressions like `2*3600 + 15*60` for
+readability (2 hours 15 minutes). For multi-day specs use `N*SECONDS_PER_DAY + …`. Any
+spec whose `time_offset` is `>= SECONDS_PER_DAY * duration_days` is skipped at run time
+with a stderr warning naming the duration required to include it — keep the spec,
+increase `--duration-days`, rather than silently truncating.
+
+## Tests
+
+Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
+runs full 1-day and 7-day generations end-to-end via `main()` and exercises the
+vectorized `generate_component()` path. Run with `.venv/bin/pytest` after installing
+the `dev` extra (see [README.md](README.md#tests)).
