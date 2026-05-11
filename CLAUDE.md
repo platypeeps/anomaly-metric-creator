@@ -16,6 +16,9 @@ python3 anomaly-metric-creator.py
 # LLM/cascade anomaly catalog (~46 specs vs ~19 same-day specs).
 python3 anomaly-metric-creator.py --duration-days 7
 
+# Coarser sampling: one row every 5 seconds (17,280 rows per component for 1 day).
+python3 anomaly-metric-creator.py --interval-seconds 5
+
 # Generate logs and produce the unified joined CSV in one shot:
 python3 anomaly-metric-creator.py --combine
 
@@ -25,16 +28,17 @@ python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
 
 ### CLI flags
 
-| Flag             | Default     | Notes                                                              |
-| ---------------- | ----------- | ------------------------------------------------------------------ |
-| `--duration-days`| `1`         | Days to generate. Multi-day LLM/cascade specs require `>= 7`.      |
-| `--seed`         | `42`        | RNG seed for deterministic output.                                 |
-| `--output-dir`   | `iot_logs`  | Directory CSVs are written into (created if missing).              |
-| `--drop-rate`    | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
-| `--combine`      | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. The combine step lives inline in `anomaly-metric-creator.py` (`combine_logs()` / `combine_logs_unified()`). |
-| `--combine-only` | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
+| Flag                | Default     | Notes                                                              |
+| ------------------- | ----------- | ------------------------------------------------------------------ |
+| `--duration-days`   | `1`         | Days to generate. Multi-day LLM/cascade specs require `>= 7`.      |
+| `--seed`            | `42`        | RNG seed for deterministic output.                                 |
+| `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
+| `--drop-rate`       | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
+| `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `> 0`. Anomalies map to the nearest row via `round(time_offset / interval)`. |
+| `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. The combine step lives inline in `anomaly-metric-creator.py` (`combine_logs()` / `combine_logs_unified()`). |
+| `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
 
-Anomaly specs whose `time_offset >= total_seconds` are skipped with a `WARNING:` line on stderr that names the duration needed to include them. Same-day specs (auth/cache/api/db/mq + their cascades) always fire; the LLM viral/onboarding/batch/second-viral catalog only fires at `--duration-days >= 7`.
+Anomaly specs whose `time_offset` falls outside `[0, total_seconds)` (or whose nearest row index falls outside `[0, n_rows)` at a coarse `--interval-seconds`) are skipped with a `WARNING:` line on stderr that names the duration needed to include them. Same-day specs (auth/cache/api/db/mq + their cascades) always fire; the LLM viral/onboarding/batch/second-viral catalog only fires at `--duration-days >= 7`.
 
 This generates CSV files in the output directory (default `iot_logs/`):
 - `authservice.csv`

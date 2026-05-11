@@ -25,7 +25,8 @@ def test_help_lists_every_flag():
     result = _invoke("--help")
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate"):
+    for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
+                 "--interval-seconds"):
         assert flag in out, f"--help missing flag {flag}"
         # Argparse renders the help text on the line following the flag; require
         # something non-trivial follows so the flag isn't just a bare token.
@@ -49,6 +50,18 @@ def test_invalid_drop_rate_high_fails(tmp_path):
     result = _invoke("--drop-rate", "1.5", "--output-dir", str(tmp_path))
     assert result.returncode != 0, "expected non-zero exit for --drop-rate 1.5"
     assert "drop-rate" in (result.stderr + result.stdout)
+
+
+def test_invalid_interval_seconds_zero_fails(tmp_path):
+    result = _invoke("--interval-seconds", "0", "--output-dir", str(tmp_path))
+    assert result.returncode != 0, "expected non-zero exit for --interval-seconds 0"
+    assert "interval-seconds" in (result.stderr + result.stdout)
+
+
+def test_invalid_interval_seconds_negative_fails(tmp_path):
+    result = _invoke("--interval-seconds", "-1.5", "--output-dir", str(tmp_path))
+    assert result.returncode != 0, "expected non-zero exit for --interval-seconds -1.5"
+    assert "interval-seconds" in (result.stderr + result.stdout)
 
 
 def test_output_dir_is_created(tmp_path):

@@ -304,3 +304,112 @@ def test_active_sessions_has_daily_variation(amc, one_day_run_a):
         f"active_sessions spread {spread:.2f} too small for a daily sine; "
         f"values in [{min(values):.2f}, {max(values):.2f}]"
     )
+
+
+# ------------------------------------------------------------------
+# VER-14: --interval-seconds sampling-density knob.
+# ------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def one_day_interval5_run(amc, tmp_path_factory):
+    """1-day run at --interval-seconds 5 (17,280 rows per component)."""
+    out = tmp_path_factory.mktemp("one_day_interval5")
+    import io
+    import sys as _sys
+    args = [
+        "--seed", "42",
+        "--duration-days", "1",
+        "--interval-seconds", "5",
+        "--output-dir", str(out),
+    ]
+    stderr_buf = io.StringIO()
+    real_stderr = _sys.stderr
+    _sys.stderr = stderr_buf
+    try:
+        amc.main(args)
+    finally:
+        _sys.stderr = real_stderr
+    from types import SimpleNamespace
+    return SimpleNamespace(out_dir=out, stderr=stderr_buf.getvalue())
+
+
+def test_interval_seconds_row_count(amc, one_day_interval5_run):
+    """At --interval-seconds 5 for one day, each component should have
+    floor(86400 / 5) = 17,280 rows minus the small drop-rate count."""
+    drop_rate = amc.DEFAULT_DROP_RATE
+    expected = amc.SECONDS_PER_DAY // 5  # 17,280
+    mean_dropped = drop_rate * expected
+    std = math.sqrt(expected * drop_rate * (1 - drop_rate))
+    tolerance = 5 * std
+    for component in COMPONENTS:
+        rows, _ = read_component_rows(one_day_interval5_run.out_dir, component)
+        dropped = expected - len(rows)
+        assert mean_dropped - tolerance <= dropped <= mean_dropped + tolerance, (
+            f"{component} @ interval=5: rows={len(rows)} dropped={dropped} "
+            f"outside expected drop window {mean_dropped:.1f} ± {tolerance:.1f}"
+        )
+
+
+def test_interval_seconds_timestamps_step_by_interval(one_day_interval5_run):
+    """Consecutive emitted timestamps must differ by exactly 5 seconds — except
+    across a dropped row, where the gap is a multiple of 5."""
+    for component in COMPONENTS:
+        rows, _ = read_component_rows(one_day_interval5_run.out_dir, component)
+        timestamps = [datetime.datetime.fromisoformat(ts) for ts in rows]
+        deltas = {(b - a).total_seconds() for a, b in zip(timestamps, timestamps[1:])}
+        assert deltas, f"{component} produced no emitted rows"
+        for d in deltas:
+            assert d > 0 and d % 5 == 0, (
+                f"{component}: gap of {d}s is not a multiple of the 5s interval"
+            )
+
+
+def test_interval_seconds_anomalies_at_correct_seconds(amc, one_day_interval5_run):
+    """Manifest entries at interval=5 must report the same wall-clock seconds
+    as their declared ``time_offset`` (rounded to nearest 5s row). Most one-day
+    primary/cascade specs sit at minute or hour boundaries → divisible by 5,
+    so the rounded row's timestamp equals the spec's exact time_offset."""
+    manifest = read_manifest(one_day_interval5_run.out_dir)
+    by_key = {(m["component"], m["metric"], m["description"]): m for m in manifest}
+    declared = declared_specs(amc)
+
+    # All declared one-day specs land within 17,280 rows at interval=5 except
+    # those whose rounded index would equal 17,280 — none of the current
+    # one-day specs hit that boundary, so every spec should be present unless
+    # dropped (drop_rate ~0.05% → at most a couple). Assert most are present
+    # and every present one's timestamp matches the rounded row.
+    interval = 5
+    n_rows = amc.SECONDS_PER_DAY // interval
+    expected_present = 0
+    matched = 0
+    for component, time_offset, metric, description in declared:
+        if time_offset >= amc.SECONDS_PER_DAY:
+            continue  # multi-day spec; not reachable on a 1-day run
+        idx = int(round(time_offset / interval))
+        if idx >= n_rows:
+            continue
+        expected_present += 1
+        manifest_entry = by_key.get((component, metric, description))
+        if manifest_entry is None:
+            continue  # almost certainly drop_rate; verified by overall count below
+        expected_ts = amc.START + datetime.timedelta(seconds=idx * interval)
+        actual_ts = datetime.datetime.fromisoformat(manifest_entry["timestamp"])
+        assert actual_ts == expected_ts, (
+            f"{component}/{metric} @ time_offset={time_offset}: manifest ts "
+            f"{actual_ts} != expected nearest-row ts {expected_ts}"
+        )
+        matched += 1
+
+    # Drop rate is ~0.05% — almost every declared spec should appear.
+    assert expected_present >= 15, "sanity: at least 15 one-day specs should be in range"
+    assert matched >= expected_present - 2, (
+        f"too many specs missing from manifest at interval=5: "
+        f"matched={matched} / expected={expected_present}"
+    )
+
+
+def test_interval_seconds_default_is_one(amc):
+    """The flag's CLI default must remain 1.0 so existing callers keep their
+    behavior — the rest of the existing suite asserts the resulting output is
+    unchanged at that default."""
+    args = amc.parse_args(["--output-dir", "ignored"])
+    assert args.interval_seconds == 1.0

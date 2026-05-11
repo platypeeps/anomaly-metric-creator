@@ -28,6 +28,7 @@ DEFAULT_DURATION_DAYS = 1
 DEFAULT_SEED = 42
 DEFAULT_OUTPUT_DIR = Path("iot_logs")
 DEFAULT_DROP_RATE = 0.0005
+DEFAULT_INTERVAL_SECONDS = 1.0
 
 # ------------------------------------------------------------------
 # Anomaly registry and cascade tracking (reset on each main() call)
@@ -72,7 +73,7 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray)
 # Core generator
 # ------------------------------------------------------------------
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
-                       *, base_dir, total_seconds, drop_rate,
+                       *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
@@ -80,22 +81,40 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
 
     Vectorized: natural-value math is one numpy op per metric; anomaly overrides
     are masked writes on the column arrays; packet loss is a single boolean mask
-    decided up front so a dropped second emits neither a CSV row nor a manifest
+    decided up front so a dropped row emits neither a CSV row nor a manifest
     entry. ``ts_array``/``ts_strings`` are optional so callers can share them
     across components (main() does this). The drop mask is drawn per call so
     each component keeps its independent drop pattern.
+
+    ``interval`` controls sampling density (seconds between rows). Timeline
+    coverage stays ``total_seconds`` seconds; row count is
+    ``floor(total_seconds / interval)``. Each anomaly's ``time_offset`` is
+    mapped to the nearest row via ``round(time_offset / interval)``; specs
+    that fall outside ``[0, n_rows)`` are skipped with the existing
+    stderr warning.
     """
     file_path = base_dir / f"{component_name}.csv"
     fieldnames = [s.name for s in specs]
+    n_rows = int(total_seconds // interval)
 
     # Merge primary anomalies with cascading anomalies
     all_anomalies = list(anomaly_specs)
     if component_name in cascading_anomalies:
         all_anomalies.extend(cascading_anomalies[component_name])
 
-    # Surface specs outside the configured window so dead specs are loud, not silent.
-    out_of_range = [s for s in all_anomalies
-                    if s["time_offset"] >= total_seconds or s["time_offset"] < 0]
+    # Map every spec to its row index once; out-of-range is anything outside
+    # ``[0, n_rows)`` after rounding so warnings honor the configured interval.
+    in_range_specs: list[tuple[int, dict]] = []
+    out_of_range: list[dict] = []
+    for s in all_anomalies:
+        if s["time_offset"] < 0:
+            out_of_range.append(s)
+            continue
+        idx = int(round(s["time_offset"] / interval))
+        if idx >= n_rows:
+            out_of_range.append(s)
+        else:
+            in_range_specs.append((idx, s))
     if out_of_range:
         max_offset = max(s["time_offset"] for s in out_of_range)
         needed_days = max_offset // SECONDS_PER_DAY + 1
@@ -105,14 +124,13 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             f"Run with --duration-days {needed_days} to include them.",
             file=sys.stderr,
         )
-        all_anomalies = [s for s in all_anomalies if 0 <= s["time_offset"] < total_seconds]
 
     # Fail loudly on duplicate (metric, time_offset) tuples — the previous
     # ``metric_overrides = {spec["metric"]: spec["generator"] for spec in specs}``
     # silently kept only the last one.
     seen: dict[tuple[str, int], dict] = {}
     duplicates: list[tuple[str, str, int]] = []
-    for spec in all_anomalies:
+    for _idx, spec in in_range_specs:
         key = (spec["metric"], spec["time_offset"])
         if key in seen:
             duplicates.append((component_name, spec["metric"], spec["time_offset"]))
@@ -124,31 +142,33 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         )
 
     if ts_array is None or ts_strings is None:
-        ts_array, ts_strings = _build_timestamp_arrays(total_seconds)
-    drop_mask = np.random.random(total_seconds) < drop_rate
+        ts_array, ts_strings = _build_timestamp_arrays(total_seconds, interval)
+    drop_mask = np.random.random(n_rows) < drop_rate
 
-    elapsed = np.arange(total_seconds, dtype=np.int64)
+    # Elapsed seconds (not row index) so daily/hourly seasonality generators
+    # produce the same wall-clock shape at any sampling interval.
+    elapsed = np.arange(n_rows, dtype=np.float64) * interval
 
     # Natural values: one column array per metric, computed in a single numpy op.
     n_cols = len(specs)
-    values = np.empty((total_seconds, n_cols), dtype=np.float64)
+    values = np.empty((n_rows, n_cols), dtype=np.float64)
     for col, spec in enumerate(specs):
         values[:, col] = _natural_column(spec, ts_array, elapsed)
 
-    # Apply anomaly overrides. Skip overrides at dropped seconds so manifest and
-    # CSV stay coherent (a dropped second has no row, so it must have no manifest
-    # entry either — the VER-5 invariant). Sort for a deterministic order of
-    # cascade RNG draws within a run.
+    # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
+    # CSV stay coherent (a dropped row has no CSV entry, so it must have no
+    # manifest entry either — the VER-5 invariant). Sort for a deterministic
+    # order of cascade RNG draws within a run.
     name_to_col = {s.name: i for i, s in enumerate(specs)}
-    for aspec in sorted(all_anomalies, key=lambda s: (s["time_offset"], s["metric"])):
-        t = aspec["time_offset"]
-        if drop_mask[t]:
+    for row_idx, aspec in sorted(in_range_specs,
+                                 key=lambda ix_s: (ix_s[1]["time_offset"], ix_s[1]["metric"])):
+        if drop_mask[row_idx]:
             continue
         col = name_to_col[aspec["metric"]]
-        ts_py = START + datetime.timedelta(seconds=t)
-        values[t, col] = aspec["generator"](ts_py, col)
+        ts_py = START + datetime.timedelta(seconds=float(row_idx * interval))
+        values[row_idx, col] = aspec["generator"](ts_py, col)
         anomalies.append({
-            "timestamp": str(ts_strings[t]),
+            "timestamp": str(ts_strings[row_idx]),
             "component": component_name,
             "metric": aspec["metric"],
             "description": aspec["description"],
@@ -195,13 +215,18 @@ def _format_fixed3(arr: np.ndarray) -> np.ndarray:
     return np.char.add(out, frac_part)
 
 
-def _build_timestamp_arrays(total_seconds: int):
+def _build_timestamp_arrays(total_seconds: int, interval: float = 1.0):
     """Pre-compute the shared per-run timestamp arrays (numpy + formatted str).
 
     Built once per run and reused across all six components — they're identical
     by construction, so re-computing them per component is pure waste.
+    Row ``i`` is at ``START + i * interval`` seconds; row count is
+    ``floor(total_seconds / interval)``. Strings are rendered at second
+    precision regardless of interval (matches the existing CSV format).
     """
-    ts_array = np.datetime64(START) + np.arange(total_seconds, dtype="timedelta64[s]")
+    n_rows = int(total_seconds // interval)
+    step_us = int(round(interval * 1_000_000))
+    ts_array = np.datetime64(START) + np.arange(n_rows) * np.timedelta64(step_us, "us")
     ts_strings = np.char.replace(np.datetime_as_string(ts_array, unit="s"), "T", " ")
     return ts_array, ts_strings
 
@@ -643,6 +668,11 @@ def parse_args(argv=None):
     p.add_argument("--drop-rate", type=float, default=DEFAULT_DROP_RATE,
                    help=f"Probability per row of writing a blank line to simulate packet loss "
                         f"(default: {DEFAULT_DROP_RATE}).")
+    p.add_argument("--interval-seconds", type=float, default=DEFAULT_INTERVAL_SECONDS,
+                   help=f"Seconds between consecutive emitted rows "
+                        f"(default: {DEFAULT_INTERVAL_SECONDS}). Controls sampling "
+                        f"density; timeline coverage stays --duration-days * 86400 "
+                        f"seconds. Row count per component is floor(total_seconds / interval).")
     p.add_argument("--combine", action="store_true",
                    help="After generating logs, also write a unified combined CSV "
                         "(combined_metrics_unified.csv) into --output-dir.")
@@ -655,6 +685,8 @@ def parse_args(argv=None):
         p.error("--duration-days must be >= 1")
     if not 0.0 <= args.drop_rate <= 1.0:
         p.error("--drop-rate must be between 0 and 1")
+    if args.interval_seconds <= 0:
+        p.error("--interval-seconds must be > 0")
     if args.combine and args.combine_only:
         p.error("--combine and --combine-only are mutually exclusive")
     return args
@@ -779,13 +811,15 @@ def main(argv=None):
         "llm_analytics": anoms_llm,
     }
 
-    ts_array, ts_strings = _build_timestamp_arrays(total_seconds)
+    ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
+    n_rows = int(total_seconds // args.interval_seconds)
 
     for name, specs in COMPONENTS.items():
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
                            drop_rate=args.drop_rate,
+                           interval=args.interval_seconds,
                            ts_array=ts_array,
                            ts_strings=ts_strings)
 
@@ -797,6 +831,7 @@ def main(argv=None):
 
     print(f"Done - {len(COMPONENTS)} log files + anomalies.csv written to {args.output_dir}")
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
+    print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
     print(f"   Anomalies recorded: {len(anomalies)}")
 
     if args.combine:
