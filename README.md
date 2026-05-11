@@ -5,10 +5,10 @@ with built-in anomalies. It writes one CSV per component plus an `anomalies.csv`
 manifest that catalogues every anomaly the run injected. Output is deterministic for a
 given `--seed`.
 
-By default the script emits **one day** of second-by-second metrics for six
+By default the script emits **one day** of second-by-second metrics for nine
 components: `authservice`, `cacheservice`, `apigateway`, `database`, `mqservice`,
-`llm_analytics`. Duration, sampling interval, drop rate, and output directory are all
-CLI-configurable.
+`llm_analytics`, `loadbalancer`, `objectstore`, `vectorstore`. Duration, sampling
+interval, drop rate, and output directory are all CLI-configurable.
 
 ## Install
 
@@ -65,6 +65,9 @@ Written to `--output-dir` (default `iot_logs/`):
 - `database.csv`
 - `mqservice.csv`
 - `llm_analytics.csv`
+- `loadbalancer.csv`
+- `objectstore.csv`
+- `vectorstore.csv`
 - `anomalies.csv` — manifest of every injected anomaly (component, metric, timestamp, description, value).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
 
@@ -100,6 +103,15 @@ The same-day catalog always fires. The multi-day LLM catalog only fires at
 | `cacheservice` | 17:00 | `memory_util_pct` | Memory pressure — 97% nearing eviction. |
 | `apigateway` | 21:45 | `error_rate` | 5xx burst from bad config push — 12%. |
 | `database` | 23:00 | `queries_per_sec` | Nightly batch kickoff — 55k QPS. |
+| `loadbalancer` | 03:00 | `tls_handshake_errors` | Cert near-expiry — TLS errors spike to 80/s. |
+| `loadbalancer` | 08:15 | `healthcheck_failures` | Backend pool flapping — 12 healthcheck failures. |
+| `loadbalancer` | 13:00 | `connection_resets` | SYN flood-style burst — 450 resets. |
+| `loadbalancer` | 20:30 | `backend_5xx_per_sec` | Region failover propagates 5xx — 75/s. |
+| `objectstore` | 07:00 | `5xx_rate` | Upstream provider 5xx wave — 14%. |
+| `objectstore` | 12:00 | `bandwidth_mbps` | Batch export saturates bandwidth — 950 Mbps. |
+| `objectstore` | 18:30 | `get_latency_ms` | Read-after-write tail — 380 ms. |
+| `vectorstore` | 10:30 | `ann_query_latency_ms` | Index rebuild stall — 280 ms. |
+| `vectorstore` | 15:00 | `recall_at_10` | Recall degrades after model swap — 0.62. |
 
 ### Same-day cascades (any `--duration-days`)
 
@@ -121,6 +133,11 @@ propagation:
 - 14:32:00 — `database.connections` ~8500 (MQ jam → connection buildup).
 - 14:32:05 — `database.write_latency_ms` ~85 ms (MQ backpressure → slow writes).
 - 14:32:30 — `authservice.avg_auth_latency_ms` ~280 ms (MQ jam delays session writes).
+- 07:00:20 — `apigateway.error_rate` ~6% (object store 5xx wave → dependent endpoints).
+- 08:15:05 — `apigateway.active_connections` ~200 (LB withdraws flapping pool).
+- 10:30:15 — `llm_analytics.avg_llm_latency_ms` ~1,900 ms (slow ANN retrieval).
+- 15:00:30 — `llm_analytics.llm_api_error_rate` ~8% (low-recall fallback retries).
+- 20:30:10 — `apigateway.error_rate` ~9% (LB region failover propagates 5xx).
 
 ### Multi-day LLM catalog (`--duration-days >= 7`)
 
@@ -132,10 +149,12 @@ propagation:
 | Day 3 14:00 | `llm_analytics` | `llm_requests_per_sec` | Enterprise onboarding — sustained 285/s. |
 | Day 3 14:00 | `llm_analytics` | `avg_context_window_size` | Context window jumps to 12,500 tokens. |
 | Day 3 14:00 | `llm_analytics` | `token_limit_hits_per_min` | 45 hits/min — frequent ceiling strikes. |
+| Day 3 14:00 | `vectorstore` | `embeddings_per_sec` | Enterprise onboarding drives embeddings to 350/s. |
 | Day 5 09:30 | `llm_analytics` | `llm_api_error_rate` | Upstream rate-limited — 18% errors. |
 | Day 5 09:30 | `llm_analytics` | `avg_llm_latency_ms` | Latency spikes to 4200 ms under rate limiting. |
 | Day 6 02:00 | `llm_analytics` | `input_tokens_per_sec` | Weekend batch analytics — 320k tokens/s. |
 | Day 6 02:00 | `llm_analytics` | `context_overflow_rate` | Context overflow rate at 8.5 (large batch docs). |
+| Day 6 02:00 | `objectstore` | `bandwidth_mbps` | Weekend batch saturates object store — 1,400 Mbps. |
 | Day 7 16:45 | `llm_analytics` | `llm_requests_per_sec` | Second viral event — 10× spike to 450/s. |
 | Day 7 16:45 | `llm_analytics` | `input_tokens_per_sec` | Massive 420k tokens/s under social traffic. |
 | Day 7 16:45 | `llm_analytics` | `output_tokens_per_sec` | Output tokens surge to 135k/s. |

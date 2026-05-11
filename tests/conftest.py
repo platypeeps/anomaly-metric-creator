@@ -69,6 +69,9 @@ COMPONENT_FIELDS = {
     "database": ("anoms_db", 6),
     "mqservice": ("anoms_mq", 6),
     "llm_analytics": ("anoms_llm", 8),
+    "loadbalancer": ("anoms_lb", 7),
+    "objectstore": ("anoms_obj", 5),
+    "vectorstore": ("anoms_vec", 5),
 }
 
 COMPONENTS = list(COMPONENT_FIELDS.keys())

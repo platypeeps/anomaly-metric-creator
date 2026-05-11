@@ -331,6 +331,29 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("context_overflow_rate", 0.3, 0.1, clip_min=0),
         MetricSpec("llm_api_error_rate", 0.05, 0.02, clip_min=0),
     ],
+    "loadbalancer": [
+        MetricSpec("requests_per_sec", 900, 60),
+        MetricSpec("healthcheck_failures", 0, 0.1, clip_min=0),
+        MetricSpec("active_tls_handshakes", 120, 10),
+        MetricSpec("tls_handshake_errors", 0.5, 0.2, clip_min=0),
+        MetricSpec("backend_5xx_per_sec", 1.5, 0.5, clip_min=0),
+        MetricSpec("connection_resets", 5, 2, clip_min=0),
+        MetricSpec("cpu_util_pct", 18, 3),
+    ],
+    "objectstore": [
+        MetricSpec("get_latency_ms", 45, 5),
+        MetricSpec("put_latency_ms", 60, 8),
+        MetricSpec("5xx_rate", 0.1, 0.05, clip_min=0),
+        MetricSpec("bandwidth_mbps", 180, 20),
+        MetricSpec("requests_per_sec", 1200, 80),
+    ],
+    "vectorstore": [
+        MetricSpec("ann_query_latency_ms", 25, 4),
+        MetricSpec("embeddings_per_sec", 80, 10, multiplier=_llm_business_hours),
+        MetricSpec("recall_at_10", 0.91, 0.01),
+        MetricSpec("cache_hit_ratio", 88, 2),
+        MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
+    ],
 }
 
 # ------------------------------------------------------------------
@@ -445,6 +468,83 @@ anoms_mq = [
         "description": "DLQ blow-up — 1,200 messages parked",
         "generator": lambda ts,idx: 1200
     }
+]
+
+anoms_lb = [
+    {
+        "time_offset": 3*3600,                    # 03:00:00
+        "metric": "tls_handshake_errors",
+        "description": "TLS handshake errors surge to 80/s (cert near-expiry warning)",
+        "generator": lambda ts,idx: 80.0,
+    },
+    {
+        "time_offset": 8*3600 + 15*60,            # 08:15:00
+        "metric": "healthcheck_failures",
+        "description": "Healthcheck failures jump to 12 (backend pool flapping)",
+        "generator": lambda ts,idx: 12.0,
+    },
+    {
+        "time_offset": 13*3600,                   # 13:00:00
+        "metric": "connection_resets",
+        "description": "Connection resets spike to 450 (SYN flood-style burst)",
+        "generator": lambda ts,idx: 450.0,
+    },
+    {
+        "time_offset": 20*3600 + 30*60,           # 20:30:00
+        "metric": "backend_5xx_per_sec",
+        "description": "Backend 5xx jump to 75/s (region failover cascades 5xx upstream)",
+        "generator": lambda ts,idx: 75.0,
+    },
+]
+
+anoms_obj = [
+    {
+        "time_offset": 7*3600,                    # 07:00:00
+        "metric": "5xx_rate",
+        "description": "Object store 5xx rate spikes to 14 % (upstream provider 5xx wave)",
+        "generator": lambda ts,idx: 0.14,
+    },
+    {
+        "time_offset": 12*3600,                   # 12:00:00
+        "metric": "bandwidth_mbps",
+        "description": "Bandwidth saturates at 950 Mbps (batch export)",
+        "generator": lambda ts,idx: 950.0,
+    },
+    {
+        "time_offset": 18*3600 + 30*60,           # 18:30:00
+        "metric": "get_latency_ms",
+        "description": "GET latency tail at 380 ms (read-after-write)",
+        "generator": lambda ts,idx: 380.0,
+    },
+    # Multi-day: ties to LLM weekend batch on Day 6 02:00 (requires --duration-days >= 7)
+    {
+        "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+        "metric": "bandwidth_mbps",
+        "description": "Weekend batch export saturates object store at 1400 Mbps",
+        "generator": lambda ts,idx: 1400.0,
+    },
+]
+
+anoms_vec = [
+    {
+        "time_offset": 10*3600 + 30*60,           # 10:30:00
+        "metric": "ann_query_latency_ms",
+        "description": "ANN query latency stalls at 280 ms (index rebuild)",
+        "generator": lambda ts,idx: 280.0,
+    },
+    {
+        "time_offset": 15*3600,                   # 15:00:00
+        "metric": "recall_at_10",
+        "description": "Recall@10 degrades to 0.62 after model swap",
+        "generator": lambda ts,idx: 0.62,
+    },
+    # Multi-day: ties to enterprise onboarding Day 3 14:00 (requires --duration-days >= 3)
+    {
+        "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+        "metric": "embeddings_per_sec",
+        "description": "Enterprise onboarding drives embeddings to 350/s",
+        "generator": lambda ts,idx: 350.0,
+    },
 ]
 
 # Multi-day LLM catalog. Unreachable at --duration-days 1; needs >= 7.
@@ -726,6 +826,39 @@ def register_default_cascades():
                      "Cascading: Cache service errors under LLM traffic",
                      lambda ts, idx: 0.31)
 
+    # Load balancer cascades
+    register_cascade("apigateway",
+                     8*3600 + 15*60 + 5,
+                     "active_connections",
+                     "Cascading: LB withdraws traffic from a flapping backend pool",
+                     lambda ts, idx: 200 + np.random.normal(0, 25))
+
+    register_cascade("apigateway",
+                     20*3600 + 30*60 + 10,
+                     "error_rate",
+                     "Cascading: LB region failover propagates 5xx to gateway",
+                     lambda ts, idx: 0.09)
+
+    # Object store cascades
+    register_cascade("apigateway",
+                     7*3600 + 20,
+                     "error_rate",
+                     "Cascading: object store 5xx wave breaks dependent endpoints",
+                     lambda ts, idx: 0.06)
+
+    # Vector store cascades — feed into llm_analytics latency/errors
+    register_cascade("llm_analytics",
+                     10*3600 + 30*60 + 15,
+                     "avg_llm_latency_ms",
+                     "Cascading: slow ANN retrieval drags LLM latency to 1,900 ms",
+                     lambda ts, idx: 1900 + np.random.normal(0, 80))
+
+    register_cascade("llm_analytics",
+                     15*3600 + 30,
+                     "llm_api_error_rate",
+                     "Cascading: low-recall results trigger LLM fallback retries (8 % errors)",
+                     lambda ts, idx: 0.08)
+
 # ------------------------------------------------------------------
 # CLI + entry point
 # ------------------------------------------------------------------
@@ -884,6 +1017,9 @@ def main(argv=None):
         "database": anoms_db,
         "mqservice": anoms_mq,
         "llm_analytics": anoms_llm,
+        "loadbalancer": anoms_lb,
+        "objectstore": anoms_obj,
+        "vectorstore": anoms_vec,
     }
 
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
