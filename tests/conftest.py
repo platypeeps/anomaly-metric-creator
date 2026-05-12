@@ -72,6 +72,10 @@ COMPONENT_FIELDS = {
     "loadbalancer": ("anoms_lb", 7),
     "objectstore": ("anoms_obj", 5),
     "vectorstore": ("anoms_vec", 5),
+    "scheduler": ("anoms_scheduler", 5),
+    "paymentservice": ("anoms_payment", 5),
+    "identityprovider": ("anoms_idp", 5),
+    "observabilitypipeline": ("anoms_obs", 4),
 }
 
 COMPONENTS = list(COMPONENT_FIELDS.keys())

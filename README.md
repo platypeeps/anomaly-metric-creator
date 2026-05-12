@@ -5,10 +5,11 @@ with built-in anomalies. It writes one CSV per component plus an `anomalies.csv`
 manifest that catalogues every anomaly the run injected. Output is deterministic for a
 given `--seed`.
 
-By default the script emits **one day** of second-by-second metrics for nine
+By default the script emits **one day** of second-by-second metrics for thirteen
 components: `authservice`, `cacheservice`, `apigateway`, `database`, `mqservice`,
-`llm_analytics`, `loadbalancer`, `objectstore`, `vectorstore`. Duration, sampling
-interval, drop rate, and output directory are all CLI-configurable.
+`llm_analytics`, `loadbalancer`, `objectstore`, `vectorstore`, `scheduler`,
+`paymentservice`, `identityprovider`, `observabilitypipeline`. Duration,
+sampling interval, drop rate, and output directory are all CLI-configurable.
 
 ## Install
 
@@ -68,6 +69,10 @@ Written to `--output-dir` (default `iot_logs/`):
 - `loadbalancer.csv`
 - `objectstore.csv`
 - `vectorstore.csv`
+- `scheduler.csv`
+- `paymentservice.csv`
+- `identityprovider.csv`
+- `observabilitypipeline.csv`
 - `anomalies.csv` — manifest of every injected anomaly (component, metric, timestamp, description, value).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
 
@@ -97,27 +102,41 @@ The same-day catalog always fires. The multi-day LLM catalog only fires at
 | `authservice` | 02:15 | `login_attempts` | Login attempts surge 5× to 1250/s. |
 | `database` | 04:00 | `connections` | Backup-window connection pile-up — 6,800 connections. |
 | `database` | 04:00 | `write_latency_ms` | Backup I/O contention — writes 45 ms. |
+| `identityprovider` | 04:00 | `jwks_fetch_latency_ms` | JWKS cache miss storm — fetch latency 1500 ms at key rotation. |
+| `identityprovider` | 04:00 | `key_rotation_events` | Concurrent key rotation events triggered cache miss storm. |
 | `cacheservice` | 06:00 | `hit_ratio` | Cache collapse — hit ratio drops to 5%. |
 | `apigateway` | 06:30 | `cpu_util_pct` | Gateway CPU saturates at 100%. |
+| `objectstore` | 07:00 | `5xx_rate` | Upstream provider 5xx wave — 14%. |
+| `scheduler` | 08:00 | `avg_job_duration_s` | Job overrun — duration 4× baseline blocks next window. |
+| `loadbalancer` | 08:15 | `healthcheck_failures` | Backend pool flapping — 12 healthcheck failures. |
+| `scheduler` | 08:05 | `missed_schedules` | Missed schedule chain — 12 windows skipped after overrun. |
 | `apigateway` | 09:00 | `requests_per_sec` | Monday-morning thundering herd — 2,200 RPS spike. |
+| `observabilitypipeline` | 09:00 | `ingest_lag_s` | Ingestion lag grows to 240s — pipeline can't keep up. |
 | `authservice` | 09:00 | `login_attempts` | Benign baseline shift — Monday-morning login burst at 1,400 attempts/s. |
+| `vectorstore` | 10:30 | `ann_query_latency_ms` | Index rebuild stall — 280 ms. |
+| `scheduler` | 10:00 | `jobs_queued` | Job queue overflow — 2,500 jobs backlog. |
 | `database` | 11:00 | `read_latency_ms` | Read latency skyrockets to 360 ms. |
 | `database` | 11:00 | `error_rate` | Backend errors rise to 23%. |
+| `paymentservice` | 12:00 | `provider_5xx_rate` | Stripe-style provider 5xx surge — 18% error rate. |
 | `mqservice` | 12:30 | `dead_letter_queue` | DLQ blow-up — 1,200 messages parked. |
+| `observabilitypipeline` | 13:00 | `dropped_metrics_per_sec` | High-cardinality push drops 8,500 metrics/s. |
+| `observabilitypipeline` | 13:00 | `metrics_ingested_per_sec` | Ingest rate collapses to 12,000/s during cardinality storm. |
 | `mqservice` | 14:30 | `pending_messages` | Queue jam — pending messages climb to 1,000,000. |
 | `mqservice` | 14:30 | `error_rate` | MQ error rate jumps to 10%. |
+| `paymentservice` | 13:30 | `webhook_delivery_lag_s` | Webhook delivery 5 min behind — provider backlog. |
+| `paymentservice` | 15:00 | `auth_decline_rate` | Decline-rate jump to 35% — fraud rule misfire. |
+| `vectorstore` | 15:00 | `recall_at_10` | Recall degrades after model swap — 0.62. |
+| `identityprovider` | 16:30 | `mfa_challenges_per_min` | MFA SMS provider degradation — challenges drop to 0. |
 | `cacheservice` | 17:00 | `memory_util_pct` | Memory pressure — 97% nearing eviction. |
+| `objectstore` | 18:30 | `get_latency_ms` | Read-after-write tail — 380 ms. |
+| `identityprovider` | 19:00 | `failed_oidc_flows` | SAML parse error spike — 120 failed flows from upstream IdP. |
+| `observabilitypipeline` | 20:00 | `pipeline_error_rate` | Pipeline error rate 8% — downstream dashboards go stale. |
+| `loadbalancer` | 20:30 | `backend_5xx_per_sec` | Region failover propagates 5xx — 75/s. |
 | `apigateway` | 21:45 | `error_rate` | 5xx burst from bad config push — 12%. |
 | `database` | 23:00 | `queries_per_sec` | Nightly batch kickoff — 55k QPS. |
 | `loadbalancer` | 03:00 | `tls_handshake_errors` | Cert near-expiry — TLS errors spike to 80/s. |
-| `loadbalancer` | 08:15 | `healthcheck_failures` | Backend pool flapping — 12 healthcheck failures. |
 | `loadbalancer` | 13:00 | `connection_resets` | SYN flood-style burst — 450 resets. |
-| `loadbalancer` | 20:30 | `backend_5xx_per_sec` | Region failover propagates 5xx — 75/s. |
-| `objectstore` | 07:00 | `5xx_rate` | Upstream provider 5xx wave — 14%. |
 | `objectstore` | 12:00 | `bandwidth_mbps` | Batch export saturates bandwidth — 950 Mbps. |
-| `objectstore` | 18:30 | `get_latency_ms` | Read-after-write tail — 380 ms. |
-| `vectorstore` | 10:30 | `ann_query_latency_ms` | Index rebuild stall — 280 ms. |
-| `vectorstore` | 15:00 | `recall_at_10` | Recall degrades after model swap — 0.62. |
 
 ### Same-day cascades (any `--duration-days`)
 
@@ -144,6 +163,10 @@ propagation:
 - 10:30:15 — `llm_analytics.avg_llm_latency_ms` ~1,900 ms (slow ANN retrieval).
 - 15:00:30 — `llm_analytics.llm_api_error_rate` ~8% (low-recall fallback retries).
 - 20:30:10 — `apigateway.error_rate` ~9% (LB region failover propagates 5xx).
+- 04:00:25 — `authservice.login_success_rate` ~45% (IdP JWKS storm → auth verification degraded).
+- 09:00:20 — `mqservice.pending_messages` ~220,000 (telemetry pipeline lag → downstream queue backup).
+- 10:00:30 — `database.connections` ~7,800 (scheduler queue overflow → DB connection buildup).
+- 12:00:12 — `apigateway.error_rate` ~15% (payment provider 5xx → gateway).
 
 ### Multi-day LLM catalog (`--duration-days >= 7`)
 

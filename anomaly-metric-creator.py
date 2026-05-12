@@ -431,6 +431,37 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("cache_hit_ratio", 88, 2),
         MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
     ],
+    "scheduler": [
+        MetricSpec("jobs_running", 20, 3, clip_min=0),
+        MetricSpec("jobs_queued", 50, 8, clip_min=0),
+        MetricSpec("jobs_failed_per_min", 0.5, 0.15, clip_min=0),
+        MetricSpec("avg_job_duration_s", 120, 12, clip_min=0),
+        MetricSpec("missed_schedules", 0.02, 0.05, clip_min=0),
+    ],
+    "paymentservice": [
+        MetricSpec("txn_per_sec", 80, 6,
+                   multiplier=_llm_business_hours, clip_min=0),
+        MetricSpec("provider_5xx_rate", 0.01, 0.005, clip_min=0),
+        MetricSpec("webhook_delivery_lag_s", 2.0, 0.4, clip_min=0),
+        MetricSpec("auth_decline_rate", 0.04, 0.01, clip_min=0),
+        MetricSpec("avg_txn_latency_ms", 180, 12),
+    ],
+    "identityprovider": [
+        MetricSpec("token_issuance_per_sec", 150, 12, clip_min=0),
+        MetricSpec("jwks_fetch_latency_ms", 25, 3, clip_min=0),
+        MetricSpec("mfa_challenges_per_min", 20, 4,
+                   multiplier=_llm_business_hours, clip_min=0),
+        MetricSpec("failed_oidc_flows", 2, 0.6, clip_min=0),
+        MetricSpec("key_rotation_events", 0.0, 0.0, clip_min=0),
+    ],
+    # Self-referential: when this degrades, every other component's telemetry
+    # becomes suspect — anomalies fire on the pipeline itself.
+    "observabilitypipeline": [
+        MetricSpec("metrics_ingested_per_sec", 50000, 2500, clip_min=0),
+        MetricSpec("dropped_metrics_per_sec", 5, 1.5, clip_min=0),
+        MetricSpec("ingest_lag_s", 1.0, 0.2, clip_min=0),
+        MetricSpec("pipeline_error_rate", 0.001, 0.0005, clip_min=0),
+    ],
 }
 
 # ------------------------------------------------------------------
@@ -621,6 +652,102 @@ anoms_vec = [
         "metric": "embeddings_per_sec",
         "description": "Enterprise onboarding drives embeddings to 350/s",
         "generator": lambda ts,idx: 350.0,
+    },
+]
+
+anoms_scheduler = [
+    {
+        "time_offset": 8*3600,                    # 08:00:00
+        "metric": "avg_job_duration_s",
+        "description": "Job overrun — duration 4× baseline blocks next window",
+        "generator": lambda ts,idx: 480.0,
+    },
+    {
+        "time_offset": 8*3600 + 5*60,             # 08:05:00
+        "metric": "missed_schedules",
+        "description": "Missed schedule chain — 12 windows skipped after overrun",
+        "generator": lambda ts,idx: 12.0,
+    },
+    {
+        "time_offset": 10*3600,                   # 10:00:00
+        "metric": "jobs_queued",
+        "description": "Job queue overflow — 2,500 jobs backlog",
+        "generator": lambda ts,idx: 2500.0,
+    },
+]
+
+anoms_payment = [
+    {
+        "time_offset": 12*3600,                   # 12:00:00
+        "metric": "provider_5xx_rate",
+        "description": "Stripe-style provider 5xx surge — 18% error rate",
+        "generator": lambda ts,idx: 0.18,
+    },
+    {
+        "time_offset": 13*3600 + 30*60,           # 13:30:00
+        "metric": "webhook_delivery_lag_s",
+        "description": "Webhook delivery 5 min behind — provider backlog",
+        "generator": lambda ts,idx: 300.0,
+    },
+    {
+        "time_offset": 15*3600,                   # 15:00:00
+        "metric": "auth_decline_rate",
+        "description": "Decline-rate jump to 35% — fraud rule misfire",
+        "generator": lambda ts,idx: 0.35,
+    },
+]
+
+anoms_idp = [
+    {
+        "time_offset": 4*3600,                    # 04:00:00
+        "metric": "jwks_fetch_latency_ms",
+        "description": "JWKS cache miss storm — fetch latency 1500 ms at key rotation",
+        "generator": lambda ts,idx: 1500.0,
+    },
+    {
+        "time_offset": 4*3600,                    # 04:00:00
+        "metric": "key_rotation_events",
+        "description": "Concurrent key rotation events triggered cache miss storm",
+        "generator": lambda ts,idx: 50.0,
+    },
+    {
+        "time_offset": 16*3600 + 30*60,           # 16:30:00
+        "metric": "mfa_challenges_per_min",
+        "description": "MFA SMS provider degradation — challenges drop to 0",
+        "generator": lambda ts,idx: 0.0,
+    },
+    {
+        "time_offset": 19*3600,                   # 19:00:00
+        "metric": "failed_oidc_flows",
+        "description": "SAML parse error spike — 120 failed flows from upstream IdP",
+        "generator": lambda ts,idx: 120.0,
+    },
+]
+
+anoms_obs = [
+    {
+        "time_offset": 9*3600,                    # 09:00:00
+        "metric": "ingest_lag_s",
+        "description": "Ingestion lag grows to 240s — pipeline can't keep up",
+        "generator": lambda ts,idx: 240.0,
+    },
+    {
+        "time_offset": 13*3600,                   # 13:00:00
+        "metric": "dropped_metrics_per_sec",
+        "description": "High-cardinality push drops 8,500 metrics/s",
+        "generator": lambda ts,idx: 8500.0,
+    },
+    {
+        "time_offset": 13*3600,                   # 13:00:00
+        "metric": "metrics_ingested_per_sec",
+        "description": "Ingest rate collapses to 12,000/s during cardinality storm",
+        "generator": lambda ts,idx: 12000.0,
+    },
+    {
+        "time_offset": 20*3600,                   # 20:00:00
+        "metric": "pipeline_error_rate",
+        "description": "Pipeline error rate 8% — downstream dashboards go stale",
+        "generator": lambda ts,idx: 0.08,
     },
 ]
 
@@ -936,6 +1063,34 @@ def register_default_cascades():
                      "Cascading: low-recall results trigger LLM fallback retries (8 % errors)",
                      lambda ts, idx: 0.08)
 
+    # Scheduler queue overflow → database connection pressure (jobs pull on DB)
+    register_cascade("database",
+                     10*3600 + 30,
+                     "connections",
+                     "Cascading: Scheduler queue overflow drives DB connection buildup",
+                     lambda ts, idx: 7800 + np.random.normal(0, 400))
+
+    # Paymentservice 5xx surge → apigateway error rate (payment proxied via API)
+    register_cascade("apigateway",
+                     12*3600 + 12,
+                     "error_rate",
+                     "Cascading: Payment provider 5xx propagates to gateway",
+                     lambda ts, idx: 0.15)
+
+    # Identityprovider JWKS storm → authservice login success rate dips
+    register_cascade("authservice",
+                     4*3600 + 25,
+                     "login_success_rate",
+                     "Cascading: JWKS fetch storm degrades auth verification — success ~45%",
+                     lambda ts, idx: 45 + np.random.normal(0, 2))
+
+    # Observabilitypipeline ingest lag → mqservice pending message backup
+    register_cascade("mqservice",
+                     9*3600 + 20,
+                     "pending_messages",
+                     "Cascading: Telemetry pipeline lag backs up downstream queue",
+                     lambda ts, idx: 220000 + np.random.normal(0, 15000))
+
 # ------------------------------------------------------------------
 # CLI + entry point
 # ------------------------------------------------------------------
@@ -1097,6 +1252,10 @@ def main(argv=None):
         "loadbalancer": anoms_lb,
         "objectstore": anoms_obj,
         "vectorstore": anoms_vec,
+        "scheduler": anoms_scheduler,
+        "paymentservice": anoms_payment,
+        "identityprovider": anoms_idp,
+        "observabilitypipeline": anoms_obs,
     }
 
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
