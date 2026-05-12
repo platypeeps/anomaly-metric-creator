@@ -34,6 +34,7 @@ DEFAULT_SEED = 42
 DEFAULT_OUTPUT_DIR = Path("iot_logs")
 DEFAULT_DROP_RATE = 0.0005
 DEFAULT_INTERVAL_SECONDS = 1.0
+DEFAULT_OTEL_STREAM_AUTH_SCHEME = "Bearer"
 
 # ------------------------------------------------------------------
 # Anomaly registry and cascade tracking (reset on each main() call)
@@ -1135,9 +1136,10 @@ def parse_args(argv=None):
     p.add_argument(
         "--otel-stream-endpoint",
         type=str,
-        default=None,
+        default=os.environ.get("OTEL_STREAM_ENDPOINT"),
         help="Optional OTLP/HTTP logs endpoint (for example http://localhost:4318/v1/logs). "
-             "When set, anomaly events are replayed in timestamp order to this endpoint.",
+             "When set, anomaly events are replayed in timestamp order to this endpoint. "
+             "Env override: OTEL_STREAM_ENDPOINT.",
     )
     p.add_argument(
         "--otel-stream-speedup",
@@ -1159,22 +1161,31 @@ def parse_args(argv=None):
         help="Optional cap on streamed anomaly event count (default: all).",
     )
     p.add_argument(
+        "--otel-stream-auth-token",
+        type=str,
+        default=os.environ.get("OTEL_STREAM_AUTH_TOKEN"),
+        help="Optional OTEL auth token sent as Authorization header value suffix. "
+             "Env override: OTEL_STREAM_AUTH_TOKEN.",
+    )
+    p.add_argument(
         "--otel-stream-auth-token-env",
         type=str,
         default=None,
-        help="Optional environment variable name that holds OTEL auth token.",
+        help="Deprecated fallback: env var name that holds OTEL auth token. "
+             "Ignored when --otel-stream-auth-token is set.",
     )
     p.add_argument(
         "--otel-stream-auth-scheme",
         type=str,
-        default="Bearer",
-        help="Auth scheme prefix for --otel-stream-auth-token-env (default: Bearer).",
+        default=os.environ.get("OTEL_STREAM_AUTH_SCHEME", DEFAULT_OTEL_STREAM_AUTH_SCHEME),
+        help="Auth scheme prefix for OTEL auth token (default: Bearer). "
+             "Env override: OTEL_STREAM_AUTH_SCHEME.",
     )
     p.add_argument(
         "--otel-stream-protocol",
         type=str,
-        default="json",
-        help="OTLP payload mode for stream endpoint: json or protobuf (default: json).",
+        default="protobuf",
+        help="OTLP payload mode for stream endpoint: json or protobuf (default: protobuf).",
     )
     args = p.parse_args(argv)
 
@@ -1205,8 +1216,12 @@ def parse_args(argv=None):
             p.error("--otel-stream-timeout-seconds must be > 0")
         if args.otel_stream_max_events is not None and args.otel_stream_max_events < 1:
             p.error("--otel-stream-max-events must be >= 1")
+        if args.otel_stream_auth_token and not args.otel_stream_auth_token.strip():
+            p.error("--otel-stream-auth-token must be non-empty when provided")
         if args.otel_stream_auth_token_env and not args.otel_stream_auth_token_env.strip():
             p.error("--otel-stream-auth-token-env must be a non-empty env var name")
+        if args.otel_stream_auth_scheme.strip() == "":
+            p.error("--otel-stream-auth-scheme must be non-empty")
         if args.otel_stream_protocol not in {"json", "protobuf"}:
             p.error("--otel-stream-protocol must be one of: json, protobuf")
     args.emit_selection = selected
@@ -1575,7 +1590,8 @@ def main(argv=None):
     streamed_events = 0
     if args.otel_stream_endpoint:
         extra_headers = {}
-        if args.otel_stream_auth_token_env:
+        token = args.otel_stream_auth_token
+        if token is None and args.otel_stream_auth_token_env:
             token = os.environ.get(args.otel_stream_auth_token_env)
             if not token:
                 print(
@@ -1583,8 +1599,8 @@ def main(argv=None):
                     "streaming without auth header",
                     file=sys.stderr,
                 )
-            else:
-                extra_headers["Authorization"] = f"{args.otel_stream_auth_scheme} {token}"
+        if token:
+            extra_headers["Authorization"] = f"{args.otel_stream_auth_scheme} {token}"
         streamed_events = stream_otel_logs(
             args.otel_stream_endpoint,
             anomalies,

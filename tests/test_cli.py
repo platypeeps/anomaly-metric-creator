@@ -30,7 +30,8 @@ def test_help_lists_every_flag():
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
                  "--interval-seconds", "--emit-selection", "--otel-stream-endpoint",
-                 "--otel-stream-auth-token-env"):
+                 "--otel-stream-auth-token", "--otel-stream-auth-token-env",
+                 "--otel-stream-auth-scheme"):
         assert flag in out, f"--help missing flag {flag}"
         # Argparse renders the help text on the line following the flag; require
         # something non-trivial follows so the flag isn't just a bare token.
@@ -289,6 +290,76 @@ def test_otel_stream_sends_auth_header_from_env(tmp_path, monkeypatch):
     assert auth_headers == ["Bearer secret-token"]
 
 
+def test_otel_stream_uses_explicit_auth_token_and_scheme(tmp_path):
+    auth_headers = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            auth_headers.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-stream-endpoint", endpoint,
+            "--otel-stream-auth-token", "direct-token",
+            "--otel-stream-auth-scheme", "ApiKey",
+            "--otel-stream-max-events", "1",
+            "--output-dir", str(tmp_path / "stream_direct_auth_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert auth_headers == ["ApiKey direct-token"]
+
+
+def test_otel_stream_uses_env_controls_for_endpoint_and_auth(tmp_path, monkeypatch):
+    auth_headers = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            auth_headers.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        monkeypatch.setenv("OTEL_STREAM_ENDPOINT", endpoint)
+        monkeypatch.setenv("OTEL_STREAM_AUTH_TOKEN", "env-token")
+        monkeypatch.setenv("OTEL_STREAM_AUTH_SCHEME", "Token")
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-stream-max-events", "1",
+            "--output-dir", str(tmp_path / "stream_env_auth_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert auth_headers == ["Token env-token"]
+
+
 def test_otel_stream_protobuf_sets_content_type(tmp_path):
     content_types = []
 
@@ -313,6 +384,41 @@ def test_otel_stream_protobuf_sets_content_type(tmp_path):
             "--otel-stream-protocol", "protobuf",
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_proto_run"),
+        )
+        if result.returncode != 0 and "requires opentelemetry-proto + protobuf" in result.stderr:
+            return
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert content_types == ["application/x-protobuf"]
+
+
+def test_otel_stream_default_protocol_is_protobuf(tmp_path):
+    content_types = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            content_types.append(self.headers.get("Content-Type"))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-stream-endpoint", endpoint,
+            "--otel-stream-max-events", "1",
+            "--output-dir", str(tmp_path / "stream_default_proto_run"),
         )
         if result.returncode != 0 and "requires opentelemetry-proto + protobuf" in result.stderr:
             return

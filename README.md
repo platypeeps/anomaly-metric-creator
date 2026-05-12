@@ -52,10 +52,11 @@ python3 anomaly-metric-creator.py \
   --otel-stream-endpoint http://localhost:4318/v1/logs \
   --otel-stream-speedup 3600
 
-# Stream with auth token loaded from env:
-OTEL_INGEST_TOKEN=replace-me python3 anomaly-metric-creator.py \
-  --otel-stream-endpoint https://collector.example.com/v1/logs \
-  --otel-stream-auth-token-env OTEL_INGEST_TOKEN
+# Stream with three separate env controls (endpoint, token, auth scheme):
+OTEL_STREAM_ENDPOINT=https://collector.example.com/v1/logs \
+OTEL_STREAM_AUTH_TOKEN=replace-me \
+OTEL_STREAM_AUTH_SCHEME=Bearer \
+python3 anomaly-metric-creator.py
 ```
 
 ### CLI flags
@@ -70,13 +71,14 @@ OTEL_INGEST_TOKEN=replace-me python3 anomaly-metric-creator.py \
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
-| `--otel-stream-endpoint` | _off_ | Optional OTLP/HTTP logs endpoint for real-time replay of anomaly events. Uses JSON `resourceLogs` payloads and keeps local generation running if the receiver is unavailable. |
+| `--otel-stream-endpoint` | `OTEL_STREAM_ENDPOINT` (or _off_) | Optional OTLP/HTTP logs endpoint for real-time replay of anomaly events. Uses OTLP `resourceLogs` payloads and keeps local generation running if the receiver is unavailable. |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-timeout-seconds` | `5.0` | HTTP timeout for each OTEL post attempt. |
 | `--otel-stream-max-events` | _all_ | Optional cap on streamed anomaly events for smoke-testing a receiver. |
-| `--otel-stream-auth-token-env` | _off_ | Optional env var name containing auth token; when set, an `Authorization` header is sent. |
-| `--otel-stream-auth-scheme` | `Bearer` | Auth scheme prefix used with `--otel-stream-auth-token-env`. |
-| `--otel-stream-protocol` | `json` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
+| `--otel-stream-auth-token` | `OTEL_STREAM_AUTH_TOKEN` (or _off_) | Optional OTEL auth token; when present, an `Authorization` header is sent. |
+| `--otel-stream-auth-token-env` | _off_ | Deprecated fallback env var name containing auth token; used only when `--otel-stream-auth-token` is unset. |
+| `--otel-stream-auth-scheme` | `OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth token. |
+| `--otel-stream-protocol` | `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
 
 ### Output files
 
