@@ -42,6 +42,10 @@ python3 anomaly-metric-creator.py --combine
 
 # Skip generation; only build the unified CSV from an existing output dir:
 python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
+
+# Emit only a subset of artifact types:
+python3 anomaly-metric-creator.py --emit-selection metrics,logs
+python3 anomaly-metric-creator.py --emit-selection traces
 ```
 
 ### CLI flags
@@ -53,6 +57,7 @@ python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 | `--drop-rate`       | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `> 0`. Anomalies map to the nearest row via `round(time_offset / interval)`. |
+| `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
 
@@ -73,8 +78,13 @@ Written to `--output-dir` (default `iot_logs/`):
 - `paymentservice.csv`
 - `identityprovider.csv`
 - `observabilitypipeline.csv`
-- `anomalies.csv` — manifest of every injected anomaly (component, metric, timestamp, description, value).
+- `anomalies.csv` — manifest of every injected anomaly (timestamp, component, metric, description).
+- `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
+- `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
+
+If you omit `--emit-selection`, the default remains the full backward-compatible
+set: metrics, logs, and traces.
 
 ## Failure modes / anomaly catalog
 

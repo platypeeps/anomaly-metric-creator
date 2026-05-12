@@ -26,7 +26,7 @@ def test_help_lists_every_flag():
     assert result.returncode == 0, result.stderr
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
-                 "--interval-seconds"):
+                 "--interval-seconds", "--emit-selection"):
         assert flag in out, f"--help missing flag {flag}"
         # Argparse renders the help text on the line following the flag; require
         # something non-trivial follows so the flag isn't just a bare token.
@@ -73,6 +73,8 @@ def test_output_dir_is_created(tmp_path):
     for component in COMPONENTS:
         assert (target / f"{component}.csv").exists(), f"{component}.csv not written"
     assert (target / "anomalies.csv").exists()
+    assert (target / "metric_report.log").exists()
+    assert (target / "metric_traces.jsonl").exists()
 
 
 def test_cross_process_determinism(tmp_path):
@@ -87,6 +89,59 @@ def test_cross_process_determinism(tmp_path):
         result = _invoke("--seed", "7", "--duration-days", "1", "--output-dir", str(out))
         assert result.returncode == 0, result.stderr
 
-    files = [f"{c}.csv" for c in COMPONENTS] + ["anomalies.csv"]
+    files = [f"{c}.csv" for c in COMPONENTS] + [
+        "anomalies.csv",
+        "metric_report.log",
+        "metric_traces.jsonl",
+    ]
     differ = [name for name in files if not filecmp.cmp(a / name, b / name, shallow=False)]
     assert not differ, f"cross-process determinism broken for: {differ}"
+
+
+def test_invalid_emit_selection_fails(tmp_path):
+    result = _invoke("--emit-selection", "metrics,invalid", "--output-dir", str(tmp_path))
+    assert result.returncode != 0, "expected non-zero exit for invalid --emit-selection"
+    assert "emit-selection" in (result.stderr + result.stdout)
+
+
+def test_emit_selection_logs_and_traces_only(tmp_path):
+    out = tmp_path / "emit_logs_traces"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--emit-selection", "logs,traces",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    for component in COMPONENTS:
+        assert not (out / f"{component}.csv").exists(), f"{component}.csv should not be emitted"
+    assert not (out / "anomalies.csv").exists()
+    assert (out / "metric_report.log").exists()
+    assert (out / "metric_traces.jsonl").exists()
+
+
+def test_emit_selection_metrics_only(tmp_path):
+    out = tmp_path / "emit_metrics_only"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--emit-selection", "metrics",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    for component in COMPONENTS:
+        assert (out / f"{component}.csv").exists(), f"{component}.csv should be emitted"
+    assert (out / "anomalies.csv").exists()
+    assert not (out / "metric_report.log").exists()
+    assert not (out / "metric_traces.jsonl").exists()
+
+
+def test_combine_requires_metrics_selection(tmp_path):
+    out = tmp_path / "combine_no_metrics"
+    result = _invoke(
+        "--combine",
+        "--emit-selection", "logs,traces",
+        "--output-dir", str(out),
+    )
+    assert result.returncode != 0, "expected non-zero exit when --combine excludes metrics"
+    assert "combine" in (result.stderr + result.stdout)

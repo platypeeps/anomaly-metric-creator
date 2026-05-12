@@ -11,9 +11,11 @@ configured window are skipped with a warning on stderr.
 import argparse
 import csv
 import datetime
+import json
 import os
 import sys
 from dataclasses import dataclass
+from hashlib import sha1
 from pathlib import Path
 from typing import Callable
 
@@ -74,7 +76,7 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray)
 # ------------------------------------------------------------------
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
-                       ts_array=None, ts_strings=None):
+                       ts_array=None, ts_strings=None, emit_metrics=True):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -205,10 +207,11 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         rows = np.char.add(rows, ",")
         rows = np.char.add(rows, str_vals[:, col])
 
-    with open(file_path, "w", newline="") as f:
-        f.write("timestamp," + ",".join(fieldnames) + "\n")
-        f.write("\n".join(rows.tolist()))
-        f.write("\n")
+    if emit_metrics:
+        with open(file_path, "w", newline="") as f:
+            f.write("timestamp," + ",".join(fieldnames) + "\n")
+            f.write("\n".join(rows.tolist()))
+            f.write("\n")
 
 
 def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
@@ -1119,6 +1122,13 @@ def parse_args(argv=None):
     p.add_argument("--combine-only", action="store_true",
                    help="Skip generation; only run the combine step against an existing "
                         "--output-dir. Useful for re-running the join without regenerating.")
+    p.add_argument(
+        "--emit-selection",
+        type=str,
+        default="metrics,logs,traces",
+        help="Comma-separated artifact selection: metrics, logs, traces "
+             "(default: metrics,logs,traces).",
+    )
     args = p.parse_args(argv)
 
     if args.duration_days < 1:
@@ -1129,6 +1139,17 @@ def parse_args(argv=None):
         p.error("--interval-seconds must be > 0")
     if args.combine and args.combine_only:
         p.error("--combine and --combine-only are mutually exclusive")
+    selected = {item.strip().lower() for item in args.emit_selection.split(",") if item.strip()}
+    allowed = {"metrics", "logs", "traces"}
+    invalid = sorted(selected - allowed)
+    if invalid:
+        p.error("--emit-selection contains invalid value(s): "
+                f"{', '.join(invalid)}. Allowed: metrics,logs,traces")
+    if not selected:
+        p.error("--emit-selection must contain at least one of metrics,logs,traces")
+    if args.combine and "metrics" not in selected:
+        p.error("--combine requires --emit-selection to include metrics")
+    args.emit_selection = selected
     return args
 
 
@@ -1223,6 +1244,47 @@ def combine_logs(input_dir):
     return combine_logs_unified(components, input_dir)
 
 
+def _anomaly_event_id(entry: dict) -> str:
+    """Deterministic event id used to correlate metrics, logs, and traces."""
+    required = ("timestamp", "component", "metric", "description")
+    missing = [k for k in required if not entry.get(k)]
+    if missing:
+        raise ValueError(f"anomaly entry missing required field(s): {', '.join(missing)}")
+    payload = "|".join(str(entry[k]) for k in required)
+    return "evt_" + sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def write_reporting_artifacts(output_dir: Path, anomaly_rows: list[dict]) -> None:
+    """Emit correlated log and trace artifacts aligned to anomaly metric records."""
+    output_dir = Path(output_dir)
+    log_path = output_dir / "metric_report.log"
+    trace_path = output_dir / "metric_traces.jsonl"
+
+    with open(log_path, "w", newline="") as log_f, open(trace_path, "w", newline="") as trace_f:
+        for entry in anomaly_rows:
+            event_id = _anomaly_event_id(entry)
+            component = entry["component"]
+            metric = entry["metric"]
+            timestamp = entry["timestamp"]
+            description = entry["description"]
+
+            log_f.write(
+                f"{timestamp} INFO metric_report event_id={event_id} "
+                f"component={component} metric={metric} msg=\"{description}\"\n"
+            )
+
+            trace_f.write(json.dumps({
+                "timestamp": timestamp,
+                "trace_id": f"trace_{event_id[4:]}",
+                "span_id": f"span_{event_id[4:12]}",
+                "event_id": event_id,
+                "signal_type": "metric_anomaly",
+                "component": component,
+                "metric": metric,
+                "description": description,
+            }) + "\n")
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -1268,15 +1330,26 @@ def main(argv=None):
                            drop_rate=args.drop_rate,
                            interval=args.interval_seconds,
                            ts_array=ts_array,
-                           ts_strings=ts_strings)
+                           ts_strings=ts_strings,
+                           emit_metrics="metrics" in args.emit_selection)
 
-    with open(args.output_dir / "anomalies.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["timestamp", "component", "metric", "description"])
-        writer.writeheader()
-        for a in anomalies:
-            writer.writerow(a)
+    if "metrics" in args.emit_selection:
+        with open(args.output_dir / "anomalies.csv", "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["timestamp", "component", "metric", "description"])
+            writer.writeheader()
+            for a in anomalies:
+                writer.writerow(a)
+    else:
+        (args.output_dir / "anomalies.csv").unlink(missing_ok=True)
 
-    print(f"Done - {len(COMPONENTS)} log files + anomalies.csv written to {args.output_dir}")
+    if {"logs", "traces"} & args.emit_selection:
+        write_reporting_artifacts(args.output_dir, anomalies)
+        if "logs" not in args.emit_selection:
+            (args.output_dir / "metric_report.log").unlink(missing_ok=True)
+        if "traces" not in args.emit_selection:
+            (args.output_dir / "metric_traces.jsonl").unlink(missing_ok=True)
+
+    print(f"Done - {len(COMPONENTS)} log files + anomalies.csv + reporting artifacts written to {args.output_dir}")
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
     print(f"   Anomalies recorded: {len(anomalies)}")
