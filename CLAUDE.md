@@ -51,9 +51,14 @@ Anomaly specs are dicts with:
 
 - `time_offset` — seconds from `START` (e.g., `2*3600 + 15*60` = 02:15:00, or
   `N*SECONDS_PER_DAY + …` for multi-day).
-- `metric` — name of the metric field to overwrite at the matched row.
+- `metric` — name of the metric field to overwrite at the matched row/span.
 - `description` — human-readable description; flows into `anomalies.csv`.
 - `generator` — `lambda ts, idx: value` returning the anomalous value.
+- `duration_seconds` (optional) — span length; omitted/0 keeps single-row behavior.
+- `shape` (optional) — one of `step` (default), `ramp_linear`, `ramp_exp`,
+  `sustained`, `sawtooth`, `sine`.
+- `shape_params` (optional) — shape-specific params (`start/end`, `period_s`,
+  `amplitude`, `midline`, etc.).
 
 Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.

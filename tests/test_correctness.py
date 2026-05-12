@@ -287,8 +287,98 @@ def test_duplicate_anomaly_specs_raise(tmp_path):
         "description": "Duplicate (test injection)",
         "generator": lambda ts, idx: 0.99,
     })
-    with pytest.raises(ValueError, match="Duplicate anomaly specs"):
+    with pytest.raises(ValueError, match="Overlapping anomaly specs"):
         m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
+
+
+def test_duration_shape_ramp_linear_and_sine(amc, tmp_path):
+    """Span anomalies should apply per-row shaped values across duration."""
+    out = tmp_path / "shape_span"
+    out.mkdir()
+    specs = [amc.MetricSpec(name="m0", base=10.0, std=0.0)]
+    anomaly_specs = [
+        {
+            "time_offset": 10,
+            "duration_seconds": 4,
+            "metric": "m0",
+            "description": "linear ramp",
+            "shape": "ramp_linear",
+            "shape_params": {"start": 100.0, "end": 160.0},
+            "generator": lambda ts, idx: 0.0,
+        },
+        {
+            "time_offset": 20,
+            "duration_seconds": 4,
+            "metric": "m0",
+            "description": "sine",
+            "shape": "sine",
+            "shape_params": {"period_s": 4.0, "amplitude": 10.0, "midline": 200.0},
+            "generator": lambda ts, idx: 0.0,
+        },
+    ]
+
+    amc.anomalies.clear()
+    amc.cascading_anomalies.clear()
+    ts_array, ts_strings = amc._build_timestamp_arrays(40, 1.0)
+    amc.generate_component(
+        "shape_component",
+        specs,
+        anomaly_specs,
+        base_dir=out,
+        total_seconds=40,
+        drop_rate=0.0,
+        interval=1.0,
+        ts_array=ts_array,
+        ts_strings=ts_strings,
+    )
+    rows, header = read_component_rows(out, "shape_component")
+    idx = header.index("m0")
+
+    assert float(rows["2026-03-10 00:00:10"][idx]) == 100.0
+    assert float(rows["2026-03-10 00:00:11"][idx]) == 115.0
+    assert float(rows["2026-03-10 00:00:12"][idx]) == 130.0
+    assert float(rows["2026-03-10 00:00:13"][idx]) == 145.0
+
+    assert float(rows["2026-03-10 00:00:20"][idx]) == 200.0
+    assert float(rows["2026-03-10 00:00:21"][idx]) == 210.0
+    assert float(rows["2026-03-10 00:00:22"][idx]) == 200.0
+    assert float(rows["2026-03-10 00:00:23"][idx]) == 190.0
+
+
+def test_duration_step_passes_t_within_to_generator(amc, tmp_path):
+    """Step spans call generator with row-local t when provided."""
+    out = tmp_path / "step_span_t"
+    out.mkdir()
+    specs = [amc.MetricSpec(name="m0", base=0.0, std=0.0)]
+    anomaly_specs = [
+        {
+            "time_offset": 5,
+            "duration_seconds": 3,
+            "metric": "m0",
+            "description": "step span with t",
+            "shape": "step",
+            "generator": lambda ts, idx, t: 100.0 + t,
+        }
+    ]
+    amc.anomalies.clear()
+    amc.cascading_anomalies.clear()
+    ts_array, ts_strings = amc._build_timestamp_arrays(20, 1.0)
+    amc.generate_component(
+        "step_component",
+        specs,
+        anomaly_specs,
+        base_dir=out,
+        total_seconds=20,
+        drop_rate=0.0,
+        interval=1.0,
+        ts_array=ts_array,
+        ts_strings=ts_strings,
+    )
+    rows, header = read_component_rows(out, "step_component")
+    idx = header.index("m0")
+    assert float(rows["2026-03-10 00:00:05"][idx]) == 100.0
+    assert float(rows["2026-03-10 00:00:06"][idx]) == 101.0
+    assert float(rows["2026-03-10 00:00:07"][idx]) == 102.0
 
 
 def test_active_sessions_has_daily_variation(amc, one_day_run_a):

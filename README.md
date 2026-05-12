@@ -73,8 +73,14 @@ Written to `--output-dir` (default `iot_logs/`):
 
 ## Failure modes / anomaly catalog
 
-Anomalies are time-offset injections that overwrite a single metric column at the matched
-row. Each one is emitted to the relevant per-component CSV and catalogued in
+Anomalies are time-offset injections that overwrite a metric column at a matched
+row or span. Optional fields support span realism:
+
+- `duration_seconds` — span length (0/omitted keeps single-row behavior)
+- `shape` — `step` (default), `ramp_linear`, `ramp_exp`, `sustained`, `sawtooth`, `sine`
+- `shape_params` — shape-specific parameters (for example `start/end`, `period_s`, `amplitude`, `midline`)
+
+Each injected row is emitted to the relevant per-component CSV and catalogued in
 `anomalies.csv`. Specs whose `time_offset` falls outside `[0, total_seconds)` — or whose
 nearest row index falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are
 soft-skipped with a `WARNING:` line on stderr that names the `--duration-days` required

@@ -102,19 +102,26 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if component_name in cascading_anomalies:
         all_anomalies.extend(cascading_anomalies[component_name])
 
-    # Map every spec to its row index once; out-of-range is anything outside
-    # ``[0, n_rows)`` after rounding so warnings honor the configured interval.
-    in_range_specs: list[tuple[int, dict]] = []
+    # Expand every anomaly spec into concrete row overrides. Out-of-range is
+    # anything whose full span lies outside ``[0, n_rows)``.
+    expanded_overrides: list[tuple[int, dict, float, int]] = []
     out_of_range: list[dict] = []
     for s in all_anomalies:
         if s["time_offset"] < 0:
             out_of_range.append(s)
             continue
-        idx = int(round(s["time_offset"] / interval))
-        if idx >= n_rows:
+        start_idx = int(round(s["time_offset"] / interval))
+        duration_seconds = float(s.get("duration_seconds", 0) or 0)
+        duration_rows = max(1, int(np.ceil(duration_seconds / interval)))
+        span_has_row = False
+        for span_idx in range(duration_rows):
+            row_idx = start_idx + span_idx
+            if 0 <= row_idx < n_rows:
+                span_has_row = True
+                t_within = span_idx * interval
+                expanded_overrides.append((row_idx, s, t_within, span_idx))
+        if not span_has_row:
             out_of_range.append(s)
-        else:
-            in_range_specs.append((idx, s))
     if out_of_range:
         max_offset = max(s["time_offset"] for s in out_of_range)
         needed_days = max_offset // SECONDS_PER_DAY + 1
@@ -130,15 +137,15 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # silently kept only the last one.
     seen: dict[tuple[str, int], dict] = {}
     duplicates: list[tuple[str, str, int]] = []
-    for _idx, spec in in_range_specs:
-        key = (spec["metric"], spec["time_offset"])
+    for row_idx, spec, _t_within, _span_idx in expanded_overrides:
+        key = (spec["metric"], row_idx)
         if key in seen:
-            duplicates.append((component_name, spec["metric"], spec["time_offset"]))
+            duplicates.append((component_name, spec["metric"], row_idx))
         else:
             seen[key] = spec
     if duplicates:
         raise ValueError(
-            f"Duplicate anomaly specs (component, metric, time_offset): {duplicates}"
+            f"Overlapping anomaly specs (component, metric, row_idx): {duplicates}"
         )
 
     if ts_array is None or ts_strings is None:
@@ -160,13 +167,17 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # manifest entry either — the VER-5 invariant). Sort for a deterministic
     # order of cascade RNG draws within a run.
     name_to_col = {s.name: i for i, s in enumerate(specs)}
-    for row_idx, aspec in sorted(in_range_specs,
-                                 key=lambda ix_s: (ix_s[1]["time_offset"], ix_s[1]["metric"])):
+    for row_idx, aspec, t_within, span_idx in sorted(
+        expanded_overrides,
+        key=lambda item: (item[0], item[1]["metric"]),
+    ):
         if drop_mask[row_idx]:
             continue
         col = name_to_col[aspec["metric"]]
         ts_py = START + datetime.timedelta(seconds=float(row_idx * interval))
-        values[row_idx, col] = aspec["generator"](ts_py, col)
+        values[row_idx, col] = _resolve_anomaly_value(
+            aspec, ts_py, col, t_within, span_idx
+        )
         anomalies.append({
             "timestamp": str(ts_strings[row_idx]),
             "component": component_name,
@@ -198,6 +209,72 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         f.write("timestamp," + ",".join(fieldnames) + "\n")
         f.write("\n".join(rows.tolist()))
         f.write("\n")
+
+
+def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
+                           t_within: float, span_idx: int) -> float:
+    """Resolve one anomaly value at one row, honoring shape/duration fields."""
+    duration_seconds = float(spec.get("duration_seconds", 0) or 0)
+    shape = spec.get("shape", "step")
+    shape_params = spec.get("shape_params", {}) or {}
+
+    if duration_seconds <= 0 and shape == "step":
+        return float(spec["generator"](ts, col))
+
+    if shape in ("step", "sustained"):
+        return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx))
+
+    start = shape_params.get("start")
+    if start is None:
+        start = _call_generator_within_span(spec["generator"], ts, col, 0.0, 0)
+    start = float(start)
+
+    if shape == "ramp_linear":
+        end = float(shape_params.get("end", start))
+        frac = _span_fraction(t_within, duration_seconds)
+        return start + (end - start) * frac
+
+    if shape == "ramp_exp":
+        end = float(shape_params.get("end", start))
+        exponent = float(shape_params.get("exponent", 3.0))
+        frac = _span_fraction(t_within, duration_seconds) ** exponent
+        return start + (end - start) * frac
+
+    if shape == "sawtooth":
+        period = float(shape_params.get("period_s", max(duration_seconds, 1.0)))
+        amplitude = float(shape_params.get("amplitude", 0.0))
+        midline = float(shape_params.get("midline", start))
+        phase = float(shape_params.get("phase_s", 0.0))
+        cycle = ((t_within + phase) / max(period, 1e-9)) % 1.0
+        return midline - amplitude + (2.0 * amplitude * cycle)
+
+    if shape == "sine":
+        period = float(shape_params.get("period_s", max(duration_seconds, 1.0)))
+        amplitude = float(shape_params.get("amplitude", 0.0))
+        midline = float(shape_params.get("midline", start))
+        phase = float(shape_params.get("phase_s", 0.0))
+        angle = 2.0 * np.pi * ((t_within + phase) / max(period, 1e-9))
+        return midline + amplitude * np.sin(angle)
+
+    raise ValueError(f"Unsupported anomaly shape: {shape}")
+
+
+def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
+                                t_within: float, span_idx: int):
+    """Backwards-compatible generator call with optional span args."""
+    try:
+        return generator(ts, col, t_within, span_idx)
+    except TypeError:
+        try:
+            return generator(ts, col, t_within)
+        except TypeError:
+            return generator(ts, col)
+
+
+def _span_fraction(t_within: float, duration_seconds: float) -> float:
+    if duration_seconds <= 0:
+        return 1.0
+    return min(max(t_within / duration_seconds, 0.0), 1.0)
 
 
 def _format_fixed3(arr: np.ndarray) -> np.ndarray:
