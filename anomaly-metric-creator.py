@@ -1134,18 +1134,55 @@ def parse_args(argv=None):
              "(default: metrics,logs,traces).",
     )
     p.add_argument(
-        "--otel-stream-endpoint",
+        "--otel-logs-endpoint",
         type=str,
-        default=os.environ.get("OTEL_STREAM_ENDPOINT"),
+        default=os.environ.get("OTEL_LOGS_ENDPOINT"),
         help="Optional OTLP/HTTP logs endpoint (for example http://localhost:4318/v1/logs). "
-             "When set, anomaly events are replayed in timestamp order to this endpoint. "
-             "Env override: OTEL_STREAM_ENDPOINT.",
+             "When set, anomaly events are replayed as logs to this endpoint. "
+             "Env override: OTEL_LOGS_ENDPOINT.",
+    )
+    p.add_argument(
+        "--otel-logs-auth-token",
+        type=str,
+        default=os.environ.get("OTEL_LOGS_AUTH_TOKEN"),
+        help="Optional OTEL auth token for the logs endpoint. "
+             "Env override: OTEL_LOGS_AUTH_TOKEN.",
+    )
+    p.add_argument(
+        "--otel-metrics-endpoint",
+        type=str,
+        default=os.environ.get("OTEL_METRICS_ENDPOINT"),
+        help="Optional OTLP/HTTP metrics endpoint (for example http://localhost:4318/v1/metrics). "
+             "When set, anomaly events are replayed as metrics to this endpoint. "
+             "Env override: OTEL_METRICS_ENDPOINT.",
+    )
+    p.add_argument(
+        "--otel-metrics-auth-token",
+        type=str,
+        default=os.environ.get("OTEL_METRICS_AUTH_TOKEN"),
+        help="Optional OTEL auth token for the metrics endpoint. "
+             "Env override: OTEL_METRICS_AUTH_TOKEN.",
+    )
+    p.add_argument(
+        "--otel-traces-endpoint",
+        type=str,
+        default=os.environ.get("OTEL_TRACES_ENDPOINT"),
+        help="Optional OTLP/HTTP traces endpoint (for example http://localhost:4318/v1/traces). "
+             "When set, anomaly events are replayed as traces to this endpoint. "
+             "Env override: OTEL_TRACES_ENDPOINT.",
+    )
+    p.add_argument(
+        "--otel-traces-auth-token",
+        type=str,
+        default=os.environ.get("OTEL_TRACES_AUTH_TOKEN"),
+        help="Optional OTEL auth token for the traces endpoint. "
+             "Env override: OTEL_TRACES_AUTH_TOKEN.",
     )
     p.add_argument(
         "--otel-stream-speedup",
         type=float,
         default=3600.0,
-        help="Timeline replay speed multiplier for --otel-stream-endpoint (default: 3600). "
+        help="Timeline replay speed multiplier for OTEL streaming (default: 3600). "
              "1.0 = real-time, 3600 = one hour of anomaly spacing per second.",
     )
     p.add_argument(
@@ -1159,20 +1196,6 @@ def parse_args(argv=None):
         type=int,
         default=None,
         help="Optional cap on streamed anomaly event count (default: all).",
-    )
-    p.add_argument(
-        "--otel-stream-auth-token",
-        type=str,
-        default=os.environ.get("OTEL_STREAM_AUTH_TOKEN"),
-        help="Optional OTEL auth token sent as Authorization header value suffix. "
-             "Env override: OTEL_STREAM_AUTH_TOKEN.",
-    )
-    p.add_argument(
-        "--otel-stream-auth-token-env",
-        type=str,
-        default=None,
-        help="Deprecated fallback: env var name that holds OTEL auth token. "
-             "Ignored when --otel-stream-auth-token is set.",
     )
     p.add_argument(
         "--otel-stream-auth-scheme",
@@ -1207,19 +1230,25 @@ def parse_args(argv=None):
         p.error("--emit-selection must contain at least one of metrics,logs,traces")
     if args.combine and "metrics" not in selected:
         p.error("--combine requires --emit-selection to include metrics")
-    if args.otel_stream_endpoint is not None:
-        if not args.otel_stream_endpoint.startswith(("http://", "https://")):
-            p.error("--otel-stream-endpoint must start with http:// or https://")
+    if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
+        endpoints = [
+            ("logs", args.otel_logs_endpoint, args.otel_logs_auth_token),
+            ("metrics", args.otel_metrics_endpoint, args.otel_metrics_auth_token),
+            ("traces", args.otel_traces_endpoint, args.otel_traces_auth_token),
+        ]
+        for signal, endpoint, token in endpoints:
+            if endpoint:
+                if not endpoint.startswith(("http://", "https://")):
+                    p.error(f"--otel-{signal}-endpoint must start with http:// or https://")
+                if token and not token.strip():
+                    p.error(f"--otel-{signal}-auth-token must be non-empty when provided")
+
         if args.otel_stream_speedup <= 0:
             p.error("--otel-stream-speedup must be > 0")
         if args.otel_stream_timeout_seconds <= 0:
             p.error("--otel-stream-timeout-seconds must be > 0")
         if args.otel_stream_max_events is not None and args.otel_stream_max_events < 1:
             p.error("--otel-stream-max-events must be >= 1")
-        if args.otel_stream_auth_token and not args.otel_stream_auth_token.strip():
-            p.error("--otel-stream-auth-token must be non-empty when provided")
-        if args.otel_stream_auth_token_env and not args.otel_stream_auth_token_env.strip():
-            p.error("--otel-stream-auth-token-env must be a non-empty env var name")
         if args.otel_stream_auth_scheme.strip() == "":
             p.error("--otel-stream-auth-scheme must be non-empty")
         if args.otel_stream_protocol not in {"json", "protobuf"}:
@@ -1366,6 +1395,187 @@ def _to_unix_nanos(timestamp: str) -> int:
     return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1_000_000_000)
 
 
+def _build_otlp_trace_payload(entry: dict) -> dict:
+    """Build one OTLP/HTTP JSON ``resourceSpans`` payload from one anomaly event."""
+    event_id = _anomaly_event_id(entry)
+    component = entry["component"]
+    metric = entry["metric"]
+    timestamp = entry["timestamp"]
+    description = entry["description"]
+    attributes = [
+        {"key": "event.id", "value": {"stringValue": event_id}},
+        {"key": "signal.type", "value": {"stringValue": "metric_anomaly"}},
+        {"key": "metric.name", "value": {"stringValue": metric}},
+        {"key": "component", "value": {"stringValue": component}},
+    ]
+    
+    ts_nano = _to_unix_nanos(timestamp)
+    return {
+        "resourceSpans": [{
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": component}},
+                    {"key": "service.namespace", "value": {"stringValue": "anomaly-metric-creator"}},
+                ]
+            },
+            "scopeSpans": [{
+                "scope": {
+                    "name": "anomaly-metric-creator",
+                    "version": "1.0.0",
+                },
+                "spans": [{
+                    "traceId": event_id[4:] * 2,
+                    "spanId": event_id[4:20],
+                    "name": f"anomaly:{metric}",
+                    "kind": 1,  # SPAN_KIND_INTERNAL
+                    "startTimeUnixNano": str(ts_nano),
+                    "endTimeUnixNano": str(ts_nano + 1000000),  # 1ms duration
+                    "attributes": attributes,
+                    "status": {"code": 1},  # STATUS_CODE_OK
+                }]
+            }]
+        }]
+    }
+
+
+def _build_otlp_trace_protobuf(entry: dict) -> bytes:
+    """Build one OTLP protobuf ExportTraceServiceRequest payload."""
+    try:
+        from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+        from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
+    except ImportError as exc:
+        raise SystemExit(
+            "OTLP protobuf mode requires opentelemetry-proto + protobuf. "
+            "Install with: pip install opentelemetry-proto protobuf"
+        ) from exc
+
+    event_id = _anomaly_event_id(entry)
+    component = entry["component"]
+    metric = entry["metric"]
+    timestamp = entry["timestamp"]
+    description = entry["description"]
+    attributes = [
+        KeyValue(key="event.id", value=AnyValue(string_value=event_id)),
+        KeyValue(key="signal.type", value=AnyValue(string_value="metric_anomaly")),
+        KeyValue(key="metric.name", value=AnyValue(string_value=metric)),
+        KeyValue(key="component", value=AnyValue(string_value=component)),
+    ]
+
+    req = ExportTraceServiceRequest()
+    rspan = req.resource_spans.add()
+    rspan.resource.attributes.extend([
+        KeyValue(key="service.name", value=AnyValue(string_value=component)),
+        KeyValue(key="service.namespace", value=AnyValue(string_value="anomaly-metric-creator")),
+    ])
+    sspan = rspan.scope_spans.add()
+    sspan.scope.name = "anomaly-metric-creator"
+    sspan.scope.version = "1.0.0"
+
+    ts_nano = _to_unix_nanos(timestamp)
+    span = sspan.spans.add()
+    span.trace_id = bytes.fromhex(event_id[4:] * 2)
+    span.span_id = bytes.fromhex(event_id[4:20])
+    span.name = f"anomaly:{metric}"
+    span.kind = 1
+    span.start_time_unix_nano = ts_nano
+    span.end_time_unix_nano = ts_nano + 1000000
+    span.attributes.extend(attributes)
+    span.status.code = 1
+    return req.SerializeToString()
+
+
+def _build_otlp_metric_payload(entry: dict) -> dict:
+    """Build one OTLP/HTTP JSON ``resourceMetrics`` payload from one anomaly event."""
+    event_id = _anomaly_event_id(entry)
+    component = entry["component"]
+    metric = entry["metric"]
+    timestamp = entry["timestamp"]
+    # For metrics, we'll emit a counter increment for the anomaly
+    attributes = [
+        {"key": "event.id", "value": {"stringValue": event_id}},
+        {"key": "signal.type", "value": {"stringValue": "metric_anomaly"}},
+        {"key": "metric.name", "value": {"stringValue": metric}},
+        {"key": "component", "value": {"stringValue": component}},
+    ]
+    ts_nano = _to_unix_nanos(timestamp)
+    return {
+        "resourceMetrics": [{
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": component}},
+                    {"key": "service.namespace", "value": {"stringValue": "anomaly-metric-creator"}},
+                ]
+            },
+            "scopeMetrics": [{
+                "scope": {
+                    "name": "anomaly-metric-creator",
+                    "version": "1.0.0",
+                },
+                "metrics": [{
+                    "name": "anomaly.count",
+                    "description": "Counter of anomaly events",
+                    "sum": {
+                        "dataPoints": [{
+                            "startTimeUnixNano": str(ts_nano),
+                            "timeUnixNano": str(ts_nano),
+                            "asInt": "1",
+                            "attributes": attributes,
+                        }],
+                        "aggregationTemporality": 1, # DELTA
+                        "isMonotonic": True,
+                    }
+                }]
+            }]
+        }]
+    }
+
+
+def _build_otlp_metric_protobuf(entry: dict) -> bytes:
+    """Build one OTLP protobuf ExportMetricsServiceRequest payload."""
+    try:
+        from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
+        from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
+    except ImportError as exc:
+        raise SystemExit(
+            "OTLP protobuf mode requires opentelemetry-proto + protobuf. "
+            "Install with: pip install opentelemetry-proto protobuf"
+        ) from exc
+
+    event_id = _anomaly_event_id(entry)
+    component = entry["component"]
+    metric = entry["metric"]
+    timestamp = entry["timestamp"]
+    attributes = [
+        KeyValue(key="event.id", value=AnyValue(string_value=event_id)),
+        KeyValue(key="signal.type", value=AnyValue(string_value="metric_anomaly")),
+        KeyValue(key="metric.name", value=AnyValue(string_value=metric)),
+        KeyValue(key="component", value=AnyValue(string_value=component)),
+    ]
+
+    req = ExportMetricsServiceRequest()
+    rmetric = req.resource_metrics.add()
+    rmetric.resource.attributes.extend([
+        KeyValue(key="service.name", value=AnyValue(string_value=component)),
+        KeyValue(key="service.namespace", value=AnyValue(string_value="anomaly-metric-creator")),
+    ])
+    smetric = rmetric.scope_metrics.add()
+    smetric.scope.name = "anomaly-metric-creator"
+    smetric.scope.version = "1.0.0"
+
+    ts_nano = _to_unix_nanos(timestamp)
+    m = smetric.metrics.add()
+    m.name = "anomaly.count"
+    m.description = "Counter of anomaly events"
+    m.sum.aggregation_temporality = 1
+    m.sum.is_monotonic = True
+    dp = m.sum.data_points.add()
+    dp.start_time_unix_nano = ts_nano
+    dp.time_unix_nano = ts_nano
+    dp.as_int = 1
+    dp.attributes.extend(attributes)
+    return req.SerializeToString()
+
+
 def _build_otlp_log_payload(entry: dict) -> dict:
     """Build one OTLP/HTTP JSON ``resourceLogs`` payload from one anomaly event."""
     event_id = _anomaly_event_id(entry)
@@ -1446,18 +1656,18 @@ def _build_otlp_log_protobuf(entry: dict) -> bytes:
     return req.SerializeToString()
 
 
-def stream_otel_logs(
-    endpoint: str,
+def stream_otel_signals(
+    endpoints: dict[str, str], # {"logs": url, "metrics": url, "traces": url}
     anomaly_rows: list[dict],
     *,
     speedup: float,
     timeout_seconds: float,
     max_events: int | None = None,
     max_retries: int = 3,
-    extra_headers: dict[str, str] | None = None,
+    auth_headers: dict[str, dict[str, str]] | None = None, # {"logs": {"Authorization": ...}, ...}
     protocol: str = "json",
 ) -> int:
-    """Replay anomalies to an OTLP/HTTP logs endpoint with timeline-aware pacing.
+    """Replay anomalies to multiple OTLP/HTTP endpoints with timeline-aware pacing.
 
     Failures are logged to stderr and do not stop generation.
     """
@@ -1477,49 +1687,70 @@ def stream_otel_logs(
                 time.sleep(wait_seconds)
         prev_dt = cur_dt
 
-        if protocol == "protobuf":
-            body = _build_otlp_log_protobuf(row)
-            content_type = "application/x-protobuf"
-        else:
-            payload = _build_otlp_log_payload(row)
-            body = json.dumps(payload).encode("utf-8")
-            content_type = "application/json"
-        req = urllib.request.Request(
-            endpoint,
-            data=body,
-            method="POST",
-            headers={"Content-Type": content_type, **(extra_headers or {})},
-        )
-        attempts = 0
-        while True:
-            try:
-                with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
-                    if response.status >= 400:
-                        raise urllib.error.HTTPError(
-                            endpoint,
-                            response.status,
-                            response.reason,
-                            response.headers,
-                            None,
+        # Prepare requests for each signal
+        for signal, endpoint in endpoints.items():
+            if not endpoint:
+                continue
+
+            if signal == "logs":
+                if protocol == "protobuf":
+                    body = _build_otlp_log_protobuf(row)
+                    content_type = "application/x-protobuf"
+                else:
+                    body = json.dumps(_build_otlp_log_payload(row)).encode("utf-8")
+                    content_type = "application/json"
+            elif signal == "metrics":
+                if protocol == "protobuf":
+                    body = _build_otlp_metric_protobuf(row)
+                    content_type = "application/x-protobuf"
+                else:
+                    body = json.dumps(_build_otlp_metric_payload(row)).encode("utf-8")
+                    content_type = "application/json"
+            elif signal == "traces":
+                if protocol == "protobuf":
+                    body = _build_otlp_trace_protobuf(row)
+                    content_type = "application/x-protobuf"
+                else:
+                    body = json.dumps(_build_otlp_trace_payload(row)).encode("utf-8")
+                    content_type = "application/json"
+            else:
+                continue
+
+            headers = {"Content-Type": content_type}
+            if auth_headers and signal in auth_headers:
+                headers.update(auth_headers[signal])
+
+            req = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
+            attempts = 0
+            while True:
+                try:
+                    with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                        if response.status >= 400:
+                            raise urllib.error.HTTPError(
+                                endpoint,
+                                response.status,
+                                response.reason,
+                                response.headers,
+                                None,
+                            )
+                    sent += 1
+                    break
+                except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+                    attempts += 1
+                    if attempts > max_retries:
+                        print(
+                            f"WARNING: OTEL {signal} stream failed for {row['timestamp']} "
+                            f"({row['component']}.{row['metric']}): {exc}",
+                            file=sys.stderr,
                         )
-                sent += 1
-                break
-            except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-                attempts += 1
-                if attempts > max_retries:
+                        break
+                    backoff = min(2 ** (attempts - 1), 8)
                     print(
-                        f"WARNING: OTEL stream failed for {row['timestamp']} "
-                        f"({row['component']}.{row['metric']}): {exc}",
+                        f"WARNING: OTEL {signal} stream retry {attempts}/{max_retries} for "
+                        f"{row['timestamp']} ({row['component']}.{row['metric']}): {exc}",
                         file=sys.stderr,
                     )
-                    break
-                backoff = min(2 ** (attempts - 1), 8)
-                print(
-                    f"WARNING: OTEL stream retry {attempts}/{max_retries} for "
-                    f"{row['timestamp']} ({row['component']}.{row['metric']}): {exc}",
-                    file=sys.stderr,
-                )
-                time.sleep(backoff)
+                    time.sleep(backoff)
     return sent
 
 
@@ -1588,26 +1819,25 @@ def main(argv=None):
             (args.output_dir / "metric_traces.jsonl").unlink(missing_ok=True)
 
     streamed_events = 0
-    if args.otel_stream_endpoint:
-        extra_headers = {}
-        token = args.otel_stream_auth_token
-        if token is None and args.otel_stream_auth_token_env:
-            token = os.environ.get(args.otel_stream_auth_token_env)
-            if not token:
-                print(
-                    f"WARNING: env var {args.otel_stream_auth_token_env} is empty; "
-                    "streaming without auth header",
-                    file=sys.stderr,
-                )
-        if token:
-            extra_headers["Authorization"] = f"{args.otel_stream_auth_scheme} {token}"
-        streamed_events = stream_otel_logs(
-            args.otel_stream_endpoint,
+    endpoints = {
+        "logs": args.otel_logs_endpoint,
+        "metrics": args.otel_metrics_endpoint,
+        "traces": args.otel_traces_endpoint,
+    }
+    if any(endpoints.values()):
+        auth_headers = {}
+        for signal in ["logs", "metrics", "traces"]:
+            token = getattr(args, f"otel_{signal}_auth_token")
+            if token:
+                auth_headers[signal] = {"Authorization": f"{args.otel_stream_auth_scheme} {token}"}
+        
+        streamed_events = stream_otel_signals(
+            endpoints,
             anomalies,
             speedup=args.otel_stream_speedup,
             timeout_seconds=args.otel_stream_timeout_seconds,
             max_events=args.otel_stream_max_events,
-            extra_headers=extra_headers,
+            auth_headers=auth_headers,
             protocol=args.otel_stream_protocol,
         )
 
@@ -1615,8 +1845,9 @@ def main(argv=None):
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
     print(f"   Anomalies recorded: {len(anomalies)}")
-    if args.otel_stream_endpoint:
-        print(f"   OTEL events streamed: {streamed_events} -> {args.otel_stream_endpoint}")
+    if any(endpoints.values()):
+        active = [f"{s} -> {u}" for s, u in endpoints.items() if u]
+        print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
 
     if args.combine:
         combine_logs(args.output_dir)

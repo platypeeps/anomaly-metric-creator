@@ -47,15 +47,16 @@ python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
 python3 anomaly-metric-creator.py --emit-selection metrics,logs
 python3 anomaly-metric-creator.py --emit-selection traces
 
-# Stream anomaly events to an OTLP/HTTP logs endpoint while generating locally:
+# Stream anomaly events as OTLP signals while generating locally:
 python3 anomaly-metric-creator.py \
-  --otel-stream-endpoint http://localhost:4318/v1/logs \
+  --otel-logs-endpoint http://localhost:4318/v1/logs \
+  --otel-metrics-endpoint http://localhost:4318/v1/metrics \
+  --otel-traces-endpoint http://localhost:4318/v1/traces \
   --otel-stream-speedup 3600
 
-# Stream with three separate env controls (endpoint, token, auth scheme):
-OTEL_STREAM_ENDPOINT=https://collector.example.com/v1/logs \
-OTEL_STREAM_AUTH_TOKEN=replace-me \
-OTEL_STREAM_AUTH_SCHEME=Bearer \
+# Stream with signal-specific env controls:
+OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
+OTEL_LOGS_AUTH_TOKEN=secret \
 python3 anomaly-metric-creator.py
 ```
 
@@ -71,13 +72,16 @@ python3 anomaly-metric-creator.py
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
-| `--otel-stream-endpoint` | `OTEL_STREAM_ENDPOINT` (or _off_) | Optional OTLP/HTTP logs endpoint for real-time replay of anomaly events. Uses OTLP `resourceLogs` payloads and keeps local generation running if the receiver is unavailable. |
+| `--otel-logs-endpoint` | `OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs`. |
+| `--otel-logs-auth-token` | `OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
+| `--otel-metrics-endpoint` | `OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics. |
+| `--otel-metrics-auth-token` | `OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. |
+| `--otel-traces-endpoint` | `OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events. |
+| `--otel-traces-auth-token` | `OTEL_TRACES_AUTH_TOKEN` | Optional auth token for traces endpoint. |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-timeout-seconds` | `5.0` | HTTP timeout for each OTEL post attempt. |
 | `--otel-stream-max-events` | _all_ | Optional cap on streamed anomaly events for smoke-testing a receiver. |
-| `--otel-stream-auth-token` | `OTEL_STREAM_AUTH_TOKEN` (or _off_) | Optional OTEL auth token; when present, an `Authorization` header is sent. |
-| `--otel-stream-auth-token-env` | _off_ | Deprecated fallback env var name containing auth token; used only when `--otel-stream-auth-token` is unset. |
-| `--otel-stream-auth-scheme` | `OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth token. |
+| `--otel-stream-auth-scheme` | `OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth tokens. |
 | `--otel-stream-protocol` | `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
 
 ### Output files
@@ -97,7 +101,10 @@ Written to `--output-dir` (default `iot_logs/`):
 - `paymentservice.csv`
 - `identityprovider.csv`
 - `observabilitypipeline.csv`
-- `anomalies.csv` — manifest of every injected anomaly (timestamp, component, metric, description).
+- `anomalies.csv` — manifest of every injected anomaly with recovery-aware columns:  
+  `timestamp, component, metric, description, step_note, step_group, next_step`.
+  - `step_note`: populated with `recovered-missing-step` when an anomaly could not be placed at the requested row due to simulated packet loss and was recovered to the next available row.
+  - `step_group` / `next_step`: optional chain metadata that threads multi-step scenarios.
 - `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
 - `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
@@ -115,13 +122,28 @@ row or span. Optional fields support span realism:
 - `shape_params` — shape-specific parameters (for example `start/end`, `period_s`, `amplitude`, `midline`)
 
 Each injected row is emitted to the relevant per-component CSV and catalogued in
-`anomalies.csv`. Specs whose `time_offset` falls outside `[0, total_seconds)` — or whose
-nearest row index falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are
-soft-skipped with a `WARNING:` line on stderr that names the `--duration-days` required
-to include them.
+`anomalies.csv`. If a requested anomaly row is dropped by the packet-loss mask, the generator
+recovers by emitting that anomaly on the next available timestamp for the same component/metric
+and marks that manifest row with `step_note=recovered-missing-step`. This preserves follow-up
+chain visibility (`next_step`) even under packet-loss scenarios.
+
+Specs whose `time_offset` falls outside `[0, total_seconds)` — or whose nearest row index
+falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are soft-skipped with a
+`WARNING:` line on stderr that names the `--duration-days` required to include them.
 
 The same-day catalog always fires. The multi-day LLM catalog only fires at
 `--duration-days >= 7`.
+
+### Recovery example
+
+If a target anomaly row is dropped, it is replayed to the next available timestamp for that
+metric, with `step_note` marking recovery:
+
+`anomalies.csv` line:
+`2026-03-10 00:00:02,recovery_component,m0,"forced drop recovery test",recovered-missing-step,,""`
+
+`metric_report.log` line:
+`2026-03-10 00:00:02 INFO metric_report event_id=evt_xxxxx component=recovery_component metric=m0 msg="forced drop recovery test" step_note=recovered-missing-step`
 
 ### Same-day specs (any `--duration-days`)
 
