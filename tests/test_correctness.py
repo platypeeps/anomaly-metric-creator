@@ -8,6 +8,7 @@ import importlib.util
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from conftest import (
@@ -393,6 +394,27 @@ def test_active_sessions_has_daily_variation(amc, one_day_run_a):
     assert spread > 35, (
         f"active_sessions spread {spread:.2f} too small for a daily sine; "
         f"values in [{min(values):.2f}, {max(values):.2f}]"
+    )
+
+
+def test_multiplier_scales_jitter_variance(amc):
+    """VER-21: jitter is applied before multiplier so variance scales too."""
+    n_rows = 20_000
+    ts_array = np.array([np.datetime64(amc.START)] * n_rows)
+    elapsed = np.arange(n_rows, dtype=np.float64)
+
+    def stepped_multiplier(_ts, sec):
+        return np.where(sec < (n_rows // 2), 1.0, 2.0)
+
+    spec = amc.MetricSpec(name="m0", base=0.0, std=1.0, multiplier=stepped_multiplier)
+    np.random.seed(1234)
+    col = amc._natural_column(spec, ts_array, elapsed)
+
+    first = col[: n_rows // 2]
+    second = col[n_rows // 2 :]
+    std_ratio = float(np.std(second) / np.std(first))
+    assert 1.9 <= std_ratio <= 2.1, (
+        f"expected post-shift std to be ~2x (got ratio={std_ratio:.3f})"
     )
 
 

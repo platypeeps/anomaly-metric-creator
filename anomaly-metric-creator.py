@@ -43,7 +43,7 @@ cascading_anomalies = {}  # {component_name: [anomaly_specs]}
 class MetricSpec:
     """Config for one synthetic metric column.
 
-    Natural value is ``base * multiplier(ts, sec) + additive(ts, sec) + N(0, std)``,
+    Natural value is ``(base + N(0, std)) * multiplier(ts, sec) + additive(ts, sec)``,
     optionally clipped at ``clip_min``. ``std=0`` skips the RNG draw entirely so
     deterministic series do not perturb the shared numpy random stream.
     """
@@ -58,12 +58,12 @@ class MetricSpec:
 def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray) -> np.ndarray:
     """Vectorized natural-value column. Multiplier/additive must accept arrays."""
     col = np.full(elapsed.shape, spec.base, dtype=np.float64)
+    if spec.std > 0:
+        col += np.random.normal(0.0, spec.std, elapsed.shape[0])
     if spec.multiplier is not None:
         col *= spec.multiplier(ts_array, elapsed)
     if spec.additive is not None:
         col += spec.additive(ts_array, elapsed)
-    if spec.std > 0:
-        col += np.random.normal(0.0, spec.std, elapsed.shape[0])
     if spec.clip_min is not None:
         np.maximum(col, spec.clip_min, out=col)
     return col
