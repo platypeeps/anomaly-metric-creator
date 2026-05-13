@@ -34,7 +34,8 @@ def test_help_lists_every_flag():
                  "--otel-logs-endpoint", "--otel-logs-auth-token",
                  "--otel-metrics-endpoint", "--otel-metrics-auth-token",
                  "--otel-traces-endpoint", "--otel-traces-auth-token",
-                 "--otel-stream-auth-scheme"):
+                 "--otel-stream-auth-scheme",
+                 "--otel-verbose", "--no-otel-verbose"):
         assert flag in out, f"--help missing flag {flag}"
         # Argparse renders the help text on the line following the flag; require
         # something non-trivial follows so the flag isn't just a bare token.
@@ -764,3 +765,246 @@ def test_otel_stream_default_protocol_is_protobuf(tmp_path):
         thread.join(timeout=2)
 
     assert content_types == ["application/x-protobuf"]
+
+
+def _activity_log_send_lines(log_path):
+    import shlex
+    send_lines = []
+    for line in log_path.read_text().splitlines():
+        if " SEND " not in line:
+            continue
+        send_lines.append(shlex.split(line))
+    return send_lines
+
+
+def test_otel_verbose_off_by_default_omits_body_and_headers(tmp_path):
+    """Without --otel-verbose, SEND records do not include raw body or headers."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "non_verbose.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "verbose_off_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    contents = log_target.read_text()
+    assert " body=" not in contents, "SEND body should be omitted when --otel-verbose is off"
+    assert " content_type=" not in contents, \
+        "Content-Type header should be omitted when --otel-verbose is off"
+
+
+def test_otel_verbose_includes_raw_body_in_send(tmp_path):
+    """--otel-verbose adds the raw OTLP payload to SEND records."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "verbose.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-verbose",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "verbose_on_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    send_lines = _activity_log_send_lines(log_target)
+    assert send_lines, "expected at least one SEND record"
+    for tokens in send_lines:
+        kv = {t.split("=", 1)[0]: t.split("=", 1)[1] for t in tokens[2:] if "=" in t}
+        assert "body" in kv, f"verbose SEND missing body field: {tokens}"
+        assert "content_type" in kv, f"verbose SEND missing content_type field: {tokens}"
+        parsed = json.loads(kv["body"])
+        assert "resourceLogs" in parsed, f"verbose body not OTLP JSON: {kv['body']!r}"
+        assert kv["content_type"] == "application/json"
+
+
+def test_otel_verbose_includes_response_status_on_ok(tmp_path):
+    """--otel-verbose records the HTTP response status on OK records."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(202)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "ok_status.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-verbose",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "verbose_ok_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    import shlex
+    ok_lines = [
+        shlex.split(line)
+        for line in log_target.read_text().splitlines()
+        if " OK " in line
+    ]
+    assert ok_lines, "expected at least one OK record"
+    for tokens in ok_lines:
+        kv = {t.split("=", 1)[0]: t.split("=", 1)[1] for t in tokens[2:] if "=" in t}
+        assert kv.get("status") == "202", f"verbose OK missing status=202: {tokens}"
+
+
+def test_otel_verbose_includes_error_type_on_fail(tmp_path):
+    """--otel-verbose adds the exception type to RETRY and FAIL records."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "fail_verbose.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-verbose",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "verbose_fail_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    import shlex
+    contents = log_target.read_text()
+    fail_lines = [
+        shlex.split(line) for line in contents.splitlines() if " FAIL " in line
+    ]
+    retry_lines = [
+        shlex.split(line) for line in contents.splitlines() if " RETRY " in line
+    ]
+    assert fail_lines, "expected at least one FAIL record"
+    assert retry_lines, "expected at least one RETRY record"
+    for tokens in fail_lines + retry_lines:
+        kv = {t.split("=", 1)[0]: t.split("=", 1)[1] for t in tokens[2:] if "=" in t}
+        assert "error_type" in kv, f"verbose record missing error_type: {tokens}"
+        assert "HTTPError" in kv["error_type"], (
+            f"unexpected error_type: {kv['error_type']!r}"
+        )
+
+
+def test_otel_verbose_masks_auth_token(tmp_path):
+    """Auth tokens are masked in verbose header logging to avoid leaking secrets."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "auth_verbose.log"
+    secret_token = "supersecrettoken123"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-verbose",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-logs-auth-token", secret_token,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "verbose_auth_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    contents = log_target.read_text()
+    assert secret_token not in contents, \
+        "auth token must never appear verbatim in the activity log"
+    assert "authorization=" in contents.lower(), \
+        "verbose mode should still record that an authorization header was sent"

@@ -9,6 +9,7 @@ configured window are skipped with a warning on stderr.
 """
 
 import argparse
+import base64
 import csv
 import datetime
 import json
@@ -1380,6 +1381,14 @@ def parse_args(argv=None):
              "is only created when streaming actually runs. "
              "Default: ./otel-activity.log in the current directory.",
     )
+    p.add_argument(
+        "--otel-verbose",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include raw OTLP payload bodies, request headers, response status, "
+             "and exception types in the activity log for each SEND/OK/RETRY/FAIL "
+             "record. Authorization header values are masked. Default: off.",
+    )
     p.add_argument("--inject-dst-artifact-day", type=int, default=0,
                    help="Inject a fall-DST artifact (duplicated 02:00–02:59 wall-clock hour) "
                         "on the given 1-based day of the run. 0 (default) disables. Generator "
@@ -1859,6 +1868,40 @@ def _write_activity(log_file, event: str, **fields) -> None:
     log_file.flush()
 
 
+def _verbose_body_repr(body: bytes, content_type: str) -> str:
+    """Render an OTLP request body for inclusion in the verbose activity log.
+
+    JSON bodies are decoded back to text; protobuf bodies are base64-encoded so
+    the log line stays printable and shlex-parseable.
+    """
+    if "json" in content_type:
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError:
+            return base64.b64encode(body).decode("ascii")
+    return base64.b64encode(body).decode("ascii")
+
+
+def _masked_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Return a copy of ``headers`` with auth values masked.
+
+    The Authorization header is preserved with its scheme prefix (e.g. ``Bearer``)
+    but the token portion is replaced with ``***`` so verbose logs never leak
+    bearer/api-key material.
+    """
+    masked = {}
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            parts = value.split(" ", 1)
+            if len(parts) == 2:
+                masked[key] = f"{parts[0]} ***"
+            else:
+                masked[key] = "***"
+        else:
+            masked[key] = value
+    return masked
+
+
 def stream_otel_signals(
     endpoints: dict[str, str], # {"logs": url, "metrics": url, "traces": url}
     anomaly_rows: list[dict],
@@ -1870,12 +1913,16 @@ def stream_otel_signals(
     auth_headers: dict[str, dict[str, str]] | None = None, # {"logs": {"Authorization": ...}, ...}
     protocol: str = "json",
     activity_log_path: Path | None = None,
+    verbose: bool = False,
 ) -> int:
     """Replay anomalies to multiple OTLP/HTTP endpoints with timeline-aware pacing.
 
     Failures are logged to stderr and do not stop generation. When
     ``activity_log_path`` is set, also records one line per send attempt,
-    retry, and failure to that file.
+    retry, and failure to that file. When ``verbose`` is true, those records
+    additionally include the raw request body, request headers (auth tokens
+    masked), the HTTP response status on success, and the exception type on
+    failure.
     """
     sorted_rows = sorted(anomaly_rows, key=lambda row: row["timestamp"])
     if max_events is not None:
@@ -1943,6 +1990,11 @@ def stream_otel_signals(
                     headers.update(auth_headers[signal])
 
                 req = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
+                verbose_send_fields: dict = {}
+                if verbose:
+                    verbose_send_fields["body"] = _verbose_body_repr(body, content_type)
+                    for hk, hv in _masked_headers(headers).items():
+                        verbose_send_fields[hk.lower().replace("-", "_")] = hv
                 attempts = 0
                 while True:
                     _write_activity(
@@ -1954,9 +2006,11 @@ def stream_otel_signals(
                         component=row["component"],
                         metric=row["metric"],
                         attempt=f"{attempts + 1}/{max_retries + 1}",
+                        **verbose_send_fields,
                     )
                     try:
                         with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                            response_status = response.status
                             if response.status >= 400:
                                 raise urllib.error.HTTPError(
                                     endpoint,
@@ -1965,6 +2019,9 @@ def stream_otel_signals(
                                     response.headers,
                                     None,
                                 )
+                        ok_fields: dict = {}
+                        if verbose:
+                            ok_fields["status"] = response_status
                         _write_activity(
                             log_file,
                             "OK",
@@ -1972,11 +2029,17 @@ def stream_otel_signals(
                             event_ts=row["timestamp"],
                             component=row["component"],
                             metric=row["metric"],
+                            **ok_fields,
                         )
                         sent += 1
                         break
                     except (urllib.error.URLError, urllib.error.HTTPError) as exc:
                         attempts += 1
+                        err_fields: dict = {}
+                        if verbose:
+                            err_fields["error_type"] = type(exc).__name__
+                            if isinstance(exc, urllib.error.HTTPError):
+                                err_fields["status"] = exc.code
                         if attempts > max_retries:
                             print(
                                 f"WARNING: OTEL {signal} stream failed for {row['timestamp']} "
@@ -1991,6 +2054,7 @@ def stream_otel_signals(
                                 component=row["component"],
                                 metric=row["metric"],
                                 error=repr(str(exc)),
+                                **err_fields,
                             )
                             break
                         backoff = min(2 ** (attempts - 1), 8)
@@ -2008,6 +2072,7 @@ def stream_otel_signals(
                             metric=row["metric"],
                             attempt=f"{attempts}/{max_retries}",
                             error=repr(str(exc)),
+                            **err_fields,
                         )
                         time.sleep(backoff)
     finally:
@@ -2105,6 +2170,7 @@ def main(argv=None):
             auth_headers=auth_headers,
             protocol=args.otel_stream_protocol,
             activity_log_path=args.otel_activity_log,
+            verbose=args.otel_verbose,
         )
 
     print(f"Done - {len(COMPONENTS)} log files + anomalies.csv + reporting artifacts written to {args.output_dir}")

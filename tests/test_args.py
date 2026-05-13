@@ -83,3 +83,24 @@ def test_parse_args_otel_activity_log_custom(amc):
         "--output-dir", "test_out",
     ])
     assert args.otel_activity_log == Path("/tmp/custom-activity.log")
+
+
+def test_parse_args_otel_verbose_default_off(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_verbose is False
+
+
+def test_parse_args_otel_verbose_explicit_on(amc):
+    args = amc.parse_args([
+        "--otel-verbose",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_verbose is True
+
+
+def test_parse_args_otel_no_verbose_explicit_off(amc):
+    args = amc.parse_args([
+        "--no-otel-verbose",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_verbose is False
