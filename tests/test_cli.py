@@ -262,7 +262,7 @@ def test_otel_stream_warns_and_continues_on_receiver_failure(tmp_path):
 
 def test_otel_stream_uses_env_based_auth_token(tmp_path, monkeypatch):
     auth_headers = []
-    monkeypatch.setenv("OTEL_LOGS_AUTH_TOKEN", "secret-token")
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_AUTH_TOKEN", "secret-token")
 
     class _Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
@@ -346,9 +346,9 @@ def test_otel_stream_uses_env_controls_for_endpoint_and_auth(tmp_path, monkeypat
     thread.start()
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
-        monkeypatch.setenv("OTEL_LOGS_ENDPOINT", endpoint)
-        monkeypatch.setenv("OTEL_LOGS_AUTH_TOKEN", "env-token")
-        monkeypatch.setenv("OTEL_STREAM_AUTH_SCHEME", "Token")
+        monkeypatch.setenv("MEZMO_OTEL_LOGS_ENDPOINT", endpoint)
+        monkeypatch.setenv("MEZMO_OTEL_LOGS_AUTH_TOKEN", "env-token")
+        monkeypatch.setenv("MEZMO_OTEL_STREAM_AUTH_SCHEME", "Token")
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",

@@ -66,7 +66,7 @@ COMPONENT_FIELDS = {
     "authservice": ("anoms_auth", 6),
     "cacheservice": ("anoms_cache", 6),
     "apigateway": ("anoms_api", 6),
-    "database": ("anoms_db", 6),
+    "database": ("anoms_db", 7),
     "mqservice": ("anoms_mq", 6),
     "llm_analytics": ("anoms_llm", 8),
     "loadbalancer": ("anoms_lb", 7),

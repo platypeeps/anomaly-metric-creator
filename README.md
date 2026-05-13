@@ -55,8 +55,8 @@ python3 anomaly-metric-creator.py \
   --otel-stream-speedup 3600
 
 # Stream with signal-specific env controls:
-OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
-OTEL_LOGS_AUTH_TOKEN=secret \
+MEZMO_OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
+MEZMO_OTEL_LOGS_AUTH_TOKEN=secret \
 python3 anomaly-metric-creator.py
 ```
 
@@ -72,16 +72,17 @@ python3 anomaly-metric-creator.py
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
-| `--otel-logs-endpoint` | `OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs`. |
-| `--otel-logs-auth-token` | `OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
-| `--otel-metrics-endpoint` | `OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics. |
-| `--otel-metrics-auth-token` | `OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. |
-| `--otel-traces-endpoint` | `OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events. |
-| `--otel-traces-auth-token` | `OTEL_TRACES_AUTH_TOKEN` | Optional auth token for traces endpoint. |
+| `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
+| `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs`. |
+| `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
+| `--otel-metrics-endpoint` | `MEZMO_OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics. |
+| `--otel-metrics-auth-token` | `MEZMO_OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. |
+| `--otel-traces-endpoint` | `MEZMO_OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events. |
+| `--otel-traces-auth-token` | `MEZMO_OTEL_TRACES_AUTH_TOKEN` | Optional auth token for traces endpoint. |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-timeout-seconds` | `5.0` | HTTP timeout for each OTEL post attempt. |
 | `--otel-stream-max-events` | _all_ | Optional cap on streamed anomaly events for smoke-testing a receiver. |
-| `--otel-stream-auth-scheme` | `OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth tokens. |
+| `--otel-stream-auth-scheme` | `MEZMO_OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth tokens. |
 | `--otel-stream-protocol` | `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
 
 ### Output files
@@ -147,47 +148,56 @@ metric, with `step_note` marking recovery:
 
 ### Same-day specs (any `--duration-days`)
 
-| Component | Time (HH:MM) | Metric | Failure simulated |
-| --- | --- | --- | --- |
-| `authservice` | 02:15 | `error_rate` | Brute-force login surge — error rate jumps to 42%. |
-| `authservice` | 02:15 | `login_attempts` | Login attempts surge 5× to 1250/s. |
-| `database` | 04:00 | `connections` | Backup-window connection pile-up — 6,800 connections. |
-| `database` | 04:00 | `write_latency_ms` | Backup I/O contention — writes 45 ms. |
-| `identityprovider` | 04:00 | `jwks_fetch_latency_ms` | JWKS cache miss storm — fetch latency 1500 ms at key rotation. |
-| `identityprovider` | 04:00 | `key_rotation_events` | Concurrent key rotation events triggered cache miss storm. |
-| `cacheservice` | 06:00 | `hit_ratio` | Cache collapse — hit ratio drops to 5%. |
-| `apigateway` | 06:30 | `cpu_util_pct` | Gateway CPU saturates at 100%. |
-| `objectstore` | 07:00 | `5xx_rate` | Upstream provider 5xx wave — 14%. |
-| `scheduler` | 08:00 | `avg_job_duration_s` | Job overrun — duration 4× baseline blocks next window. |
-| `loadbalancer` | 08:15 | `healthcheck_failures` | Backend pool flapping — 12 healthcheck failures. |
-| `scheduler` | 08:05 | `missed_schedules` | Missed schedule chain — 12 windows skipped after overrun. |
-| `apigateway` | 09:00 | `requests_per_sec` | Monday-morning thundering herd — 2,200 RPS spike. |
-| `observabilitypipeline` | 09:00 | `ingest_lag_s` | Ingestion lag grows to 240s — pipeline can't keep up. |
-| `authservice` | 09:00 | `login_attempts` | Benign baseline shift — Monday-morning login burst at 1,400 attempts/s. |
-| `vectorstore` | 10:30 | `ann_query_latency_ms` | Index rebuild stall — 280 ms. |
-| `scheduler` | 10:00 | `jobs_queued` | Job queue overflow — 2,500 jobs backlog. |
-| `database` | 11:00 | `read_latency_ms` | Read latency skyrockets to 360 ms. |
-| `database` | 11:00 | `error_rate` | Backend errors rise to 23%. |
-| `paymentservice` | 12:00 | `provider_5xx_rate` | Stripe-style provider 5xx surge — 18% error rate. |
-| `mqservice` | 12:30 | `dead_letter_queue` | DLQ blow-up — 1,200 messages parked. |
-| `observabilitypipeline` | 13:00 | `dropped_metrics_per_sec` | High-cardinality push drops 8,500 metrics/s. |
-| `observabilitypipeline` | 13:00 | `metrics_ingested_per_sec` | Ingest rate collapses to 12,000/s during cardinality storm. |
-| `mqservice` | 14:30 | `pending_messages` | Queue jam — pending messages climb to 1,000,000. |
-| `mqservice` | 14:30 | `error_rate` | MQ error rate jumps to 10%. |
-| `paymentservice` | 13:30 | `webhook_delivery_lag_s` | Webhook delivery 5 min behind — provider backlog. |
-| `paymentservice` | 15:00 | `auth_decline_rate` | Decline-rate jump to 35% — fraud rule misfire. |
-| `vectorstore` | 15:00 | `recall_at_10` | Recall degrades after model swap — 0.62. |
-| `identityprovider` | 16:30 | `mfa_challenges_per_min` | MFA SMS provider degradation — challenges drop to 0. |
-| `cacheservice` | 17:00 | `memory_util_pct` | Memory pressure — 97% nearing eviction. |
-| `objectstore` | 18:30 | `get_latency_ms` | Read-after-write tail — 380 ms. |
-| `identityprovider` | 19:00 | `failed_oidc_flows` | SAML parse error spike — 120 failed flows from upstream IdP. |
-| `observabilitypipeline` | 20:00 | `pipeline_error_rate` | Pipeline error rate 8% — downstream dashboards go stale. |
-| `loadbalancer` | 20:30 | `backend_5xx_per_sec` | Region failover propagates 5xx — 75/s. |
-| `apigateway` | 21:45 | `error_rate` | 5xx burst from bad config push — 12%. |
-| `database` | 23:00 | `queries_per_sec` | Nightly batch kickoff — 55k QPS. |
-| `loadbalancer` | 03:00 | `tls_handshake_errors` | Cert near-expiry — TLS errors spike to 80/s. |
-| `loadbalancer` | 13:00 | `connection_resets` | SYN flood-style burst — 450 resets. |
-| `objectstore` | 12:00 | `bandwidth_mbps` | Batch export saturates bandwidth — 950 Mbps. |
+| Time | Component | Metric | Shape | Failure Mode |
+| --- | --- | --- | --- | --- |
+| 00:00 | `database` | `disk_used_pct` | `ramp_linear` | **Disk exhaustion** — 8% → 100% over 24h. |
+| 02:15 | `authservice` | `error_rate` | `step` | Login brute force spike (42%). |
+| 02:15 | `authservice` | `login_attempts` | `step` | Login surge (1,250 / s). |
+| 03:00 | `loadbalancer` | `tls_handshake_errors` | `step` | Cert near-expiry — TLS errors spike to 80/s. |
+| 04:00 | `database` | `connections` | `step` | Backup-window connection pile-up — 6,800 connections. |
+| 04:00 | `database` | `write_latency_ms` | `step` | Backup I/O contention — writes 45 ms. |
+| 04:00 | `identityprovider` | `jwks_fetch_latency_ms` | `step` | JWKS cache miss storm — fetch latency 1500 ms at key rotation. |
+| 04:00 | `identityprovider` | `key_rotation_events` | `step` | Concurrent key rotation events triggered cache miss storm. |
+| 06:00 | `cacheservice` | `hit_ratio` | `step` | Cache collapse — hit ratio drops to 5%. |
+| 06:30 | `apigateway` | `cpu_util_pct` | `step` | CPU saturation (100%). |
+| 07:00 | `objectstore` | `5xx_rate` | `step` | Upstream provider 5xx wave — 14%. |
+| 08:00 | `cacheservice` | `memory_util_pct` | `ramp_linear` | **Slow memory leak** — 70% → 96% over 4h. |
+| 08:00 | `scheduler` | `avg_job_duration_s` | `step` | Job overrun — duration 4× baseline blocks next window. |
+| 08:05 | `scheduler` | `missed_schedules` | `step` | Missed schedule chain — 12 windows skipped after overrun. |
+| 08:15 | `loadbalancer` | `healthcheck_failures` | `step` | Backend pool flapping — 12 healthcheck failures. |
+| 09:00 | `apigateway` | `requests_per_sec` | `step` | Monday-morning thundering herd — 2,200 RPS spike. |
+| 09:00 | `authservice` | `login_attempts` | `step` | Benign baseline shift — Monday-morning login burst at 1,400 attempts/s. |
+| 09:00 | `observabilitypipeline` | `ingest_lag_s` | `step` | Ingestion lag grows to 240s — pipeline can't keep up. |
+| 09:30 | `apigateway` | `avg_response_time_ms` | `sawtooth` | **GC sawtooth** — oscillations 180↔380 ms every 90s for 30m. |
+| 10:00 | `apigateway` | `avg_response_time_ms` | `step` | **Deploy regression** — +30% latency (sustained to EOD). |
+| 10:00 | `scheduler` | `jobs_queued` | `step` | Job queue overflow — 2,500 jobs backlog. |
+| 10:30 | `vectorstore` | `ann_query_latency_ms` | `step` | Index rebuild stall — 280 ms. |
+| 11:00 | `database` | `read_latency_ms` | `step` | Read latency skyrockets to 360 ms. |
+| 11:00 | `database` | `error_rate` | `step` | Backend errors rise to 23%. |
+| 12:00 | `paymentservice` | `provider_5xx_rate` | `step` | Stripe-style provider 5xx surge — 18% error rate. |
+| 12:00 | `objectstore` | `bandwidth_mbps` | `step` | Batch export saturates bandwidth — 950 Mbps. |
+| 12:30 | `mqservice` | `dead_letter_queue` | `step` | DLQ blow-up — 1,200 messages parked. |
+| 13:00 | `loadbalancer` | `connection_resets` | `step` | SYN flood-style burst — 450 resets. |
+| 13:00 | `observabilitypipeline` | `dropped_metrics_per_sec` | `step` | High-cardinality push drops 8,500 metrics/s. |
+| 13:00 | `observabilitypipeline` | `metrics_ingested_per_sec` | `step` | Ingest rate collapses to 12,000/s during cardinality storm. |
+| 13:30 | `paymentservice` | `webhook_delivery_lag_s` | `step` | Webhook delivery 5 min behind — provider backlog. |
+| 14:30 | `mqservice` | `pending_messages` | `step` | Message jam — pending messages climb to 1,000,000. |
+| 14:30 | `mqservice` | `error_rate` | `step` | Message processing errors (10%). |
+| 15:00 | `paymentservice` | `auth_decline_rate` | `step` | Decline-rate jump to 35% — fraud rule misfire. |
+| 15:00 | `vectorstore` | `recall_at_10` | `step` | Recall degrades after model swap — 0.62. |
+| 16:00 | `database` | `connections` | `ramp_linear` | **Connection pool leak** — 3,000 → 9,500 over 6h. |
+| 16:30 | `identityprovider` | `mfa_challenges_per_min` | `step` | MFA SMS provider degradation — challenges drop to 0. |
+| 17:00 | `cacheservice` | `memory_util_pct` | `step` | Memory pressure — 97% nearing eviction. |
+| 18:00 | `database` | `error_rate` | `ramp_linear` | **Brown-out** — climbs 0.1% → 8% over 10 min. |
+| 18:10 | `database` | `error_rate` | `ramp_linear` | **Brown-out recovery** — recovers 8% → 0.1% over 10 min. |
+| 18:30 | `objectstore` | `get_latency_ms` | `step` | Read-after-write tail — 380 ms. |
+| 19:00 | `apigateway` | `requests_per_sec` | `sustained` | **Retry storm** — sustained 2× baseline for 8 min. |
+| 19:00 | `apigateway` | `error_rate` | `ramp_linear` | **Retry storm** — error rate climbs 5% → 30% alongside surge. |
+| 19:00 | `identityprovider` | `failed_oidc_flows` | `step` | SAML parse error spike — 120 failed flows from upstream IdP. |
+| 20:00 | `observabilitypipeline` | `pipeline_error_rate` | `step` | Pipeline error rate 8% — downstream dashboards go stale. |
+| 20:30 | `loadbalancer` | `backend_5xx_per_sec` | `step` | Region failover propagates 5xx — 75/s. |
+| 21:45 | `apigateway` | `error_rate` | `step` | 5xx burst from bad config push — 12%. |
+| 23:00 | `database` | `queries_per_sec` | `step` | Nightly batch kickoff — 55k QPS. |
 
 ### Same-day cascades (any `--duration-days`)
 
