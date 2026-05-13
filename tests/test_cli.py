@@ -628,6 +628,108 @@ def test_otel_activity_log_not_created_when_streaming_disabled(tmp_path):
         "activity log should not be created when streaming is disabled"
 
 
+def test_otel_activity_log_records_send_per_attempt(tmp_path):
+    """Each POST attempt (including retries) records its own SEND line."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "attempts.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "activity_attempts_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    contents = log_target.read_text()
+    send_lines = [ln for ln in contents.splitlines() if " SEND " in ln]
+    retry_lines = [ln for ln in contents.splitlines() if " RETRY " in ln]
+    fail_lines = [ln for ln in contents.splitlines() if " FAIL " in ln]
+    # max_retries default is 3 → 1 initial attempt + 3 retries = 4 sends, 3 retries, 1 fail
+    assert len(send_lines) == len(retry_lines) + len(fail_lines), (
+        f"expected one SEND per attempt; got {len(send_lines)} SEND, "
+        f"{len(retry_lines)} RETRY, {len(fail_lines)} FAIL"
+    )
+    assert len(send_lines) >= 2, f"expected SEND on retries, got only {len(send_lines)}"
+
+
+def test_otel_activity_log_values_with_spaces_are_quoted(tmp_path):
+    """Field values containing spaces are escaped so each k=v token is parseable."""
+    import shlex
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "quoted.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "activity_quoted_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    # Every SEND line must be shlex-parseable into a single timestamp, event,
+    # and exactly the documented k=v tokens. The event_ts value contains a
+    # space (YYYY-MM-DD HH:MM:SS), so unescaped writes would split it across
+    # two tokens.
+    for line in log_target.read_text().splitlines():
+        if " SEND " not in line:
+            continue
+        tokens = shlex.split(line)
+        keys = []
+        for token in tokens[2:]:  # skip ISO timestamp + event name
+            assert "=" in token, f"unparseable token {token!r} in line {line!r}"
+            keys.append(token.split("=", 1)[0])
+        assert "event_ts" in keys
+        event_ts_value = next(t for t in tokens[2:] if t.startswith("event_ts="))
+        # YYYY-MM-DD HH:MM:SS is 19 chars including the embedded space
+        assert len(event_ts_value.split("=", 1)[1]) == 19, (
+            f"event_ts not fully captured: {event_ts_value!r} in line {line!r}"
+        )
+
+
 def test_otel_stream_default_protocol_is_protobuf(tmp_path):
     content_types = []
 

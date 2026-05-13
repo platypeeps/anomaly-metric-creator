@@ -13,6 +13,7 @@ import csv
 import datetime
 import json
 import os
+import shlex
 import sys
 import time
 import urllib.error
@@ -1842,13 +1843,18 @@ def _build_otlp_log_protobuf(entry: dict) -> bytes:
 
 
 def _write_activity(log_file, event: str, **fields) -> None:
-    """Append one activity record. Format: ``ISO_TS EVENT k=v k=v``."""
+    """Append one activity record. Format: ``ISO_TS EVENT k=v k=v``.
+
+    Values are shell-quoted so embedded whitespace (e.g. ``event_ts`` which uses
+    ``YYYY-MM-DD HH:MM:SS``) keeps each ``k=v`` token round-trippable via
+    ``shlex.split``.
+    """
     if log_file is None:
         return
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     parts = [now, event]
     for k, v in fields.items():
-        parts.append(f"{k}={v}")
+        parts.append(f"{k}={shlex.quote(str(v))}")
     log_file.write(" ".join(parts) + "\n")
     log_file.flush()
 
@@ -1936,19 +1942,19 @@ def stream_otel_signals(
                 if auth_headers and signal in auth_headers:
                     headers.update(auth_headers[signal])
 
-                _write_activity(
-                    log_file,
-                    "SEND",
-                    signal=signal,
-                    endpoint=endpoint,
-                    event_ts=row["timestamp"],
-                    component=row["component"],
-                    metric=row["metric"],
-                )
-
                 req = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
                 attempts = 0
                 while True:
+                    _write_activity(
+                        log_file,
+                        "SEND",
+                        signal=signal,
+                        endpoint=endpoint,
+                        event_ts=row["timestamp"],
+                        component=row["component"],
+                        metric=row["metric"],
+                        attempt=f"{attempts + 1}/{max_retries + 1}",
+                    )
                     try:
                         with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                             if response.status >= 400:
