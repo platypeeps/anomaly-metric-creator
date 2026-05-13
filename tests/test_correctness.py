@@ -185,16 +185,32 @@ def test_value_range_sanity(amc, one_day_run_a):
     a healthy run won't trip; a regression that swaps a metric's base or std would.
     """
     manifest = read_manifest(one_day_run_a.out_dir)
-    anomaly_ts_by_component = {}
+    lookup = primary_spec_lookup(amc)
+    # {component: {metric: set(timestamps_to_skip)}}
+    skip_by_cm = {}
     for e in manifest:
-        anomaly_ts_by_component.setdefault(e["component"], set()).add(e["timestamp"])
+        comp = e["component"]
+        met = e["metric"]
+        ts_start_str = e["timestamp"]
+        ts_start = datetime.datetime.strptime(ts_start_str, "%Y-%m-%d %H:%M:%S")
+
+        # Always skip the start timestamp
+        skip_by_cm.setdefault(comp, {}).setdefault(met, set()).add(ts_start_str)
+
+        # If it's a primary span anomaly, skip the entire duration
+        spec = lookup.get((comp, met, e["description"]))
+        if spec and int(spec.get("duration_seconds", 0) or 0) > 0:
+            dur = int(spec["duration_seconds"])
+            for offset in range(1, dur):
+                ts_skip = (ts_start + datetime.timedelta(seconds=offset)).strftime("%Y-%m-%d %H:%M:%S")
+                skip_by_cm[comp][met].add(ts_skip)
 
     failures = []
     for component, specs in amc.COMPONENTS.items():
         rows, header = read_component_rows(one_day_run_a.out_dir, component)
-        skip_ts = anomaly_ts_by_component.get(component, set())
         for col_idx, mspec in enumerate(specs):
             field_idx = header.index(mspec.name)
+            skip_ts = skip_by_cm.get(component, {}).get(mspec.name, set())
             lo, hi = natural_band(amc, mspec, amc.SECONDS_PER_DAY)
             out_of_band = 0
             sample_offender = None
@@ -241,6 +257,11 @@ def test_anomalies_match_declared_value(amc, seven_day_run):
         spec = lookup.get(key)
         if spec is None:
             continue  # cascade — covered by manifest/CSV cross-check
+        if int(spec.get("duration_seconds", 0) or 0) > 0:
+            # Span anomalies use shape-driven values rather than the generator
+            # output at the start row. Per-shape value coverage lives in the
+            # dedicated VER-20 shape tests below.
+            continue
         ts = datetime.datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S")
         header = headers_by_c[entry["component"]]
         col_idx = header.index(entry["metric"])

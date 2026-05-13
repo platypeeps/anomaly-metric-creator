@@ -80,7 +80,8 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray)
 # ------------------------------------------------------------------
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
-                       ts_array=None, ts_strings=None, emit_metrics=True):
+                       ts_array=None, ts_strings=None, emit_metrics=True,
+                       dst_inject_day=0):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -128,6 +129,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 expanded_overrides.append((row_idx, s, t_within, span_idx))
         if not span_has_row:
             out_of_range.append(s)
+            continue
     if out_of_range:
         max_offset = max(s["time_offset"] for s in out_of_range)
         needed_days = max_offset // SECONDS_PER_DAY + 1
@@ -138,21 +140,30 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             file=sys.stderr,
         )
 
-    # Fail loudly on duplicate (metric, time_offset) tuples — the previous
+    # Fail loudly on identical (metric, time_offset) specs — the previous
     # ``metric_overrides = {spec["metric"]: spec["generator"] for spec in specs}``
     # silently kept only the last one.
-    seen: dict[tuple[str, int], dict] = {}
+    seen_specs: dict[tuple[str, int], dict] = {}
     duplicates: list[tuple[str, str, int]] = []
-    for row_idx, spec, _t_within, _span_idx in expanded_overrides:
-        key = (spec["metric"], row_idx)
-        if key in seen:
-            duplicates.append((component_name, spec["metric"], row_idx))
+    for s in all_anomalies:
+        key = (s["metric"], s["time_offset"])
+        if key in seen_specs:
+            duplicates.append((component_name, s["metric"], s["time_offset"]))
         else:
-            seen[key] = spec
+            seen_specs[key] = s
     if duplicates:
         raise ValueError(
-            f"Overlapping anomaly specs (component, metric, row_idx): {duplicates}"
+            f"Overlapping anomaly specs (component, metric, time_offset): {duplicates}"
         )
+
+    # Sort all overrides by row index and then by metric. When multiple specs
+    # target the same row+metric (e.g. a single-row cascade firing inside a
+    # shaped span), they apply in order. Stable sort + all_anomalies order
+    # (primary then cascades) ensures the cascade wins.
+    sorted_overrides = sorted(
+        expanded_overrides,
+        key=lambda item: (item[0], item[1]["metric"]),
+    )
 
     if ts_array is None or ts_strings is None:
         ts_array, ts_strings = _build_timestamp_arrays(total_seconds, interval)
@@ -171,12 +182,9 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
     # CSV stay coherent (a dropped row has no CSV entry, so it must have no
     # manifest entry either — the VER-5 invariant). Sort for a deterministic
-    # order of cascade RNG draws within a run.
+    # order of scale/jitter draws within a run.
     name_to_col = {s.name: i for i, s in enumerate(specs)}
-    for row_idx, aspec, t_within, span_idx in sorted(
-        expanded_overrides,
-        key=lambda item: (item[0], item[1]["metric"]),
-    ):
+    for row_idx, aspec, t_within, span_idx in sorted_overrides:
         if drop_mask[row_idx]:
             continue
         col = name_to_col[aspec["metric"]]
@@ -184,12 +192,13 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         values[row_idx, col] = _resolve_anomaly_value(
             aspec, ts_py, col, t_within, span_idx
         )
-        anomalies.append({
-            "timestamp": str(ts_strings[row_idx]),
-            "component": component_name,
-            "metric": aspec["metric"],
-            "description": aspec["description"],
-        })
+        if span_idx == 0:
+            anomalies.append({
+                "timestamp": str(ts_strings[row_idx]),
+                "component": component_name,
+                "metric": aspec["metric"],
+                "description": aspec["description"],
+            })
 
     np.round(values, 3, out=values)
 
@@ -211,11 +220,40 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         rows = np.char.add(rows, ",")
         rows = np.char.add(rows, str_vals[:, col])
 
+    # VER-20: fall-DST artifact. Duplicate the 02:00–02:59 wall-clock hour on
+    # the configured day so downstream consumers must handle non-monotonic
+    # timestamps (a real-world quirk that breaks naive timeseries pipelines).
+    if dst_inject_day > 0:
+        rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
+
     if emit_metrics:
         with open(file_path, "w", newline="") as f:
             f.write("timestamp," + ",".join(fieldnames) + "\n")
             f.write("\n".join(rows.tolist()))
             f.write("\n")
+
+
+def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
+                         dst_day: int) -> np.ndarray:
+    """Duplicate the 02:00–02:59 hour on ``dst_day`` (1-based) inside ``rows``.
+
+    ``rows`` is the formatted ``ts,v0,...,vk`` string array; ``kept_ts`` is the
+    matching ``YYYY-MM-DD HH:MM:SS`` timestamps used to locate the window. The
+    returned array has 3,600 / interval extra rows for the targeted day. The
+    duplicate hour reuses the same timestamp prefix, so the resulting CSV has
+    non-monotonic timestamps — the realistic fall-DST quirk.
+    """
+    day_date = (START + datetime.timedelta(days=dst_day - 1)).strftime("%Y-%m-%d")
+    dst_start = f"{day_date} 02:00:00"
+    dst_end = f"{day_date} 03:00:00"
+    mask = (kept_ts >= dst_start) & (kept_ts < dst_end)
+    indices = np.flatnonzero(mask)
+    if indices.size == 0:
+        return rows
+    first = int(indices[0])
+    last = int(indices[-1])
+    return np.concatenate([rows[:last + 1], rows[first:last + 1], rows[last + 1:]])
+
 
 
 def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
@@ -395,6 +433,13 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("queries_per_sec", 25000, 2000),
         MetricSpec("cpu_util_pct", 18, 3),
         MetricSpec("error_rate", 0.1, 0.05),
+        # VER-20: disk_used_pct trends slightly upward across the day under
+        # natural conditions; the disk-exhaustion ramp anomaly drives it to
+        # 100%. ``std=0`` keeps this column out of the shared RNG stream so
+        # adding it doesn't shift draws on later components.
+        MetricSpec("disk_used_pct", 8.0,
+                   additive=lambda _ts, elapsed: 2e-5 * elapsed,
+                   clip_min=0),
     ],
     "mqservice": [
         MetricSpec("pending_messages", 45000, 3000),
@@ -507,7 +552,19 @@ anoms_cache = [
         "metric": "memory_util_pct",
         "description": "Memory pressure — 97% nearing eviction",
         "generator": lambda ts,idx: 97.0
-    }
+    },
+    # VER-20: slow memory leak — linear ramp 70% → 96% over 4h, then snap-back
+    # to natural baseline (no explicit reset spec; the span ends and the
+    # natural column resumes at row 12:00:00).
+    {
+        "time_offset": 8*3600,                    # 08:00:00
+        "duration_seconds": 4*3600,               # 4h ramp
+        "shape": "ramp_linear",
+        "shape_params": {"start": 70.0, "end": 96.0},
+        "metric": "memory_util_pct",
+        "description": "Slow memory leak — utilization ramps 70% → 96% over 4h",
+        "generator": lambda ts,idx: 70.0,         # match start_value for test_correctness
+    },
 ]
 
 anoms_api = [
@@ -528,7 +585,51 @@ anoms_api = [
         "metric": "error_rate",
         "description": "5xx burst from bad config push — 12 %",
         "generator": lambda ts,idx: 0.12
-    }
+    },
+    # VER-20: GC sawtooth — avg_response_time_ms oscillates 180 ↔ 380 every 90s
+    # for 30 min, mimicking stop-the-world pauses on a leaky JVM-style workload.
+    {
+        "time_offset": 9*3600 + 30*60,            # 09:30:00
+        "duration_seconds": 30*60,                # 30 min
+        "shape": "sawtooth",
+        "shape_params": {"period_s": 90, "amplitude": 100, "midline": 280},
+        "metric": "avg_response_time_ms",
+        "description": "GC sawtooth — response time oscillates 180↔380 ms every 90s for 30 min",
+        "generator": lambda ts,idx: 180.0,        # midline - amplitude
+    },
+    # VER-20: deploy regression — step shift +30% (180 → 234 ms) at 10:00,
+    # sustained to end of day. The existing 14:31:30 MQ-cascade single-row
+    # override still fires inside the span (sort order applies the step first,
+    # then the cascade overwrites that one row).
+    {
+        "time_offset": 10*3600,                   # 10:00:00
+        "duration_seconds": 14*3600,              # 10:00 → 24:00
+        "shape": "step",
+        "metric": "avg_response_time_ms",
+        "description": "Deploy regression — avg_response_time_ms step +30% to 234 ms (sustained)",
+        "generator": lambda ts,idx: 234.0,
+    },
+    # VER-20: retry storm — requests_per_sec sustained 2× baseline for 8 min,
+    # with a co-spec on error_rate climbing in parallel as retries amplify
+    # transient failures.
+    {
+        "time_offset": 19*3600,                   # 19:00:00
+        "duration_seconds": 8*60,                 # 8 min
+        "shape": "sustained",
+        "shape_params": {"multiplier": 2.0},
+        "metric": "requests_per_sec",
+        "description": "Retry storm — requests_per_sec sustained 2× baseline for 8 min",
+        "generator": lambda ts,idx: 1600,
+    },
+    {
+        "time_offset": 19*3600,                   # 19:00:00 (same span)
+        "duration_seconds": 8*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 0.05, "end": 0.30},
+        "metric": "error_rate",
+        "description": "Retry storm — error_rate climbs 5% → 30% as retries amplify failures",
+        "generator": lambda ts,idx: 0.05,
+    },
 ]
 
 anoms_db = [
@@ -561,7 +662,51 @@ anoms_db = [
         "metric": "queries_per_sec",
         "description": "Nightly batch kickoff — 55k QPS",
         "generator": lambda ts,idx: 55000
-    }
+    },
+    # VER-20: disk exhaustion — monotonic 24h climb on the new disk_used_pct
+    # column. Starts at the natural baseline (~8) and ramps to 100% by EOD.
+    {
+        "time_offset": 0,
+        "duration_seconds": SECONDS_PER_DAY,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 8.0, "end": 100.0},
+        "metric": "disk_used_pct",
+        "description": "Disk exhaustion — disk_used_pct ramps 8% → 100% over 24h",
+        "generator": lambda ts,idx: 8.0,
+    },
+    # VER-20: connection pool leak — connections ramp 3,000 → 9,500 over 6h.
+    # Slot 16:00–22:00 keeps the span clear of the existing 14:32 MQ-cascade
+    # single-row override on database.connections.
+    {
+        "time_offset": 16*3600,                   # 16:00:00
+        "duration_seconds": 6*3600,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 3000.0, "end": 9500.0},
+        "metric": "connections",
+        "description": "Connection pool leak — connections ramp 3,000 → 9,500 over 6h",
+        "generator": lambda ts,idx: 3000.0,
+    },
+    # VER-20: brown-out — error_rate ramps 0.1% → 8% over 10 min, then back
+    # down over 10 min. Two ramp specs implement the triangle profile and the
+    # snap-back is implicit (span ends, natural baseline resumes). No cascade.
+    {
+        "time_offset": 18*3600,                   # 18:00:00 — climb phase
+        "duration_seconds": 10*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 0.001, "end": 0.08},
+        "metric": "error_rate",
+        "description": "Brown-out — error_rate ramps 0.1% → 8% over 10 min",
+        "generator": lambda ts,idx: 0.08,
+    },
+    {
+        "time_offset": 18*3600 + 10*60,           # 18:10:00 — recovery phase
+        "duration_seconds": 10*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 0.08, "end": 0.001},
+        "metric": "error_rate",
+        "description": "Brown-out — error_rate recovers 8% → 0.1% over 10 min",
+        "generator": lambda ts,idx: 0.08,
+    },
 ]
 
 anoms_mq = [
@@ -1136,47 +1281,47 @@ def parse_args(argv=None):
     p.add_argument(
         "--otel-logs-endpoint",
         type=str,
-        default=os.environ.get("OTEL_LOGS_ENDPOINT"),
+        default=os.environ.get("MEZMO_OTEL_LOGS_ENDPOINT"),
         help="Optional OTLP/HTTP logs endpoint (for example http://localhost:4318/v1/logs). "
              "When set, anomaly events are replayed as logs to this endpoint. "
-             "Env override: OTEL_LOGS_ENDPOINT.",
+             "Env override: MEZMO_OTEL_LOGS_ENDPOINT.",
     )
     p.add_argument(
         "--otel-logs-auth-token",
         type=str,
-        default=os.environ.get("OTEL_LOGS_AUTH_TOKEN"),
+        default=os.environ.get("MEZMO_OTEL_LOGS_AUTH_TOKEN"),
         help="Optional OTEL auth token for the logs endpoint. "
-             "Env override: OTEL_LOGS_AUTH_TOKEN.",
+             "Env override: MEZMO_OTEL_LOGS_AUTH_TOKEN.",
     )
     p.add_argument(
         "--otel-metrics-endpoint",
         type=str,
-        default=os.environ.get("OTEL_METRICS_ENDPOINT"),
+        default=os.environ.get("MEZMO_OTEL_METRICS_ENDPOINT"),
         help="Optional OTLP/HTTP metrics endpoint (for example http://localhost:4318/v1/metrics). "
              "When set, anomaly events are replayed as metrics to this endpoint. "
-             "Env override: OTEL_METRICS_ENDPOINT.",
+             "Env override: MEZMO_OTEL_METRICS_ENDPOINT.",
     )
     p.add_argument(
         "--otel-metrics-auth-token",
         type=str,
-        default=os.environ.get("OTEL_METRICS_AUTH_TOKEN"),
+        default=os.environ.get("MEZMO_OTEL_METRICS_AUTH_TOKEN"),
         help="Optional OTEL auth token for the metrics endpoint. "
-             "Env override: OTEL_METRICS_AUTH_TOKEN.",
+             "Env override: MEZMO_OTEL_METRICS_AUTH_TOKEN.",
     )
     p.add_argument(
         "--otel-traces-endpoint",
         type=str,
-        default=os.environ.get("OTEL_TRACES_ENDPOINT"),
+        default=os.environ.get("MEZMO_OTEL_TRACES_ENDPOINT"),
         help="Optional OTLP/HTTP traces endpoint (for example http://localhost:4318/v1/traces). "
              "When set, anomaly events are replayed as traces to this endpoint. "
-             "Env override: OTEL_TRACES_ENDPOINT.",
+             "Env override: MEZMO_OTEL_TRACES_ENDPOINT.",
     )
     p.add_argument(
         "--otel-traces-auth-token",
         type=str,
-        default=os.environ.get("OTEL_TRACES_AUTH_TOKEN"),
+        default=os.environ.get("MEZMO_OTEL_TRACES_AUTH_TOKEN"),
         help="Optional OTEL auth token for the traces endpoint. "
-             "Env override: OTEL_TRACES_AUTH_TOKEN.",
+             "Env override: MEZMO_OTEL_TRACES_AUTH_TOKEN.",
     )
     p.add_argument(
         "--otel-stream-speedup",
@@ -1200,9 +1345,9 @@ def parse_args(argv=None):
     p.add_argument(
         "--otel-stream-auth-scheme",
         type=str,
-        default=os.environ.get("OTEL_STREAM_AUTH_SCHEME", DEFAULT_OTEL_STREAM_AUTH_SCHEME),
+        default=os.environ.get("MEZMO_OTEL_STREAM_AUTH_SCHEME", DEFAULT_OTEL_STREAM_AUTH_SCHEME),
         help="Auth scheme prefix for OTEL auth token (default: Bearer). "
-             "Env override: OTEL_STREAM_AUTH_SCHEME.",
+             "Env override: MEZMO_OTEL_STREAM_AUTH_SCHEME.",
     )
     p.add_argument(
         "--otel-stream-protocol",
@@ -1210,6 +1355,11 @@ def parse_args(argv=None):
         default="protobuf",
         help="OTLP payload mode for stream endpoint: json or protobuf (default: protobuf).",
     )
+    p.add_argument("--inject-dst-artifact-day", type=int, default=0,
+                   help="Inject a fall-DST artifact (duplicated 02:00–02:59 wall-clock hour) "
+                        "on the given 1-based day of the run. 0 (default) disables. Generator "
+                        "quirk, not an anomaly spec — does not appear in anomalies.csv. The "
+                        "affected CSVs end up with 3,600/interval extra rows for that day.")
     args = p.parse_args(argv)
 
     if args.duration_days < 1:
@@ -1220,6 +1370,11 @@ def parse_args(argv=None):
         p.error("--interval-seconds must be > 0")
     if args.combine and args.combine_only:
         p.error("--combine and --combine-only are mutually exclusive")
+    if args.inject_dst_artifact_day < 0:
+        p.error("--inject-dst-artifact-day must be >= 0 (0 disables)")
+    if args.inject_dst_artifact_day > args.duration_days:
+        p.error(f"--inject-dst-artifact-day {args.inject_dst_artifact_day} "
+                f"is outside the configured --duration-days {args.duration_days}")
     selected = {item.strip().lower() for item in args.emit_selection.split(",") if item.strip()}
     allowed = {"metrics", "logs", "traces"}
     invalid = sorted(selected - allowed)
@@ -1800,7 +1955,8 @@ def main(argv=None):
                            interval=args.interval_seconds,
                            ts_array=ts_array,
                            ts_strings=ts_strings,
-                           emit_metrics="metrics" in args.emit_selection)
+                           emit_metrics="metrics" in args.emit_selection,
+                           dst_inject_day=args.inject_dst_artifact_day)
 
     if "metrics" in args.emit_selection:
         with open(args.output_dir / "anomalies.csv", "w", newline="") as f:
