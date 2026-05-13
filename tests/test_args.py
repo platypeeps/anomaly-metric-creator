@@ -104,3 +104,50 @@ def test_parse_args_otel_no_verbose_explicit_off(amc):
         "--output-dir", "test_out",
     ])
     assert args.otel_verbose is False
+
+
+def test_parse_args_components_default_is_all(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.components == set(amc.COMPONENTS.keys())
+
+
+def test_parse_args_components_single(amc):
+    args = amc.parse_args(["--components", "authservice", "--output-dir", "test_out"])
+    assert args.components == {"authservice"}
+
+
+def test_parse_args_components_multiple(amc):
+    args = amc.parse_args([
+        "--components", "authservice,database,apigateway",
+        "--output-dir", "test_out",
+    ])
+    assert args.components == {"authservice", "database", "apigateway"}
+
+
+def test_parse_args_components_whitespace_tolerant(amc):
+    args = amc.parse_args([
+        "--components", " authservice , database ",
+        "--output-dir", "test_out",
+    ])
+    assert args.components == {"authservice", "database"}
+
+
+def test_parse_args_components_invalid_name_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--components", "authservice,not_a_component",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_parse_args_components_empty_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--components", "",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_parse_args_components_all_keyword(amc):
+    args = amc.parse_args(["--components", "all", "--output-dir", "test_out"])
+    assert args.components == set(amc.COMPONENTS.keys())

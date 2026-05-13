@@ -29,7 +29,7 @@ def test_help_lists_every_flag():
     assert result.returncode == 0, result.stderr
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
-                 "--interval-seconds", "--emit-selection",
+                 "--interval-seconds", "--emit-selection", "--components",
                  "--otel-enabled", "--otel-disabled",
                  "--otel-logs-endpoint", "--otel-logs-auth-token",
                  "--otel-metrics-endpoint", "--otel-metrics-auth-token",
@@ -143,6 +143,116 @@ def test_emit_selection_metrics_only(tmp_path):
     assert (out / "anomalies.csv").exists()
     assert not (out / "metric_report.log").exists()
     assert not (out / "metric_traces.jsonl").exists()
+
+
+def test_components_filter_limits_csv_emission(tmp_path):
+    """--components only emits CSVs for the named components."""
+    out = tmp_path / "components_subset"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--components", "authservice,database",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    selected = {"authservice", "database"}
+    for component in COMPONENTS:
+        path = out / f"{component}.csv"
+        if component in selected:
+            assert path.exists(), f"{component}.csv should be emitted"
+        else:
+            assert not path.exists(), f"{component}.csv should NOT be emitted"
+
+
+def test_components_filter_filters_anomalies_csv(tmp_path):
+    """Anomalies CSV only contains rows for the selected components."""
+    import csv as _csv
+    out = tmp_path / "components_anomalies"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--components", "authservice",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    with open(out / "anomalies.csv") as f:
+        rows = list(_csv.DictReader(f))
+    assert rows, "expected at least one anomaly row for authservice"
+    components_in_csv = {r["component"] for r in rows}
+    assert components_in_csv == {"authservice"}, \
+        f"anomalies.csv should only contain authservice, got {components_in_csv}"
+
+
+def test_components_filter_invalid_name_fails(tmp_path):
+    result = _invoke(
+        "--components", "authservice,bogus_component",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode != 0, "expected non-zero exit for invalid --components value"
+    assert "components" in (result.stderr + result.stdout)
+
+
+def test_components_filter_default_emits_all(tmp_path):
+    """Default (no --components) emits every component CSV — regression guard."""
+    out = tmp_path / "components_default"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    for component in COMPONENTS:
+        assert (out / f"{component}.csv").exists(), \
+            f"{component}.csv missing without --components filter"
+
+
+def test_components_filter_limits_otel_stream(tmp_path):
+    """--components limits which component's anomalies are streamed via OTel."""
+    received = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            received.append(json.loads(body.decode("utf-8")))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--components", "authservice",
+            "--otel-enabled",
+            "--otel-logs-endpoint", f"{base_url}/v1/logs",
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--output-dir", str(tmp_path / "otel_components"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert received, "expected at least one OTel event for authservice"
+    # Every payload should reference only authservice via its log body attributes.
+    for payload in received:
+        body_text = json.dumps(payload)
+        # The component name surfaces as an attribute value in OTLP log bodies.
+        # Sanity-check: no other component's name appears in any streamed body.
+        for other in COMPONENTS:
+            if other == "authservice":
+                continue
+            assert other not in body_text, \
+                f"OTel stream included {other} despite --components=authservice"
 
 
 def test_combine_requires_metrics_selection(tmp_path):

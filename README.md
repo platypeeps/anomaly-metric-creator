@@ -47,6 +47,10 @@ python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
 python3 anomaly-metric-creator.py --emit-selection metrics,logs
 python3 anomaly-metric-creator.py --emit-selection traces
 
+# Emit only a subset of components (CSVs, anomalies.csv, reporting artifacts,
+# and OTEL streaming are all filtered to just these components):
+python3 anomaly-metric-creator.py --components authservice,database
+
 # Stream anomaly events as OTLP signals while generating locally:
 # OTEL streaming is OFF by default; pass --otel-enabled to opt in.
 python3 anomaly-metric-creator.py \
@@ -72,6 +76,7 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--drop-rate`       | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `> 0`. Anomalies map to the nearest row via `round(time_offset / interval)`. |
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
+| `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |

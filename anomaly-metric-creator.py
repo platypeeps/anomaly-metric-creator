@@ -1280,6 +1280,15 @@ def parse_args(argv=None):
         help="Comma-separated artifact selection: metrics, logs, traces "
              "(default: metrics,logs,traces).",
     )
+    p.add_argument(
+        "--components",
+        type=str,
+        default="all",
+        help="Comma-separated list of component names to emit (CSV files, "
+             "anomalies.csv, reporting artifacts, and OTel streaming). Use "
+             "'all' (default) for every component. Allowed names: "
+             f"{', '.join(sorted(COMPONENTS.keys()))}.",
+    )
     otel_toggle = p.add_mutually_exclusive_group()
     otel_toggle.add_argument(
         "--otel-enabled",
@@ -1449,6 +1458,20 @@ def parse_args(argv=None):
         if args.otel_stream_protocol not in {"json", "protobuf"}:
             p.error("--otel-stream-protocol must be one of: json, protobuf")
     args.emit_selection = selected
+
+    raw_components = [item.strip().lower() for item in args.components.split(",") if item.strip()]
+    if not raw_components:
+        p.error("--components must contain at least one component name (or 'all')")
+    if "all" in raw_components:
+        selected_components = set(COMPONENTS.keys())
+    else:
+        selected_components = set(raw_components)
+        invalid_components = sorted(selected_components - set(COMPONENTS.keys()))
+        if invalid_components:
+            p.error("--components contains invalid value(s): "
+                    f"{', '.join(invalid_components)}. "
+                    f"Allowed: {', '.join(sorted(COMPONENTS.keys()))} or 'all'")
+    args.components = selected_components
     return args
 
 
@@ -2121,6 +2144,8 @@ def main(argv=None):
     n_rows = int(total_seconds // args.interval_seconds)
 
     for name, specs in COMPONENTS.items():
+        if name not in args.components:
+            continue
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
@@ -2131,17 +2156,19 @@ def main(argv=None):
                            emit_metrics="metrics" in args.emit_selection,
                            dst_inject_day=args.inject_dst_artifact_day)
 
+    filtered_anomalies = [a for a in anomalies if a["component"] in args.components]
+
     if "metrics" in args.emit_selection:
         with open(args.output_dir / "anomalies.csv", "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["timestamp", "component", "metric", "description"])
             writer.writeheader()
-            for a in anomalies:
+            for a in filtered_anomalies:
                 writer.writerow(a)
     else:
         (args.output_dir / "anomalies.csv").unlink(missing_ok=True)
 
     if {"logs", "traces"} & args.emit_selection:
-        write_reporting_artifacts(args.output_dir, anomalies)
+        write_reporting_artifacts(args.output_dir, filtered_anomalies)
         if "logs" not in args.emit_selection:
             (args.output_dir / "metric_report.log").unlink(missing_ok=True)
         if "traces" not in args.emit_selection:
@@ -2163,7 +2190,7 @@ def main(argv=None):
 
         streamed_events = stream_otel_signals(
             endpoints,
-            anomalies,
+            filtered_anomalies,
             speedup=args.otel_stream_speedup,
             timeout_seconds=args.otel_stream_timeout_seconds,
             max_events=args.otel_stream_max_events,
@@ -2173,10 +2200,10 @@ def main(argv=None):
             verbose=args.otel_verbose,
         )
 
-    print(f"Done - {len(COMPONENTS)} log files + anomalies.csv + reporting artifacts written to {args.output_dir}")
+    print(f"Done - {len(args.components)} log files + anomalies.csv + reporting artifacts written to {args.output_dir}")
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
-    print(f"   Anomalies recorded: {len(anomalies)}")
+    print(f"   Anomalies recorded: {len(filtered_anomalies)}")
     if otel_active:
         active = [f"{s} -> {u}" for s, u in endpoints.items() if u]
         print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
