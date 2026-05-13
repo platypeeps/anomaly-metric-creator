@@ -5,6 +5,7 @@
 .idea
 __pycache__
 iot_logs
+otel-activity.log
 .claude
 .venv
 .pytest_cache

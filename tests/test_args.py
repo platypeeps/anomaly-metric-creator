@@ -70,3 +70,16 @@ def test_parse_args_otel_disabled_explicit_off(amc):
 def test_parse_args_otel_enabled_without_any_endpoint_fails(amc):
     with pytest.raises(SystemExit):
         amc.parse_args(["--otel-enabled", "--output-dir", "test_out"])
+
+
+def test_parse_args_otel_activity_log_default(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_activity_log == Path("otel-activity.log")
+
+
+def test_parse_args_otel_activity_log_custom(amc):
+    args = amc.parse_args([
+        "--otel-activity-log", "/tmp/custom-activity.log",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_activity_log == Path("/tmp/custom-activity.log")

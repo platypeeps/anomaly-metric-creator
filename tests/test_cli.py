@@ -486,6 +486,148 @@ def test_otel_stream_protobuf_sets_content_type(tmp_path):
     assert content_types == ["application/x-protobuf"]
 
 
+def test_otel_activity_log_default_path_in_cwd(tmp_path):
+    """Default activity log is written to ./otel-activity.log in the CWD when streaming runs."""
+    received = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            received.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--output-dir", str(tmp_path / "activity_default_run"),
+            cwd=str(cwd),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    log_path = cwd / "otel-activity.log"
+    assert log_path.exists(), "default activity log not created in CWD"
+    contents = log_path.read_text()
+    assert "START" in contents
+    assert "SEND" in contents
+    assert "END" in contents
+
+
+def test_otel_activity_log_custom_path(tmp_path):
+    """Activity log honors --otel-activity-log path."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "nested" / "custom.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "activity_custom_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert log_target.exists(), "custom activity log not created at requested path"
+    contents = log_target.read_text()
+    assert "START" in contents
+    assert "SEND" in contents
+
+
+def test_otel_activity_log_records_failure(tmp_path):
+    """Activity log records FAIL entries when the receiver returns errors."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log_target = tmp_path / "fail.log"
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-enabled",
+            "--otel-logs-endpoint", endpoint,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(log_target),
+            "--output-dir", str(tmp_path / "activity_fail_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert log_target.exists(), "activity log not written on failure path"
+    contents = log_target.read_text()
+    assert "RETRY" in contents
+    assert "FAIL" in contents
+
+
+def test_otel_activity_log_not_created_when_streaming_disabled(tmp_path):
+    """No activity log when --otel-enabled is not passed (no streaming runs)."""
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--output-dir", str(tmp_path / "no_stream_run"),
+        cwd=str(cwd),
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (cwd / "otel-activity.log").exists(), \
+        "activity log should not be created when streaming is disabled"
+
+
 def test_otel_stream_default_protocol_is_protobuf(tmp_path):
     content_types = []
 
