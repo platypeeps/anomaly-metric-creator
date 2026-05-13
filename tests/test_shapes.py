@@ -280,6 +280,64 @@ def test_sustained_requires_value_or_multiplier(amc):
 
 
 # ------------------------------------------------------------------
+# Catalog hygiene: every anomaly spec's ``shape_params`` keys must
+# be consumed by ``_resolve_anomaly_value`` for the spec's shape.
+# Catches dead config like ``sustained: {"multiplier": ...}`` (which
+# the resolver ignores) before it ships as silently-misleading docs.
+# ------------------------------------------------------------------
+_SHAPE_PARAM_KEYS = {
+    "step": frozenset(),
+    "sustained": frozenset(),
+    "ramp_linear": frozenset({"start", "end"}),
+    "ramp_exp": frozenset({"start", "end", "exponent"}),
+    "sawtooth": frozenset({"start", "period_s", "amplitude", "midline", "phase_s"}),
+    "sine": frozenset({"start", "period_s", "amplitude", "midline", "phase_s"}),
+}
+
+
+def _all_specs(amc):
+    out = []
+    spec_list_names = [
+        "anoms_auth", "anoms_cache", "anoms_api", "anoms_db", "anoms_mq",
+        "anoms_lb", "anoms_obj", "anoms_vec", "anoms_scheduler",
+        "anoms_payment", "anoms_idp", "anoms_obs", "anoms_llm",
+        "anoms_high_lb", "anoms_high_cache", "anoms_high_db",
+        "anoms_high_llm", "anoms_high_api", "anoms_high_obj",
+    ]
+    for name in spec_list_names:
+        for spec in getattr(amc, name):
+            out.append((name, spec))
+    return out
+
+
+def test_no_dead_shape_params_in_catalog(amc):
+    """Every spec's ``shape_params`` keys must be consumed for its shape.
+
+    Regression guard for the Copilot review finding on the gateway DDoS
+    sustained scenario, which originally shipped with a no-op
+    ``{"multiplier": 6.0}``. The resolver silently dropped it, leaving a
+    misleading paper-only value.
+    """
+    offenders = []
+    for source, spec in _all_specs(amc):
+        shape = spec.get("shape", "step")
+        params = spec.get("shape_params") or {}
+        if not params:
+            continue
+        allowed = _SHAPE_PARAM_KEYS.get(shape)
+        if allowed is None:
+            offenders.append((source, shape, "unknown shape", sorted(params.keys())))
+            continue
+        unknown = set(params.keys()) - allowed
+        if unknown:
+            offenders.append((source, shape, "unknown keys", sorted(unknown)))
+    assert not offenders, (
+        "specs declare shape_params keys that the resolver does not read: "
+        f"{offenders}"
+    )
+
+
+# ------------------------------------------------------------------
 # DST artifact — duplicate hour around 02:00 on the configured day.
 # ------------------------------------------------------------------
 def test_dst_artifact_duplicates_02_hour(amc, tmp_path):

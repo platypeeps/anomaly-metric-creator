@@ -12,6 +12,7 @@ import argparse
 import base64
 import csv
 import datetime
+import hashlib
 import json
 import os
 import shlex
@@ -37,6 +38,24 @@ DEFAULT_OUTPUT_DIR = Path("iot_logs")
 DEFAULT_DROP_RATE = 0.0005
 DEFAULT_INTERVAL_SECONDS = 1.0
 DEFAULT_OTEL_STREAM_AUTH_SCHEME = "Bearer"
+DEFAULT_SIGNAL_LEVEL = "medium"
+
+# Inclusion hierarchy for --signal-level: each level keeps its own severity tier
+# plus everything weaker. A spec with no explicit ``severity`` defaults to
+# ``medium`` so today's catalog continues to fire under the default level.
+SIGNAL_LEVELS: dict[str, set[str]] = {
+    "low": {"low"},
+    "medium": {"low", "medium"},
+    "high": {"low", "medium", "high"},
+}
+DEFAULT_SEVERITY = "medium"
+
+# Stable named sub-seed for the --anomaly-count sampling RNG. Derived from
+# sha256(b"anomaly_count_cap") and fixed at import time so the cap RNG stream
+# is decoupled from any other np.random use that shares the same seed.
+_ANOMALY_COUNT_CAP_SALT = int.from_bytes(
+    hashlib.sha256(b"anomaly_count_cap").digest()[:4], "big"
+)
 
 # ------------------------------------------------------------------
 # Anomaly registry and cascade tracking (reset on each main() call)
@@ -357,15 +376,21 @@ def _build_timestamp_arrays(total_seconds: int, interval: float = 1.0):
 # ------------------------------------------------------------------
 # Cascade helper function
 # ------------------------------------------------------------------
-def register_cascade(target_component, time_offset, metric, description, generator):
+def register_cascade(target_component, time_offset, metric, description, generator,
+                     severity=DEFAULT_SEVERITY):
     """
     Register a cascading anomaly that will affect another component.
+
+    ``severity`` controls --signal-level eligibility. Defaults to ``medium`` so
+    today's cascades fire at the default level; pass ``"high"`` for cascades
+    that only belong to the high-pressure catalog.
     """
     cascading_anomalies.setdefault(target_component, []).append({
         "time_offset": time_offset,
         "metric": metric,
         "description": description,
         "generator": generator,
+        "severity": severity,
     })
 
 # ------------------------------------------------------------------
@@ -538,7 +563,8 @@ anoms_auth = [
         "time_offset": 9*3600,                    # 09:00:00
         "metric": "login_attempts",
         "description": "Benign baseline shift: Monday morning login burst — 1,400 attempts/s",
-        "generator": lambda ts,idx: 1400
+        "generator": lambda ts,idx: 1400,
+        "severity": "low",
     }
 ]
 
@@ -580,7 +606,8 @@ anoms_api = [
         "time_offset": 9*3600,                    # 09:00:00
         "metric": "requests_per_sec",
         "description": "Monday-morning thundering herd — 2,200 RPS spike",
-        "generator": lambda ts,idx: 2200
+        "generator": lambda ts,idx: 2200,
+        "severity": "low",
     },
     {
         "time_offset": 21*3600 + 45*60,           # 21:45:00
@@ -618,7 +645,6 @@ anoms_api = [
         "time_offset": 19*3600,                   # 19:00:00
         "duration_seconds": 8*60,                 # 8 min
         "shape": "sustained",
-        "shape_params": {"multiplier": 2.0},
         "metric": "requests_per_sec",
         "description": "Retry storm — requests_per_sec sustained 2× baseline for 8 min",
         "generator": lambda ts,idx: 1600,
@@ -904,6 +930,127 @@ anoms_obs = [
         "generator": lambda ts,idx: 0.08,
     },
 ]
+
+# ------------------------------------------------------------------
+# High-pressure cross-component scenarios. Only fire at
+# --signal-level high. Each scenario has a triggering anomaly (or
+# coordinated pair) plus its own cascade fan-out registered in
+# register_high_pressure_cascades(). They are deliberately placed
+# off-peak from the medium catalog to keep both layers legible.
+# ------------------------------------------------------------------
+anoms_high_lb = [
+    # Regional failover storm — load balancer sees a sustained 5xx surge for
+    # 5 minutes as traffic spills to a degraded region.
+    {
+        "time_offset": 5*3600,                    # 05:00:00
+        "duration_seconds": 5*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 1.5, "end": 220.0},
+        "metric": "backend_5xx_per_sec",
+        "description": "Regional failover storm — backend 5xx ramps to 220/s over 5 min",
+        "generator": lambda ts,idx: 1.5,
+        "severity": "high",
+    },
+]
+
+anoms_high_cache = [
+    # Coordinated cache+DB meltdown — cache memory saturates while DB read
+    # latency simultaneously climbs (10-minute high-pressure window).
+    {
+        "time_offset": 11*3600 + 30*60,           # 11:30:00
+        "duration_seconds": 10*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 80.0, "end": 99.5},
+        "metric": "memory_util_pct",
+        "description": "Cache+DB meltdown — cache memory saturates 80% → 99.5% over 10 min",
+        "generator": lambda ts,idx: 80.0,
+        "severity": "high",
+    },
+]
+
+anoms_high_db = [
+    {
+        "time_offset": 11*3600 + 30*60,           # 11:30:00 — paired with cache spec
+        "duration_seconds": 10*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 12.0, "end": 800.0},
+        "metric": "read_latency_ms",
+        "description": "Cache+DB meltdown — DB read latency climbs to 800 ms over 10 min",
+        "generator": lambda ts,idx: 12.0,
+        "severity": "high",
+    },
+]
+
+anoms_high_llm = [
+    # LLM provider sustained outage — error rate climbs to 60% over 15 min.
+    {
+        "time_offset": 20*3600,                   # 20:00:00
+        "duration_seconds": 15*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 0.05, "end": 0.60},
+        "metric": "llm_api_error_rate",
+        "description": "LLM provider sustained outage — error rate ramps 5% → 60% over 15 min",
+        "generator": lambda ts,idx: 0.05,
+        "severity": "high",
+    },
+    {
+        "time_offset": 20*3600,                   # paired latency surge
+        "duration_seconds": 15*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 900.0, "end": 8000.0},
+        "metric": "avg_llm_latency_ms",
+        "description": "LLM provider sustained outage — latency climbs to 8,000 ms over 15 min",
+        "generator": lambda ts,idx: 900.0,
+        "severity": "high",
+    },
+]
+
+anoms_high_api = [
+    # Gateway DDoS-style saturation — sustained 5x traffic burst for 10 min,
+    # CPU pinned at 99%. Drives cascades into auth, DB, and MQ.
+    {
+        "time_offset": 16*3600,                   # 16:00:00
+        "duration_seconds": 10*60,
+        "shape": "sustained",
+        "metric": "requests_per_sec",
+        "description": "Gateway DDoS saturation — requests sustained at 5,000/s for 10 min",
+        "generator": lambda ts,idx: 5000,
+        "severity": "high",
+    },
+    {
+        "time_offset": 16*3600,
+        "duration_seconds": 10*60,
+        "shape": "sustained",
+        "metric": "cpu_util_pct",
+        "description": "Gateway DDoS saturation — CPU pinned at 99% for 10 min",
+        "generator": lambda ts,idx: 99.0,
+        "severity": "high",
+    },
+]
+
+anoms_high_obj = [
+    # Storage layer pressure — PUT latency climbs and 5xx surge.
+    {
+        "time_offset": 22*3600,                   # 22:00:00
+        "duration_seconds": 10*60,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 60.0, "end": 700.0},
+        "metric": "put_latency_ms",
+        "description": "Storage layer pressure — PUT latency climbs 60 → 700 ms over 10 min",
+        "generator": lambda ts,idx: 60.0,
+        "severity": "high",
+    },
+    {
+        "time_offset": 22*3600,
+        "duration_seconds": 10*60,                # matches paired put_latency_ms ramp
+        "shape": "sustained",
+        "metric": "5xx_rate",
+        "description": "Storage layer pressure — object store 5xx surge to 25% for 10 min",
+        "generator": lambda ts,idx: 0.25,
+        "severity": "high",
+    },
+]
+
 
 # Multi-day LLM catalog. Unreachable at --duration-days 1; needs >= 7.
 anoms_llm = [
@@ -1245,6 +1392,194 @@ def register_default_cascades():
                      "Cascading: Telemetry pipeline lag backs up downstream queue",
                      lambda ts, idx: 220000 + np.random.normal(0, 15000))
 
+
+def register_high_pressure_cascades():
+    """High-severity cascade fan-out for the cross-component scenarios.
+
+    Only registered when --signal-level high. Each cascade fires shortly after
+    its triggering scenario and is tagged ``severity="high"`` so it survives
+    severity filtering only at the highest level.
+    """
+    # Regional failover storm (loadbalancer 05:00) → API gateway 5xx, DB
+    # connection pressure, auth verification failures, MQ backpressure.
+    register_cascade("apigateway",
+                     5*3600 + 30,
+                     "error_rate",
+                     "Cascading: Regional failover floods gateway with 5xx (30%)",
+                     lambda ts, idx: 0.30,
+                     severity="high")
+    register_cascade("database",
+                     5*3600 + 45,
+                     "connections",
+                     "Cascading: Regional failover pile-up — DB connections climb to ~9,000",
+                     lambda ts, idx: 9000 + np.random.normal(0, 250),
+                     severity="high")
+    register_cascade("authservice",
+                     5*3600 + 60,
+                     "error_rate",
+                     "Cascading: Regional failover propagates auth errors (~25%)",
+                     lambda ts, idx: 0.25,
+                     severity="high")
+    register_cascade("mqservice",
+                     5*3600 + 90,
+                     "pending_messages",
+                     "Cascading: Regional failover backs up queue — ~500,000 pending",
+                     lambda ts, idx: 500000 + np.random.normal(0, 12000),
+                     severity="high")
+
+    # Cache+DB meltdown (11:30) → LLM latency doubles, gateway backend latency.
+    register_cascade("llm_analytics",
+                     11*3600 + 30*60 + 30,
+                     "avg_llm_latency_ms",
+                     "Cascading: Cache+DB meltdown doubles LLM latency to ~1,700 ms",
+                     lambda ts, idx: 1700 + np.random.normal(0, 90),
+                     severity="high")
+    register_cascade("apigateway",
+                     11*3600 + 30*60 + 45,
+                     "backend_latency_ms",
+                     "Cascading: Cache+DB meltdown drags gateway backend latency to ~950 ms",
+                     lambda ts, idx: 950 + np.random.normal(0, 60),
+                     severity="high")
+
+    # LLM provider outage (20:00) → API gateway error rate, cache miss surge.
+    register_cascade("apigateway",
+                     20*3600 + 15,
+                     "error_rate",
+                     "Cascading: LLM outage propagates to gateway (~25%)",
+                     lambda ts, idx: 0.25,
+                     severity="high")
+    register_cascade("cacheservice",
+                     20*3600 + 30,
+                     "cache_misses",
+                     "Cascading: LLM outage drives context cache miss surge (~3,000)",
+                     lambda ts, idx: 3000 + np.random.normal(0, 200),
+                     severity="high")
+
+    # Gateway DDoS saturation (16:00) → auth latency, DB CPU, MQ backpressure.
+    register_cascade("authservice",
+                     16*3600 + 60,
+                     "avg_auth_latency_ms",
+                     "Cascading: Gateway saturation slows auth path to ~600 ms",
+                     lambda ts, idx: 600 + np.random.normal(0, 25),
+                     severity="high")
+    register_cascade("database",
+                     16*3600 + 90,
+                     "cpu_util_pct",
+                     "Cascading: Gateway saturation drives DB CPU to ~92%",
+                     lambda ts, idx: 92 + np.random.normal(0, 2),
+                     severity="high")
+    register_cascade("mqservice",
+                     16*3600 + 120,
+                     "pending_messages",
+                     "Cascading: Gateway saturation queues messages — ~800,000 pending",
+                     lambda ts, idx: 800000 + np.random.normal(0, 15000),
+                     severity="high")
+
+    # Storage layer pressure (22:00) → DB write latency, gateway 5xx.
+    register_cascade("database",
+                     22*3600 + 30,
+                     "write_latency_ms",
+                     "Cascading: Storage pressure drags DB write latency to ~90 ms",
+                     lambda ts, idx: 90 + np.random.normal(0, 6),
+                     severity="high")
+    register_cascade("apigateway",
+                     22*3600 + 45,
+                     "error_rate",
+                     "Cascading: Storage 5xx surge propagates to gateway (~15%)",
+                     lambda ts, idx: 0.15,
+                     severity="high")
+
+def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: dict,
+                                  *, signal_level: str, selected_components: set,
+                                  anomaly_count: int | None, seed: int,
+                                  total_seconds: int, interval_seconds: float) -> None:
+    """In-place filter the primary and cascade anomaly registries.
+
+    Order is: severity (per ``signal_level``) → component allowlist
+    (``selected_components``) → optional global cap (``anomaly_count``). Specs
+    that fail any gate are dropped from the underlying lists/dicts so the
+    generator never sees them.
+
+    Out-of-range specs (``time_offset`` rounding to a row outside
+    ``[0, n_rows)``) are excluded from the ``--anomaly-count`` sampling pool
+    but always remain in the registries, so the generator's existing stderr
+    soft-skip warning fires for them in every configuration. The cap still
+    matches manifest output exactly because out-of-range specs cannot
+    produce manifest rows.
+
+    Sampling for ``anomaly_count`` uses a dedicated
+    ``np.random.SeedSequence`` derived from ``seed`` with a fixed
+    ``spawn_key`` tag, so it doesn't perturb the column-noise RNG stream that
+    ``generate_component`` shares via ``np.random``. The sampled positions are
+    iterated in sorted order so the manifest row order is fully deterministic
+    for a given ``(seed, anomaly_count, eligible-pool)`` triple — independent
+    of CPython's set iteration order.
+    """
+    allowed_severities = SIGNAL_LEVELS[signal_level]
+    n_rows = int(total_seconds // interval_seconds)
+
+    def _keep(spec: dict, component: str) -> bool:
+        if component not in selected_components:
+            return False
+        return spec.get("severity", DEFAULT_SEVERITY) in allowed_severities
+
+    def _in_range(spec: dict) -> bool:
+        offset = spec.get("time_offset", 0)
+        if offset < 0:
+            return False
+        return int(round(offset / interval_seconds)) < n_rows
+
+    for component, specs in component_anomalies.items():
+        component_anomalies[component] = [s for s in specs if _keep(s, component)]
+    for component in list(cascade_registry.keys()):
+        cascade_registry[component] = [s for s in cascade_registry[component]
+                                       if _keep(s, component)]
+
+    if anomaly_count is None:
+        return
+
+    # Build a positional view of the in-range pool only; out-of-range specs
+    # cannot produce manifest rows but stay in the registries so the
+    # generator's existing soft-skip warning still fires for them.
+    positional: list[tuple[str, str, dict]] = []
+    for component, specs in component_anomalies.items():
+        for spec in specs:
+            if _in_range(spec):
+                positional.append((component, "primary", spec))
+    for component, specs in cascade_registry.items():
+        for spec in specs:
+            if _in_range(spec):
+                positional.append((component, "cascade", spec))
+
+    if anomaly_count >= len(positional):
+        return
+
+    seq = np.random.SeedSequence(seed, spawn_key=(_ANOMALY_COUNT_CAP_SALT,))
+    rng = np.random.default_rng(seq)
+    # Iterate positions in sorted order so manifest row sequence is
+    # independent of Python set hash-iteration order.
+    keep_positions = sorted(
+        rng.choice(len(positional), size=anomaly_count, replace=False).tolist()
+    )
+
+    kept_primary: dict[str, list[dict]] = {}
+    kept_cascade: dict[str, list[dict]] = {}
+    for pos in keep_positions:
+        component, source, spec = positional[pos]
+        target = kept_primary if source == "primary" else kept_cascade
+        target.setdefault(component, []).append(spec)
+
+    # Re-append out-of-range specs so the generator continues to surface its
+    # stderr soft-skip warning for them; they cannot contribute manifest
+    # rows, so the cap still matches output exactly.
+    for component in list(component_anomalies.keys()):
+        out_of_range = [s for s in component_anomalies[component] if not _in_range(s)]
+        component_anomalies[component] = kept_primary.get(component, []) + out_of_range
+    for component in list(cascade_registry.keys()):
+        out_of_range = [s for s in cascade_registry[component] if not _in_range(s)]
+        cascade_registry[component] = kept_cascade.get(component, []) + out_of_range
+
+
 # ------------------------------------------------------------------
 # CLI + entry point
 # ------------------------------------------------------------------
@@ -1288,6 +1623,23 @@ def parse_args(argv=None):
              "anomalies.csv, reporting artifacts, and OTel streaming). Use "
              "'all' (default) for every component. Allowed names: "
              f"{', '.join(sorted(COMPONENTS.keys()))}.",
+    )
+    p.add_argument(
+        "--signal-level",
+        type=str,
+        default=DEFAULT_SIGNAL_LEVEL,
+        help="Anomaly intensity level: low, medium (default), or high. "
+             "low keeps only benign baseline shifts; medium keeps the standard "
+             "catalog (today's behavior); high additionally activates the "
+             "high-pressure cross-component scenarios.",
+    )
+    p.add_argument(
+        "--anomaly-count",
+        type=int,
+        default=None,
+        help="Optional cap on the total number of anomalies (including "
+             "cascades) injected across the whole dataset. Sampling is "
+             "deterministic for a given --seed. Defaults to unlimited.",
     )
     otel_toggle = p.add_mutually_exclusive_group()
     otel_toggle.add_argument(
@@ -1472,6 +1824,16 @@ def parse_args(argv=None):
                     f"{', '.join(invalid_components)}. "
                     f"Allowed: {', '.join(sorted(COMPONENTS.keys()))} or 'all'")
     args.components = selected_components
+
+    signal_level = (args.signal_level or "").strip().lower()
+    if signal_level not in SIGNAL_LEVELS:
+        p.error("--signal-level must be one of: "
+                f"{', '.join(sorted(SIGNAL_LEVELS.keys()))}")
+    args.signal_level = signal_level
+
+    if args.anomaly_count is not None and args.anomaly_count < 1:
+        p.error("--anomaly-count must be >= 1 (omit the flag for unlimited)")
+
     return args
 
 
@@ -2123,22 +2485,42 @@ def main(argv=None):
     anomalies.clear()
     cascading_anomalies.clear()
     register_default_cascades()
+    if args.signal_level == "high":
+        register_high_pressure_cascades()
 
     component_anomalies = {
-        "authservice": anoms_auth,
-        "cacheservice": anoms_cache,
-        "apigateway": anoms_api,
-        "database": anoms_db,
-        "mqservice": anoms_mq,
-        "llm_analytics": anoms_llm,
-        "loadbalancer": anoms_lb,
-        "objectstore": anoms_obj,
-        "vectorstore": anoms_vec,
-        "scheduler": anoms_scheduler,
-        "paymentservice": anoms_payment,
-        "identityprovider": anoms_idp,
-        "observabilitypipeline": anoms_obs,
+        "authservice": list(anoms_auth),
+        "cacheservice": list(anoms_cache),
+        "apigateway": list(anoms_api),
+        "database": list(anoms_db),
+        "mqservice": list(anoms_mq),
+        "llm_analytics": list(anoms_llm),
+        "loadbalancer": list(anoms_lb),
+        "objectstore": list(anoms_obj),
+        "vectorstore": list(anoms_vec),
+        "scheduler": list(anoms_scheduler),
+        "paymentservice": list(anoms_payment),
+        "identityprovider": list(anoms_idp),
+        "observabilitypipeline": list(anoms_obs),
     }
+    if args.signal_level == "high":
+        component_anomalies["loadbalancer"].extend(anoms_high_lb)
+        component_anomalies["cacheservice"].extend(anoms_high_cache)
+        component_anomalies["database"].extend(anoms_high_db)
+        component_anomalies["llm_analytics"].extend(anoms_high_llm)
+        component_anomalies["apigateway"].extend(anoms_high_api)
+        component_anomalies["objectstore"].extend(anoms_high_obj)
+
+    _apply_signal_level_and_count(
+        component_anomalies,
+        cascading_anomalies,
+        signal_level=args.signal_level,
+        selected_components=args.components,
+        anomaly_count=args.anomaly_count,
+        seed=args.seed,
+        total_seconds=total_seconds,
+        interval_seconds=args.interval_seconds,
+    )
 
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
