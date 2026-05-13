@@ -12,6 +12,7 @@ import argparse
 import base64
 import csv
 import datetime
+import hashlib
 import json
 import os
 import shlex
@@ -52,11 +53,9 @@ DEFAULT_SEVERITY = "medium"
 # Stable named sub-seed for the --anomaly-count sampling RNG. Derived from
 # sha256(b"anomaly_count_cap") and fixed at import time so the cap RNG stream
 # is decoupled from any other np.random use that shares the same seed.
-import hashlib as _hashlib
 _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
-    _hashlib.sha256(b"anomaly_count_cap").digest()[:4], "big"
+    hashlib.sha256(b"anomaly_count_cap").digest()[:4], "big"
 )
-del _hashlib
 
 # ------------------------------------------------------------------
 # Anomaly registry and cascade tracking (reset on each main() call)
@@ -1043,8 +1042,10 @@ anoms_high_obj = [
     },
     {
         "time_offset": 22*3600,
+        "duration_seconds": 10*60,                # matches paired put_latency_ms ramp
+        "shape": "sustained",
         "metric": "5xx_rate",
-        "description": "Storage layer pressure — object store 5xx surge to 25%",
+        "description": "Storage layer pressure — object store 5xx surge to 25% for 10 min",
         "generator": lambda ts,idx: 0.25,
         "severity": "high",
     },
@@ -1539,17 +1540,26 @@ def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: d
     if anomaly_count is None:
         return
 
+    # Drop out-of-range specs from the registries unconditionally when the
+    # cap is active: the docstring promises both the sampling pool and the
+    # generator see the same in-range view. Doing this before the early-
+    # return below keeps the promise even when the cap is wider than the
+    # eligible pool.
+    for component, specs in component_anomalies.items():
+        component_anomalies[component] = [s for s in specs if _in_range(s)]
+    for component in list(cascade_registry.keys()):
+        cascade_registry[component] = [s for s in cascade_registry[component]
+                                       if _in_range(s)]
+
     # Build a positional view: each entry tags which component/source bucket
     # the spec came from, then sampling decides which positions survive.
     positional: list[tuple[str, str, dict]] = []
     for component, specs in component_anomalies.items():
         for spec in specs:
-            if _in_range(spec):
-                positional.append((component, "primary", spec))
+            positional.append((component, "primary", spec))
     for component, specs in cascade_registry.items():
         for spec in specs:
-            if _in_range(spec):
-                positional.append((component, "cascade", spec))
+            positional.append((component, "cascade", spec))
 
     if anomaly_count >= len(positional):
         return

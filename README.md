@@ -267,7 +267,7 @@ fan out into 3–4 additional services per scenario.
 | 20:00 | `llm_analytics` | `llm_api_error_rate` | `ramp_linear` | **LLM provider sustained outage** — error rate ramps 5% → 60% over 15 min, paired with latency climbing to 8,000 ms; cascades to gateway error rate ~25% and cache miss surge ~3,000. |
 | 20:00 | `llm_analytics` | `avg_llm_latency_ms` | `ramp_linear` | **LLM provider sustained outage** (paired) — latency climbs to 8,000 ms over 15 min. |
 | 22:00 | `objectstore` | `put_latency_ms` | `ramp_linear` | **Storage layer pressure** — PUT latency climbs 60 → 700 ms over 10 min, paired with object-store 5xx surge to 25%; cascades to DB write latency ~90 ms and gateway error rate ~15%. |
-| 22:00 | `objectstore` | `5xx_rate` | `step` | **Storage layer pressure** (paired) — object-store 5xx surge to 25%. |
+| 22:00 | `objectstore` | `5xx_rate` | `sustained` | **Storage layer pressure** (paired) — object-store 5xx surge to 25% for 10 min. |
 
 ### Multi-day LLM catalog (`--duration-days >= 7`)
 
