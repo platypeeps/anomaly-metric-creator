@@ -48,16 +48,18 @@ python3 anomaly-metric-creator.py --emit-selection metrics,logs
 python3 anomaly-metric-creator.py --emit-selection traces
 
 # Stream anomaly events as OTLP signals while generating locally:
+# OTEL streaming is OFF by default; pass --otel-enabled to opt in.
 python3 anomaly-metric-creator.py \
+  --otel-enabled \
   --otel-logs-endpoint http://localhost:4318/v1/logs \
   --otel-metrics-endpoint http://localhost:4318/v1/metrics \
   --otel-traces-endpoint http://localhost:4318/v1/traces \
   --otel-stream-speedup 3600
 
-# Stream with signal-specific env controls:
+# Stream with signal-specific env controls (still requires --otel-enabled):
 MEZMO_OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
 MEZMO_OTEL_LOGS_AUTH_TOKEN=secret \
-python3 anomaly-metric-creator.py
+python3 anomaly-metric-creator.py --otel-enabled
 ```
 
 ### CLI flags
@@ -73,11 +75,12 @@ python3 anomaly-metric-creator.py
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
-| `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs`. |
+| `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
+| `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
 | `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
-| `--otel-metrics-endpoint` | `MEZMO_OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics. |
+| `--otel-metrics-endpoint` | `MEZMO_OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics when `--otel-enabled`. |
 | `--otel-metrics-auth-token` | `MEZMO_OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. |
-| `--otel-traces-endpoint` | `MEZMO_OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events. |
+| `--otel-traces-endpoint` | `MEZMO_OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events when `--otel-enabled`. |
 | `--otel-traces-auth-token` | `MEZMO_OTEL_TRACES_AUTH_TOKEN` | Optional auth token for traces endpoint. |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-timeout-seconds` | `5.0` | HTTP timeout for each OTEL post attempt. |
