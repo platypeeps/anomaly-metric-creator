@@ -1,5 +1,5 @@
 """Combine-step integration: autodiscovery, llm_analytics inclusion,
-row preservation, and the synthetic-extra-component case (VER-6 guarantee).
+row preservation, and the synthetic-extra-component case.
 """
 
 import csv
