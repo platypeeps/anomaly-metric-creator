@@ -1370,6 +1370,15 @@ def parse_args(argv=None):
         default="protobuf",
         help="OTLP payload mode for stream endpoint: json or protobuf (default: protobuf).",
     )
+    p.add_argument(
+        "--otel-activity-log",
+        type=Path,
+        default=Path("otel-activity.log"),
+        help="Path to the OTEL streaming activity log file. Records one line per "
+             "send attempt, retry, and failure when --otel-enabled is set. The file "
+             "is only created when streaming actually runs. "
+             "Default: ./otel-activity.log in the current directory.",
+    )
     p.add_argument("--inject-dst-artifact-day", type=int, default=0,
                    help="Inject a fall-DST artifact (duplicated 02:00–02:59 wall-clock hour) "
                         "on the given 1-based day of the run. 0 (default) disables. Generator "
@@ -1832,6 +1841,18 @@ def _build_otlp_log_protobuf(entry: dict) -> bytes:
     return req.SerializeToString()
 
 
+def _write_activity(log_file, event: str, **fields) -> None:
+    """Append one activity record. Format: ``ISO_TS EVENT k=v k=v``."""
+    if log_file is None:
+        return
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    parts = [now, event]
+    for k, v in fields.items():
+        parts.append(f"{k}={v}")
+    log_file.write(" ".join(parts) + "\n")
+    log_file.flush()
+
+
 def stream_otel_signals(
     endpoints: dict[str, str], # {"logs": url, "metrics": url, "traces": url}
     anomaly_rows: list[dict],
@@ -1842,10 +1863,13 @@ def stream_otel_signals(
     max_retries: int = 3,
     auth_headers: dict[str, dict[str, str]] | None = None, # {"logs": {"Authorization": ...}, ...}
     protocol: str = "json",
+    activity_log_path: Path | None = None,
 ) -> int:
     """Replay anomalies to multiple OTLP/HTTP endpoints with timeline-aware pacing.
 
-    Failures are logged to stderr and do not stop generation.
+    Failures are logged to stderr and do not stop generation. When
+    ``activity_log_path`` is set, also records one line per send attempt,
+    retry, and failure to that file.
     """
     sorted_rows = sorted(anomaly_rows, key=lambda row: row["timestamp"])
     if max_events is not None:
@@ -1853,80 +1877,137 @@ def stream_otel_signals(
     if not sorted_rows:
         return 0
 
+    log_file = None
+    if activity_log_path is not None:
+        activity_log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = open(activity_log_path, "w", encoding="utf-8")
+
+    active_signals = ",".join(s for s, u in endpoints.items() if u) or "(none)"
+    _write_activity(
+        log_file,
+        "START",
+        signals=active_signals,
+        events=len(sorted_rows),
+        protocol=protocol,
+        speedup=speedup,
+    )
+
     prev_dt = None
     sent = 0
-    for row in sorted_rows:
-        cur_dt = datetime.datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M:%S")
-        if prev_dt is not None:
-            wait_seconds = max(0.0, (cur_dt - prev_dt).total_seconds() / speedup)
-            if wait_seconds > 0:
-                time.sleep(wait_seconds)
-        prev_dt = cur_dt
+    try:
+        for row in sorted_rows:
+            cur_dt = datetime.datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M:%S")
+            if prev_dt is not None:
+                wait_seconds = max(0.0, (cur_dt - prev_dt).total_seconds() / speedup)
+                if wait_seconds > 0:
+                    time.sleep(wait_seconds)
+            prev_dt = cur_dt
 
-        # Prepare requests for each signal
-        for signal, endpoint in endpoints.items():
-            if not endpoint:
-                continue
+            # Prepare requests for each signal
+            for signal, endpoint in endpoints.items():
+                if not endpoint:
+                    continue
 
-            if signal == "logs":
-                if protocol == "protobuf":
-                    body = _build_otlp_log_protobuf(row)
-                    content_type = "application/x-protobuf"
+                if signal == "logs":
+                    if protocol == "protobuf":
+                        body = _build_otlp_log_protobuf(row)
+                        content_type = "application/x-protobuf"
+                    else:
+                        body = json.dumps(_build_otlp_log_payload(row)).encode("utf-8")
+                        content_type = "application/json"
+                elif signal == "metrics":
+                    if protocol == "protobuf":
+                        body = _build_otlp_metric_protobuf(row)
+                        content_type = "application/x-protobuf"
+                    else:
+                        body = json.dumps(_build_otlp_metric_payload(row)).encode("utf-8")
+                        content_type = "application/json"
+                elif signal == "traces":
+                    if protocol == "protobuf":
+                        body = _build_otlp_trace_protobuf(row)
+                        content_type = "application/x-protobuf"
+                    else:
+                        body = json.dumps(_build_otlp_trace_payload(row)).encode("utf-8")
+                        content_type = "application/json"
                 else:
-                    body = json.dumps(_build_otlp_log_payload(row)).encode("utf-8")
-                    content_type = "application/json"
-            elif signal == "metrics":
-                if protocol == "protobuf":
-                    body = _build_otlp_metric_protobuf(row)
-                    content_type = "application/x-protobuf"
-                else:
-                    body = json.dumps(_build_otlp_metric_payload(row)).encode("utf-8")
-                    content_type = "application/json"
-            elif signal == "traces":
-                if protocol == "protobuf":
-                    body = _build_otlp_trace_protobuf(row)
-                    content_type = "application/x-protobuf"
-                else:
-                    body = json.dumps(_build_otlp_trace_payload(row)).encode("utf-8")
-                    content_type = "application/json"
-            else:
-                continue
+                    continue
 
-            headers = {"Content-Type": content_type}
-            if auth_headers and signal in auth_headers:
-                headers.update(auth_headers[signal])
+                headers = {"Content-Type": content_type}
+                if auth_headers and signal in auth_headers:
+                    headers.update(auth_headers[signal])
 
-            req = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
-            attempts = 0
-            while True:
-                try:
-                    with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
-                        if response.status >= 400:
-                            raise urllib.error.HTTPError(
-                                endpoint,
-                                response.status,
-                                response.reason,
-                                response.headers,
-                                None,
+                _write_activity(
+                    log_file,
+                    "SEND",
+                    signal=signal,
+                    endpoint=endpoint,
+                    event_ts=row["timestamp"],
+                    component=row["component"],
+                    metric=row["metric"],
+                )
+
+                req = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
+                attempts = 0
+                while True:
+                    try:
+                        with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                            if response.status >= 400:
+                                raise urllib.error.HTTPError(
+                                    endpoint,
+                                    response.status,
+                                    response.reason,
+                                    response.headers,
+                                    None,
+                                )
+                        _write_activity(
+                            log_file,
+                            "OK",
+                            signal=signal,
+                            event_ts=row["timestamp"],
+                            component=row["component"],
+                            metric=row["metric"],
+                        )
+                        sent += 1
+                        break
+                    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+                        attempts += 1
+                        if attempts > max_retries:
+                            print(
+                                f"WARNING: OTEL {signal} stream failed for {row['timestamp']} "
+                                f"({row['component']}.{row['metric']}): {exc}",
+                                file=sys.stderr,
                             )
-                    sent += 1
-                    break
-                except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-                    attempts += 1
-                    if attempts > max_retries:
+                            _write_activity(
+                                log_file,
+                                "FAIL",
+                                signal=signal,
+                                event_ts=row["timestamp"],
+                                component=row["component"],
+                                metric=row["metric"],
+                                error=repr(str(exc)),
+                            )
+                            break
+                        backoff = min(2 ** (attempts - 1), 8)
                         print(
-                            f"WARNING: OTEL {signal} stream failed for {row['timestamp']} "
-                            f"({row['component']}.{row['metric']}): {exc}",
+                            f"WARNING: OTEL {signal} stream retry {attempts}/{max_retries} for "
+                            f"{row['timestamp']} ({row['component']}.{row['metric']}): {exc}",
                             file=sys.stderr,
                         )
-                        break
-                    backoff = min(2 ** (attempts - 1), 8)
-                    print(
-                        f"WARNING: OTEL {signal} stream retry {attempts}/{max_retries} for "
-                        f"{row['timestamp']} ({row['component']}.{row['metric']}): {exc}",
-                        file=sys.stderr,
-                    )
-                    time.sleep(backoff)
+                        _write_activity(
+                            log_file,
+                            "RETRY",
+                            signal=signal,
+                            event_ts=row["timestamp"],
+                            component=row["component"],
+                            metric=row["metric"],
+                            attempt=f"{attempts}/{max_retries}",
+                            error=repr(str(exc)),
+                        )
+                        time.sleep(backoff)
+    finally:
+        _write_activity(log_file, "END", sent=sent)
+        if log_file is not None:
+            log_file.close()
     return sent
 
 
@@ -2017,6 +2098,7 @@ def main(argv=None):
             max_events=args.otel_stream_max_events,
             auth_headers=auth_headers,
             protocol=args.otel_stream_protocol,
+            activity_log_path=args.otel_activity_log,
         )
 
     print(f"Done - {len(COMPONENTS)} log files + anomalies.csv + reporting artifacts written to {args.output_dir}")
