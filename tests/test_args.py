@@ -151,3 +151,40 @@ def test_parse_args_components_empty_fails(amc):
 def test_parse_args_components_all_keyword(amc):
     args = amc.parse_args(["--components", "all", "--output-dir", "test_out"])
     assert args.components == set(amc.COMPONENTS.keys())
+
+
+def test_parse_args_signal_level_default_medium(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.signal_level == "medium"
+
+
+@pytest.mark.parametrize("level", ["low", "medium", "high"])
+def test_parse_args_signal_level_explicit(amc, level):
+    args = amc.parse_args(["--signal-level", level, "--output-dir", "test_out"])
+    assert args.signal_level == level
+
+
+def test_parse_args_signal_level_invalid_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args(["--signal-level", "extreme", "--output-dir", "test_out"])
+
+
+def test_parse_args_signal_level_case_insensitive(amc):
+    args = amc.parse_args(["--signal-level", "HIGH", "--output-dir", "test_out"])
+    assert args.signal_level == "high"
+
+
+def test_parse_args_anomaly_count_default_unlimited(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.anomaly_count is None
+
+
+def test_parse_args_anomaly_count_explicit(amc):
+    args = amc.parse_args(["--anomaly-count", "7", "--output-dir", "test_out"])
+    assert args.anomaly_count == 7
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_parse_args_anomaly_count_non_positive_fails(amc, value):
+    with pytest.raises(SystemExit):
+        amc.parse_args(["--anomaly-count", value, "--output-dir", "test_out"])

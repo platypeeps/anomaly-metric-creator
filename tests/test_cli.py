@@ -30,6 +30,7 @@ def test_help_lists_every_flag():
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
                  "--interval-seconds", "--emit-selection", "--components",
+                 "--signal-level", "--anomaly-count",
                  "--otel-enabled", "--otel-disabled",
                  "--otel-logs-endpoint", "--otel-logs-auth-token",
                  "--otel-metrics-endpoint", "--otel-metrics-auth-token",
@@ -253,6 +254,152 @@ def test_components_filter_limits_otel_stream(tmp_path):
                 continue
             assert other not in body_text, \
                 f"OTel stream included {other} despite --components=authservice"
+
+
+def _count_manifest_rows(out_dir):
+    import csv as _csv
+    with open(out_dir / "anomalies.csv") as f:
+        return sum(1 for _ in _csv.DictReader(f))
+
+
+def test_signal_level_default_medium_matches_no_flag(tmp_path):
+    """--signal-level medium (default) is identical to omitting the flag."""
+    out_default = tmp_path / "level_default"
+    out_medium = tmp_path / "level_medium"
+    r1 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--output-dir", str(out_default),
+    )
+    r2 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--signal-level", "medium",
+        "--output-dir", str(out_medium),
+    )
+    assert r1.returncode == 0, r1.stderr
+    assert r2.returncode == 0, r2.stderr
+    assert _count_manifest_rows(out_default) == _count_manifest_rows(out_medium)
+
+
+def test_signal_level_high_emits_more_than_medium(tmp_path):
+    """--signal-level high includes high-pressure scenarios; manifest is strictly larger."""
+    out_med = tmp_path / "level_medium"
+    out_high = tmp_path / "level_high"
+    r1 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--signal-level", "medium",
+        "--output-dir", str(out_med),
+    )
+    r2 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--signal-level", "high",
+        "--output-dir", str(out_high),
+    )
+    assert r1.returncode == 0, r1.stderr
+    assert r2.returncode == 0, r2.stderr
+    assert _count_manifest_rows(out_high) > _count_manifest_rows(out_med)
+
+
+def test_signal_level_low_emits_fewer_than_medium(tmp_path):
+    """--signal-level low only keeps explicitly-low specs; manifest is strictly smaller."""
+    out_med = tmp_path / "level_medium"
+    out_low = tmp_path / "level_low"
+    r1 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--signal-level", "medium",
+        "--output-dir", str(out_med),
+    )
+    r2 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--signal-level", "low",
+        "--output-dir", str(out_low),
+    )
+    assert r1.returncode == 0, r1.stderr
+    assert r2.returncode == 0, r2.stderr
+    assert _count_manifest_rows(out_low) < _count_manifest_rows(out_med)
+
+
+def test_signal_level_invalid_value_fails(tmp_path):
+    result = _invoke(
+        "--signal-level", "extreme",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode != 0
+    assert "signal-level" in (result.stderr + result.stdout)
+
+
+def test_anomaly_count_caps_manifest(tmp_path):
+    """--anomaly-count caps the total anomalies in the manifest."""
+    out = tmp_path / "count_3"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--drop-rate", "0",
+        "--anomaly-count", "3",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    assert _count_manifest_rows(out) == 3
+
+
+def test_anomaly_count_larger_than_pool_keeps_all(tmp_path):
+    """--anomaly-count larger than the eligible pool keeps every spec — no error."""
+    out_unlimited = tmp_path / "count_unlimited"
+    out_huge = tmp_path / "count_huge"
+    r1 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--output-dir", str(out_unlimited),
+    )
+    r2 = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--anomaly-count", "100000",
+        "--output-dir", str(out_huge),
+    )
+    assert r1.returncode == 0, r1.stderr
+    assert r2.returncode == 0, r2.stderr
+    assert _count_manifest_rows(out_huge) == _count_manifest_rows(out_unlimited)
+
+
+def test_anomaly_count_deterministic_for_same_seed(tmp_path):
+    """Repeated runs with the same seed + count produce the same manifest."""
+    import csv as _csv
+
+    def _manifest_keys(out_dir):
+        with open(out_dir / "anomalies.csv") as f:
+            return sorted(
+                (r["component"], r["metric"], r["description"])
+                for r in _csv.DictReader(f)
+            )
+
+    out_a = tmp_path / "count_seed_a"
+    out_b = tmp_path / "count_seed_b"
+    args = [
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--anomaly-count", "5",
+        "--seed", "42",
+    ]
+    r1 = _invoke(*args, "--output-dir", str(out_a))
+    r2 = _invoke(*args, "--output-dir", str(out_b))
+    assert r1.returncode == 0, r1.stderr
+    assert r2.returncode == 0, r2.stderr
+    assert _manifest_keys(out_a) == _manifest_keys(out_b)
+
+
+def test_anomaly_count_invalid_value_fails(tmp_path):
+    result = _invoke(
+        "--anomaly-count", "0",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode != 0
+    assert "anomaly-count" in (result.stderr + result.stdout)
 
 
 def test_combine_requires_metrics_selection(tmp_path):

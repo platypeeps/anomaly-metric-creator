@@ -51,6 +51,16 @@ python3 anomaly-metric-creator.py --emit-selection traces
 # and OTEL streaming are all filtered to just these components):
 python3 anomaly-metric-creator.py --components authservice,database
 
+# Pick the signal intensity level: low (only benign baseline shifts),
+# medium (default — today's full catalog), or high (additionally activates
+# the high-pressure cross-component scenarios):
+python3 anomaly-metric-creator.py --signal-level high
+
+# Cap the total anomaly count across the whole dataset (deterministic for a
+# given --seed). Useful for keeping noisy test datasets small or sweeping
+# across anomaly density:
+python3 anomaly-metric-creator.py --anomaly-count 25
+
 # Stream anomaly events as OTLP signals while generating locally:
 # OTEL streaming is OFF by default; pass --otel-enabled to opt in.
 python3 anomaly-metric-creator.py \
@@ -77,6 +87,8 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `> 0`. Anomalies map to the nearest row via `round(time_offset / interval)`. |
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
+| `--signal-level`    | `medium`    | Anomaly intensity level: `low`, `medium` (default), or `high`. Inclusion hierarchy: `low` only fires specs explicitly tagged `severity="low"` (today: a handful of benign Monday-morning baseline shifts); `medium` adds the standard catalog (the default behavior); `high` additionally activates the high-pressure cross-component scenarios (regional failover storm, coordinated cache+DB meltdown, LLM provider outage, gateway DDoS saturation, storage layer pressure) and their cascades. |
+| `--anomaly-count`   | _unlimited_ | Optional cap on the total number of injected anomalies (primary specs + cascades) across the whole dataset. Sampling is deterministic for a given `--seed` and uses its own RNG stream so it doesn't perturb the column noise. Applied after `--signal-level` and `--components` filters. Out-of-range specs (e.g. multi-day cascades on a 1-day run) are excluded from the sampling pool. |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
@@ -238,6 +250,24 @@ propagation:
 - 09:00:20 — `mqservice.pending_messages` ~220,000 (telemetry pipeline lag → downstream queue backup).
 - 10:00:30 — `database.connections` ~7,800 (scheduler queue overflow → DB connection buildup).
 - 12:00:12 — `apigateway.error_rate` ~15% (payment provider 5xx → gateway).
+
+### High-pressure cross-component scenarios (`--signal-level high`)
+
+These scenarios are gated by `--signal-level high` and produce coordinated
+multi-component pressure to exercise blast-radius detection. Their cascades
+fan out into 3–4 additional services per scenario.
+
+| Time | Component | Metric | Shape | Failure Mode |
+| --- | --- | --- | --- | --- |
+| 05:00 | `loadbalancer` | `backend_5xx_per_sec` | `ramp_linear` | **Regional failover storm** — backend 5xx ramps to 220/s over 5 min; cascades to gateway 5xx (~30%), DB connection pile-up (~9,000), auth errors (~25%), MQ pending ~500k. |
+| 11:30 | `cacheservice` | `memory_util_pct` | `ramp_linear` | **Cache+DB meltdown** — cache memory saturates 80% → 99.5% over 10 min, paired with DB read latency climbing to 800 ms; cascades double LLM latency and drag gateway backend latency. |
+| 11:30 | `database` | `read_latency_ms` | `ramp_linear` | **Cache+DB meltdown** (paired) — DB read latency climbs to 800 ms over 10 min. |
+| 16:00 | `apigateway` | `requests_per_sec` | `sustained` | **Gateway DDoS saturation** — sustained 5,000 RPS for 10 min, paired with CPU pinned at 99%; cascades to auth latency ~600 ms, DB CPU ~92%, MQ pending ~800k. |
+| 16:00 | `apigateway` | `cpu_util_pct` | `sustained` | **Gateway DDoS saturation** (paired) — CPU pinned at 99% for 10 min. |
+| 20:00 | `llm_analytics` | `llm_api_error_rate` | `ramp_linear` | **LLM provider sustained outage** — error rate ramps 5% → 60% over 15 min, paired with latency climbing to 8,000 ms; cascades to gateway error rate ~25% and cache miss surge ~3,000. |
+| 20:00 | `llm_analytics` | `avg_llm_latency_ms` | `ramp_linear` | **LLM provider sustained outage** (paired) — latency climbs to 8,000 ms over 15 min. |
+| 22:00 | `objectstore` | `put_latency_ms` | `ramp_linear` | **Storage layer pressure** — PUT latency climbs 60 → 700 ms over 10 min, paired with object-store 5xx surge to 25%; cascades to DB write latency ~90 ms and gateway error rate ~15%. |
+| 22:00 | `objectstore` | `5xx_rate` | `step` | **Storage layer pressure** (paired) — object-store 5xx surge to 25%. |
 
 ### Multi-day LLM catalog (`--duration-days >= 7`)
 
