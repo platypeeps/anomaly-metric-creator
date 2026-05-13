@@ -42,3 +42,31 @@ def test_parse_args_emit_selection(amc):
 def test_parse_args_invalid_emit_selection(amc):
     with pytest.raises(SystemExit):
         amc.parse_args(["--emit-selection", "invalid", "--output-dir", "test_out"])
+
+
+def test_parse_args_otel_enabled_default_off(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_enabled is False
+
+
+def test_parse_args_otel_enabled_explicit_on(amc):
+    args = amc.parse_args([
+        "--otel-enabled",
+        "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_enabled is True
+
+
+def test_parse_args_otel_disabled_explicit_off(amc):
+    args = amc.parse_args([
+        "--otel-disabled",
+        "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_enabled is False
+
+
+def test_parse_args_otel_enabled_without_any_endpoint_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args(["--otel-enabled", "--output-dir", "test_out"])

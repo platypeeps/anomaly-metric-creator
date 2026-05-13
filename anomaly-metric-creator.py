@@ -1278,12 +1278,27 @@ def parse_args(argv=None):
         help="Comma-separated artifact selection: metrics, logs, traces "
              "(default: metrics,logs,traces).",
     )
+    otel_toggle = p.add_mutually_exclusive_group()
+    otel_toggle.add_argument(
+        "--otel-enabled",
+        dest="otel_enabled",
+        action="store_true",
+        help="Enable streaming anomaly events to the configured OTLP/HTTP endpoints. "
+             "Default: off. When off, configured endpoints are ignored at runtime.",
+    )
+    otel_toggle.add_argument(
+        "--otel-disabled",
+        dest="otel_enabled",
+        action="store_false",
+        help="Explicitly disable OTEL streaming (the default). Overrides --otel-enabled.",
+    )
+    p.set_defaults(otel_enabled=False)
     p.add_argument(
         "--otel-logs-endpoint",
         type=str,
         default=os.environ.get("MEZMO_OTEL_LOGS_ENDPOINT"),
         help="Optional OTLP/HTTP logs endpoint (for example http://localhost:4318/v1/logs). "
-             "When set, anomaly events are replayed as logs to this endpoint. "
+             "Streamed only when --otel-enabled is also passed. "
              "Env override: MEZMO_OTEL_LOGS_ENDPOINT.",
     )
     p.add_argument(
@@ -1385,6 +1400,12 @@ def parse_args(argv=None):
         p.error("--emit-selection must contain at least one of metrics,logs,traces")
     if args.combine and "metrics" not in selected:
         p.error("--combine requires --emit-selection to include metrics")
+    if args.otel_enabled and not any([
+        args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint
+    ]):
+        p.error("--otel-enabled requires at least one of --otel-logs-endpoint, "
+                "--otel-metrics-endpoint, or --otel-traces-endpoint to be set "
+                "(via flag or env var).")
     if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
         endpoints = [
             ("logs", args.otel_logs_endpoint, args.otel_logs_auth_token),
@@ -1980,13 +2001,14 @@ def main(argv=None):
         "metrics": args.otel_metrics_endpoint,
         "traces": args.otel_traces_endpoint,
     }
-    if any(endpoints.values()):
+    otel_active = args.otel_enabled and any(endpoints.values())
+    if otel_active:
         auth_headers = {}
         for signal in ["logs", "metrics", "traces"]:
             token = getattr(args, f"otel_{signal}_auth_token")
             if token:
                 auth_headers[signal] = {"Authorization": f"{args.otel_stream_auth_scheme} {token}"}
-        
+
         streamed_events = stream_otel_signals(
             endpoints,
             anomalies,
@@ -2001,9 +2023,11 @@ def main(argv=None):
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
     print(f"   Anomalies recorded: {len(anomalies)}")
-    if any(endpoints.values()):
+    if otel_active:
         active = [f"{s} -> {u}" for s, u in endpoints.items() if u]
         print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
+    elif any(endpoints.values()):
+        print("   OTEL streaming disabled (pass --otel-enabled to send to configured endpoints)")
 
     if args.combine:
         combine_logs(args.output_dir)

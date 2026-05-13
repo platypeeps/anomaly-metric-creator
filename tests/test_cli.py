@@ -29,7 +29,8 @@ def test_help_lists_every_flag():
     assert result.returncode == 0, result.stderr
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
-                 "--interval-seconds", "--emit-selection", 
+                 "--interval-seconds", "--emit-selection",
+                 "--otel-enabled", "--otel-disabled",
                  "--otel-logs-endpoint", "--otel-logs-auth-token",
                  "--otel-metrics-endpoint", "--otel-metrics-auth-token",
                  "--otel-traces-endpoint", "--otel-traces-auth-token",
@@ -205,6 +206,7 @@ def test_otel_stream_posts_events_to_endpoints(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
+            "--otel-enabled",
             "--otel-logs-endpoint", f"{base_url}/v1/logs",
             "--otel-metrics-endpoint", f"{base_url}/v1/metrics",
             "--otel-traces-endpoint", f"{base_url}/v1/traces",
@@ -223,6 +225,85 @@ def test_otel_stream_posts_events_to_endpoints(tmp_path):
     assert len(received) == 3, f"expected 3 streamed events, got {len(received)}"
     paths = {item[0] for item in received}
     assert paths == {"/v1/logs", "/v1/metrics", "/v1/traces"}
+
+
+def test_otel_stream_disabled_by_default_makes_no_requests(tmp_path):
+    """Endpoint configured but --otel-enabled omitted: no POSTs should occur."""
+    received = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            received.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-logs-endpoint", f"{base_url}/v1/logs",
+            "--otel-stream-max-events", "1",
+            "--output-dir", str(tmp_path / "stream_disabled_default"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert received == [], f"expected no streamed events when disabled, got {received}"
+
+
+def test_otel_stream_explicit_disabled_makes_no_requests(tmp_path):
+    """--otel-disabled with endpoint configured: no POSTs should occur."""
+    received = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            received.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-disabled",
+            "--otel-logs-endpoint", f"{base_url}/v1/logs",
+            "--otel-stream-max-events", "1",
+            "--output-dir", str(tmp_path / "stream_disabled_explicit"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert received == [], f"expected no streamed events when disabled, got {received}"
+
+
+def test_otel_enabled_without_endpoints_fails(tmp_path):
+    """--otel-enabled with no configured endpoint should be a usage error."""
+    result = _invoke(
+        "--otel-enabled",
+        "--output-dir", str(tmp_path / "stream_enabled_no_endpoints"),
+    )
+    assert result.returncode != 0, "expected non-zero exit for --otel-enabled with no endpoints"
+    assert "otel-enabled" in (result.stderr + result.stdout)
 
 
 def test_otel_stream_warns_and_continues_on_receiver_failure(tmp_path):
@@ -245,6 +326,7 @@ def test_otel_stream_warns_and_continues_on_receiver_failure(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
+            "--otel-enabled",
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -281,6 +363,7 @@ def test_otel_stream_uses_env_based_auth_token(tmp_path, monkeypatch):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
+            "--otel-enabled",
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_auth_run"),
@@ -314,6 +397,7 @@ def test_otel_stream_uses_explicit_auth_token_and_scheme(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
+            "--otel-enabled",
             "--otel-logs-endpoint", endpoint,
             "--otel-logs-auth-token", "direct-token",
             "--otel-stream-auth-scheme", "ApiKey",
@@ -352,6 +436,7 @@ def test_otel_stream_uses_env_controls_for_endpoint_and_auth(tmp_path, monkeypat
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
+            "--otel-enabled",
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_env_auth_run"),
         )
@@ -384,6 +469,7 @@ def test_otel_stream_protobuf_sets_content_type(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
+            "--otel-enabled",
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-protocol", "protobuf",
             "--otel-stream-max-events", "1",
@@ -420,6 +506,7 @@ def test_otel_stream_default_protocol_is_protobuf(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
+            "--otel-enabled",
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_default_proto_run"),
