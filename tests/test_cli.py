@@ -402,6 +402,49 @@ def test_anomaly_count_invalid_value_fails(tmp_path):
     assert "anomaly-count" in (result.stderr + result.stdout)
 
 
+def test_anomaly_count_preserves_manifest_row_order(tmp_path):
+    """Manifest row order is identical (not just same set) across two
+    same-seed runs with --anomaly-count. Guards against accidentally
+    iterating a Python set, whose hash-iteration order is not stable
+    across CPython versions / PYTHONHASHSEED variation.
+    """
+    out_a = tmp_path / "order_a"
+    out_b = tmp_path / "order_b"
+    args = [
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--drop-rate", "0",
+        "--anomaly-count", "10",
+        "--seed", "42",
+    ]
+    r1 = _invoke(*args, "--output-dir", str(out_a))
+    r2 = _invoke(*args, "--output-dir", str(out_b))
+    assert r1.returncode == 0, r1.stderr
+    assert r2.returncode == 0, r2.stderr
+    with open(out_a / "anomalies.csv") as f_a, open(out_b / "anomalies.csv") as f_b:
+        assert f_a.read() == f_b.read(), \
+            "manifest row order must match exactly across same-seed runs"
+
+
+def test_anomaly_count_still_warns_for_out_of_range_specs(tmp_path):
+    """--anomaly-count must not silently suppress the stderr soft-skip
+    warning for out-of-range specs (e.g. multi-day cascades on a 1-day run).
+    """
+    out = tmp_path / "count_with_oor"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--drop-rate", "0",
+        "--anomaly-count", "100000",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "skipping" in result.stderr, (
+        "expected stderr soft-skip warning even with --anomaly-count set; "
+        f"got: {result.stderr!r}"
+    )
+
+
 def test_combine_requires_metrics_selection(tmp_path):
     out = tmp_path / "combine_no_metrics"
     result = _invoke(

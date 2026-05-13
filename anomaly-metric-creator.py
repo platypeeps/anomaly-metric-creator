@@ -1500,22 +1500,20 @@ def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: d
     that fail any gate are dropped from the underlying lists/dicts so the
     generator never sees them.
 
-    When ``anomaly_count`` is ``None`` the post-severity/post-component
-    registries are returned untouched, including out-of-range specs which the
-    generator soft-skips with the usual stderr warning. When ``anomaly_count``
-    is set, out-of-range specs (``time_offset`` rounding to a row outside
-    ``[0, n_rows)``) are excluded both from the sampling pool and from the
-    generator, so the cap matches manifest output exactly — losing the skip
-    warning for those specs is acceptable since they could not have produced
-    manifest rows anyway.
+    Out-of-range specs (``time_offset`` rounding to a row outside
+    ``[0, n_rows)``) are excluded from the ``--anomaly-count`` sampling pool
+    but always remain in the registries, so the generator's existing stderr
+    soft-skip warning fires for them in every configuration. The cap still
+    matches manifest output exactly because out-of-range specs cannot
+    produce manifest rows.
 
     Sampling for ``anomaly_count`` uses a dedicated
-    ``np.random.SeedSequence`` derived from ``seed`` with a stable
-    ``("anomaly_count_cap",)`` spawn key, so it doesn't perturb the
-    column-noise RNG stream that ``generate_component`` shares via
-    ``np.random``. Surviving specs are tracked by their position in the
-    eligible list rather than by ``id()`` so the function is robust to repeat
-    invocations against shared dict objects.
+    ``np.random.SeedSequence`` derived from ``seed`` with a fixed
+    ``spawn_key`` tag, so it doesn't perturb the column-noise RNG stream that
+    ``generate_component`` shares via ``np.random``. The sampled positions are
+    iterated in sorted order so the manifest row order is fully deterministic
+    for a given ``(seed, anomaly_count, eligible-pool)`` triple — independent
+    of CPython's set iteration order.
     """
     allowed_severities = SIGNAL_LEVELS[signal_level]
     n_rows = int(total_seconds // interval_seconds)
@@ -1540,35 +1538,27 @@ def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: d
     if anomaly_count is None:
         return
 
-    # Drop out-of-range specs from the registries unconditionally when the
-    # cap is active: the docstring promises both the sampling pool and the
-    # generator see the same in-range view. Doing this before the early-
-    # return below keeps the promise even when the cap is wider than the
-    # eligible pool.
-    for component, specs in component_anomalies.items():
-        component_anomalies[component] = [s for s in specs if _in_range(s)]
-    for component in list(cascade_registry.keys()):
-        cascade_registry[component] = [s for s in cascade_registry[component]
-                                       if _in_range(s)]
-
-    # Build a positional view: each entry tags which component/source bucket
-    # the spec came from, then sampling decides which positions survive.
+    # Build a positional view of the in-range pool only; out-of-range specs
+    # cannot produce manifest rows but stay in the registries so the
+    # generator's existing soft-skip warning still fires for them.
     positional: list[tuple[str, str, dict]] = []
     for component, specs in component_anomalies.items():
         for spec in specs:
-            positional.append((component, "primary", spec))
+            if _in_range(spec):
+                positional.append((component, "primary", spec))
     for component, specs in cascade_registry.items():
         for spec in specs:
-            positional.append((component, "cascade", spec))
+            if _in_range(spec):
+                positional.append((component, "cascade", spec))
 
     if anomaly_count >= len(positional):
         return
 
-    # Fixed 32-bit tag derived once from sha256(b"anomaly_count_cap") so this
-    # named sub-seed is decoupled from any other RandomState the caller uses.
     seq = np.random.SeedSequence(seed, spawn_key=(_ANOMALY_COUNT_CAP_SALT,))
     rng = np.random.default_rng(seq)
-    keep_positions = set(
+    # Iterate positions in sorted order so manifest row sequence is
+    # independent of Python set hash-iteration order.
+    keep_positions = sorted(
         rng.choice(len(positional), size=anomaly_count, replace=False).tolist()
     )
 
@@ -1579,10 +1569,15 @@ def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: d
         target = kept_primary if source == "primary" else kept_cascade
         target.setdefault(component, []).append(spec)
 
+    # Re-append out-of-range specs so the generator continues to surface its
+    # stderr soft-skip warning for them; they cannot contribute manifest
+    # rows, so the cap still matches output exactly.
     for component in list(component_anomalies.keys()):
-        component_anomalies[component] = kept_primary.get(component, [])
+        out_of_range = [s for s in component_anomalies[component] if not _in_range(s)]
+        component_anomalies[component] = kept_primary.get(component, []) + out_of_range
     for component in list(cascade_registry.keys()):
-        cascade_registry[component] = kept_cascade.get(component, [])
+        out_of_range = [s for s in cascade_registry[component] if not _in_range(s)]
+        cascade_registry[component] = kept_cascade.get(component, []) + out_of_range
 
 
 # ------------------------------------------------------------------
