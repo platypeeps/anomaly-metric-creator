@@ -1,5 +1,5 @@
 """Correctness invariants: row counts, manifest/CSV coherence, spec coverage,
-value-band sanity, and schema-driven plumbing introduced by VER-4/5/8.
+value-band sanity, and schema-driven plumbing.
 """
 
 import csv
@@ -30,8 +30,8 @@ from conftest import (
 # ------------------------------------------------------------------
 def _assert_row_count_within_tolerance(amc, run, days):
     """Each component CSV has 1 header + (total_seconds - dropped) data rows, with
-    dropped count within 5σ of drop_rate * total_seconds (post VER-5: dropped
-    seconds emit no row at all, so file line count == 1 + unique-timestamp rows).
+    dropped count within 5σ of drop_rate * total_seconds. Dropped seconds emit
+    no row at all, so file line count == 1 + unique-timestamp rows.
     """
     drop_rate = amc.DEFAULT_DROP_RATE
     n = amc.SECONDS_PER_DAY * days
@@ -76,8 +76,8 @@ def test_drop_rate_within_tolerance(amc, one_day_run_a):
 
 
 def test_no_empty_csv_records(one_day_run_a, seven_day_run):
-    """VER-5 AC: dropped samples produce no CSV record at all. Every emitted row
-    has a timestamp + at least one non-empty data cell.
+    """Dropped samples produce no CSV record at all. Every emitted row has a
+    timestamp + at least one non-empty data cell.
     """
     for run in (one_day_run_a, seven_day_run):
         for component in COMPONENTS:
@@ -94,7 +94,7 @@ def test_no_empty_csv_records(one_day_run_a, seven_day_run):
 
 
 # ------------------------------------------------------------------
-# Manifest ↔ CSV coherence (VER-5 joint gate)
+# Manifest ↔ CSV coherence (joint gate)
 # ------------------------------------------------------------------
 CROSS_CHECK_SEEDS = [1, 7, 42, 99]
 
@@ -102,9 +102,9 @@ CROSS_CHECK_SEEDS = [1, 7, 42, 99]
 @pytest.mark.parametrize("seed", CROSS_CHECK_SEEDS)
 def test_manifest_csv_cross_check(amc, tmp_path, seed):
     """Multi-seed: every (component, metric, timestamp) in anomalies.csv maps to
-    a non-empty CSV cell. The pre-VER-5 bug silently desyncs whenever an anomaly
-    second happens to coincide with a drop — passes by coincidence at a single
-    seed, so the multi-seed sweep is the real gate.
+    a non-empty CSV cell. A naive implementation silently desyncs whenever an
+    anomaly second happens to coincide with a drop — it passes by coincidence
+    at a single seed, so the multi-seed sweep is the real gate.
     """
     out = tmp_path / f"seed_{seed}"
     out.mkdir()
@@ -134,11 +134,11 @@ def test_manifest_csv_cross_check(amc, tmp_path, seed):
 
 
 # ------------------------------------------------------------------
-# Spec coverage (VER-4 loud-failure + multi-day reachability)
+# Spec coverage (loud-failure + multi-day reachability)
 # ------------------------------------------------------------------
 def test_spec_coverage_one_day(amc, one_day_run_a):
     """Every in-range spec appears in the 1-day manifest, out-of-range ones do not,
-    and the stderr WARNING names the duration required to reach them (VER-4 AC).
+    and the stderr WARNING names the duration required to reach them.
     """
     seen = {(e["component"], e["metric"], e["description"]) for e in read_manifest(one_day_run_a.out_dir)}
     in_range_missing = []
@@ -260,7 +260,7 @@ def test_anomalies_match_declared_value(amc, seven_day_run):
         if int(spec.get("duration_seconds", 0) or 0) > 0:
             # Span anomalies use shape-driven values rather than the generator
             # output at the start row. Per-shape value coverage lives in the
-            # dedicated VER-20 shape tests below.
+            # dedicated shape tests below.
             continue
         ts = datetime.datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S")
         header = headers_by_c[entry["component"]]
@@ -282,7 +282,7 @@ def test_anomalies_match_declared_value(amc, seven_day_run):
 
 
 # ------------------------------------------------------------------
-# Schema / refactor invariants (VER-8)
+# Schema / refactor invariants
 # ------------------------------------------------------------------
 def test_schema_is_single_source_of_truth(amc, one_day_run_a):
     """COMPONENTS drives the CSV columns — adding a metric edits exactly one list."""
@@ -419,7 +419,7 @@ def test_active_sessions_has_daily_variation(amc, one_day_run_a):
 
 
 def test_multiplier_scales_jitter_variance(amc):
-    """VER-21: jitter is applied before multiplier so variance scales too."""
+    """Jitter is applied before multiplier so variance scales too."""
     n_rows = 20_000
     ts_array = np.array([np.datetime64(amc.START)] * n_rows)
     elapsed = np.arange(n_rows, dtype=np.float64)
@@ -440,7 +440,7 @@ def test_multiplier_scales_jitter_variance(amc):
 
 
 # ------------------------------------------------------------------
-# VER-14: --interval-seconds sampling-density knob.
+# --interval-seconds sampling-density knob.
 # ------------------------------------------------------------------
 @pytest.fixture(scope="session")
 def one_day_interval5_run(amc, tmp_path_factory):

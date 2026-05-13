@@ -1,4 +1,4 @@
-"""VER-20 shape tests: ramp endpoints, sustained span row count, periodic mean,
+"""Anomaly shape tests: ramp endpoints, sustained span row count, periodic mean,
 and the DST-artifact CLI flag.
 
 Each test exercises a single shape end-to-end through ``main()`` and reads the
@@ -241,8 +241,8 @@ def test_brownout_triangle_profile(amc, one_day_run_a):
 # Manifest entry — span anomalies appear once, at the span start.
 # ------------------------------------------------------------------
 def test_span_manifest_at_start(amc, one_day_run_a):
-    """Every VER-20 span spec emits exactly one manifest row, with the
-    timestamp equal to the span's start."""
+    """Every span spec emits exactly one manifest row, with the timestamp
+    equal to the span's start."""
     manifest = read_manifest(one_day_run_a.out_dir)
     expected = {
         ("cacheservice", "memory_util_pct", "2026-03-10 08:00:00"),
@@ -257,7 +257,7 @@ def test_span_manifest_at_start(amc, one_day_run_a):
     }
     seen = {(e["component"], e["metric"], e["timestamp"]) for e in manifest}
     missing = expected - seen
-    assert not missing, f"VER-20 span manifest entries missing: {sorted(missing)}"
+    assert not missing, f"Span manifest entries missing: {sorted(missing)}"
 
 
 # ------------------------------------------------------------------

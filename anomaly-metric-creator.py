@@ -180,9 +180,9 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         values[:, col] = _natural_column(spec, ts_array, elapsed)
 
     # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
-    # CSV stay coherent (a dropped row has no CSV entry, so it must have no
-    # manifest entry either — the VER-5 invariant). Sort for a deterministic
-    # order of scale/jitter draws within a run.
+    # CSV stay coherent: a dropped row has no CSV entry, so it must have no
+    # manifest entry either. Sort for a deterministic order of scale/jitter
+    # draws within a run.
     name_to_col = {s.name: i for i, s in enumerate(specs)}
     for row_idx, aspec, t_within, span_idx in sorted_overrides:
         if drop_mask[row_idx]:
@@ -220,8 +220,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         rows = np.char.add(rows, ",")
         rows = np.char.add(rows, str_vals[:, col])
 
-    # VER-20: fall-DST artifact. Duplicate the 02:00–02:59 wall-clock hour on
-    # the configured day so downstream consumers must handle non-monotonic
+    # Fall-DST artifact. Duplicate the 02:00–02:59 wall-clock hour on the
+    # configured day so downstream consumers must handle non-monotonic
     # timestamps (a real-world quirk that breaks naive timeseries pipelines).
     if dst_inject_day > 0:
         rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
@@ -433,10 +433,10 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("queries_per_sec", 25000, 2000),
         MetricSpec("cpu_util_pct", 18, 3),
         MetricSpec("error_rate", 0.1, 0.05),
-        # VER-20: disk_used_pct trends slightly upward across the day under
-        # natural conditions; the disk-exhaustion ramp anomaly drives it to
-        # 100%. ``std=0`` keeps this column out of the shared RNG stream so
-        # adding it doesn't shift draws on later components.
+        # disk_used_pct trends slightly upward across the day under natural
+        # conditions; the disk-exhaustion ramp anomaly drives it to 100%.
+        # ``std=0`` keeps this column out of the shared RNG stream so adding
+        # it doesn't shift draws on later components.
         MetricSpec("disk_used_pct", 8.0,
                    additive=lambda _ts, elapsed: 2e-5 * elapsed,
                    clip_min=0),
@@ -553,9 +553,9 @@ anoms_cache = [
         "description": "Memory pressure — 97% nearing eviction",
         "generator": lambda ts,idx: 97.0
     },
-    # VER-20: slow memory leak — linear ramp 70% → 96% over 4h, then snap-back
-    # to natural baseline (no explicit reset spec; the span ends and the
-    # natural column resumes at row 12:00:00).
+    # Slow memory leak — linear ramp 70% → 96% over 4h, then snap-back to
+    # natural baseline (no explicit reset spec; the span ends and the natural
+    # column resumes at row 12:00:00).
     {
         "time_offset": 8*3600,                    # 08:00:00
         "duration_seconds": 4*3600,               # 4h ramp
@@ -586,8 +586,8 @@ anoms_api = [
         "description": "5xx burst from bad config push — 12 %",
         "generator": lambda ts,idx: 0.12
     },
-    # VER-20: GC sawtooth — avg_response_time_ms oscillates 180 ↔ 380 every 90s
-    # for 30 min, mimicking stop-the-world pauses on a leaky JVM-style workload.
+    # GC sawtooth — avg_response_time_ms oscillates 180 ↔ 380 every 90s for
+    # 30 min, mimicking stop-the-world pauses on a leaky JVM-style workload.
     {
         "time_offset": 9*3600 + 30*60,            # 09:30:00
         "duration_seconds": 30*60,                # 30 min
@@ -597,10 +597,10 @@ anoms_api = [
         "description": "GC sawtooth — response time oscillates 180↔380 ms every 90s for 30 min",
         "generator": lambda ts,idx: 180.0,        # midline - amplitude
     },
-    # VER-20: deploy regression — step shift +30% (180 → 234 ms) at 10:00,
-    # sustained to end of day. The existing 14:31:30 MQ-cascade single-row
-    # override still fires inside the span (sort order applies the step first,
-    # then the cascade overwrites that one row).
+    # Deploy regression — step shift +30% (180 → 234 ms) at 10:00, sustained
+    # to end of day. The existing 14:31:30 MQ-cascade single-row override
+    # still fires inside the span (sort order applies the step first, then
+    # the cascade overwrites that one row).
     {
         "time_offset": 10*3600,                   # 10:00:00
         "duration_seconds": 14*3600,              # 10:00 → 24:00
@@ -609,9 +609,9 @@ anoms_api = [
         "description": "Deploy regression — avg_response_time_ms step +30% to 234 ms (sustained)",
         "generator": lambda ts,idx: 234.0,
     },
-    # VER-20: retry storm — requests_per_sec sustained 2× baseline for 8 min,
-    # with a co-spec on error_rate climbing in parallel as retries amplify
-    # transient failures.
+    # Retry storm — requests_per_sec sustained 2× baseline for 8 min, with a
+    # co-spec on error_rate climbing in parallel as retries amplify transient
+    # failures.
     {
         "time_offset": 19*3600,                   # 19:00:00
         "duration_seconds": 8*60,                 # 8 min
@@ -663,8 +663,8 @@ anoms_db = [
         "description": "Nightly batch kickoff — 55k QPS",
         "generator": lambda ts,idx: 55000
     },
-    # VER-20: disk exhaustion — monotonic 24h climb on the new disk_used_pct
-    # column. Starts at the natural baseline (~8) and ramps to 100% by EOD.
+    # Disk exhaustion — monotonic 24h climb on the disk_used_pct column.
+    # Starts at the natural baseline (~8) and ramps to 100% by EOD.
     {
         "time_offset": 0,
         "duration_seconds": SECONDS_PER_DAY,
@@ -674,8 +674,8 @@ anoms_db = [
         "description": "Disk exhaustion — disk_used_pct ramps 8% → 100% over 24h",
         "generator": lambda ts,idx: 8.0,
     },
-    # VER-20: connection pool leak — connections ramp 3,000 → 9,500 over 6h.
-    # Slot 16:00–22:00 keeps the span clear of the existing 14:32 MQ-cascade
+    # Connection pool leak — connections ramp 3,000 → 9,500 over 6h. Slot
+    # 16:00–22:00 keeps the span clear of the existing 14:32 MQ-cascade
     # single-row override on database.connections.
     {
         "time_offset": 16*3600,                   # 16:00:00
@@ -686,9 +686,9 @@ anoms_db = [
         "description": "Connection pool leak — connections ramp 3,000 → 9,500 over 6h",
         "generator": lambda ts,idx: 3000.0,
     },
-    # VER-20: brown-out — error_rate ramps 0.1% → 8% over 10 min, then back
-    # down over 10 min. Two ramp specs implement the triangle profile and the
-    # snap-back is implicit (span ends, natural baseline resumes). No cascade.
+    # Brown-out — error_rate ramps 0.1% → 8% over 10 min, then back down over
+    # 10 min. Two ramp specs implement the triangle profile and the snap-back
+    # is implicit (span ends, natural baseline resumes). No cascade.
     {
         "time_offset": 18*3600,                   # 18:00:00 — climb phase
         "duration_seconds": 10*60,
