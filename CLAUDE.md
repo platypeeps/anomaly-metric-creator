@@ -87,13 +87,25 @@ into two zones:
   so existing default output stays byte-identical; they are only emitted when callers
   pass `--metrics-per-component` high enough to reach them.
 
-Up to `MAX_METRICS_PER_COMPONENT` (10) entries are allowed per component. No other
-changes needed — the column flows through `_natural_column()` and
+Up to `MAX_METRICS_PER_COMPONENT` (10) entries are allowed per component, and every
+catalog in `COMPONENTS` is already at that cap. Adding a new metric therefore
+requires one of:
+
+- Replace or remove an existing supplemental metric (zone 2) — preserves the
+  default schema and stays within the cap.
+- Intentionally raise `MAX_METRICS_PER_COMPONENT` — must be matched by an update
+  in `tests/conftest.py` (`COMPONENT_FIELDS` per-component total) and re-run the
+  test suite; the import-time validator rejects any list longer than the cap.
+
+Once the slot exists, the column flows through `_natural_column()` and
 `generate_component()` automatically.
 
 ### Adding new components
 
-A new component needs four lockstep entries:
+A new component needs six lockstep entries — four in `anomaly-metric-creator.py`
+and two in `tests/conftest.py`:
+
+In `anomaly-metric-creator.py`:
 
 1. `COMPONENTS[name]` — ordered `MetricSpec` list (up to `MAX_METRICS_PER_COMPONENT`).
 2. `DEFAULT_METRICS_PER_COMPONENT[name]` — how many metrics the new component
@@ -103,12 +115,22 @@ A new component needs four lockstep entries:
 4. `COMPONENT_PRIMARY_ANOMALIES[name]` — pair the new `anoms_*` list with the
    component name so the runner picks it up.
 
+In `tests/conftest.py`:
+
+5. `COMPONENT_FIELDS[name]` — `(anom_attr, total_metric_count)`. Drives
+   `tests/test_registry.py` (component coverage, anomaly attribute presence,
+   metric count) and several `tests/test_correctness.py` checks.
+6. `DEFAULT_METRIC_COUNT[name]` — historic per-component default count. Drives
+   `tests/test_cli.py::test_metrics_per_component_default_matches_legacy_columns`
+   and the default-emitted-subset checks in `tests/test_correctness.py`.
+
 Optional: register cascades inside `register_default_cascades()` (or the
 high-pressure variant) with the new component name.
 
 Drift between `COMPONENTS`, `DEFAULT_METRICS_PER_COMPONENT`, and
 `COMPONENT_PRIMARY_ANOMALIES` is rejected at module import time with a clear
-`ValueError`, so missing or extra keys can't sneak in.
+`ValueError`. Drift between `COMPONENTS` and `COMPONENT_FIELDS` / `DEFAULT_METRIC_COUNT`
+is caught by the test suite, so missing or extra keys can't sneak in.
 
 ### Anomaly metric validation
 

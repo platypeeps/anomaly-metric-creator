@@ -66,9 +66,11 @@ def seven_day_run(amc, tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def one_day_full_metrics_run(amc, tmp_path_factory):
-    """1-day run with --metrics-per-component 10 so value-band and combine
-    integration tests can exercise every supplemental metric. Shares
-    ``run_capture`` so default and full-metric runs use one execution path."""
+    """1-day run with --metrics-per-component 10 so ``test_value_range_sanity_full_catalog``
+    can exercise every supplemental metric column. Shares ``run_capture`` so default
+    and full-metric runs go through one execution path. ``--combine`` coverage for
+    the new flag lives in ``tests/test_combine.py`` and uses its own subprocess
+    fixtures rather than this in-process run."""
     out = tmp_path_factory.mktemp("one_day_full_metrics")
     return run_capture(
         amc, out, days=1, extra_args=["--metrics-per-component", "10"]
