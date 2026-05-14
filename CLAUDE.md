@@ -72,13 +72,23 @@ blast radius (auth → gateway, cache → DB, DB → API/auth, MQ → API/DB, LL
 ### Adding new metrics
 
 Append a `MetricSpec` to the relevant list in `COMPONENTS`. Each component's list
-is ordered by descending importance, so put the new metric where it ranks. Up to
-`MAX_METRICS_PER_COMPONENT` (10) entries are allowed per component. No other
+is ordered by descending importance and is split by `DEFAULT_METRICS_PER_COMPONENT[name]`
+into two zones:
+
+- Indices `[0, DEFAULT_METRICS_PER_COMPONENT[name])` — the historic default schema.
+  Inserting or reordering here changes the default CSV columns and breaks the
+  byte-for-byte default-output guarantee. Do this only when you are intentionally
+  changing the default schema, and bump `DEFAULT_METRICS_PER_COMPONENT[name]` in the
+  same change if you are adding (not replacing) an entry.
+- Indices `[DEFAULT_METRICS_PER_COMPONENT[name], MAX_METRICS_PER_COMPONENT]` — the
+  supplemental zone surfaced only via `--metrics-per-component`. New metrics should
+  be appended here by default so existing default output stays byte-identical; they
+  are only emitted when callers pass `--metrics-per-component` high enough to reach
+  them.
+
+Up to `MAX_METRICS_PER_COMPONENT` (10) entries are allowed per component. No other
 changes needed — the column flows through `_natural_column()` and
-`generate_component()` automatically. The historic default-emitted count per
-component is fixed at the existing `DEFAULT_METRICS_PER_COMPONENT[name]` value;
-new metrics appended past that point are only emitted when callers pass
-`--metrics-per-component` high enough to reach them.
+`generate_component()` automatically.
 
 ### Adding new components
 
