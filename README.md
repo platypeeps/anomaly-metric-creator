@@ -338,6 +338,18 @@ fan out into 3–4 additional services per scenario.
   `apigateway.cpu_util_pct` ~87%, `database.connections` ~9800,
   `cacheservice.error_rate` ~31%.
 
+### Multi-day cascading scenarios (`--duration-days >= 7`)
+
+Three multi-day failure modes layered on top of the LLM catalog above. Each one
+spans several days, uses default-zone metrics only, and propagates through a
+fan-out of cross-component cascades at `medium` severity.
+
+| Scenario | Day spread | Components touched | Failure simulated |
+| --- | --- | --- | --- |
+| **A. Cache memory-leak death march → forced restart** | Day 2 → Day 4 | `cacheservice`, `database`, `apigateway`, `mqservice` | Slow `cacheservice.memory_util_pct` ramp 50% → 95% over 51h drives a 12h `hit_ratio` decline 88% → 60%, ending in a forced restart that resets memory to 55% and triggers a cold-start cache miss / DB query stampede plus brief gateway and MQ pressure. |
+| **B. Certificate / JWKS rotation chaos** | Day 3 → Day 5 | `loadbalancer`, `identityprovider`, `authservice`, `apigateway`, `paymentservice`, `cacheservice` | `loadbalancer.tls_handshake_errors` flaps 2 → 25/s for 6h, JWKS fetch latency holds at 800 ms for 8h, login success rate degrades 98% → 85%, then hard cert expiry spikes TLS errors to 200/s and OIDC failures to 800 — cascading through gateway 5xx, auth latency, payment declines, and a session re-auth cache miss wave. |
+| **C. Database disk + write-latency exhaustion** | Day 2 → Day 6 | `database`, `scheduler`, `observabilitypipeline`, `mqservice`, `apigateway` | `database.disk_used_pct` creeps 65% → 92% over 96h; write latency drifts 12 → 90 ms as I/O saturates; an emergency 20-min log-truncation event spikes write errors to 12%, drops disk to 78%, and partially relieves write latency — propagating to scheduler job failures, observability ingest lag, MQ backlog, and elevated gateway backend latency / 5xx. |
+
 ## Tests
 
 Dev dependencies (`pytest`, `numpy`) ship under the `dev` extra.

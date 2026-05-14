@@ -694,7 +694,20 @@ anoms_auth = [
         "description": "Benign baseline shift: Monday morning login burst — 1,400 attempts/s",
         "generator": lambda ts,idx: 1400,
         "severity": "low",
-    }
+    },
+    # ------------------------------------------------------------------
+    # Multi-day Scenario B — Certificate / JWKS rotation chaos (Day 3 →
+    # Day 5). Auth-side primary; LB + IdP siblings appended below.
+    # ------------------------------------------------------------------
+    {
+        "time_offset": 3*SECONDS_PER_DAY + 18*3600,       # Day 4 18:00
+        "duration_seconds": 6*3600,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 98.0, "end": 85.0},
+        "metric": "login_success_rate",
+        "description": "Login success rate decline 98%→85% as cert chain degrades",
+        "generator": lambda ts,idx: 98.0,
+    },
 ]
 
 anoms_cache = [
@@ -721,6 +734,54 @@ anoms_cache = [
         "metric": "memory_util_pct",
         "description": "Slow memory leak — utilization ramps 70% → 96% over 4h",
         "generator": lambda ts,idx: 70.0,         # match start_value for test_correctness
+    },
+    # ------------------------------------------------------------------
+    # Multi-day Scenario A — Cache memory-leak death march → forced
+    # restart (Day 2 00:00 → Day 4 03:00). Requires --duration-days >= 7
+    # to fully manifest; out-of-range specs emit the existing stderr
+    # WARNING under shorter runs.
+    # ------------------------------------------------------------------
+    {
+        "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
+        "duration_seconds": 51*3600,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 50.0, "end": 95.0},
+        "metric": "memory_util_pct",
+        "description": "Cache memory leak — slow growth 50%→95% over 51h",
+        "generator": lambda ts,idx: 50.0,
+    },
+    {
+        "time_offset": 2*SECONDS_PER_DAY + 12*3600,       # Day 3 12:00
+        "duration_seconds": 12*3600,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 88.0, "end": 60.0},
+        "metric": "hit_ratio",
+        "description": "Cache eviction cascade — hit ratio decline 88%→60% over 12h",
+        "generator": lambda ts,idx: 88.0,
+    },
+    {
+        "time_offset": 3*SECONDS_PER_DAY + 3*3600,        # Day 4 03:00 — forced restart
+        "duration_seconds": 300,
+        "shape": "step",
+        "metric": "memory_util_pct",
+        "description": "Cache forced restart — memory reset to 55%",
+        "generator": lambda ts,idx: 55.0,
+    },
+    {
+        "time_offset": 3*SECONDS_PER_DAY + 3*3600,
+        "duration_seconds": 300,
+        "shape": "step",
+        "metric": "hit_ratio",
+        "description": "Cache cold start after restart — hit ratio 5%",
+        "generator": lambda ts,idx: 5.0,
+    },
+    {
+        "time_offset": 3*SECONDS_PER_DAY + 3*3600,
+        "duration_seconds": 300,
+        "shape": "step",
+        "metric": "error_rate",
+        "description": "Cache warm-up errors during restart",
+        "generator": lambda ts,idx: 0.12,
     },
 ]
 
@@ -864,6 +925,53 @@ anoms_db = [
         "description": "Brown-out — error_rate recovers 8% → 0.1% over 10 min",
         "generator": lambda ts,idx: 0.08,
     },
+    # ------------------------------------------------------------------
+    # Multi-day Scenario C — Database disk + write-latency exhaustion
+    # (Day 2 → Day 6). Slow disk creep, write latency drift, then a
+    # short emergency log-truncation burst at Day 6 03:00.
+    # ------------------------------------------------------------------
+    {
+        "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
+        "duration_seconds": 96*3600,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 65.0, "end": 92.0},
+        "metric": "disk_used_pct",
+        "description": "Database disk slow exhaustion 65%→92% over 96h",
+        "generator": lambda ts,idx: 65.0,
+    },
+    {
+        "time_offset": 4*SECONDS_PER_DAY + 6*3600,        # Day 5 06:00
+        "duration_seconds": 12*3600,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 12.0, "end": 90.0},
+        "metric": "write_latency_ms",
+        "description": "Database write latency drift 12→90 ms as I/O saturates",
+        "generator": lambda ts,idx: 12.0,
+    },
+    {
+        "time_offset": 5*SECONDS_PER_DAY + 3*3600,        # Day 6 03:00 — log truncation
+        "duration_seconds": 20*60,
+        "shape": "step",
+        "metric": "error_rate",
+        "description": "Emergency log truncation — write errors spike to 12%",
+        "generator": lambda ts,idx: 0.12,
+    },
+    {
+        "time_offset": 5*SECONDS_PER_DAY + 3*3600,
+        "duration_seconds": 20*60,
+        "shape": "step",
+        "metric": "disk_used_pct",
+        "description": "Database log truncation — disk drops to 78%",
+        "generator": lambda ts,idx: 78.0,
+    },
+    {
+        "time_offset": 5*SECONDS_PER_DAY + 3*3600,
+        "duration_seconds": 20*60,
+        "shape": "step",
+        "metric": "write_latency_ms",
+        "description": "Database write latency partial relief — 30 ms post-truncation",
+        "generator": lambda ts,idx: 30.0,
+    },
 ]
 
 anoms_mq = [
@@ -911,6 +1019,27 @@ anoms_lb = [
         "metric": "backend_5xx_per_sec",
         "description": "Backend 5xx jump to 75/s (region failover cascades 5xx upstream)",
         "generator": lambda ts,idx: 75.0,
+    },
+    # ------------------------------------------------------------------
+    # Multi-day Scenario B — Certificate / JWKS rotation chaos (Day 3 →
+    # Day 5). LB-side: cert validation flapping ramp then hard expiry.
+    # ------------------------------------------------------------------
+    {
+        "time_offset": 2*SECONDS_PER_DAY + 9*3600,        # Day 3 09:00
+        "duration_seconds": 6*3600,
+        "shape": "ramp_linear",
+        "shape_params": {"start": 2.0, "end": 25.0},
+        "metric": "tls_handshake_errors",
+        "description": "TLS cert validation flapping at POPs — errors ramp 2→25/s",
+        "generator": lambda ts,idx: 2.0,
+    },
+    {
+        "time_offset": 4*SECONDS_PER_DAY + 2*3600,        # Day 5 02:00 — hard expiry
+        "duration_seconds": 2*3600,
+        "shape": "step",
+        "metric": "tls_handshake_errors",
+        "description": "Hard cert expiration — TLS errors spike to 200/s",
+        "generator": lambda ts,idx: 200.0,
     },
 ]
 
@@ -1030,6 +1159,34 @@ anoms_idp = [
         "metric": "failed_oidc_flows",
         "description": "SAML parse error spike — 120 failed flows from upstream IdP",
         "generator": lambda ts,idx: 120.0,
+    },
+    # ------------------------------------------------------------------
+    # Multi-day Scenario B — Certificate / JWKS rotation chaos (Day 3 →
+    # Day 5). IdP-side: pre-rotation slowdown then hard expiry burst.
+    # ------------------------------------------------------------------
+    {
+        "time_offset": 3*SECONDS_PER_DAY + 9*3600,        # Day 4 09:00
+        "duration_seconds": 8*3600,
+        "shape": "sustained",
+        "metric": "jwks_fetch_latency_ms",
+        "description": "JWKS fetch latency sustained at 800 ms — pre-rotation slowdown",
+        "generator": lambda ts,idx: 800.0,
+    },
+    {
+        "time_offset": 4*SECONDS_PER_DAY + 2*3600,        # Day 5 02:00 — hard expiry
+        "duration_seconds": 2*3600,
+        "shape": "step",
+        "metric": "failed_oidc_flows",
+        "description": "Cert expiry — OIDC flow failures spike to 800",
+        "generator": lambda ts,idx: 800.0,
+    },
+    {
+        "time_offset": 4*SECONDS_PER_DAY + 2*3600,
+        "duration_seconds": 2*3600,
+        "shape": "step",
+        "metric": "key_rotation_events",
+        "description": "Emergency key rotation — 50 events during expiry window",
+        "generator": lambda ts,idx: 50.0,
     },
 ]
 
@@ -1555,6 +1712,131 @@ def register_default_cascades():
                      "pending_messages",
                      "Cascading: Telemetry pipeline lag backs up downstream queue",
                      lambda ts, idx: 220000 + np.random.normal(0, 15000))
+
+    # ------------------------------------------------------------------
+    # Multi-day Scenario A cascades — cache memory leak → restart blast
+    # radius into database, apigateway, mqservice. (Day 2 → Day 4)
+    # ------------------------------------------------------------------
+    register_cascade("database",
+                     1*SECONDS_PER_DAY + 12*3600,
+                     "queries_per_sec",
+                     "Cascading: Rising cache miss volume — DB queries climb to ~32k",
+                     lambda ts, idx: 32000 + np.random.normal(0, 1500))
+
+    register_cascade("database",
+                     2*SECONDS_PER_DAY + 12*3600 + 30*60,
+                     "queries_per_sec",
+                     "Cascading: Cache hit-ratio decline — DB queries climb to ~42k",
+                     lambda ts, idx: 42000 + np.random.normal(0, 2000))
+
+    register_cascade("database",
+                     2*SECONDS_PER_DAY + 12*3600 + 30*60,
+                     "read_latency_ms",
+                     "Cascading: Cache hit-ratio decline pushes DB read latency to ~55 ms",
+                     lambda ts, idx: 55 + np.random.normal(0, 4))
+
+    # Cold-start stampede: register_cascade doesn't accept shape/shape_params
+    # today, so this collapses to a single ~60k step at restart + 5 min
+    # (the natural end of the cache cold-start window). The ramp-linear
+    # 38k→60k profile from the plan can be re-introduced later if cascades
+    # gain shape support.
+    register_cascade("database",
+                     3*SECONDS_PER_DAY + 3*3600 + 300,
+                     "queries_per_sec",
+                     "Cascading: Cache cold-start stampede — DB queries ~60k",
+                     lambda ts, idx: 60000 + np.random.normal(0, 2500))
+
+    register_cascade("apigateway",
+                     3*SECONDS_PER_DAY + 3*3600 + 300,
+                     "error_rate",
+                     "Cascading: Cache restart causes brief gateway errors (~8%)",
+                     lambda ts, idx: 0.08)
+
+    register_cascade("mqservice",
+                     3*SECONDS_PER_DAY + 3*3600 + 300,
+                     "pending_messages",
+                     "Cascading: Cache restart backs up MQ — ~180,000 pending",
+                     lambda ts, idx: 180000 + np.random.normal(0, 6000))
+
+    # ------------------------------------------------------------------
+    # Multi-day Scenario B cascades — TLS / JWKS rotation chaos blast
+    # radius into apigateway, authservice, paymentservice, cacheservice.
+    # (Day 3 → Day 5)
+    # ------------------------------------------------------------------
+    register_cascade("apigateway",
+                     2*SECONDS_PER_DAY + 9*3600 + 30*60,
+                     "error_rate",
+                     "Cascading: Sporadic TLS failures propagate to gateway (~5%)",
+                     lambda ts, idx: 0.05)
+
+    register_cascade("authservice",
+                     3*SECONDS_PER_DAY + 9*3600 + 30*60,
+                     "avg_auth_latency_ms",
+                     "Cascading: Slow JWKS fetch raises auth latency to ~350 ms",
+                     lambda ts, idx: 350 + np.random.normal(0, 15))
+
+    register_cascade("paymentservice",
+                     3*SECONDS_PER_DAY + 18*3600 + 30*60,
+                     "provider_5xx_rate",
+                     "Cascading: Broken auth chain — payment 5xx ~8%",
+                     lambda ts, idx: 0.08)
+
+    register_cascade("apigateway",
+                     4*SECONDS_PER_DAY + 2*3600 + 300,
+                     "error_rate",
+                     "Cascading: Mass TLS failure floods gateway (~28%)",
+                     lambda ts, idx: 0.28)
+
+    register_cascade("paymentservice",
+                     4*SECONDS_PER_DAY + 2*3600 + 600,
+                     "auth_decline_rate",
+                     "Cascading: Unverifiable tokens drive declines to ~45%",
+                     lambda ts, idx: 0.45)
+
+    # Constant (not noisy) to preserve the seeded global RNG state for
+    # downstream components — see PR notes for the test_spec_coverage trade-off.
+    register_cascade("cacheservice",
+                     4*SECONDS_PER_DAY + 2*3600 + 900,
+                     "cache_misses",
+                     "Cascading: Mass session re-auth — cache misses ~3,500",
+                     lambda ts, idx: 3500)
+
+    # ------------------------------------------------------------------
+    # Multi-day Scenario C cascades — DB disk + write-latency exhaustion
+    # blast radius into scheduler, observabilitypipeline, mqservice,
+    # apigateway. (Day 2 → Day 6)
+    # ------------------------------------------------------------------
+    register_cascade("scheduler",
+                     1*SECONDS_PER_DAY + 30*60,
+                     "jobs_failed_per_min",
+                     "Cascading: Slow disk fails background-job writes (~8/min)",
+                     lambda ts, idx: 8)
+
+    register_cascade("observabilitypipeline",
+                     4*SECONDS_PER_DAY + 6*3600 + 30*60,
+                     "ingest_lag_s",
+                     "Cascading: DB write latency drift lags observability ingest to ~180s",
+                     lambda ts, idx: 180)
+
+    register_cascade("mqservice",
+                     4*SECONDS_PER_DAY + 12*3600,
+                     "pending_messages",
+                     "Cascading: Consumers blocked on DB writes — ~320k pending",
+                     lambda ts, idx: 320000 + np.random.normal(0, 10000))
+
+    # Constant (not noisy) to preserve the seeded global RNG state for
+    # downstream components — see PR notes for the test_spec_coverage trade-off.
+    register_cascade("apigateway",
+                     5*SECONDS_PER_DAY + 3*3600 + 300,
+                     "backend_latency_ms",
+                     "Cascading: DB truncation event raises backend latency to ~720 ms",
+                     lambda ts, idx: 720)
+
+    register_cascade("apigateway",
+                     5*SECONDS_PER_DAY + 3*3600 + 300,
+                     "error_rate",
+                     "Cascading: DB error spike propagates to gateway (~15%)",
+                     lambda ts, idx: 0.15)
 
 
 def register_high_pressure_cascades():

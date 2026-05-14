@@ -66,6 +66,18 @@ anomaly registry is collected into the manifest file.
 Cascades use `register_cascade(target_component, time_offset, metric, description,
 generator)` and are appended after the originating anomaly's time offset to simulate
 blast radius (auth → gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API).
+`register_cascade` does **not** support `shape` / `shape_params`; cascades are
+single-row step writes only — express ramps/sustained spans as primary
+`anoms_*` specs, not as cascades.
+
+The three VER-98 multi-day scenarios (cache leak → restart, cert/JWKS
+rotation chaos, DB disk/write-latency exhaustion) are worked examples of
+shaped multi-day spans with cross-component cascade fan-out — see the
+`# Multi-day Scenario A/B/C` blocks in `anoms_cache`, `anoms_lb`,
+`anoms_idp`, `anoms_auth`, and `anoms_db`, paired with the corresponding
+cascade groups inside `register_default_cascades()`. They only manifest
+at `--duration-days >= 7`; out-of-range specs are caught by the existing
+stderr WARNING path.
 
 ## Modifying the script
 
