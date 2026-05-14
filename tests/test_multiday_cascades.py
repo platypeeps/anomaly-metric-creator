@@ -8,9 +8,7 @@ deterministic ``anomalies.csv`` output.
 
 from __future__ import annotations
 
-import csv
 import datetime
-from pathlib import Path
 
 from conftest import read_manifest, run_capture
 
