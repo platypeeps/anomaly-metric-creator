@@ -61,6 +61,12 @@ python3 anomaly-metric-creator.py --signal-level high
 # across anomaly density:
 python3 anomaly-metric-creator.py --anomaly-count 25
 
+# Cap the metric columns emitted per component (1..10). Each component emits
+# the first N of its priority-ordered catalog. Omit the flag to keep the
+# historic default per-component count:
+python3 anomaly-metric-creator.py --metrics-per-component 3
+python3 anomaly-metric-creator.py --metrics-per-component 10
+
 # Stream anomaly events as OTLP signals while generating locally:
 # OTEL streaming is OFF by default; pass --otel-enabled to opt in.
 python3 anomaly-metric-creator.py \
@@ -89,6 +95,7 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
 | `--signal-level`    | `medium`    | Anomaly intensity level: `low`, `medium` (default), or `high`. Inclusion hierarchy: `low` only fires specs explicitly tagged `severity="low"` (today: a handful of benign Monday-morning baseline shifts) and intentionally has **no cascade fan-out** because benign baseline shifts do not realistically propagate as failures; `medium` adds the standard catalog plus its cascade fan-out (the default behavior); `high` additionally activates the high-pressure cross-component scenarios (regional failover storm, coordinated cache+DB meltdown, LLM provider outage, gateway DDoS saturation, storage layer pressure) and their cascades. |
 | `--anomaly-count`   | _unlimited_ | Optional cap on the total number of injected anomalies (primary specs + cascades) across the whole dataset. Sampling is deterministic for a given `--seed` and uses its own RNG stream so it doesn't perturb the column noise. Applied after `--signal-level` and `--components` filters. Out-of-range specs (e.g. multi-day cascades on a 1-day run) are excluded from the sampling pool. |
+| `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–8 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
@@ -134,6 +141,34 @@ Written to `--output-dir` (default `iot_logs/`):
 
 If you omit `--emit-selection`, the default remains the full backward-compatible
 set: metrics, logs, and traces.
+
+### Per-component metric catalog
+
+Each component declares up to **10** metrics in descending importance. The default
+emitted set per component (when `--metrics-per-component` is unset) matches the
+historic catalog; the supplemental tail is shown in *italics* and is only emitted
+when `--metrics-per-component` is set high enough to reach it.
+
+| Component                | Default # | Metrics (ordered by importance — supplemental tail in italics) |
+| ------------------------ | --------- | ---- |
+| `authservice`            | 6         | `active_sessions`, `login_attempts`, `login_success_rate`, `avg_auth_latency_ms`, `cpu_util_pct`, `error_rate`, *`avg_session_duration_s`*, *`password_reset_per_min`*, *`admin_actions_per_min`*, *`memory_util_pct`* |
+| `cacheservice`           | 6         | `cache_hits`, `cache_misses`, `hit_ratio`, `avg_cache_latency_ms`, `memory_util_pct`, `error_rate`, *`evictions_per_sec`*, *`expired_keys_per_sec`*, *`cpu_util_pct`*, *`connected_clients`* |
+| `apigateway`             | 6         | `requests_per_sec`, `avg_response_time_ms`, `backend_latency_ms`, `active_connections`, `cpu_util_pct`, `error_rate`, *`rate_limited_per_sec`*, *`tls_handshakes_per_sec`*, *`memory_util_pct`*, *`upstream_unhealthy_count`* |
+| `database`               | 7         | `connections`, `read_latency_ms`, `write_latency_ms`, `queries_per_sec`, `cpu_util_pct`, `error_rate`, `disk_used_pct`, *`replication_lag_s`*, *`buffer_cache_hit_ratio`*, *`deadlocks_per_min`* |
+| `mqservice`              | 6         | `pending_messages`, `processed_messages`, `avg_latency_ms`, `dead_letter_queue`, `mem_util_pct`, `error_rate`, *`publish_rate_per_sec`*, *`consumer_lag`*, *`unacked_messages`*, *`broker_disk_used_pct`* |
+| `llm_analytics`          | 8         | `input_tokens_per_sec`, `output_tokens_per_sec`, `avg_context_window_size`, `llm_requests_per_sec`, `avg_llm_latency_ms`, `token_limit_hits_per_min`, `context_overflow_rate`, `llm_api_error_rate`, *`p95_llm_latency_ms`*, *`prompt_cache_hit_ratio`* |
+| `loadbalancer`           | 7         | `requests_per_sec`, `healthcheck_failures`, `active_tls_handshakes`, `tls_handshake_errors`, `backend_5xx_per_sec`, `connection_resets`, `cpu_util_pct`, *`healthy_backends`*, *`avg_request_duration_ms`*, *`dropped_connections`* |
+| `objectstore`            | 5         | `get_latency_ms`, `put_latency_ms`, `5xx_rate`, `bandwidth_mbps`, `requests_per_sec`, *`p99_get_latency_ms`*, *`avg_object_size_kb`*, *`error_rate`*, *`throttled_requests_per_sec`*, *`multipart_upload_rate`* |
+| `vectorstore`            | 5         | `ann_query_latency_ms`, `embeddings_per_sec`, `recall_at_10`, `cache_hit_ratio`, `error_rate`, *`index_size_gb`*, *`queries_per_sec`*, *`avg_vector_dim`*, *`shard_skew_pct`*, *`compaction_lag_s`* |
+| `scheduler`              | 5         | `jobs_running`, `jobs_queued`, `jobs_failed_per_min`, `avg_job_duration_s`, `missed_schedules`, *`retries_per_min`*, *`workers_available`*, *`job_throughput_per_min`*, *`queue_age_seconds_p95`*, *`cpu_util_pct`* |
+| `paymentservice`         | 5         | `txn_per_sec`, `provider_5xx_rate`, `webhook_delivery_lag_s`, `auth_decline_rate`, `avg_txn_latency_ms`, *`chargebacks_per_min`*, *`settlement_lag_s`*, *`fraud_score_avg`*, *`retry_rate`*, *`error_rate`* |
+| `identityprovider`       | 5         | `token_issuance_per_sec`, `jwks_fetch_latency_ms`, `mfa_challenges_per_min`, `failed_oidc_flows`, `key_rotation_events`, *`avg_token_size_bytes`*, *`revoked_tokens_per_min`*, *`session_introspection_rate`*, *`password_reset_rate`*, *`error_rate`* |
+| `observabilitypipeline`  | 4         | `metrics_ingested_per_sec`, `dropped_metrics_per_sec`, `ingest_lag_s`, `pipeline_error_rate`, *`cardinality_count`*, *`retention_hours`*, *`compactions_per_min`*, *`shard_count`*, *`flush_latency_ms`*, *`cpu_util_pct`* |
+
+Anomaly specs only target metrics within the historic default set, so dropping the
+metric cap below a component's default count will filter out anomalies whose target
+metric is no longer emitted — they simply will not appear in `anomalies.csv` or any
+reporting artifact for that run.
 
 ## Failure modes / anomaly catalog
 

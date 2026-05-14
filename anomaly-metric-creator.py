@@ -428,6 +428,12 @@ def _daily_sine(amplitude: float) -> Callable:
 # ------------------------------------------------------------------
 # Per-component metric schemas. Add a metric by editing exactly one list.
 # ------------------------------------------------------------------
+# Each component lists up to ``MAX_METRICS_PER_COMPONENT`` MetricSpecs in
+# descending importance. The first ``DEFAULT_METRICS_PER_COMPONENT[component]``
+# entries are emitted by default; the remainder are supplemental and emitted
+# only when ``--metrics-per-component N`` selects past the default tail.
+# Order matters: existing default metrics keep their historic positions to
+# preserve byte-for-byte CSV output at default arguments.
 COMPONENTS: dict[str, list[MetricSpec]] = {
     "authservice": [
         MetricSpec("active_sessions", 200, additive=_daily_sine(20)),
@@ -436,6 +442,11 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("avg_auth_latency_ms", 110, 5),
         MetricSpec("cpu_util_pct", 20, 3),
         MetricSpec("error_rate", 0.2, 0.05),
+        # Supplemental metrics
+        MetricSpec("avg_session_duration_s", 900, 30, clip_min=0),
+        MetricSpec("password_reset_per_min", 3, 1, clip_min=0),
+        MetricSpec("admin_actions_per_min", 8, 2, clip_min=0),
+        MetricSpec("memory_util_pct", 45, 4),
     ],
     "cacheservice": [
         MetricSpec("cache_hits", 5000, 200),
@@ -444,6 +455,11 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("avg_cache_latency_ms", 15, 1),
         MetricSpec("memory_util_pct", 70, 5),
         MetricSpec("error_rate", 0.05, 0.02),
+        # Supplemental metrics
+        MetricSpec("evictions_per_sec", 8, 3, clip_min=0),
+        MetricSpec("expired_keys_per_sec", 12, 4, clip_min=0),
+        MetricSpec("cpu_util_pct", 15, 3),
+        MetricSpec("connected_clients", 400, 30, clip_min=0),
     ],
     "apigateway": [
         MetricSpec("requests_per_sec", 800, 50),
@@ -452,6 +468,11 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("active_connections", 1200, 60),
         MetricSpec("cpu_util_pct", 22, 4),
         MetricSpec("error_rate", 0.15, 0.04),
+        # Supplemental metrics
+        MetricSpec("rate_limited_per_sec", 4, 2, clip_min=0),
+        MetricSpec("tls_handshakes_per_sec", 140, 15, clip_min=0),
+        MetricSpec("memory_util_pct", 55, 4),
+        MetricSpec("upstream_unhealthy_count", 0.2, 0.4, clip_min=0),
     ],
     "database": [
         MetricSpec("connections", 3000, 400),
@@ -467,6 +488,10 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("disk_used_pct", 8.0,
                    additive=lambda _ts, elapsed: 2e-5 * elapsed,
                    clip_min=0),
+        # Supplemental metrics
+        MetricSpec("replication_lag_s", 0.4, 0.1, clip_min=0),
+        MetricSpec("buffer_cache_hit_ratio", 98.0, 0.3),
+        MetricSpec("deadlocks_per_min", 0.05, 0.05, clip_min=0),
     ],
     "mqservice": [
         MetricSpec("pending_messages", 45000, 3000),
@@ -475,6 +500,11 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("dead_letter_queue", 5, 1),
         MetricSpec("mem_util_pct", 55, 4),
         MetricSpec("error_rate", 0.08, 0.02),
+        # Supplemental metrics
+        MetricSpec("publish_rate_per_sec", 4500, 200, clip_min=0),
+        MetricSpec("consumer_lag", 300, 80, clip_min=0),
+        MetricSpec("unacked_messages", 120, 25, clip_min=0),
+        MetricSpec("broker_disk_used_pct", 42.0, 2.0),
     ],
     "llm_analytics": [
         MetricSpec("input_tokens_per_sec", 25000, 2000, multiplier=_llm_business_hours),
@@ -486,6 +516,9 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
                    multiplier=_llm_business_hours, clip_min=0),
         MetricSpec("context_overflow_rate", 0.3, 0.1, clip_min=0),
         MetricSpec("llm_api_error_rate", 0.05, 0.02, clip_min=0),
+        # Supplemental metrics
+        MetricSpec("p95_llm_latency_ms", 1400, 80),
+        MetricSpec("prompt_cache_hit_ratio", 0.55, 0.05, clip_min=0),
     ],
     "loadbalancer": [
         MetricSpec("requests_per_sec", 900, 60),
@@ -495,6 +528,10 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("backend_5xx_per_sec", 1.5, 0.5, clip_min=0),
         MetricSpec("connection_resets", 5, 2, clip_min=0),
         MetricSpec("cpu_util_pct", 18, 3),
+        # Supplemental metrics
+        MetricSpec("healthy_backends", 12, 0.3),
+        MetricSpec("avg_request_duration_ms", 210, 12),
+        MetricSpec("dropped_connections", 0.2, 0.3, clip_min=0),
     ],
     "objectstore": [
         MetricSpec("get_latency_ms", 45, 5),
@@ -502,6 +539,12 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("5xx_rate", 0.1, 0.05, clip_min=0),
         MetricSpec("bandwidth_mbps", 180, 20),
         MetricSpec("requests_per_sec", 1200, 80),
+        # Supplemental metrics
+        MetricSpec("p99_get_latency_ms", 140, 10),
+        MetricSpec("avg_object_size_kb", 320, 15, clip_min=0),
+        MetricSpec("error_rate", 0.05, 0.02, clip_min=0),
+        MetricSpec("throttled_requests_per_sec", 0.3, 0.2, clip_min=0),
+        MetricSpec("multipart_upload_rate", 2.0, 0.5, clip_min=0),
     ],
     "vectorstore": [
         MetricSpec("ann_query_latency_ms", 25, 4),
@@ -509,6 +552,13 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("recall_at_10", 0.91, 0.01),
         MetricSpec("cache_hit_ratio", 88, 2),
         MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
+        # Supplemental metrics. ``std=0`` skips the RNG draw for near-constant
+        # metrics so adding them doesn't perturb downstream column noise.
+        MetricSpec("index_size_gb", 42.0, 0.0, clip_min=0),
+        MetricSpec("queries_per_sec", 140, 12, multiplier=_llm_business_hours, clip_min=0),
+        MetricSpec("avg_vector_dim", 1536.0, 0.0),
+        MetricSpec("shard_skew_pct", 3.0, 0.8, clip_min=0),
+        MetricSpec("compaction_lag_s", 2.5, 0.5, clip_min=0),
     ],
     "scheduler": [
         MetricSpec("jobs_running", 20, 3, clip_min=0),
@@ -516,6 +566,12 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("jobs_failed_per_min", 0.5, 0.15, clip_min=0),
         MetricSpec("avg_job_duration_s", 120, 12, clip_min=0),
         MetricSpec("missed_schedules", 0.02, 0.05, clip_min=0),
+        # Supplemental metrics
+        MetricSpec("retries_per_min", 4, 1, clip_min=0),
+        MetricSpec("workers_available", 24, 2, clip_min=0),
+        MetricSpec("job_throughput_per_min", 140, 10, clip_min=0),
+        MetricSpec("queue_age_seconds_p95", 85, 10, clip_min=0),
+        MetricSpec("cpu_util_pct", 18, 3),
     ],
     "paymentservice": [
         MetricSpec("txn_per_sec", 80, 6,
@@ -524,6 +580,12 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("webhook_delivery_lag_s", 2.0, 0.4, clip_min=0),
         MetricSpec("auth_decline_rate", 0.04, 0.01, clip_min=0),
         MetricSpec("avg_txn_latency_ms", 180, 12),
+        # Supplemental metrics
+        MetricSpec("chargebacks_per_min", 0.3, 0.1, clip_min=0),
+        MetricSpec("settlement_lag_s", 180, 12, clip_min=0),
+        MetricSpec("fraud_score_avg", 0.05, 0.01, clip_min=0),
+        MetricSpec("retry_rate", 0.02, 0.01, clip_min=0),
+        MetricSpec("error_rate", 0.08, 0.02, clip_min=0),
     ],
     "identityprovider": [
         MetricSpec("token_issuance_per_sec", 150, 12, clip_min=0),
@@ -532,6 +594,12 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
                    multiplier=_llm_business_hours, clip_min=0),
         MetricSpec("failed_oidc_flows", 2, 0.6, clip_min=0),
         MetricSpec("key_rotation_events", 0.0, 0.0, clip_min=0),
+        # Supplemental metrics
+        MetricSpec("avg_token_size_bytes", 1200, 40, clip_min=0),
+        MetricSpec("revoked_tokens_per_min", 1.5, 0.5, clip_min=0),
+        MetricSpec("session_introspection_rate", 22, 3, clip_min=0),
+        MetricSpec("password_reset_rate", 0.5, 0.2, clip_min=0),
+        MetricSpec("error_rate", 0.04, 0.02, clip_min=0),
     ],
     # Self-referential: when this degrades, every other component's telemetry
     # becomes suspect — anomalies fire on the pipeline itself.
@@ -540,7 +608,37 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("dropped_metrics_per_sec", 5, 1.5, clip_min=0),
         MetricSpec("ingest_lag_s", 1.0, 0.2, clip_min=0),
         MetricSpec("pipeline_error_rate", 0.001, 0.0005, clip_min=0),
+        # Supplemental metrics
+        MetricSpec("cardinality_count", 120000, 4000, clip_min=0),
+        MetricSpec("retention_hours", 72.0, 0.0, clip_min=0),
+        MetricSpec("compactions_per_min", 1.5, 0.5, clip_min=0),
+        MetricSpec("shard_count", 12.0, 0.0, clip_min=0),
+        MetricSpec("flush_latency_ms", 22, 3, clip_min=0),
+        MetricSpec("cpu_util_pct", 12, 2),
     ],
+}
+
+# Maximum metrics any component can expose. Caps both the catalog above and
+# the --metrics-per-component CLI flag.
+MAX_METRICS_PER_COMPONENT = 10
+
+# Default emitted metrics per component when ``--metrics-per-component`` is
+# not provided. Matches the historic catalog so default CSVs remain
+# byte-for-byte stable.
+DEFAULT_METRICS_PER_COMPONENT: dict[str, int] = {
+    "authservice": 6,
+    "cacheservice": 6,
+    "apigateway": 6,
+    "database": 7,
+    "mqservice": 6,
+    "llm_analytics": 8,
+    "loadbalancer": 7,
+    "objectstore": 5,
+    "vectorstore": 5,
+    "scheduler": 5,
+    "paymentservice": 5,
+    "identityprovider": 5,
+    "observabilitypipeline": 4,
 }
 
 # ------------------------------------------------------------------
@@ -1489,6 +1587,49 @@ def register_high_pressure_cascades():
                      lambda ts, idx: 0.15,
                      severity="high")
 
+def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
+    """Return ``{component: specs[:limit]}`` for the active --metrics-per-component.
+
+    When ``metrics_per_component`` is None, each component is trimmed to its
+    historic ``DEFAULT_METRICS_PER_COMPONENT`` count so default CSV output
+    stays byte-for-byte identical. When provided, every component is trimmed
+    to the same N (capped to its catalog size).
+    """
+    resolved: dict[str, list[MetricSpec]] = {}
+    for name, specs in COMPONENTS.items():
+        if metrics_per_component is None:
+            limit = DEFAULT_METRICS_PER_COMPONENT[name]
+        else:
+            limit = min(metrics_per_component, len(specs))
+        resolved[name] = specs[:limit]
+    return resolved
+
+
+def _filter_anomalies_for_emitted_metrics(component_anomalies: dict,
+                                           cascade_registry: dict,
+                                           effective_specs: dict) -> None:
+    """Drop anomaly specs targeting metrics not in the trimmed catalog.
+
+    Without this filter, ``generate_component`` would KeyError on
+    ``name_to_col[aspec["metric"]]`` for any anomaly whose metric column was
+    cut by --metrics-per-component. Filtering happens in-place before the
+    severity / count gates so the anomaly-count cap pool reflects what can
+    actually emit.
+    """
+    allowed = {name: {s.name for s in specs}
+               for name, specs in effective_specs.items()}
+    for name in list(component_anomalies.keys()):
+        component_anomalies[name] = [
+            spec for spec in component_anomalies[name]
+            if spec["metric"] in allowed.get(name, set())
+        ]
+    for name in list(cascade_registry.keys()):
+        cascade_registry[name] = [
+            spec for spec in cascade_registry[name]
+            if spec["metric"] in allowed.get(name, set())
+        ]
+
+
 def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: dict,
                                   *, signal_level: str, selected_components: set,
                                   anomaly_count: int | None, seed: int,
@@ -1640,6 +1781,17 @@ def parse_args(argv=None):
         help="Optional cap on the total number of anomalies (including "
              "cascades) injected across the whole dataset. Sampling is "
              "deterministic for a given --seed. Defaults to unlimited.",
+    )
+    p.add_argument(
+        "--metrics-per-component",
+        type=int,
+        default=None,
+        help=f"Optional cap on emitted metrics per component "
+             f"(1..{MAX_METRICS_PER_COMPONENT}). When unset, every component "
+             f"emits its historic default set. When set to N, each component "
+             f"emits the first N metrics from its priority-ordered catalog "
+             f"(highest-value first). Anomalies targeting metrics outside "
+             f"the trimmed set are filtered out.",
     )
     otel_toggle = p.add_mutually_exclusive_group()
     otel_toggle.add_argument(
@@ -1833,6 +1985,15 @@ def parse_args(argv=None):
 
     if args.anomaly_count is not None and args.anomaly_count < 1:
         p.error("--anomaly-count must be >= 1 (omit the flag for unlimited)")
+
+    if args.metrics_per_component is not None and (
+        args.metrics_per_component < 1
+        or args.metrics_per_component > MAX_METRICS_PER_COMPONENT
+    ):
+        p.error(
+            f"--metrics-per-component must be in [1, {MAX_METRICS_PER_COMPONENT}] "
+            f"(omit the flag to use each component's historic default count)"
+        )
 
     return args
 
@@ -2511,6 +2672,11 @@ def main(argv=None):
         component_anomalies["apigateway"].extend(anoms_high_api)
         component_anomalies["objectstore"].extend(anoms_high_obj)
 
+    effective_specs = _resolve_effective_specs(args.metrics_per_component)
+    _filter_anomalies_for_emitted_metrics(
+        component_anomalies, cascading_anomalies, effective_specs
+    )
+
     _apply_signal_level_and_count(
         component_anomalies,
         cascading_anomalies,
@@ -2525,7 +2691,7 @@ def main(argv=None):
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
 
-    for name, specs in COMPONENTS.items():
+    for name, specs in effective_specs.items():
         if name not in args.components:
             continue
         generate_component(name, specs, component_anomalies[name],

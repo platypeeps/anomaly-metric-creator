@@ -31,6 +31,7 @@ def test_help_lists_every_flag():
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
                  "--interval-seconds", "--emit-selection", "--components",
                  "--signal-level", "--anomaly-count",
+                 "--metrics-per-component",
                  "--otel-enabled", "--otel-disabled",
                  "--otel-logs-endpoint", "--otel-logs-auth-token",
                  "--otel-metrics-endpoint", "--otel-metrics-auth-token",
@@ -1308,3 +1309,130 @@ def test_otel_verbose_masks_auth_token(tmp_path):
         "auth token must never appear verbatim in the activity log"
     assert "authorization=" in contents.lower(), \
         "verbose mode should still record that an authorization header was sent"
+
+
+def _read_csv_header(path):
+    import csv as _csv
+    with open(path) as f:
+        reader = _csv.reader(f)
+        return next(reader)
+
+
+def test_metrics_per_component_default_matches_legacy_columns(tmp_path):
+    """Without --metrics-per-component, each component CSV has exactly the
+    historic per-component column count (timestamp + DEFAULT_METRIC_COUNT)."""
+    from conftest import DEFAULT_METRIC_COUNT
+    out = tmp_path / "default_cols"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    for component, expected in DEFAULT_METRIC_COUNT.items():
+        header = _read_csv_header(out / f"{component}.csv")
+        # header = ["timestamp", ...metric names]
+        assert len(header) - 1 == expected, (
+            f"{component}: header has {len(header)-1} metric columns, "
+            f"expected {expected}"
+        )
+
+
+def test_metrics_per_component_three_trims_every_component(tmp_path):
+    """--metrics-per-component 3 emits exactly 3 metric columns per component."""
+    from conftest import COMPONENTS as _COMPONENTS
+    out = tmp_path / "metrics_3"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--metrics-per-component", "3",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    for component in _COMPONENTS:
+        header = _read_csv_header(out / f"{component}.csv")
+        assert len(header) - 1 == 3, (
+            f"{component}: header has {len(header)-1} metric columns, expected 3"
+        )
+
+
+def test_metrics_per_component_ten_emits_ten_columns(tmp_path):
+    """--metrics-per-component 10 emits exactly 10 metric columns per component."""
+    from conftest import COMPONENTS as _COMPONENTS
+    out = tmp_path / "metrics_10"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--metrics-per-component", "10",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    for component in _COMPONENTS:
+        header = _read_csv_header(out / f"{component}.csv")
+        assert len(header) - 1 == 10, (
+            f"{component}: header has {len(header)-1} metric columns, expected 10"
+        )
+
+
+def test_metrics_per_component_columns_are_prefix_of_full_set(tmp_path):
+    """The columns at --metrics-per-component N are the first N entries of
+    each component's full 10-metric ordering — proving highest-value-first."""
+    from conftest import COMPONENTS as _COMPONENTS
+    out_three = tmp_path / "prefix_3"
+    out_ten = tmp_path / "prefix_10"
+    for cap, out in (("3", out_three), ("10", out_ten)):
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--metrics-per-component", cap,
+            "--output-dir", str(out),
+        )
+        assert result.returncode == 0, result.stderr
+    for component in _COMPONENTS:
+        header_three = _read_csv_header(out_three / f"{component}.csv")
+        header_ten = _read_csv_header(out_ten / f"{component}.csv")
+        # First metric column should match (skip "timestamp")
+        assert header_three[1:] == header_ten[1:4], (
+            f"{component}: --metrics-per-component 3 columns "
+            f"{header_three[1:]} are not the prefix of 10-metric columns "
+            f"{header_ten[1:4]}"
+        )
+
+
+def test_metrics_per_component_invalid_value_fails(tmp_path):
+    """--metrics-per-component 0 / 11 should be rejected with a usage error."""
+    for bad in ("0", "11", "-1"):
+        result = _invoke(
+            "--metrics-per-component", bad,
+            "--output-dir", str(tmp_path / f"bad_{bad}"),
+        )
+        assert result.returncode != 0, \
+            f"expected non-zero exit for --metrics-per-component {bad}"
+        assert "metrics-per-component" in (result.stderr + result.stdout)
+
+
+def test_metrics_per_component_filters_anomalies_targeting_dropped_metrics(tmp_path):
+    """Anomalies that target metrics dropped by --metrics-per-component are
+    filtered out instead of crashing the generator. The remaining manifest
+    rows reference only the trimmed metric set."""
+    import csv as _csv
+    from conftest import COMPONENTS as _COMPONENTS
+    out = tmp_path / "trim_anomalies"
+    result = _invoke(
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--metrics-per-component", "2",
+        "--output-dir", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    # Per-component allowed metric sets
+    allowed = {}
+    for component in _COMPONENTS:
+        header = _read_csv_header(out / f"{component}.csv")
+        allowed[component] = set(header[1:])
+    with open(out / "anomalies.csv") as f:
+        for row in _csv.DictReader(f):
+            assert row["metric"] in allowed[row["component"]], (
+                f"manifest references metric {row['metric']} not emitted by "
+                f"{row['component']} (allowed: {sorted(allowed[row['component']])})"
+            )

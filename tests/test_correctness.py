@@ -13,6 +13,7 @@ import pytest
 
 from conftest import (
     COMPONENTS,
+    DEFAULT_METRIC_COUNT,
     SCRIPT_PATH,
     count_blank_lines,
     count_lines,
@@ -208,7 +209,8 @@ def test_value_range_sanity(amc, one_day_run_a):
     failures = []
     for component, specs in amc.COMPONENTS.items():
         rows, header = read_component_rows(one_day_run_a.out_dir, component)
-        for col_idx, mspec in enumerate(specs):
+        emitted_specs = specs[:DEFAULT_METRIC_COUNT[component]]
+        for col_idx, mspec in enumerate(emitted_specs):
             field_idx = header.index(mspec.name)
             skip_ts = skip_by_cm.get(component, {}).get(mspec.name, set())
             lo, hi = natural_band(amc, mspec, amc.SECONDS_PER_DAY)
@@ -285,10 +287,13 @@ def test_anomalies_match_declared_value(amc, seven_day_run):
 # Schema / refactor invariants
 # ------------------------------------------------------------------
 def test_schema_is_single_source_of_truth(amc, one_day_run_a):
-    """COMPONENTS drives the CSV columns — adding a metric edits exactly one list."""
+    """COMPONENTS drives the CSV columns — at default --metrics-per-component
+    each component emits the first DEFAULT_METRIC_COUNT[name] metrics from its
+    ordered MetricSpec list, preserving today's byte-for-byte CSV layout."""
     for component, specs in amc.COMPONENTS.items():
         _, header = read_component_rows(one_day_run_a.out_dir, component)
-        expected = ["timestamp"] + [s.name for s in specs]
+        limit = DEFAULT_METRIC_COUNT[component]
+        expected = ["timestamp"] + [s.name for s in specs[:limit]]
         assert header == expected, f"{component}: header {header} != schema {expected}"
 
 

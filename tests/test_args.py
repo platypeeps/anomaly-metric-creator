@@ -188,3 +188,20 @@ def test_parse_args_anomaly_count_explicit(amc):
 def test_parse_args_anomaly_count_non_positive_fails(amc, value):
     with pytest.raises(SystemExit):
         amc.parse_args(["--anomaly-count", value, "--output-dir", "test_out"])
+
+
+def test_parse_args_metrics_per_component_default_is_none(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.metrics_per_component is None
+
+
+@pytest.mark.parametrize("value", ["1", "3", "5", "10"])
+def test_parse_args_metrics_per_component_explicit_valid(amc, value):
+    args = amc.parse_args(["--metrics-per-component", value, "--output-dir", "test_out"])
+    assert args.metrics_per_component == int(value)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "11", "100"])
+def test_parse_args_metrics_per_component_out_of_range_fails(amc, value):
+    with pytest.raises(SystemExit):
+        amc.parse_args(["--metrics-per-component", value, "--output-dir", "test_out"])
