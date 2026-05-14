@@ -71,14 +71,36 @@ blast radius (auth → gateway, cache → DB, DB → API/auth, MQ → API/DB, LL
 
 ### Adding new metrics
 
-Append a `MetricSpec` to the relevant list in `COMPONENTS`. No other changes needed —
-the column flows through `_natural_column()` and `generate_component()` automatically.
+Append a `MetricSpec` to the relevant list in `COMPONENTS`. Each component's list
+is ordered by descending importance, so put the new metric where it ranks. Up to
+`MAX_METRICS_PER_COMPONENT` (10) entries are allowed per component. No other
+changes needed — the column flows through `_natural_column()` and
+`generate_component()` automatically. The historic default-emitted count per
+component is fixed at the existing `DEFAULT_METRICS_PER_COMPONENT[name]` value;
+new metrics appended past that point are only emitted when callers pass
+`--metrics-per-component` high enough to reach them.
 
 ### Adding new components
 
-Add a `COMPONENTS[name]` entry with the metric list, then add anomaly specs to the
-matching `anoms_*` list (or register cascades in `register_default_cascades()`). The
+Add a `COMPONENTS[name]` entry with the metric list AND a matching
+`DEFAULT_METRICS_PER_COMPONENT[name]` entry naming how many metrics the new
+component should emit by default. Then add anomaly specs to the matching
+`anoms_*` list (or register cascades in `register_default_cascades()`). The
 runner picks up new components without further wiring.
+
+Drift between `COMPONENTS` and `DEFAULT_METRICS_PER_COMPONENT` is rejected at
+module import time with a `ValueError` so missing/extra keys can't sneak in.
+
+### Anomaly metric validation
+
+`_filter_anomalies_for_emitted_metrics()` runs before generation and treats two
+cases differently:
+
+- Metric is in the full `COMPONENTS[component]` catalog but trimmed by
+  `--metrics-per-component` → silently dropped (intended behavior of the cap).
+- Metric (or component) is not in the full catalog → `ValueError`. This catches
+  typos in `anoms_*` lists and `register_cascade()` calls that would otherwise
+  silently disappear from all outputs.
 
 ### Changing time range
 

@@ -336,6 +336,48 @@ def test_duplicate_anomaly_specs_raise(tmp_path):
         m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
 
 
+def test_unknown_primary_anomaly_metric_raises(tmp_path):
+    """A typo in an anoms_* list must fail loudly, not be silently dropped by
+    the metrics-per-component filter."""
+    spec = importlib.util.spec_from_file_location("amc_unknown_primary", SCRIPT_PATH)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    m.anoms_auth.append({
+        "time_offset": 7 * 3600,
+        "metric": "not_a_real_metric",
+        "description": "Typo (test injection)",
+        "generator": lambda ts, idx: 0.0,
+    })
+    with pytest.raises(ValueError, match="missing from COMPONENTS"):
+        m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
+
+
+def test_unknown_cascade_metric_raises(tmp_path):
+    """A typo in a register_cascade() call must also fail loudly. Without the
+    typo-vs-trim distinction this would be silently swallowed by the filter.
+
+    main() clears cascading_anomalies and calls register_default_cascades, so
+    the test wraps that function to inject the typo cascade on each call."""
+    spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    original_register = m.register_default_cascades
+
+    def register_with_typo():
+        original_register()
+        m.register_cascade(
+            "database",
+            7 * 3600,
+            "not_a_db_metric",
+            "Typo cascade (test injection)",
+            lambda ts, idx: 0.0,
+        )
+
+    m.register_default_cascades = register_with_typo
+    with pytest.raises(ValueError, match="missing from COMPONENTS"):
+        m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
+
+
 def test_duration_shape_ramp_linear_and_sine(amc, tmp_path):
     """Span anomalies should apply per-row shaped values across duration."""
     out = tmp_path / "shape_span"

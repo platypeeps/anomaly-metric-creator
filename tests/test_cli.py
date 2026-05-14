@@ -1414,7 +1414,9 @@ def test_metrics_per_component_invalid_value_fails(tmp_path):
 def test_metrics_per_component_filters_anomalies_targeting_dropped_metrics(tmp_path):
     """Anomalies that target metrics dropped by --metrics-per-component are
     filtered out instead of crashing the generator. The remaining manifest
-    rows reference only the trimmed metric set."""
+    rows reference only the trimmed metric set, AND at least one anomaly
+    targeting a kept metric survives (guards against over-filtering: a bug
+    that dropped every anomaly would otherwise pass this test silently)."""
     import csv as _csv
     from conftest import COMPONENTS as _COMPONENTS
     out = tmp_path / "trim_anomalies"
@@ -1431,8 +1433,21 @@ def test_metrics_per_component_filters_anomalies_targeting_dropped_metrics(tmp_p
         header = _read_csv_header(out / f"{component}.csv")
         allowed[component] = set(header[1:])
     with open(out / "anomalies.csv") as f:
-        for row in _csv.DictReader(f):
-            assert row["metric"] in allowed[row["component"]], (
-                f"manifest references metric {row['metric']} not emitted by "
-                f"{row['component']} (allowed: {sorted(allowed[row['component']])})"
-            )
+        rows = list(_csv.DictReader(f))
+    assert rows, (
+        "anomalies.csv is empty under --metrics-per-component 2; the filter "
+        "is over-filtering eligible anomalies"
+    )
+    for row in rows:
+        assert row["metric"] in allowed[row["component"]], (
+            f"manifest references metric {row['metric']} not emitted by "
+            f"{row['component']} (allowed: {sorted(allowed[row['component']])})"
+        )
+    # authservice keeps active_sessions and login_attempts at N=2; one or
+    # both of those is the target of multiple in-range primary anomalies, so
+    # at least one entry for those metrics must survive.
+    auth_metrics = {r["metric"] for r in rows if r["component"] == "authservice"}
+    assert auth_metrics & {"active_sessions", "login_attempts"}, (
+        "no authservice anomaly survived for either retained metric "
+        f"(active_sessions, login_attempts); got {auth_metrics}"
+    )

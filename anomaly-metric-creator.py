@@ -624,7 +624,9 @@ MAX_METRICS_PER_COMPONENT = 10
 
 # Default emitted metrics per component when ``--metrics-per-component`` is
 # not provided. Matches the historic catalog so default CSVs remain
-# byte-for-byte stable.
+# byte-for-byte stable. Keys MUST match COMPONENTS exactly — adding a new
+# component requires a new entry here. Drift is rejected at import time by
+# the assertion below.
 DEFAULT_METRICS_PER_COMPONENT: dict[str, int] = {
     "authservice": 6,
     "cacheservice": 6,
@@ -640,6 +642,24 @@ DEFAULT_METRICS_PER_COMPONENT: dict[str, int] = {
     "identityprovider": 5,
     "observabilitypipeline": 4,
 }
+
+_components_keys = set(COMPONENTS.keys())
+_defaults_keys = set(DEFAULT_METRICS_PER_COMPONENT.keys())
+if _components_keys != _defaults_keys:
+    missing = _components_keys - _defaults_keys
+    extra = _defaults_keys - _components_keys
+    raise ValueError(
+        "DEFAULT_METRICS_PER_COMPONENT and COMPONENTS keys must match. "
+        f"Missing from DEFAULT_METRICS_PER_COMPONENT: {sorted(missing)}. "
+        f"Extra in DEFAULT_METRICS_PER_COMPONENT: {sorted(extra)}."
+    )
+for _name, _default in DEFAULT_METRICS_PER_COMPONENT.items():
+    if not 1 <= _default <= len(COMPONENTS[_name]):
+        raise ValueError(
+            f"DEFAULT_METRICS_PER_COMPONENT[{_name!r}] = {_default} is outside "
+            f"[1, {len(COMPONENTS[_name])}]"
+        )
+del _components_keys, _defaults_keys, _name, _default
 
 # ------------------------------------------------------------------
 # Anomaly specifications
@@ -1608,26 +1628,53 @@ def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, lis
 def _filter_anomalies_for_emitted_metrics(component_anomalies: dict,
                                            cascade_registry: dict,
                                            effective_specs: dict) -> None:
-    """Drop anomaly specs targeting metrics not in the trimmed catalog.
+    """Drop anomaly specs whose metric was trimmed by ``--metrics-per-component``.
 
-    Without this filter, ``generate_component`` would KeyError on
-    ``name_to_col[aspec["metric"]]`` for any anomaly whose metric column was
-    cut by --metrics-per-component. Filtering happens in-place before the
-    severity / count gates so the anomaly-count cap pool reflects what can
-    actually emit.
+    Two distinct cases are handled differently:
+
+    - Metric is in the full ``COMPONENTS[component]`` catalog but not in the
+      trimmed ``effective_specs[component]`` prefix → silently dropped. This
+      is the intended behavior of the cap.
+    - Metric (or component) is not in the full catalog at all → raise
+      ``ValueError``. This is a typo in an ``anoms_*`` list or a
+      ``register_cascade`` call and would otherwise be silently swallowed.
+
+    Filtering happens in-place before the severity / count gates so the
+    anomaly-count cap pool reflects what can actually emit.
     """
-    allowed = {name: {s.name for s in specs}
+    full_catalog = {name: {s.name for s in specs}
+                    for name, specs in COMPONENTS.items()}
+    emitted = {name: {s.name for s in specs}
                for name, specs in effective_specs.items()}
+
+    def _validate_and_filter(specs: list[dict], component: str) -> list[dict]:
+        unknown: list[tuple[str, str, str]] = []
+        catalog = full_catalog.get(component, set())
+        emitted_for_component = emitted.get(component, set())
+        kept: list[dict] = []
+        for spec in specs:
+            metric = spec["metric"]
+            if metric not in catalog:
+                unknown.append((component, metric, spec.get("description", "")))
+                continue
+            if metric in emitted_for_component:
+                kept.append(spec)
+            # else: known metric trimmed by the cap — silent drop is intentional
+        if unknown:
+            raise ValueError(
+                "Anomaly spec(s) reference metrics or components missing "
+                f"from COMPONENTS (component, metric, description): {unknown}"
+            )
+        return kept
+
     for name in list(component_anomalies.keys()):
-        component_anomalies[name] = [
-            spec for spec in component_anomalies[name]
-            if spec["metric"] in allowed.get(name, set())
-        ]
+        component_anomalies[name] = _validate_and_filter(
+            component_anomalies[name], name
+        )
     for name in list(cascade_registry.keys()):
-        cascade_registry[name] = [
-            spec for spec in cascade_registry[name]
-            if spec["metric"] in allowed.get(name, set())
-        ]
+        cascade_registry[name] = _validate_and_filter(
+            cascade_registry[name], name
+        )
 
 
 def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: dict,
