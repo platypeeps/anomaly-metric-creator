@@ -2455,12 +2455,30 @@ def combine_logs_unified(components, input_dir, output_file=None):
     return total_rows, size_mb
 
 
-def combine_logs(input_dir):
-    """Discover components in ``input_dir`` and write the unified combined CSV."""
+def combine_logs(input_dir, components=None):
+    """Write the unified combined CSV from per-component CSVs in ``input_dir``.
+
+    When ``components`` is ``None``, the combine step autodiscovers every
+    ``*.csv`` in ``input_dir`` (excluding the anomalies manifest and prior
+    combine outputs). When ``components`` is provided, it is used verbatim —
+    the caller controls the order and is responsible for restricting to the
+    user-selected allowlist. Any named component whose ``{name}.csv`` is
+    missing from ``input_dir`` raises ``SystemExit``.
+    """
     input_dir = Path(input_dir)
-    components = discover_components(input_dir)
-    if not components:
-        raise SystemExit(f"No component CSVs found in {input_dir}/")
+    if components is None:
+        components = discover_components(input_dir)
+        if not components:
+            raise SystemExit(f"No component CSVs found in {input_dir}/")
+    else:
+        components = list(components)
+        missing = [f"{name}.csv" for name in components
+                   if not (input_dir / f"{name}.csv").exists()]
+        if missing:
+            raise SystemExit(
+                f"--combine-only: missing component CSVs in {input_dir}: "
+                f"{', '.join(missing)}"
+            )
     return combine_logs_unified(components, input_dir)
 
 
@@ -3006,11 +3024,20 @@ def stream_otel_signals(
 def main(argv=None):
     args = parse_args(argv)
 
+    # Restrict the combine step to user-selected components when --components
+    # narrows the selection; pass None for the default ("all") so autodiscovery
+    # still picks up any extra CSVs in --output-dir. List order follows the
+    # COMPONENTS declaration so unified CSV columns stay deterministic.
+    if args.components == set(COMPONENTS.keys()):
+        combine_components = None
+    else:
+        combine_components = [name for name in COMPONENTS if name in args.components]
+
     if args.combine_only:
         if not args.output_dir.is_dir():
             raise SystemExit(f"--combine-only requires an existing --output-dir; "
                              f"{args.output_dir} does not exist")
-        combine_logs(args.output_dir)
+        combine_logs(args.output_dir, components=combine_components)
         return
 
     total_seconds = SECONDS_PER_DAY * args.duration_days
@@ -3122,7 +3149,7 @@ def main(argv=None):
         print("   OTEL streaming disabled (pass --otel-enabled to send to configured endpoints)")
 
     if args.combine:
-        combine_logs(args.output_dir)
+        combine_logs(args.output_dir, components=combine_components)
 
 
 if __name__ == "__main__":

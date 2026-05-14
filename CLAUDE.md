@@ -31,6 +31,20 @@ making changes.
 `if __name__ == "__main__"`. Importing the module does not trigger generation, which
 keeps tests and ad-hoc reuse of `generate_component()` cheap.
 
+### Combine step
+
+`combine_logs(input_dir, components=None)` joins the per-component CSVs in
+`input_dir` into `combined_metrics_unified.csv`. When `components` is provided,
+the unified output is restricted to that list verbatim (caller-controlled order,
+missing per-component CSVs raise `SystemExit`); when omitted, every `*.csv` in
+`input_dir` is autodiscovered (excluding the anomalies manifest and prior
+combine outputs). `main()` threads `--components` into both call sites
+(`--combine` and `--combine-only`) so the combine output honors the same
+allowlist as generation, `anomalies.csv`, reporting artifacts, and OTEL
+streaming. The default `--components all` keeps autodiscovery active, which
+preserves the synthetic-extra-component path used by the existing
+test fixture.
+
 ### Metric specs (value generation)
 
 Each component's columns are declared in `COMPONENTS` as a list of `MetricSpec(name,
