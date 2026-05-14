@@ -46,14 +46,23 @@ def test_default_metrics_per_component_keys_match_components(amc):
 def test_component_primary_anomalies_keys_match_components(amc):
     """``COMPONENT_PRIMARY_ANOMALIES`` is what ``main()`` uses to build the
     per-component anomaly dict. Its keys must mirror ``COMPONENTS`` exactly,
-    and each value must be the actual ``anoms_*`` list module attribute (not
-    a copy) so cascade registrations and tests that mutate the source list
-    stay coherent."""
+    and each value must be the actual ``anoms_*`` list module attribute —
+    same object identity, not a copy and not a sibling component's list.
+
+    Without the identity check, a copy or a paste-error swap (e.g.
+    ``"authservice": anoms_cache``) would silently desync the runner from
+    cascade registrations and from any test that mutates the source list,
+    and the type-only check would still pass."""
     assert set(amc.COMPONENT_PRIMARY_ANOMALIES.keys()) == set(amc.COMPONENTS.keys()), (
         "COMPONENT_PRIMARY_ANOMALIES must include exactly the components in COMPONENTS"
     )
-    for component, anoms in amc.COMPONENT_PRIMARY_ANOMALIES.items():
-        assert isinstance(anoms, list), (
-            f"COMPONENT_PRIMARY_ANOMALIES[{component!r}] must be a list, "
-            f"got {type(anoms).__name__}"
-        )
+    mismatches = []
+    for component, (attr, _) in COMPONENT_FIELDS.items():
+        registered = amc.COMPONENT_PRIMARY_ANOMALIES[component]
+        expected = getattr(amc, attr)
+        if registered is not expected:
+            mismatches.append((component, attr, id(registered), id(expected)))
+    assert not mismatches, (
+        "COMPONENT_PRIMARY_ANOMALIES values must be the same object as the "
+        f"matching anoms_* module attribute; mismatches: {mismatches}"
+    )
