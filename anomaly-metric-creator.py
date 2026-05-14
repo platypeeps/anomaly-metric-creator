@@ -2476,7 +2476,7 @@ def combine_logs(input_dir, components=None):
                    if not (input_dir / f"{name}.csv").exists()]
         if missing:
             raise SystemExit(
-                f"--combine-only: missing component CSVs in {input_dir}: "
+                f"missing component CSVs in {input_dir}: "
                 f"{', '.join(missing)}"
             )
     return combine_logs_unified(components, input_dir)
