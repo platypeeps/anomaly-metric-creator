@@ -21,7 +21,7 @@ def _load_amc():
     return module
 
 
-def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None):
+def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None, extra_args=None):
     args = [
         "--seed", str(seed),
         "--duration-days", str(days),
@@ -29,6 +29,8 @@ def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None):
     ]
     if drop_rate is not None:
         args += ["--drop-rate", str(drop_rate)]
+    if extra_args:
+        args += list(extra_args)
     stderr_buf = io.StringIO()
     real_stderr = sys.stderr
     sys.stderr = stderr_buf
@@ -65,22 +67,12 @@ def seven_day_run(amc, tmp_path_factory):
 @pytest.fixture(scope="session")
 def one_day_full_metrics_run(amc, tmp_path_factory):
     """1-day run with --metrics-per-component 10 so value-band and combine
-    integration tests can exercise every supplemental metric."""
+    integration tests can exercise every supplemental metric. Shares
+    ``run_capture`` so default and full-metric runs use one execution path."""
     out = tmp_path_factory.mktemp("one_day_full_metrics")
-    args = [
-        "--seed", "42",
-        "--duration-days", "1",
-        "--metrics-per-component", "10",
-        "--output-dir", str(out),
-    ]
-    stderr_buf = io.StringIO()
-    real_stderr = sys.stderr
-    sys.stderr = stderr_buf
-    try:
-        amc.main(args)
-    finally:
-        sys.stderr = real_stderr
-    return SimpleNamespace(out_dir=out, stderr=stderr_buf.getvalue())
+    return run_capture(
+        amc, out, days=1, extra_args=["--metrics-per-component", "10"]
+    )
 
 
 # (anomaly-list attribute name, total metric count in COMPONENTS)

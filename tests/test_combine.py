@@ -125,6 +125,34 @@ def test_combine_only_cli_produces_unified_csv(amc, one_day_run_a, tmp_path):
         )
 
 
+def _run_combine_subprocess(out_dir, *extra_args):
+    """Run anomaly-metric-creator.py in a subprocess so generation-level
+    side-effects (notably ``cascading_anomalies`` filtering by
+    ``--metrics-per-component``) don't pollute the session-scoped ``amc``
+    module that other tests share."""
+    import subprocess
+    import sys as _sys
+    from conftest import SCRIPT_PATH
+    result = subprocess.run(
+        [_sys.executable, str(SCRIPT_PATH),
+         "--seed", "42",
+         "--duration-days", "1",
+         "--interval-seconds", "60",
+         "--combine",
+         "--output-dir", str(out_dir),
+         *extra_args],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _read_unified_fieldnames(path):
+    with open(path) as f:
+        reader = csv.DictReader(f)
+        return reader.fieldnames
+
+
 def test_combine_with_metrics_per_component_full_catalog(amc, tmp_path):
     """``--combine --metrics-per-component 10`` includes every supplemental
     metric column in the unified CSV, in COMPONENTS-declared order.
@@ -134,19 +162,10 @@ def test_combine_with_metrics_per_component_full_catalog(amc, tmp_path):
     cover either case because they only see the historic per-component count.
     """
     out = tmp_path / "iot_logs"
-    amc.main([
-        "--seed", "42",
-        "--duration-days", "1",
-        "--interval-seconds", "60",
-        "--metrics-per-component", "10",
-        "--combine",
-        "--output-dir", str(out),
-    ])
+    _run_combine_subprocess(out, "--metrics-per-component", "10")
     unified = out / "combined_metrics_unified.csv"
     assert unified.exists(), "combine did not write the unified CSV"
-    with open(unified) as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames
+    fieldnames = _read_unified_fieldnames(unified)
 
     # Every component should contribute 10 prefixed columns in the unified CSV.
     for component, specs in amc.COMPONENTS.items():
@@ -163,19 +182,10 @@ def test_combine_with_metrics_per_component_trims_unified_columns(amc, tmp_path)
     per-component column set is exactly the first 3 schema metrics, with no
     leftover columns from the historic default catalog."""
     out = tmp_path / "iot_logs"
-    amc.main([
-        "--seed", "42",
-        "--duration-days", "1",
-        "--interval-seconds", "60",
-        "--metrics-per-component", "3",
-        "--combine",
-        "--output-dir", str(out),
-    ])
+    _run_combine_subprocess(out, "--metrics-per-component", "3")
     unified = out / "combined_metrics_unified.csv"
     assert unified.exists(), "combine did not write the unified CSV"
-    with open(unified) as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames
+    fieldnames = _read_unified_fieldnames(unified)
 
     for component, specs in amc.COMPONENTS.items():
         expected = [f"{component}_{s.name}" for s in specs[:3]]

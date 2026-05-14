@@ -653,13 +653,24 @@ if _components_keys != _defaults_keys:
         f"Missing from DEFAULT_METRICS_PER_COMPONENT: {sorted(missing)}. "
         f"Extra in DEFAULT_METRICS_PER_COMPONENT: {sorted(extra)}."
     )
+_overflowed = {
+    name: len(specs)
+    for name, specs in COMPONENTS.items()
+    if len(specs) > MAX_METRICS_PER_COMPONENT
+}
+if _overflowed:
+    raise ValueError(
+        f"COMPONENTS entries exceed MAX_METRICS_PER_COMPONENT={MAX_METRICS_PER_COMPONENT}: "
+        f"{_overflowed}. An accidental extra MetricSpec would be unreachable "
+        f"via --metrics-per-component; trim the catalog or raise the cap."
+    )
 for _name, _default in DEFAULT_METRICS_PER_COMPONENT.items():
     if not 1 <= _default <= len(COMPONENTS[_name]):
         raise ValueError(
             f"DEFAULT_METRICS_PER_COMPONENT[{_name!r}] = {_default} is outside "
             f"[1, {len(COMPONENTS[_name])}]"
         )
-del _components_keys, _defaults_keys, _name, _default
+del _components_keys, _defaults_keys, _overflowed, _name, _default
 
 # ------------------------------------------------------------------
 # Anomaly specifications
