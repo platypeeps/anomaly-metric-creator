@@ -41,3 +41,19 @@ def test_default_metrics_per_component_keys_match_components(amc):
             f"DEFAULT_METRICS_PER_COMPONENT[{component!r}] = {default} is "
             f"outside [1, {catalog_size}]"
         )
+
+
+def test_component_primary_anomalies_keys_match_components(amc):
+    """``COMPONENT_PRIMARY_ANOMALIES`` is what ``main()`` uses to build the
+    per-component anomaly dict. Its keys must mirror ``COMPONENTS`` exactly,
+    and each value must be the actual ``anoms_*`` list module attribute (not
+    a copy) so cascade registrations and tests that mutate the source list
+    stay coherent."""
+    assert set(amc.COMPONENT_PRIMARY_ANOMALIES.keys()) == set(amc.COMPONENTS.keys()), (
+        "COMPONENT_PRIMARY_ANOMALIES must include exactly the components in COMPONENTS"
+    )
+    for component, anoms in amc.COMPONENT_PRIMARY_ANOMALIES.items():
+        assert isinstance(anoms, list), (
+            f"COMPONENT_PRIMARY_ANOMALIES[{component!r}] must be a list, "
+            f"got {type(anoms).__name__}"
+        )

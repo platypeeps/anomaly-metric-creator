@@ -1269,6 +1269,41 @@ anoms_llm = [
 ]
 
 # ------------------------------------------------------------------
+# Component → primary anomaly list mapping. Adding a new component means
+# adding an ``anoms_*`` list and pairing it here; main() derives
+# ``component_anomalies`` from this registry so the generation loop stays
+# in sync without hand-edits inside main().
+# ------------------------------------------------------------------
+COMPONENT_PRIMARY_ANOMALIES: dict[str, list[dict]] = {
+    "authservice": anoms_auth,
+    "cacheservice": anoms_cache,
+    "apigateway": anoms_api,
+    "database": anoms_db,
+    "mqservice": anoms_mq,
+    "llm_analytics": anoms_llm,
+    "loadbalancer": anoms_lb,
+    "objectstore": anoms_obj,
+    "vectorstore": anoms_vec,
+    "scheduler": anoms_scheduler,
+    "paymentservice": anoms_payment,
+    "identityprovider": anoms_idp,
+    "observabilitypipeline": anoms_obs,
+}
+
+_primary_keys = set(COMPONENT_PRIMARY_ANOMALIES.keys())
+_components_keys = set(COMPONENTS.keys())
+if _primary_keys != _components_keys:
+    missing = _components_keys - _primary_keys
+    extra = _primary_keys - _components_keys
+    raise ValueError(
+        "COMPONENT_PRIMARY_ANOMALIES and COMPONENTS keys must match. "
+        f"Missing from COMPONENT_PRIMARY_ANOMALIES: {sorted(missing)}. "
+        f"Extra in COMPONENT_PRIMARY_ANOMALIES: {sorted(extra)}."
+    )
+del _primary_keys, _components_keys
+
+
+# ------------------------------------------------------------------
 # Cascading-failure registry. Same-day cascades fire under any duration;
 # multi-day cascades (LLM-driven) only reach during runs of >= 7 days.
 # ------------------------------------------------------------------
@@ -2708,19 +2743,7 @@ def main(argv=None):
         register_high_pressure_cascades()
 
     component_anomalies = {
-        "authservice": list(anoms_auth),
-        "cacheservice": list(anoms_cache),
-        "apigateway": list(anoms_api),
-        "database": list(anoms_db),
-        "mqservice": list(anoms_mq),
-        "llm_analytics": list(anoms_llm),
-        "loadbalancer": list(anoms_lb),
-        "objectstore": list(anoms_obj),
-        "vectorstore": list(anoms_vec),
-        "scheduler": list(anoms_scheduler),
-        "paymentservice": list(anoms_payment),
-        "identityprovider": list(anoms_idp),
-        "observabilitypipeline": list(anoms_obs),
+        name: list(specs) for name, specs in COMPONENT_PRIMARY_ANOMALIES.items()
     }
     if args.signal_level == "high":
         component_anomalies["loadbalancer"].extend(anoms_high_lb)

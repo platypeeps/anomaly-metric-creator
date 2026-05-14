@@ -82,14 +82,22 @@ new metrics appended past that point are only emitted when callers pass
 
 ### Adding new components
 
-Add a `COMPONENTS[name]` entry with the metric list AND a matching
-`DEFAULT_METRICS_PER_COMPONENT[name]` entry naming how many metrics the new
-component should emit by default. Then add anomaly specs to the matching
-`anoms_*` list (or register cascades in `register_default_cascades()`). The
-runner picks up new components without further wiring.
+A new component needs four lockstep entries:
 
-Drift between `COMPONENTS` and `DEFAULT_METRICS_PER_COMPONENT` is rejected at
-module import time with a `ValueError` so missing/extra keys can't sneak in.
+1. `COMPONENTS[name]` — ordered `MetricSpec` list (up to `MAX_METRICS_PER_COMPONENT`).
+2. `DEFAULT_METRICS_PER_COMPONENT[name]` — how many metrics the new component
+   emits by default.
+3. `anoms_<short>` — a module-level list of primary anomaly spec dicts (may be
+   empty if the component has only cascade-driven anomalies).
+4. `COMPONENT_PRIMARY_ANOMALIES[name]` — pair the new `anoms_*` list with the
+   component name so the runner picks it up.
+
+Optional: register cascades inside `register_default_cascades()` (or the
+high-pressure variant) with the new component name.
+
+Drift between `COMPONENTS`, `DEFAULT_METRICS_PER_COMPONENT`, and
+`COMPONENT_PRIMARY_ANOMALIES` is rejected at module import time with a clear
+`ValueError`, so missing or extra keys can't sneak in.
 
 ### Anomaly metric validation
 
