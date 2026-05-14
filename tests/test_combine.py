@@ -123,3 +123,64 @@ def test_combine_only_cli_produces_unified_csv(amc, one_day_run_a, tmp_path):
         assert (staged / name).stat().st_mtime_ns == mtime, (
             f"--combine-only rewrote source file {name}"
         )
+
+
+def test_combine_with_metrics_per_component_full_catalog(amc, tmp_path):
+    """``--combine --metrics-per-component 10`` includes every supplemental
+    metric column in the unified CSV, in COMPONENTS-declared order.
+
+    Guards regressions where ``--combine`` drops the supplemental tail or
+    reorders trimmed schemas — the existing default-only combine tests don't
+    cover either case because they only see the historic per-component count.
+    """
+    out = tmp_path / "iot_logs"
+    amc.main([
+        "--seed", "42",
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--metrics-per-component", "10",
+        "--combine",
+        "--output-dir", str(out),
+    ])
+    unified = out / "combined_metrics_unified.csv"
+    assert unified.exists(), "combine did not write the unified CSV"
+    with open(unified) as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+
+    # Every component should contribute 10 prefixed columns in the unified CSV.
+    for component, specs in amc.COMPONENTS.items():
+        expected = [f"{component}_{s.name}" for s in specs[: amc.MAX_METRICS_PER_COMPONENT]]
+        observed = [f for f in fieldnames if f.startswith(f"{component}_")]
+        assert observed == expected, (
+            f"{component}: unified columns {observed} != schema-derived "
+            f"order {expected}"
+        )
+
+
+def test_combine_with_metrics_per_component_trims_unified_columns(amc, tmp_path):
+    """``--combine --metrics-per-component 3`` produces a unified CSV whose
+    per-component column set is exactly the first 3 schema metrics, with no
+    leftover columns from the historic default catalog."""
+    out = tmp_path / "iot_logs"
+    amc.main([
+        "--seed", "42",
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--metrics-per-component", "3",
+        "--combine",
+        "--output-dir", str(out),
+    ])
+    unified = out / "combined_metrics_unified.csv"
+    assert unified.exists(), "combine did not write the unified CSV"
+    with open(unified) as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+
+    for component, specs in amc.COMPONENTS.items():
+        expected = [f"{component}_{s.name}" for s in specs[:3]]
+        observed = [f for f in fieldnames if f.startswith(f"{component}_")]
+        assert observed == expected, (
+            f"{component}: unified columns {observed} != expected first-3 "
+            f"{expected}"
+        )

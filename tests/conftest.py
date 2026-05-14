@@ -62,6 +62,27 @@ def seven_day_run(amc, tmp_path_factory):
     return run_capture(amc, out, days=7)
 
 
+@pytest.fixture(scope="session")
+def one_day_full_metrics_run(amc, tmp_path_factory):
+    """1-day run with --metrics-per-component 10 so value-band and combine
+    integration tests can exercise every supplemental metric."""
+    out = tmp_path_factory.mktemp("one_day_full_metrics")
+    args = [
+        "--seed", "42",
+        "--duration-days", "1",
+        "--metrics-per-component", "10",
+        "--output-dir", str(out),
+    ]
+    stderr_buf = io.StringIO()
+    real_stderr = sys.stderr
+    sys.stderr = stderr_buf
+    try:
+        amc.main(args)
+    finally:
+        sys.stderr = real_stderr
+    return SimpleNamespace(out_dir=out, stderr=stderr_buf.getvalue())
+
+
 # (anomaly-list attribute name, total metric count in COMPONENTS)
 COMPONENT_FIELDS = {
     "authservice": ("anoms_auth", 10),

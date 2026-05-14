@@ -178,14 +178,14 @@ def test_spec_coverage_seven_day(amc, seven_day_run):
 # ------------------------------------------------------------------
 # Value-range sanity (per metric × per component)
 # ------------------------------------------------------------------
-def test_value_range_sanity(amc, one_day_run_a):
-    """Natural rows for every metric fall inside the schema-derived plausible band.
+def _assert_value_band_sanity(amc, run, emitted_count):
+    """Each emitted metric column stays inside an 8σ band of its MetricSpec.
 
-    Excludes timestamps that appear in the manifest (those are anomalies and are
-    expected out-of-band). Uses an 8σ envelope around the metric's daily shape so
-    a healthy run won't trip; a regression that swaps a metric's base or std would.
+    ``emitted_count(component) -> int`` returns how many metrics that
+    component's CSV should expose for this run. Anomaly rows (and full
+    anomaly spans) are excluded from the band check.
     """
-    manifest = read_manifest(one_day_run_a.out_dir)
+    manifest = read_manifest(run.out_dir)
     lookup = primary_spec_lookup(amc)
     # {component: {metric: set(timestamps_to_skip)}}
     skip_by_cm = {}
@@ -208,8 +208,8 @@ def test_value_range_sanity(amc, one_day_run_a):
 
     failures = []
     for component, specs in amc.COMPONENTS.items():
-        rows, header = read_component_rows(one_day_run_a.out_dir, component)
-        emitted_specs = specs[:DEFAULT_METRIC_COUNT[component]]
+        rows, header = read_component_rows(run.out_dir, component)
+        emitted_specs = specs[: emitted_count(component)]
         for col_idx, mspec in enumerate(emitted_specs):
             field_idx = header.index(mspec.name)
             skip_ts = skip_by_cm.get(component, {}).get(mspec.name, set())
@@ -227,6 +227,24 @@ def test_value_range_sanity(amc, one_day_run_a):
             if out_of_band:
                 failures.append((component, mspec.name, lo, hi, out_of_band, sample_offender))
     assert not failures, f"Metrics outside 8σ natural band: {failures}"
+
+
+def test_value_range_sanity(amc, one_day_run_a):
+    """Default-run metrics stay inside their 8σ natural band."""
+    _assert_value_band_sanity(
+        amc, one_day_run_a, emitted_count=lambda c: DEFAULT_METRIC_COUNT[c]
+    )
+
+
+def test_value_range_sanity_full_catalog(amc, one_day_full_metrics_run):
+    """With --metrics-per-component 10 every supplemental metric is exercised
+    too. Without this gate, a regression in a supplemental MetricSpec's base /
+    std / multiplier would slip through the default-only check."""
+    _assert_value_band_sanity(
+        amc,
+        one_day_full_metrics_run,
+        emitted_count=lambda c: amc.MAX_METRICS_PER_COMPONENT,
+    )
 
 
 # ------------------------------------------------------------------
