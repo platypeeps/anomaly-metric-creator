@@ -80,11 +80,12 @@ into two zones:
   byte-for-byte default-output guarantee. Do this only when you are intentionally
   changing the default schema, and bump `DEFAULT_METRICS_PER_COMPONENT[name]` in the
   same change if you are adding (not replacing) an entry.
-- Indices `[DEFAULT_METRICS_PER_COMPONENT[name], MAX_METRICS_PER_COMPONENT]` — the
-  supplemental zone surfaced only via `--metrics-per-component`. New metrics should
-  be appended here by default so existing default output stays byte-identical; they
-  are only emitted when callers pass `--metrics-per-component` high enough to reach
-  them.
+- Indices `[DEFAULT_METRICS_PER_COMPONENT[name], MAX_METRICS_PER_COMPONENT)` — the
+  supplemental zone surfaced only via `--metrics-per-component` (half-open: the last
+  valid index is `MAX_METRICS_PER_COMPONENT - 1`, so each component holds at most
+  `MAX_METRICS_PER_COMPONENT` entries). New metrics should be appended here by default
+  so existing default output stays byte-identical; they are only emitted when callers
+  pass `--metrics-per-component` high enough to reach them.
 
 Up to `MAX_METRICS_PER_COMPONENT` (10) entries are allowed per component. No other
 changes needed — the column flows through `_natural_column()` and

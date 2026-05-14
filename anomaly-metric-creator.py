@@ -518,7 +518,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("llm_api_error_rate", 0.05, 0.02, clip_min=0),
         # Supplemental metrics
         MetricSpec("p95_llm_latency_ms", 1400, 80),
-        MetricSpec("prompt_cache_hit_ratio", 0.55, 0.05, clip_min=0),
+        MetricSpec("prompt_cache_hit_ratio", 55.0, 2.0, clip_min=0),
     ],
     "loadbalancer": [
         MetricSpec("requests_per_sec", 900, 60),
