@@ -194,3 +194,86 @@ def test_combine_with_metrics_per_component_trims_unified_columns(amc, tmp_path)
             f"{component}: unified columns {observed} != expected first-3 "
             f"{expected}"
         )
+
+
+def test_combine_only_components_filters_unified_columns(amc, one_day_run_a, tmp_path):
+    """``--combine-only --components authservice,database`` writes a unified CSV
+    whose columns are exactly ``timestamp`` plus every ``authservice_*`` and
+    ``database_*`` column — no other component prefixes leak in even though
+    the staged --output-dir holds CSVs for every component."""
+    staged = tmp_path / "iot_logs"
+    staged.mkdir()
+    for src in one_day_run_a.out_dir.iterdir():
+        shutil.copy2(src, staged / src.name)
+
+    amc.main([
+        "--combine-only",
+        "--output-dir", str(staged),
+        "--components", "authservice,database",
+    ])
+
+    unified = staged / "combined_metrics_unified.csv"
+    assert unified.exists(), "--combine-only did not write the unified CSV"
+    fieldnames = _read_unified_fieldnames(unified)
+
+    auth_specs = amc.COMPONENTS["authservice"]
+    db_specs = amc.COMPONENTS["database"]
+    auth_default = amc.DEFAULT_METRICS_PER_COMPONENT["authservice"]
+    db_default = amc.DEFAULT_METRICS_PER_COMPONENT["database"]
+    expected_auth = [f"authservice_{s.name}" for s in auth_specs[:auth_default]]
+    expected_db = [f"database_{s.name}" for s in db_specs[:db_default]]
+    expected = ["timestamp", *expected_auth, *expected_db]
+
+    assert fieldnames == expected, (
+        f"unified columns {fieldnames} != expected {expected}"
+    )
+
+
+def test_combine_with_components_filters_unified_columns(amc, tmp_path):
+    """``--combine --components authservice,database`` writes a unified CSV
+    containing only those two components' columns, even if a leftover
+    component CSV from a previous run is sitting in --output-dir.
+    """
+    out = tmp_path / "iot_logs"
+    out.mkdir()
+    leftover = out / "scheduler.csv"
+    leftover.write_text(
+        "timestamp,scheduler_jobs_in_queue\n"
+        "2026-03-10 00:00:00,7\n"
+    )
+
+    _run_combine_subprocess(out, "--components", "authservice,database")
+    unified = out / "combined_metrics_unified.csv"
+    assert unified.exists(), "combine did not write the unified CSV"
+    fieldnames = _read_unified_fieldnames(unified)
+
+    component_prefixes = {
+        c for c in amc.COMPONENTS.keys() if any(f.startswith(f"{c}_") for f in fieldnames)
+    }
+    assert component_prefixes == {"authservice", "database"}, (
+        f"unified contained columns for {component_prefixes}, "
+        f"expected only {{'authservice', 'database'}}"
+    )
+    assert fieldnames[0] == "timestamp"
+
+
+def test_combine_only_components_missing_csv_errors(amc, one_day_run_a, tmp_path):
+    """``--combine-only --components a,b`` errors clearly when one of the
+    requested component CSVs is missing from --output-dir, naming the
+    missing file."""
+    staged = tmp_path / "iot_logs"
+    staged.mkdir()
+    for src in one_day_run_a.out_dir.iterdir():
+        shutil.copy2(src, staged / src.name)
+    (staged / "database.csv").unlink()
+
+    with pytest.raises(SystemExit) as excinfo:
+        amc.main([
+            "--combine-only",
+            "--output-dir", str(staged),
+            "--components", "authservice,database",
+        ])
+    message = str(excinfo.value)
+    assert "database.csv" in message, (
+        f"SystemExit message {message!r} did not name database.csv"
+    )
