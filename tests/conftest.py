@@ -21,7 +21,7 @@ def _load_amc():
     return module
 
 
-def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None):
+def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None, extra_args=None):
     args = [
         "--seed", str(seed),
         "--duration-days", str(days),
@@ -29,6 +29,8 @@ def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None):
     ]
     if drop_rate is not None:
         args += ["--drop-rate", str(drop_rate)]
+    if extra_args:
+        args += list(extra_args)
     stderr_buf = io.StringIO()
     real_stderr = sys.stderr
     sys.stderr = stderr_buf
@@ -62,20 +64,53 @@ def seven_day_run(amc, tmp_path_factory):
     return run_capture(amc, out, days=7)
 
 
+@pytest.fixture(scope="session")
+def one_day_full_metrics_run(amc, tmp_path_factory):
+    """1-day run with --metrics-per-component 10 so ``test_value_range_sanity_full_catalog``
+    can exercise every supplemental metric column. Shares ``run_capture`` so default
+    and full-metric runs go through one execution path. ``--combine`` coverage for
+    the new flag lives in ``tests/test_combine.py`` and uses its own subprocess
+    fixtures rather than this in-process run."""
+    out = tmp_path_factory.mktemp("one_day_full_metrics")
+    return run_capture(
+        amc, out, days=1, extra_args=["--metrics-per-component", "10"]
+    )
+
+
+# (anomaly-list attribute name, total metric count in COMPONENTS)
 COMPONENT_FIELDS = {
-    "authservice": ("anoms_auth", 6),
-    "cacheservice": ("anoms_cache", 6),
-    "apigateway": ("anoms_api", 6),
-    "database": ("anoms_db", 7),
-    "mqservice": ("anoms_mq", 6),
-    "llm_analytics": ("anoms_llm", 8),
-    "loadbalancer": ("anoms_lb", 7),
-    "objectstore": ("anoms_obj", 5),
-    "vectorstore": ("anoms_vec", 5),
-    "scheduler": ("anoms_scheduler", 5),
-    "paymentservice": ("anoms_payment", 5),
-    "identityprovider": ("anoms_idp", 5),
-    "observabilitypipeline": ("anoms_obs", 4),
+    "authservice": ("anoms_auth", 10),
+    "cacheservice": ("anoms_cache", 10),
+    "apigateway": ("anoms_api", 10),
+    "database": ("anoms_db", 10),
+    "mqservice": ("anoms_mq", 10),
+    "llm_analytics": ("anoms_llm", 10),
+    "loadbalancer": ("anoms_lb", 10),
+    "objectstore": ("anoms_obj", 10),
+    "vectorstore": ("anoms_vec", 10),
+    "scheduler": ("anoms_scheduler", 10),
+    "paymentservice": ("anoms_payment", 10),
+    "identityprovider": ("anoms_idp", 10),
+    "observabilitypipeline": ("anoms_obs", 10),
+}
+
+# How many metrics each component emits when --metrics-per-component is unset.
+# This is the historic per-component count and must stay stable for default
+# CSV byte-for-byte compatibility.
+DEFAULT_METRIC_COUNT = {
+    "authservice": 6,
+    "cacheservice": 6,
+    "apigateway": 6,
+    "database": 7,
+    "mqservice": 6,
+    "llm_analytics": 8,
+    "loadbalancer": 7,
+    "objectstore": 5,
+    "vectorstore": 5,
+    "scheduler": 5,
+    "paymentservice": 5,
+    "identityprovider": 5,
+    "observabilitypipeline": 4,
 }
 
 COMPONENTS = list(COMPONENT_FIELDS.keys())

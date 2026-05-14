@@ -13,6 +13,7 @@ import pytest
 
 from conftest import (
     COMPONENTS,
+    DEFAULT_METRIC_COUNT,
     SCRIPT_PATH,
     count_blank_lines,
     count_lines,
@@ -177,14 +178,14 @@ def test_spec_coverage_seven_day(amc, seven_day_run):
 # ------------------------------------------------------------------
 # Value-range sanity (per metric × per component)
 # ------------------------------------------------------------------
-def test_value_range_sanity(amc, one_day_run_a):
-    """Natural rows for every metric fall inside the schema-derived plausible band.
+def _assert_value_band_sanity(amc, run, emitted_count):
+    """Each emitted metric column stays inside an 8σ band of its MetricSpec.
 
-    Excludes timestamps that appear in the manifest (those are anomalies and are
-    expected out-of-band). Uses an 8σ envelope around the metric's daily shape so
-    a healthy run won't trip; a regression that swaps a metric's base or std would.
+    ``emitted_count(component) -> int`` returns how many metrics that
+    component's CSV should expose for this run. Anomaly rows (and full
+    anomaly spans) are excluded from the band check.
     """
-    manifest = read_manifest(one_day_run_a.out_dir)
+    manifest = read_manifest(run.out_dir)
     lookup = primary_spec_lookup(amc)
     # {component: {metric: set(timestamps_to_skip)}}
     skip_by_cm = {}
@@ -207,8 +208,9 @@ def test_value_range_sanity(amc, one_day_run_a):
 
     failures = []
     for component, specs in amc.COMPONENTS.items():
-        rows, header = read_component_rows(one_day_run_a.out_dir, component)
-        for col_idx, mspec in enumerate(specs):
+        rows, header = read_component_rows(run.out_dir, component)
+        emitted_specs = specs[: emitted_count(component)]
+        for mspec in emitted_specs:
             field_idx = header.index(mspec.name)
             skip_ts = skip_by_cm.get(component, {}).get(mspec.name, set())
             lo, hi = natural_band(amc, mspec, amc.SECONDS_PER_DAY)
@@ -225,6 +227,24 @@ def test_value_range_sanity(amc, one_day_run_a):
             if out_of_band:
                 failures.append((component, mspec.name, lo, hi, out_of_band, sample_offender))
     assert not failures, f"Metrics outside 8σ natural band: {failures}"
+
+
+def test_value_range_sanity(amc, one_day_run_a):
+    """Default-run metrics stay inside their 8σ natural band."""
+    _assert_value_band_sanity(
+        amc, one_day_run_a, emitted_count=lambda c: DEFAULT_METRIC_COUNT[c]
+    )
+
+
+def test_value_range_sanity_full_catalog(amc, one_day_full_metrics_run):
+    """With --metrics-per-component 10 every supplemental metric is exercised
+    too. Without this gate, a regression in a supplemental MetricSpec's base /
+    std / multiplier would slip through the default-only check."""
+    _assert_value_band_sanity(
+        amc,
+        one_day_full_metrics_run,
+        emitted_count=lambda c: amc.MAX_METRICS_PER_COMPONENT,
+    )
 
 
 # ------------------------------------------------------------------
@@ -285,10 +305,13 @@ def test_anomalies_match_declared_value(amc, seven_day_run):
 # Schema / refactor invariants
 # ------------------------------------------------------------------
 def test_schema_is_single_source_of_truth(amc, one_day_run_a):
-    """COMPONENTS drives the CSV columns — adding a metric edits exactly one list."""
+    """COMPONENTS drives the CSV columns — at default --metrics-per-component
+    each component emits the first DEFAULT_METRIC_COUNT[name] metrics from its
+    ordered MetricSpec list, preserving today's byte-for-byte CSV layout."""
     for component, specs in amc.COMPONENTS.items():
         _, header = read_component_rows(one_day_run_a.out_dir, component)
-        expected = ["timestamp"] + [s.name for s in specs]
+        limit = DEFAULT_METRIC_COUNT[component]
+        expected = ["timestamp"] + [s.name for s in specs[:limit]]
         assert header == expected, f"{component}: header {header} != schema {expected}"
 
 
@@ -310,6 +333,48 @@ def test_duplicate_anomaly_specs_raise(tmp_path):
         "generator": lambda ts, idx: 0.99,
     })
     with pytest.raises(ValueError, match="Overlapping anomaly specs"):
+        m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
+
+
+def test_unknown_primary_anomaly_metric_raises(tmp_path):
+    """A typo in an anoms_* list must fail loudly, not be silently dropped by
+    the metrics-per-component filter."""
+    spec = importlib.util.spec_from_file_location("amc_unknown_primary", SCRIPT_PATH)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    m.anoms_auth.append({
+        "time_offset": 7 * 3600,
+        "metric": "not_a_real_metric",
+        "description": "Typo (test injection)",
+        "generator": lambda ts, idx: 0.0,
+    })
+    with pytest.raises(ValueError, match="missing from COMPONENTS"):
+        m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
+
+
+def test_unknown_cascade_metric_raises(tmp_path):
+    """A typo in a register_cascade() call must also fail loudly. Without the
+    typo-vs-trim distinction this would be silently swallowed by the filter.
+
+    main() clears cascading_anomalies and calls register_default_cascades, so
+    the test wraps that function to inject the typo cascade on each call."""
+    spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    original_register = m.register_default_cascades
+
+    def register_with_typo():
+        original_register()
+        m.register_cascade(
+            "database",
+            7 * 3600,
+            "not_a_db_metric",
+            "Typo cascade (test injection)",
+            lambda ts, idx: 0.0,
+        )
+
+    m.register_default_cascades = register_with_typo
+    with pytest.raises(ValueError, match="missing from COMPONENTS"):
         m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
 
 
