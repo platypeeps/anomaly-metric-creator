@@ -127,10 +127,21 @@ In `tests/conftest.py`:
 Optional: register cascades inside `register_default_cascades()` (or the
 high-pressure variant) with the new component name.
 
-Drift between `COMPONENTS`, `DEFAULT_METRICS_PER_COMPONENT`, and
-`COMPONENT_PRIMARY_ANOMALIES` is rejected at module import time with a clear
-`ValueError`. Drift between `COMPONENTS` and `COMPONENT_FIELDS` / `DEFAULT_METRIC_COUNT`
-is caught by the test suite, so missing or extra keys can't sneak in.
+Validation is split across import time and the test suite, and the difference
+matters:
+
+- **Import time** rejects key drift between `COMPONENTS` and each of
+  `DEFAULT_METRICS_PER_COMPONENT` and `COMPONENT_PRIMARY_ANOMALIES`, any catalog
+  longer than `MAX_METRICS_PER_COMPONENT`, and any default count outside
+  `[1, len(catalog)]`. These raise a clear `ValueError` before `main()` runs.
+- **Test suite only.** Import-time validation does *not* check that each
+  `COMPONENT_PRIMARY_ANOMALIES[name]` is the right list object — a paste-error
+  swap like `"authservice": anoms_cache` has matching keys and imports clean.
+  `tests/test_registry.py::test_component_primary_anomalies_keys_match_components`
+  is what catches that, using `is` identity against the expected `anoms_*`
+  attribute. Drift between `COMPONENTS` and `COMPONENT_FIELDS` /
+  `DEFAULT_METRIC_COUNT` is also test-only. Run the test suite after adding
+  or modifying a component — don't rely on import-time validation alone.
 
 ### Anomaly metric validation
 
