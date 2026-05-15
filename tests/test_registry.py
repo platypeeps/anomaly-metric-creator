@@ -113,6 +113,70 @@ def test_scenarios_components_touched_matches_specs(amc):
         )
 
 
+def test_scenarios_spec_level_severity_in_vocabulary(amc):
+    """Every explicit ``severity`` on a primary or cascade spec dict must be
+    ``low`` / ``medium`` / ``high``.
+
+    ``_apply_signal_level_and_count`` reads ``spec.get("severity",
+    DEFAULT_SEVERITY)`` per spec, so an unknown value (e.g. ``"meidum"`` typo)
+    would not raise — the spec would be silently filtered out at every
+    ``--signal-level``. The import-time validator
+    ``_validate_scenarios_registry`` rejects unknown spec-level severities for
+    the same reason; this test mirrors that invariant for explicit coverage.
+    """
+    valid = {"low", "medium", "high"}
+    for slug, scenario in amc.SCENARIOS.items():
+        for component, spec in scenario.primary_specs:
+            if "severity" in spec:
+                assert spec["severity"] in valid, (
+                    f"SCENARIOS[{slug!r}].primary_specs entry for "
+                    f"{component!r} has severity {spec['severity']!r}; "
+                    f"must be one of {sorted(valid)}"
+                )
+        for target, cascade in scenario.cascade_specs:
+            if "severity" in cascade:
+                assert cascade["severity"] in valid, (
+                    f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
+                    f"{target!r} has severity {cascade['severity']!r}; "
+                    f"must be one of {sorted(valid)}"
+                )
+
+
+def test_validate_scenarios_registry_rejects_bad_spec_severity(amc, monkeypatch):
+    """The import-time validator must reject typos in spec-level severity.
+
+    Without this guard a misspelling like ``"meidum"`` would import cleanly
+    and then silently drop the spec at every ``--signal-level`` because
+    ``_apply_signal_level_and_count`` filters with ``spec.get("severity",
+    DEFAULT_SEVERITY) in allowed_severities``.
+    """
+    # Build a minimal valid scenario, then swap in a bad severity on its
+    # primary spec and verify the validator raises.
+    good_component = next(iter(amc.COMPONENTS.keys()))
+    bad_primary_spec = {
+        "time_offset": 0,
+        "metric": amc.COMPONENTS[good_component][0].name,
+        "description": "test-only synthetic spec",
+        "generator": lambda ts, idx: 1.0,
+        "severity": "meidum",  # intentional typo
+    }
+    bad_scenario = amc.Scenario(
+        id="synthetic_bad_severity",
+        name="Synthetic bad-severity scenario",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=(good_component,),
+        primary_specs=((good_component, bad_primary_spec),),
+        cascade_specs=(),
+    )
+    patched = dict(amc.SCENARIOS)
+    patched["synthetic_bad_severity"] = bad_scenario
+    monkeypatch.setattr(amc, "SCENARIOS", patched)
+    with pytest.raises(ValueError, match="meidum"):
+        amc._validate_scenarios_registry()
+
+
 def test_scenarios_all_components_touched_exist(amc):
     """Every component in components_touched must exist in COMPONENTS."""
     known = set(amc.COMPONENTS.keys())

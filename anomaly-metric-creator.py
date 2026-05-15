@@ -83,21 +83,21 @@ class MetricSpec:
 
 
 # ------------------------------------------------------------------
-# Named scenario registry (VER-102 Phase 1).
+# Named scenario registry (VER-102 / VER-104 — full migration complete).
 #
-# Each Scenario bundles a slug-named bundle of primary anomaly specs and
-# cascade specs that can be selected together via --scenarios. This phase
-# migrates the 3 multi-day cascading scenarios (cache_leak_restart,
-# jwks_rotation_chaos, db_disk_exhaustion) into the registry; every other
-# anomaly continues to fire via the legacy ``anoms_*`` / imperative-cascade
-# path until VER-104 completes the migration.
+# Each Scenario bundles a slug-named set of primary anomaly specs and
+# cascade specs that can be selected together via --scenarios. Every
+# anomaly and cascade in the codebase lives in the ``SCENARIOS`` dict
+# below; there is no legacy ``anoms_*`` path. ``main()`` builds
+# ``component_anomalies`` and ``cascading_anomalies`` exclusively via
+# ``_apply_scenarios()``.
 #
-# Each primary_spec is paired with the component name where it lives; each
-# cascade_spec is paired with the target_component. The inner dict has the
-# same shape as today's ``anoms_*`` entries (and the same shape as cascade
-# dicts after register_cascade builds them), so generation paths see the
-# same data structure regardless of whether a spec arrived via the legacy
-# path or the registry walk.
+# Each primary_spec is paired with the component name where it lands;
+# each cascade_spec is paired with the target component. The inner dict
+# carries the same fields the generator path consumes (time_offset,
+# metric, description, generator, optional duration_seconds / shape /
+# shape_params / severity), so ``generate_component()`` sees a uniform
+# spec shape regardless of whether it arrived as a primary or a cascade.
 # ------------------------------------------------------------------
 @dataclass(frozen=True)
 class Scenario:
@@ -2229,17 +2229,36 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].components_touched contains unknown "
                 f"component(s): {sorted(unknown_touched)}"
             )
-        for component, _ in scenario.primary_specs:
+        valid_severities = {"low", "medium", "high"}
+        for component, spec in scenario.primary_specs:
             if component not in known_components:
                 raise ValueError(
                     f"SCENARIOS[{slug!r}].primary_specs references unknown "
                     f"component {component!r}"
                 )
-        for target, _ in scenario.cascade_specs:
+            if "severity" in spec and spec["severity"] not in valid_severities:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].primary_specs entry for component "
+                    f"{component!r} has severity {spec['severity']!r}; "
+                    f"must be one of {sorted(valid_severities)}. "
+                    f"_apply_signal_level_and_count reads spec.get('severity', "
+                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                    f"filtered out at every --signal-level."
+                )
+        for target, cascade in scenario.cascade_specs:
             if target not in known_components:
                 raise ValueError(
                     f"SCENARIOS[{slug!r}].cascade_specs targets unknown "
                     f"component {target!r}"
+                )
+            if "severity" in cascade and cascade["severity"] not in valid_severities:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
+                    f"{target!r} has severity {cascade['severity']!r}; "
+                    f"must be one of {sorted(valid_severities)}. "
+                    f"_apply_signal_level_and_count reads spec.get('severity', "
+                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                    f"filtered out at every --signal-level."
                 )
 
 
