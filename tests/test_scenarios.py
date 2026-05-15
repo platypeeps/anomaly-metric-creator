@@ -1,8 +1,9 @@
 """SCENARIOS registry coverage (VER-103 phase 1 + VER-104 phase 2 full migration).
 
-All anomaly and cascade specs now live in the SCENARIOS registry; the legacy
-``anoms_*`` lists and ``register_default_cascades()`` / ``register_high_pressure_cascades()``
-bodies have been removed. These tests cover:
+All anomaly and cascade specs live in the SCENARIOS registry; the legacy
+``anoms_*`` lists and ``register_default_cascades()`` /
+``register_high_pressure_cascades()`` functions have been deleted entirely.
+These tests cover:
 
 * Registry structural validation — slug uniqueness, severity vocabulary,
   ``days_required`` vocabulary, component coverage.
@@ -13,7 +14,9 @@ bodies have been removed. These tests cover:
   unknown-slug hard error.
 * Default-output byte-for-byte regression — locked SHA-256 hashes for every
   per-component CSV and ``anomalies.csv`` from a default 1-day run at seed
-  42 and a 7-day run at seed 42, captured immediately before this refactor.
+  42 and a 7-day run at seed 42 (the VER-104 baseline; the high-signal +
+  ``--anomaly-count`` capped 7-day hashes below were captured after the
+  full migration and lock the post-VER-104 sampling pool).
 """
 
 from __future__ import annotations
@@ -122,14 +125,14 @@ DEFAULT_SEVEN_DAY_HASHES = {
     "vectorstore.csv": "00bda8d310a34db9e08c3dd5e26c01378f58f9a2669ee776ac01e0c985d4d5ea",
 }
 
-# SHA-256 hashes captured from the pre-VER-103 main branch for
-# ``--signal-level high --duration-days 7 --anomaly-count 100`` at seed 42.
-# Locking these protects the deterministic --anomaly-count sampling pool
-# from drift in the positional order of legacy / scenario / high-pressure
-# specs: _apply_signal_level_and_count() seeds an SeedSequence with
-# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count``
-# positions out of the in-range pool, so any reshuffle changes which
-# anomalies land in the manifest.
+# SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
+# at seed 42, captured against the post-VER-104 registry-only spec ordering
+# (commit f6bd453). Locking these protects the deterministic --anomaly-count
+# sampling pool from drift in the positional order of registry specs:
+# _apply_signal_level_and_count() seeds an SeedSequence with
+# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count`` positions
+# out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
+# of per-component append ordering changes which anomalies land in the manifest.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
     "anomalies.csv": "a3d1592da8a66c51266f5269a67f991c2e8d74047a6c7d2151d2412efef63d5b",
     "apigateway.csv": "5c799a684ade9c3140089ec319cc633f879d4f422c3723d03c65e892962fae21",
@@ -188,9 +191,15 @@ def test_scenario_severity_in_vocabulary(amc, slug):
 
 @pytest.mark.parametrize("slug", sorted(THREE_MULTI_DAY_SCENARIOS))
 def test_scenario_days_required_vocabulary(amc, slug):
+    """``days_required`` is the minimum --duration-days at which any of the
+    scenario's specs becomes in range. VER-104 relaxed the validator from
+    ``{1, 7}`` to any positive int so each scenario can gate at the day
+    index of its earliest offset; the exact-match guard lives in
+    ``test_registry.test_scenarios_days_required_valid``.
+    """
     days_required = amc.SCENARIOS[slug].days_required
-    assert days_required in {1, 7}, (
-        f"SCENARIOS[{slug!r}].days_required {days_required!r} not in {{1, 7}}"
+    assert isinstance(days_required, int) and days_required >= 1, (
+        f"SCENARIOS[{slug!r}].days_required {days_required!r} must be a positive int"
     )
 
 
@@ -205,13 +214,20 @@ def test_scenario_components_touched_exist(amc, slug):
 
 
 def test_three_multi_day_scenarios_require_seven_days(amc):
-    """The 3 migrated multi-day cascading scenarios must declare
-    ``days_required >= 7`` so a default 1-day run drops them with a stderr
-    warning (matches the acceptance criterion for VER-103)."""
+    """The 3 migrated multi-day cascading scenarios all have specs that span past
+    Day 1, so they must declare ``days_required >= 2`` and a default 1-day run
+    must drop them with a stderr warning (the VER-103 acceptance criterion).
+
+    VER-104 narrowed each scenario's ``days_required`` to its actual minimum
+    in-range day (e.g. ``cache_leak_restart`` and ``db_disk_exhaustion`` start
+    on Day 2, ``jwks_rotation_chaos`` starts on Day 3) so shorter multi-day
+    runs emit the in-range portion the legacy path used to emit. The test
+    therefore checks ``>= 2`` rather than the original ``== 7``.
+    """
     for slug in THREE_MULTI_DAY_SCENARIOS:
         scenario = amc.SCENARIOS[slug]
-        assert scenario.days_required == 7, (
-            f"SCENARIOS[{slug!r}].days_required must be 7 (this is a multi-day scenario)"
+        assert scenario.days_required >= 2, (
+            f"SCENARIOS[{slug!r}].days_required must be >= 2 (multi-day scenario)"
         )
 
 

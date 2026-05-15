@@ -51,8 +51,6 @@ def test_cascades_applied_in_generate_component(amc, tmp_path):
 
 def test_cascades_populated_from_scenarios(amc, tmp_path):
     """Registry-driven _apply_scenarios populates cascading_anomalies for a 1-day run."""
-    import io
-    import sys
     out = tmp_path / "cascade_reg_test"
     out.mkdir()
     amc.cascading_anomalies.clear()

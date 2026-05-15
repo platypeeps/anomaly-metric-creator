@@ -63,10 +63,50 @@ def test_scenarios_severity_valid(amc):
 
 
 def test_scenarios_days_required_valid(amc):
-    """Every scenario days_required must be 1 or 7."""
+    """Every scenario days_required must be a positive int and at most equal to the
+    smallest time_offset's day index across its primary and cascade specs.
+
+    days_required is the minimum --duration-days at which any of the scenario's
+    specs become in range. Setting it higher than that minimum silently drops
+    in-range specs the legacy path would have emitted (with stderr warnings for
+    the out-of-range tail), so this test guards against that regression.
+    """
     for slug, scenario in amc.SCENARIOS.items():
-        assert scenario.days_required in {1, 7}, (
-            f"SCENARIOS[{slug!r}].days_required {scenario.days_required!r} must be 1 or 7"
+        assert isinstance(scenario.days_required, int) and scenario.days_required >= 1, (
+            f"SCENARIOS[{slug!r}].days_required {scenario.days_required!r} "
+            "must be a positive int"
+        )
+        offsets = [p["time_offset"] for _, p in scenario.primary_specs]
+        offsets += [c["time_offset"] for _, c in scenario.cascade_specs]
+        if not offsets:
+            continue
+        min_day_required = min(offsets) // amc.SECONDS_PER_DAY + 1
+        assert scenario.days_required <= min_day_required, (
+            f"SCENARIOS[{slug!r}].days_required={scenario.days_required} is greater "
+            f"than the smallest in-range duration ({min_day_required}); this would "
+            "silently drop in-range specs"
+        )
+
+
+def test_scenarios_components_touched_matches_specs(amc):
+    """``components_touched`` must equal the set of components referenced by the
+    scenario's primary and cascade specs.
+
+    ``_resolve_scenarios()`` filters scenarios against ``--components`` using
+    ``components_touched``. If a referenced component is missing from that tuple,
+    users who select only that component will silently lose this scenario.
+    Conversely, listing components the scenario does not touch dilutes the
+    filter and causes the scenario to fire under irrelevant component
+    allowlists.
+    """
+    for slug, scenario in amc.SCENARIOS.items():
+        referenced = {c for c, _ in scenario.primary_specs}
+        referenced.update(c for c, _ in scenario.cascade_specs)
+        declared = set(scenario.components_touched)
+        assert referenced == declared, (
+            f"SCENARIOS[{slug!r}].components_touched={sorted(declared)} does not "
+            f"equal components referenced by specs={sorted(referenced)}; "
+            f"missing={sorted(referenced - declared)} extras={sorted(declared - referenced)}"
         )
 
 

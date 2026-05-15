@@ -733,9 +733,14 @@ del _components_keys, _defaults_keys, _overflowed, _name, _default
 # Walk order is dict-insertion order (Python 3.7+). Within each scenario,
 # primary_specs and cascade_specs are appended in declaration order.
 # Byte-for-byte default output is preserved because generate_component()
-# sorts expanded overrides by (row_idx, metric) before applying them, so
-# generator call order — and thus global RNG draw order — is determined
-# by time_offset + metric name, not by spec list order.
+# applies Python's stable sort with key (row_idx, metric) to expanded
+# overrides, so generator call order — and the global RNG draw sequence —
+# is determined by (time_offset, metric_name) when those keys are unique.
+# When two specs collide on the same (row_idx, metric) (e.g. a cascade
+# landing inside a shaped span, or coarse --interval-seconds rounding
+# multiple offsets to the same row), the stable sort preserves their
+# declaration order and the last writer wins — so spec list order within
+# a scenario is part of the contract for collision cases.
 # ------------------------------------------------------------------
 SCENARIOS: dict[str, Scenario] = {
     # ------------------------------------------------------------------
@@ -1389,7 +1394,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="llm_viral_surge_day2",
         name="LLM viral surge — customer demo goes viral on Day 2",
         severity="medium",
-        days_required=7,
+        days_required=2,
         category="multi_day_llm",
         components_touched=("llm_analytics", "database", "cacheservice", "apigateway"),
         primary_specs=(
@@ -1447,7 +1452,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="llm_enterprise_onboarding",
         name="LLM enterprise customer onboarding — large context windows on Day 3",
         severity="medium",
-        days_required=7,
+        days_required=3,
         category="multi_day_llm",
         components_touched=("llm_analytics", "vectorstore", "database", "cacheservice"),
         primary_specs=(
@@ -1497,7 +1502,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="llm_rate_limit_fallout",
         name="LLM provider rate limit fallout on Day 5",
         severity="medium",
-        days_required=7,
+        days_required=5,
         category="multi_day_llm",
         components_touched=("llm_analytics", "apigateway"),
         primary_specs=(
@@ -1528,7 +1533,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="llm_weekend_batch",
         name="LLM weekend batch analytics job on Day 6",
         severity="medium",
-        days_required=7,
+        days_required=6,
         category="multi_day_llm",
         components_touched=("llm_analytics", "objectstore", "database", "cacheservice"),
         primary_specs=(
@@ -1878,7 +1883,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="cache_leak_restart",
         name="Cache memory-leak death march → forced restart",
         severity="medium",
-        days_required=7,
+        days_required=2,
         category="multi_day_cascade",
         components_touched=(
             "cacheservice", "database", "apigateway", "mqservice",
@@ -1984,7 +1989,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="jwks_rotation_chaos",
         name="Certificate / JWKS rotation chaos",
         severity="medium",
-        days_required=7,
+        days_required=3,
         category="multi_day_cascade",
         components_touched=(
             "loadbalancer", "identityprovider", "authservice",
@@ -2096,7 +2101,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="db_disk_exhaustion",
         name="Database disk + write-latency exhaustion",
         severity="medium",
-        days_required=7,
+        days_required=2,
         category="multi_day_cascade",
         components_touched=(
             "database", "scheduler", "observabilitypipeline",
@@ -2208,10 +2213,11 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].severity {scenario.severity!r} must be "
                 "one of low / medium / high"
             )
-        if scenario.days_required not in {1, 7}:
+        if not isinstance(scenario.days_required, int) or scenario.days_required < 1:
             raise ValueError(
                 f"SCENARIOS[{slug!r}].days_required {scenario.days_required!r} "
-                "must be 1 or 7"
+                "must be a positive int (the minimum --duration-days at which "
+                "any of the scenario's specs become in range)"
             )
         unknown_touched = set(scenario.components_touched) - known_components
         if unknown_touched:
@@ -2240,20 +2246,6 @@ _validate_scenarios_registry()
 # Cascading-failure registry. Same-day cascades fire under any duration;
 # multi-day cascades (LLM-driven) only reach during runs of >= 7 days.
 # ------------------------------------------------------------------
-def register_default_cascades():
-    """Kept as a no-op for backward compatibility.
-
-    All cascade specs migrated to SCENARIOS registry in VER-104.
-    """
-
-
-def register_high_pressure_cascades():
-    """Kept as a no-op for backward compatibility.
-
-    All high-pressure cascade specs migrated to SCENARIOS registry in VER-104.
-    """
-
-
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
     """Return ``{component: specs[:limit]}`` for the active --metrics-per-component.
 
@@ -2471,10 +2463,16 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
     registries.
 
     Walks ``SCENARIOS`` in declaration order. Byte-for-byte output is
-    preserved because ``generate_component`` sorts its expanded override list
-    by ``(row_idx, metric)`` before applying generators, so the global RNG
-    draw sequence is anchored to time_offset + metric name — not to the spec
-    list order here.
+    preserved when each ``(row_idx, metric)`` is unique, because
+    ``generate_component`` applies Python's stable ``sorted()`` with key
+    ``(row_idx, metric)`` to its expanded overrides — under that condition
+    the global RNG draw sequence is anchored to ``(time_offset, metric_name)``
+    and the spec list order here does not matter. When two specs collide on
+    the same ``(row_idx, metric)`` (e.g. a cascade landing inside a shaped
+    primary span, or coarse ``--interval-seconds`` rounding two offsets to
+    the same row), the stable sort preserves declaration order and the last
+    writer wins for that cell — so the per-scenario spec list order is part
+    of the contract for collisions.
     """
     for slug, scenario in SCENARIOS.items():
         if slug not in active_scenarios:
@@ -2494,7 +2492,9 @@ def parse_args(argv=None):
     )
     p.add_argument("--duration-days", type=int, default=DEFAULT_DURATION_DAYS,
                    help=f"Number of days of metrics to generate (default: {DEFAULT_DURATION_DAYS}). "
-                        "The multi-day LLM/cascade catalog requires >= 7.")
+                        "Each scenario's ``days_required`` is the minimum value at which "
+                        "any of its specs become in range; the full multi-day catalog "
+                        "manifests at 7+.")
     p.add_argument("--seed", type=int, default=DEFAULT_SEED,
                    help=f"RNG seed for deterministic output (default: {DEFAULT_SEED}).")
     p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,

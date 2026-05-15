@@ -108,17 +108,25 @@ allowlist (`--scenarios`) → exclusion (`--exclude-scenarios`) → severity fil
 (`--components`). Scenarios dropped by severity or duration emit a stderr WARNING;
 scenarios excluded silently by the component filter produce no output.
 
-**RNG ordering invariant**: `generate_component()` sorts all override specs by
-`(row_idx, metric_name)` before calling generators, so the list order of specs
-inside `primary_specs` / `cascade_specs` does not affect RNG draws or CSV content.
-Byte-for-byte output is determined only by which specs are active, not by their
-declaration order.
+**RNG ordering invariant (with tiebreaker caveat)**: `generate_component()` calls
+Python's stable `sorted()` on override specs with key `(row_idx, metric_name)`. For
+specs that round to **distinct** `(row_idx, metric)` pairs, the declaration order
+of `primary_specs` / `cascade_specs` does not affect the RNG draw sequence or CSV
+content. However, when two specs collide on the same `(row_idx, metric)` — e.g.
+two cascades that round to the same row at a coarse `--interval-seconds`, or a
+cascade landing inside a shaped primary span — the stable sort preserves their
+input order and the **last** writer wins for that cell. Reordering colliding
+specs can therefore change RNG draws and CSV content; preserve declaration order
+within a scenario unless you have verified no collisions exist.
 
-**`--anomaly-count` ordering**: `_apply_signal_level_and_count()` samples from the
-ordered spec list built by `_apply_scenarios()`. The SCENARIOS dict insertion order
-determines the sampling pool order; changing that order shifts which anomalies
-survive the cap for the same seed. Preserve existing slug ordering when adding new
-scenarios unless you intentionally want to shift the cap selection.
+**`--anomaly-count` ordering**: `_apply_signal_level_and_count()` flattens the
+per-component dict in `COMPONENTS` order, walks each component's spec list in the
+order produced by `_apply_scenarios()`, then appends cascades in their target
+component's registry order. Two ordering axes therefore matter for stable
+`--anomaly-count` sampling: (1) the order of `COMPONENTS` (the dict iteration
+order at the top of the file), and (2) the order in which scenarios append into
+each component's list — which is the SCENARIOS dict insertion order. Preserve
+both unless you intentionally want to shift the cap selection for the same seed.
 
 ## Modifying the script
 
@@ -128,7 +136,11 @@ scenarios unless you intentionally want to shift the cap selection.
    to match when the scenario should fire:
    - `severity="medium"` (default) → fires under `--signal-level medium` and `high`
    - `severity="high"` → fires only under `--signal-level high`
-   - `days_required=7` → fires only on `--duration-days 7` runs
+   - `days_required=N` → minimum `--duration-days` at which any of this scenario's
+     specs becomes in range. Set this to the day index (1-based) of the earliest
+     `time_offset` across all primary and cascade specs. The
+     `test_scenarios_days_required_valid` test will catch values set too high
+     (which would silently drop in-range specs the legacy path emitted).
 
 2. Add a `Scenario(...)` entry to `SCENARIOS` at the appropriate position (grouped by
    severity/category; new entries go after existing ones in the same group to avoid
@@ -142,8 +154,11 @@ scenarios unless you intentionally want to shift the cap selection.
    - All referenced components must be keys of `COMPONENTS`; import-time validation
      (`_validate_scenarios_registry`) enforces this.
 
-4. Add the slug to `components_touched` — the set of components whose CSVs are
-   modified by any primary or cascade spec in this scenario.
+4. Set `components_touched` to the tuple of `COMPONENTS` keys (component names, not
+   the scenario slug) referenced by any primary or cascade spec in this scenario.
+   `test_scenarios_components_touched_matches_specs` asserts this set is exactly
+   equal to the components actually referenced, so it acts as the
+   `--components` filter index.
 
 5. Run the test suite. The parametrized tests in `test_scenarios.py` and the
    coverage checks in `test_correctness.py` will catch missing/wrong specs
