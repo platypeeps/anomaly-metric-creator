@@ -2606,15 +2606,15 @@ def parse_args(argv=None):
     raw_scenarios = [item.strip().lower() for item in args.scenarios.split(",") if item.strip()]
     if not raw_scenarios:
         p.error("--scenarios must contain at least one scenario slug (or 'all')")
+    invalid_scenarios = sorted(set(raw_scenarios) - set(SCENARIOS.keys()) - {"all"})
+    if invalid_scenarios:
+        p.error("--scenarios contains invalid value(s): "
+                f"{', '.join(invalid_scenarios)}. "
+                f"Allowed: {', '.join(sorted(SCENARIOS.keys()))} or 'all'")
     if "all" in raw_scenarios:
         selected_scenarios = set(SCENARIOS.keys())
     else:
         selected_scenarios = set(raw_scenarios)
-        invalid_scenarios = sorted(selected_scenarios - set(SCENARIOS.keys()))
-        if invalid_scenarios:
-            p.error("--scenarios contains invalid value(s): "
-                    f"{', '.join(invalid_scenarios)}. "
-                    f"Allowed: {', '.join(sorted(SCENARIOS.keys()))} or 'all'")
     args.scenarios = selected_scenarios
 
     raw_exclude = [item.strip().lower() for item in args.exclude_scenarios.split(",") if item.strip()]

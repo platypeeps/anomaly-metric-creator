@@ -257,6 +257,14 @@ def test_parse_args_scenarios_invalid_name_fails(amc):
         ])
 
 
+def test_parse_args_scenarios_all_with_invalid_name_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--scenarios", "all,not_a_scenario",
+            "--output-dir", "test_out",
+        ])
+
+
 def test_parse_args_scenarios_empty_fails(amc):
     with pytest.raises(SystemExit):
         amc.parse_args(["--scenarios", "", "--output-dir", "test_out"])
