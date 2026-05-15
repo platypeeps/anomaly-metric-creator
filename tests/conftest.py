@@ -52,17 +52,22 @@ _OTEL_ENV_VARS = (
 )
 
 
-@pytest.fixture(autouse=True)
-def _isolate_otel_env(monkeypatch):
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_otel_env_session():
     # Argparse defaults for OTEL endpoints/tokens read from MEZMO_OTEL_* env
     # vars at parse time, so a developer shell with those exported (or a CI
     # runner with them in the job env) makes --otel-enabled look valid even
-    # without explicit endpoint flags. Strip them before every test so both
-    # in-process parse_args calls and subprocess _invoke() runs see a clean
-    # slate; tests that need a value continue to set it explicitly via
-    # monkeypatch.setenv after this fixture runs.
+    # without explicit endpoint flags. Strip them at session start so every
+    # session-scoped fixture (one_day_run_a, seven_day_run, ...) sees a clean
+    # slate before its first parse_args call, and so subprocess _invoke()
+    # runs inherit the cleared parent env. Function-scoped tests using
+    # monkeypatch.setenv still work — their setenv runs after the session pop
+    # and pytest restores to the popped (unset) state on test teardown.
+    mp = pytest.MonkeyPatch()
     for name in _OTEL_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
+        mp.delenv(name, raising=False)
+    yield
+    mp.undo()
 
 
 @pytest.fixture(scope="session")
