@@ -1388,7 +1388,11 @@ SCENARIOS: dict[str, Scenario] = {
         cascade_specs=(),
     ),
     # ------------------------------------------------------------------
-    # Multi-day LLM catalog (days_required=7, severity=medium)
+    # Multi-day LLM catalog (severity=medium; per-scenario days_required:
+    # 2 for llm_viral_surge_day2, 3 for llm_enterprise_onboarding,
+    # 5 for llm_rate_limit_fallout, 6 for llm_weekend_batch,
+    # 7 for llm_second_viral — each set to the day index of the
+    # scenario's earliest in-range offset).
     # ------------------------------------------------------------------
     "llm_viral_surge_day2": Scenario(
         id="llm_viral_surge_day2",
@@ -2244,7 +2248,11 @@ _validate_scenarios_registry()
 
 # ------------------------------------------------------------------
 # Cascading-failure registry. Same-day cascades fire under any duration;
-# multi-day cascades (LLM-driven) only reach during runs of >= 7 days.
+# multi-day cascades reach at each scenario's own ``days_required`` (e.g.
+# Day 2 for cache_leak_restart / llm_viral_surge_day2, Day 3 for
+# jwks_rotation_chaos / llm_enterprise_onboarding, and so on up to Day 7
+# for llm_second_viral). The full multi-day catalog manifests at
+# ``--duration-days 7``.
 # ------------------------------------------------------------------
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
     """Return ``{component: specs[:limit]}`` for the active --metrics-per-component.

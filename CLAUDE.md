@@ -93,7 +93,10 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
 - `id` — slug, must match the dict key.
 - `name` — human-readable label.
 - `severity ∈ {low, medium, high}` — controls which `--signal-level` activates it.
-- `days_required ∈ {1, 7}` — minimum `--duration-days` for specs to be in range.
+- `days_required` (positive int) — minimum `--duration-days` at which any of
+  the scenario's specs becomes in range. Must equal the day index (1-based) of
+  the earliest `time_offset` across all primary and cascade specs;
+  `test_scenarios_days_required_valid` enforces this equality.
 - `category` — free-form label for documentation/filtering.
 - `components_touched` — subset of `COMPONENTS` keys; validated at import time.
 - `primary_specs` — list of `(component, spec_dict)` pairs, same dict shape as the

@@ -138,29 +138,53 @@ def test_manifest_csv_cross_check(amc, tmp_path, seed):
 # Spec coverage (loud-failure + multi-day reachability)
 # ------------------------------------------------------------------
 def test_spec_coverage_one_day(amc, one_day_run_a):
-    """Every in-range spec appears in the 1-day manifest, out-of-range ones do not,
-    and the stderr WARNING names the duration required to reach them.
+    """Every in-range spec from active (medium-severity, 1-day) scenarios appears in
+    the 1-day manifest, out-of-scope scenarios' specs do not leak in, and the stderr
+    WARNING names a scenario that requires a larger ``--duration-days`` value.
     """
     seen = {(e["component"], e["metric"], e["description"]) for e in read_manifest(one_day_run_a.out_dir)}
-    in_range_missing = []
-    out_of_range_leaked = []
-    has_out_of_range = False
-    for component, offset, metric, description in declared_specs(amc, days=1, signal_level="medium"):
-        key = (component, metric, description)
-        if offset < amc.SECONDS_PER_DAY:
-            if key not in seen:
-                in_range_missing.append((component, offset, metric, description))
-        else:
-            has_out_of_range = True
-            if key in seen:
-                out_of_range_leaked.append((component, offset, metric, description))
-    assert not in_range_missing, f"In-range specs missing from 1-day manifest: {in_range_missing}"
-    assert not out_of_range_leaked, f"Out-of-range specs leaked into 1-day manifest: {out_of_range_leaked}"
 
-    if has_out_of_range:
-        assert "WARNING" in one_day_run_a.stderr
-        assert "--duration-days 7" in one_day_run_a.stderr, (
-            f"Expected loud failure naming --duration-days 7; got:\n{one_day_run_a.stderr}"
+    # 1) Active scenarios for this run must contribute all their in-range specs.
+    #    declared_specs(days=1, signal_level="medium") drops out-of-scope scenarios
+    #    (multi-day or high-severity) so we only assert on what the run could emit.
+    in_range_missing = [
+        (c, o, m, d)
+        for (c, o, m, d) in declared_specs(amc, days=1, signal_level="medium")
+        if o < amc.SECONDS_PER_DAY and (c, m, d) not in seen
+    ]
+    assert not in_range_missing, f"In-range specs missing from 1-day manifest: {in_range_missing}"
+
+    # 2) Out-of-scope scenarios (gated by signal_level or days_required) must not
+    #    leak into the manifest. Using the *unfiltered* declared list and excluding
+    #    the active subset gives us specs that should be absent.
+    active_keys = {
+        (c, m, d) for (c, _, m, d) in declared_specs(amc, days=1, signal_level="medium")
+    }
+    out_of_scope_leaked = [
+        (c, o, m, d)
+        for (c, o, m, d) in declared_specs(amc)
+        if (c, m, d) not in active_keys and (c, m, d) in seen
+    ]
+    assert not out_of_scope_leaked, (
+        f"Out-of-scope specs leaked into 1-day manifest: {out_of_scope_leaked}"
+    )
+
+    # 3) At least one scenario in the unfiltered catalog needs --duration-days >= 2
+    #    (every multi-day scenario), so the run must emit the corresponding
+    #    scenario-gate WARNING on stderr. We don't pin a specific minimum day because
+    #    different scenarios advertise different values; we just require the warning
+    #    template fired at least once.
+    multi_day_present = any(
+        amc.SCENARIOS[slug].days_required > 1
+        for slug in amc.SCENARIOS
+    )
+    if multi_day_present:
+        assert "WARNING: scenario" in one_day_run_a.stderr, (
+            "Expected at least one scenario-gate WARNING on a 1-day run "
+            f"(multi-day scenarios should be soft-skipped); got:\n{one_day_run_a.stderr}"
+        )
+        assert "requires --duration-days" in one_day_run_a.stderr, (
+            f"Expected --duration-days requirement in WARNING; got:\n{one_day_run_a.stderr}"
         )
 
 

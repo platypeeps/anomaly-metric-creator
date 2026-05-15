@@ -194,7 +194,8 @@ def test_scenario_days_required_vocabulary(amc, slug):
     """``days_required`` is the minimum --duration-days at which any of the
     scenario's specs becomes in range. VER-104 relaxed the validator from
     ``{1, 7}`` to any positive int so each scenario can gate at the day
-    index of its earliest offset; the exact-match guard lives in
+    index of its earliest offset; the equality check (days_required must
+    equal that earliest in-range day) lives in
     ``test_registry.test_scenarios_days_required_valid``.
     """
     days_required = amc.SCENARIOS[slug].days_required

@@ -30,7 +30,10 @@ python3 -m venv .venv
 # Default: 1 day (86,400 rows per component)
 python3 anomaly-metric-creator.py
 
-# Full week (604,800 rows per component); required to unlock multi-day scenarios.
+# Full week (604,800 rows per component). Each multi-day scenario activates at
+# its own `days_required` (e.g. llm_viral_surge_day2 at 2 days, cache_leak_restart
+# at 2 days, jwks_rotation_chaos at 3 days, llm_second_viral at 7 days);
+# --duration-days 7 unlocks the complete multi-day catalog.
 python3 anomaly-metric-creator.py --duration-days 7
 
 # Coarser sampling: one row every 5 seconds (17,280 rows per component for 1 day).
@@ -91,7 +94,7 @@ python3 anomaly-metric-creator.py --otel-enabled
 
 | Flag                | Default     | Notes                                                              |
 | ------------------- | ----------- | ------------------------------------------------------------------ |
-| `--duration-days`   | `1`         | Days to generate. Multi-day scenarios require `>= 7`.              |
+| `--duration-days`   | `1`         | Days to generate. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2, `jwks_rotation_chaos` at 3, `llm_second_viral` at 7); see the [scenario catalog](#scenario-catalog) for per-scenario values. Pass `--duration-days 7` to unlock the full multi-day catalog. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 | `--drop-rate`       | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
