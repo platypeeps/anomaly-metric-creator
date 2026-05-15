@@ -124,6 +124,31 @@ DEFAULT_SEVEN_DAY_HASHES = {
     "vectorstore.csv": "00bda8d310a34db9e08c3dd5e26c01378f58f9a2669ee776ac01e0c985d4d5ea",
 }
 
+# SHA-256 hashes captured from the pre-VER-103 main branch for
+# ``--signal-level high --duration-days 7 --anomaly-count 100`` at seed 42.
+# Locking these protects the deterministic --anomaly-count sampling pool
+# from drift in the positional order of legacy / scenario / high-pressure
+# specs: _apply_signal_level_and_count() seeds an SeedSequence with
+# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count``
+# positions out of the in-range pool, so any reshuffle changes which
+# anomalies land in the manifest.
+HIGH_SEVEN_DAY_CAPPED_HASHES = {
+    "anomalies.csv": "cc2b39f13df6c3b44d700f1c4856dc98ed7af7654ba8a6469ecc807e84d5399f",
+    "apigateway.csv": "019af0c94f2c803f51c8f948b09ef9ed89c4faa2a1335a7da22aa5d7e4775a54",
+    "authservice.csv": "8a934bd6b9069948d0fed195056f64e42ad9bf784db05a9ab2251eb0cf6a352d",
+    "cacheservice.csv": "693c886a53d61f5038b88884005c46865f89faae10452a9ce3e469db2ee5a2d9",
+    "database.csv": "3ae83b0e75fcd27d64c87d3ce53cc997abef0b42dfc4c7128fca7fdfef7194ef",
+    "identityprovider.csv": "523e8929bc18e09559c7fa6a06def508124d33a9cfd68248e2de3bc7dbb156a6",
+    "llm_analytics.csv": "3adcf752bfc6f67d233750b1902a0cec498f5a37837e1bacc9a1d13338f65a42",
+    "loadbalancer.csv": "a4b3434be2c8407a96c04d2bcf90c79708797f08a04391519aa377d030d155f4",
+    "mqservice.csv": "ab74c73a43902cbe050f12b3d6fe7af97c811f28457107330a9b60c4f13b518d",
+    "objectstore.csv": "42598e0db3d27aecc85bf74c04412bfd3c21b4aedaf4be2c88a229432645bcae",
+    "observabilitypipeline.csv": "5211c83ad338ac49866b2f7d366d227485ffd6d716fa1504648760286e10e9f3",
+    "paymentservice.csv": "3178647b2d2ea7f8a28cd7c0371bfed3847e0d01c44540a2f2c49b40306f2758",
+    "scheduler.csv": "9dd9f850a6733c544c9094c225ce7daa7c0cc952be2059ef00aee8d1bc7ecc43",
+    "vectorstore.csv": "b5e2e05135491d3f5e4f63ba4ece370fbad056a4f0ffa4ffeb517a38fe20c3be",
+}
+
 
 def _sha256_path(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -323,5 +348,42 @@ def test_default_seven_day_csvs_byte_identical(seven_day_run, filename, expected
     actual = _sha256_path(path)
     assert actual == expected_hash, (
         f"{filename} drifted from pre-refactor hash. "
+        f"expected={expected_hash} actual={actual}"
+    )
+
+
+# ------------------------------------------------------------------
+# Byte-for-byte high-pressure + anomaly-cap regression
+# ------------------------------------------------------------------
+# This guards against the ordering bug where applying scenarios *after*
+# the high-pressure extensions reshuffles the deterministic sampling pool
+# used by --anomaly-count, even though the default (medium-signal) hashes
+# stay stable.
+@pytest.fixture(scope="session")
+def high_seven_day_capped_run(amc, tmp_path_factory):
+    out = tmp_path_factory.mktemp("high_seven_day_capped")
+    return run_capture(
+        amc, out, days=7,
+        extra_args=["--signal-level", "high", "--anomaly-count", "100"],
+    )
+
+
+@pytest.mark.parametrize(
+    "filename, expected_hash", sorted(HIGH_SEVEN_DAY_CAPPED_HASHES.items())
+)
+def test_high_seven_day_capped_csvs_byte_identical(
+    high_seven_day_capped_run, filename, expected_hash
+):
+    path = high_seven_day_capped_run.out_dir / filename
+    assert path.exists(), (
+        f"{filename} missing from --signal-level high --duration-days 7 "
+        f"--anomaly-count 100 run"
+    )
+    actual = _sha256_path(path)
+    assert actual == expected_hash, (
+        f"{filename} drifted from pre-refactor hash under "
+        f"--signal-level high --anomaly-count 100. The scenario / "
+        f"high-pressure spec ordering inside _apply_signal_level_and_count's "
+        f"sampling pool has shifted. "
         f"expected={expected_hash} actual={actual}"
     )

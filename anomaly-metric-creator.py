@@ -2318,6 +2318,11 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
     exactly. That order anchors every numpy.random draw inside
     ``generate_component``, so any reordering would shift the RNG stream
     and break the byte-for-byte default-output guarantee.
+
+    Callers must invoke this **before** appending any ``--signal-level high``
+    extensions to either registry, so the positional ordering used by
+    ``_apply_signal_level_and_count()`` to build the deterministic
+    ``--anomaly-count`` sampling pool remains stable across the refactor.
     """
     for slug, scenario in SCENARIOS.items():
         if slug not in active_scenarios:
@@ -3322,27 +3327,31 @@ def main(argv=None):
     anomalies.clear()
     cascading_anomalies.clear()
     register_default_cascades()
-    if args.signal_level == "high":
-        register_high_pressure_cascades()
 
     component_anomalies = {
         name: list(specs) for name, specs in COMPONENT_PRIMARY_ANOMALIES.items()
     }
+
+    # Append registry-driven scenario primaries/cascades onto the runtime
+    # registries BEFORE the high-pressure extension so the positional order
+    # (legacy specs → scenarios → high-pressure specs) matches the
+    # pre-VER-103 layout, where the 3 multi-day scenarios lived inside the
+    # legacy anoms_* lists / register_default_cascades() body and so came
+    # before the high-pressure extensions. _apply_signal_level_and_count()
+    # builds its deterministic --anomaly-count sampling pool from this
+    # order, so any reshuffle would change which subset is selected for
+    # the same (seed, cap) under --signal-level high.
+    active_scenarios = _resolve_scenarios(args)
+    _apply_scenarios(component_anomalies, cascading_anomalies, active_scenarios)
+
     if args.signal_level == "high":
+        register_high_pressure_cascades()
         component_anomalies["loadbalancer"].extend(anoms_high_lb)
         component_anomalies["cacheservice"].extend(anoms_high_cache)
         component_anomalies["database"].extend(anoms_high_db)
         component_anomalies["llm_analytics"].extend(anoms_high_llm)
         component_anomalies["apigateway"].extend(anoms_high_api)
         component_anomalies["objectstore"].extend(anoms_high_obj)
-
-    # Append registry-driven scenario primaries/cascades onto the runtime
-    # registries. The walk runs after register_default_cascades() and the
-    # high-pressure extension so the tail-append order for the 3 multi-day
-    # scenarios matches the pre-VER-103 layout exactly (preserves RNG
-    # draw order in generate_component).
-    active_scenarios = _resolve_scenarios(args)
-    _apply_scenarios(component_anomalies, cascading_anomalies, active_scenarios)
 
     effective_specs = _resolve_effective_specs(args.metrics_per_component)
     _filter_anomalies_for_emitted_metrics(

@@ -92,8 +92,13 @@ VER-103 they live in the `SCENARIOS` registry under the slugs
 (see `Scenario` dataclass). Each entry bundles every primary and
 cascade spec for the named scenario; `_apply_scenarios()` in `main()`
 appends them onto `component_anomalies` / `cascading_anomalies` after
-`register_default_cascades()` runs, preserving today's tail-append
-order so byte-for-byte default output is unchanged. The scenarios
+`register_default_cascades()` runs but **before** any
+`--signal-level high` extensions are added, so the pre-VER-103
+positional ordering (legacy specs → scenarios → high-pressure specs)
+is preserved end-to-end. That ordering anchors both the RNG draws
+inside `generate_component` (byte-for-byte default output) and the
+deterministic sampling pool inside `_apply_signal_level_and_count()`
+(stable `--anomaly-count` selection for the same seed). The scenarios
 only manifest at `--duration-days >= 7`; out-of-range specs are
 caught by the existing stderr WARNING path, and `_resolve_scenarios()`
 additionally drops whole scenarios with a `WARNING: scenario <slug>
