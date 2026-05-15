@@ -82,6 +82,52 @@ class MetricSpec:
     clip_min: float | None = None
 
 
+# ------------------------------------------------------------------
+# Named scenario registry (VER-102 Phase 1).
+#
+# Each Scenario bundles a slug-named bundle of primary anomaly specs and
+# cascade specs that can be selected together via --scenarios. This phase
+# migrates the 3 multi-day cascading scenarios (cache_leak_restart,
+# jwks_rotation_chaos, db_disk_exhaustion) into the registry; every other
+# anomaly continues to fire via the legacy ``anoms_*`` / imperative-cascade
+# path until VER-104 completes the migration.
+#
+# Each primary_spec is paired with the component name where it lives; each
+# cascade_spec is paired with the target_component. The inner dict has the
+# same shape as today's ``anoms_*`` entries (and the same shape as cascade
+# dicts after register_cascade builds them), so generation paths see the
+# same data structure regardless of whether a spec arrived via the legacy
+# path or the registry walk.
+# ------------------------------------------------------------------
+@dataclass(frozen=True)
+class Scenario:
+    """A named bundle of primary + cascade specs selectable via --scenarios.
+
+    ``days_required`` is the minimum ``--duration-days`` value at which the
+    scenario can fully manifest; below that, ``_resolve_scenarios`` emits a
+    stderr WARNING naming the scenario and drops it. ``severity`` follows the
+    same vocabulary as individual anomaly specs (``low`` / ``medium`` /
+    ``high``); scenarios outside the active ``--signal-level`` hierarchy are
+    similarly warn-and-skip. ``components_touched`` is the union of components
+    where any primary or cascade lands, used by ``--components`` to short-
+    circuit scenarios that produce no output for the active component set.
+    """
+    id: str
+    name: str
+    severity: str
+    days_required: int
+    category: str
+    components_touched: tuple[str, ...]
+    # (component, spec_dict) pairs. spec_dict has the same shape as an entry
+    # in the legacy anoms_* lists (time_offset, metric, description, generator,
+    # optional duration_seconds/shape/shape_params/severity).
+    primary_specs: tuple[tuple[str, dict], ...]
+    # (target_component, cascade_dict) pairs. cascade_dict has the same shape
+    # as values stored in cascading_anomalies (time_offset, metric, description,
+    # generator, severity).
+    cascade_specs: tuple[tuple[str, dict], ...]
+
+
 def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray) -> np.ndarray:
     """Vectorized natural-value column. Multiplier/additive must accept arrays."""
     col = np.full(elapsed.shape, spec.base, dtype=np.float64)
@@ -695,19 +741,8 @@ anoms_auth = [
         "generator": lambda ts,idx: 1400,
         "severity": "low",
     },
-    # ------------------------------------------------------------------
-    # Multi-day Scenario B — Certificate / JWKS rotation chaos (Day 3 →
-    # Day 5). Auth-side primary; LB + IdP siblings appended below.
-    # ------------------------------------------------------------------
-    {
-        "time_offset": 3*SECONDS_PER_DAY + 18*3600,       # Day 4 18:00
-        "duration_seconds": 6*3600,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 98.0, "end": 85.0},
-        "metric": "login_success_rate",
-        "description": "Login success rate decline 98%→85% as cert chain degrades",
-        "generator": lambda ts,idx: 98.0,
-    },
+    # NOTE: Multi-day Scenario B (jwks_rotation_chaos) auth-side primary
+    # moved to SCENARIOS["jwks_rotation_chaos"] in VER-103.
 ]
 
 anoms_cache = [
@@ -735,54 +770,11 @@ anoms_cache = [
         "description": "Slow memory leak — utilization ramps 70% → 96% over 4h",
         "generator": lambda ts,idx: 70.0,         # match start_value for test_correctness
     },
-    # ------------------------------------------------------------------
-    # Multi-day Scenario A — Cache memory-leak death march → forced
-    # restart (Day 2 00:00 → Day 4 03:00). Requires --duration-days >= 7
-    # to fully manifest; out-of-range specs emit the existing stderr
-    # WARNING under shorter runs.
-    # ------------------------------------------------------------------
-    {
-        "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
-        "duration_seconds": 51*3600,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 50.0, "end": 95.0},
-        "metric": "memory_util_pct",
-        "description": "Cache memory leak — slow growth 50%→95% over 51h",
-        "generator": lambda ts,idx: 50.0,
-    },
-    {
-        "time_offset": 2*SECONDS_PER_DAY + 12*3600,       # Day 3 12:00
-        "duration_seconds": 12*3600,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 88.0, "end": 60.0},
-        "metric": "hit_ratio",
-        "description": "Cache eviction cascade — hit ratio decline 88%→60% over 12h",
-        "generator": lambda ts,idx: 88.0,
-    },
-    {
-        "time_offset": 3*SECONDS_PER_DAY + 3*3600,        # Day 4 03:00 — forced restart
-        "duration_seconds": 300,
-        "shape": "step",
-        "metric": "memory_util_pct",
-        "description": "Cache forced restart — memory reset to 55%",
-        "generator": lambda ts,idx: 55.0,
-    },
-    {
-        "time_offset": 3*SECONDS_PER_DAY + 3*3600,
-        "duration_seconds": 300,
-        "shape": "step",
-        "metric": "hit_ratio",
-        "description": "Cache cold start after restart — hit ratio 5%",
-        "generator": lambda ts,idx: 5.0,
-    },
-    {
-        "time_offset": 3*SECONDS_PER_DAY + 3*3600,
-        "duration_seconds": 300,
-        "shape": "step",
-        "metric": "error_rate",
-        "description": "Cache warm-up errors during restart",
-        "generator": lambda ts,idx: 0.12,
-    },
+    # NOTE: Multi-day Scenario A (cache_leak_restart) primaries moved to
+    # SCENARIOS["cache_leak_restart"] in VER-103. The scenario walk in
+    # main() appends them back onto component_anomalies["cacheservice"] at
+    # the same tail position, preserving RNG draw order for byte-for-byte
+    # default output.
 ]
 
 anoms_api = [
@@ -925,53 +917,8 @@ anoms_db = [
         "description": "Brown-out — error_rate recovers 8% → 0.1% over 10 min",
         "generator": lambda ts,idx: 0.08,
     },
-    # ------------------------------------------------------------------
-    # Multi-day Scenario C — Database disk + write-latency exhaustion
-    # (Day 2 → Day 6). Slow disk creep, write latency drift, then a
-    # short emergency log-truncation burst at Day 6 03:00.
-    # ------------------------------------------------------------------
-    {
-        "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
-        "duration_seconds": 96*3600,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 65.0, "end": 92.0},
-        "metric": "disk_used_pct",
-        "description": "Database disk slow exhaustion 65%→92% over 96h",
-        "generator": lambda ts,idx: 65.0,
-    },
-    {
-        "time_offset": 4*SECONDS_PER_DAY + 6*3600,        # Day 5 06:00
-        "duration_seconds": 12*3600,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 12.0, "end": 90.0},
-        "metric": "write_latency_ms",
-        "description": "Database write latency drift 12→90 ms as I/O saturates",
-        "generator": lambda ts,idx: 12.0,
-    },
-    {
-        "time_offset": 5*SECONDS_PER_DAY + 3*3600,        # Day 6 03:00 — log truncation
-        "duration_seconds": 20*60,
-        "shape": "step",
-        "metric": "error_rate",
-        "description": "Emergency log truncation — write errors spike to 12%",
-        "generator": lambda ts,idx: 0.12,
-    },
-    {
-        "time_offset": 5*SECONDS_PER_DAY + 3*3600,
-        "duration_seconds": 20*60,
-        "shape": "step",
-        "metric": "disk_used_pct",
-        "description": "Database log truncation — disk drops to 78%",
-        "generator": lambda ts,idx: 78.0,
-    },
-    {
-        "time_offset": 5*SECONDS_PER_DAY + 3*3600,
-        "duration_seconds": 20*60,
-        "shape": "step",
-        "metric": "write_latency_ms",
-        "description": "Database write latency partial relief — 30 ms post-truncation",
-        "generator": lambda ts,idx: 30.0,
-    },
+    # NOTE: Multi-day Scenario C (db_disk_exhaustion) primaries moved to
+    # SCENARIOS["db_disk_exhaustion"] in VER-103.
 ]
 
 anoms_mq = [
@@ -1020,27 +967,8 @@ anoms_lb = [
         "description": "Backend 5xx jump to 75/s (region failover cascades 5xx upstream)",
         "generator": lambda ts,idx: 75.0,
     },
-    # ------------------------------------------------------------------
-    # Multi-day Scenario B — Certificate / JWKS rotation chaos (Day 3 →
-    # Day 5). LB-side: cert validation flapping ramp then hard expiry.
-    # ------------------------------------------------------------------
-    {
-        "time_offset": 2*SECONDS_PER_DAY + 9*3600,        # Day 3 09:00
-        "duration_seconds": 6*3600,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 2.0, "end": 25.0},
-        "metric": "tls_handshake_errors",
-        "description": "TLS cert validation flapping at POPs — errors ramp 2→25/s",
-        "generator": lambda ts,idx: 2.0,
-    },
-    {
-        "time_offset": 4*SECONDS_PER_DAY + 2*3600,        # Day 5 02:00 — hard expiry
-        "duration_seconds": 2*3600,
-        "shape": "step",
-        "metric": "tls_handshake_errors",
-        "description": "Hard cert expiration — TLS errors spike to 200/s",
-        "generator": lambda ts,idx: 200.0,
-    },
+    # NOTE: Multi-day Scenario B (jwks_rotation_chaos) LB-side primaries
+    # moved to SCENARIOS["jwks_rotation_chaos"] in VER-103.
 ]
 
 anoms_obj = [
@@ -1160,34 +1088,8 @@ anoms_idp = [
         "description": "SAML parse error spike — 120 failed flows from upstream IdP",
         "generator": lambda ts,idx: 120.0,
     },
-    # ------------------------------------------------------------------
-    # Multi-day Scenario B — Certificate / JWKS rotation chaos (Day 3 →
-    # Day 5). IdP-side: pre-rotation slowdown then hard expiry burst.
-    # ------------------------------------------------------------------
-    {
-        "time_offset": 3*SECONDS_PER_DAY + 9*3600,        # Day 4 09:00
-        "duration_seconds": 8*3600,
-        "shape": "sustained",
-        "metric": "jwks_fetch_latency_ms",
-        "description": "JWKS fetch latency sustained at 800 ms — pre-rotation slowdown",
-        "generator": lambda ts,idx: 800.0,
-    },
-    {
-        "time_offset": 4*SECONDS_PER_DAY + 2*3600,        # Day 5 02:00 — hard expiry
-        "duration_seconds": 2*3600,
-        "shape": "step",
-        "metric": "failed_oidc_flows",
-        "description": "Cert expiry — OIDC flow failures spike to 800",
-        "generator": lambda ts,idx: 800.0,
-    },
-    {
-        "time_offset": 4*SECONDS_PER_DAY + 2*3600,
-        "duration_seconds": 2*3600,
-        "shape": "step",
-        "metric": "key_rotation_events",
-        "description": "Emergency key rotation — 50 events during expiry window",
-        "generator": lambda ts,idx: 50.0,
-    },
+    # NOTE: Multi-day Scenario B (jwks_rotation_chaos) IdP-side primaries
+    # moved to SCENARIOS["jwks_rotation_chaos"] in VER-103.
 ]
 
 anoms_obs = [
@@ -1461,6 +1363,383 @@ del _primary_keys, _components_keys
 
 
 # ------------------------------------------------------------------
+# Named scenario registry (VER-102 Phase 1).
+#
+# This phase migrates the 3 multi-day cascading scenarios out of the legacy
+# imperative path. Each registry entry collects every primary spec and
+# cascade for one named scenario so callers can opt in/out via --scenarios.
+# Walk order matters for byte-for-byte default-output preservation: the
+# tail-append in main() runs scenarios in dict-iteration order, so cache_leak
+# → jwks_rotation → db_disk_exhaustion mirrors today's spec / cascade
+# registration sequence inside the legacy lists and register_default_cascades.
+#
+# Every other anomaly continues to fire via anoms_* / register_default_cascades
+# during this phase. VER-104 will migrate the rest and delete the legacy path.
+# ------------------------------------------------------------------
+SCENARIOS: dict[str, Scenario] = {
+    "cache_leak_restart": Scenario(
+        id="cache_leak_restart",
+        name="Cache memory-leak death march → forced restart",
+        severity="medium",
+        days_required=7,
+        category="multi_day_cascade",
+        components_touched=(
+            "cacheservice", "database", "apigateway", "mqservice",
+        ),
+        # Order matches the historic anoms_cache tail order so that, on
+        # tail-append in main(), component_anomalies["cacheservice"] reads
+        # identically to today's flat list.
+        primary_specs=(
+            ("cacheservice", {
+                "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
+                "duration_seconds": 51*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 50.0, "end": 95.0},
+                "metric": "memory_util_pct",
+                "description": "Cache memory leak — slow growth 50%→95% over 51h",
+                "generator": lambda ts, idx: 50.0,
+            }),
+            ("cacheservice", {
+                "time_offset": 2*SECONDS_PER_DAY + 12*3600,       # Day 3 12:00
+                "duration_seconds": 12*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 88.0, "end": 60.0},
+                "metric": "hit_ratio",
+                "description": "Cache eviction cascade — hit ratio decline 88%→60% over 12h",
+                "generator": lambda ts, idx: 88.0,
+            }),
+            ("cacheservice", {
+                "time_offset": 3*SECONDS_PER_DAY + 3*3600,        # Day 4 03:00 — forced restart
+                "duration_seconds": 300,
+                "shape": "step",
+                "metric": "memory_util_pct",
+                "description": "Cache forced restart — memory reset to 55%",
+                "generator": lambda ts, idx: 55.0,
+            }),
+            ("cacheservice", {
+                "time_offset": 3*SECONDS_PER_DAY + 3*3600,
+                "duration_seconds": 300,
+                "shape": "step",
+                "metric": "hit_ratio",
+                "description": "Cache cold start after restart — hit ratio 5%",
+                "generator": lambda ts, idx: 5.0,
+            }),
+            ("cacheservice", {
+                "time_offset": 3*SECONDS_PER_DAY + 3*3600,
+                "duration_seconds": 300,
+                "shape": "step",
+                "metric": "error_rate",
+                "description": "Cache warm-up errors during restart",
+                "generator": lambda ts, idx: 0.12,
+            }),
+        ),
+        # Order mirrors today's register_default_cascades() body for the
+        # Scenario A block, so cascading_anomalies[target] order is identical.
+        cascade_specs=(
+            ("database", {
+                "time_offset": 1*SECONDS_PER_DAY + 12*3600,
+                "metric": "queries_per_sec",
+                "description": "Cascading: Rising cache miss volume — DB queries climb to ~32k",
+                "generator": lambda ts, idx: 32000 + np.random.normal(0, 1500),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 2*SECONDS_PER_DAY + 12*3600 + 30*60,
+                "metric": "queries_per_sec",
+                "description": "Cascading: Cache hit-ratio decline — DB queries climb to ~42k",
+                "generator": lambda ts, idx: 42000 + np.random.normal(0, 2000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 2*SECONDS_PER_DAY + 12*3600 + 30*60,
+                "metric": "read_latency_ms",
+                "description": "Cascading: Cache hit-ratio decline pushes DB read latency to ~55 ms",
+                "generator": lambda ts, idx: 55 + np.random.normal(0, 4),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            # Cold-start stampede: cascade specs are single-row step writes
+            # (register_cascade has no shape support), so this collapses to a
+            # single ~60k step at restart + 5 min.
+            ("database", {
+                "time_offset": 3*SECONDS_PER_DAY + 3*3600 + 300,
+                "metric": "queries_per_sec",
+                "description": "Cascading: Cache cold-start stampede — DB queries ~60k",
+                "generator": lambda ts, idx: 60000 + np.random.normal(0, 2500),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("apigateway", {
+                "time_offset": 3*SECONDS_PER_DAY + 3*3600 + 300,
+                "metric": "error_rate",
+                "description": "Cascading: Cache restart causes brief gateway errors (~8%)",
+                "generator": lambda ts, idx: 0.08,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("mqservice", {
+                "time_offset": 3*SECONDS_PER_DAY + 3*3600 + 300,
+                "metric": "pending_messages",
+                "description": "Cascading: Cache restart backs up MQ — ~180,000 pending",
+                "generator": lambda ts, idx: 180000 + np.random.normal(0, 6000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "jwks_rotation_chaos": Scenario(
+        id="jwks_rotation_chaos",
+        name="Certificate / JWKS rotation chaos",
+        severity="medium",
+        days_required=7,
+        category="multi_day_cascade",
+        components_touched=(
+            "loadbalancer", "identityprovider", "authservice",
+            "apigateway", "paymentservice", "cacheservice",
+        ),
+        # Order matches anoms_lb / anoms_idp / anoms_auth tail order in the
+        # pre-migration file (lb pair, idp triple, auth single) so the
+        # component_anomalies tail order for each is identical post-walk.
+        primary_specs=(
+            ("loadbalancer", {
+                "time_offset": 2*SECONDS_PER_DAY + 9*3600,        # Day 3 09:00
+                "duration_seconds": 6*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 2.0, "end": 25.0},
+                "metric": "tls_handshake_errors",
+                "description": "TLS cert validation flapping at POPs — errors ramp 2→25/s",
+                "generator": lambda ts, idx: 2.0,
+            }),
+            ("loadbalancer", {
+                "time_offset": 4*SECONDS_PER_DAY + 2*3600,        # Day 5 02:00 — hard expiry
+                "duration_seconds": 2*3600,
+                "shape": "step",
+                "metric": "tls_handshake_errors",
+                "description": "Hard cert expiration — TLS errors spike to 200/s",
+                "generator": lambda ts, idx: 200.0,
+            }),
+            ("identityprovider", {
+                "time_offset": 3*SECONDS_PER_DAY + 9*3600,        # Day 4 09:00
+                "duration_seconds": 8*3600,
+                "shape": "sustained",
+                "metric": "jwks_fetch_latency_ms",
+                "description": "JWKS fetch latency sustained at 800 ms — pre-rotation slowdown",
+                "generator": lambda ts, idx: 800.0,
+            }),
+            ("identityprovider", {
+                "time_offset": 4*SECONDS_PER_DAY + 2*3600,        # Day 5 02:00 — hard expiry
+                "duration_seconds": 2*3600,
+                "shape": "step",
+                "metric": "failed_oidc_flows",
+                "description": "Cert expiry — OIDC flow failures spike to 800",
+                "generator": lambda ts, idx: 800.0,
+            }),
+            ("identityprovider", {
+                "time_offset": 4*SECONDS_PER_DAY + 2*3600,
+                "duration_seconds": 2*3600,
+                "shape": "step",
+                "metric": "key_rotation_events",
+                "description": "Emergency key rotation — 50 events during expiry window",
+                "generator": lambda ts, idx: 50.0,
+            }),
+            ("authservice", {
+                "time_offset": 3*SECONDS_PER_DAY + 18*3600,       # Day 4 18:00
+                "duration_seconds": 6*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 98.0, "end": 85.0},
+                "metric": "login_success_rate",
+                "description": "Login success rate decline 98%→85% as cert chain degrades",
+                "generator": lambda ts, idx: 98.0,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 2*SECONDS_PER_DAY + 9*3600 + 30*60,
+                "metric": "error_rate",
+                "description": "Cascading: Sporadic TLS failures propagate to gateway (~5%)",
+                "generator": lambda ts, idx: 0.05,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("authservice", {
+                "time_offset": 3*SECONDS_PER_DAY + 9*3600 + 30*60,
+                "metric": "avg_auth_latency_ms",
+                "description": "Cascading: Slow JWKS fetch raises auth latency to ~350 ms",
+                "generator": lambda ts, idx: 350 + np.random.normal(0, 15),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("paymentservice", {
+                "time_offset": 3*SECONDS_PER_DAY + 18*3600 + 30*60,
+                "metric": "provider_5xx_rate",
+                "description": "Cascading: Broken auth chain — payment 5xx ~8%",
+                "generator": lambda ts, idx: 0.08,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("apigateway", {
+                "time_offset": 4*SECONDS_PER_DAY + 2*3600 + 300,
+                "metric": "error_rate",
+                "description": "Cascading: Mass TLS failure floods gateway (~28%)",
+                "generator": lambda ts, idx: 0.28,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("paymentservice", {
+                "time_offset": 4*SECONDS_PER_DAY + 2*3600 + 600,
+                "metric": "auth_decline_rate",
+                "description": "Cascading: Unverifiable tokens drive declines to ~45%",
+                "generator": lambda ts, idx: 0.45,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            # Constant (not noisy) to preserve the seeded global RNG state for
+            # downstream components.
+            ("cacheservice", {
+                "time_offset": 4*SECONDS_PER_DAY + 2*3600 + 900,
+                "metric": "cache_misses",
+                "description": "Cascading: Mass session re-auth — cache misses ~3,500",
+                "generator": lambda ts, idx: 3500,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "db_disk_exhaustion": Scenario(
+        id="db_disk_exhaustion",
+        name="Database disk + write-latency exhaustion",
+        severity="medium",
+        days_required=7,
+        category="multi_day_cascade",
+        components_touched=(
+            "database", "scheduler", "observabilitypipeline",
+            "mqservice", "apigateway",
+        ),
+        primary_specs=(
+            ("database", {
+                "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
+                "duration_seconds": 96*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 65.0, "end": 92.0},
+                "metric": "disk_used_pct",
+                "description": "Database disk slow exhaustion 65%→92% over 96h",
+                "generator": lambda ts, idx: 65.0,
+            }),
+            ("database", {
+                "time_offset": 4*SECONDS_PER_DAY + 6*3600,        # Day 5 06:00
+                "duration_seconds": 12*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 12.0, "end": 90.0},
+                "metric": "write_latency_ms",
+                "description": "Database write latency drift 12→90 ms as I/O saturates",
+                "generator": lambda ts, idx: 12.0,
+            }),
+            ("database", {
+                "time_offset": 5*SECONDS_PER_DAY + 3*3600,        # Day 6 03:00 — log truncation
+                "duration_seconds": 20*60,
+                "shape": "step",
+                "metric": "error_rate",
+                "description": "Emergency log truncation — write errors spike to 12%",
+                "generator": lambda ts, idx: 0.12,
+            }),
+            ("database", {
+                "time_offset": 5*SECONDS_PER_DAY + 3*3600,
+                "duration_seconds": 20*60,
+                "shape": "step",
+                "metric": "disk_used_pct",
+                "description": "Database log truncation — disk drops to 78%",
+                "generator": lambda ts, idx: 78.0,
+            }),
+            ("database", {
+                "time_offset": 5*SECONDS_PER_DAY + 3*3600,
+                "duration_seconds": 20*60,
+                "shape": "step",
+                "metric": "write_latency_ms",
+                "description": "Database write latency partial relief — 30 ms post-truncation",
+                "generator": lambda ts, idx: 30.0,
+            }),
+        ),
+        cascade_specs=(
+            ("scheduler", {
+                "time_offset": 1*SECONDS_PER_DAY + 30*60,
+                "metric": "jobs_failed_per_min",
+                "description": "Cascading: Slow disk fails background-job writes (~8/min)",
+                "generator": lambda ts, idx: 8,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("observabilitypipeline", {
+                "time_offset": 4*SECONDS_PER_DAY + 6*3600 + 30*60,
+                "metric": "ingest_lag_s",
+                "description": "Cascading: DB write latency drift lags observability ingest to ~180s",
+                "generator": lambda ts, idx: 180,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("mqservice", {
+                "time_offset": 4*SECONDS_PER_DAY + 12*3600,
+                "metric": "pending_messages",
+                "description": "Cascading: Consumers blocked on DB writes — ~320k pending",
+                "generator": lambda ts, idx: 320000 + np.random.normal(0, 10000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            # Constant (not noisy) to preserve the seeded global RNG state for
+            # downstream components.
+            ("apigateway", {
+                "time_offset": 5*SECONDS_PER_DAY + 3*3600 + 300,
+                "metric": "backend_latency_ms",
+                "description": "Cascading: DB truncation event raises backend latency to ~720 ms",
+                "generator": lambda ts, idx: 720,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("apigateway", {
+                "time_offset": 5*SECONDS_PER_DAY + 3*3600 + 300,
+                "metric": "error_rate",
+                "description": "Cascading: DB error spike propagates to gateway (~15%)",
+                "generator": lambda ts, idx: 0.15,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+}
+
+
+def _validate_scenarios_registry() -> None:
+    """Import-time invariants for ``SCENARIOS``.
+
+    Mirrors the registry tests in ``tests/test_scenarios.py`` so any drift
+    while editing the registry is caught at module load. Kept as a function
+    so loop locals don't leak into the module namespace.
+    """
+    known_components = set(COMPONENTS.keys())
+    for slug, scenario in SCENARIOS.items():
+        if scenario.id != slug:
+            raise ValueError(
+                f"SCENARIOS[{slug!r}].id is {scenario.id!r}; id must equal "
+                f"the registry key"
+            )
+        if scenario.severity not in {"low", "medium", "high"}:
+            raise ValueError(
+                f"SCENARIOS[{slug!r}].severity {scenario.severity!r} must be "
+                "one of low / medium / high"
+            )
+        if scenario.days_required not in {1, 7}:
+            raise ValueError(
+                f"SCENARIOS[{slug!r}].days_required {scenario.days_required!r} "
+                "must be 1 or 7"
+            )
+        unknown_touched = set(scenario.components_touched) - known_components
+        if unknown_touched:
+            raise ValueError(
+                f"SCENARIOS[{slug!r}].components_touched contains unknown "
+                f"component(s): {sorted(unknown_touched)}"
+            )
+        for component, _ in scenario.primary_specs:
+            if component not in known_components:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].primary_specs references unknown "
+                    f"component {component!r}"
+                )
+        for target, _ in scenario.cascade_specs:
+            if target not in known_components:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].cascade_specs targets unknown "
+                    f"component {target!r}"
+                )
+
+
+_validate_scenarios_registry()
+
+
+# ------------------------------------------------------------------
 # Cascading-failure registry. Same-day cascades fire under any duration;
 # multi-day cascades (LLM-driven) only reach during runs of >= 7 days.
 # ------------------------------------------------------------------
@@ -1713,130 +1992,11 @@ def register_default_cascades():
                      "Cascading: Telemetry pipeline lag backs up downstream queue",
                      lambda ts, idx: 220000 + np.random.normal(0, 15000))
 
-    # ------------------------------------------------------------------
-    # Multi-day Scenario A cascades — cache memory leak → restart blast
-    # radius into database, apigateway, mqservice. (Day 2 → Day 4)
-    # ------------------------------------------------------------------
-    register_cascade("database",
-                     1*SECONDS_PER_DAY + 12*3600,
-                     "queries_per_sec",
-                     "Cascading: Rising cache miss volume — DB queries climb to ~32k",
-                     lambda ts, idx: 32000 + np.random.normal(0, 1500))
-
-    register_cascade("database",
-                     2*SECONDS_PER_DAY + 12*3600 + 30*60,
-                     "queries_per_sec",
-                     "Cascading: Cache hit-ratio decline — DB queries climb to ~42k",
-                     lambda ts, idx: 42000 + np.random.normal(0, 2000))
-
-    register_cascade("database",
-                     2*SECONDS_PER_DAY + 12*3600 + 30*60,
-                     "read_latency_ms",
-                     "Cascading: Cache hit-ratio decline pushes DB read latency to ~55 ms",
-                     lambda ts, idx: 55 + np.random.normal(0, 4))
-
-    # Cold-start stampede: register_cascade doesn't accept shape/shape_params
-    # today, so this collapses to a single ~60k step at restart + 5 min
-    # (the natural end of the cache cold-start window). The ramp-linear
-    # 38k→60k profile from the plan can be re-introduced later if cascades
-    # gain shape support.
-    register_cascade("database",
-                     3*SECONDS_PER_DAY + 3*3600 + 300,
-                     "queries_per_sec",
-                     "Cascading: Cache cold-start stampede — DB queries ~60k",
-                     lambda ts, idx: 60000 + np.random.normal(0, 2500))
-
-    register_cascade("apigateway",
-                     3*SECONDS_PER_DAY + 3*3600 + 300,
-                     "error_rate",
-                     "Cascading: Cache restart causes brief gateway errors (~8%)",
-                     lambda ts, idx: 0.08)
-
-    register_cascade("mqservice",
-                     3*SECONDS_PER_DAY + 3*3600 + 300,
-                     "pending_messages",
-                     "Cascading: Cache restart backs up MQ — ~180,000 pending",
-                     lambda ts, idx: 180000 + np.random.normal(0, 6000))
-
-    # ------------------------------------------------------------------
-    # Multi-day Scenario B cascades — TLS / JWKS rotation chaos blast
-    # radius into apigateway, authservice, paymentservice, cacheservice.
-    # (Day 3 → Day 5)
-    # ------------------------------------------------------------------
-    register_cascade("apigateway",
-                     2*SECONDS_PER_DAY + 9*3600 + 30*60,
-                     "error_rate",
-                     "Cascading: Sporadic TLS failures propagate to gateway (~5%)",
-                     lambda ts, idx: 0.05)
-
-    register_cascade("authservice",
-                     3*SECONDS_PER_DAY + 9*3600 + 30*60,
-                     "avg_auth_latency_ms",
-                     "Cascading: Slow JWKS fetch raises auth latency to ~350 ms",
-                     lambda ts, idx: 350 + np.random.normal(0, 15))
-
-    register_cascade("paymentservice",
-                     3*SECONDS_PER_DAY + 18*3600 + 30*60,
-                     "provider_5xx_rate",
-                     "Cascading: Broken auth chain — payment 5xx ~8%",
-                     lambda ts, idx: 0.08)
-
-    register_cascade("apigateway",
-                     4*SECONDS_PER_DAY + 2*3600 + 300,
-                     "error_rate",
-                     "Cascading: Mass TLS failure floods gateway (~28%)",
-                     lambda ts, idx: 0.28)
-
-    register_cascade("paymentservice",
-                     4*SECONDS_PER_DAY + 2*3600 + 600,
-                     "auth_decline_rate",
-                     "Cascading: Unverifiable tokens drive declines to ~45%",
-                     lambda ts, idx: 0.45)
-
-    # Constant (not noisy) to preserve the seeded global RNG state for
-    # downstream components — see PR notes for the test_spec_coverage trade-off.
-    register_cascade("cacheservice",
-                     4*SECONDS_PER_DAY + 2*3600 + 900,
-                     "cache_misses",
-                     "Cascading: Mass session re-auth — cache misses ~3,500",
-                     lambda ts, idx: 3500)
-
-    # ------------------------------------------------------------------
-    # Multi-day Scenario C cascades — DB disk + write-latency exhaustion
-    # blast radius into scheduler, observabilitypipeline, mqservice,
-    # apigateway. (Day 2 → Day 6)
-    # ------------------------------------------------------------------
-    register_cascade("scheduler",
-                     1*SECONDS_PER_DAY + 30*60,
-                     "jobs_failed_per_min",
-                     "Cascading: Slow disk fails background-job writes (~8/min)",
-                     lambda ts, idx: 8)
-
-    register_cascade("observabilitypipeline",
-                     4*SECONDS_PER_DAY + 6*3600 + 30*60,
-                     "ingest_lag_s",
-                     "Cascading: DB write latency drift lags observability ingest to ~180s",
-                     lambda ts, idx: 180)
-
-    register_cascade("mqservice",
-                     4*SECONDS_PER_DAY + 12*3600,
-                     "pending_messages",
-                     "Cascading: Consumers blocked on DB writes — ~320k pending",
-                     lambda ts, idx: 320000 + np.random.normal(0, 10000))
-
-    # Constant (not noisy) to preserve the seeded global RNG state for
-    # downstream components — see PR notes for the test_spec_coverage trade-off.
-    register_cascade("apigateway",
-                     5*SECONDS_PER_DAY + 3*3600 + 300,
-                     "backend_latency_ms",
-                     "Cascading: DB truncation event raises backend latency to ~720 ms",
-                     lambda ts, idx: 720)
-
-    register_cascade("apigateway",
-                     5*SECONDS_PER_DAY + 3*3600 + 300,
-                     "error_rate",
-                     "Cascading: DB error spike propagates to gateway (~15%)",
-                     lambda ts, idx: 0.15)
+    # NOTE: Multi-day Scenario A/B/C cascades moved to the SCENARIOS
+    # registry in VER-103. main() walks the resolved scenario set after
+    # this function returns and appends their cascades onto
+    # cascading_anomalies in A → B → C order, preserving the historic
+    # registration sequence (and therefore RNG draw order).
 
 
 def register_high_pressure_cascades():
@@ -2096,6 +2256,83 @@ def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: d
         cascade_registry[component] = kept_cascade.get(component, []) + out_of_range
 
 
+def _resolve_scenarios(args) -> set[str]:
+    """Return the effective set of scenario slugs for this run.
+
+    Resolution order: allowlist (``args.scenarios``) → exclusion
+    (``args.exclude_scenarios``) → severity filter (``args.signal_level``) →
+    duration filter (``args.duration_days``) → component filter
+    (``args.components``).
+
+    Scenarios dropped by the severity or duration filter emit a stderr
+    ``WARNING: scenario <slug> requires …`` so a misconfigured run is
+    diagnosable without re-running with -v. Scenarios with no
+    ``components_touched`` intersection with ``args.components`` are dropped
+    silently — every spec they would have produced is already filtered out
+    downstream, and the warning would be noise for users who restricted
+    components on purpose.
+
+    parse_args has already validated that every slug in ``args.scenarios``
+    and ``args.exclude_scenarios`` exists in ``SCENARIOS``, so this function
+    never raises for unknown-slug.
+    """
+    allowed_severities = SIGNAL_LEVELS[args.signal_level]
+    resolved = set(args.scenarios) - set(args.exclude_scenarios)
+
+    survivors: set[str] = set()
+    for slug in resolved:
+        scenario = SCENARIOS[slug]
+        if scenario.severity not in allowed_severities:
+            print(
+                f"WARNING: scenario {slug} requires --signal-level "
+                f"{scenario.severity} (current: {args.signal_level}); skipped.",
+                file=sys.stderr,
+            )
+            continue
+        if scenario.days_required > args.duration_days:
+            print(
+                f"WARNING: scenario {slug} requires --duration-days "
+                f">= {scenario.days_required} (current: {args.duration_days}); "
+                "skipped.",
+                file=sys.stderr,
+            )
+            continue
+        touched = set(scenario.components_touched)
+        if not (touched & args.components):
+            # Silent drop — no scenario output is possible under the
+            # active --components allowlist anyway.
+            continue
+        survivors.add(slug)
+    return survivors
+
+
+def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
+                     active_scenarios: set[str]) -> None:
+    """Append the active scenarios' primaries and cascades onto the runtime
+    registries.
+
+    Walks ``SCENARIOS`` in declaration order so that, when all 3 multi-day
+    scenarios are active (default ``--scenarios all`` plus
+    ``--duration-days 7``), the tail order of ``component_anomalies[name]``
+    and ``cascading_anomalies[target]`` matches the pre-VER-103 layout
+    exactly. That order anchors every numpy.random draw inside
+    ``generate_component``, so any reordering would shift the RNG stream
+    and break the byte-for-byte default-output guarantee.
+
+    Callers must invoke this **before** appending any ``--signal-level high``
+    extensions to either registry, so the positional ordering used by
+    ``_apply_signal_level_and_count()`` to build the deterministic
+    ``--anomaly-count`` sampling pool remains stable across the refactor.
+    """
+    for slug, scenario in SCENARIOS.items():
+        if slug not in active_scenarios:
+            continue
+        for component, spec in scenario.primary_specs:
+            component_anomalies.setdefault(component, []).append(spec)
+        for target, cascade in scenario.cascade_specs:
+            cascade_registry.setdefault(target, []).append(cascade)
+
+
 # ------------------------------------------------------------------
 # CLI + entry point
 # ------------------------------------------------------------------
@@ -2139,6 +2376,25 @@ def parse_args(argv=None):
              "anomalies.csv, reporting artifacts, and OTel streaming). Use "
              "'all' (default) for every component. Allowed names: "
              f"{', '.join(sorted(COMPONENTS.keys()))}.",
+    )
+    p.add_argument(
+        "--scenarios",
+        type=str,
+        default="all",
+        help="Comma-separated list of named scenario slugs to include. Use "
+             "'all' (default) to include every scenario in the registry. "
+             "Case-insensitive. Currently only the 3 multi-day cascading "
+             "scenarios live in the SCENARIOS registry (VER-103); all other "
+             "anomalies still fire via the legacy path. Known slugs: "
+             f"{', '.join(sorted(SCENARIOS.keys()))}.",
+    )
+    p.add_argument(
+        "--exclude-scenarios",
+        type=str,
+        default="",
+        help="Comma-separated list of named scenario slugs to exclude from "
+             "the resolved set (applied after --scenarios). Case-insensitive. "
+             "Defaults to empty (no exclusion).",
     )
     p.add_argument(
         "--signal-level",
@@ -2351,6 +2607,29 @@ def parse_args(argv=None):
                     f"{', '.join(invalid_components)}. "
                     f"Allowed: {', '.join(sorted(COMPONENTS.keys()))} or 'all'")
     args.components = selected_components
+
+    raw_scenarios = [item.strip().lower() for item in args.scenarios.split(",") if item.strip()]
+    if not raw_scenarios:
+        p.error("--scenarios must contain at least one scenario slug (or 'all')")
+    invalid_scenarios = sorted(set(raw_scenarios) - set(SCENARIOS.keys()) - {"all"})
+    if invalid_scenarios:
+        p.error("--scenarios contains invalid value(s): "
+                f"{', '.join(invalid_scenarios)}. "
+                f"Allowed: {', '.join(sorted(SCENARIOS.keys()))} or 'all'")
+    if "all" in raw_scenarios:
+        selected_scenarios = set(SCENARIOS.keys())
+    else:
+        selected_scenarios = set(raw_scenarios)
+    args.scenarios = selected_scenarios
+
+    raw_exclude = [item.strip().lower() for item in args.exclude_scenarios.split(",") if item.strip()]
+    excluded_scenarios = set(raw_exclude)
+    invalid_excluded = sorted(excluded_scenarios - set(SCENARIOS.keys()))
+    if invalid_excluded:
+        p.error("--exclude-scenarios contains invalid value(s): "
+                f"{', '.join(invalid_excluded)}. "
+                f"Allowed: {', '.join(sorted(SCENARIOS.keys()))}")
+    args.exclude_scenarios = excluded_scenarios
 
     signal_level = (args.signal_level or "").strip().lower()
     if signal_level not in SIGNAL_LEVELS:
@@ -3048,13 +3327,25 @@ def main(argv=None):
     anomalies.clear()
     cascading_anomalies.clear()
     register_default_cascades()
-    if args.signal_level == "high":
-        register_high_pressure_cascades()
 
     component_anomalies = {
         name: list(specs) for name, specs in COMPONENT_PRIMARY_ANOMALIES.items()
     }
+
+    # Append registry-driven scenario primaries/cascades onto the runtime
+    # registries BEFORE the high-pressure extension so the positional order
+    # (legacy specs → scenarios → high-pressure specs) matches the
+    # pre-VER-103 layout, where the 3 multi-day scenarios lived inside the
+    # legacy anoms_* lists / register_default_cascades() body and so came
+    # before the high-pressure extensions. _apply_signal_level_and_count()
+    # builds its deterministic --anomaly-count sampling pool from this
+    # order, so any reshuffle would change which subset is selected for
+    # the same (seed, cap) under --signal-level high.
+    active_scenarios = _resolve_scenarios(args)
+    _apply_scenarios(component_anomalies, cascading_anomalies, active_scenarios)
+
     if args.signal_level == "high":
+        register_high_pressure_cascades()
         component_anomalies["loadbalancer"].extend(anoms_high_lb)
         component_anomalies["cacheservice"].extend(anoms_high_cache)
         component_anomalies["database"].extend(anoms_high_db)

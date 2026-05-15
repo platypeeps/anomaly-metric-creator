@@ -86,12 +86,50 @@ single-row step writes only — express ramps/sustained spans as primary
 
 The three VER-98 multi-day scenarios (cache leak → restart, cert/JWKS
 rotation chaos, DB disk/write-latency exhaustion) are worked examples of
-shaped multi-day spans with cross-component cascade fan-out — see the
-`# Multi-day Scenario A/B/C` blocks in `anoms_cache`, `anoms_lb`,
-`anoms_idp`, `anoms_auth`, and `anoms_db`, paired with the corresponding
-cascade groups inside `register_default_cascades()`. They only manifest
-at `--duration-days >= 7`; out-of-range specs are caught by the existing
-stderr WARNING path.
+shaped multi-day spans with cross-component cascade fan-out. As of
+VER-103 they live in the `SCENARIOS` registry under the slugs
+`cache_leak_restart`, `jwks_rotation_chaos`, and `db_disk_exhaustion`
+(see `Scenario` dataclass). Each entry bundles every primary and
+cascade spec for the named scenario; `_apply_scenarios()` in `main()`
+appends them onto `component_anomalies` / `cascading_anomalies` after
+`register_default_cascades()` runs but **before** any
+`--signal-level high` extensions are added, so the pre-VER-103
+positional ordering (legacy specs → scenarios → high-pressure specs)
+is preserved end-to-end. That ordering anchors both the RNG draws
+inside `generate_component` (byte-for-byte default output) and the
+deterministic sampling pool inside `_apply_signal_level_and_count()`
+(stable `--anomaly-count` selection for the same seed). The scenarios
+only manifest at `--duration-days >= 7`; out-of-range specs are
+caught by the existing stderr WARNING path, and `_resolve_scenarios()`
+additionally drops whole scenarios with a `WARNING: scenario <slug>
+requires …` message when the duration or severity gates exclude them.
+
+### Scenario registry (partial)
+
+`SCENARIOS: dict[str, Scenario]` only holds the 3 multi-day cascading
+scenarios above today. Every other anomaly (single-day clusters,
+high-pressure cross-component scenarios, multi-day LLM viral/cascade
+catalog, Monday baseline) still fires via the legacy `anoms_*` lists
+and the imperative body of `register_default_cascades()` /
+`register_high_pressure_cascades()`. The legacy path coexists with the
+registry and runs first; the registry walk only tail-appends. VER-104
+will migrate the remaining anomalies into the registry and delete the
+legacy lists/cascade bodies.
+
+Adding a new entry to `SCENARIOS` requires:
+
+- A unique slug (registry key); `id` must match the key.
+- `severity ∈ {low, medium, high}` and `days_required ∈ {1, 7}`
+  (import-time validation enforces both).
+- `components_touched` must be a subset of `COMPONENTS`.
+- Each `primary_specs` entry is `(component, spec_dict)` with the
+  same dict shape as an `anoms_*` list entry; each `cascade_specs`
+  entry is `(target_component, cascade_dict)` with the same dict shape
+  as values inside `cascading_anomalies`. Both lists are validated at
+  import time to reference real components.
+- CLI: `--scenarios` (default `all`) and `--exclude-scenarios`
+  (default empty) accept comma-separated, case-insensitive slug lists
+  and reject unknown slugs at `parse_args` time.
 
 ## Modifying the script
 

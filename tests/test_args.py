@@ -205,3 +205,95 @@ def test_parse_args_metrics_per_component_explicit_valid(amc, value):
 def test_parse_args_metrics_per_component_out_of_range_fails(amc, value):
     with pytest.raises(SystemExit):
         amc.parse_args(["--metrics-per-component", value, "--output-dir", "test_out"])
+
+
+def test_parse_args_scenarios_default_is_all(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.scenarios == set(amc.SCENARIOS.keys())
+
+
+def test_parse_args_scenarios_all_keyword(amc):
+    args = amc.parse_args(["--scenarios", "all", "--output-dir", "test_out"])
+    assert args.scenarios == set(amc.SCENARIOS.keys())
+
+
+def test_parse_args_scenarios_single(amc):
+    args = amc.parse_args([
+        "--scenarios", "cache_leak_restart",
+        "--output-dir", "test_out",
+    ])
+    assert args.scenarios == {"cache_leak_restart"}
+
+
+def test_parse_args_scenarios_multiple(amc):
+    args = amc.parse_args([
+        "--scenarios", "cache_leak_restart,jwks_rotation_chaos",
+        "--output-dir", "test_out",
+    ])
+    assert args.scenarios == {"cache_leak_restart", "jwks_rotation_chaos"}
+
+
+def test_parse_args_scenarios_whitespace_tolerant(amc):
+    args = amc.parse_args([
+        "--scenarios", " cache_leak_restart , db_disk_exhaustion ",
+        "--output-dir", "test_out",
+    ])
+    assert args.scenarios == {"cache_leak_restart", "db_disk_exhaustion"}
+
+
+def test_parse_args_scenarios_case_insensitive(amc):
+    args = amc.parse_args([
+        "--scenarios", "CACHE_LEAK_RESTART",
+        "--output-dir", "test_out",
+    ])
+    assert args.scenarios == {"cache_leak_restart"}
+
+
+def test_parse_args_scenarios_invalid_name_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--scenarios", "cache_leak_restart,not_a_scenario",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_parse_args_scenarios_all_with_invalid_name_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--scenarios", "all,not_a_scenario",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_parse_args_scenarios_empty_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args(["--scenarios", "", "--output-dir", "test_out"])
+
+
+def test_parse_args_exclude_scenarios_default_empty(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.exclude_scenarios == set()
+
+
+def test_parse_args_exclude_scenarios_single(amc):
+    args = amc.parse_args([
+        "--exclude-scenarios", "jwks_rotation_chaos",
+        "--output-dir", "test_out",
+    ])
+    assert args.exclude_scenarios == {"jwks_rotation_chaos"}
+
+
+def test_parse_args_exclude_scenarios_case_insensitive(amc):
+    args = amc.parse_args([
+        "--exclude-scenarios", "JWKS_ROTATION_CHAOS",
+        "--output-dir", "test_out",
+    ])
+    assert args.exclude_scenarios == {"jwks_rotation_chaos"}
+
+
+def test_parse_args_exclude_scenarios_invalid_name_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--exclude-scenarios", "not_a_scenario",
+            "--output-dir", "test_out",
+        ])
