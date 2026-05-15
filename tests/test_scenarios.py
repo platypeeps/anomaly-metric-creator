@@ -406,3 +406,41 @@ def test_high_seven_day_capped_csvs_byte_identical(
         f"sampling pool has shifted. "
         f"expected={expected_hash} actual={actual}"
     )
+
+
+# ------------------------------------------------------------------
+# Per-slug isolation test: --scenarios <slug> emits only that scenario
+# ------------------------------------------------------------------
+
+def _extra_args_for_slug(amc, slug: str) -> list[str]:
+    """Return extra_args (beyond seed/days/output-dir) to activate a single slug."""
+    scenario = amc.SCENARIOS[slug]
+    extra = ["--scenarios", slug, "--drop-rate", "0", "--interval-seconds", "60"]
+    if scenario.severity == "high":
+        extra += ["--signal-level", "high"]
+    return extra
+
+
+def test_per_slug_isolation(amc, tmp_path):
+    """For every slug in SCENARIOS, running with ``--scenarios <slug>`` produces a
+    non-empty ``anomalies.csv`` where every row's component is in the scenario's
+    ``components_touched`` set.
+    """
+    for slug, scenario in amc.SCENARIOS.items():
+        out = tmp_path / f"slug_{slug}"
+        out.mkdir()
+        days = max(scenario.days_required, 1)
+        extra = _extra_args_for_slug(amc, slug)
+        run = run_capture(amc, out, days=days, extra_args=extra)
+
+        manifest = read_manifest(out)
+        assert manifest, (
+            f"--scenarios {slug} produced empty anomalies.csv "
+            f"(severity={scenario.severity}, days_required={scenario.days_required})"
+        )
+        allowed = set(scenario.components_touched)
+        for row in manifest:
+            assert row["component"] in allowed, (
+                f"--scenarios {slug}: manifest row component={row['component']!r} "
+                f"is not in components_touched={sorted(allowed)!r}"
+            )
