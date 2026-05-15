@@ -297,16 +297,9 @@ _SHAPE_PARAM_KEYS = {
 
 def _all_specs(amc):
     out = []
-    spec_list_names = [
-        "anoms_auth", "anoms_cache", "anoms_api", "anoms_db", "anoms_mq",
-        "anoms_lb", "anoms_obj", "anoms_vec", "anoms_scheduler",
-        "anoms_payment", "anoms_idp", "anoms_obs", "anoms_llm",
-        "anoms_high_lb", "anoms_high_cache", "anoms_high_db",
-        "anoms_high_llm", "anoms_high_api", "anoms_high_obj",
-    ]
-    for name in spec_list_names:
-        for spec in getattr(amc, name):
-            out.append((name, spec))
+    for slug, scenario in amc.SCENARIOS.items():
+        for _component, spec in scenario.primary_specs:
+            out.append((slug, spec))
     return out
 
 

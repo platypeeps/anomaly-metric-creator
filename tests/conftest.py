@@ -77,21 +77,21 @@ def one_day_full_metrics_run(amc, tmp_path_factory):
     )
 
 
-# (anomaly-list attribute name, total metric count in COMPONENTS)
+# total metric count in COMPONENTS (all catalogs are at the MAX_METRICS_PER_COMPONENT cap)
 COMPONENT_FIELDS = {
-    "authservice": ("anoms_auth", 10),
-    "cacheservice": ("anoms_cache", 10),
-    "apigateway": ("anoms_api", 10),
-    "database": ("anoms_db", 10),
-    "mqservice": ("anoms_mq", 10),
-    "llm_analytics": ("anoms_llm", 10),
-    "loadbalancer": ("anoms_lb", 10),
-    "objectstore": ("anoms_obj", 10),
-    "vectorstore": ("anoms_vec", 10),
-    "scheduler": ("anoms_scheduler", 10),
-    "paymentservice": ("anoms_payment", 10),
-    "identityprovider": ("anoms_idp", 10),
-    "observabilitypipeline": ("anoms_obs", 10),
+    "authservice": 10,
+    "cacheservice": 10,
+    "apigateway": 10,
+    "database": 10,
+    "mqservice": 10,
+    "llm_analytics": 10,
+    "loadbalancer": 10,
+    "objectstore": 10,
+    "vectorstore": 10,
+    "scheduler": 10,
+    "paymentservice": 10,
+    "identityprovider": 10,
+    "observabilitypipeline": 10,
 }
 
 # How many metrics each component emits when --metrics-per-component is unset.
@@ -116,23 +116,41 @@ DEFAULT_METRIC_COUNT = {
 COMPONENTS = list(COMPONENT_FIELDS.keys())
 
 
-def declared_specs(amc):
-    """Flatten every declared anomaly spec into (component, time_offset, metric, description)."""
+def declared_specs(amc, *, days=None, signal_level=None):
+    """Flatten declared anomaly specs into (component, time_offset, metric, description).
+
+    When ``days`` and/or ``signal_level`` are provided, only scenarios that would
+    be active for those run parameters are included (mirrors ``_resolve_scenarios``
+    severity + duration gates). Pass matching values from the fixture under test
+    so the declared set aligns with what actually appears in the manifest.
+    """
+    allowed_severities = amc.SIGNAL_LEVELS[signal_level] if signal_level else None
     out = []
-    for component, (attr, _) in COMPONENT_FIELDS.items():
-        for s in getattr(amc, attr):
+    for scenario in amc.SCENARIOS.values():
+        if allowed_severities is not None and scenario.severity not in allowed_severities:
+            continue
+        if days is not None and scenario.days_required > days:
+            continue
+        for component, s in scenario.primary_specs:
             out.append((component, s["time_offset"], s["metric"], s["description"]))
-    for component, specs in amc.cascading_anomalies.items():
-        for s in specs:
+        for component, s in scenario.cascade_specs:
             out.append((component, s["time_offset"], s["metric"], s["description"]))
     return out
 
 
-def primary_spec_lookup(amc):
-    """Map (component, metric, description) -> the declared primary spec dict."""
+def primary_spec_lookup(amc, *, days=None, signal_level=None):
+    """Map (component, metric, description) -> the declared primary spec dict.
+
+    Accepts the same ``days``/``signal_level`` filters as ``declared_specs``.
+    """
+    allowed_severities = amc.SIGNAL_LEVELS[signal_level] if signal_level else None
     out = {}
-    for component, (attr, _) in COMPONENT_FIELDS.items():
-        for s in getattr(amc, attr):
+    for scenario in amc.SCENARIOS.values():
+        if allowed_severities is not None and scenario.severity not in allowed_severities:
+            continue
+        if days is not None and scenario.days_required > days:
+            continue
+        for component, s in scenario.primary_specs:
             out[(component, s["metric"], s["description"])] = s
     return out
 

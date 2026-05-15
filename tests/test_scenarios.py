@@ -1,10 +1,9 @@
-"""Phase 1 SCENARIOS registry coverage.
+"""SCENARIOS registry coverage (VER-103 phase 1 + VER-104 phase 2 full migration).
 
-This phase migrates the 3 multi-day cascading scenarios (cache_leak_restart,
-jwks_rotation_chaos, db_disk_exhaustion) out of the legacy ``anoms_*`` lists
-and ``register_default_cascades()`` body into a registry-driven walk in
-``main()``. The legacy imperative path remains in place for every other
-anomaly until VER-104 completes the migration. These tests cover:
+All anomaly and cascade specs live in the SCENARIOS registry; the legacy
+``anoms_*`` lists and ``register_default_cascades()`` /
+``register_high_pressure_cascades()`` functions have been deleted entirely.
+These tests cover:
 
 * Registry structural validation — slug uniqueness, severity vocabulary,
   ``days_required`` vocabulary, component coverage.
@@ -15,7 +14,9 @@ anomaly until VER-104 completes the migration. These tests cover:
   unknown-slug hard error.
 * Default-output byte-for-byte regression — locked SHA-256 hashes for every
   per-component CSV and ``anomalies.csv`` from a default 1-day run at seed
-  42 and a 7-day run at seed 42, captured immediately before this refactor.
+  42 and a 7-day run at seed 42 (the VER-104 baseline; the high-signal +
+  ``--anomaly-count`` capped 7-day hashes below were captured after the
+  full migration and lock the post-VER-104 sampling pool).
 """
 
 from __future__ import annotations
@@ -124,29 +125,29 @@ DEFAULT_SEVEN_DAY_HASHES = {
     "vectorstore.csv": "00bda8d310a34db9e08c3dd5e26c01378f58f9a2669ee776ac01e0c985d4d5ea",
 }
 
-# SHA-256 hashes captured from the pre-VER-103 main branch for
-# ``--signal-level high --duration-days 7 --anomaly-count 100`` at seed 42.
-# Locking these protects the deterministic --anomaly-count sampling pool
-# from drift in the positional order of legacy / scenario / high-pressure
-# specs: _apply_signal_level_and_count() seeds an SeedSequence with
-# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count``
-# positions out of the in-range pool, so any reshuffle changes which
-# anomalies land in the manifest.
+# SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
+# at seed 42, captured against the post-VER-104 registry-only spec ordering
+# (commit f6bd453). Locking these protects the deterministic --anomaly-count
+# sampling pool from drift in the positional order of registry specs:
+# _apply_signal_level_and_count() seeds a SeedSequence with
+# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count`` positions
+# out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
+# of per-component append ordering changes which anomalies land in the manifest.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "cc2b39f13df6c3b44d700f1c4856dc98ed7af7654ba8a6469ecc807e84d5399f",
-    "apigateway.csv": "019af0c94f2c803f51c8f948b09ef9ed89c4faa2a1335a7da22aa5d7e4775a54",
-    "authservice.csv": "8a934bd6b9069948d0fed195056f64e42ad9bf784db05a9ab2251eb0cf6a352d",
-    "cacheservice.csv": "693c886a53d61f5038b88884005c46865f89faae10452a9ce3e469db2ee5a2d9",
-    "database.csv": "3ae83b0e75fcd27d64c87d3ce53cc997abef0b42dfc4c7128fca7fdfef7194ef",
-    "identityprovider.csv": "523e8929bc18e09559c7fa6a06def508124d33a9cfd68248e2de3bc7dbb156a6",
-    "llm_analytics.csv": "3adcf752bfc6f67d233750b1902a0cec498f5a37837e1bacc9a1d13338f65a42",
-    "loadbalancer.csv": "a4b3434be2c8407a96c04d2bcf90c79708797f08a04391519aa377d030d155f4",
-    "mqservice.csv": "ab74c73a43902cbe050f12b3d6fe7af97c811f28457107330a9b60c4f13b518d",
-    "objectstore.csv": "42598e0db3d27aecc85bf74c04412bfd3c21b4aedaf4be2c88a229432645bcae",
-    "observabilitypipeline.csv": "5211c83ad338ac49866b2f7d366d227485ffd6d716fa1504648760286e10e9f3",
-    "paymentservice.csv": "3178647b2d2ea7f8a28cd7c0371bfed3847e0d01c44540a2f2c49b40306f2758",
-    "scheduler.csv": "9dd9f850a6733c544c9094c225ce7daa7c0cc952be2059ef00aee8d1bc7ecc43",
-    "vectorstore.csv": "b5e2e05135491d3f5e4f63ba4ece370fbad056a4f0ffa4ffeb517a38fe20c3be",
+    "anomalies.csv": "a3d1592da8a66c51266f5269a67f991c2e8d74047a6c7d2151d2412efef63d5b",
+    "apigateway.csv": "5c799a684ade9c3140089ec319cc633f879d4f422c3723d03c65e892962fae21",
+    "authservice.csv": "20becf147a24bac19fd7262f7e80ea5fac3a7496a86ea7b52c3ffedda7d994bd",
+    "cacheservice.csv": "99ffcc89dbef13ba72a96cbf4bee24cc090182830880a0be5a4d4180ff6e2496",
+    "database.csv": "af08021dd8c8730c2651c33c11edfebe8d822f28bd9b3570e36c7766d14a737b",
+    "identityprovider.csv": "8a802526532b7eadbb78d39ca41c78ed3e97e520bf958b1674f944f1a8f421f2",
+    "llm_analytics.csv": "93aaaac09a6cd5df9178bbb2b1bc6c374e16ea8b0991a9a950b9a938774089c0",
+    "loadbalancer.csv": "1474640c86ad99df61c9ca4b8076be531aff62d37745719d467f39d9e1645624",
+    "mqservice.csv": "dd4bf97a7a9fdfb450098024f5f9a2b11a799b8b5111b5a48e0013ffecbc2495",
+    "objectstore.csv": "de6b370eb3122fc1c98bdb836a0784b29f206dd24a0e1787bff0f3e3365e542e",
+    "observabilitypipeline.csv": "5be5001456b0ccd23715ea31b274817158db631fcc1d70dc51f482f6ef037ee7",
+    "paymentservice.csv": "0d14c888eecd42660984a14db3a787035f9736089241ac1a9befbc8554d5dabe",
+    "scheduler.csv": "65bd4988b1951d912e36cd103c27c15c3b8d8b21a6672a267d655ab7f8e5d648",
+    "vectorstore.csv": "8fd3681f7fb799ad3efac9157bd36b64bb005a245eddec1b86bd0dbb1287ce39",
 }
 
 
@@ -190,9 +191,16 @@ def test_scenario_severity_in_vocabulary(amc, slug):
 
 @pytest.mark.parametrize("slug", sorted(THREE_MULTI_DAY_SCENARIOS))
 def test_scenario_days_required_vocabulary(amc, slug):
+    """``days_required`` is the minimum --duration-days at which any of the
+    scenario's specs becomes in range. VER-104 relaxed the validator from
+    ``{1, 7}`` to any positive int so each scenario can gate at the day
+    index of its earliest offset; the equality check (days_required must
+    equal that earliest in-range day) lives in
+    ``test_registry.test_scenarios_days_required_valid``.
+    """
     days_required = amc.SCENARIOS[slug].days_required
-    assert days_required in {1, 7}, (
-        f"SCENARIOS[{slug!r}].days_required {days_required!r} not in {{1, 7}}"
+    assert isinstance(days_required, int) and days_required >= 1, (
+        f"SCENARIOS[{slug!r}].days_required {days_required!r} must be a positive int"
     )
 
 
@@ -207,13 +215,20 @@ def test_scenario_components_touched_exist(amc, slug):
 
 
 def test_three_multi_day_scenarios_require_seven_days(amc):
-    """The 3 migrated multi-day cascading scenarios must declare
-    ``days_required >= 7`` so a default 1-day run drops them with a stderr
-    warning (matches the acceptance criterion for VER-103)."""
+    """The 3 migrated multi-day cascading scenarios all have specs that span past
+    Day 1, so they must declare ``days_required >= 2`` and a default 1-day run
+    must drop them with a stderr warning (the VER-103 acceptance criterion).
+
+    VER-104 narrowed each scenario's ``days_required`` to its actual minimum
+    in-range day (e.g. ``cache_leak_restart`` and ``db_disk_exhaustion`` start
+    on Day 2, ``jwks_rotation_chaos`` starts on Day 3) so shorter multi-day
+    runs emit the in-range portion the legacy path used to emit. The test
+    therefore checks ``>= 2`` rather than the original ``== 7``.
+    """
     for slug in THREE_MULTI_DAY_SCENARIOS:
         scenario = amc.SCENARIOS[slug]
-        assert scenario.days_required == 7, (
-            f"SCENARIOS[{slug!r}].days_required must be 7 (this is a multi-day scenario)"
+        assert scenario.days_required >= 2, (
+            f"SCENARIOS[{slug!r}].days_required must be >= 2 (multi-day scenario)"
         )
 
 
@@ -429,3 +444,67 @@ def test_high_seven_day_capped_csvs_byte_identical(
         f"sampling pool has shifted. "
         f"expected={expected_hash} actual={actual}"
     )
+
+
+# ------------------------------------------------------------------
+# Per-slug isolation test: --scenarios <slug> emits only that scenario
+# ------------------------------------------------------------------
+
+def _extra_args_for_slug(amc, slug: str) -> list[str]:
+    """Return extra_args (beyond seed/days/output-dir) to activate a single slug."""
+    scenario = amc.SCENARIOS[slug]
+    extra = ["--scenarios", slug, "--drop-rate", "0", "--interval-seconds", "60"]
+    if scenario.severity == "high":
+        extra += ["--signal-level", "high"]
+    return extra
+
+
+def _expected_events_for_slug(amc, slug: str) -> set[tuple[str, str, str]]:
+    """Build the expected ``(component, metric, description)`` set for a slug.
+
+    Primary specs land on their declared component; cascade specs land on the
+    cascade's target component (the first element of each ``cascade_specs``
+    tuple). This matches what ``_apply_scenarios`` writes into
+    ``component_anomalies`` / ``cascading_anomalies``, which in turn is what
+    ``anomalies.csv`` records row-by-row.
+    """
+    scenario = amc.SCENARIOS[slug]
+    expected: set[tuple[str, str, str]] = set()
+    for component, spec in scenario.primary_specs:
+        expected.add((component, spec["metric"], spec["description"]))
+    for target, cascade in scenario.cascade_specs:
+        expected.add((target, cascade["metric"], cascade["description"]))
+    return expected
+
+
+def test_per_slug_isolation(amc, tmp_path):
+    """For every slug in SCENARIOS, running with ``--scenarios <slug>`` produces
+    a non-empty ``anomalies.csv`` whose every row matches one of that scenario's
+    own primary or cascade specs by ``(component, metric, description)``.
+
+    Checking only ``components_touched`` membership is too loose: e.g.
+    ``auth_brute_force`` and ``monday_baseline`` both touch authservice +
+    apigateway, so a leak between them would pass a components-only assertion.
+    Comparing against the slug's own ``primary_specs`` + ``cascade_specs``
+    (whose descriptions flow verbatim into the manifest) catches that.
+    """
+    for slug, scenario in amc.SCENARIOS.items():
+        out = tmp_path / f"slug_{slug}"
+        out.mkdir()
+        days = max(scenario.days_required, 1)
+        extra = _extra_args_for_slug(amc, slug)
+        run = run_capture(amc, out, days=days, extra_args=extra)
+
+        manifest = read_manifest(out)
+        assert manifest, (
+            f"--scenarios {slug} produced empty anomalies.csv "
+            f"(severity={scenario.severity}, days_required={scenario.days_required})"
+        )
+        expected_events = _expected_events_for_slug(amc, slug)
+        for row in manifest:
+            key = (row["component"], row["metric"], row["description"])
+            assert key in expected_events, (
+                f"--scenarios {slug}: manifest row {key!r} is not declared by "
+                f"this scenario's primary_specs or cascade_specs — looks like a "
+                f"leak from another scenario."
+            )

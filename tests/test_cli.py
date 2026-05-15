@@ -428,21 +428,31 @@ def test_anomaly_count_preserves_manifest_row_order(tmp_path):
 
 
 def test_anomaly_count_still_warns_for_out_of_range_specs(tmp_path):
-    """--anomaly-count must not silently suppress the stderr soft-skip
-    warning for out-of-range specs (e.g. multi-day cascades on a 1-day run).
+    """--anomaly-count must not silently suppress the generator's stderr
+    soft-skip warning for out-of-range specs (e.g. multi-day specs whose
+    time_offset falls past the end of the requested duration).
+
+    Uses --duration-days 2 so partial multi-day scenarios such as
+    cache_leak_restart (days_required=2, specs spanning Day 2-4) and
+    db_disk_exhaustion (days_required=2, specs spanning Day 2-6) are
+    active (their gate passes) but their Day 3+ specs fall out of
+    range — which is exactly the generator's "time_offset outside"
+    path. A bare "skipped" substring would also be satisfied by the
+    scenario-gate warnings emitted by _resolve_scenarios, so the
+    assertion looks for the generator-specific warning text.
     """
     out = tmp_path / "count_with_oor"
     result = _invoke(
-        "--duration-days", "1",
+        "--duration-days", "2",
         "--interval-seconds", "60",
         "--drop-rate", "0",
         "--anomaly-count", "100000",
         "--output-dir", str(out),
     )
     assert result.returncode == 0, result.stderr
-    assert "skipping" in result.stderr, (
-        "expected stderr soft-skip warning even with --anomaly-count set; "
-        f"got: {result.stderr!r}"
+    assert "time_offset outside" in result.stderr, (
+        "expected generator-emitted soft-skip warning (`time_offset outside`) "
+        f"even with --anomaly-count set; got: {result.stderr!r}"
     )
 
 

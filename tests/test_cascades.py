@@ -49,9 +49,17 @@ def test_cascades_applied_in_generate_component(amc, tmp_path):
     ts_normal = "2026-03-10 00:00:04"
     assert float(rows[ts_normal][idx]) == 10.0
 
-def test_register_default_cascades(amc):
+def test_cascades_populated_from_scenarios(amc, tmp_path):
+    """Registry-driven _apply_scenarios populates cascading_anomalies for a 1-day run."""
+    out = tmp_path / "cascade_reg_test"
+    out.mkdir()
     amc.cascading_anomalies.clear()
-    amc.register_default_cascades()
+    args_ns = amc.parse_args([
+        "--seed", "42", "--duration-days", "1",
+        "--output-dir", str(out),
+    ])
+    active = amc._resolve_scenarios(args_ns)
+    component_anomalies = {name: [] for name in amc.COMPONENTS}
+    amc._apply_scenarios(component_anomalies, amc.cascading_anomalies, active)
     assert len(amc.cascading_anomalies) > 0
-    # Verify a known cascade from the catalog
     assert "authservice" in amc.cascading_anomalies

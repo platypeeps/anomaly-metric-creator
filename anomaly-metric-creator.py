@@ -83,21 +83,21 @@ class MetricSpec:
 
 
 # ------------------------------------------------------------------
-# Named scenario registry (VER-102 Phase 1).
+# Named scenario registry (VER-102 / VER-104 — full migration complete).
 #
-# Each Scenario bundles a slug-named bundle of primary anomaly specs and
-# cascade specs that can be selected together via --scenarios. This phase
-# migrates the 3 multi-day cascading scenarios (cache_leak_restart,
-# jwks_rotation_chaos, db_disk_exhaustion) into the registry; every other
-# anomaly continues to fire via the legacy ``anoms_*`` / imperative-cascade
-# path until VER-104 completes the migration.
+# Each Scenario bundles a slug-named set of primary anomaly specs and
+# cascade specs that can be selected together via --scenarios. Every
+# anomaly and cascade in the codebase lives in the ``SCENARIOS`` dict
+# below; there is no legacy ``anoms_*`` path. ``main()`` builds
+# ``component_anomalies`` and ``cascading_anomalies`` exclusively via
+# ``_apply_scenarios()``.
 #
-# Each primary_spec is paired with the component name where it lives; each
-# cascade_spec is paired with the target_component. The inner dict has the
-# same shape as today's ``anoms_*`` entries (and the same shape as cascade
-# dicts after register_cascade builds them), so generation paths see the
-# same data structure regardless of whether a spec arrived via the legacy
-# path or the registry walk.
+# Each primary_spec is paired with the component name where it lands;
+# each cascade_spec is paired with the target component. The inner dict
+# carries the same fields the generator path consumes (time_offset,
+# metric, description, generator, optional duration_seconds / shape /
+# shape_params / severity), so ``generate_component()`` sees a uniform
+# spec shape regardless of whether it arrived as a primary or a cascade.
 # ------------------------------------------------------------------
 @dataclass(frozen=True)
 class Scenario:
@@ -719,669 +719,1175 @@ for _name, _default in DEFAULT_METRICS_PER_COMPONENT.items():
 del _components_keys, _defaults_keys, _overflowed, _name, _default
 
 # ------------------------------------------------------------------
-# Anomaly specifications
+# Anomaly specifications — migrated to SCENARIOS registry (VER-104).
+# All anomaly and cascade specs now live in the SCENARIOS dict below.
 # ------------------------------------------------------------------
-anoms_auth = [
-    {
-        "time_offset": 2*3600 + 15*60,            # 02:15:00
-        "metric": "error_rate",
-        "description": "Spike in failed logins – possible brute force",
-        "generator": lambda ts,idx: 0.42   # 42 % error
-    },
-    {
-        "time_offset": 2*3600 + 15*60,
-        "metric": "login_attempts",
-        "description": "Login attempts surge 5×",
-        "generator": lambda ts,idx: 1250
-    },
-    {
-        "time_offset": 9*3600,                    # 09:00:00
-        "metric": "login_attempts",
-        "description": "Benign baseline shift: Monday morning login burst — 1,400 attempts/s",
-        "generator": lambda ts,idx: 1400,
-        "severity": "low",
-    },
-    # NOTE: Multi-day Scenario B (jwks_rotation_chaos) auth-side primary
-    # moved to SCENARIOS["jwks_rotation_chaos"] in VER-103.
-]
-
-anoms_cache = [
-    {
-        "time_offset": 6*3600,          # 04:30:00
-        "metric": "hit_ratio",
-        "description": "Cache hit ratio drops to 5 %",
-        "generator": lambda ts,idx: 5.0
-    },
-    {
-        "time_offset": 17*3600,                   # 17:00:00
-        "metric": "memory_util_pct",
-        "description": "Memory pressure — 97% nearing eviction",
-        "generator": lambda ts,idx: 97.0
-    },
-    # Slow memory leak — linear ramp 70% → 96% over 4h, then snap-back to
-    # natural baseline (no explicit reset spec; the span ends and the natural
-    # column resumes at row 12:00:00).
-    {
-        "time_offset": 8*3600,                    # 08:00:00
-        "duration_seconds": 4*3600,               # 4h ramp
-        "shape": "ramp_linear",
-        "shape_params": {"start": 70.0, "end": 96.0},
-        "metric": "memory_util_pct",
-        "description": "Slow memory leak — utilization ramps 70% → 96% over 4h",
-        "generator": lambda ts,idx: 70.0,         # match start_value for test_correctness
-    },
-    # NOTE: Multi-day Scenario A (cache_leak_restart) primaries moved to
-    # SCENARIOS["cache_leak_restart"] in VER-103. The scenario walk in
-    # main() appends them back onto component_anomalies["cacheservice"] at
-    # the same tail position, preserving RNG draw order for byte-for-byte
-    # default output.
-]
-
-anoms_api = [
-    {
-        "time_offset": 6*3600 + 30*60,  # 06:30:00
-        "metric": "cpu_util_pct",
-        "description": "CPU saturates at 100 %",
-        "generator": lambda ts,idx: 100.0
-    },
-    {
-        "time_offset": 9*3600,                    # 09:00:00
-        "metric": "requests_per_sec",
-        "description": "Monday-morning thundering herd — 2,200 RPS spike",
-        "generator": lambda ts,idx: 2200,
-        "severity": "low",
-    },
-    {
-        "time_offset": 21*3600 + 45*60,           # 21:45:00
-        "metric": "error_rate",
-        "description": "5xx burst from bad config push — 12 %",
-        "generator": lambda ts,idx: 0.12
-    },
-    # GC sawtooth — avg_response_time_ms oscillates 180 ↔ 380 every 90s for
-    # 30 min, mimicking stop-the-world pauses on a leaky JVM-style workload.
-    {
-        "time_offset": 9*3600 + 30*60,            # 09:30:00
-        "duration_seconds": 30*60,                # 30 min
-        "shape": "sawtooth",
-        "shape_params": {"period_s": 90, "amplitude": 100, "midline": 280},
-        "metric": "avg_response_time_ms",
-        "description": "GC sawtooth — response time oscillates 180↔380 ms every 90s for 30 min",
-        "generator": lambda ts,idx: 180.0,        # midline - amplitude
-    },
-    # Deploy regression — step shift +30% (180 → 234 ms) at 10:00, sustained
-    # to end of day. The existing 14:31:30 MQ-cascade single-row override
-    # still fires inside the span (sort order applies the step first, then
-    # the cascade overwrites that one row).
-    {
-        "time_offset": 10*3600,                   # 10:00:00
-        "duration_seconds": 14*3600,              # 10:00 → 24:00
-        "shape": "step",
-        "metric": "avg_response_time_ms",
-        "description": "Deploy regression — avg_response_time_ms step +30% to 234 ms (sustained)",
-        "generator": lambda ts,idx: 234.0,
-    },
-    # Retry storm — requests_per_sec sustained 2× baseline for 8 min, with a
-    # co-spec on error_rate climbing in parallel as retries amplify transient
-    # failures.
-    {
-        "time_offset": 19*3600,                   # 19:00:00
-        "duration_seconds": 8*60,                 # 8 min
-        "shape": "sustained",
-        "metric": "requests_per_sec",
-        "description": "Retry storm — requests_per_sec sustained 2× baseline for 8 min",
-        "generator": lambda ts,idx: 1600,
-    },
-    {
-        "time_offset": 19*3600,                   # 19:00:00 (same span)
-        "duration_seconds": 8*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 0.05, "end": 0.30},
-        "metric": "error_rate",
-        "description": "Retry storm — error_rate climbs 5% → 30% as retries amplify failures",
-        "generator": lambda ts,idx: 0.05,
-    },
-]
-
-anoms_db = [
-    {
-        "time_offset": 11*3600,           # 11:00:00
-        "metric": "read_latency_ms",
-        "description": "Read latency skyrockets to 360 ms",
-        "generator": lambda ts,idx: 360.0
-    },
-    {
-        "time_offset": 11*3600,
-        "metric": "error_rate",
-        "description": "Backend errors rise 23 %",
-        "generator": lambda ts,idx: 0.23
-    },
-    {
-        "time_offset": 4*3600,                    # 04:00:00
-        "metric": "connections",
-        "description": "Backup-window connection pile-up — 6,800 connections",
-        "generator": lambda ts,idx: 6800
-    },
-    {
-        "time_offset": 4*3600,                    # 04:00:00
-        "metric": "write_latency_ms",
-        "description": "Backup I/O contention — writes 45 ms",
-        "generator": lambda ts,idx: 45.0
-    },
-    {
-        "time_offset": 23*3600,                   # 23:00:00
-        "metric": "queries_per_sec",
-        "description": "Nightly batch kickoff — 55k QPS",
-        "generator": lambda ts,idx: 55000
-    },
-    # Disk exhaustion — monotonic 24h climb on the disk_used_pct column.
-    # Starts at the natural baseline (~8) and ramps to 100% by EOD.
-    {
-        "time_offset": 0,
-        "duration_seconds": SECONDS_PER_DAY,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 8.0, "end": 100.0},
-        "metric": "disk_used_pct",
-        "description": "Disk exhaustion — disk_used_pct ramps 8% → 100% over 24h",
-        "generator": lambda ts,idx: 8.0,
-    },
-    # Connection pool leak — connections ramp 3,000 → 9,500 over 6h. Slot
-    # 16:00–22:00 keeps the span clear of the existing 14:32 MQ-cascade
-    # single-row override on database.connections.
-    {
-        "time_offset": 16*3600,                   # 16:00:00
-        "duration_seconds": 6*3600,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 3000.0, "end": 9500.0},
-        "metric": "connections",
-        "description": "Connection pool leak — connections ramp 3,000 → 9,500 over 6h",
-        "generator": lambda ts,idx: 3000.0,
-    },
-    # Brown-out — error_rate ramps 0.1% → 8% over 10 min, then back down over
-    # 10 min. Two ramp specs implement the triangle profile and the snap-back
-    # is implicit (span ends, natural baseline resumes). No cascade.
-    {
-        "time_offset": 18*3600,                   # 18:00:00 — climb phase
-        "duration_seconds": 10*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 0.001, "end": 0.08},
-        "metric": "error_rate",
-        "description": "Brown-out — error_rate ramps 0.1% → 8% over 10 min",
-        "generator": lambda ts,idx: 0.08,
-    },
-    {
-        "time_offset": 18*3600 + 10*60,           # 18:10:00 — recovery phase
-        "duration_seconds": 10*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 0.08, "end": 0.001},
-        "metric": "error_rate",
-        "description": "Brown-out — error_rate recovers 8% → 0.1% over 10 min",
-        "generator": lambda ts,idx: 0.08,
-    },
-    # NOTE: Multi-day Scenario C (db_disk_exhaustion) primaries moved to
-    # SCENARIOS["db_disk_exhaustion"] in VER-103.
-]
-
-anoms_mq = [
-    {
-        "time_offset": 14*3600 + 30*60,   # 14:30:00
-        "metric": "pending_messages",
-        "description": "Pending messages jam to 1 M",
-        "generator": lambda ts,idx: 1_000_000
-    },
-    {
-        "time_offset": 14*3600 + 30*60,
-        "metric": "error_rate",
-        "description": "Error rate jumps to 10 %",
-        "generator": lambda ts,idx: 0.10
-    },
-    {
-        "time_offset": 12*3600 + 30*60,           # 12:30:00
-        "metric": "dead_letter_queue",
-        "description": "DLQ blow-up — 1,200 messages parked",
-        "generator": lambda ts,idx: 1200
-    }
-]
-
-anoms_lb = [
-    {
-        "time_offset": 3*3600,                    # 03:00:00
-        "metric": "tls_handshake_errors",
-        "description": "TLS handshake errors surge to 80/s (cert near-expiry warning)",
-        "generator": lambda ts,idx: 80.0,
-    },
-    {
-        "time_offset": 8*3600 + 15*60,            # 08:15:00
-        "metric": "healthcheck_failures",
-        "description": "Healthcheck failures jump to 12 (backend pool flapping)",
-        "generator": lambda ts,idx: 12.0,
-    },
-    {
-        "time_offset": 13*3600,                   # 13:00:00
-        "metric": "connection_resets",
-        "description": "Connection resets spike to 450 (SYN flood-style burst)",
-        "generator": lambda ts,idx: 450.0,
-    },
-    {
-        "time_offset": 20*3600 + 30*60,           # 20:30:00
-        "metric": "backend_5xx_per_sec",
-        "description": "Backend 5xx jump to 75/s (region failover cascades 5xx upstream)",
-        "generator": lambda ts,idx: 75.0,
-    },
-    # NOTE: Multi-day Scenario B (jwks_rotation_chaos) LB-side primaries
-    # moved to SCENARIOS["jwks_rotation_chaos"] in VER-103.
-]
-
-anoms_obj = [
-    {
-        "time_offset": 7*3600,                    # 07:00:00
-        "metric": "5xx_rate",
-        "description": "Object store 5xx rate spikes to 14 % (upstream provider 5xx wave)",
-        "generator": lambda ts,idx: 0.14,
-    },
-    {
-        "time_offset": 12*3600,                   # 12:00:00
-        "metric": "bandwidth_mbps",
-        "description": "Bandwidth saturates at 950 Mbps (batch export)",
-        "generator": lambda ts,idx: 950.0,
-    },
-    {
-        "time_offset": 18*3600 + 30*60,           # 18:30:00
-        "metric": "get_latency_ms",
-        "description": "GET latency tail at 380 ms (read-after-write)",
-        "generator": lambda ts,idx: 380.0,
-    },
-    # Multi-day: ties to LLM weekend batch on Day 6 02:00 (requires --duration-days >= 7)
-    {
-        "time_offset": 5*SECONDS_PER_DAY + 2*3600,
-        "metric": "bandwidth_mbps",
-        "description": "Weekend batch export saturates object store at 1400 Mbps",
-        "generator": lambda ts,idx: 1400.0,
-    },
-]
-
-anoms_vec = [
-    {
-        "time_offset": 10*3600 + 30*60,           # 10:30:00
-        "metric": "ann_query_latency_ms",
-        "description": "ANN query latency stalls at 280 ms (index rebuild)",
-        "generator": lambda ts,idx: 280.0,
-    },
-    {
-        "time_offset": 15*3600,                   # 15:00:00
-        "metric": "recall_at_10",
-        "description": "Recall@10 degrades to 0.62 after model swap",
-        "generator": lambda ts,idx: 0.62,
-    },
-    # Multi-day: ties to enterprise onboarding Day 3 14:00 (requires --duration-days >= 3)
-    {
-        "time_offset": 2*SECONDS_PER_DAY + 14*3600,
-        "metric": "embeddings_per_sec",
-        "description": "Enterprise onboarding drives embeddings to 350/s",
-        "generator": lambda ts,idx: 350.0,
-    },
-]
-
-anoms_scheduler = [
-    {
-        "time_offset": 8*3600,                    # 08:00:00
-        "metric": "avg_job_duration_s",
-        "description": "Job overrun — duration 4× baseline blocks next window",
-        "generator": lambda ts,idx: 480.0,
-    },
-    {
-        "time_offset": 8*3600 + 5*60,             # 08:05:00
-        "metric": "missed_schedules",
-        "description": "Missed schedule chain — 12 windows skipped after overrun",
-        "generator": lambda ts,idx: 12.0,
-    },
-    {
-        "time_offset": 10*3600,                   # 10:00:00
-        "metric": "jobs_queued",
-        "description": "Job queue overflow — 2,500 jobs backlog",
-        "generator": lambda ts,idx: 2500.0,
-    },
-]
-
-anoms_payment = [
-    {
-        "time_offset": 12*3600,                   # 12:00:00
-        "metric": "provider_5xx_rate",
-        "description": "Stripe-style provider 5xx surge — 18% error rate",
-        "generator": lambda ts,idx: 0.18,
-    },
-    {
-        "time_offset": 13*3600 + 30*60,           # 13:30:00
-        "metric": "webhook_delivery_lag_s",
-        "description": "Webhook delivery 5 min behind — provider backlog",
-        "generator": lambda ts,idx: 300.0,
-    },
-    {
-        "time_offset": 15*3600,                   # 15:00:00
-        "metric": "auth_decline_rate",
-        "description": "Decline-rate jump to 35% — fraud rule misfire",
-        "generator": lambda ts,idx: 0.35,
-    },
-]
-
-anoms_idp = [
-    {
-        "time_offset": 4*3600,                    # 04:00:00
-        "metric": "jwks_fetch_latency_ms",
-        "description": "JWKS cache miss storm — fetch latency 1500 ms at key rotation",
-        "generator": lambda ts,idx: 1500.0,
-    },
-    {
-        "time_offset": 4*3600,                    # 04:00:00
-        "metric": "key_rotation_events",
-        "description": "Concurrent key rotation events triggered cache miss storm",
-        "generator": lambda ts,idx: 50.0,
-    },
-    {
-        "time_offset": 16*3600 + 30*60,           # 16:30:00
-        "metric": "mfa_challenges_per_min",
-        "description": "MFA SMS provider degradation — challenges drop to 0",
-        "generator": lambda ts,idx: 0.0,
-    },
-    {
-        "time_offset": 19*3600,                   # 19:00:00
-        "metric": "failed_oidc_flows",
-        "description": "SAML parse error spike — 120 failed flows from upstream IdP",
-        "generator": lambda ts,idx: 120.0,
-    },
-    # NOTE: Multi-day Scenario B (jwks_rotation_chaos) IdP-side primaries
-    # moved to SCENARIOS["jwks_rotation_chaos"] in VER-103.
-]
-
-anoms_obs = [
-    {
-        "time_offset": 9*3600,                    # 09:00:00
-        "metric": "ingest_lag_s",
-        "description": "Ingestion lag grows to 240s — pipeline can't keep up",
-        "generator": lambda ts,idx: 240.0,
-    },
-    {
-        "time_offset": 13*3600,                   # 13:00:00
-        "metric": "dropped_metrics_per_sec",
-        "description": "High-cardinality push drops 8,500 metrics/s",
-        "generator": lambda ts,idx: 8500.0,
-    },
-    {
-        "time_offset": 13*3600,                   # 13:00:00
-        "metric": "metrics_ingested_per_sec",
-        "description": "Ingest rate collapses to 12,000/s during cardinality storm",
-        "generator": lambda ts,idx: 12000.0,
-    },
-    {
-        "time_offset": 20*3600,                   # 20:00:00
-        "metric": "pipeline_error_rate",
-        "description": "Pipeline error rate 8% — downstream dashboards go stale",
-        "generator": lambda ts,idx: 0.08,
-    },
-]
-
-# ------------------------------------------------------------------
-# High-pressure cross-component scenarios. Only fire at
-# --signal-level high. Each scenario has a triggering anomaly (or
-# coordinated pair) plus its own cascade fan-out registered in
-# register_high_pressure_cascades(). They are deliberately placed
-# off-peak from the medium catalog to keep both layers legible.
-# ------------------------------------------------------------------
-anoms_high_lb = [
-    # Regional failover storm — load balancer sees a sustained 5xx surge for
-    # 5 minutes as traffic spills to a degraded region.
-    {
-        "time_offset": 5*3600,                    # 05:00:00
-        "duration_seconds": 5*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 1.5, "end": 220.0},
-        "metric": "backend_5xx_per_sec",
-        "description": "Regional failover storm — backend 5xx ramps to 220/s over 5 min",
-        "generator": lambda ts,idx: 1.5,
-        "severity": "high",
-    },
-]
-
-anoms_high_cache = [
-    # Coordinated cache+DB meltdown — cache memory saturates while DB read
-    # latency simultaneously climbs (10-minute high-pressure window).
-    {
-        "time_offset": 11*3600 + 30*60,           # 11:30:00
-        "duration_seconds": 10*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 80.0, "end": 99.5},
-        "metric": "memory_util_pct",
-        "description": "Cache+DB meltdown — cache memory saturates 80% → 99.5% over 10 min",
-        "generator": lambda ts,idx: 80.0,
-        "severity": "high",
-    },
-]
-
-anoms_high_db = [
-    {
-        "time_offset": 11*3600 + 30*60,           # 11:30:00 — paired with cache spec
-        "duration_seconds": 10*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 12.0, "end": 800.0},
-        "metric": "read_latency_ms",
-        "description": "Cache+DB meltdown — DB read latency climbs to 800 ms over 10 min",
-        "generator": lambda ts,idx: 12.0,
-        "severity": "high",
-    },
-]
-
-anoms_high_llm = [
-    # LLM provider sustained outage — error rate climbs to 60% over 15 min.
-    {
-        "time_offset": 20*3600,                   # 20:00:00
-        "duration_seconds": 15*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 0.05, "end": 0.60},
-        "metric": "llm_api_error_rate",
-        "description": "LLM provider sustained outage — error rate ramps 5% → 60% over 15 min",
-        "generator": lambda ts,idx: 0.05,
-        "severity": "high",
-    },
-    {
-        "time_offset": 20*3600,                   # paired latency surge
-        "duration_seconds": 15*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 900.0, "end": 8000.0},
-        "metric": "avg_llm_latency_ms",
-        "description": "LLM provider sustained outage — latency climbs to 8,000 ms over 15 min",
-        "generator": lambda ts,idx: 900.0,
-        "severity": "high",
-    },
-]
-
-anoms_high_api = [
-    # Gateway DDoS-style saturation — sustained 5x traffic burst for 10 min,
-    # CPU pinned at 99%. Drives cascades into auth, DB, and MQ.
-    {
-        "time_offset": 16*3600,                   # 16:00:00
-        "duration_seconds": 10*60,
-        "shape": "sustained",
-        "metric": "requests_per_sec",
-        "description": "Gateway DDoS saturation — requests sustained at 5,000/s for 10 min",
-        "generator": lambda ts,idx: 5000,
-        "severity": "high",
-    },
-    {
-        "time_offset": 16*3600,
-        "duration_seconds": 10*60,
-        "shape": "sustained",
-        "metric": "cpu_util_pct",
-        "description": "Gateway DDoS saturation — CPU pinned at 99% for 10 min",
-        "generator": lambda ts,idx: 99.0,
-        "severity": "high",
-    },
-]
-
-anoms_high_obj = [
-    # Storage layer pressure — PUT latency climbs and 5xx surge.
-    {
-        "time_offset": 22*3600,                   # 22:00:00
-        "duration_seconds": 10*60,
-        "shape": "ramp_linear",
-        "shape_params": {"start": 60.0, "end": 700.0},
-        "metric": "put_latency_ms",
-        "description": "Storage layer pressure — PUT latency climbs 60 → 700 ms over 10 min",
-        "generator": lambda ts,idx: 60.0,
-        "severity": "high",
-    },
-    {
-        "time_offset": 22*3600,
-        "duration_seconds": 10*60,                # matches paired put_latency_ms ramp
-        "shape": "sustained",
-        "metric": "5xx_rate",
-        "description": "Storage layer pressure — object store 5xx surge to 25% for 10 min",
-        "generator": lambda ts,idx: 0.25,
-        "severity": "high",
-    },
-]
-
-
-# Multi-day LLM catalog. Unreachable at --duration-days 1; needs >= 7.
-anoms_llm = [
-    # Day 1 - Initial viral surge
-    {
-        "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,  # Day 2, 10:15:00
-        "metric": "llm_requests_per_sec",
-        "description": "Viral surge: Customer demo goes viral, 8× request spike",
-        "generator": lambda ts,idx: 360
-    },
-    {
-        "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
-        "metric": "input_tokens_per_sec",
-        "description": "Token surge from viral traffic",
-        "generator": lambda ts,idx: 185000
-    },
-    {
-        "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
-        "metric": "output_tokens_per_sec",
-        "description": "Output token surge from viral traffic",
-        "generator": lambda ts,idx: 62000
-    },
-    # Day 2 - Enterprise customer onboarding
-    {
-        "time_offset": 2*SECONDS_PER_DAY + 14*3600,  # Day 3, 14:00:00
-        "metric": "llm_requests_per_sec",
-        "description": "Enterprise onboarding: Major customer launches AI features",
-        "generator": lambda ts,idx: 285
-    },
-    {
-        "time_offset": 2*SECONDS_PER_DAY + 14*3600,
-        "metric": "avg_context_window_size",
-        "description": "Enterprise using large context windows for analytics",
-        "generator": lambda ts,idx: 12500
-    },
-    {
-        "time_offset": 2*SECONDS_PER_DAY + 14*3600,
-        "metric": "token_limit_hits_per_min",
-        "description": "Token limits hit frequently during enterprise rollout",
-        "generator": lambda ts,idx: 45
-    },
-    # Day 4 - API rate limit issues
-    {
-        "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60,  # Day 5, 09:30:00
-        "metric": "llm_api_error_rate",
-        "description": "LLM provider rate limits hit, 18% error rate",
-        "generator": lambda ts,idx: 0.18
-    },
-    {
-        "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60,
-        "metric": "avg_llm_latency_ms",
-        "description": "LLM latency spikes due to rate limiting",
-        "generator": lambda ts,idx: 4200
-    },
-    # Day 5 - Weekend batch processing surge
-    {
-        "time_offset": 5*SECONDS_PER_DAY + 2*3600,  # Day 6, 02:00:00 (weekend batch job)
-        "metric": "input_tokens_per_sec",
-        "description": "Weekend batch analytics job processing historical data",
-        "generator": lambda ts,idx: 320000
-    },
-    {
-        "time_offset": 5*SECONDS_PER_DAY + 2*3600,
-        "metric": "context_overflow_rate",
-        "description": "Context overflow from large batch documents",
-        "generator": lambda ts,idx: 8.5
-    },
-    # Day 6 - Second viral event
-    {
-        "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,  # Day 7, 16:45:00
-        "metric": "llm_requests_per_sec",
-        "description": "Social media mention drives 10× traffic spike",
-        "generator": lambda ts,idx: 450
-    },
-    {
-        "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
-        "metric": "input_tokens_per_sec",
-        "description": "Massive token usage from social traffic",
-        "generator": lambda ts,idx: 420000
-    },
-    {
-        "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
-        "metric": "output_tokens_per_sec",
-        "description": "Output tokens surge from viral event",
-        "generator": lambda ts,idx: 135000
-    }
-]
-
-# ------------------------------------------------------------------
-# Component → primary anomaly list mapping. Adding a new component means
-# adding an ``anoms_*`` list and pairing it here; main() derives
-# ``component_anomalies`` from this registry so the generation loop stays
-# in sync without hand-edits inside main().
-# ------------------------------------------------------------------
-COMPONENT_PRIMARY_ANOMALIES: dict[str, list[dict]] = {
-    "authservice": anoms_auth,
-    "cacheservice": anoms_cache,
-    "apigateway": anoms_api,
-    "database": anoms_db,
-    "mqservice": anoms_mq,
-    "llm_analytics": anoms_llm,
-    "loadbalancer": anoms_lb,
-    "objectstore": anoms_obj,
-    "vectorstore": anoms_vec,
-    "scheduler": anoms_scheduler,
-    "paymentservice": anoms_payment,
-    "identityprovider": anoms_idp,
-    "observabilitypipeline": anoms_obs,
-}
-
-_primary_keys = set(COMPONENT_PRIMARY_ANOMALIES.keys())
-_components_keys = set(COMPONENTS.keys())
-if _primary_keys != _components_keys:
-    missing = _components_keys - _primary_keys
-    extra = _primary_keys - _components_keys
-    raise ValueError(
-        "COMPONENT_PRIMARY_ANOMALIES and COMPONENTS keys must match. "
-        f"Missing from COMPONENT_PRIMARY_ANOMALIES: {sorted(missing)}. "
-        f"Extra in COMPONENT_PRIMARY_ANOMALIES: {sorted(extra)}."
-    )
-del _primary_keys, _components_keys
+# (legacy anoms_* lists and COMPONENT_PRIMARY_ANOMALIES removed)
 
 
 # ------------------------------------------------------------------
-# Named scenario registry (VER-102 Phase 1).
+# Named scenario registry (VER-102 / VER-104 — full migration complete).
 #
-# This phase migrates the 3 multi-day cascading scenarios out of the legacy
-# imperative path. Each registry entry collects every primary spec and
-# cascade for one named scenario so callers can opt in/out via --scenarios.
-# Walk order matters for byte-for-byte default-output preservation: the
-# tail-append in main() runs scenarios in dict-iteration order, so cache_leak
-# → jwks_rotation → db_disk_exhaustion mirrors today's spec / cascade
-# registration sequence inside the legacy lists and register_default_cascades.
-#
-# Every other anomaly continues to fire via anoms_* / register_default_cascades
-# during this phase. VER-104 will migrate the rest and delete the legacy path.
+# Every primary spec and cascade lives here. main() builds component_anomalies
+# and cascading_anomalies entirely from this registry via _apply_scenarios().
+# Walk order is dict-insertion order (Python 3.7+). Within each scenario,
+# primary_specs and cascade_specs are appended in declaration order.
+# Byte-for-byte default output is preserved because generate_component()
+# applies Python's stable sort with key (row_idx, metric) to expanded
+# overrides, so generator call order — and the global RNG draw sequence —
+# is determined by (time_offset, metric_name) when those keys are unique.
+# When two specs collide on the same (row_idx, metric) (e.g. a cascade
+# landing inside a shaped span, or coarse --interval-seconds rounding
+# multiple offsets to the same row), the stable sort preserves their
+# declaration order and the last writer wins — so spec list order within
+# a scenario is part of the contract for collision cases.
 # ------------------------------------------------------------------
 SCENARIOS: dict[str, Scenario] = {
+    # ------------------------------------------------------------------
+    # Same-day medium-severity scenario clusters (days_required=1)
+    # ------------------------------------------------------------------
+    "auth_brute_force": Scenario(
+        id="auth_brute_force",
+        name="Authentication brute-force attack",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("authservice", "apigateway"),
+        primary_specs=(
+            ("authservice", {
+                "time_offset": 2*3600 + 15*60,
+                "metric": "error_rate",
+                "description": "Spike in failed logins – possible brute force",
+                "generator": lambda ts, idx: 0.42,
+            }),
+            ("authservice", {
+                "time_offset": 2*3600 + 15*60,
+                "metric": "login_attempts",
+                "description": "Login attempts surge 5×",
+                "generator": lambda ts, idx: 1250,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 2*3600 + 15*60 + 15,
+                "metric": "error_rate",
+                "description": "Cascading: Auth failures cause API gateway errors",
+                "generator": lambda ts, idx: 0.28,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("authservice", {
+                "time_offset": 2*3600 + 15*60 + 30,
+                "metric": "active_sessions",
+                "description": "Cascading: Sessions invalidated after brute-force detection",
+                "generator": lambda ts, idx: 35,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "cache_collapse": Scenario(
+        id="cache_collapse",
+        name="Cache collapse — hit ratio collapse + memory pressure",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("cacheservice", "database"),
+        primary_specs=(
+            ("cacheservice", {
+                "time_offset": 6*3600,
+                "metric": "hit_ratio",
+                "description": "Cache hit ratio drops to 5 %",
+                "generator": lambda ts, idx: 5.0,
+            }),
+            ("cacheservice", {
+                "time_offset": 17*3600,
+                "metric": "memory_util_pct",
+                "description": "Memory pressure — 97% nearing eviction",
+                "generator": lambda ts, idx: 97.0,
+            }),
+            ("cacheservice", {
+                "time_offset": 8*3600,
+                "duration_seconds": 4*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 70.0, "end": 96.0},
+                "metric": "memory_util_pct",
+                "description": "Slow memory leak — utilization ramps 70% → 96% over 4h",
+                "generator": lambda ts, idx: 70.0,
+            }),
+        ),
+        cascade_specs=(
+            ("cacheservice", {
+                "time_offset": 6*3600 + 20,
+                "metric": "cache_misses",
+                "description": "Cascading: Cache miss surge before DB cascade lands",
+                "generator": lambda ts, idx: 2400 + np.random.normal(0, 150),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 6*3600 + 30,
+                "metric": "queries_per_sec",
+                "description": "Cascading: Cache misses increase database queries",
+                "generator": lambda ts, idx: 38000 + np.random.normal(0, 3000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 6*3600 + 45,
+                "metric": "read_latency_ms",
+                "description": "Cascading: Database read latency increases from cache misses",
+                "generator": lambda ts, idx: 45 + np.random.normal(0, 5),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "api_cpu_saturation": Scenario(
+        id="api_cpu_saturation",
+        name="API gateway CPU saturation + retry storm",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("apigateway", "authservice", "cacheservice"),
+        primary_specs=(
+            ("apigateway", {
+                "time_offset": 6*3600 + 30*60,
+                "metric": "cpu_util_pct",
+                "description": "CPU saturates at 100 %",
+                "generator": lambda ts, idx: 100.0,
+            }),
+            ("apigateway", {
+                "time_offset": 21*3600 + 45*60,
+                "metric": "error_rate",
+                "description": "5xx burst from bad config push — 12 %",
+                "generator": lambda ts, idx: 0.12,
+            }),
+            ("apigateway", {
+                "time_offset": 9*3600 + 30*60,
+                "duration_seconds": 30*60,
+                "shape": "sawtooth",
+                "shape_params": {"period_s": 90, "amplitude": 100, "midline": 280},
+                "metric": "avg_response_time_ms",
+                "description": "GC sawtooth — response time oscillates 180↔380 ms every 90s for 30 min",
+                "generator": lambda ts, idx: 180.0,
+            }),
+            ("apigateway", {
+                "time_offset": 10*3600,
+                "duration_seconds": 14*3600,
+                "shape": "step",
+                "metric": "avg_response_time_ms",
+                "description": "Deploy regression — avg_response_time_ms step +30% to 234 ms (sustained)",
+                "generator": lambda ts, idx: 234.0,
+            }),
+            ("apigateway", {
+                "time_offset": 19*3600,
+                "duration_seconds": 8*60,
+                "shape": "sustained",
+                "metric": "requests_per_sec",
+                "description": "Retry storm — requests_per_sec sustained 2× baseline for 8 min",
+                "generator": lambda ts, idx: 1600,
+            }),
+            ("apigateway", {
+                "time_offset": 19*3600,
+                "duration_seconds": 8*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 0.05, "end": 0.30},
+                "metric": "error_rate",
+                "description": "Retry storm — error_rate climbs 5% → 30% as retries amplify failures",
+                "generator": lambda ts, idx: 0.05,
+            }),
+        ),
+        cascade_specs=(
+            ("authservice", {
+                "time_offset": 6*3600 + 30*60 + 12,
+                "metric": "error_rate",
+                "description": "Cascading: API gateway overload causes auth errors",
+                "generator": lambda ts, idx: 0.35,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("cacheservice", {
+                "time_offset": 6*3600 + 30*60 + 18,
+                "metric": "error_rate",
+                "description": "Cascading: API gateway overload causes cache errors",
+                "generator": lambda ts, idx: 0.15,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "db_stall": Scenario(
+        id="db_stall",
+        name="Database stall — read latency + backup window + disk exhaustion",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("database", "apigateway", "authservice", "mqservice"),
+        primary_specs=(
+            ("database", {
+                "time_offset": 11*3600,
+                "metric": "read_latency_ms",
+                "description": "Read latency skyrockets to 360 ms",
+                "generator": lambda ts, idx: 360.0,
+            }),
+            ("database", {
+                "time_offset": 11*3600,
+                "metric": "error_rate",
+                "description": "Backend errors rise 23 %",
+                "generator": lambda ts, idx: 0.23,
+            }),
+            ("database", {
+                "time_offset": 4*3600,
+                "metric": "connections",
+                "description": "Backup-window connection pile-up — 6,800 connections",
+                "generator": lambda ts, idx: 6800,
+            }),
+            ("database", {
+                "time_offset": 4*3600,
+                "metric": "write_latency_ms",
+                "description": "Backup I/O contention — writes 45 ms",
+                "generator": lambda ts, idx: 45.0,
+            }),
+            ("database", {
+                "time_offset": 23*3600,
+                "metric": "queries_per_sec",
+                "description": "Nightly batch kickoff — 55k QPS",
+                "generator": lambda ts, idx: 55000,
+            }),
+            ("database", {
+                "time_offset": 0,
+                "duration_seconds": SECONDS_PER_DAY,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 8.0, "end": 100.0},
+                "metric": "disk_used_pct",
+                "description": "Disk exhaustion — disk_used_pct ramps 8% → 100% over 24h",
+                "generator": lambda ts, idx: 8.0,
+            }),
+            ("database", {
+                "time_offset": 16*3600,
+                "duration_seconds": 6*3600,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 3000.0, "end": 9500.0},
+                "metric": "connections",
+                "description": "Connection pool leak — connections ramp 3,000 → 9,500 over 6h",
+                "generator": lambda ts, idx: 3000.0,
+            }),
+            ("database", {
+                "time_offset": 18*3600,
+                "duration_seconds": 10*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 0.001, "end": 0.08},
+                "metric": "error_rate",
+                "description": "Brown-out — error_rate ramps 0.1% → 8% over 10 min",
+                "generator": lambda ts, idx: 0.08,
+            }),
+            ("database", {
+                "time_offset": 18*3600 + 10*60,
+                "duration_seconds": 10*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 0.08, "end": 0.001},
+                "metric": "error_rate",
+                "description": "Brown-out — error_rate recovers 8% → 0.1% over 10 min",
+                "generator": lambda ts, idx: 0.08,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 11*3600,
+                "metric": "backend_latency_ms",
+                "description": "Cascading: Database latency affects API backend",
+                "generator": lambda ts, idx: 850 + np.random.normal(0, 50),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("apigateway", {
+                "time_offset": 11*3600 + 5,
+                "metric": "error_rate",
+                "description": "Cascading: Database errors propagate to API",
+                "generator": lambda ts, idx: 0.19,
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("authservice", {
+                "time_offset": 11*3600 + 10,
+                "metric": "avg_auth_latency_ms",
+                "description": "Cascading: Database issues slow auth queries",
+                "generator": lambda ts, idx: 420 + np.random.normal(0, 30),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("mqservice", {
+                "time_offset": 11*3600 + 20,
+                "metric": "pending_messages",
+                "description": "Cascading: DB stall causes MQ backpressure",
+                "generator": lambda ts, idx: 250000 + np.random.normal(0, 5000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "mq_jam": Scenario(
+        id="mq_jam",
+        name="Message queue jam — pending message backlog",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("mqservice", "apigateway", "database", "authservice"),
+        primary_specs=(
+            ("mqservice", {
+                "time_offset": 14*3600 + 30*60,
+                "metric": "pending_messages",
+                "description": "Pending messages jam to 1 M",
+                "generator": lambda ts, idx: 1_000_000,
+            }),
+            ("mqservice", {
+                "time_offset": 14*3600 + 30*60,
+                "metric": "error_rate",
+                "description": "Error rate jumps to 10 %",
+                "generator": lambda ts, idx: 0.10,
+            }),
+            ("mqservice", {
+                "time_offset": 12*3600 + 30*60,
+                "metric": "dead_letter_queue",
+                "description": "DLQ blow-up — 1,200 messages parked",
+                "generator": lambda ts, idx: 1200,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 14*3600 + 30*60 + 60,
+                "metric": "avg_response_time_ms",
+                "description": "Cascading: MQ backlog delays API responses",
+                "generator": lambda ts, idx: 650 + np.random.normal(0, 40),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 14*3600 + 30*60 + 90,
+                "metric": "connections",
+                "description": "Cascading: MQ issues cause connection buildup",
+                "generator": lambda ts, idx: 8500 + np.random.normal(0, 500),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 14*3600 + 30*60 + 95,
+                "metric": "write_latency_ms",
+                "description": "Cascading: MQ backpressure increases write latency",
+                "generator": lambda ts, idx: 85 + np.random.normal(0, 10),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("authservice", {
+                "time_offset": 14*3600 + 32*60 + 30,
+                "metric": "avg_auth_latency_ms",
+                "description": "Cascading: MQ jam delays session writes",
+                "generator": lambda ts, idx: 280 + np.random.normal(0, 15),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "lb_flapping": Scenario(
+        id="lb_flapping",
+        name="Load balancer flapping — TLS errors + health check failures",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("loadbalancer", "apigateway"),
+        primary_specs=(
+            ("loadbalancer", {
+                "time_offset": 3*3600,
+                "metric": "tls_handshake_errors",
+                "description": "TLS handshake errors surge to 80/s (cert near-expiry warning)",
+                "generator": lambda ts, idx: 80.0,
+            }),
+            ("loadbalancer", {
+                "time_offset": 8*3600 + 15*60,
+                "metric": "healthcheck_failures",
+                "description": "Healthcheck failures jump to 12 (backend pool flapping)",
+                "generator": lambda ts, idx: 12.0,
+            }),
+            ("loadbalancer", {
+                "time_offset": 13*3600,
+                "metric": "connection_resets",
+                "description": "Connection resets spike to 450 (SYN flood-style burst)",
+                "generator": lambda ts, idx: 450.0,
+            }),
+            ("loadbalancer", {
+                "time_offset": 20*3600 + 30*60,
+                "metric": "backend_5xx_per_sec",
+                "description": "Backend 5xx jump to 75/s (region failover cascades 5xx upstream)",
+                "generator": lambda ts, idx: 75.0,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 8*3600 + 15*60 + 5,
+                "metric": "active_connections",
+                "description": "Cascading: LB withdraws traffic from a flapping backend pool",
+                "generator": lambda ts, idx: 200 + np.random.normal(0, 25),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("apigateway", {
+                "time_offset": 20*3600 + 30*60 + 10,
+                "metric": "error_rate",
+                "description": "Cascading: LB region failover propagates 5xx to gateway",
+                "generator": lambda ts, idx: 0.09,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "object_store_5xx": Scenario(
+        id="object_store_5xx",
+        name="Object store 5xx surge — bandwidth saturation",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("objectstore", "apigateway"),
+        primary_specs=(
+            ("objectstore", {
+                "time_offset": 7*3600,
+                "metric": "5xx_rate",
+                "description": "Object store 5xx rate spikes to 14 % (upstream provider 5xx wave)",
+                "generator": lambda ts, idx: 0.14,
+            }),
+            ("objectstore", {
+                "time_offset": 12*3600,
+                "metric": "bandwidth_mbps",
+                "description": "Bandwidth saturates at 950 Mbps (batch export)",
+                "generator": lambda ts, idx: 950.0,
+            }),
+            ("objectstore", {
+                "time_offset": 18*3600 + 30*60,
+                "metric": "get_latency_ms",
+                "description": "GET latency tail at 380 ms (read-after-write)",
+                "generator": lambda ts, idx: 380.0,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 7*3600 + 20,
+                "metric": "error_rate",
+                "description": "Cascading: object store 5xx wave breaks dependent endpoints",
+                "generator": lambda ts, idx: 0.06,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "vectorstore_pressure": Scenario(
+        id="vectorstore_pressure",
+        name="Vector store index rebuild + recall degradation",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("vectorstore", "llm_analytics"),
+        primary_specs=(
+            ("vectorstore", {
+                "time_offset": 10*3600 + 30*60,
+                "metric": "ann_query_latency_ms",
+                "description": "ANN query latency stalls at 280 ms (index rebuild)",
+                "generator": lambda ts, idx: 280.0,
+            }),
+            ("vectorstore", {
+                "time_offset": 15*3600,
+                "metric": "recall_at_10",
+                "description": "Recall@10 degrades to 0.62 after model swap",
+                "generator": lambda ts, idx: 0.62,
+            }),
+        ),
+        cascade_specs=(
+            ("llm_analytics", {
+                "time_offset": 10*3600 + 30*60 + 15,
+                "metric": "avg_llm_latency_ms",
+                "description": "Cascading: slow ANN retrieval drags LLM latency to 1,900 ms",
+                "generator": lambda ts, idx: 1900 + np.random.normal(0, 80),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("llm_analytics", {
+                "time_offset": 15*3600 + 30,
+                "metric": "llm_api_error_rate",
+                "description": "Cascading: low-recall results trigger LLM fallback retries (8 % errors)",
+                "generator": lambda ts, idx: 0.08,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "scheduler_overflow": Scenario(
+        id="scheduler_overflow",
+        name="Scheduler job overrun + queue overflow",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("scheduler", "database"),
+        primary_specs=(
+            ("scheduler", {
+                "time_offset": 8*3600,
+                "metric": "avg_job_duration_s",
+                "description": "Job overrun — duration 4× baseline blocks next window",
+                "generator": lambda ts, idx: 480.0,
+            }),
+            ("scheduler", {
+                "time_offset": 8*3600 + 5*60,
+                "metric": "missed_schedules",
+                "description": "Missed schedule chain — 12 windows skipped after overrun",
+                "generator": lambda ts, idx: 12.0,
+            }),
+            ("scheduler", {
+                "time_offset": 10*3600,
+                "metric": "jobs_queued",
+                "description": "Job queue overflow — 2,500 jobs backlog",
+                "generator": lambda ts, idx: 2500.0,
+            }),
+        ),
+        cascade_specs=(
+            ("database", {
+                "time_offset": 10*3600 + 30,
+                "metric": "connections",
+                "description": "Cascading: Scheduler queue overflow drives DB connection buildup",
+                "generator": lambda ts, idx: 7800 + np.random.normal(0, 400),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "payment_5xx": Scenario(
+        id="payment_5xx",
+        name="Payment provider 5xx surge + fraud rule misfire",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("paymentservice", "apigateway"),
+        primary_specs=(
+            ("paymentservice", {
+                "time_offset": 12*3600,
+                "metric": "provider_5xx_rate",
+                "description": "Stripe-style provider 5xx surge — 18% error rate",
+                "generator": lambda ts, idx: 0.18,
+            }),
+            ("paymentservice", {
+                "time_offset": 13*3600 + 30*60,
+                "metric": "webhook_delivery_lag_s",
+                "description": "Webhook delivery 5 min behind — provider backlog",
+                "generator": lambda ts, idx: 300.0,
+            }),
+            ("paymentservice", {
+                "time_offset": 15*3600,
+                "metric": "auth_decline_rate",
+                "description": "Decline-rate jump to 35% — fraud rule misfire",
+                "generator": lambda ts, idx: 0.35,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 12*3600 + 12,
+                "metric": "error_rate",
+                "description": "Cascading: Payment provider 5xx propagates to gateway",
+                "generator": lambda ts, idx: 0.15,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "idp_jwks_storm": Scenario(
+        id="idp_jwks_storm",
+        name="Identity provider JWKS cache miss storm",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("identityprovider", "authservice"),
+        primary_specs=(
+            ("identityprovider", {
+                "time_offset": 4*3600,
+                "metric": "jwks_fetch_latency_ms",
+                "description": "JWKS cache miss storm — fetch latency 1500 ms at key rotation",
+                "generator": lambda ts, idx: 1500.0,
+            }),
+            ("identityprovider", {
+                "time_offset": 4*3600,
+                "metric": "key_rotation_events",
+                "description": "Concurrent key rotation events triggered cache miss storm",
+                "generator": lambda ts, idx: 50.0,
+            }),
+            ("identityprovider", {
+                "time_offset": 16*3600 + 30*60,
+                "metric": "mfa_challenges_per_min",
+                "description": "MFA SMS provider degradation — challenges drop to 0",
+                "generator": lambda ts, idx: 0.0,
+            }),
+            ("identityprovider", {
+                "time_offset": 19*3600,
+                "metric": "failed_oidc_flows",
+                "description": "SAML parse error spike — 120 failed flows from upstream IdP",
+                "generator": lambda ts, idx: 120.0,
+            }),
+        ),
+        cascade_specs=(
+            ("authservice", {
+                "time_offset": 4*3600 + 25,
+                "metric": "login_success_rate",
+                "description": "Cascading: JWKS fetch storm degrades auth verification — success ~45%",
+                "generator": lambda ts, idx: 45 + np.random.normal(0, 2),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "observability_lag": Scenario(
+        id="observability_lag",
+        name="Observability pipeline ingest lag + cardinality storm",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=("observabilitypipeline", "mqservice"),
+        primary_specs=(
+            ("observabilitypipeline", {
+                "time_offset": 9*3600,
+                "metric": "ingest_lag_s",
+                "description": "Ingestion lag grows to 240s — pipeline can't keep up",
+                "generator": lambda ts, idx: 240.0,
+            }),
+            ("observabilitypipeline", {
+                "time_offset": 13*3600,
+                "metric": "dropped_metrics_per_sec",
+                "description": "High-cardinality push drops 8,500 metrics/s",
+                "generator": lambda ts, idx: 8500.0,
+            }),
+            ("observabilitypipeline", {
+                "time_offset": 13*3600,
+                "metric": "metrics_ingested_per_sec",
+                "description": "Ingest rate collapses to 12,000/s during cardinality storm",
+                "generator": lambda ts, idx: 12000.0,
+            }),
+            ("observabilitypipeline", {
+                "time_offset": 20*3600,
+                "metric": "pipeline_error_rate",
+                "description": "Pipeline error rate 8% — downstream dashboards go stale",
+                "generator": lambda ts, idx: 0.08,
+            }),
+        ),
+        cascade_specs=(
+            ("mqservice", {
+                "time_offset": 9*3600 + 20,
+                "metric": "pending_messages",
+                "description": "Cascading: Telemetry pipeline lag backs up downstream queue",
+                "generator": lambda ts, idx: 220000 + np.random.normal(0, 15000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    # ------------------------------------------------------------------
+    # Low-severity baseline (days_required=1, severity=low)
+    # ------------------------------------------------------------------
+    "monday_baseline": Scenario(
+        id="monday_baseline",
+        name="Monday-morning login burst + RPS spike",
+        severity="low",
+        days_required=1,
+        category="same_day",
+        components_touched=("authservice", "apigateway"),
+        primary_specs=(
+            ("authservice", {
+                "time_offset": 9*3600,
+                "metric": "login_attempts",
+                "description": "Benign baseline shift: Monday morning login burst — 1,400 attempts/s",
+                "generator": lambda ts, idx: 1400,
+                "severity": "low",
+            }),
+            ("apigateway", {
+                "time_offset": 9*3600,
+                "metric": "requests_per_sec",
+                "description": "Monday-morning thundering herd — 2,200 RPS spike",
+                "generator": lambda ts, idx: 2200,
+                "severity": "low",
+            }),
+        ),
+        cascade_specs=(),
+    ),
+    # ------------------------------------------------------------------
+    # Multi-day LLM catalog (severity=medium; per-scenario days_required:
+    # 2 for llm_viral_surge_day2, 3 for llm_enterprise_onboarding,
+    # 5 for llm_rate_limit_fallout, 6 for llm_weekend_batch,
+    # 7 for llm_second_viral — each set to the day index of the
+    # scenario's earliest in-range offset).
+    # ------------------------------------------------------------------
+    "llm_viral_surge_day2": Scenario(
+        id="llm_viral_surge_day2",
+        name="LLM viral surge — customer demo goes viral on Day 2",
+        severity="medium",
+        days_required=2,
+        category="multi_day_llm",
+        components_touched=("llm_analytics", "database", "cacheservice", "apigateway"),
+        primary_specs=(
+            ("llm_analytics", {
+                "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
+                "metric": "llm_requests_per_sec",
+                "description": "Viral surge: Customer demo goes viral, 8× request spike",
+                "generator": lambda ts, idx: 360,
+            }),
+            ("llm_analytics", {
+                "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
+                "metric": "input_tokens_per_sec",
+                "description": "Token surge from viral traffic",
+                "generator": lambda ts, idx: 185000,
+            }),
+            ("llm_analytics", {
+                "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
+                "metric": "output_tokens_per_sec",
+                "description": "Output token surge from viral traffic",
+                "generator": lambda ts, idx: 62000,
+            }),
+        ),
+        cascade_specs=(
+            ("database", {
+                "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 30,
+                "metric": "queries_per_sec",
+                "description": "Cascading: LLM surge increases database queries for context retrieval",
+                "generator": lambda ts, idx: 48000 + np.random.normal(0, 4000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 45,
+                "metric": "connections",
+                "description": "Cascading: LLM service creates more database connections",
+                "generator": lambda ts, idx: 7200 + np.random.normal(0, 400),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("cacheservice", {
+                "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 20,
+                "metric": "cache_misses",
+                "description": "Cascading: LLM context cache misses spike",
+                "generator": lambda ts, idx: 1800 + np.random.normal(0, 150),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("apigateway", {
+                "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 10,
+                "metric": "requests_per_sec",
+                "description": "Cascading: LLM viral traffic increases API gateway load",
+                "generator": lambda ts, idx: 2400 + np.random.normal(0, 200),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "llm_enterprise_onboarding": Scenario(
+        id="llm_enterprise_onboarding",
+        name="LLM enterprise customer onboarding — large context windows on Day 3",
+        severity="medium",
+        days_required=3,
+        category="multi_day_llm",
+        components_touched=("llm_analytics", "vectorstore", "database", "cacheservice"),
+        primary_specs=(
+            ("llm_analytics", {
+                "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "metric": "llm_requests_per_sec",
+                "description": "Enterprise onboarding: Major customer launches AI features",
+                "generator": lambda ts, idx: 285,
+            }),
+            ("llm_analytics", {
+                "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "metric": "avg_context_window_size",
+                "description": "Enterprise using large context windows for analytics",
+                "generator": lambda ts, idx: 12500,
+            }),
+            ("llm_analytics", {
+                "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "metric": "token_limit_hits_per_min",
+                "description": "Token limits hit frequently during enterprise rollout",
+                "generator": lambda ts, idx: 45,
+            }),
+            ("vectorstore", {
+                "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "metric": "embeddings_per_sec",
+                "description": "Enterprise onboarding drives embeddings to 350/s",
+                "generator": lambda ts, idx: 350.0,
+            }),
+        ),
+        cascade_specs=(
+            ("database", {
+                "time_offset": 2*SECONDS_PER_DAY + 14*3600 + 60,
+                "metric": "read_latency_ms",
+                "description": "Cascading: Large LLM context windows cause slow DB reads",
+                "generator": lambda ts, idx: 85 + np.random.normal(0, 8),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("cacheservice", {
+                "time_offset": 2*SECONDS_PER_DAY + 14*3600 + 35,
+                "metric": "memory_util_pct",
+                "description": "Cascading: LLM context caching increases memory pressure",
+                "generator": lambda ts, idx: 92 + np.random.normal(0, 3),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "llm_rate_limit_fallout": Scenario(
+        id="llm_rate_limit_fallout",
+        name="LLM provider rate limit fallout on Day 5",
+        severity="medium",
+        days_required=5,
+        category="multi_day_llm",
+        components_touched=("llm_analytics", "apigateway"),
+        primary_specs=(
+            ("llm_analytics", {
+                "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60,
+                "metric": "llm_api_error_rate",
+                "description": "LLM provider rate limits hit, 18% error rate",
+                "generator": lambda ts, idx: 0.18,
+            }),
+            ("llm_analytics", {
+                "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60,
+                "metric": "avg_llm_latency_ms",
+                "description": "LLM latency spikes due to rate limiting",
+                "generator": lambda ts, idx: 4200,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60 + 8,
+                "metric": "error_rate",
+                "description": "Cascading: LLM API errors propagate to gateway",
+                "generator": lambda ts, idx: 0.22,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "llm_weekend_batch": Scenario(
+        id="llm_weekend_batch",
+        name="LLM weekend batch analytics job on Day 6",
+        severity="medium",
+        days_required=6,
+        category="multi_day_llm",
+        components_touched=("llm_analytics", "objectstore", "database", "cacheservice"),
+        primary_specs=(
+            ("llm_analytics", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+                "metric": "input_tokens_per_sec",
+                "description": "Weekend batch analytics job processing historical data",
+                "generator": lambda ts, idx: 320000,
+            }),
+            ("llm_analytics", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+                "metric": "context_overflow_rate",
+                "description": "Context overflow from large batch documents",
+                "generator": lambda ts, idx: 8.5,
+            }),
+            ("objectstore", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+                "metric": "bandwidth_mbps",
+                "description": "Weekend batch export saturates object store at 1400 Mbps",
+                "generator": lambda ts, idx: 1400.0,
+            }),
+        ),
+        cascade_specs=(
+            ("database", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 15,
+                "metric": "queries_per_sec",
+                "description": "Cascading: Batch LLM processing hammers database",
+                "generator": lambda ts, idx: 65000 + np.random.normal(0, 5000),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 120,
+                "metric": "cpu_util_pct",
+                "description": "Cascading: Database CPU saturates from batch analytics",
+                "generator": lambda ts, idx: 94 + np.random.normal(0, 2),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("cacheservice", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 45,
+                "metric": "hit_ratio",
+                "description": "Cascading: Batch job overwhelms cache with cold data",
+                "generator": lambda ts, idx: 22.0 + np.random.normal(0, 3),
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    "llm_second_viral": Scenario(
+        id="llm_second_viral",
+        name="LLM second viral event — social media mention on Day 7",
+        severity="medium",
+        days_required=7,
+        category="multi_day_llm",
+        components_touched=("llm_analytics", "apigateway", "database", "cacheservice"),
+        primary_specs=(
+            ("llm_analytics", {
+                "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
+                "metric": "llm_requests_per_sec",
+                "description": "Social media mention drives 10× traffic spike",
+                "generator": lambda ts, idx: 450,
+            }),
+            ("llm_analytics", {
+                "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
+                "metric": "input_tokens_per_sec",
+                "description": "Massive token usage from social traffic",
+                "generator": lambda ts, idx: 420000,
+            }),
+            ("llm_analytics", {
+                "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
+                "metric": "output_tokens_per_sec",
+                "description": "Output tokens surge from viral event",
+                "generator": lambda ts, idx: 135000,
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 5,
+                "metric": "active_connections",
+                "description": "Cascading: Viral LLM traffic maxes out connections",
+                "generator": lambda ts, idx: 4800 + np.random.normal(0, 200),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("apigateway", {
+                "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 15,
+                "metric": "cpu_util_pct",
+                "description": "Cascading: API gateway CPU spikes from LLM traffic",
+                "generator": lambda ts, idx: 87 + np.random.normal(0, 4),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("database", {
+                "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 25,
+                "metric": "connections",
+                "description": "Cascading: Database connection pool exhausted by LLM load",
+                "generator": lambda ts, idx: 9800 + np.random.normal(0, 500),
+                "severity": DEFAULT_SEVERITY,
+            }),
+            ("cacheservice", {
+                "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 18,
+                "metric": "error_rate",
+                "description": "Cascading: Cache service errors under LLM traffic",
+                "generator": lambda ts, idx: 0.31,
+                "severity": DEFAULT_SEVERITY,
+            }),
+        ),
+    ),
+    # ------------------------------------------------------------------
+    # High-pressure cross-component scenarios (days_required=1, severity=high)
+    # ------------------------------------------------------------------
+    "regional_failover_storm": Scenario(
+        id="regional_failover_storm",
+        name="Regional failover storm — load balancer 5xx surge",
+        severity="high",
+        days_required=1,
+        category="high_pressure",
+        components_touched=("loadbalancer", "apigateway", "database", "authservice", "mqservice"),
+        primary_specs=(
+            ("loadbalancer", {
+                "time_offset": 5*3600,
+                "duration_seconds": 5*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 1.5, "end": 220.0},
+                "metric": "backend_5xx_per_sec",
+                "description": "Regional failover storm — backend 5xx ramps to 220/s over 5 min",
+                "generator": lambda ts, idx: 1.5,
+                "severity": "high",
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 5*3600 + 30,
+                "metric": "error_rate",
+                "description": "Cascading: Regional failover floods gateway with 5xx (30%)",
+                "generator": lambda ts, idx: 0.30,
+                "severity": "high",
+            }),
+            ("database", {
+                "time_offset": 5*3600 + 45,
+                "metric": "connections",
+                "description": "Cascading: Regional failover pile-up — DB connections climb to ~9,000",
+                "generator": lambda ts, idx: 9000 + np.random.normal(0, 250),
+                "severity": "high",
+            }),
+            ("authservice", {
+                "time_offset": 5*3600 + 60,
+                "metric": "error_rate",
+                "description": "Cascading: Regional failover propagates auth errors (~25%)",
+                "generator": lambda ts, idx: 0.25,
+                "severity": "high",
+            }),
+            ("mqservice", {
+                "time_offset": 5*3600 + 90,
+                "metric": "pending_messages",
+                "description": "Cascading: Regional failover backs up queue — ~500,000 pending",
+                "generator": lambda ts, idx: 500000 + np.random.normal(0, 12000),
+                "severity": "high",
+            }),
+        ),
+    ),
+    "cache_db_meltdown": Scenario(
+        id="cache_db_meltdown",
+        name="Coordinated cache + DB meltdown",
+        severity="high",
+        days_required=1,
+        category="high_pressure",
+        components_touched=("cacheservice", "database", "llm_analytics", "apigateway"),
+        primary_specs=(
+            ("cacheservice", {
+                "time_offset": 11*3600 + 30*60,
+                "duration_seconds": 10*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 80.0, "end": 99.5},
+                "metric": "memory_util_pct",
+                "description": "Cache+DB meltdown — cache memory saturates 80% → 99.5% over 10 min",
+                "generator": lambda ts, idx: 80.0,
+                "severity": "high",
+            }),
+            ("database", {
+                "time_offset": 11*3600 + 30*60,
+                "duration_seconds": 10*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 12.0, "end": 800.0},
+                "metric": "read_latency_ms",
+                "description": "Cache+DB meltdown — DB read latency climbs to 800 ms over 10 min",
+                "generator": lambda ts, idx: 12.0,
+                "severity": "high",
+            }),
+        ),
+        cascade_specs=(
+            ("llm_analytics", {
+                "time_offset": 11*3600 + 30*60 + 30,
+                "metric": "avg_llm_latency_ms",
+                "description": "Cascading: Cache+DB meltdown doubles LLM latency to ~1,700 ms",
+                "generator": lambda ts, idx: 1700 + np.random.normal(0, 90),
+                "severity": "high",
+            }),
+            ("apigateway", {
+                "time_offset": 11*3600 + 30*60 + 45,
+                "metric": "backend_latency_ms",
+                "description": "Cascading: Cache+DB meltdown drags gateway backend latency to ~950 ms",
+                "generator": lambda ts, idx: 950 + np.random.normal(0, 60),
+                "severity": "high",
+            }),
+        ),
+    ),
+    "llm_provider_outage": Scenario(
+        id="llm_provider_outage",
+        name="LLM provider sustained outage",
+        severity="high",
+        days_required=1,
+        category="high_pressure",
+        components_touched=("llm_analytics", "apigateway", "cacheservice"),
+        primary_specs=(
+            ("llm_analytics", {
+                "time_offset": 20*3600,
+                "duration_seconds": 15*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 0.05, "end": 0.60},
+                "metric": "llm_api_error_rate",
+                "description": "LLM provider sustained outage — error rate ramps 5% → 60% over 15 min",
+                "generator": lambda ts, idx: 0.05,
+                "severity": "high",
+            }),
+            ("llm_analytics", {
+                "time_offset": 20*3600,
+                "duration_seconds": 15*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 900.0, "end": 8000.0},
+                "metric": "avg_llm_latency_ms",
+                "description": "LLM provider sustained outage — latency climbs to 8,000 ms over 15 min",
+                "generator": lambda ts, idx: 900.0,
+                "severity": "high",
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 20*3600 + 15,
+                "metric": "error_rate",
+                "description": "Cascading: LLM outage propagates to gateway (~25%)",
+                "generator": lambda ts, idx: 0.25,
+                "severity": "high",
+            }),
+            ("cacheservice", {
+                "time_offset": 20*3600 + 30,
+                "metric": "cache_misses",
+                "description": "Cascading: LLM outage drives context cache miss surge (~3,000)",
+                "generator": lambda ts, idx: 3000 + np.random.normal(0, 200),
+                "severity": "high",
+            }),
+        ),
+    ),
+    "gateway_ddos": Scenario(
+        id="gateway_ddos",
+        name="Gateway DDoS-style saturation",
+        severity="high",
+        days_required=1,
+        category="high_pressure",
+        components_touched=("apigateway", "authservice", "database", "mqservice"),
+        primary_specs=(
+            ("apigateway", {
+                "time_offset": 16*3600,
+                "duration_seconds": 10*60,
+                "shape": "sustained",
+                "metric": "requests_per_sec",
+                "description": "Gateway DDoS saturation — requests sustained at 5,000/s for 10 min",
+                "generator": lambda ts, idx: 5000,
+                "severity": "high",
+            }),
+            ("apigateway", {
+                "time_offset": 16*3600,
+                "duration_seconds": 10*60,
+                "shape": "sustained",
+                "metric": "cpu_util_pct",
+                "description": "Gateway DDoS saturation — CPU pinned at 99% for 10 min",
+                "generator": lambda ts, idx: 99.0,
+                "severity": "high",
+            }),
+        ),
+        cascade_specs=(
+            ("authservice", {
+                "time_offset": 16*3600 + 60,
+                "metric": "avg_auth_latency_ms",
+                "description": "Cascading: Gateway saturation slows auth path to ~600 ms",
+                "generator": lambda ts, idx: 600 + np.random.normal(0, 25),
+                "severity": "high",
+            }),
+            ("database", {
+                "time_offset": 16*3600 + 90,
+                "metric": "cpu_util_pct",
+                "description": "Cascading: Gateway saturation drives DB CPU to ~92%",
+                "generator": lambda ts, idx: 92 + np.random.normal(0, 2),
+                "severity": "high",
+            }),
+            ("mqservice", {
+                "time_offset": 16*3600 + 120,
+                "metric": "pending_messages",
+                "description": "Cascading: Gateway saturation queues messages — ~800,000 pending",
+                "generator": lambda ts, idx: 800000 + np.random.normal(0, 15000),
+                "severity": "high",
+            }),
+        ),
+    ),
+    "storage_layer_pressure": Scenario(
+        id="storage_layer_pressure",
+        name="Storage layer pressure — PUT latency + 5xx surge",
+        severity="high",
+        days_required=1,
+        category="high_pressure",
+        components_touched=("objectstore", "database", "apigateway"),
+        primary_specs=(
+            ("objectstore", {
+                "time_offset": 22*3600,
+                "duration_seconds": 10*60,
+                "shape": "ramp_linear",
+                "shape_params": {"start": 60.0, "end": 700.0},
+                "metric": "put_latency_ms",
+                "description": "Storage layer pressure — PUT latency climbs 60 → 700 ms over 10 min",
+                "generator": lambda ts, idx: 60.0,
+                "severity": "high",
+            }),
+            ("objectstore", {
+                "time_offset": 22*3600,
+                "duration_seconds": 10*60,
+                "shape": "sustained",
+                "metric": "5xx_rate",
+                "description": "Storage layer pressure — object store 5xx surge to 25% for 10 min",
+                "generator": lambda ts, idx: 0.25,
+                "severity": "high",
+            }),
+        ),
+        cascade_specs=(
+            ("database", {
+                "time_offset": 22*3600 + 30,
+                "metric": "write_latency_ms",
+                "description": "Cascading: Storage pressure drags DB write latency to ~90 ms",
+                "generator": lambda ts, idx: 90 + np.random.normal(0, 6),
+                "severity": "high",
+            }),
+            ("apigateway", {
+                "time_offset": 22*3600 + 45,
+                "metric": "error_rate",
+                "description": "Cascading: Storage 5xx surge propagates to gateway (~15%)",
+                "generator": lambda ts, idx: 0.15,
+                "severity": "high",
+            }),
+        ),
+    ),
     "cache_leak_restart": Scenario(
         id="cache_leak_restart",
         name="Cache memory-leak death march → forced restart",
         severity="medium",
-        days_required=7,
+        days_required=2,
         category="multi_day_cascade",
         components_touched=(
             "cacheservice", "database", "apigateway", "mqservice",
@@ -1487,7 +1993,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="jwks_rotation_chaos",
         name="Certificate / JWKS rotation chaos",
         severity="medium",
-        days_required=7,
+        days_required=3,
         category="multi_day_cascade",
         components_touched=(
             "loadbalancer", "identityprovider", "authservice",
@@ -1599,7 +2105,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="db_disk_exhaustion",
         name="Database disk + write-latency exhaustion",
         severity="medium",
-        days_required=7,
+        days_required=2,
         category="multi_day_cascade",
         components_touched=(
             "database", "scheduler", "observabilitypipeline",
@@ -1711,10 +2217,11 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].severity {scenario.severity!r} must be "
                 "one of low / medium / high"
             )
-        if scenario.days_required not in {1, 7}:
+        if not isinstance(scenario.days_required, int) or scenario.days_required < 1:
             raise ValueError(
                 f"SCENARIOS[{slug!r}].days_required {scenario.days_required!r} "
-                "must be 1 or 7"
+                "must be a positive int (the minimum --duration-days at which "
+                "any of the scenario's specs become in range)"
             )
         unknown_touched = set(scenario.components_touched) - known_components
         if unknown_touched:
@@ -1722,378 +2229,41 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].components_touched contains unknown "
                 f"component(s): {sorted(unknown_touched)}"
             )
-        for component, _ in scenario.primary_specs:
+        valid_severities = {"low", "medium", "high"}
+        for component, spec in scenario.primary_specs:
             if component not in known_components:
                 raise ValueError(
                     f"SCENARIOS[{slug!r}].primary_specs references unknown "
                     f"component {component!r}"
                 )
-        for target, _ in scenario.cascade_specs:
+            if "severity" in spec and spec["severity"] not in valid_severities:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].primary_specs entry for component "
+                    f"{component!r} has severity {spec['severity']!r}; "
+                    f"must be one of {sorted(valid_severities)}. "
+                    f"_apply_signal_level_and_count reads spec.get('severity', "
+                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                    f"filtered out at every --signal-level."
+                )
+        for target, cascade in scenario.cascade_specs:
             if target not in known_components:
                 raise ValueError(
                     f"SCENARIOS[{slug!r}].cascade_specs targets unknown "
                     f"component {target!r}"
                 )
+            if "severity" in cascade and cascade["severity"] not in valid_severities:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
+                    f"{target!r} has severity {cascade['severity']!r}; "
+                    f"must be one of {sorted(valid_severities)}. "
+                    f"_apply_signal_level_and_count reads spec.get('severity', "
+                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                    f"filtered out at every --signal-level."
+                )
 
 
 _validate_scenarios_registry()
 
-
-# ------------------------------------------------------------------
-# Cascading-failure registry. Same-day cascades fire under any duration;
-# multi-day cascades (LLM-driven) only reach during runs of >= 7 days.
-# ------------------------------------------------------------------
-def register_default_cascades():
-    # Auth service brute force → API Gateway sees more errors
-    register_cascade("apigateway",
-                     2*3600 + 15*60 + 15,
-                     "error_rate",
-                     "Cascading: Auth failures cause API gateway errors",
-                     lambda ts, idx: 0.28)
-
-    # Brute-force forces session invalidation
-    register_cascade("authservice",
-                     2*3600 + 15*60 + 30,
-                     "active_sessions",
-                     "Cascading: Sessions invalidated after brute-force detection",
-                     lambda ts, idx: 35)
-
-    # Cache failure → preceding miss surge before DB load lands
-    register_cascade("cacheservice",
-                     6*3600 + 20,
-                     "cache_misses",
-                     "Cascading: Cache miss surge before DB cascade lands",
-                     lambda ts, idx: 2400 + np.random.normal(0, 150))
-
-    # Cache failure → Database sees increased load
-    register_cascade("database",
-                     6*3600 + 30,
-                     "queries_per_sec",
-                     "Cascading: Cache misses increase database queries",
-                     lambda ts, idx: 38000 + np.random.normal(0, 3000))
-
-    register_cascade("database",
-                     6*3600 + 45,
-                     "read_latency_ms",
-                     "Cascading: Database read latency increases from cache misses",
-                     lambda ts, idx: 45 + np.random.normal(0, 5))
-
-    # API Gateway CPU saturation → cascades to multiple services
-    register_cascade("authservice",
-                     6*3600 + 30*60 + 12,
-                     "error_rate",
-                     "Cascading: API gateway overload causes auth errors",
-                     lambda ts, idx: 0.35)
-
-    register_cascade("cacheservice",
-                     6*3600 + 30*60 + 18,
-                     "error_rate",
-                     "Cascading: API gateway overload causes cache errors",
-                     lambda ts, idx: 0.15)
-
-    # Database failure → cascades to API and Auth
-    register_cascade("apigateway",
-                     11*3600,
-                     "backend_latency_ms",
-                     "Cascading: Database latency affects API backend",
-                     lambda ts, idx: 850 + np.random.normal(0, 50))
-
-    register_cascade("apigateway",
-                     11*3600 + 5,
-                     "error_rate",
-                     "Cascading: Database errors propagate to API",
-                     lambda ts, idx: 0.19)
-
-    register_cascade("authservice",
-                     11*3600 + 10,
-                     "avg_auth_latency_ms",
-                     "Cascading: Database issues slow auth queries",
-                     lambda ts, idx: 420 + np.random.normal(0, 30))
-
-    # DB stall → MQ backpressure
-    register_cascade("mqservice",
-                     11*3600 + 20,
-                     "pending_messages",
-                     "Cascading: DB stall causes MQ backpressure",
-                     lambda ts, idx: 250000 + np.random.normal(0, 5000))
-
-    # MQ service jam → cascades to API and Database
-    register_cascade("apigateway",
-                     14*3600 + 30*60 + 60,
-                     "avg_response_time_ms",
-                     "Cascading: MQ backlog delays API responses",
-                     lambda ts, idx: 650 + np.random.normal(0, 40))
-
-    register_cascade("database",
-                     14*3600 + 30*60 + 90,
-                     "connections",
-                     "Cascading: MQ issues cause connection buildup",
-                     lambda ts, idx: 8500 + np.random.normal(0, 500))
-
-    register_cascade("database",
-                     14*3600 + 30*60 + 95,
-                     "write_latency_ms",
-                     "Cascading: MQ backpressure increases write latency",
-                     lambda ts, idx: 85 + np.random.normal(0, 10))
-
-    register_cascade("authservice",
-                     14*3600 + 32*60 + 30,
-                     "avg_auth_latency_ms",
-                     "Cascading: MQ jam delays session writes",
-                     lambda ts, idx: 280 + np.random.normal(0, 15))
-
-    # LLM viral surge → cascades to database and cache (multi-day)
-    register_cascade("database",
-                     1*SECONDS_PER_DAY + 10*3600 + 15*60 + 30,
-                     "queries_per_sec",
-                     "Cascading: LLM surge increases database queries for context retrieval",
-                     lambda ts, idx: 48000 + np.random.normal(0, 4000))
-
-    register_cascade("database",
-                     1*SECONDS_PER_DAY + 10*3600 + 15*60 + 45,
-                     "connections",
-                     "Cascading: LLM service creates more database connections",
-                     lambda ts, idx: 7200 + np.random.normal(0, 400))
-
-    register_cascade("cacheservice",
-                     1*SECONDS_PER_DAY + 10*3600 + 15*60 + 20,
-                     "cache_misses",
-                     "Cascading: LLM context cache misses spike",
-                     lambda ts, idx: 1800 + np.random.normal(0, 150))
-
-    register_cascade("apigateway",
-                     1*SECONDS_PER_DAY + 10*3600 + 15*60 + 10,
-                     "requests_per_sec",
-                     "Cascading: LLM viral traffic increases API gateway load",
-                     lambda ts, idx: 2400 + np.random.normal(0, 200))
-
-    # Enterprise onboarding → database pressure (multi-day)
-    register_cascade("database",
-                     2*SECONDS_PER_DAY + 14*3600 + 60,
-                     "read_latency_ms",
-                     "Cascading: Large LLM context windows cause slow DB reads",
-                     lambda ts, idx: 85 + np.random.normal(0, 8))
-
-    register_cascade("cacheservice",
-                     2*SECONDS_PER_DAY + 14*3600 + 35,
-                     "memory_util_pct",
-                     "Cascading: LLM context caching increases memory pressure",
-                     lambda ts, idx: 92 + np.random.normal(0, 3))
-
-    # LLM rate limit issues → API gateway sees errors (multi-day)
-    register_cascade("apigateway",
-                     4*SECONDS_PER_DAY + 9*3600 + 30*60 + 8,
-                     "error_rate",
-                     "Cascading: LLM API errors propagate to gateway",
-                     lambda ts, idx: 0.22)
-
-    # Weekend batch job → multiple service impact (multi-day)
-    register_cascade("database",
-                     5*SECONDS_PER_DAY + 2*3600 + 15,
-                     "queries_per_sec",
-                     "Cascading: Batch LLM processing hammers database",
-                     lambda ts, idx: 65000 + np.random.normal(0, 5000))
-
-    register_cascade("database",
-                     5*SECONDS_PER_DAY + 2*3600 + 120,
-                     "cpu_util_pct",
-                     "Cascading: Database CPU saturates from batch analytics",
-                     lambda ts, idx: 94 + np.random.normal(0, 2))
-
-    register_cascade("cacheservice",
-                     5*SECONDS_PER_DAY + 2*3600 + 45,
-                     "hit_ratio",
-                     "Cascading: Batch job overwhelms cache with cold data",
-                     lambda ts, idx: 22.0 + np.random.normal(0, 3))
-
-    # Second viral event → system-wide impact (multi-day)
-    register_cascade("apigateway",
-                     6*SECONDS_PER_DAY + 16*3600 + 45*60 + 5,
-                     "active_connections",
-                     "Cascading: Viral LLM traffic maxes out connections",
-                     lambda ts, idx: 4800 + np.random.normal(0, 200))
-
-    register_cascade("apigateway",
-                     6*SECONDS_PER_DAY + 16*3600 + 45*60 + 15,
-                     "cpu_util_pct",
-                     "Cascading: API gateway CPU spikes from LLM traffic",
-                     lambda ts, idx: 87 + np.random.normal(0, 4))
-
-    register_cascade("database",
-                     6*SECONDS_PER_DAY + 16*3600 + 45*60 + 25,
-                     "connections",
-                     "Cascading: Database connection pool exhausted by LLM load",
-                     lambda ts, idx: 9800 + np.random.normal(0, 500))
-
-    register_cascade("cacheservice",
-                     6*SECONDS_PER_DAY + 16*3600 + 45*60 + 18,
-                     "error_rate",
-                     "Cascading: Cache service errors under LLM traffic",
-                     lambda ts, idx: 0.31)
-
-    # Load balancer cascades
-    register_cascade("apigateway",
-                     8*3600 + 15*60 + 5,
-                     "active_connections",
-                     "Cascading: LB withdraws traffic from a flapping backend pool",
-                     lambda ts, idx: 200 + np.random.normal(0, 25))
-
-    register_cascade("apigateway",
-                     20*3600 + 30*60 + 10,
-                     "error_rate",
-                     "Cascading: LB region failover propagates 5xx to gateway",
-                     lambda ts, idx: 0.09)
-
-    # Object store cascades
-    register_cascade("apigateway",
-                     7*3600 + 20,
-                     "error_rate",
-                     "Cascading: object store 5xx wave breaks dependent endpoints",
-                     lambda ts, idx: 0.06)
-
-    # Vector store cascades — feed into llm_analytics latency/errors
-    register_cascade("llm_analytics",
-                     10*3600 + 30*60 + 15,
-                     "avg_llm_latency_ms",
-                     "Cascading: slow ANN retrieval drags LLM latency to 1,900 ms",
-                     lambda ts, idx: 1900 + np.random.normal(0, 80))
-
-    register_cascade("llm_analytics",
-                     15*3600 + 30,
-                     "llm_api_error_rate",
-                     "Cascading: low-recall results trigger LLM fallback retries (8 % errors)",
-                     lambda ts, idx: 0.08)
-
-    # Scheduler queue overflow → database connection pressure (jobs pull on DB)
-    register_cascade("database",
-                     10*3600 + 30,
-                     "connections",
-                     "Cascading: Scheduler queue overflow drives DB connection buildup",
-                     lambda ts, idx: 7800 + np.random.normal(0, 400))
-
-    # Paymentservice 5xx surge → apigateway error rate (payment proxied via API)
-    register_cascade("apigateway",
-                     12*3600 + 12,
-                     "error_rate",
-                     "Cascading: Payment provider 5xx propagates to gateway",
-                     lambda ts, idx: 0.15)
-
-    # Identityprovider JWKS storm → authservice login success rate dips
-    register_cascade("authservice",
-                     4*3600 + 25,
-                     "login_success_rate",
-                     "Cascading: JWKS fetch storm degrades auth verification — success ~45%",
-                     lambda ts, idx: 45 + np.random.normal(0, 2))
-
-    # Observabilitypipeline ingest lag → mqservice pending message backup
-    register_cascade("mqservice",
-                     9*3600 + 20,
-                     "pending_messages",
-                     "Cascading: Telemetry pipeline lag backs up downstream queue",
-                     lambda ts, idx: 220000 + np.random.normal(0, 15000))
-
-    # NOTE: Multi-day Scenario A/B/C cascades moved to the SCENARIOS
-    # registry in VER-103. main() walks the resolved scenario set after
-    # this function returns and appends their cascades onto
-    # cascading_anomalies in A → B → C order, preserving the historic
-    # registration sequence (and therefore RNG draw order).
-
-
-def register_high_pressure_cascades():
-    """High-severity cascade fan-out for the cross-component scenarios.
-
-    Only registered when --signal-level high. Each cascade fires shortly after
-    its triggering scenario and is tagged ``severity="high"`` so it survives
-    severity filtering only at the highest level.
-    """
-    # Regional failover storm (loadbalancer 05:00) → API gateway 5xx, DB
-    # connection pressure, auth verification failures, MQ backpressure.
-    register_cascade("apigateway",
-                     5*3600 + 30,
-                     "error_rate",
-                     "Cascading: Regional failover floods gateway with 5xx (30%)",
-                     lambda ts, idx: 0.30,
-                     severity="high")
-    register_cascade("database",
-                     5*3600 + 45,
-                     "connections",
-                     "Cascading: Regional failover pile-up — DB connections climb to ~9,000",
-                     lambda ts, idx: 9000 + np.random.normal(0, 250),
-                     severity="high")
-    register_cascade("authservice",
-                     5*3600 + 60,
-                     "error_rate",
-                     "Cascading: Regional failover propagates auth errors (~25%)",
-                     lambda ts, idx: 0.25,
-                     severity="high")
-    register_cascade("mqservice",
-                     5*3600 + 90,
-                     "pending_messages",
-                     "Cascading: Regional failover backs up queue — ~500,000 pending",
-                     lambda ts, idx: 500000 + np.random.normal(0, 12000),
-                     severity="high")
-
-    # Cache+DB meltdown (11:30) → LLM latency doubles, gateway backend latency.
-    register_cascade("llm_analytics",
-                     11*3600 + 30*60 + 30,
-                     "avg_llm_latency_ms",
-                     "Cascading: Cache+DB meltdown doubles LLM latency to ~1,700 ms",
-                     lambda ts, idx: 1700 + np.random.normal(0, 90),
-                     severity="high")
-    register_cascade("apigateway",
-                     11*3600 + 30*60 + 45,
-                     "backend_latency_ms",
-                     "Cascading: Cache+DB meltdown drags gateway backend latency to ~950 ms",
-                     lambda ts, idx: 950 + np.random.normal(0, 60),
-                     severity="high")
-
-    # LLM provider outage (20:00) → API gateway error rate, cache miss surge.
-    register_cascade("apigateway",
-                     20*3600 + 15,
-                     "error_rate",
-                     "Cascading: LLM outage propagates to gateway (~25%)",
-                     lambda ts, idx: 0.25,
-                     severity="high")
-    register_cascade("cacheservice",
-                     20*3600 + 30,
-                     "cache_misses",
-                     "Cascading: LLM outage drives context cache miss surge (~3,000)",
-                     lambda ts, idx: 3000 + np.random.normal(0, 200),
-                     severity="high")
-
-    # Gateway DDoS saturation (16:00) → auth latency, DB CPU, MQ backpressure.
-    register_cascade("authservice",
-                     16*3600 + 60,
-                     "avg_auth_latency_ms",
-                     "Cascading: Gateway saturation slows auth path to ~600 ms",
-                     lambda ts, idx: 600 + np.random.normal(0, 25),
-                     severity="high")
-    register_cascade("database",
-                     16*3600 + 90,
-                     "cpu_util_pct",
-                     "Cascading: Gateway saturation drives DB CPU to ~92%",
-                     lambda ts, idx: 92 + np.random.normal(0, 2),
-                     severity="high")
-    register_cascade("mqservice",
-                     16*3600 + 120,
-                     "pending_messages",
-                     "Cascading: Gateway saturation queues messages — ~800,000 pending",
-                     lambda ts, idx: 800000 + np.random.normal(0, 15000),
-                     severity="high")
-
-    # Storage layer pressure (22:00) → DB write latency, gateway 5xx.
-    register_cascade("database",
-                     22*3600 + 30,
-                     "write_latency_ms",
-                     "Cascading: Storage pressure drags DB write latency to ~90 ms",
-                     lambda ts, idx: 90 + np.random.normal(0, 6),
-                     severity="high")
-    register_cascade("apigateway",
-                     22*3600 + 45,
-                     "error_rate",
-                     "Cascading: Storage 5xx surge propagates to gateway (~15%)",
-                     lambda ts, idx: 0.15,
-                     severity="high")
 
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
     """Return ``{component: specs[:limit]}`` for the active --metrics-per-component.
@@ -2316,18 +2486,17 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
     """Append the active scenarios' primaries and cascades onto the runtime
     registries.
 
-    Walks ``SCENARIOS`` in declaration order so that, when all 3 multi-day
-    scenarios are active (default ``--scenarios all`` plus
-    ``--duration-days 7``), the tail order of ``component_anomalies[name]``
-    and ``cascading_anomalies[target]`` matches the pre-VER-103 layout
-    exactly. That order anchors every numpy.random draw inside
-    ``generate_component``, so any reordering would shift the RNG stream
-    and break the byte-for-byte default-output guarantee.
-
-    Callers must invoke this **before** appending any ``--signal-level high``
-    extensions to either registry, so the positional ordering used by
-    ``_apply_signal_level_and_count()`` to build the deterministic
-    ``--anomaly-count`` sampling pool remains stable across the refactor.
+    Walks ``SCENARIOS`` in declaration order. Byte-for-byte output is
+    preserved when each ``(row_idx, metric)`` is unique, because
+    ``generate_component`` applies Python's stable ``sorted()`` with key
+    ``(row_idx, metric)`` to its expanded overrides — under that condition
+    the global RNG draw sequence is anchored to ``(time_offset, metric_name)``
+    and the spec list order here does not matter. When two specs collide on
+    the same ``(row_idx, metric)`` (e.g. a cascade landing inside a shaped
+    primary span, or coarse ``--interval-seconds`` rounding two offsets to
+    the same row), the stable sort preserves declaration order and the last
+    writer wins for that cell — so the per-scenario spec list order is part
+    of the contract for collisions.
     """
     for slug, scenario in SCENARIOS.items():
         if slug not in active_scenarios:
@@ -2347,7 +2516,9 @@ def parse_args(argv=None):
     )
     p.add_argument("--duration-days", type=int, default=DEFAULT_DURATION_DAYS,
                    help=f"Number of days of metrics to generate (default: {DEFAULT_DURATION_DAYS}). "
-                        "The multi-day LLM/cascade catalog requires >= 7.")
+                        "Each scenario's ``days_required`` is the minimum value at which "
+                        "any of its specs become in range; the full multi-day catalog "
+                        "manifests at 7+.")
     p.add_argument("--seed", type=int, default=DEFAULT_SEED,
                    help=f"RNG seed for deterministic output (default: {DEFAULT_SEED}).")
     p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
@@ -2388,9 +2559,7 @@ def parse_args(argv=None):
         default="all",
         help="Comma-separated list of named scenario slugs to include. Use "
              "'all' (default) to include every scenario in the registry. "
-             "Case-insensitive. Currently only the 3 multi-day cascading "
-             "scenarios live in the SCENARIOS registry (VER-103); all other "
-             "anomalies still fire via the legacy path. Known slugs: "
+             "Case-insensitive. Known slugs: "
              f"{', '.join(sorted(SCENARIOS.keys()))}.",
     )
     p.add_argument(
@@ -3331,32 +3500,15 @@ def main(argv=None):
     # Reset module-level registries so repeated calls (e.g., from tests) don't accumulate.
     anomalies.clear()
     cascading_anomalies.clear()
-    register_default_cascades()
 
-    component_anomalies = {
-        name: list(specs) for name, specs in COMPONENT_PRIMARY_ANOMALIES.items()
-    }
-
-    # Append registry-driven scenario primaries/cascades onto the runtime
-    # registries BEFORE the high-pressure extension so the positional order
-    # (legacy specs → scenarios → high-pressure specs) matches the
-    # pre-VER-103 layout, where the 3 multi-day scenarios lived inside the
-    # legacy anoms_* lists / register_default_cascades() body and so came
-    # before the high-pressure extensions. _apply_signal_level_and_count()
-    # builds its deterministic --anomaly-count sampling pool from this
-    # order, so any reshuffle would change which subset is selected for
-    # the same (seed, cap) under --signal-level high.
+    # Build component_anomalies and cascading_anomalies entirely from the
+    # SCENARIOS registry. _resolve_scenarios() applies the --scenarios /
+    # --exclude-scenarios / --signal-level / --duration-days / --components
+    # gates; _apply_scenarios() walks the resolved set in declaration order
+    # and tail-appends each scenario's primaries and cascades.
+    component_anomalies = {name: [] for name in COMPONENTS}
     active_scenarios = _resolve_scenarios(args)
     _apply_scenarios(component_anomalies, cascading_anomalies, active_scenarios)
-
-    if args.signal_level == "high":
-        register_high_pressure_cascades()
-        component_anomalies["loadbalancer"].extend(anoms_high_lb)
-        component_anomalies["cacheservice"].extend(anoms_high_cache)
-        component_anomalies["database"].extend(anoms_high_db)
-        component_anomalies["llm_analytics"].extend(anoms_high_llm)
-        component_anomalies["apigateway"].extend(anoms_high_api)
-        component_anomalies["objectstore"].extend(anoms_high_obj)
 
     effective_specs = _resolve_effective_specs(args.metrics_per_component)
     _filter_anomalies_for_emitted_metrics(
