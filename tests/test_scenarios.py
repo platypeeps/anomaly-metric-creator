@@ -1,10 +1,8 @@
-"""Phase 1 SCENARIOS registry coverage.
+"""SCENARIOS registry coverage (VER-103 phase 1 + VER-104 phase 2 full migration).
 
-This phase migrates the 3 multi-day cascading scenarios (cache_leak_restart,
-jwks_rotation_chaos, db_disk_exhaustion) out of the legacy ``anoms_*`` lists
-and ``register_default_cascades()`` body into a registry-driven walk in
-``main()``. The legacy imperative path remains in place for every other
-anomaly until VER-104 completes the migration. These tests cover:
+All anomaly and cascade specs now live in the SCENARIOS registry; the legacy
+``anoms_*`` lists and ``register_default_cascades()`` / ``register_high_pressure_cascades()``
+bodies have been removed. These tests cover:
 
 * Registry structural validation — slug uniqueness, severity vocabulary,
   ``days_required`` vocabulary, component coverage.
@@ -133,20 +131,20 @@ DEFAULT_SEVEN_DAY_HASHES = {
 # positions out of the in-range pool, so any reshuffle changes which
 # anomalies land in the manifest.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "cc2b39f13df6c3b44d700f1c4856dc98ed7af7654ba8a6469ecc807e84d5399f",
-    "apigateway.csv": "019af0c94f2c803f51c8f948b09ef9ed89c4faa2a1335a7da22aa5d7e4775a54",
-    "authservice.csv": "8a934bd6b9069948d0fed195056f64e42ad9bf784db05a9ab2251eb0cf6a352d",
-    "cacheservice.csv": "693c886a53d61f5038b88884005c46865f89faae10452a9ce3e469db2ee5a2d9",
-    "database.csv": "3ae83b0e75fcd27d64c87d3ce53cc997abef0b42dfc4c7128fca7fdfef7194ef",
-    "identityprovider.csv": "523e8929bc18e09559c7fa6a06def508124d33a9cfd68248e2de3bc7dbb156a6",
-    "llm_analytics.csv": "3adcf752bfc6f67d233750b1902a0cec498f5a37837e1bacc9a1d13338f65a42",
-    "loadbalancer.csv": "a4b3434be2c8407a96c04d2bcf90c79708797f08a04391519aa377d030d155f4",
-    "mqservice.csv": "ab74c73a43902cbe050f12b3d6fe7af97c811f28457107330a9b60c4f13b518d",
-    "objectstore.csv": "42598e0db3d27aecc85bf74c04412bfd3c21b4aedaf4be2c88a229432645bcae",
-    "observabilitypipeline.csv": "5211c83ad338ac49866b2f7d366d227485ffd6d716fa1504648760286e10e9f3",
-    "paymentservice.csv": "3178647b2d2ea7f8a28cd7c0371bfed3847e0d01c44540a2f2c49b40306f2758",
-    "scheduler.csv": "9dd9f850a6733c544c9094c225ce7daa7c0cc952be2059ef00aee8d1bc7ecc43",
-    "vectorstore.csv": "b5e2e05135491d3f5e4f63ba4ece370fbad056a4f0ffa4ffeb517a38fe20c3be",
+    "anomalies.csv": "a3d1592da8a66c51266f5269a67f991c2e8d74047a6c7d2151d2412efef63d5b",
+    "apigateway.csv": "5c799a684ade9c3140089ec319cc633f879d4f422c3723d03c65e892962fae21",
+    "authservice.csv": "20becf147a24bac19fd7262f7e80ea5fac3a7496a86ea7b52c3ffedda7d994bd",
+    "cacheservice.csv": "99ffcc89dbef13ba72a96cbf4bee24cc090182830880a0be5a4d4180ff6e2496",
+    "database.csv": "af08021dd8c8730c2651c33c11edfebe8d822f28bd9b3570e36c7766d14a737b",
+    "identityprovider.csv": "8a802526532b7eadbb78d39ca41c78ed3e97e520bf958b1674f944f1a8f421f2",
+    "llm_analytics.csv": "93aaaac09a6cd5df9178bbb2b1bc6c374e16ea8b0991a9a950b9a938774089c0",
+    "loadbalancer.csv": "1474640c86ad99df61c9ca4b8076be531aff62d37745719d467f39d9e1645624",
+    "mqservice.csv": "dd4bf97a7a9fdfb450098024f5f9a2b11a799b8b5111b5a48e0013ffecbc2495",
+    "objectstore.csv": "de6b370eb3122fc1c98bdb836a0784b29f206dd24a0e1787bff0f3e3365e542e",
+    "observabilitypipeline.csv": "5be5001456b0ccd23715ea31b274817158db631fcc1d70dc51f482f6ef037ee7",
+    "paymentservice.csv": "0d14c888eecd42660984a14db3a787035f9736089241ac1a9befbc8554d5dabe",
+    "scheduler.csv": "65bd4988b1951d912e36cd103c27c15c3b8d8b21a6672a267d655ab7f8e5d648",
+    "vectorstore.csv": "8fd3681f7fb799ad3efac9157bd36b64bb005a245eddec1b86bd0dbb1287ce39",
 }
 
 

@@ -77,61 +77,80 @@ Anomaly specs are dicts with:
 Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.
 
-Cascades use `register_cascade(target_component, time_offset, metric, description,
-generator)` and are appended after the originating anomaly's time offset to simulate
-blast radius (auth → gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API).
-`register_cascade` does **not** support `shape` / `shape_params`; cascades are
-single-row step writes only — express ramps/sustained spans as primary
-`anoms_*` specs, not as cascades.
+Cascade specs use `register_cascade(target_component, time_offset, metric, description,
+generator)` internally and simulate blast radius (auth → gateway, cache → DB,
+DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Cascades are single-row step writes
+only — express ramps/sustained spans as primary specs in `primary_specs`, not in
+`cascade_specs`.
 
-The three VER-98 multi-day scenarios (cache leak → restart, cert/JWKS
-rotation chaos, DB disk/write-latency exhaustion) are worked examples of
-shaped multi-day spans with cross-component cascade fan-out. As of
-VER-103 they live in the `SCENARIOS` registry under the slugs
-`cache_leak_restart`, `jwks_rotation_chaos`, and `db_disk_exhaustion`
-(see `Scenario` dataclass). Each entry bundles every primary and
-cascade spec for the named scenario; `_apply_scenarios()` in `main()`
-appends them onto `component_anomalies` / `cascading_anomalies` after
-`register_default_cascades()` runs but **before** any
-`--signal-level high` extensions are added, so the pre-VER-103
-positional ordering (legacy specs → scenarios → high-pressure specs)
-is preserved end-to-end. That ordering anchors both the RNG draws
-inside `generate_component` (byte-for-byte default output) and the
-deterministic sampling pool inside `_apply_signal_level_and_count()`
-(stable `--anomaly-count` selection for the same seed). The scenarios
-only manifest at `--duration-days >= 7`; out-of-range specs are
-caught by the existing stderr WARNING path, and `_resolve_scenarios()`
-additionally drops whole scenarios with a `WARNING: scenario <slug>
-requires …` message when the duration or severity gates exclude them.
+### Scenario registry
 
-### Scenario registry (partial)
+`SCENARIOS: dict[str, Scenario]` holds every anomaly scenario in the catalog. There
+are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries.
+`_apply_scenarios()` in `main()` is the single point that populates
+`component_anomalies` and `cascading_anomalies`. Each `Scenario` bundles:
 
-`SCENARIOS: dict[str, Scenario]` only holds the 3 multi-day cascading
-scenarios above today. Every other anomaly (single-day clusters,
-high-pressure cross-component scenarios, multi-day LLM viral/cascade
-catalog, Monday baseline) still fires via the legacy `anoms_*` lists
-and the imperative body of `register_default_cascades()` /
-`register_high_pressure_cascades()`. The legacy path coexists with the
-registry and runs first; the registry walk only tail-appends. VER-104
-will migrate the remaining anomalies into the registry and delete the
-legacy lists/cascade bodies.
+- `id` — slug, must match the dict key.
+- `name` — human-readable label.
+- `severity ∈ {low, medium, high}` — controls which `--signal-level` activates it.
+- `days_required ∈ {1, 7}` — minimum `--duration-days` for specs to be in range.
+- `category` — free-form label for documentation/filtering.
+- `components_touched` — subset of `COMPONENTS` keys; validated at import time.
+- `primary_specs` — list of `(component, spec_dict)` pairs, same dict shape as the
+  anomaly injection schema above.
+- `cascade_specs` — list of `(target_component, cascade_dict)` pairs; each
+  `cascade_dict` has `time_offset`, `metric`, `description`, and `generator`
+  (no `shape`/`shape_params` — cascades are single-row steps).
 
-Adding a new entry to `SCENARIOS` requires:
+`_resolve_scenarios()` applies the resolution pipeline:
+allowlist (`--scenarios`) → exclusion (`--exclude-scenarios`) → severity filter
+(`--signal-level`) → duration filter (`--duration-days`) → component filter
+(`--components`). Scenarios dropped by severity or duration emit a stderr WARNING;
+scenarios excluded silently by the component filter produce no output.
 
-- A unique slug (registry key); `id` must match the key.
-- `severity ∈ {low, medium, high}` and `days_required ∈ {1, 7}`
-  (import-time validation enforces both).
-- `components_touched` must be a subset of `COMPONENTS`.
-- Each `primary_specs` entry is `(component, spec_dict)` with the
-  same dict shape as an `anoms_*` list entry; each `cascade_specs`
-  entry is `(target_component, cascade_dict)` with the same dict shape
-  as values inside `cascading_anomalies`. Both lists are validated at
-  import time to reference real components.
-- CLI: `--scenarios` (default `all`) and `--exclude-scenarios`
-  (default empty) accept comma-separated, case-insensitive slug lists
-  and reject unknown slugs at `parse_args` time.
+**RNG ordering invariant**: `generate_component()` sorts all override specs by
+`(row_idx, metric_name)` before calling generators, so the list order of specs
+inside `primary_specs` / `cascade_specs` does not affect RNG draws or CSV content.
+Byte-for-byte output is determined only by which specs are active, not by their
+declaration order.
+
+**`--anomaly-count` ordering**: `_apply_signal_level_and_count()` samples from the
+ordered spec list built by `_apply_scenarios()`. The SCENARIOS dict insertion order
+determines the sampling pool order; changing that order shifts which anomalies
+survive the cap for the same seed. Preserve existing slug ordering when adding new
+scenarios unless you intentionally want to shift the cap selection.
 
 ## Modifying the script
+
+### Adding a new scenario
+
+1. Choose a unique slug (lowercase, underscores). Pick `severity` and `days_required`
+   to match when the scenario should fire:
+   - `severity="medium"` (default) → fires under `--signal-level medium` and `high`
+   - `severity="high"` → fires only under `--signal-level high`
+   - `days_required=7` → fires only on `--duration-days 7` runs
+
+2. Add a `Scenario(...)` entry to `SCENARIOS` at the appropriate position (grouped by
+   severity/category; new entries go after existing ones in the same group to avoid
+   shifting the `--anomaly-count` sampling pool).
+
+3. Populate `primary_specs` and `cascade_specs`:
+   - Each primary spec is `(component, {time_offset, metric, description, generator,
+     optionally duration_seconds/shape/shape_params})`.
+   - Each cascade spec is `(target_component, {time_offset, metric, description,
+     generator})` — no shape fields.
+   - All referenced components must be keys of `COMPONENTS`; import-time validation
+     (`_validate_scenarios_registry`) enforces this.
+
+4. Add the slug to `components_touched` — the set of components whose CSVs are
+   modified by any primary or cascade spec in this scenario.
+
+5. Run the test suite. The parametrized tests in `test_scenarios.py` and the
+   coverage checks in `test_correctness.py` will catch missing/wrong specs
+   automatically. No conftest changes are needed for a new scenario.
+
+6. Update `README.md`'s scenario catalog table with the new slug, severity,
+   `days_required`, and a one-line description.
 
 ### Adding new metrics
 
@@ -166,46 +185,37 @@ Once the slot exists, the column flows through `_natural_column()` and
 
 ### Adding new components
 
-A new component needs six lockstep entries — four in `anomaly-metric-creator.py`
-and two in `tests/conftest.py`:
+A new component needs four lockstep entries in `anomaly-metric-creator.py` and two
+in `tests/conftest.py`:
 
 In `anomaly-metric-creator.py`:
 
 1. `COMPONENTS[name]` — ordered `MetricSpec` list (up to `MAX_METRICS_PER_COMPONENT`).
 2. `DEFAULT_METRICS_PER_COMPONENT[name]` — how many metrics the new component
    emits by default.
-3. `anoms_<short>` — a module-level list of primary anomaly spec dicts (may be
-   empty if the component has only cascade-driven anomalies).
-4. `COMPONENT_PRIMARY_ANOMALIES[name]` — pair the new `anoms_*` list with the
-   component name so the runner picks it up.
 
 In `tests/conftest.py`:
 
-5. `COMPONENT_FIELDS[name]` — `(anom_attr, total_metric_count)`. Drives
-   `tests/test_registry.py` (component coverage, anomaly attribute presence,
-   metric count) and several `tests/test_correctness.py` checks.
-6. `DEFAULT_METRIC_COUNT[name]` — historic per-component default count. Drives
+3. `COMPONENT_FIELDS[name]` — total metric count (int). Drives
+   `tests/test_registry.py` (component coverage, metric count) and several
+   `tests/test_correctness.py` checks.
+4. `DEFAULT_METRIC_COUNT[name]` — historic per-component default count. Drives
    `tests/test_cli.py::test_metrics_per_component_default_matches_legacy_columns`
    and the default-emitted-subset checks in `tests/test_correctness.py`.
 
-Optional: register cascades inside `register_default_cascades()` (or the
-high-pressure variant) with the new component name.
+To add anomalies for the new component, add `Scenario` entries to `SCENARIOS` that
+reference it in `primary_specs` or `cascade_specs`, and list it in
+`components_touched`. No imperative registration functions need to be touched.
 
-Validation is split across import time and the test suite, and the difference
-matters:
+Validation is split across import time and the test suite:
 
-- **Import time** rejects key drift between `COMPONENTS` and each of
-  `DEFAULT_METRICS_PER_COMPONENT` and `COMPONENT_PRIMARY_ANOMALIES`, any catalog
-  longer than `MAX_METRICS_PER_COMPONENT`, and any default count outside
-  `[1, len(catalog)]`. These raise a clear `ValueError` before `main()` runs.
-- **Test suite only.** Import-time validation does *not* check that each
-  `COMPONENT_PRIMARY_ANOMALIES[name]` is the right list object — a paste-error
-  swap like `"authservice": anoms_cache` has matching keys and imports clean.
-  `tests/test_registry.py::test_component_primary_anomalies_keys_match_components`
-  is what catches that, using `is` identity against the expected `anoms_*`
-  attribute. Drift between `COMPONENTS` and `COMPONENT_FIELDS` /
-  `DEFAULT_METRIC_COUNT` is also test-only. Run the test suite after adding
-  or modifying a component — don't rely on import-time validation alone.
+- **Import time** rejects key drift between `COMPONENTS` and
+  `DEFAULT_METRICS_PER_COMPONENT`, any catalog longer than `MAX_METRICS_PER_COMPONENT`,
+  any default count outside `[1, len(catalog)]`, and any scenario referencing a
+  non-existent component. These raise a clear `ValueError` before `main()` runs.
+- **Test suite only.** Drift between `COMPONENTS` and `COMPONENT_FIELDS` /
+  `DEFAULT_METRIC_COUNT` is caught only by the test suite. Run it after adding or
+  modifying a component — don't rely on import-time validation alone.
 
 ### Anomaly metric validation
 
@@ -215,8 +225,7 @@ cases differently:
 - Metric is in the full `COMPONENTS[component]` catalog but trimmed by
   `--metrics-per-component` → silently dropped (intended behavior of the cap).
 - Metric (or component) is not in the full catalog → `ValueError`. This catches
-  typos in `anoms_*` lists and `register_cascade()` calls that would otherwise
-  silently disappear from all outputs.
+  typos in scenario specs that would otherwise silently disappear from all outputs.
 
 ### Changing time range
 

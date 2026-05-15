@@ -440,7 +440,7 @@ def test_anomaly_count_still_warns_for_out_of_range_specs(tmp_path):
         "--output-dir", str(out),
     )
     assert result.returncode == 0, result.stderr
-    assert "skipping" in result.stderr, (
+    assert "skipped" in result.stderr, (
         "expected stderr soft-skip warning even with --anomaly-count set; "
         f"got: {result.stderr!r}"
     )

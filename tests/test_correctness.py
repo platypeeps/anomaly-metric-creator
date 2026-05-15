@@ -145,7 +145,7 @@ def test_spec_coverage_one_day(amc, one_day_run_a):
     in_range_missing = []
     out_of_range_leaked = []
     has_out_of_range = False
-    for component, offset, metric, description in declared_specs(amc):
+    for component, offset, metric, description in declared_specs(amc, days=1, signal_level="medium"):
         key = (component, metric, description)
         if offset < amc.SECONDS_PER_DAY:
             if key not in seen:
@@ -169,7 +169,7 @@ def test_spec_coverage_seven_day(amc, seven_day_run):
     seen = {(e["component"], e["metric"], e["description"]) for e in read_manifest(seven_day_run.out_dir)}
     missing = [
         (c, o, m, d)
-        for (c, o, m, d) in declared_specs(amc)
+        for (c, o, m, d) in declared_specs(amc, days=7, signal_level="medium")
         if (c, m, d) not in seen
     ]
     assert not missing, f"Specs missing from 7-day manifest: {missing}"
@@ -326,45 +326,55 @@ def test_duplicate_anomaly_specs_raise(tmp_path):
     spec = importlib.util.spec_from_file_location("amc_dup", SCRIPT_PATH)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-    m.anoms_auth.append({
-        "time_offset": 2 * 3600 + 15 * 60,
-        "metric": "error_rate",
-        "description": "Duplicate (test injection)",
-        "generator": lambda ts, idx: 0.99,
-    })
+    # Inject a duplicate by patching _apply_scenarios to append an extra spec
+    orig_apply = m._apply_scenarios
+    def apply_with_dup(comp_anoms, cascade_reg, active):
+        orig_apply(comp_anoms, cascade_reg, active)
+        comp_anoms["authservice"].append({
+            "time_offset": 2 * 3600 + 15 * 60,
+            "metric": "error_rate",
+            "description": "Duplicate (test injection)",
+            "generator": lambda ts, idx: 0.99,
+        })
+    m._apply_scenarios = apply_with_dup
     with pytest.raises(ValueError, match="Overlapping anomaly specs"):
         m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
 
 
 def test_unknown_primary_anomaly_metric_raises(tmp_path):
-    """A typo in an anoms_* list must fail loudly, not be silently dropped by
-    the metrics-per-component filter."""
+    """A typo in a primary spec metric must fail loudly, not be silently dropped
+    by the metrics-per-component filter."""
     spec = importlib.util.spec_from_file_location("amc_unknown_primary", SCRIPT_PATH)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-    m.anoms_auth.append({
-        "time_offset": 7 * 3600,
-        "metric": "not_a_real_metric",
-        "description": "Typo (test injection)",
-        "generator": lambda ts, idx: 0.0,
-    })
+    # Inject a typo primary via _apply_scenarios patch
+    orig_apply = m._apply_scenarios
+    def apply_with_typo(comp_anoms, cascade_reg, active):
+        orig_apply(comp_anoms, cascade_reg, active)
+        comp_anoms["authservice"].append({
+            "time_offset": 7 * 3600,
+            "metric": "not_a_real_metric",
+            "description": "Typo (test injection)",
+            "generator": lambda ts, idx: 0.0,
+        })
+    m._apply_scenarios = apply_with_typo
     with pytest.raises(ValueError, match="missing from COMPONENTS"):
         m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
 
 
 def test_unknown_cascade_metric_raises(tmp_path):
-    """A typo in a register_cascade() call must also fail loudly. Without the
-    typo-vs-trim distinction this would be silently swallowed by the filter.
+    """A typo in a cascade metric must fail loudly. Without the typo-vs-trim
+    distinction this would be silently swallowed by the filter.
 
-    main() clears cascading_anomalies and calls register_default_cascades, so
-    the test wraps that function to inject the typo cascade on each call."""
+    The test patches _apply_scenarios to inject the typo cascade after the
+    registry walk, mirroring how register_cascade was tested pre-VER-104."""
     spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-    original_register = m.register_default_cascades
+    original_apply = m._apply_scenarios
 
-    def register_with_typo():
-        original_register()
+    def apply_with_typo(comp_anoms, cascade_reg, active):
+        original_apply(comp_anoms, cascade_reg, active)
         m.register_cascade(
             "database",
             7 * 3600,
@@ -373,7 +383,7 @@ def test_unknown_cascade_metric_raises(tmp_path):
             lambda ts, idx: 0.0,
         )
 
-    m.register_default_cascades = register_with_typo
+    m._apply_scenarios = apply_with_typo
     with pytest.raises(ValueError, match="missing from COMPONENTS"):
         m.main(["--seed", "42", "--duration-days", "1", "--output-dir", str(tmp_path)])
 
@@ -568,7 +578,7 @@ def test_interval_seconds_anomalies_at_correct_seconds(amc, one_day_interval5_ru
     so the rounded row's timestamp equals the spec's exact time_offset."""
     manifest = read_manifest(one_day_interval5_run.out_dir)
     by_key = {(m["component"], m["metric"], m["description"]): m for m in manifest}
-    declared = declared_specs(amc)
+    declared = declared_specs(amc, days=1, signal_level="medium")
 
     # All declared one-day specs land within 17,280 rows at interval=5 except
     # those whose rounded index would equal 17,280 — none of the current
