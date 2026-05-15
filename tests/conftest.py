@@ -41,6 +41,30 @@ def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None, extra_args=None)
     return SimpleNamespace(out_dir=out_dir, stderr=stderr_buf.getvalue())
 
 
+_OTEL_ENV_VARS = (
+    "MEZMO_OTEL_LOGS_ENDPOINT",
+    "MEZMO_OTEL_LOGS_AUTH_TOKEN",
+    "MEZMO_OTEL_METRICS_ENDPOINT",
+    "MEZMO_OTEL_METRICS_AUTH_TOKEN",
+    "MEZMO_OTEL_TRACES_ENDPOINT",
+    "MEZMO_OTEL_TRACES_AUTH_TOKEN",
+    "MEZMO_OTEL_STREAM_AUTH_SCHEME",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_otel_env(monkeypatch):
+    # Argparse defaults for OTEL endpoints/tokens read from MEZMO_OTEL_* env
+    # vars at parse time, so a developer shell with those exported (or a CI
+    # runner with them in the job env) makes --otel-enabled look valid even
+    # without explicit endpoint flags. Strip them before every test so both
+    # in-process parse_args calls and subprocess _invoke() runs see a clean
+    # slate; tests that need a value continue to set it explicitly via
+    # monkeypatch.setenv after this fixture runs.
+    for name in _OTEL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(scope="session")
 def amc():
     return _load_amc()
