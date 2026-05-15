@@ -2246,14 +2246,6 @@ def _validate_scenarios_registry() -> None:
 _validate_scenarios_registry()
 
 
-# ------------------------------------------------------------------
-# Cascading-failure registry. Same-day cascades fire under any duration;
-# multi-day cascades reach at each scenario's own ``days_required`` (e.g.
-# Day 2 for cache_leak_restart / llm_viral_surge_day2, Day 3 for
-# jwks_rotation_chaos / llm_enterprise_onboarding, and so on up to Day 7
-# for llm_second_viral). The full multi-day catalog manifests at
-# ``--duration-days 7``.
-# ------------------------------------------------------------------
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
     """Return ``{component: specs[:limit]}`` for the active --metrics-per-component.
 

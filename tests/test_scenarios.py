@@ -129,7 +129,7 @@ DEFAULT_SEVEN_DAY_HASHES = {
 # at seed 42, captured against the post-VER-104 registry-only spec ordering
 # (commit f6bd453). Locking these protects the deterministic --anomaly-count
 # sampling pool from drift in the positional order of registry specs:
-# _apply_signal_level_and_count() seeds an SeedSequence with
+# _apply_signal_level_and_count() seeds a SeedSequence with
 # ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count`` positions
 # out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
 # of per-component append ordering changes which anomalies land in the manifest.
@@ -438,10 +438,34 @@ def _extra_args_for_slug(amc, slug: str) -> list[str]:
     return extra
 
 
+def _expected_events_for_slug(amc, slug: str) -> set[tuple[str, str, str]]:
+    """Build the expected ``(component, metric, description)`` set for a slug.
+
+    Primary specs land on their declared component; cascade specs land on the
+    cascade's target component (the first element of each ``cascade_specs``
+    tuple). This matches what ``_apply_scenarios`` writes into
+    ``component_anomalies`` / ``cascading_anomalies``, which in turn is what
+    ``anomalies.csv`` records row-by-row.
+    """
+    scenario = amc.SCENARIOS[slug]
+    expected: set[tuple[str, str, str]] = set()
+    for component, spec in scenario.primary_specs:
+        expected.add((component, spec["metric"], spec["description"]))
+    for target, cascade in scenario.cascade_specs:
+        expected.add((target, cascade["metric"], cascade["description"]))
+    return expected
+
+
 def test_per_slug_isolation(amc, tmp_path):
-    """For every slug in SCENARIOS, running with ``--scenarios <slug>`` produces a
-    non-empty ``anomalies.csv`` where every row's component is in the scenario's
-    ``components_touched`` set.
+    """For every slug in SCENARIOS, running with ``--scenarios <slug>`` produces
+    a non-empty ``anomalies.csv`` whose every row matches one of that scenario's
+    own primary or cascade specs by ``(component, metric, description)``.
+
+    Checking only ``components_touched`` membership is too loose: e.g.
+    ``auth_brute_force`` and ``monday_baseline`` both touch authservice +
+    apigateway, so a leak between them would pass a components-only assertion.
+    Comparing against the slug's own ``primary_specs`` + ``cascade_specs``
+    (whose descriptions flow verbatim into the manifest) catches that.
     """
     for slug, scenario in amc.SCENARIOS.items():
         out = tmp_path / f"slug_{slug}"
@@ -455,9 +479,11 @@ def test_per_slug_isolation(amc, tmp_path):
             f"--scenarios {slug} produced empty anomalies.csv "
             f"(severity={scenario.severity}, days_required={scenario.days_required})"
         )
-        allowed = set(scenario.components_touched)
+        expected_events = _expected_events_for_slug(amc, slug)
         for row in manifest:
-            assert row["component"] in allowed, (
-                f"--scenarios {slug}: manifest row component={row['component']!r} "
-                f"is not in components_touched={sorted(allowed)!r}"
+            key = (row["component"], row["metric"], row["description"])
+            assert key in expected_events, (
+                f"--scenarios {slug}: manifest row {key!r} is not declared by "
+                f"this scenario's primary_specs or cascade_specs — looks like a "
+                f"leak from another scenario."
             )

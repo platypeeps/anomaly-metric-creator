@@ -203,7 +203,7 @@ Once the slot exists, the column flows through `_natural_column()` and
 
 ### Adding new components
 
-A new component needs four lockstep entries in `anomaly-metric-creator.py` and two
+A new component needs two lockstep entries in `anomaly-metric-creator.py` and two
 in `tests/conftest.py`:
 
 In `anomaly-metric-creator.py`:
