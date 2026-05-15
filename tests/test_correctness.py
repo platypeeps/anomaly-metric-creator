@@ -4,6 +4,7 @@ value-band sanity, and schema-driven plumbing.
 
 import csv
 import datetime
+import hashlib
 import importlib.util
 import math
 from pathlib import Path
@@ -645,3 +646,46 @@ def test_interval_seconds_default_is_one(amc):
     unchanged at that default."""
     args = amc.parse_args(["--output-dir", "ignored"])
     assert args.interval_seconds == 1.0
+
+
+# ------------------------------------------------------------------
+# VER-105: --scenarios all is exactly equivalent to no flag (default).
+# Pre-VER-102 byte hashes are locked separately in test_scenarios.py
+# (DEFAULT_ONE_DAY_HASHES / DEFAULT_SEVEN_DAY_HASHES); this test adds
+# the complementary parity check: passing --scenarios all explicitly
+# produces the same per-component CSV + manifest bytes as omitting
+# the flag, for both 1-day and 7-day runs at the documented seed 42.
+# ------------------------------------------------------------------
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _all_artifact_filenames():
+    return [f"{c}.csv" for c in COMPONENTS] + ["anomalies.csv"]
+
+
+@pytest.mark.parametrize("days", [1, 7])
+def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
+    """``--scenarios all`` must produce the same per-component CSV and
+    ``anomalies.csv`` bytes as the default (no flag). This is the
+    default-equivalence regression for VER-102: any drift between the
+    two paths would indicate a divergence in scenario resolution that
+    the existing byte-hash lock in ``test_scenarios.py`` cannot detect
+    on its own (the lock only covers no-flag).
+    """
+    out_default = tmp_path / f"default_{days}d"
+    out_explicit = tmp_path / f"explicit_all_{days}d"
+    out_default.mkdir()
+    out_explicit.mkdir()
+    run_capture(amc, out_default, days=days)
+    run_capture(amc, out_explicit, days=days, extra_args=["--scenarios", "all"])
+
+    for filename in _all_artifact_filenames():
+        default_path = out_default / filename
+        explicit_path = out_explicit / filename
+        assert default_path.exists(), f"default run missing {filename}"
+        assert explicit_path.exists(), f"--scenarios all run missing {filename}"
+        assert _sha256(default_path) == _sha256(explicit_path), (
+            f"{filename}: --scenarios all diverged from the default run bytes "
+            f"at --duration-days {days}"
+        )

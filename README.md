@@ -64,6 +64,17 @@ python3 anomaly-metric-creator.py --signal-level high --scenarios cache_db_meltd
 # Run all scenarios except LLM-related ones and the Monday baseline:
 python3 anomaly-metric-creator.py --exclude-scenarios llm_viral_surge_day2,llm_enterprise_onboarding,llm_rate_limit_fallout,llm_weekend_batch,llm_second_viral,llm_provider_outage,monday_baseline
 
+# Run the full default catalog at 7 days but drop the JWKS rotation scenario
+# (handy when you want every other multi-day scenario without re-typing the
+# full slug list):
+python3 anomaly-metric-creator.py --duration-days 7 --exclude-scenarios jwks_rotation_chaos
+
+# Selector composition order: --scenarios (allowlist) → --exclude-scenarios
+# (denylist, wins on overlap) → --signal-level (severity gate) →
+# --duration-days (duration gate) → --components (component allowlist).
+# Slugs dropped by the severity or duration gate emit a stderr WARNING line;
+# slugs disjoint from --components are dropped silently.
+
 # Cap the total anomaly count across the whole dataset (deterministic for a
 # given --seed). Useful for keeping noisy test datasets small or sweeping
 # across anomaly density:
@@ -101,8 +112,8 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `> 0`. Anomalies map to the nearest row via `round(time_offset / interval)`. |
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
-| `--scenarios`       | `all`       | Comma-separated allowlist of named scenario slugs (case-insensitive). Use `all` (default) to include every scenario in the `SCENARIOS` registry that passes the severity and duration gates. Scenarios outside the active `--signal-level` severity hierarchy or whose `days_required` exceeds `--duration-days` are dropped with a stderr `WARNING: scenario <slug> requires …` message. See the [scenario catalog](#scenario-catalog) for all known slugs. |
-| `--exclude-scenarios` | _empty_   | Comma-separated denylist of scenario slugs to subtract from the resolved set (applied after `--scenarios`). Case-insensitive. Useful for `--scenarios all --exclude-scenarios jwks_rotation_chaos` to get every scenario except one. |
+| `--scenarios`       | `all`       | Comma-separated allowlist of named scenario slugs (case-insensitive). Use `all` (default) to include every scenario in the `SCENARIOS` registry that passes the severity and duration gates. The `all` sentinel is mutually exclusive with explicit slugs (`all,foo` is rejected). Scenarios outside the active `--signal-level` severity hierarchy or whose `days_required` exceeds `--duration-days` are dropped with a stderr `WARNING: scenario <slug> requires …` message; scenarios whose `components_touched` is disjoint from `--components` are dropped silently. See the [scenario catalog](#scenario-catalog) for all known slugs and the composition order. |
+| `--exclude-scenarios` | _empty_   | Comma-separated denylist of scenario slugs to subtract from the resolved set (applied after `--scenarios`, before the severity/duration/components gates). Case-insensitive. Useful for `--exclude-scenarios jwks_rotation_chaos` to get every scenario except one; on overlap with `--scenarios`, exclusion wins. |
 | `--signal-level`    | `medium`    | Anomaly intensity level: `low`, `medium` (default), or `high`. Inclusion hierarchy: `low` only fires specs explicitly tagged `severity="low"` (today: a handful of benign Monday-morning baseline shifts) and intentionally has **no cascade fan-out** because benign baseline shifts do not realistically propagate as failures; `medium` adds the standard catalog plus its cascade fan-out (the default behavior); `high` additionally activates the high-pressure cross-component scenarios (regional failover storm, coordinated cache+DB meltdown, LLM provider outage, gateway DDoS saturation, storage layer pressure) and their cascades. |
 | `--anomaly-count`   | _unlimited_ | Optional cap on the total number of injected anomalies (primary specs + cascades) across the whole dataset. Sampling is deterministic for a given `--seed` and uses its own RNG stream so it doesn't perturb the column noise. Applied after `--signal-level` and `--components` filters. Out-of-range specs (e.g. multi-day cascades on a 1-day run) are excluded from the sampling pool. |
 | `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–8 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
@@ -261,4 +272,8 @@ python3 -m venv .venv
 ```
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
-runs full 1-day and 7-day generations end-to-end via `main()`.
+runs full 1-day and 7-day generations end-to-end via `main()`. Composition matrix
+coverage for `--scenarios` / `--exclude-scenarios` lives in
+`tests/test_scenarios.py` (selector intersection, WARNING content, `--anomaly-count`
+interaction); the canonical slug catalog is the [scenario catalog](#scenario-catalog)
+table in this file.

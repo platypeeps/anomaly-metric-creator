@@ -265,3 +265,52 @@ Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The s
 runs full 1-day and 7-day generations end-to-end via `main()` and exercises the
 vectorized `generate_component()` path. Run with `.venv/bin/pytest` after installing
 the `dev` extra (see [README.md](README.md#tests)).
+
+The canonical scenario catalog — slugs, severities, `days_required`, and
+`components_touched` — lives in the [README scenario catalog](README.md#scenario-catalog)
+table. Tests should be derived from `amc.SCENARIOS` (and parametrized off it where
+practical) rather than hard-coding slug lists, so new scenarios are automatically
+covered without test edits.
+
+### Scenario selector test layout
+
+The `--scenarios` / `--exclude-scenarios` selector matrix is covered across three
+test files:
+
+- `tests/test_args.py` — `parse_args`-only coverage: defaults, case-insensitivity,
+  whitespace tolerance, single-slug / multi-slug parsing, unknown-slug rejection.
+- `tests/test_scenarios.py` — in-process composition matrix:
+  - `test_compose_scenarios_x_signal_level_*` — severity gate drops the slug and
+    emits exactly one stderr WARNING per dropped slug.
+  - `test_compose_scenarios_x_duration_days_*` — duration gate drops the slug and
+    emits exactly one stderr WARNING per dropped slug.
+  - `test_compose_scenarios_x_components_*` — `components_touched` ∩ `--components`
+    determines survival; disjoint drops are silent (no WARNING).
+  - `test_compose_scenarios_x_exclude_scenarios_*` — exclusion wins over allowlist
+    on overlap and is silent.
+  - `test_validation_scenarios_*` / `test_validation_exclude_scenarios_*` —
+    unknown slugs and `all`+explicit-slug mixes exit non-zero with a clear error
+    message naming the offending slug and the catalog.
+  - `test_warning_*` — exactly one WARNING line per dropped slug, matching the
+    `WARNING: scenario <slug> requires …; skipped.` convention.
+  - `test_resolve_scenarios_warning_order_is_deterministic` — WARNING lines
+    appear in sorted-slug order across runs, regardless of dict iteration.
+  - `test_anomaly_count_with_scenarios_*` — `--anomaly-count` restricts the
+    sampling pool to the active scenarios and stays byte-deterministic for a
+    given `--seed`.
+  - `test_default_*_csvs_byte_identical` + `test_high_seven_day_capped_*` —
+    locked SHA-256 hashes for default and `--signal-level high
+    --anomaly-count 100` runs; protects against silent spec-order drift.
+- `tests/test_cli.py` — subprocess-level smoke for `--scenarios` and
+  `--exclude-scenarios`: help text presence, end-to-end run success on a
+  single slug, non-zero exit for unknown slugs and `all`+explicit mixes.
+- `tests/test_correctness.py` —
+  `test_scenarios_all_matches_no_flag_byte_for_byte` is the default-equivalence
+  regression: explicit `--scenarios all` must produce identical per-component
+  CSV and `anomalies.csv` bytes as omitting the flag, at 1 and 7 days.
+
+Selector composition order (locked by the VER-102 plan):
+`--scenarios` → `--exclude-scenarios` → `--signal-level` → `--duration-days`
+→ `--components`. Severity and duration drops are loud (WARNING); the
+component filter drop is silent because the user already restricted the
+allowlist on purpose.
