@@ -2785,6 +2785,13 @@ def parse_args(argv=None):
     raw_scenarios = [item.strip().lower() for item in args.scenarios.split(",") if item.strip()]
     if not raw_scenarios:
         p.error("--scenarios must contain at least one scenario slug (or 'all')")
+    if "all" in raw_scenarios and len(set(raw_scenarios)) > 1:
+        # 'all' is a sentinel meaning "every scenario in the registry"; mixing
+        # it with explicit slugs is ambiguous (does the user want only those
+        # slugs, or every scenario plus those slugs?). Reject so the intent
+        # has to be made explicit.
+        p.error("--scenarios: 'all' is mutually exclusive with explicit slugs; "
+                "pass either 'all' or a comma-separated list of slugs, not both")
     invalid_scenarios = sorted(set(raw_scenarios) - set(SCENARIOS.keys()) - {"all"})
     if invalid_scenarios:
         p.error("--scenarios contains invalid value(s): "

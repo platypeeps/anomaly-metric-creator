@@ -30,6 +30,7 @@ def test_help_lists_every_flag():
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
                  "--interval-seconds", "--emit-selection", "--components",
+                 "--scenarios", "--exclude-scenarios",
                  "--signal-level", "--anomaly-count",
                  "--metrics-per-component",
                  "--otel-enabled", "--otel-disabled",
@@ -1461,3 +1462,94 @@ def test_metrics_per_component_filters_anomalies_targeting_dropped_metrics(tmp_p
         "no authservice anomaly survived for either retained metric "
         f"(active_sessions, login_attempts); got {auth_metrics}"
     )
+
+
+# ==================================================================
+# VER-105: CLI surface coverage for --scenarios / --exclude-scenarios
+# (subprocess-level — complements parse_args-only tests in test_args.py
+# and the in-process composition tests in test_scenarios.py).
+# ==================================================================
+
+
+def test_cli_scenarios_unknown_slug_exits_nonzero(tmp_path):
+    """``--scenarios <unknown>`` exits non-zero and the error names the bad
+    slug along with the catalog. Subprocess-level so the
+    ``if __name__ == "__main__"`` path is exercised end-to-end.
+    """
+    result = _invoke(
+        "--scenarios", "not_a_scenario",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode != 0, (
+        f"expected non-zero exit; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    err = result.stderr + result.stdout
+    assert "not_a_scenario" in err, f"error must name bad slug; got: {err!r}"
+    # Catalog hint is present so the user can pick a valid slug.
+    assert "Allowed:" in err or "allowed" in err.lower(), (
+        f"error must advertise the catalog; got: {err!r}"
+    )
+
+
+def test_cli_exclude_scenarios_unknown_slug_exits_nonzero(tmp_path):
+    result = _invoke(
+        "--exclude-scenarios", "not_a_scenario",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode != 0, (
+        f"expected non-zero exit; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    err = result.stderr + result.stdout
+    assert "not_a_scenario" in err, f"error must name bad slug; got: {err!r}"
+
+
+def test_cli_scenarios_all_plus_explicit_slug_exits_nonzero(tmp_path):
+    """``--scenarios all,<slug>`` exits non-zero with a mutual-exclusion error
+    message. The 'all' sentinel cannot be combined with explicit slugs.
+    """
+    result = _invoke(
+        "--scenarios", "all,cache_leak_restart",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode != 0, (
+        f"expected non-zero exit; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    err = result.stderr + result.stdout
+    assert "mutually exclusive" in err, (
+        f"error must mention mutual exclusion; got: {err!r}"
+    )
+
+
+def test_cli_scenarios_single_slug_runs_end_to_end(tmp_path):
+    """``--scenarios <slug>`` succeeds end-to-end via the ``__main__``
+    entry: exit zero, ``anomalies.csv`` exists with at least one row.
+    Uses ``--drop-rate 0`` and a coarse interval so the run stays fast.
+    """
+    result = _invoke(
+        "--scenarios", "auth_brute_force",
+        "--duration-days", "1",
+        "--drop-rate", "0",
+        "--interval-seconds", "60",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode == 0, (
+        f"expected zero exit; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert (tmp_path / "anomalies.csv").exists()
+
+
+def test_cli_exclude_scenarios_single_slug_runs_end_to_end(tmp_path):
+    """``--exclude-scenarios <slug>`` succeeds end-to-end via the
+    ``__main__`` entry. Verifies the flag is wired through subprocess.
+    """
+    result = _invoke(
+        "--exclude-scenarios", "monday_baseline",
+        "--duration-days", "1",
+        "--drop-rate", "0",
+        "--interval-seconds", "60",
+        "--output-dir", str(tmp_path),
+    )
+    assert result.returncode == 0, (
+        f"expected zero exit; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert (tmp_path / "anomalies.csv").exists()

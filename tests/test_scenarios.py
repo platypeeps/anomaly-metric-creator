@@ -331,17 +331,30 @@ def test_resolve_scenarios_warning_order_is_deterministic(amc, tmp_path):
     """When multiple scenarios are dropped by ``--duration-days`` /
     ``--signal-level``, the stderr ``WARNING`` lines appear in sorted-slug
     order so diagnostics are reproducible across runs. Set iteration
-    order would otherwise vary by interpreter hash randomization."""
+    order would otherwise vary by interpreter hash randomization.
+
+    Computes the expected set dynamically (any registry slug whose
+    ``severity`` is outside the active hierarchy or whose
+    ``days_required`` exceeds the run's ``--duration-days``) so the test
+    stays correct as new scenarios are added.
+    """
+    days = 1
+    signal_level = "medium"
+    allowed_severities = amc.SIGNAL_LEVELS[signal_level]
     result = run_capture(
-        amc, tmp_path, days=1,
-        extra_args=["--scenarios", "all"],
+        amc, tmp_path, days=days,
+        extra_args=["--scenarios", "all", "--signal-level", signal_level],
     )
     warning_slugs = [
         line.split()[2]
         for line in result.stderr.splitlines()
         if line.startswith("WARNING: scenario ")
     ]
-    expected = sorted(THREE_MULTI_DAY_SCENARIOS)
+    expected = sorted(
+        slug for slug, scenario in amc.SCENARIOS.items()
+        if scenario.severity not in allowed_severities
+        or scenario.days_required > days
+    )
     assert warning_slugs == expected, (
         "Expected scenario WARNING lines in sorted-slug order "
         f"{expected}; got {warning_slugs}"
@@ -508,3 +521,384 @@ def test_per_slug_isolation(amc, tmp_path):
                 f"this scenario's primary_specs or cascade_specs — looks like a "
                 f"leak from another scenario."
             )
+
+
+# ==================================================================
+# VER-105: Composition matrix + validation + WARNING hardening
+# ==================================================================
+# Composition order locked by VER-102 plan:
+#   allowlist (--scenarios) → exclude (--exclude-scenarios)
+#   → severity (--signal-level) → duration (--duration-days)
+#   → components (--components)
+#
+# The tests below lock in the intersection semantics of every selector
+# pair, the validation surface (clear errors for unknown slugs, clear
+# error for the 'all'+explicit-slug mix), and the stderr WARNING
+# contract (exactly one line per dropped slug for severity/duration
+# drops; silent drop for component-disjoint scenarios).
+
+# Lightweight slug picks for the composition matrix. Locking these to
+# named scenarios (rather than discovering them dynamically) keeps each
+# test's intent obvious; the slug-vocabulary tests above already catch
+# rename/removal of any of these slugs.
+_LOW_SLUG = "monday_baseline"            # severity=low, days=1
+_MEDIUM_1D_SLUG = "auth_brute_force"     # severity=medium, days=1, touches authservice/apigateway
+_MEDIUM_MULTI_SLUG = "cache_leak_restart"  # severity=medium, days=2
+_HIGH_1D_SLUG = "gateway_ddos"           # severity=high, days=1
+
+
+def _stderr_warnings_for(slug: str, stderr: str) -> list[str]:
+    """Return every ``WARNING: scenario <slug> …`` line in ``stderr``.
+
+    The convention is one WARNING per dropped slug; this helper exists so
+    the matching is one place and is robust to any extra warnings the
+    generator may emit for unrelated reasons.
+    """
+    return [
+        line for line in stderr.splitlines()
+        if line.startswith(f"WARNING: scenario {slug} ")
+    ]
+
+
+# ------------------------------------------------------------------
+# Composition matrix
+# ------------------------------------------------------------------
+def test_compose_scenarios_x_signal_level_low_drops_medium_with_warning(amc, tmp_path):
+    """Medium-severity slug requested at ``--signal-level low`` → dropped from
+    the manifest and emits exactly one WARNING naming the slug.
+    """
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=["--scenarios", _MEDIUM_1D_SLUG, "--signal-level", "low"],
+    )
+    descriptions = {row["description"] for row in read_manifest(result.out_dir)}
+    primary_descs = {
+        spec["description"]
+        for component, spec in amc.SCENARIOS[_MEDIUM_1D_SLUG].primary_specs
+    }
+    assert not (primary_descs & descriptions), (
+        f"{_MEDIUM_1D_SLUG} primaries leaked at --signal-level low: "
+        f"{primary_descs & descriptions}"
+    )
+    warnings = _stderr_warnings_for(_MEDIUM_1D_SLUG, result.stderr)
+    assert len(warnings) == 1, (
+        f"Expected exactly one WARNING for {_MEDIUM_1D_SLUG} at --signal-level low; "
+        f"got {len(warnings)}: {warnings!r}"
+    )
+    assert "--signal-level" in warnings[0]
+
+
+def test_compose_scenarios_x_signal_level_medium_drops_high_with_warning(amc, tmp_path):
+    """High-severity slug requested at the default ``--signal-level medium`` →
+    dropped from the manifest and emits exactly one WARNING naming the slug.
+    """
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=["--scenarios", _HIGH_1D_SLUG],
+    )
+    descriptions = {row["description"] for row in read_manifest(result.out_dir)}
+    primary_descs = {
+        spec["description"]
+        for component, spec in amc.SCENARIOS[_HIGH_1D_SLUG].primary_specs
+    }
+    assert not (primary_descs & descriptions), (
+        f"{_HIGH_1D_SLUG} primaries leaked at --signal-level medium: "
+        f"{primary_descs & descriptions}"
+    )
+    warnings = _stderr_warnings_for(_HIGH_1D_SLUG, result.stderr)
+    assert len(warnings) == 1, (
+        f"Expected exactly one WARNING for {_HIGH_1D_SLUG} at --signal-level medium; "
+        f"got {len(warnings)}: {warnings!r}"
+    )
+    assert "--signal-level" in warnings[0]
+
+
+def test_compose_scenarios_x_duration_days_short_run_drops_multi_day(amc, tmp_path):
+    """Multi-day slug on a 1-day run → dropped from the manifest and emits
+    exactly one WARNING naming the slug.
+    """
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=["--scenarios", _MEDIUM_MULTI_SLUG],
+    )
+    descriptions = {row["description"] for row in read_manifest(result.out_dir)}
+    primary_descs = {
+        spec["description"]
+        for component, spec in amc.SCENARIOS[_MEDIUM_MULTI_SLUG].primary_specs
+    }
+    assert not (primary_descs & descriptions), (
+        f"{_MEDIUM_MULTI_SLUG} primaries leaked at --duration-days 1: "
+        f"{primary_descs & descriptions}"
+    )
+    warnings = _stderr_warnings_for(_MEDIUM_MULTI_SLUG, result.stderr)
+    assert len(warnings) == 1, (
+        f"Expected exactly one WARNING for {_MEDIUM_MULTI_SLUG} at --duration-days 1; "
+        f"got {len(warnings)}: {warnings!r}"
+    )
+    assert "--duration-days" in warnings[0]
+
+
+def test_compose_scenarios_x_components_disjoint_drops_silently(amc, tmp_path):
+    """Scenario whose ``components_touched`` is disjoint from ``--components``
+    is dropped silently — no WARNING is emitted because the user restricted
+    components on purpose and the scenario could not have produced output
+    under that allowlist anyway.
+
+    ``monday_baseline`` touches ``authservice`` + ``apigateway``; restricting
+    components to a disjoint set (``database``) drops it.
+    """
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=[
+            "--scenarios", _LOW_SLUG,
+            "--signal-level", "low",
+            "--components", "database",
+        ],
+    )
+    descriptions = {row["description"] for row in read_manifest(result.out_dir)}
+    primary_descs = {
+        spec["description"]
+        for component, spec in amc.SCENARIOS[_LOW_SLUG].primary_specs
+    }
+    assert not (primary_descs & descriptions), (
+        f"{_LOW_SLUG} primaries leaked under --components database: "
+        f"{primary_descs & descriptions}"
+    )
+    warnings = _stderr_warnings_for(_LOW_SLUG, result.stderr)
+    assert warnings == [], (
+        f"Component-disjoint drops must be silent; got: {warnings!r}"
+    )
+
+
+def test_compose_scenarios_x_components_overlap_survives(amc, tmp_path):
+    """When ``components_touched`` overlaps the ``--components`` allowlist,
+    the scenario survives the filter — its primaries that target the kept
+    components appear in the manifest.
+    """
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=[
+            "--scenarios", _LOW_SLUG,
+            "--signal-level", "low",
+            "--components", "authservice",
+        ],
+    )
+    descriptions = {row["description"] for row in read_manifest(result.out_dir)}
+    expected_descs = {
+        spec["description"]
+        for component, spec in amc.SCENARIOS[_LOW_SLUG].primary_specs
+        if component == "authservice"
+    }
+    assert expected_descs, (
+        f"{_LOW_SLUG} has no authservice primaries to assert against; pick "
+        f"a different overlap test slug"
+    )
+    missing = expected_descs - descriptions
+    assert not missing, (
+        f"{_LOW_SLUG} authservice primaries missing under --components authservice: {missing}"
+    )
+
+
+def test_compose_scenarios_x_exclude_scenarios_overlap_excludes_wins(amc, tmp_path):
+    """When ``--exclude-scenarios`` overlaps ``--scenarios``, the exclusion
+    wins: every slug named in both lists is dropped from the resolved set
+    and emits no WARNING (it was excluded by the user, not by a gate).
+    """
+    result = run_capture(
+        amc, tmp_path, days=7,
+        extra_args=[
+            "--scenarios", f"{_MEDIUM_MULTI_SLUG},jwks_rotation_chaos",
+            "--exclude-scenarios", _MEDIUM_MULTI_SLUG,
+        ],
+    )
+    descriptions = {row["description"] for row in read_manifest(result.out_dir)}
+
+    excluded_descs = SCENARIO_PRIMARIES_BY_SLUG[_MEDIUM_MULTI_SLUG]
+    leaked = excluded_descs & descriptions
+    assert not leaked, (
+        f"{_MEDIUM_MULTI_SLUG} survived --exclude-scenarios overlap: {leaked}"
+    )
+    # The non-excluded scenario in the allowlist still fires.
+    kept = SCENARIO_PRIMARIES_BY_SLUG["jwks_rotation_chaos"] & descriptions
+    assert kept, (
+        "jwks_rotation_chaos primaries missing even though it was in --scenarios "
+        "and not in --exclude-scenarios"
+    )
+    # Exclusion is silent — no WARNING emitted for the excluded slug.
+    assert _stderr_warnings_for(_MEDIUM_MULTI_SLUG, result.stderr) == []
+
+
+# ------------------------------------------------------------------
+# Validation errors
+# ------------------------------------------------------------------
+def test_validation_scenarios_unknown_slug_error_message(amc, capsys):
+    """``--scenarios <unknown>`` exits non-zero and the error names the bad
+    slug along with the catalog so the user can fix the typo.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        amc.parse_args([
+            "--scenarios", "not_a_scenario",
+            "--output-dir", "test_out",
+        ])
+    assert excinfo.value.code != 0
+    err = capsys.readouterr().err
+    assert "not_a_scenario" in err, f"Error must name the bad slug; got: {err!r}"
+    # Catalog should be advertised so the user can pick a valid one.
+    for slug in sorted(amc.SCENARIOS.keys()):
+        assert slug in err, (
+            f"Error message must list the full catalog (missing {slug!r}); got: {err!r}"
+        )
+
+
+def test_validation_exclude_scenarios_unknown_slug_error_message(amc, capsys):
+    """``--exclude-scenarios <unknown>`` exits non-zero and the error names
+    the bad slug along with the catalog.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        amc.parse_args([
+            "--exclude-scenarios", "not_a_scenario",
+            "--output-dir", "test_out",
+        ])
+    assert excinfo.value.code != 0
+    err = capsys.readouterr().err
+    assert "not_a_scenario" in err, f"Error must name the bad slug; got: {err!r}"
+    for slug in sorted(amc.SCENARIOS.keys()):
+        assert slug in err, (
+            f"Error message must list the full catalog (missing {slug!r}); got: {err!r}"
+        )
+
+
+def test_validation_scenarios_all_plus_explicit_slug_mutually_exclusive(amc, capsys):
+    """``--scenarios all,<slug>`` is rejected: 'all' is a sentinel meaning
+    every scenario, so mixing it with explicit slugs is ambiguous. Catches
+    both ``all,unknown`` (covered by ``..._unknown_slug_...`` above) and
+    ``all,<valid>`` (this test).
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        amc.parse_args([
+            "--scenarios", f"all,{_MEDIUM_MULTI_SLUG}",
+            "--output-dir", "test_out",
+        ])
+    assert excinfo.value.code != 0
+    err = capsys.readouterr().err
+    assert "all" in err and "mutually exclusive" in err, (
+        f"Error must call out the 'all'+explicit mutual exclusion; got: {err!r}"
+    )
+
+
+def test_validation_scenarios_all_plus_unknown_slug_fails(amc):
+    """``--scenarios all,foo`` exits non-zero. Today this is caught by the
+    mutual-exclusion guard (``all`` plus anything else); previously it was
+    caught by the unknown-slug check. Either path is acceptable — the
+    contract is that the combination is not accepted.
+    """
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--scenarios", "all,not_a_scenario",
+            "--output-dir", "test_out",
+        ])
+
+
+# ------------------------------------------------------------------
+# Out-of-range WARNING tests (exactly one line per dropped slug)
+# ------------------------------------------------------------------
+def test_warning_multi_day_slug_on_one_day_run_emits_exactly_one_line(amc, tmp_path):
+    """Multi-day slug on a 1-day run → exactly one stderr WARNING line for
+    that slug. Convention matches ``_resolve_scenarios``:
+    ``WARNING: scenario <slug> requires --duration-days >= N (current: 1); skipped.``
+    """
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=["--scenarios", _MEDIUM_MULTI_SLUG],
+    )
+    warnings = _stderr_warnings_for(_MEDIUM_MULTI_SLUG, result.stderr)
+    assert len(warnings) == 1, (
+        f"Expected exactly one WARNING for {_MEDIUM_MULTI_SLUG}; "
+        f"got {len(warnings)}: {warnings!r}"
+    )
+    expected_days = amc.SCENARIOS[_MEDIUM_MULTI_SLUG].days_required
+    line = warnings[0]
+    assert "--duration-days" in line
+    assert f">= {expected_days}" in line
+    assert "skipped" in line
+
+
+def test_warning_high_pressure_slug_at_medium_signal_emits_exactly_one_line(amc, tmp_path):
+    """High-severity slug at ``--signal-level medium`` → exactly one stderr
+    WARNING line for that slug, and zero rows from it in the manifest.
+    """
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=["--scenarios", _HIGH_1D_SLUG],
+    )
+    warnings = _stderr_warnings_for(_HIGH_1D_SLUG, result.stderr)
+    assert len(warnings) == 1, (
+        f"Expected exactly one WARNING for {_HIGH_1D_SLUG} at --signal-level medium; "
+        f"got {len(warnings)}: {warnings!r}"
+    )
+    assert "--signal-level high" in warnings[0]
+    assert "skipped" in warnings[0]
+
+    descriptions = {row["description"] for row in read_manifest(result.out_dir)}
+    primary_descs = {
+        spec["description"]
+        for component, spec in amc.SCENARIOS[_HIGH_1D_SLUG].primary_specs
+    }
+    assert not (primary_descs & descriptions)
+
+
+# ------------------------------------------------------------------
+# --anomaly-count + --scenarios interaction
+# ------------------------------------------------------------------
+def test_anomaly_count_with_scenarios_restricts_sampling_pool(amc, tmp_path):
+    """With ``--scenarios <slug> --anomaly-count N``, every manifest row
+    belongs to the selected scenario (the sampling pool is restricted to
+    that scenario's primaries + cascades). N is honoured exactly when the
+    pool is at least that large.
+    """
+    slug = _MEDIUM_MULTI_SLUG
+    out = tmp_path / "anomaly_count_scenarios"
+    out.mkdir()
+    extra = [
+        "--scenarios", slug,
+        "--anomaly-count", "5",
+        "--drop-rate", "0",
+        "--interval-seconds", "60",
+    ]
+    run = run_capture(amc, out, days=7, extra_args=extra)
+    manifest = read_manifest(out)
+    assert len(manifest) == 5, (
+        f"--anomaly-count 5 should produce exactly 5 manifest rows; got {len(manifest)}"
+    )
+    expected = _expected_events_for_slug(amc, slug)
+    for row in manifest:
+        key = (row["component"], row["metric"], row["description"])
+        assert key in expected, (
+            f"--anomaly-count + --scenarios {slug}: manifest row {key!r} is "
+            f"not declared by this scenario's primary_specs or cascade_specs"
+        )
+
+
+def test_anomaly_count_with_scenarios_is_deterministic_for_seed(amc, tmp_path):
+    """Two ``--scenarios <slug> --anomaly-count N`` runs at the same
+    ``--seed`` produce byte-identical ``anomalies.csv``. The cap RNG is
+    seeded off the same SeedSequence as ``--seed``, so the sampled
+    positions are stable.
+    """
+    slug = _MEDIUM_MULTI_SLUG
+    out_a = tmp_path / "anomaly_count_det_a"
+    out_b = tmp_path / "anomaly_count_det_b"
+    out_a.mkdir()
+    out_b.mkdir()
+    extra = [
+        "--scenarios", slug,
+        "--anomaly-count", "5",
+        "--drop-rate", "0",
+        "--interval-seconds", "60",
+    ]
+    run_capture(amc, out_a, days=7, extra_args=extra)
+    run_capture(amc, out_b, days=7, extra_args=extra)
+    assert _sha256_path(out_a / "anomalies.csv") == _sha256_path(out_b / "anomalies.csv"), (
+        "Two runs of --scenarios + --anomaly-count at the same --seed must "
+        "produce byte-identical anomalies.csv"
+    )
