@@ -326,7 +326,7 @@ def test_resolve_scenarios_warning_order_is_deterministic(amc, tmp_path):
         for line in result.stderr.splitlines()
         if line.startswith("WARNING: scenario ")
     ]
-    expected = ["cache_leak_restart", "db_disk_exhaustion", "jwks_rotation_chaos"]
+    expected = sorted(THREE_MULTI_DAY_SCENARIOS)
     assert warning_slugs == expected, (
         "Expected scenario WARNING lines in sorted-slug order "
         f"{expected}; got {warning_slugs}"
