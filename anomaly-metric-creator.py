@@ -2275,12 +2275,17 @@ def _resolve_scenarios(args) -> set[str]:
     parse_args has already validated that every slug in ``args.scenarios``
     and ``args.exclude_scenarios`` exists in ``SCENARIOS``, so this function
     never raises for unknown-slug.
+
+    Iterates the candidate slugs in sorted order so the stderr ``WARNING``
+    lines emitted on severity/duration drops appear in a deterministic
+    order across runs — set iteration order would otherwise vary and make
+    diagnostics harder to diff.
     """
     allowed_severities = SIGNAL_LEVELS[args.signal_level]
     resolved = set(args.scenarios) - set(args.exclude_scenarios)
 
     survivors: set[str] = set()
-    for slug in resolved:
+    for slug in sorted(resolved):
         scenario = SCENARIOS[slug]
         if scenario.severity not in allowed_severities:
             print(
