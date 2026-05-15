@@ -1523,7 +1523,9 @@ def test_cli_scenarios_all_plus_explicit_slug_exits_nonzero(tmp_path):
 def test_cli_scenarios_single_slug_runs_end_to_end(tmp_path):
     """``--scenarios <slug>`` succeeds end-to-end via the ``__main__``
     entry: exit zero, ``anomalies.csv`` exists with at least one row.
-    Uses ``--drop-rate 0`` and a coarse interval so the run stays fast.
+    Reading the manifest catches the case where the subprocess exits 0
+    but produces an empty manifest (e.g. a future regression that
+    silently drops every spec for the chosen slug).
     """
     result = _invoke(
         "--scenarios", "auth_brute_force",
@@ -1535,12 +1537,22 @@ def test_cli_scenarios_single_slug_runs_end_to_end(tmp_path):
     assert result.returncode == 0, (
         f"expected zero exit; stdout={result.stdout!r} stderr={result.stderr!r}"
     )
-    assert (tmp_path / "anomalies.csv").exists()
+    import csv as _csv
+    manifest_path = tmp_path / "anomalies.csv"
+    assert manifest_path.exists()
+    with open(manifest_path) as f:
+        rows = list(_csv.DictReader(f))
+    assert rows, (
+        "expected --scenarios auth_brute_force to produce at least one "
+        "manifest row; got an empty anomalies.csv"
+    )
 
 
 def test_cli_exclude_scenarios_single_slug_runs_end_to_end(tmp_path):
     """``--exclude-scenarios <slug>`` succeeds end-to-end via the
-    ``__main__`` entry. Verifies the flag is wired through subprocess.
+    ``__main__`` entry. Asserts the manifest has at least one row from
+    the non-excluded scenarios so the test proves output was actually
+    produced, not just that the file was created.
     """
     result = _invoke(
         "--exclude-scenarios", "monday_baseline",
@@ -1552,4 +1564,13 @@ def test_cli_exclude_scenarios_single_slug_runs_end_to_end(tmp_path):
     assert result.returncode == 0, (
         f"expected zero exit; stdout={result.stdout!r} stderr={result.stderr!r}"
     )
-    assert (tmp_path / "anomalies.csv").exists()
+    import csv as _csv
+    manifest_path = tmp_path / "anomalies.csv"
+    assert manifest_path.exists()
+    with open(manifest_path) as f:
+        rows = list(_csv.DictReader(f))
+    assert rows, (
+        "expected --exclude-scenarios monday_baseline to produce at least "
+        "one manifest row from the remaining scenarios; got an empty "
+        "anomalies.csv"
+    )

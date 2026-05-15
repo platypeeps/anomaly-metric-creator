@@ -560,25 +560,39 @@ def _stderr_warnings_for(slug: str, stderr: str) -> list[str]:
     ]
 
 
+def _all_scenario_descriptions(amc, slug: str) -> set[str]:
+    """Return every primary + cascade description a scenario can emit.
+
+    Dropping a scenario must remove both its primaries and its cascades
+    from the manifest. Gate tests use this so a cascade-only leak can't
+    silently slip through a primary-only assertion.
+    """
+    scenario = amc.SCENARIOS[slug]
+    descs: set[str] = set()
+    for _component, spec in scenario.primary_specs:
+        descs.add(spec["description"])
+    for _target, cascade in scenario.cascade_specs:
+        descs.add(cascade["description"])
+    return descs
+
+
 # ------------------------------------------------------------------
 # Composition matrix
 # ------------------------------------------------------------------
 def test_compose_scenarios_x_signal_level_low_drops_medium_with_warning(amc, tmp_path):
     """Medium-severity slug requested at ``--signal-level low`` → dropped from
-    the manifest and emits exactly one WARNING naming the slug.
+    the manifest (both primaries **and** cascades) and emits exactly one
+    WARNING naming the slug.
     """
     result = run_capture(
         amc, tmp_path, days=1,
         extra_args=["--scenarios", _MEDIUM_1D_SLUG, "--signal-level", "low"],
     )
     descriptions = {row["description"] for row in read_manifest(result.out_dir)}
-    primary_descs = {
-        spec["description"]
-        for component, spec in amc.SCENARIOS[_MEDIUM_1D_SLUG].primary_specs
-    }
-    assert not (primary_descs & descriptions), (
-        f"{_MEDIUM_1D_SLUG} primaries leaked at --signal-level low: "
-        f"{primary_descs & descriptions}"
+    scenario_descs = _all_scenario_descriptions(amc, _MEDIUM_1D_SLUG)
+    leaked = scenario_descs & descriptions
+    assert not leaked, (
+        f"{_MEDIUM_1D_SLUG} primaries/cascades leaked at --signal-level low: {leaked}"
     )
     warnings = _stderr_warnings_for(_MEDIUM_1D_SLUG, result.stderr)
     assert len(warnings) == 1, (
@@ -590,20 +604,18 @@ def test_compose_scenarios_x_signal_level_low_drops_medium_with_warning(amc, tmp
 
 def test_compose_scenarios_x_signal_level_medium_drops_high_with_warning(amc, tmp_path):
     """High-severity slug requested at the default ``--signal-level medium`` →
-    dropped from the manifest and emits exactly one WARNING naming the slug.
+    dropped from the manifest (both primaries **and** cascades) and emits
+    exactly one WARNING naming the slug.
     """
     result = run_capture(
         amc, tmp_path, days=1,
         extra_args=["--scenarios", _HIGH_1D_SLUG],
     )
     descriptions = {row["description"] for row in read_manifest(result.out_dir)}
-    primary_descs = {
-        spec["description"]
-        for component, spec in amc.SCENARIOS[_HIGH_1D_SLUG].primary_specs
-    }
-    assert not (primary_descs & descriptions), (
-        f"{_HIGH_1D_SLUG} primaries leaked at --signal-level medium: "
-        f"{primary_descs & descriptions}"
+    scenario_descs = _all_scenario_descriptions(amc, _HIGH_1D_SLUG)
+    leaked = scenario_descs & descriptions
+    assert not leaked, (
+        f"{_HIGH_1D_SLUG} primaries/cascades leaked at --signal-level medium: {leaked}"
     )
     warnings = _stderr_warnings_for(_HIGH_1D_SLUG, result.stderr)
     assert len(warnings) == 1, (
@@ -614,21 +626,19 @@ def test_compose_scenarios_x_signal_level_medium_drops_high_with_warning(amc, tm
 
 
 def test_compose_scenarios_x_duration_days_short_run_drops_multi_day(amc, tmp_path):
-    """Multi-day slug on a 1-day run → dropped from the manifest and emits
-    exactly one WARNING naming the slug.
+    """Multi-day slug on a 1-day run → dropped from the manifest (both
+    primaries **and** cascades) and emits exactly one WARNING naming
+    the slug.
     """
     result = run_capture(
         amc, tmp_path, days=1,
         extra_args=["--scenarios", _MEDIUM_MULTI_SLUG],
     )
     descriptions = {row["description"] for row in read_manifest(result.out_dir)}
-    primary_descs = {
-        spec["description"]
-        for component, spec in amc.SCENARIOS[_MEDIUM_MULTI_SLUG].primary_specs
-    }
-    assert not (primary_descs & descriptions), (
-        f"{_MEDIUM_MULTI_SLUG} primaries leaked at --duration-days 1: "
-        f"{primary_descs & descriptions}"
+    scenario_descs = _all_scenario_descriptions(amc, _MEDIUM_MULTI_SLUG)
+    leaked = scenario_descs & descriptions
+    assert not leaked, (
+        f"{_MEDIUM_MULTI_SLUG} primaries/cascades leaked at --duration-days 1: {leaked}"
     )
     warnings = _stderr_warnings_for(_MEDIUM_MULTI_SLUG, result.stderr)
     assert len(warnings) == 1, (
@@ -645,7 +655,8 @@ def test_compose_scenarios_x_components_disjoint_drops_silently(amc, tmp_path):
     under that allowlist anyway.
 
     ``monday_baseline`` touches ``authservice`` + ``apigateway``; restricting
-    components to a disjoint set (``database``) drops it.
+    components to a disjoint set (``database``) drops it. Both primaries and
+    cascades are checked.
     """
     result = run_capture(
         amc, tmp_path, days=1,
@@ -656,13 +667,10 @@ def test_compose_scenarios_x_components_disjoint_drops_silently(amc, tmp_path):
         ],
     )
     descriptions = {row["description"] for row in read_manifest(result.out_dir)}
-    primary_descs = {
-        spec["description"]
-        for component, spec in amc.SCENARIOS[_LOW_SLUG].primary_specs
-    }
-    assert not (primary_descs & descriptions), (
-        f"{_LOW_SLUG} primaries leaked under --components database: "
-        f"{primary_descs & descriptions}"
+    scenario_descs = _all_scenario_descriptions(amc, _LOW_SLUG)
+    leaked = scenario_descs & descriptions
+    assert not leaked, (
+        f"{_LOW_SLUG} primaries/cascades leaked under --components database: {leaked}"
     )
     warnings = _stderr_warnings_for(_LOW_SLUG, result.stderr)
     assert warnings == [], (
@@ -702,7 +710,8 @@ def test_compose_scenarios_x_components_overlap_survives(amc, tmp_path):
 def test_compose_scenarios_x_exclude_scenarios_overlap_excludes_wins(amc, tmp_path):
     """When ``--exclude-scenarios`` overlaps ``--scenarios``, the exclusion
     wins: every slug named in both lists is dropped from the resolved set
-    and emits no WARNING (it was excluded by the user, not by a gate).
+    (both primaries and cascades) and emits no WARNING (it was excluded
+    by the user, not by a gate).
     """
     result = run_capture(
         amc, tmp_path, days=7,
@@ -713,10 +722,10 @@ def test_compose_scenarios_x_exclude_scenarios_overlap_excludes_wins(amc, tmp_pa
     )
     descriptions = {row["description"] for row in read_manifest(result.out_dir)}
 
-    excluded_descs = SCENARIO_PRIMARIES_BY_SLUG[_MEDIUM_MULTI_SLUG]
+    excluded_descs = _all_scenario_descriptions(amc, _MEDIUM_MULTI_SLUG)
     leaked = excluded_descs & descriptions
     assert not leaked, (
-        f"{_MEDIUM_MULTI_SLUG} survived --exclude-scenarios overlap: {leaked}"
+        f"{_MEDIUM_MULTI_SLUG} primaries/cascades survived --exclude-scenarios overlap: {leaked}"
     )
     # The non-excluded scenario in the allowlist still fires.
     kept = SCENARIO_PRIMARIES_BY_SLUG["jwks_rotation_chaos"] & descriptions
@@ -865,7 +874,7 @@ def test_anomaly_count_with_scenarios_restricts_sampling_pool(amc, tmp_path):
         "--drop-rate", "0",
         "--interval-seconds", "60",
     ]
-    run = run_capture(amc, out, days=7, extra_args=extra)
+    run_capture(amc, out, days=7, extra_args=extra)
     manifest = read_manifest(out)
     assert len(manifest) == 5, (
         f"--anomaly-count 5 should produce exactly 5 manifest rows; got {len(manifest)}"
