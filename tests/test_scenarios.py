@@ -312,6 +312,27 @@ def test_scenarios_unknown_slug_exits_nonzero(amc, tmp_path):
         ])
 
 
+def test_resolve_scenarios_warning_order_is_deterministic(amc, tmp_path):
+    """When multiple scenarios are dropped by ``--duration-days`` /
+    ``--signal-level``, the stderr ``WARNING`` lines appear in sorted-slug
+    order so diagnostics are reproducible across runs. Set iteration
+    order would otherwise vary by interpreter hash randomization."""
+    result = run_capture(
+        amc, tmp_path, days=1,
+        extra_args=["--scenarios", "all"],
+    )
+    warning_slugs = [
+        line.split()[2]
+        for line in result.stderr.splitlines()
+        if line.startswith("WARNING: scenario ")
+    ]
+    expected = sorted(THREE_MULTI_DAY_SCENARIOS)
+    assert warning_slugs == expected, (
+        "Expected scenario WARNING lines in sorted-slug order "
+        f"{expected}; got {warning_slugs}"
+    )
+
+
 def test_exclude_scenarios_jwks_drops_only_b(amc, tmp_path):
     """``--exclude-scenarios jwks_rotation_chaos --duration-days 7`` keeps
     Scenario A + C primaries and drops Scenario B."""
