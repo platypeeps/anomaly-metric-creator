@@ -273,6 +273,15 @@ def test_scenarios_cache_leak_restart_isolates_to_a_only(amc, tmp_path):
     assert not leaked_b, f"Scenario B primaries leaked when filtered to A-only: {leaked_b}"
     assert not leaked_c, f"Scenario C primaries leaked when filtered to A-only: {leaked_c}"
 
+    leaked_b_cas = SCENARIO_CASCADES_BY_SLUG["jwks_rotation_chaos"] & descriptions
+    leaked_c_cas = SCENARIO_CASCADES_BY_SLUG["db_disk_exhaustion"] & descriptions
+    assert not leaked_b_cas, (
+        f"Scenario B cascades leaked when filtered to A-only: {leaked_b_cas}"
+    )
+    assert not leaked_c_cas, (
+        f"Scenario C cascades leaked when filtered to A-only: {leaked_c_cas}"
+    )
+
 
 def test_scenarios_db_disk_exhaustion_one_day_warns_and_drops(amc, tmp_path):
     """``--scenarios db_disk_exhaustion --duration-days 1`` emits a stderr
@@ -316,6 +325,10 @@ def test_exclude_scenarios_jwks_drops_only_b(amc, tmp_path):
     assert not leaked_b, (
         f"Scenario B primaries leaked under --exclude-scenarios jwks_rotation_chaos: {leaked_b}"
     )
+    leaked_b_cas = SCENARIO_CASCADES_BY_SLUG["jwks_rotation_chaos"] & descriptions
+    assert not leaked_b_cas, (
+        f"Scenario B cascades leaked under --exclude-scenarios jwks_rotation_chaos: {leaked_b_cas}"
+    )
 
     missing_a = SCENARIO_PRIMARIES_BY_SLUG["cache_leak_restart"] - descriptions
     missing_c = SCENARIO_PRIMARIES_BY_SLUG["db_disk_exhaustion"] - descriptions
@@ -324,6 +337,14 @@ def test_exclude_scenarios_jwks_drops_only_b(amc, tmp_path):
     )
     assert not missing_c, (
         f"Scenario C primaries missing when only B is excluded: {missing_c}"
+    )
+    missing_a_cas = SCENARIO_CASCADES_BY_SLUG["cache_leak_restart"] - descriptions
+    missing_c_cas = SCENARIO_CASCADES_BY_SLUG["db_disk_exhaustion"] - descriptions
+    assert not missing_a_cas, (
+        f"Scenario A cascades missing when only B is excluded: {missing_a_cas}"
+    )
+    assert not missing_c_cas, (
+        f"Scenario C cascades missing when only B is excluded: {missing_c_cas}"
     )
 
 
