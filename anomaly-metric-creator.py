@@ -14,6 +14,7 @@ import csv
 import datetime
 import hashlib
 import json
+import math
 import os
 import shlex
 import sys
@@ -411,12 +412,20 @@ def _build_timestamp_arrays(total_seconds: int, interval: float = 1.0):
     by construction, so re-computing them per component is pure waste.
     Row ``i`` is at ``START + i * interval`` seconds; row count is
     ``floor(total_seconds / interval)``. Strings are rendered at second
-    precision regardless of interval (matches the existing CSV format).
+    precision when ``interval >= 1.0`` and at millisecond precision otherwise
+    so adjacent sub-second rows never share a timestamp string.
     """
     n_rows = int(total_seconds // interval)
     step_us = int(round(interval * 1_000_000))
     ts_array = np.datetime64(START) + np.arange(n_rows) * np.timedelta64(step_us, "us")
-    ts_strings = np.char.replace(np.datetime_as_string(ts_array, unit="s"), "T", " ")
+    if interval < 1.0:
+        ts_strings = np.char.replace(
+            np.datetime_as_string(ts_array, unit="ms"), "T", " "
+        )
+    else:
+        ts_strings = np.char.replace(
+            np.datetime_as_string(ts_array, unit="s"), "T", " "
+        )
     return ts_array, ts_strings
 
 # ------------------------------------------------------------------
@@ -2530,7 +2539,11 @@ def parse_args(argv=None):
                    help=f"Seconds between consecutive emitted rows "
                         f"(default: {DEFAULT_INTERVAL_SECONDS}). Controls sampling "
                         f"density; timeline coverage stays --duration-days * 86400 "
-                        f"seconds. Row count per component is floor(total_seconds / interval).")
+                        f"seconds. Row count per component is floor(total_seconds / interval). "
+                        f"Must be >= 0.001 (millisecond precision floor). "
+                        f"Values >= 1.0 emit second-precision timestamps "
+                        f"(YYYY-MM-DD HH:MM:SS); values < 1.0 emit millisecond-precision "
+                        f"timestamps (YYYY-MM-DD HH:MM:SS.SSS) to keep adjacent rows unique.")
     p.add_argument("--combine", action="store_true",
                    help="After generating logs, also write a unified combined CSV "
                         "(combined_metrics_unified.csv) into --output-dir.")
@@ -2719,8 +2732,19 @@ def parse_args(argv=None):
         p.error("--duration-days must be >= 1")
     if not 0.0 <= args.drop_rate <= 1.0:
         p.error("--drop-rate must be between 0 and 1")
+    # NaN and infinity slip past plain <= 0 / < 0.001 comparisons:
+    # NaN compares false to everything, and inf is greater than every finite
+    # bound. NaN later crashes when row counts are cast to int; inf silently
+    # generates zero rows. Reject both up-front.
+    if not math.isfinite(args.interval_seconds):
+        p.error("--interval-seconds must be a finite number")
     if args.interval_seconds <= 0:
         p.error("--interval-seconds must be > 0")
+    # Sub-second intervals emit millisecond-precision timestamps. Anything
+    # finer than 1ms would collide on the rendered string and silently drop
+    # rows in the combine step (the original VER-111 failure mode).
+    if args.interval_seconds < 0.001:
+        p.error("--interval-seconds must be >= 0.001 (ms-precision floor)")
     if args.combine and args.combine_only:
         p.error("--combine and --combine-only are mutually exclusive")
     if args.inject_dst_artifact_day < 0:
@@ -2984,10 +3008,31 @@ def write_reporting_artifacts(output_dir: Path, anomaly_rows: list[dict]) -> Non
             }) + "\n")
 
 
+def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
+    """Parse a ``YYYY-MM-DD HH:MM:SS[.SSS]`` CSV timestamp into a naive datetime.
+
+    The integer-second and millisecond-precision forms emitted by
+    ``_build_timestamp_arrays`` are both accepted. Centralizing the format
+    dispatch here keeps every consumer (OTLP payload conversion, OTEL stream
+    pacing, future readers) in lockstep on the supported formats.
+    """
+    fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in timestamp else "%Y-%m-%d %H:%M:%S"
+    return datetime.datetime.strptime(timestamp, fmt)
+
+
+_UNIX_EPOCH_UTC = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+
+
 def _to_unix_nanos(timestamp: str) -> int:
-    """Convert ``YYYY-MM-DD HH:MM:SS`` timestamp strings to unix-nanoseconds."""
-    dt = datetime.datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-    return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1_000_000_000)
+    """Convert ``YYYY-MM-DD HH:MM:SS[.SSS]`` timestamp strings to unix-nanoseconds.
+
+    Uses integer arithmetic on ``timedelta`` fields rather than
+    ``datetime.timestamp() * 1e9`` so millisecond-precision inputs do not
+    accrue floating-point rounding error on the way to a nanosecond integer.
+    """
+    dt = _parse_csv_timestamp(timestamp).replace(tzinfo=datetime.timezone.utc)
+    delta = dt - _UNIX_EPOCH_UTC
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _build_otlp_trace_payload(entry: dict) -> dict:
@@ -3349,7 +3394,7 @@ def stream_otel_signals(
     sent = 0
     try:
         for row in sorted_rows:
-            cur_dt = datetime.datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M:%S")
+            cur_dt = _parse_csv_timestamp(row["timestamp"])
             if prev_dt is not None:
                 wait_seconds = max(0.0, (cur_dt - prev_dt).total_seconds() / speedup)
                 if wait_seconds > 0:
