@@ -288,8 +288,13 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         misses_col = name_to_col.get("cache_misses")
         ratio_col = name_to_col.get("hit_ratio")
         if hits_col is not None and misses_col is not None and ratio_col is not None:
-            hits = values[:, hits_col]
-            misses = values[:, misses_col]
+            # Defensive clamp: anomaly generators bypass MetricSpec.clip_min,
+            # so a future generator that drives hits/misses below zero would
+            # otherwise produce hit_ratio < 0 or > 100. Source columns already
+            # honor clip_min for the natural-noise path; this guards the
+            # derivation against override values too.
+            hits = np.maximum(values[:, hits_col], 0.0)
+            misses = np.maximum(values[:, misses_col], 0.0)
             denom = hits + misses
             with np.errstate(divide="ignore", invalid="ignore"):
                 values[:, ratio_col] = np.where(
@@ -532,8 +537,8 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("memory_util_pct", 45, 4),
     ],
     "cacheservice": [
-        MetricSpec("cache_hits", 5000, 200),
-        MetricSpec("cache_misses", 200, 20),
+        MetricSpec("cache_hits", 5000, 200, clip_min=0),
+        MetricSpec("cache_misses", 200, 20, clip_min=0),
         MetricSpec("hit_ratio", 95.0, 0.3),
         MetricSpec("avg_cache_latency_ms", 15, 1),
         MetricSpec("memory_util_pct", 70, 5),

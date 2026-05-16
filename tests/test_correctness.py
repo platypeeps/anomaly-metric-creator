@@ -275,6 +275,58 @@ def test_value_range_sanity_full_catalog(amc, one_day_full_metrics_run):
 
 
 # ------------------------------------------------------------------
+# Derived metric consistency (catches drift in the derivation pass)
+# ------------------------------------------------------------------
+def _assert_cacheservice_hit_ratio_consistent(run):
+    """``cacheservice.hit_ratio`` must equal ``100 * cache_hits /
+    (cache_hits + cache_misses)`` on every emitted row, with the zero-
+    denominator rule (``hit_ratio == 0`` when both counters are zero).
+    Tolerance accounts for the post-derivation 3-decimal rounding of the
+    source columns: small rounding error in hits/misses can shift the
+    computed ratio by < 0.01.
+    """
+    rows, header = read_component_rows(run.out_dir, "cacheservice")
+    hits_idx = header.index("cache_hits")
+    misses_idx = header.index("cache_misses")
+    ratio_idx = header.index("hit_ratio")
+
+    failures = []
+    for ts, row in rows.items():
+        hits = float(row[hits_idx])
+        misses = float(row[misses_idx])
+        ratio = float(row[ratio_idx])
+        assert hits >= 0.0, f"{ts}: cache_hits={hits} negative"
+        assert misses >= 0.0, f"{ts}: cache_misses={misses} negative"
+        assert 0.0 <= ratio <= 100.0, f"{ts}: hit_ratio={ratio} out of [0,100]"
+        denom = hits + misses
+        expected = 0.0 if denom == 0 else 100.0 * hits / denom
+        if abs(ratio - expected) > 0.01:
+            failures.append((ts, hits, misses, ratio, expected))
+    assert not failures, (
+        f"cacheservice.hit_ratio diverges from 100*hits/(hits+misses) on "
+        f"{len(failures)} rows; first: {failures[0]}"
+    )
+
+
+def test_derived_hit_ratio_consistency_one_day(one_day_run_a):
+    """Locks the derived-metric invariant on the default 1-day run: every
+    cacheservice row's hit_ratio agrees with its hits/misses counters. A
+    regression in the derivation pass (wrong column index, skipped recompute,
+    forgotten zero-denominator rule, or a new anomaly that drives hits/misses
+    negative) would land here loudly rather than silently shipping
+    physically-inconsistent telemetry."""
+    _assert_cacheservice_hit_ratio_consistent(one_day_run_a)
+
+
+def test_derived_hit_ratio_consistency_seven_day(seven_day_run):
+    """7-day variant: exercises every multi-day cacheservice anomaly spec
+    that touches cache_misses/hit_ratio so the consistency invariant holds
+    across the full anomaly catalog, not just the medium-severity 1-day
+    subset."""
+    _assert_cacheservice_hit_ratio_consistent(seven_day_run)
+
+
+# ------------------------------------------------------------------
 # Anomaly value coherence (catches wire-to-wrong-field)
 # ------------------------------------------------------------------
 def test_anomalies_match_declared_value(amc, seven_day_run):
