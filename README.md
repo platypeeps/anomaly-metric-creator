@@ -243,7 +243,7 @@ scenario, or name specific slugs to narrow or exclude them.
 
 ### Scenario catalog
 
-All 26 scenarios are listed below. The **Signal** column shows the minimum
+All 29 scenarios are listed below. The **Signal** column shows the minimum
 `--signal-level` required (`low`/`medium`/`high`). The **Days** column shows the
 minimum `--duration-days` required. Cascades are secondary specs within the same
 scenario that propagate the blast radius to additional components.
@@ -269,8 +269,11 @@ scenario that propagate the blast radius to additional components.
 | `llm_weekend_batch` | medium | 6 | Day 6 02:00 | `llm_analytics`, `objectstore`, `cacheservice`, `database` | Weekend batch analytics — 320k tokens/s, context overflow rate 8.5; cascades to object-store bandwidth saturation, DB query/CPU surge, cache hit-ratio drop. |
 | `llm_second_viral` | medium | 7 | Day 7 16:45 | `llm_analytics`, `apigateway`, `cacheservice`, `database` | Second viral event — 10× spike to 450/s, 420k tokens/s; cascades to gateway active connections, CPU, DB connections, cache errors. |
 | `regional_failover_storm` | **high** | 1 | 05:00 | `loadbalancer`, `apigateway`, `authservice`, `database`, `mqservice` | Regional failover — backend 5xx ramps to 220/s over 5 min; cascades to gateway 5xx (~30%), DB connections (~9,000), auth errors (~25%), MQ pending ~500k. |
+| `dns_provider_outage` | **high** | 1 | 11:00 | `loadbalancer`, `apigateway`, `identityprovider`, `paymentservice` | External DNS provider outage — TLS handshake errors 45/s, backend 5xx 80/s, health check failures 8/s, sustained for 6 min; cascades to OIDC callback failures (~150), payment provider 5xx (~32%), gateway error rate (~28%). Sharp step-up at T0 and step-down at T1. |
 | `cache_db_meltdown` | **high** | 1 | 11:30 | `cacheservice`, `database`, `llm_analytics`, `apigateway` | Coordinated cache memory saturation (80%→99.5%) + DB read latency (800 ms); cascades to doubled LLM latency and elevated gateway backend latency. |
+| `deploy_bad_canary_rollback` | **high** | 1 | 15:00 | `apigateway`, `authservice`, `cacheservice`, `database` | Bad canary deploy plateau — gateway error rate 18%, backend latency 480 ms, retry-driven RPS 1,100, sustained 8 min until rollback; cascades to login success (~92%), cold-cache miss spike (~1,200), DB connection pile-up (~5,800). Sharp step-up at T0 and step-down at T1. |
 | `llm_provider_outage` | **high** | 1 | 20:00 | `llm_analytics`, `apigateway`, `cacheservice` | LLM provider sustained outage — error rate 5%→60%, latency 8,000 ms; cascades to gateway 5xx (~25%) and context cache miss surge (~3,000). |
+| `network_partition_az_split` | **high** | 1 | 18:20 | `database`, `mqservice`, `apigateway`, `authservice` | Intra-region AZ network partition — DB replication lag 18 s, DB error rate 30%, MQ consumer lag 12,000, unacked messages 4,500, sustained 4 min until heal; cascades to gateway backend latency (~380 ms), auth replica read failures (~22%). Sharp step-up at T0 and step-down at T1. (Shifted from 18:00 to clear `db_stall`'s 18:00–18:20 brown-out on `database.error_rate`.) |
 | `gateway_ddos` | **high** | 1 | 16:00 | `apigateway`, `authservice`, `database`, `mqservice` | Gateway DDoS-style saturation — 5,000 RPS + CPU 99% for 10 min; cascades to auth latency (~600 ms), DB CPU (~92%), MQ pending (~800k). |
 | `storage_layer_pressure` | **high** | 1 | 22:00 | `objectstore`, `database`, `apigateway` | Storage layer pressure — PUT latency 60→700 ms + object-store 5xx 25%; cascades to DB write latency (~90 ms) and gateway error rate (~15%). |
 | `cache_leak_restart` | medium | 2 | Day 2–4 | `cacheservice`, `database`, `apigateway`, `mqservice` | Cache memory-leak death march 50%→95% over 51h → forced restart → cold-start cache miss / DB query stampede + brief gateway and MQ pressure. (Full sequence needs `--duration-days 4`; shorter multi-day runs emit the in-range portion with stderr WARNINGs for the tail.) |
