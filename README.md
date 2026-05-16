@@ -252,7 +252,7 @@ scenarios can also include `instant` primaries and cascades at different
 timestamps, which are not reflected here. Notation:
 
 - A single value (e.g. `8 min`, `4h`) for a single-span incident, regardless of shape (`step`, `sustained`, `ramp_linear`, `ramp_exp`, `sawtooth`, `sine`).
-- A multi-phase summary (e.g. `51h leak + 12h eviction cascade + 5 min restart/cold-start`) for staged incidents, in `time + phase` segments separated by ` + `.
+- A multi-phase summary (e.g. `51h leak + 12h eviction cascade + 5 min restart/cold-start`) for staged incidents — a chronologically ordered list of notable primary spans separated by ` + `. The `+` is *not* an additive total, and spans may overlap (e.g. the 12h eviction cascade above occurs inside the 51h leak window).
 - `instant` when every primary spec has `duration_seconds` omitted or `0` — each such spec expands to a single sample at its target timestamp (one row in the CSV before the `--drop-rate` mask is applied; the row may still be dropped at high drop rates).
 
 Cascades are secondary specs within the same scenario that propagate the blast
@@ -262,7 +262,7 @@ radius to additional components.
 | ---- | ------ | ---- | ---------- | -------- | ------------------ | ----------- |
 | `auth_brute_force` | medium | 1 | 02:15 | instant | `authservice`, `apigateway` | Login brute-force spike — error rate 42%, login surge 1,250/s; cascades to gateway 5xx and session invalidation. |
 | `cache_collapse` | medium | 1 | 06:00 | 4h | `cacheservice`, `database` | Cache hit-ratio collapse to 5% + slow memory leak 70%→96%; cascades to DB query spike and read latency. |
-| `api_cpu_saturation` | medium | 1 | 06:30 | 14h sustained step + 30 min sawtooth + 8 min retry storm | `apigateway`, `authservice`, `cacheservice` | Gateway CPU saturation (100%) + retry storm — cascades to auth errors and cache errors. |
+| `api_cpu_saturation` | medium | 1 | 06:30 | 30 min sawtooth + 14h sustained step + 8 min retry storm | `apigateway`, `authservice`, `cacheservice` | Gateway CPU saturation (100%) + retry storm — cascades to auth errors and cache errors. |
 | `db_stall` | medium | 1 | 00:00 | 24h disk ramp + 6h connection-leak ramp + 20 min brown-out (10 min down + 10 min recovery) | `database`, `apigateway`, `authservice`, `mqservice` | DB disk exhaustion ramp, backup-window connection pile-up, read-latency skyrocket, brown-out, nightly batch; cascades to backend latency, gateway 5xx, auth latency, MQ backpressure. |
 | `mq_jam` | medium | 1 | 12:30 | instant | `mqservice`, `apigateway`, `authservice`, `database` | Message queue DLQ blow-up + 1M pending; cascades to slow API response, DB connection buildup, slow writes, auth session write delay. |
 | `lb_flapping` | medium | 1 | 03:00 | instant | `loadbalancer`, `apigateway` | TLS cert near-expiry errors 80/s + LB health-check failures; cascades to reduced active connections. |
@@ -287,7 +287,7 @@ radius to additional components.
 | `gateway_ddos` | **high** | 1 | 16:00 | 10 min | `apigateway`, `authservice`, `database`, `mqservice` | Gateway DDoS-style saturation — 5,000 RPS + CPU 99% for 10 min; cascades to auth latency (~600 ms), DB CPU (~92%), MQ pending (~800k). |
 | `storage_layer_pressure` | **high** | 1 | 22:00 | 10 min | `objectstore`, `database`, `apigateway` | Storage layer pressure — PUT latency 60→700 ms + object-store 5xx 25%; cascades to DB write latency (~90 ms) and gateway error rate (~15%). |
 | `cache_leak_restart` | medium | 2 | Day 2–4 | 51h leak + 12h eviction cascade + 5 min restart/cold-start | `cacheservice`, `database`, `apigateway`, `mqservice` | Cache memory-leak death march 50%→95% over 51h → forced restart → cold-start cache miss / DB query stampede + brief gateway and MQ pressure. (Full sequence needs `--duration-days 4`; shorter multi-day runs emit the in-range portion with stderr WARNINGs for the tail.) |
-| `jwks_rotation_chaos` | medium | 3 | Day 3–5 | 8h JWKS latency + 6h TLS flapping + 6h login degradation + 2h cert-expiry window | `loadbalancer`, `identityprovider`, `authservice`, `apigateway`, `paymentservice`, `cacheservice` | Cert/JWKS rotation chaos — TLS flapping, JWKS latency, login degradation, hard cert expiry spike to 200/s + 800 OIDC failures; cascades across gateway, auth, payments, and cache. (Full sequence needs `--duration-days 5`.) |
+| `jwks_rotation_chaos` | medium | 3 | Day 3–5 | 6h TLS flapping + 8h JWKS latency + 6h login degradation + 2h cert-expiry window | `loadbalancer`, `identityprovider`, `authservice`, `apigateway`, `paymentservice`, `cacheservice` | Cert/JWKS rotation chaos — TLS flapping, JWKS latency, login degradation, hard cert expiry spike to 200/s + 800 OIDC failures; cascades across gateway, auth, payments, and cache. (Full sequence needs `--duration-days 5`.) |
 | `db_disk_exhaustion` | medium | 2 | Day 2–6 | 96h disk ramp + 12h I/O saturation drift + 20 min emergency log-truncation | `database`, `scheduler`, `observabilitypipeline`, `mqservice`, `apigateway` | DB disk creeps 65%→92% over 96h, write latency 12→90 ms, emergency log-truncation event; cascades to scheduler failures, observability lag, MQ backlog, elevated gateway backend latency. (Full sequence needs `--duration-days 6`.) |
 
 ## Tests
