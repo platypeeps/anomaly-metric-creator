@@ -354,7 +354,7 @@ def test_scenarios_have_specs(amc):
 
 
 def test_expected_scenario_slugs_present(amc):
-    """All 26 expected scenario slugs are present in the registry."""
+    """All 29 expected scenario slugs are present in the registry."""
     expected = {
         # Same-day medium
         "auth_brute_force", "cache_collapse", "api_cpu_saturation", "db_stall",
@@ -368,6 +368,9 @@ def test_expected_scenario_slugs_present(amc):
         # High-pressure
         "regional_failover_storm", "cache_db_meltdown", "llm_provider_outage",
         "gateway_ddos", "storage_layer_pressure",
+        # High-pressure: sharp-start/end incidents (VER-119)
+        "deploy_bad_canary_rollback", "dns_provider_outage",
+        "network_partition_az_split",
         # Multi-day cascading
         "cache_leak_restart", "jwks_rotation_chaos", "db_disk_exhaustion",
     }

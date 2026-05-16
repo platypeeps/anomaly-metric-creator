@@ -134,20 +134,20 @@ DEFAULT_SEVEN_DAY_HASHES = {
 # out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
 # of per-component append ordering changes which anomalies land in the manifest.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "a3d1592da8a66c51266f5269a67f991c2e8d74047a6c7d2151d2412efef63d5b",
-    "apigateway.csv": "5c799a684ade9c3140089ec319cc633f879d4f422c3723d03c65e892962fae21",
-    "authservice.csv": "20becf147a24bac19fd7262f7e80ea5fac3a7496a86ea7b52c3ffedda7d994bd",
-    "cacheservice.csv": "99ffcc89dbef13ba72a96cbf4bee24cc090182830880a0be5a4d4180ff6e2496",
-    "database.csv": "af08021dd8c8730c2651c33c11edfebe8d822f28bd9b3570e36c7766d14a737b",
-    "identityprovider.csv": "8a802526532b7eadbb78d39ca41c78ed3e97e520bf958b1674f944f1a8f421f2",
-    "llm_analytics.csv": "93aaaac09a6cd5df9178bbb2b1bc6c374e16ea8b0991a9a950b9a938774089c0",
-    "loadbalancer.csv": "1474640c86ad99df61c9ca4b8076be531aff62d37745719d467f39d9e1645624",
-    "mqservice.csv": "dd4bf97a7a9fdfb450098024f5f9a2b11a799b8b5111b5a48e0013ffecbc2495",
-    "objectstore.csv": "de6b370eb3122fc1c98bdb836a0784b29f206dd24a0e1787bff0f3e3365e542e",
-    "observabilitypipeline.csv": "5be5001456b0ccd23715ea31b274817158db631fcc1d70dc51f482f6ef037ee7",
-    "paymentservice.csv": "0d14c888eecd42660984a14db3a787035f9736089241ac1a9befbc8554d5dabe",
-    "scheduler.csv": "65bd4988b1951d912e36cd103c27c15c3b8d8b21a6672a267d655ab7f8e5d648",
-    "vectorstore.csv": "8fd3681f7fb799ad3efac9157bd36b64bb005a245eddec1b86bd0dbb1287ce39",
+    "anomalies.csv": "269c9b7d7db6b8692d01ca0d88767b6bf058af53a98b3bd5ae092c25945664af",
+    "apigateway.csv": "8f59a00eb62bd09abdb4cbc19e7cf7a15cd063974bda857d8b8de05d529cfed7",
+    "authservice.csv": "5b561312f13397642e56886e6fbbeeb21f09b078ff6a5abc5967ceaabf858523",
+    "cacheservice.csv": "f26e6861af534b008e1837ee6f6c8cc3db30bc4c12409336c0577079efd6927d",
+    "database.csv": "361e67875bf1cd000a753288501c5df2417a4a3e322ce7c057a552a0bcb826ef",
+    "identityprovider.csv": "7f9549edc1f597f2b25b2e20b1b14625ede70f22859ee5cc5582bc17859044e4",
+    "llm_analytics.csv": "56e975cc0e08eb315ed772c0d338ce0203b4ae88d32e20644dd5fe10c7dcb79c",
+    "loadbalancer.csv": "aa593986a8c026e828b426ef3896341b3d0a6dd7b4cb7327e363419d2cd438f1",
+    "mqservice.csv": "baf4b6b6309dec50c7ee6ea622e3bdc656dace22750d756c8a780fdff6cfbeef",
+    "objectstore.csv": "176d8a59c6e302d0ccdb4438c3c2e90c19afab7234ed163e5dc1b988c8df7f04",
+    "observabilitypipeline.csv": "d5f94960af80e52366a1ca26725cc38f8933b59c558ddf13faa0101c9dce9cc4",
+    "paymentservice.csv": "ab847d6ca94990dc254bdecd2430cec826192e85248dfd190f6d41f2023e49c3",
+    "scheduler.csv": "597e72aef32163ade0c676f64eb482376e5e48c3761e9dc44a71bb569c24933e",
+    "vectorstore.csv": "bcdb9c00e505815fa0c4ded0b8f508ae94104b8d0de06b0c309c6c1d3e27faf6",
 }
 
 
