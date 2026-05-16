@@ -96,9 +96,13 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
 - `days_required` (positive int) — minimum `--duration-days` at which any of
   the scenario's specs becomes in range. Must equal the day index (1-based) of
   the earliest `time_offset` across all primary and cascade specs;
-  `test_scenarios_days_required_valid` enforces this equality.
+  `_validate_scenarios_registry` enforces this equality at import time
+  (`test_scenarios_days_required_valid` mirrors the same invariant).
 - `category` — free-form label for documentation/filtering.
-- `components_touched` — subset of `COMPONENTS` keys; validated at import time.
+- `components_touched` — must equal exactly the set of components referenced
+  by `primary_specs` + `cascade_specs`; `_validate_scenarios_registry`
+  enforces this at import time
+  (`test_scenarios_components_touched_matches_specs` mirrors the same invariant).
 - `primary_specs` — list of `(component, spec_dict)` pairs, same dict shape as the
   anomaly injection schema above.
 - `cascade_specs` — list of `(target_component, cascade_dict)` pairs; each
@@ -141,9 +145,9 @@ both unless you intentionally want to shift the cap selection for the same seed.
    - `severity="high"` → fires only under `--signal-level high`
    - `days_required=N` → minimum `--duration-days` at which any of this scenario's
      specs becomes in range. Set this to the day index (1-based) of the earliest
-     `time_offset` across all primary and cascade specs. The
-     `test_scenarios_days_required_valid` test will catch values set too high
-     (which would silently drop in-range specs the legacy path emitted).
+     `time_offset` across all primary and cascade specs. `_validate_scenarios_registry`
+     rejects any other value at import time (and
+     `test_scenarios_days_required_valid` mirrors the invariant).
 
 2. Add a `Scenario(...)` entry to `SCENARIOS` at the appropriate position (grouped by
    severity/category; new entries go after existing ones in the same group to avoid
@@ -159,9 +163,10 @@ both unless you intentionally want to shift the cap selection for the same seed.
 
 4. Set `components_touched` to the tuple of `COMPONENTS` keys (component names, not
    the scenario slug) referenced by any primary or cascade spec in this scenario.
-   `test_scenarios_components_touched_matches_specs` asserts this set is exactly
-   equal to the components actually referenced, so it acts as the
-   `--components` filter index.
+   `_validate_scenarios_registry` rejects any drift (missing or extra entries)
+   at import time, so the tuple acts as the authoritative `--components` filter
+   index (`test_scenarios_components_touched_matches_specs` mirrors the
+   invariant).
 
 5. Run the test suite. The parametrized tests in `test_scenarios.py` and the
    coverage checks in `test_correctness.py` will catch missing/wrong specs
@@ -229,8 +234,12 @@ Validation is split across import time and the test suite:
 
 - **Import time** rejects key drift between `COMPONENTS` and
   `DEFAULT_METRICS_PER_COMPONENT`, any catalog longer than `MAX_METRICS_PER_COMPONENT`,
-  any default count outside `[1, len(catalog)]`, and any scenario referencing a
-  non-existent component. These raise a clear `ValueError` before `main()` runs.
+  any default count outside `[1, len(catalog)]`, any scenario referencing a
+  non-existent component, any `days_required` that does not equal the day index
+  (1-based) of the earliest spec offset, and any `components_touched` tuple
+  that does not equal the set of components actually referenced by the
+  scenario's primary and cascade specs. These raise a clear `ValueError`
+  before `main()` runs.
 - **Test suite only.** Drift between `COMPONENTS` and `COMPONENT_FIELDS` /
   `DEFAULT_METRIC_COUNT` is caught only by the test suite. Run it after adding or
   modifying a component — don't rely on import-time validation alone.

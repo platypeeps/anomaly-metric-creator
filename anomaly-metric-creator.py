@@ -2238,6 +2238,41 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].components_touched contains unknown "
                 f"component(s): {sorted(unknown_touched)}"
             )
+        # days_required must equal the day index (1-based) of the earliest
+        # time_offset across primary and cascade specs. Setting it too high
+        # silently drops in-range specs at the requested --duration-days;
+        # too low activates the scenario before any spec is in range.
+        offsets = [p["time_offset"] for _, p in scenario.primary_specs]
+        offsets += [c["time_offset"] for _, c in scenario.cascade_specs]
+        if offsets:
+            min_day_required = min(offsets) // SECONDS_PER_DAY + 1
+            if scenario.days_required != min_day_required:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].days_required={scenario.days_required} "
+                    f"must equal the day index of its earliest spec offset "
+                    f"({min_day_required}). Too high silently drops in-range "
+                    f"specs at the requested --duration-days; too low activates "
+                    f"the scenario before any spec is in range."
+                )
+        # components_touched must equal exactly the set of components
+        # referenced by primary_specs + cascade_specs. Under-claiming
+        # silently drops the scenario under a narrow --components allowlist;
+        # over-claiming dilutes the filter so the scenario fires for
+        # allowlists that contain none of its actual components.
+        referenced_components = {c for c, _ in scenario.primary_specs}
+        referenced_components.update(c for c, _ in scenario.cascade_specs)
+        declared_components = set(scenario.components_touched)
+        if referenced_components != declared_components:
+            missing = sorted(referenced_components - declared_components)
+            extras = sorted(declared_components - referenced_components)
+            raise ValueError(
+                f"SCENARIOS[{slug!r}].components_touched="
+                f"{sorted(declared_components)} must equal components "
+                f"referenced by specs={sorted(referenced_components)}; "
+                f"missing={missing} extras={extras}. Under-claiming silently "
+                f"drops the scenario under a narrow --components allowlist; "
+                f"over-claiming dilutes the filter."
+            )
         valid_severities = {"low", "medium", "high"}
         for component, spec in scenario.primary_specs:
             if component not in known_components:

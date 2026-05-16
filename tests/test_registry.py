@@ -177,6 +177,144 @@ def test_validate_scenarios_registry_rejects_bad_spec_severity(amc, monkeypatch)
         amc._validate_scenarios_registry()
 
 
+def test_validate_scenarios_registry_rejects_days_required_too_high(amc, monkeypatch):
+    """The import-time validator must reject ``days_required`` set above the
+    day index of the earliest spec offset.
+
+    Setting it too high silently drops in-range specs because
+    ``_resolve_scenarios`` filters the scenario out at the requested
+    ``--duration-days`` before any spec is even considered, with no per-spec
+    stderr warning.
+    """
+    good_component = next(iter(amc.COMPONENTS.keys()))
+    primary_spec = {
+        "time_offset": 0,  # day index 1
+        "metric": amc.COMPONENTS[good_component][0].name,
+        "description": "test-only synthetic spec",
+        "generator": lambda ts, idx: 1.0,
+    }
+    bad_scenario = amc.Scenario(
+        id="synthetic_days_too_high",
+        name="Synthetic days_required-too-high scenario",
+        severity="medium",
+        days_required=2,  # too high — earliest offset lands on day 1
+        category="same_day",
+        components_touched=(good_component,),
+        primary_specs=((good_component, primary_spec),),
+        cascade_specs=(),
+    )
+    patched = dict(amc.SCENARIOS)
+    patched["synthetic_days_too_high"] = bad_scenario
+    monkeypatch.setattr(amc, "SCENARIOS", patched)
+    with pytest.raises(ValueError, match=r"synthetic_days_too_high.*days_required"):
+        amc._validate_scenarios_registry()
+
+
+def test_validate_scenarios_registry_rejects_days_required_too_low(amc, monkeypatch):
+    """The import-time validator must reject ``days_required`` set below the
+    day index of the earliest spec offset.
+
+    Setting it too low activates the scenario at durations where no spec is
+    yet in range, producing empty scenario output with no warning.
+    """
+    good_component = next(iter(amc.COMPONENTS.keys()))
+    primary_spec = {
+        "time_offset": 3 * amc.SECONDS_PER_DAY,  # day index 4
+        "metric": amc.COMPONENTS[good_component][0].name,
+        "description": "test-only synthetic spec",
+        "generator": lambda ts, idx: 1.0,
+    }
+    bad_scenario = amc.Scenario(
+        id="synthetic_days_too_low",
+        name="Synthetic days_required-too-low scenario",
+        severity="medium",
+        days_required=1,  # too low — earliest offset lands on day 4
+        category="multi_day",
+        components_touched=(good_component,),
+        primary_specs=((good_component, primary_spec),),
+        cascade_specs=(),
+    )
+    patched = dict(amc.SCENARIOS)
+    patched["synthetic_days_too_low"] = bad_scenario
+    monkeypatch.setattr(amc, "SCENARIOS", patched)
+    with pytest.raises(ValueError, match=r"synthetic_days_too_low.*days_required"):
+        amc._validate_scenarios_registry()
+
+
+def test_validate_scenarios_registry_rejects_components_touched_missing(amc, monkeypatch):
+    """The import-time validator must reject ``components_touched`` that
+    under-claims relative to the scenario's primary/cascade specs.
+
+    A missing component silently drops the scenario under a narrow
+    ``--components`` allowlist because ``_resolve_scenarios`` short-circuits
+    when the touched set is disjoint from the allowlist.
+    """
+    keys = list(amc.COMPONENTS.keys())
+    primary_component = keys[0]
+    cascade_target = keys[1]
+    primary_spec = {
+        "time_offset": 0,
+        "metric": amc.COMPONENTS[primary_component][0].name,
+        "description": "test-only synthetic spec",
+        "generator": lambda ts, idx: 1.0,
+    }
+    cascade_spec = {
+        "time_offset": 60,
+        "metric": amc.COMPONENTS[cascade_target][0].name,
+        "description": "test-only synthetic cascade",
+        "generator": lambda ts, idx: 1.0,
+    }
+    bad_scenario = amc.Scenario(
+        id="synthetic_components_missing",
+        name="Synthetic components_touched-missing scenario",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=(primary_component,),  # missing cascade_target
+        primary_specs=((primary_component, primary_spec),),
+        cascade_specs=((cascade_target, cascade_spec),),
+    )
+    patched = dict(amc.SCENARIOS)
+    patched["synthetic_components_missing"] = bad_scenario
+    monkeypatch.setattr(amc, "SCENARIOS", patched)
+    with pytest.raises(ValueError, match=r"synthetic_components_missing.*components_touched"):
+        amc._validate_scenarios_registry()
+
+
+def test_validate_scenarios_registry_rejects_components_touched_extra(amc, monkeypatch):
+    """The import-time validator must reject ``components_touched`` that
+    over-claims relative to the scenario's primary/cascade specs.
+
+    An extra component dilutes the ``--components`` filter and causes the
+    scenario to fire under allowlists that contain none of its actual
+    components, producing no anomalies but counting toward the active pool.
+    """
+    keys = list(amc.COMPONENTS.keys())
+    primary_component = keys[0]
+    unused_extra = keys[1]
+    primary_spec = {
+        "time_offset": 0,
+        "metric": amc.COMPONENTS[primary_component][0].name,
+        "description": "test-only synthetic spec",
+        "generator": lambda ts, idx: 1.0,
+    }
+    bad_scenario = amc.Scenario(
+        id="synthetic_components_extra",
+        name="Synthetic components_touched-extra scenario",
+        severity="medium",
+        days_required=1,
+        category="same_day",
+        components_touched=(primary_component, unused_extra),  # unused_extra is not referenced
+        primary_specs=((primary_component, primary_spec),),
+        cascade_specs=(),
+    )
+    patched = dict(amc.SCENARIOS)
+    patched["synthetic_components_extra"] = bad_scenario
+    monkeypatch.setattr(amc, "SCENARIOS", patched)
+    with pytest.raises(ValueError, match=r"synthetic_components_extra.*components_touched"):
+        amc._validate_scenarios_registry()
+
+
 def test_scenarios_all_components_touched_exist(amc):
     """Every component in components_touched must exist in COMPONENTS."""
     known = set(amc.COMPONENTS.keys())
