@@ -19,12 +19,12 @@ from conftest import read_manifest, run_capture
 SCENARIO_A_PRIMARIES = [
     ("cacheservice", "memory_util_pct",
      "Cache memory leak — slow growth 50%→95% over 51h", 2),
-    ("cacheservice", "hit_ratio",
-     "Cache eviction cascade — hit ratio decline 88%→60% over 12h", 3),
+    ("cacheservice", "cache_misses",
+     "Cache eviction cascade — misses ramp 682→3,333 (hit ratio 88%→60%) over 12h", 3),
     ("cacheservice", "memory_util_pct",
      "Cache forced restart — memory reset to 55%", 4),
-    ("cacheservice", "hit_ratio",
-     "Cache cold start after restart — hit ratio 5%", 4),
+    ("cacheservice", "cache_misses",
+     "Cache cold start after restart — misses ~95,000 (hit ratio ~5%)", 4),
     ("cacheservice", "error_rate",
      "Cache warm-up errors during restart", 4),
 ]

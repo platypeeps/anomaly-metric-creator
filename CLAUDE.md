@@ -59,6 +59,20 @@ value = (base + jitter * randn(n)) * multiplier(ts, elapsed) + additive(ts, elap
 one pass. Use `_daily_sine(amplitude)` for natural 24h variation and
 `_llm_business_hours` for the LLM business-hours envelope.
 
+### Derived metrics
+
+Some columns are physically derived from siblings and must stay consistent with
+them under every anomaly override. `generate_component()` enforces this after the
+natural-value pass and the anomaly override loop, before rounding/formatting:
+
+- `cacheservice.hit_ratio = 100 * cache_hits / (cache_hits + cache_misses)`
+  (zero-denominator → 0). Anomalies that want to influence the cache hit ratio
+  must therefore drive `cache_hits` and/or `cache_misses`, not `hit_ratio`
+  directly; otherwise the override is silently overwritten by the derivation.
+
+When adding a new derived-metric rule, keep it inside `generate_component()` so
+the recomputation runs once per column, after every override has settled.
+
 ### Anomaly injection schema
 
 Anomaly specs are dicts with:

@@ -64,6 +64,57 @@ _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
 anomalies = []
 cascading_anomalies = {}  # {component_name: [anomaly_specs]}
 
+# Derived-metric registry. Each entry maps a component to (derivation_fn,
+# tuple_of_derived_metric_names). generate_component() looks the component
+# up in this dict after the natural-value pass and the anomaly override
+# loop; if a function is registered, it recomputes the derived column(s)
+# from their sibling columns so the emitted CSV stays self-consistent.
+# Anomalies that want to influence a derived column must therefore target
+# its source column(s), not the derived column itself.
+#
+# DERIVATIONS is the single source of truth: ``DERIVED_METRICS`` is
+# computed from it below, so the test-side exemption set and the
+# derivation pass can never drift apart. A new derived column requires
+# registering both the function and the column name here in lockstep.
+def _derive_cacheservice(values: "np.ndarray", name_to_col: dict[str, int]) -> None:
+    """Recompute ``hit_ratio`` from ``cache_hits`` / ``cache_misses``.
+
+    Clamps the source columns to ``>= 0`` in place first so the emitted CSV
+    values agree with the derived ratio. Anomaly generators bypass
+    ``MetricSpec.clip_min``, so without the in-place clamp a future
+    generator that drove the counters negative would yield emitted source
+    values < 0 alongside a derivation computed from clamped intermediates —
+    breaking the very consistency invariant this pass exists to enforce.
+    """
+    hits_col = name_to_col.get("cache_hits")
+    misses_col = name_to_col.get("cache_misses")
+    ratio_col = name_to_col.get("hit_ratio")
+    if hits_col is None or misses_col is None or ratio_col is None:
+        return
+    np.maximum(values[:, hits_col], 0.0, out=values[:, hits_col])
+    np.maximum(values[:, misses_col], 0.0, out=values[:, misses_col])
+    hits = values[:, hits_col]
+    misses = values[:, misses_col]
+    denom = hits + misses
+    with np.errstate(divide="ignore", invalid="ignore"):
+        values[:, ratio_col] = np.where(
+            denom > 0, 100.0 * hits / denom, 0.0
+        )
+
+
+DERIVATIONS: dict[
+    str,
+    tuple[Callable[["np.ndarray", dict[str, int]], None], tuple[str, ...]],
+] = {
+    "cacheservice": (_derive_cacheservice, ("hit_ratio",)),
+}
+
+DERIVED_METRICS: set[tuple[str, str]] = {
+    (component, metric)
+    for component, (_, metrics) in DERIVATIONS.items()
+    for metric in metrics
+}
+
 # ------------------------------------------------------------------
 # Per-metric schema. One MetricSpec per CSV column per component.
 # ------------------------------------------------------------------
@@ -267,6 +318,17 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 "metric": aspec["metric"],
                 "description": aspec["description"],
             })
+
+    # Derived metrics: rebuild self-consistent relationships after natural and
+    # anomaly values have settled. The registered function recomputes the
+    # derived column(s) from their sibling columns; without this pass,
+    # anomalies that drove only a source column (or that overrode a derived
+    # column in isolation) would leave the columns internally inconsistent —
+    # exactly the consistency anomaly real telemetry would flag.
+    derivation = DERIVATIONS.get(component_name)
+    if derivation is not None:
+        derive_fn, _ = derivation
+        derive_fn(values, name_to_col)
 
     np.round(values, 3, out=values)
 
@@ -496,7 +558,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("login_success_rate", 97.0, 0.5),
         MetricSpec("avg_auth_latency_ms", 110, 5),
         MetricSpec("cpu_util_pct", 20, 3),
-        MetricSpec("error_rate", 0.2, 0.05),
+        MetricSpec("error_rate", 0.2, 0.05, clip_min=0),
         # Supplemental metrics
         MetricSpec("avg_session_duration_s", 900, 30, clip_min=0),
         MetricSpec("password_reset_per_min", 3, 1, clip_min=0),
@@ -504,12 +566,12 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("memory_util_pct", 45, 4),
     ],
     "cacheservice": [
-        MetricSpec("cache_hits", 5000, 200),
-        MetricSpec("cache_misses", 200, 20),
+        MetricSpec("cache_hits", 5000, 200, clip_min=0),
+        MetricSpec("cache_misses", 200, 20, clip_min=0),
         MetricSpec("hit_ratio", 95.0, 0.3),
         MetricSpec("avg_cache_latency_ms", 15, 1),
         MetricSpec("memory_util_pct", 70, 5),
-        MetricSpec("error_rate", 0.05, 0.02),
+        MetricSpec("error_rate", 0.05, 0.02, clip_min=0),
         # Supplemental metrics
         MetricSpec("evictions_per_sec", 8, 3, clip_min=0),
         MetricSpec("expired_keys_per_sec", 12, 4, clip_min=0),
@@ -522,7 +584,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("backend_latency_ms", 90, 8),
         MetricSpec("active_connections", 1200, 60),
         MetricSpec("cpu_util_pct", 22, 4),
-        MetricSpec("error_rate", 0.15, 0.04),
+        MetricSpec("error_rate", 0.15, 0.04, clip_min=0),
         # Supplemental metrics
         MetricSpec("rate_limited_per_sec", 4, 2, clip_min=0),
         MetricSpec("tls_handshakes_per_sec", 140, 15, clip_min=0),
@@ -535,7 +597,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("write_latency_ms", 12, 3),
         MetricSpec("queries_per_sec", 25000, 2000),
         MetricSpec("cpu_util_pct", 18, 3),
-        MetricSpec("error_rate", 0.1, 0.05),
+        MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
         # disk_used_pct trends slightly upward across the day under natural
         # conditions; the disk-exhaustion ramp anomaly drives it to 100%.
         # ``std=0`` keeps this column out of the shared RNG stream so adding
@@ -554,7 +616,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("avg_latency_ms", 70, 5),
         MetricSpec("dead_letter_queue", 5, 1),
         MetricSpec("mem_util_pct", 55, 4),
-        MetricSpec("error_rate", 0.08, 0.02),
+        MetricSpec("error_rate", 0.08, 0.02, clip_min=0),
         # Supplemental metrics
         MetricSpec("publish_rate_per_sec", 4500, 200, clip_min=0),
         MetricSpec("consumer_lag", 300, 80, clip_min=0),
@@ -803,9 +865,9 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("cacheservice", {
                 "time_offset": 6*3600,
-                "metric": "hit_ratio",
-                "description": "Cache hit ratio drops to 5 %",
-                "generator": lambda ts, idx: 5.0,
+                "metric": "cache_misses",
+                "description": "Cache miss spike to 95,000 — derives hit ratio ~5%",
+                "generator": lambda ts, idx: 95000.0,
             }),
             ("cacheservice", {
                 "time_offset": 17*3600,
@@ -1586,9 +1648,9 @@ SCENARIOS: dict[str, Scenario] = {
             }),
             ("cacheservice", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 45,
-                "metric": "hit_ratio",
-                "description": "Cascading: Batch job overwhelms cache with cold data",
-                "generator": lambda ts, idx: 22.0 + np.random.normal(0, 3),
+                "metric": "cache_misses",
+                "description": "Cascading: Batch job overwhelms cache — misses ~17,700 (hit ratio ~22%)",
+                "generator": lambda ts, idx: 17727.0 + np.random.normal(0, 800),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -2105,10 +2167,10 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 2*SECONDS_PER_DAY + 12*3600,       # Day 3 12:00
                 "duration_seconds": 12*3600,
                 "shape": "ramp_linear",
-                "shape_params": {"start": 88.0, "end": 60.0},
-                "metric": "hit_ratio",
-                "description": "Cache eviction cascade — hit ratio decline 88%→60% over 12h",
-                "generator": lambda ts, idx: 88.0,
+                "shape_params": {"start": 682.0, "end": 3333.0},
+                "metric": "cache_misses",
+                "description": "Cache eviction cascade — misses ramp 682→3,333 (hit ratio 88%→60%) over 12h",
+                "generator": lambda ts, idx: 682.0,
             }),
             ("cacheservice", {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600,        # Day 4 03:00 — forced restart
@@ -2122,9 +2184,9 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600,
                 "duration_seconds": 300,
                 "shape": "step",
-                "metric": "hit_ratio",
-                "description": "Cache cold start after restart — hit ratio 5%",
-                "generator": lambda ts, idx: 5.0,
+                "metric": "cache_misses",
+                "description": "Cache cold start after restart — misses ~95,000 (hit ratio ~5%)",
+                "generator": lambda ts, idx: 95000.0,
             }),
             ("cacheservice", {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600,
@@ -2494,6 +2556,36 @@ def _validate_scenarios_registry() -> None:
 
 
 _validate_scenarios_registry()
+
+
+def _validate_derivations_registry() -> None:
+    """Import-time invariants for ``DERIVATIONS``.
+
+    Catches drift between the derivation registry and ``COMPONENTS``: a
+    misnamed component or column would silently no-op (the dict lookup
+    misses) or silently mis-target (the name lookup in the derivation
+    misses), and the test-side ``DERIVED_METRICS`` exemption would skip a
+    column that no longer exists. Failing fast at import time forces
+    these to stay in lockstep.
+    """
+    known_components = set(COMPONENTS.keys())
+    for component, (_, metrics) in DERIVATIONS.items():
+        if component not in known_components:
+            raise ValueError(
+                f"DERIVATIONS references unknown component {component!r}; "
+                f"expected one of {sorted(known_components)}"
+            )
+        known_metrics = {spec.name for spec in COMPONENTS[component]}
+        unknown_metrics = sorted(set(metrics) - known_metrics)
+        if unknown_metrics:
+            raise ValueError(
+                f"DERIVATIONS[{component!r}] declares derived metrics "
+                f"{unknown_metrics} that are not in COMPONENTS[{component!r}]; "
+                f"register the MetricSpec first or correct the name."
+            )
+
+
+_validate_derivations_registry()
 
 
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
