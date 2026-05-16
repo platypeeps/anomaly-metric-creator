@@ -109,7 +109,7 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--duration-days`   | `1`         | Days to generate. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2, `jwks_rotation_chaos` at 3, `llm_second_viral` at 7); see the [scenario catalog](#scenario-catalog) for per-scenario values. Pass `--duration-days 7` to unlock the full multi-day catalog. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
-| `--drop-rate`       | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
+| `--drop-rate`       | `0.0005`    | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Simulated packet loss. |
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `> 0`. Anomalies map to the nearest row via `round(time_offset / interval)`. |
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
@@ -153,8 +153,12 @@ Written to `--output-dir` (default `iot_logs/`):
 - `paymentservice.csv`
 - `identityprovider.csv`
 - `observabilitypipeline.csv`
-- `anomalies.csv` — manifest of injected anomalies whose span anchor row
-  (`span_idx == 0`) survives the packet-loss mask, with columns:  
+- `anomalies.csv` — written alongside the per-component CSVs whenever
+  `--emit-selection` includes `metrics` (the default); explicitly deleted
+  from `--output-dir` on runs that omit `metrics` (e.g.
+  `--emit-selection logs,traces`). Manifest of injected anomalies whose
+  span anchor row (`span_idx == 0`) survives the packet-loss mask, with
+  columns:  
   `timestamp, component, metric, description`.
   - The packet-loss mask (`--drop-rate`) is applied per row, not per anomaly.
     A dropped row is omitted entirely from the per-component CSV (no row is
