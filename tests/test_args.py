@@ -106,6 +106,36 @@ def test_parse_args_otel_no_verbose_explicit_off(amc):
     assert args.otel_verbose is False
 
 
+def test_parse_args_otel_stream_protocol_default_is_protobuf(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_STREAM_PROTOCOL", raising=False)
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_stream_protocol == "protobuf"
+
+
+def test_parse_args_otel_stream_protocol_env_var_overrides_default(amc, monkeypatch):
+    monkeypatch.setenv("MEZMO_OTEL_STREAM_PROTOCOL", "json")
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_stream_protocol == "json"
+
+
+def test_parse_args_otel_stream_protocol_cli_overrides_env_var(amc, monkeypatch):
+    monkeypatch.setenv("MEZMO_OTEL_STREAM_PROTOCOL", "json")
+    args = amc.parse_args([
+        "--otel-stream-protocol", "protobuf",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_stream_protocol == "protobuf"
+
+
+def test_parse_args_otel_stream_protocol_invalid_env_var_fails(amc, monkeypatch):
+    monkeypatch.setenv("MEZMO_OTEL_STREAM_PROTOCOL", "xml")
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+            "--output-dir", "test_out",
+        ])
+
+
 def test_parse_args_components_default_is_all(amc):
     args = amc.parse_args(["--output-dir", "test_out"])
     assert args.components == set(amc.COMPONENTS.keys())
