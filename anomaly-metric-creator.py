@@ -2568,7 +2568,8 @@ def parse_args(argv=None):
     p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
                    help=f"Directory to write CSV files into (default: {DEFAULT_OUTPUT_DIR}).")
     p.add_argument("--drop-rate", type=float, default=DEFAULT_DROP_RATE,
-                   help=f"Probability per row of writing a blank line to simulate packet loss "
+                   help=f"Per-row probability of dropping the row entirely from the per-component CSV "
+                        f"(no row is emitted for that timestamp). Simulated packet loss "
                         f"(default: {DEFAULT_DROP_RATE}).")
     p.add_argument("--interval-seconds", type=float, default=DEFAULT_INTERVAL_SECONDS,
                    help=f"Seconds between consecutive emitted rows "
