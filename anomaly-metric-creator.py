@@ -14,6 +14,7 @@ import csv
 import datetime
 import hashlib
 import json
+import math
 import os
 import shlex
 import sys
@@ -2731,6 +2732,12 @@ def parse_args(argv=None):
         p.error("--duration-days must be >= 1")
     if not 0.0 <= args.drop_rate <= 1.0:
         p.error("--drop-rate must be between 0 and 1")
+    # NaN and infinity slip past plain <= 0 / < 0.001 comparisons:
+    # NaN compares false to everything, and inf is greater than every finite
+    # bound. NaN later crashes when row counts are cast to int; inf silently
+    # generates zero rows. Reject both up-front.
+    if not math.isfinite(args.interval_seconds):
+        p.error("--interval-seconds must be a finite number")
     if args.interval_seconds <= 0:
         p.error("--interval-seconds must be > 0")
     # Sub-second intervals emit millisecond-precision timestamps. Anything
@@ -3013,10 +3020,19 @@ def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
     return datetime.datetime.strptime(timestamp, fmt)
 
 
+_UNIX_EPOCH_UTC = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+
+
 def _to_unix_nanos(timestamp: str) -> int:
-    """Convert ``YYYY-MM-DD HH:MM:SS[.SSS]`` timestamp strings to unix-nanoseconds."""
-    dt = _parse_csv_timestamp(timestamp)
-    return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1_000_000_000)
+    """Convert ``YYYY-MM-DD HH:MM:SS[.SSS]`` timestamp strings to unix-nanoseconds.
+
+    Uses integer arithmetic on ``timedelta`` fields rather than
+    ``datetime.timestamp() * 1e9`` so millisecond-precision inputs do not
+    accrue floating-point rounding error on the way to a nanosecond integer.
+    """
+    dt = _parse_csv_timestamp(timestamp).replace(tzinfo=datetime.timezone.utc)
+    delta = dt - _UNIX_EPOCH_UTC
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _build_otlp_trace_payload(entry: dict) -> dict:

@@ -1,8 +1,12 @@
 # anomaly-metric-creator
 
 `anomaly-metric-creator.py` generates synthetic IoT-style metric logs for a SaaS stack
-with built-in anomalies. It writes one CSV per component plus an `anomalies.csv`
-manifest that catalogues every anomaly the run injected. Output is deterministic for a
+with built-in anomalies. By default (`--emit-selection metrics,logs,traces`) it
+writes one CSV per component plus an `anomalies.csv` manifest that catalogues each
+injected anomaly whose span anchor row survives the `--drop-rate` packet-loss mask;
+runs that omit `metrics` (e.g. `--emit-selection logs,traces`) skip the per-component
+CSVs and delete `anomalies.csv` from `--output-dir`. See [Output files](#output-files)
+for the exact emit-selection and packet-loss gating. Output is deterministic for a
 given `--seed`.
 
 By default the script emits **one day** of second-by-second metrics for thirteen
@@ -108,7 +112,7 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--duration-days`   | `1`         | Days to generate. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2, `jwks_rotation_chaos` at 3, `llm_second_viral` at 7); see the [scenario catalog](#scenario-catalog) for per-scenario values. Pass `--duration-days 7` to unlock the full multi-day catalog. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
-| `--drop-rate`       | `0.0005`    | Per-row probability of emitting a blank line (simulated packet loss). |
+| `--drop-rate`       | `0.0005`    | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Simulated packet loss. |
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. |
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
@@ -152,10 +156,26 @@ Written to `--output-dir` (default `iot_logs/`):
 - `paymentservice.csv`
 - `identityprovider.csv`
 - `observabilitypipeline.csv`
-- `anomalies.csv` — manifest of every injected anomaly with recovery-aware columns:  
-  `timestamp, component, metric, description, step_note, step_group, next_step`.
-  - `step_note`: populated with `recovered-missing-step` when an anomaly could not be placed at the requested row due to simulated packet loss and was recovered to the next available row.
-  - `step_group` / `next_step`: optional chain metadata that threads multi-step scenarios.
+- `anomalies.csv` — written alongside the per-component CSVs whenever
+  `--emit-selection` includes `metrics` (the default); explicitly deleted
+  from `--output-dir` on runs that omit `metrics` (e.g.
+  `--emit-selection logs,traces`). Manifest of injected anomalies whose
+  span anchor row (`span_idx == 0`) survives the packet-loss mask, with
+  columns:  
+  `timestamp, component, metric, description`.
+  - The packet-loss mask (`--drop-rate`) is applied per row, not per anomaly.
+    A dropped row is omitted entirely from the per-component CSV (no row is
+    emitted for that timestamp), and contributes no influence to neighboring
+    rows. For single-row anomalies, a dropped target row therefore produces
+    no per-component CSV row and no manifest entry. For shaped or
+    `duration_seconds` spans, only the dropped rows within the span lose
+    their override — any surviving rows in the span still receive the
+    anomalous value in the per-component CSV.
+  - A manifest entry is written only when the **first** row of the span
+    (`span_idx == 0`) is kept. If that anchor row is dropped, no manifest
+    entry is produced even when later rows in the same span survive and
+    carry the anomaly value. The generator never slides anomalies forward
+    to a later timestamp.
 - `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
 - `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
@@ -200,11 +220,18 @@ row or span. Optional fields support span realism:
 - `shape` — `step` (default), `ramp_linear`, `ramp_exp`, `sustained`, `sawtooth`, `sine`
 - `shape_params` — shape-specific parameters (for example `start/end`, `period_s`, `amplitude`, `midline`)
 
-Each injected row is emitted to the relevant per-component CSV and catalogued in
-`anomalies.csv`. If a requested anomaly row is dropped by the packet-loss mask, the generator
-recovers by emitting that anomaly on the next available timestamp for the same component/metric
-and marks that manifest row with `step_note=recovered-missing-step`. This preserves follow-up
-chain visibility (`next_step`) even under packet-loss scenarios.
+Surviving injected rows are emitted to the relevant per-component CSV, and
+the anomaly is catalogued in `anomalies.csv` when the span's first row
+(`span_idx == 0`) is kept. The packet-loss mask (`--drop-rate`) is applied
+per row, not per anomaly: each row in a shaped or `duration_seconds` span is
+masked independently. Dropped rows are omitted entirely from the per-component
+CSV (no row is emitted for that timestamp) and exert no influence on
+neighbors, while surviving rows in the same span still receive the anomalous
+value. The `anomalies.csv` entry is written only when the first row of the
+span (`span_idx == 0`) is kept; if that anchor row is dropped, no manifest
+entry is produced even when later rows in the span survive and carry the
+anomaly value. The generator never slides anomalies forward to a later
+timestamp.
 
 Specs whose `time_offset` falls outside `[0, total_seconds)` — or whose nearest row index
 falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are soft-skipped with a
@@ -213,17 +240,6 @@ falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are soft-skippe
 Every scenario below has a **slug** that can be passed to `--scenarios` or
 `--exclude-scenarios`. Use `--scenarios all` (default) to include every reachable
 scenario, or name specific slugs to narrow or exclude them.
-
-### Recovery example
-
-If a target anomaly row is dropped, it is replayed to the next available timestamp for that
-metric, with `step_note` marking recovery:
-
-`anomalies.csv` line:
-`2026-03-10 00:00:02,recovery_component,m0,"forced drop recovery test",recovered-missing-step,,""`
-
-`metric_report.log` line:
-`2026-03-10 00:00:02 INFO metric_report event_id=evt_xxxxx component=recovery_component metric=m0 msg="forced drop recovery test" step_note=recovered-missing-step`
 
 ### Scenario catalog
 

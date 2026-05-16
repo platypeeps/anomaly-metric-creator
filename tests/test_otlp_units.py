@@ -31,6 +31,20 @@ def test_to_unix_nanos_accepts_millisecond_format(amc):
     assert nanos_millis - nanos_second == 500_000_000
 
 
+@pytest.mark.parametrize("ms_offset", [1, 2, 3, 7, 17, 23, 100, 333, 500, 999])
+def test_to_unix_nanos_exact_for_millisecond_inputs(amc, ms_offset):
+    """VER-111 review round 2: every millisecond-precision input must round-
+    trip to an integer nanosecond count with zero floating-point drift.
+    Previously _to_unix_nanos went through datetime.timestamp() * 1e9,
+    which can accrue tens-to-hundreds of ns of error for some ms offsets.
+    Compare against integer arithmetic from the parsed datetime fields."""
+    base_ts = "2026-03-10 12:00:00"
+    ms_ts = f"2026-03-10 12:00:00.{ms_offset:03d}"
+    base_ns = amc._to_unix_nanos(base_ts)
+    ms_ns = amc._to_unix_nanos(ms_ts)
+    assert ms_ns - base_ns == ms_offset * 1_000_000
+
+
 def test_parse_csv_timestamp_dispatches_both_formats(amc):
     """The shared _parse_csv_timestamp helper underpins both _to_unix_nanos
     (OTLP payload conversion) and the OTEL streaming-loop pacing parser.

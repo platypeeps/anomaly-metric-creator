@@ -34,6 +34,11 @@ def test_parse_args_custom(amc):
     # millisecond-precision timestamp string and silently drop rows.
     ("--interval-seconds", "0.0005"),
     ("--interval-seconds", "0.0009"),
+    # VER-111 review round 2: non-finite floats slip past <= 0 and < 0.001
+    # checks; NaN crashes int conversion later, inf emits zero rows silently.
+    ("--interval-seconds", "nan"),
+    ("--interval-seconds", "inf"),
+    ("--interval-seconds", "-inf"),
 ])
 def test_parse_args_invalid_values(amc, flag, value):
     with pytest.raises(SystemExit):
