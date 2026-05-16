@@ -154,9 +154,16 @@ Written to `--output-dir` (default `iot_logs/`):
 - `observabilitypipeline.csv`
 - `anomalies.csv` — manifest of every injected anomaly with columns:  
   `timestamp, component, metric, description`.
-  - When an anomaly's row is removed by the `--drop-rate` packet-loss mask, the
-    anomaly is silently dropped and produces no manifest entry — the generator
-    does not slide it forward to the next available row.
+  - The packet-loss mask (`--drop-rate`) is applied per row, not per anomaly.
+    For single-row anomalies, a dropped target row produces no CSV value and
+    no manifest entry. For shaped or `duration_seconds` spans, only the
+    dropped rows within the span lose their override — any surviving rows in
+    the span still receive the anomalous value in the per-component CSV.
+  - A manifest entry is written only when the **first** row of the span
+    (`span_idx == 0`) is kept. If that first row is dropped, no manifest
+    entry is produced even when later rows in the same span survive and
+    carry the anomaly value. The generator never slides anomalies forward
+    to a later timestamp.
 - `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
 - `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
@@ -202,9 +209,14 @@ row or span. Optional fields support span realism:
 - `shape_params` — shape-specific parameters (for example `start/end`, `period_s`, `amplitude`, `midline`)
 
 Each injected row is emitted to the relevant per-component CSV and catalogued in
-`anomalies.csv`. If a requested anomaly row is removed by the `--drop-rate`
-packet-loss mask, the generator skips the injection entirely and the manifest
-contains no entry for it — there is no recovery-to-next-row behavior.
+`anomalies.csv`. The packet-loss mask (`--drop-rate`) is applied per row, not
+per anomaly: each row in a shaped or `duration_seconds` span is masked
+independently. Dropped rows lose their override (no CSV value, no influence on
+neighbors), while surviving rows in the same span still receive the anomalous
+value. The `anomalies.csv` entry is written only when the first row of the
+span (`span_idx == 0`) is kept; if that anchor row is dropped, no manifest
+entry is produced even when later rows in the span survive. The generator
+never slides anomalies forward to a later timestamp.
 
 Specs whose `time_offset` falls outside `[0, total_seconds)` — or whose nearest row index
 falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are soft-skipped with a
