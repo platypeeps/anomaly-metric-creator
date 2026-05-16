@@ -411,12 +411,20 @@ def _build_timestamp_arrays(total_seconds: int, interval: float = 1.0):
     by construction, so re-computing them per component is pure waste.
     Row ``i`` is at ``START + i * interval`` seconds; row count is
     ``floor(total_seconds / interval)``. Strings are rendered at second
-    precision regardless of interval (matches the existing CSV format).
+    precision when ``interval >= 1.0`` and at millisecond precision otherwise
+    so adjacent sub-second rows never share a timestamp string.
     """
     n_rows = int(total_seconds // interval)
     step_us = int(round(interval * 1_000_000))
     ts_array = np.datetime64(START) + np.arange(n_rows) * np.timedelta64(step_us, "us")
-    ts_strings = np.char.replace(np.datetime_as_string(ts_array, unit="s"), "T", " ")
+    if interval < 1.0:
+        ts_strings = np.char.replace(
+            np.datetime_as_string(ts_array, unit="ms"), "T", " "
+        )
+    else:
+        ts_strings = np.char.replace(
+            np.datetime_as_string(ts_array, unit="s"), "T", " "
+        )
     return ts_array, ts_strings
 
 # ------------------------------------------------------------------
@@ -2530,7 +2538,10 @@ def parse_args(argv=None):
                    help=f"Seconds between consecutive emitted rows "
                         f"(default: {DEFAULT_INTERVAL_SECONDS}). Controls sampling "
                         f"density; timeline coverage stays --duration-days * 86400 "
-                        f"seconds. Row count per component is floor(total_seconds / interval).")
+                        f"seconds. Row count per component is floor(total_seconds / interval). "
+                        f"Values >= 1.0 emit second-precision timestamps "
+                        f"(YYYY-MM-DD HH:MM:SS); values < 1.0 emit millisecond-precision "
+                        f"timestamps (YYYY-MM-DD HH:MM:SS.SSS) to keep adjacent rows unique.")
     p.add_argument("--combine", action="store_true",
                    help="After generating logs, also write a unified combined CSV "
                         "(combined_metrics_unified.csv) into --output-dir.")
@@ -2985,8 +2996,9 @@ def write_reporting_artifacts(output_dir: Path, anomaly_rows: list[dict]) -> Non
 
 
 def _to_unix_nanos(timestamp: str) -> int:
-    """Convert ``YYYY-MM-DD HH:MM:SS`` timestamp strings to unix-nanoseconds."""
-    dt = datetime.datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+    """Convert ``YYYY-MM-DD HH:MM:SS[.SSS]`` timestamp strings to unix-nanoseconds."""
+    fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in timestamp else "%Y-%m-%d %H:%M:%S"
+    dt = datetime.datetime.strptime(timestamp, fmt)
     return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1_000_000_000)
 
 
@@ -3349,7 +3361,9 @@ def stream_otel_signals(
     sent = 0
     try:
         for row in sorted_rows:
-            cur_dt = datetime.datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M:%S")
+            ts_str = row["timestamp"]
+            ts_fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in ts_str else "%Y-%m-%d %H:%M:%S"
+            cur_dt = datetime.datetime.strptime(ts_str, ts_fmt)
             if prev_dt is not None:
                 wait_seconds = max(0.0, (cur_dt - prev_dt).total_seconds() / speedup)
                 if wait_seconds > 0:

@@ -649,6 +649,92 @@ def test_interval_seconds_default_is_one(amc):
 
 
 # ------------------------------------------------------------------
+# VER-111: sub-second --interval-seconds must keep per-row timestamp
+# strings unique and combine_logs_unified must preserve every row.
+# Pre-fix, _build_timestamp_arrays formatted every row at second
+# precision, so adjacent rows at interval=0.5 collided on the same
+# timestamp string. That collapsed per-component CSVs (duplicate keys)
+# and silently dropped half the rows from the unified combine output.
+# ------------------------------------------------------------------
+def test_sub_second_interval_unique_timestamps_and_lossless_combine(amc, tmp_path):
+    """At ``--interval-seconds 0.5`` every per-component CSV row must have a
+    unique timestamp string, and ``combine_logs_unified`` must preserve every
+    generated row (no silent ``(timestamp, component)`` collisions)."""
+    out = tmp_path / "sub_second"
+    out.mkdir()
+    run_capture(
+        amc,
+        out,
+        days=1,
+        drop_rate=0.0,
+        extra_args=[
+            "--interval-seconds", "0.5",
+            "--combine",
+        ],
+    )
+
+    skip_names = {"anomalies.csv", "combined_metrics_unified.csv"}
+    component_csvs = [p for p in sorted(out.glob("*.csv")) if p.name not in skip_names]
+    assert component_csvs, "no per-component CSVs produced"
+
+    component_row_counts = []
+    for comp_csv in component_csvs:
+        with open(comp_csv) as f:
+            rows = list(csv.DictReader(f))
+        timestamps = [r["timestamp"] for r in rows]
+        assert timestamps, f"{comp_csv.name} produced no data rows"
+        assert len(timestamps) == len(set(timestamps)), (
+            f"Duplicate timestamps in {comp_csv.name}: "
+            f"{len(timestamps) - len(set(timestamps))} duplicates "
+            f"(sub-second rows collapsed)"
+        )
+        component_row_counts.append(len(rows))
+
+    combined = out / "combined_metrics_unified.csv"
+    assert combined.exists(), "--combine did not produce combined_metrics_unified.csv"
+    with open(combined) as f:
+        combined_rows = list(csv.DictReader(f))
+    # With drop_rate=0.0 every component has the same row count, and the
+    # unified output must keep one row per timestamp. Any silent collapse
+    # would shrink the unified count below the per-component count.
+    assert len(combined_rows) == max(component_row_counts), (
+        f"combined row count {len(combined_rows)} != max per-component row count "
+        f"{max(component_row_counts)} — combine silently dropped sub-second rows"
+    )
+
+
+def test_sub_second_interval_timestamps_have_fractional_resolution(amc, tmp_path):
+    """Timestamp strings at interval=0.5 must carry fractional precision so the
+    step between adjacent rows is observable in the rendered string."""
+    out = tmp_path / "sub_second_fmt"
+    out.mkdir()
+    run_capture(
+        amc,
+        out,
+        days=1,
+        drop_rate=0.0,
+        extra_args=[
+            "--interval-seconds", "0.5",
+        ],
+    )
+    # Pick any component CSV and inspect the first two timestamp strings.
+    component_csvs = [
+        p for p in sorted(out.glob("*.csv"))
+        if p.name not in {"anomalies.csv", "combined_metrics_unified.csv"}
+    ]
+    with open(component_csvs[0]) as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) >= 2, "need at least two rows to compare adjacent timestamps"
+    assert rows[0]["timestamp"] != rows[1]["timestamp"], (
+        f"adjacent sub-second rows still share a timestamp: {rows[0]['timestamp']!r}"
+    )
+    # Fractional component is present (a "." after the seconds).
+    assert "." in rows[0]["timestamp"], (
+        f"sub-second interval produced second-precision timestamp: {rows[0]['timestamp']!r}"
+    )
+
+
+# ------------------------------------------------------------------
 # VER-105: --scenarios all is exactly equivalent to no flag (default).
 # Pre-VER-102 byte hashes are locked separately in test_scenarios.py
 # (DEFAULT_ONE_DAY_HASHES / DEFAULT_SEVEN_DAY_HASHES); this test adds

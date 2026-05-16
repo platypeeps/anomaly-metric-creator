@@ -20,6 +20,16 @@ def test_to_unix_nanos(amc):
     expected = int(datetime.datetime(2026, 3, 10, 12, 0, 0, tzinfo=datetime.timezone.utc).timestamp() * 1_000_000_000)
     assert amc._to_unix_nanos(ts) == expected
 
+
+def test_to_unix_nanos_accepts_millisecond_format(amc):
+    """_to_unix_nanos must parse both ``HH:MM:SS`` and ``HH:MM:SS.SSS`` so
+    the OTEL streaming path keeps working at --interval-seconds < 1.0."""
+    ts_second = "2026-03-10 12:00:00"
+    ts_millis = "2026-03-10 12:00:00.500"
+    nanos_second = amc._to_unix_nanos(ts_second)
+    nanos_millis = amc._to_unix_nanos(ts_millis)
+    assert nanos_millis - nanos_second == 500_000_000
+
 def test_anomaly_event_id_determinism(amc, sample_entry):
     id1 = amc._anomaly_event_id(sample_entry)
     id2 = amc._anomaly_event_id(sample_entry)
