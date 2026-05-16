@@ -64,6 +64,15 @@ _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
 anomalies = []
 cascading_anomalies = {}  # {component_name: [anomaly_specs]}
 
+# Columns whose value is recomputed from sibling columns after all natural and
+# anomaly writes settle. The MetricSpec for these columns still defines the
+# emitted column name and position, but its base/std do not describe the value
+# distribution — that is implied by the source metrics' distributions.
+# generate_component() applies the derivation inline.
+DERIVED_METRICS: set[tuple[str, str]] = {
+    ("cacheservice", "hit_ratio"),
+}
+
 # ------------------------------------------------------------------
 # Per-metric schema. One MetricSpec per CSV column per component.
 # ------------------------------------------------------------------
@@ -267,6 +276,25 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 "metric": aspec["metric"],
                 "description": aspec["description"],
             })
+
+    # Derived metrics: rebuild self-consistent relationships after natural and
+    # anomaly values have settled. hit_ratio must equal 100*hits/(hits+misses)
+    # by construction; without this pass, anomalies that drive cache_misses
+    # (or that overrode hit_ratio in isolation) would leave the three columns
+    # internally inconsistent — exactly the consistency anomaly real telemetry
+    # would flag.
+    if component_name == "cacheservice":
+        hits_col = name_to_col.get("cache_hits")
+        misses_col = name_to_col.get("cache_misses")
+        ratio_col = name_to_col.get("hit_ratio")
+        if hits_col is not None and misses_col is not None and ratio_col is not None:
+            hits = values[:, hits_col]
+            misses = values[:, misses_col]
+            denom = hits + misses
+            with np.errstate(divide="ignore", invalid="ignore"):
+                values[:, ratio_col] = np.where(
+                    denom > 0, 100.0 * hits / denom, 0.0
+                )
 
     np.round(values, 3, out=values)
 
@@ -509,7 +537,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("hit_ratio", 95.0, 0.3),
         MetricSpec("avg_cache_latency_ms", 15, 1),
         MetricSpec("memory_util_pct", 70, 5),
-        MetricSpec("error_rate", 0.05, 0.02),
+        MetricSpec("error_rate", 0.05, 0.02, clip_min=0),
         # Supplemental metrics
         MetricSpec("evictions_per_sec", 8, 3, clip_min=0),
         MetricSpec("expired_keys_per_sec", 12, 4, clip_min=0),
@@ -522,7 +550,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("backend_latency_ms", 90, 8),
         MetricSpec("active_connections", 1200, 60),
         MetricSpec("cpu_util_pct", 22, 4),
-        MetricSpec("error_rate", 0.15, 0.04),
+        MetricSpec("error_rate", 0.15, 0.04, clip_min=0),
         # Supplemental metrics
         MetricSpec("rate_limited_per_sec", 4, 2, clip_min=0),
         MetricSpec("tls_handshakes_per_sec", 140, 15, clip_min=0),
@@ -535,7 +563,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("write_latency_ms", 12, 3),
         MetricSpec("queries_per_sec", 25000, 2000),
         MetricSpec("cpu_util_pct", 18, 3),
-        MetricSpec("error_rate", 0.1, 0.05),
+        MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
         # disk_used_pct trends slightly upward across the day under natural
         # conditions; the disk-exhaustion ramp anomaly drives it to 100%.
         # ``std=0`` keeps this column out of the shared RNG stream so adding
@@ -554,7 +582,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("avg_latency_ms", 70, 5),
         MetricSpec("dead_letter_queue", 5, 1),
         MetricSpec("mem_util_pct", 55, 4),
-        MetricSpec("error_rate", 0.08, 0.02),
+        MetricSpec("error_rate", 0.08, 0.02, clip_min=0),
         # Supplemental metrics
         MetricSpec("publish_rate_per_sec", 4500, 200, clip_min=0),
         MetricSpec("consumer_lag", 300, 80, clip_min=0),
@@ -803,9 +831,9 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("cacheservice", {
                 "time_offset": 6*3600,
-                "metric": "hit_ratio",
-                "description": "Cache hit ratio drops to 5 %",
-                "generator": lambda ts, idx: 5.0,
+                "metric": "cache_misses",
+                "description": "Cache miss spike to 95,000 — derives hit ratio ~5%",
+                "generator": lambda ts, idx: 95000.0,
             }),
             ("cacheservice", {
                 "time_offset": 17*3600,
@@ -1586,9 +1614,9 @@ SCENARIOS: dict[str, Scenario] = {
             }),
             ("cacheservice", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 45,
-                "metric": "hit_ratio",
-                "description": "Cascading: Batch job overwhelms cache with cold data",
-                "generator": lambda ts, idx: 22.0 + np.random.normal(0, 3),
+                "metric": "cache_misses",
+                "description": "Cascading: Batch job overwhelms cache — misses ~17,700 (hit ratio ~22%)",
+                "generator": lambda ts, idx: 17727.0 + np.random.normal(0, 800),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -2105,10 +2133,10 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 2*SECONDS_PER_DAY + 12*3600,       # Day 3 12:00
                 "duration_seconds": 12*3600,
                 "shape": "ramp_linear",
-                "shape_params": {"start": 88.0, "end": 60.0},
-                "metric": "hit_ratio",
-                "description": "Cache eviction cascade — hit ratio decline 88%→60% over 12h",
-                "generator": lambda ts, idx: 88.0,
+                "shape_params": {"start": 682.0, "end": 3333.0},
+                "metric": "cache_misses",
+                "description": "Cache eviction cascade — misses ramp 682→3,333 (hit ratio 88%→60%) over 12h",
+                "generator": lambda ts, idx: 682.0,
             }),
             ("cacheservice", {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600,        # Day 4 03:00 — forced restart
@@ -2122,9 +2150,9 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600,
                 "duration_seconds": 300,
                 "shape": "step",
-                "metric": "hit_ratio",
-                "description": "Cache cold start after restart — hit ratio 5%",
-                "generator": lambda ts, idx: 5.0,
+                "metric": "cache_misses",
+                "description": "Cache cold start after restart — misses ~95,000 (hit ratio ~5%)",
+                "generator": lambda ts, idx: 95000.0,
             }),
             ("cacheservice", {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600,

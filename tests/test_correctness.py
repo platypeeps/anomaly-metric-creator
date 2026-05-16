@@ -236,6 +236,8 @@ def _assert_value_band_sanity(amc, run, emitted_count):
         rows, header = read_component_rows(run.out_dir, component)
         emitted_specs = specs[: emitted_count(component)]
         for mspec in emitted_specs:
+            if (component, mspec.name) in amc.DERIVED_METRICS:
+                continue
             field_idx = header.index(mspec.name)
             skip_ts = skip_by_cm.get(component, {}).get(mspec.name, set())
             lo, hi = natural_band(amc, mspec, amc.SECONDS_PER_DAY)
