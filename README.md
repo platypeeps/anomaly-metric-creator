@@ -152,10 +152,11 @@ Written to `--output-dir` (default `iot_logs/`):
 - `paymentservice.csv`
 - `identityprovider.csv`
 - `observabilitypipeline.csv`
-- `anomalies.csv` — manifest of every injected anomaly with recovery-aware columns:  
-  `timestamp, component, metric, description, step_note, step_group, next_step`.
-  - `step_note`: populated with `recovered-missing-step` when an anomaly could not be placed at the requested row due to simulated packet loss and was recovered to the next available row.
-  - `step_group` / `next_step`: optional chain metadata that threads multi-step scenarios.
+- `anomalies.csv` — manifest of every injected anomaly with columns:  
+  `timestamp, component, metric, description`.
+  - When an anomaly's row is removed by the `--drop-rate` packet-loss mask, the
+    anomaly is silently dropped and produces no manifest entry — the generator
+    does not slide it forward to the next available row.
 - `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
 - `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
@@ -201,10 +202,9 @@ row or span. Optional fields support span realism:
 - `shape_params` — shape-specific parameters (for example `start/end`, `period_s`, `amplitude`, `midline`)
 
 Each injected row is emitted to the relevant per-component CSV and catalogued in
-`anomalies.csv`. If a requested anomaly row is dropped by the packet-loss mask, the generator
-recovers by emitting that anomaly on the next available timestamp for the same component/metric
-and marks that manifest row with `step_note=recovered-missing-step`. This preserves follow-up
-chain visibility (`next_step`) even under packet-loss scenarios.
+`anomalies.csv`. If a requested anomaly row is removed by the `--drop-rate`
+packet-loss mask, the generator skips the injection entirely and the manifest
+contains no entry for it — there is no recovery-to-next-row behavior.
 
 Specs whose `time_offset` falls outside `[0, total_seconds)` — or whose nearest row index
 falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are soft-skipped with a
@@ -213,17 +213,6 @@ falls outside `[0, n_rows)` at a coarse `--interval-seconds` — are soft-skippe
 Every scenario below has a **slug** that can be passed to `--scenarios` or
 `--exclude-scenarios`. Use `--scenarios all` (default) to include every reachable
 scenario, or name specific slugs to narrow or exclude them.
-
-### Recovery example
-
-If a target anomaly row is dropped, it is replayed to the next available timestamp for that
-metric, with `step_note` marking recovery:
-
-`anomalies.csv` line:
-`2026-03-10 00:00:02,recovery_component,m0,"forced drop recovery test",recovered-missing-step,,""`
-
-`metric_report.log` line:
-`2026-03-10 00:00:02 INFO metric_report event_id=evt_xxxxx component=recovery_component metric=m0 msg="forced drop recovery test" step_note=recovered-missing-step`
 
 ### Scenario catalog
 
