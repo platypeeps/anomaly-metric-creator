@@ -245,13 +245,15 @@ scenario, or name specific slugs to narrow or exclude them.
 
 All 29 scenarios are listed below. The **Signal** column shows the minimum
 `--signal-level` required (`low`/`medium`/`high`). The **Days** column shows the
-minimum `--duration-days` required. The **Duration** column shows how long each
-scenario's anomalous behavior lasts in the dataset, derived from
-`duration_seconds` on the primary specs in `SCENARIOS`:
+minimum `--duration-days` required. The **Duration** column summarizes the span
+lengths of the scenario's **primary** specs (`duration_seconds` in `SCENARIOS`).
+It is a primary-span summary, not the full wall-clock footprint of the scenario:
+scenarios can also include `instant` primaries and cascades at different
+timestamps, which are not reflected here. Notation:
 
 - A single value (e.g. `8 min`, `4h`) for a single-span incident, regardless of shape (`step`, `sustained`, `ramp_linear`, `ramp_exp`, `sawtooth`, `sine`).
 - A multi-phase summary (e.g. `51h leak + 12h eviction cascade + 5 min restart/cold-start`) for staged incidents, in `time + phase` segments separated by ` + `.
-- `instant` for one-sample step injections (`duration_seconds` omitted or `0`), which write exactly one row in the CSV at the matched timestamp (a single sample; at the default `--interval-seconds 1.0` that's 1 Hz).
+- `instant` when every primary spec has `duration_seconds` omitted or `0` — each such spec expands to a single sample at its target timestamp (one row in the CSV before the `--drop-rate` mask is applied; the row may still be dropped at high drop rates).
 
 Cascades are secondary specs within the same scenario that propagate the blast
 radius to additional components.
