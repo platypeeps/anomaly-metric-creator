@@ -249,9 +249,9 @@ minimum `--duration-days` required. The **Duration** column shows how long each
 scenario's anomalous behavior lasts in the dataset, derived from
 `duration_seconds` on the primary specs in `SCENARIOS`:
 
-- A single value (e.g. `8 min`, `4h`) for sharp-boundary plateaus.
+- A single value (e.g. `8 min`, `4h`) for a single-span incident, regardless of shape (`step`, `sustained`, `ramp_linear`, `ramp_exp`, `sawtooth`, `sine`).
 - A multi-phase summary (e.g. `51h leak + 12h eviction cascade + 5 min restart/cold-start`) for staged incidents, in `time + phase` segments separated by ` + `.
-- `instant` for one-sample step injections (no `duration_seconds`), which occupy one row at the configured `--interval-seconds` — i.e. one second at the default interval.
+- `instant` for one-sample step injections (`duration_seconds` omitted or `0`), which occupy one row at the configured `--interval-seconds` — i.e. one second at the default interval.
 
 Cascades are secondary specs within the same scenario that propagate the blast
 radius to additional components.
