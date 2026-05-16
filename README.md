@@ -251,7 +251,7 @@ scenario's anomalous behavior lasts in the dataset, derived from
 
 - A single value (e.g. `8 min`, `4h`) for a single-span incident, regardless of shape (`step`, `sustained`, `ramp_linear`, `ramp_exp`, `sawtooth`, `sine`).
 - A multi-phase summary (e.g. `51h leak + 12h eviction cascade + 5 min restart/cold-start`) for staged incidents, in `time + phase` segments separated by ` + `.
-- `instant` for one-sample step injections (`duration_seconds` omitted or `0`), which occupy one row at the configured `--interval-seconds` — i.e. one second at the default interval.
+- `instant` for one-sample step injections (`duration_seconds` omitted or `0`), which write exactly one row in the CSV at the matched timestamp (a single sample; at the default `--interval-seconds 1.0` that's 1 Hz).
 
 Cascades are secondary specs within the same scenario that propagate the blast
 radius to additional components.
