@@ -131,7 +131,7 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--otel-stream-timeout-seconds` | `5.0` | HTTP timeout for each OTEL post attempt. |
 | `--otel-stream-max-events` | _all_ | Optional cap on streamed anomaly events for smoke-testing a receiver. |
 | `--otel-stream-auth-scheme` | `MEZMO_OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth tokens. |
-| `--otel-stream-protocol` | `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
+| `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
 | `--otel-activity-log` | `./otel-activity.log` | File that records every OTEL streaming activity (`START`, `SEND`, `OK`, `RETRY`, `FAIL`, `END`) when `--otel-enabled` is set. Only created when streaming actually runs. |
 | `--otel-verbose` / `--no-otel-verbose` | _off_ | When enabled, the activity log captures the raw OTLP payload (`body`), the request `content_type` and other request headers (auth values masked as `<scheme> ***`), the HTTP response `status` on success, and the exception `error_type` (plus HTTP `status` for `HTTPError`) on retry/failure. Useful for offline debugging of receiver behavior. |
 

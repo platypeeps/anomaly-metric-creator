@@ -2687,8 +2687,9 @@ def parse_args(argv=None):
     p.add_argument(
         "--otel-stream-protocol",
         type=str,
-        default="protobuf",
-        help="OTLP payload mode for stream endpoint: json or protobuf (default: protobuf).",
+        default=os.environ.get("MEZMO_OTEL_STREAM_PROTOCOL", "protobuf"),
+        help="OTLP payload mode for stream endpoint: json or protobuf (default: protobuf). "
+             "Env override: MEZMO_OTEL_STREAM_PROTOCOL.",
     )
     p.add_argument(
         "--otel-activity-log",
