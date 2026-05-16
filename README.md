@@ -1,10 +1,13 @@
 # anomaly-metric-creator
 
 `anomaly-metric-creator.py` generates synthetic IoT-style metric logs for a SaaS stack
-with built-in anomalies. It writes one CSV per component plus an `anomalies.csv`
-manifest that catalogues each injected anomaly whose span anchor row survives the
-`--drop-rate` packet-loss mask (see [Output files](#output-files) for the exact
-gating). Output is deterministic for a given `--seed`.
+with built-in anomalies. By default (`--emit-selection metrics,logs,traces`) it
+writes one CSV per component plus an `anomalies.csv` manifest that catalogues each
+injected anomaly whose span anchor row survives the `--drop-rate` packet-loss mask;
+runs that omit `metrics` (e.g. `--emit-selection logs,traces`) skip the per-component
+CSVs and delete `anomalies.csv` from `--output-dir`. See [Output files](#output-files)
+for the exact emit-selection and packet-loss gating. Output is deterministic for a
+given `--seed`.
 
 By default the script emits **one day** of second-by-second metrics for thirteen
 components: `authservice`, `cacheservice`, `apigateway`, `database`, `mqservice`,
