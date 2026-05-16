@@ -2539,6 +2539,7 @@ def parse_args(argv=None):
                         f"(default: {DEFAULT_INTERVAL_SECONDS}). Controls sampling "
                         f"density; timeline coverage stays --duration-days * 86400 "
                         f"seconds. Row count per component is floor(total_seconds / interval). "
+                        f"Must be >= 0.001 (millisecond precision floor). "
                         f"Values >= 1.0 emit second-precision timestamps "
                         f"(YYYY-MM-DD HH:MM:SS); values < 1.0 emit millisecond-precision "
                         f"timestamps (YYYY-MM-DD HH:MM:SS.SSS) to keep adjacent rows unique.")
@@ -2732,6 +2733,11 @@ def parse_args(argv=None):
         p.error("--drop-rate must be between 0 and 1")
     if args.interval_seconds <= 0:
         p.error("--interval-seconds must be > 0")
+    # Sub-second intervals emit millisecond-precision timestamps. Anything
+    # finer than 1ms would collide on the rendered string and silently drop
+    # rows in the combine step (the original VER-111 failure mode).
+    if args.interval_seconds < 0.001:
+        p.error("--interval-seconds must be >= 0.001 (ms-precision floor)")
     if args.combine and args.combine_only:
         p.error("--combine and --combine-only are mutually exclusive")
     if args.inject_dst_artifact_day < 0:
@@ -2995,10 +3001,21 @@ def write_reporting_artifacts(output_dir: Path, anomaly_rows: list[dict]) -> Non
             }) + "\n")
 
 
+def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
+    """Parse a ``YYYY-MM-DD HH:MM:SS[.SSS]`` CSV timestamp into a naive datetime.
+
+    The integer-second and millisecond-precision forms emitted by
+    ``_build_timestamp_arrays`` are both accepted. Centralizing the format
+    dispatch here keeps every consumer (OTLP payload conversion, OTEL stream
+    pacing, future readers) in lockstep on the supported formats.
+    """
+    fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in timestamp else "%Y-%m-%d %H:%M:%S"
+    return datetime.datetime.strptime(timestamp, fmt)
+
+
 def _to_unix_nanos(timestamp: str) -> int:
     """Convert ``YYYY-MM-DD HH:MM:SS[.SSS]`` timestamp strings to unix-nanoseconds."""
-    fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in timestamp else "%Y-%m-%d %H:%M:%S"
-    dt = datetime.datetime.strptime(timestamp, fmt)
+    dt = _parse_csv_timestamp(timestamp)
     return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1_000_000_000)
 
 
@@ -3361,9 +3378,7 @@ def stream_otel_signals(
     sent = 0
     try:
         for row in sorted_rows:
-            ts_str = row["timestamp"]
-            ts_fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in ts_str else "%Y-%m-%d %H:%M:%S"
-            cur_dt = datetime.datetime.strptime(ts_str, ts_fmt)
+            cur_dt = _parse_csv_timestamp(row["timestamp"])
             if prev_dt is not None:
                 wait_seconds = max(0.0, (cur_dt - prev_dt).total_seconds() / speedup)
                 if wait_seconds > 0:

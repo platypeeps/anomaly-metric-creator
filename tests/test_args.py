@@ -30,10 +30,21 @@ def test_parse_args_custom(amc):
     ("--drop-rate", "1.1"),
     ("--interval-seconds", "0"),
     ("--interval-seconds", "-5"),
+    # VER-111: sub-millisecond intervals would collide on the rendered
+    # millisecond-precision timestamp string and silently drop rows.
+    ("--interval-seconds", "0.0005"),
+    ("--interval-seconds", "0.0009"),
 ])
 def test_parse_args_invalid_values(amc, flag, value):
     with pytest.raises(SystemExit):
         amc.parse_args([flag, value, "--output-dir", "test_out"])
+
+
+def test_parse_args_interval_seconds_accepts_millisecond_floor(amc):
+    """VER-111: --interval-seconds 0.001 (1ms) is the documented floor and
+    must parse cleanly; anything below collapses to identical timestamps."""
+    args = amc.parse_args(["--interval-seconds", "0.001", "--output-dir", "test_out"])
+    assert args.interval_seconds == 0.001
 
 def test_parse_args_emit_selection(amc):
     args = amc.parse_args(["--emit-selection", "metrics,logs", "--output-dir", "test_out"])

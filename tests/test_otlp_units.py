@@ -30,6 +30,26 @@ def test_to_unix_nanos_accepts_millisecond_format(amc):
     nanos_millis = amc._to_unix_nanos(ts_millis)
     assert nanos_millis - nanos_second == 500_000_000
 
+
+def test_parse_csv_timestamp_dispatches_both_formats(amc):
+    """The shared _parse_csv_timestamp helper underpins both _to_unix_nanos
+    (OTLP payload conversion) and the OTEL streaming-loop pacing parser.
+    Both formats must round-trip to the expected naive datetime so the two
+    consumers stay in lockstep when interval drops below 1s."""
+    expected_second = datetime.datetime(2026, 3, 10, 12, 0, 0)
+    expected_millis = datetime.datetime(2026, 3, 10, 12, 0, 0, 500_000)
+    assert amc._parse_csv_timestamp("2026-03-10 12:00:00") == expected_second
+    assert amc._parse_csv_timestamp("2026-03-10 12:00:00.500") == expected_millis
+
+
+def test_parse_csv_timestamp_rejects_malformed_input(amc):
+    """Garbled timestamp strings must surface a parse error rather than
+    silently fall through to a wrong-format default."""
+    with pytest.raises(ValueError):
+        amc._parse_csv_timestamp("not a timestamp")
+    with pytest.raises(ValueError):
+        amc._parse_csv_timestamp("2026-03-10T12:00:00")  # ISO 'T' separator not accepted
+
 def test_anomaly_event_id_determinism(amc, sample_entry):
     id1 = amc._anomaly_event_id(sample_entry)
     id2 = amc._anomaly_event_id(sample_entry)
