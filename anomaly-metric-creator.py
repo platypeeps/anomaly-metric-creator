@@ -64,13 +64,55 @@ _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
 anomalies = []
 cascading_anomalies = {}  # {component_name: [anomaly_specs]}
 
-# Columns whose value is recomputed from sibling columns after all natural and
-# anomaly writes settle. The MetricSpec for these columns still defines the
-# emitted column name and position, but its base/std do not describe the value
-# distribution — that is implied by the source metrics' distributions.
-# generate_component() applies the derivation inline.
+# Derived-metric registry. Each entry maps a component to (derivation_fn,
+# tuple_of_derived_metric_names). generate_component() looks the component
+# up in this dict after the natural-value pass and the anomaly override
+# loop; if a function is registered, it recomputes the derived column(s)
+# from their sibling columns so the emitted CSV stays self-consistent.
+# Anomalies that want to influence a derived column must therefore target
+# its source column(s), not the derived column itself.
+#
+# DERIVATIONS is the single source of truth: ``DERIVED_METRICS`` is
+# computed from it below, so the test-side exemption set and the
+# derivation pass can never drift apart. A new derived column requires
+# registering both the function and the column name here in lockstep.
+def _derive_cacheservice(values: "np.ndarray", name_to_col: dict[str, int]) -> None:
+    """Recompute ``hit_ratio`` from ``cache_hits`` / ``cache_misses``.
+
+    Clamps the source columns to ``>= 0`` in place first so the emitted CSV
+    values agree with the derived ratio. Anomaly generators bypass
+    ``MetricSpec.clip_min``, so without the in-place clamp a future
+    generator that drove the counters negative would yield emitted source
+    values < 0 alongside a derivation computed from clamped intermediates —
+    breaking the very consistency invariant this pass exists to enforce.
+    """
+    hits_col = name_to_col.get("cache_hits")
+    misses_col = name_to_col.get("cache_misses")
+    ratio_col = name_to_col.get("hit_ratio")
+    if hits_col is None or misses_col is None or ratio_col is None:
+        return
+    np.maximum(values[:, hits_col], 0.0, out=values[:, hits_col])
+    np.maximum(values[:, misses_col], 0.0, out=values[:, misses_col])
+    hits = values[:, hits_col]
+    misses = values[:, misses_col]
+    denom = hits + misses
+    with np.errstate(divide="ignore", invalid="ignore"):
+        values[:, ratio_col] = np.where(
+            denom > 0, 100.0 * hits / denom, 0.0
+        )
+
+
+DERIVATIONS: dict[
+    str,
+    tuple[Callable[["np.ndarray", dict[str, int]], None], tuple[str, ...]],
+] = {
+    "cacheservice": (_derive_cacheservice, ("hit_ratio",)),
+}
+
 DERIVED_METRICS: set[tuple[str, str]] = {
-    ("cacheservice", "hit_ratio"),
+    (component, metric)
+    for component, (_, metrics) in DERIVATIONS.items()
+    for metric in metrics
 }
 
 # ------------------------------------------------------------------
@@ -278,28 +320,15 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             })
 
     # Derived metrics: rebuild self-consistent relationships after natural and
-    # anomaly values have settled. hit_ratio must equal 100*hits/(hits+misses)
-    # by construction; without this pass, anomalies that drive cache_misses
-    # (or that overrode hit_ratio in isolation) would leave the three columns
-    # internally inconsistent — exactly the consistency anomaly real telemetry
-    # would flag.
-    if component_name == "cacheservice":
-        hits_col = name_to_col.get("cache_hits")
-        misses_col = name_to_col.get("cache_misses")
-        ratio_col = name_to_col.get("hit_ratio")
-        if hits_col is not None and misses_col is not None and ratio_col is not None:
-            # Defensive clamp: anomaly generators bypass MetricSpec.clip_min,
-            # so a future generator that drives hits/misses below zero would
-            # otherwise produce hit_ratio < 0 or > 100. Source columns already
-            # honor clip_min for the natural-noise path; this guards the
-            # derivation against override values too.
-            hits = np.maximum(values[:, hits_col], 0.0)
-            misses = np.maximum(values[:, misses_col], 0.0)
-            denom = hits + misses
-            with np.errstate(divide="ignore", invalid="ignore"):
-                values[:, ratio_col] = np.where(
-                    denom > 0, 100.0 * hits / denom, 0.0
-                )
+    # anomaly values have settled. The registered function recomputes the
+    # derived column(s) from their sibling columns; without this pass,
+    # anomalies that drove only a source column (or that overrode a derived
+    # column in isolation) would leave the columns internally inconsistent —
+    # exactly the consistency anomaly real telemetry would flag.
+    derivation = DERIVATIONS.get(component_name)
+    if derivation is not None:
+        derive_fn, _ = derivation
+        derive_fn(values, name_to_col)
 
     np.round(values, 3, out=values)
 
@@ -529,7 +558,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("login_success_rate", 97.0, 0.5),
         MetricSpec("avg_auth_latency_ms", 110, 5),
         MetricSpec("cpu_util_pct", 20, 3),
-        MetricSpec("error_rate", 0.2, 0.05),
+        MetricSpec("error_rate", 0.2, 0.05, clip_min=0),
         # Supplemental metrics
         MetricSpec("avg_session_duration_s", 900, 30, clip_min=0),
         MetricSpec("password_reset_per_min", 3, 1, clip_min=0),
@@ -2527,6 +2556,36 @@ def _validate_scenarios_registry() -> None:
 
 
 _validate_scenarios_registry()
+
+
+def _validate_derivations_registry() -> None:
+    """Import-time invariants for ``DERIVATIONS``.
+
+    Catches drift between the derivation registry and ``COMPONENTS``: a
+    misnamed component or column would silently no-op (the dict lookup
+    misses) or silently mis-target (the name lookup in the derivation
+    misses), and the test-side ``DERIVED_METRICS`` exemption would skip a
+    column that no longer exists. Failing fast at import time forces
+    these to stay in lockstep.
+    """
+    known_components = set(COMPONENTS.keys())
+    for component, (_, metrics) in DERIVATIONS.items():
+        if component not in known_components:
+            raise ValueError(
+                f"DERIVATIONS references unknown component {component!r}; "
+                f"expected one of {sorted(known_components)}"
+            )
+        known_metrics = {spec.name for spec in COMPONENTS[component]}
+        unknown_metrics = sorted(set(metrics) - known_metrics)
+        if unknown_metrics:
+            raise ValueError(
+                f"DERIVATIONS[{component!r}] declares derived metrics "
+                f"{unknown_metrics} that are not in COMPONENTS[{component!r}]; "
+                f"register the MetricSpec first or correct the name."
+            )
+
+
+_validate_derivations_registry()
 
 
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:

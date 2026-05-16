@@ -94,7 +94,7 @@ SCENARIO_CASCADES_BY_SLUG = {
 DEFAULT_ONE_DAY_HASHES = {
     "anomalies.csv": "c17b82d54305156f3574190180537a54bc57b8697e9446dd29d89e59689b76dc",
     "apigateway.csv": "23d0e6e3c0ebe47976480a656f393e2c623ea233532679c741c35a8fc5927c22",
-    "authservice.csv": "7ba9f17c30c579fd81a5a929b6cf23a075493e34e4bf301fcf78e75d3fbbd195",
+    "authservice.csv": "06ab97884f65eb53db6eff0c61147f576809517b841e21b98b2861cb99dd5617",
     "cacheservice.csv": "7ace2f8b8dd6c6ed43ed90058eae8a0f1b1f077a37bbedd88ea9f7523246dde3",
     "database.csv": "fab6a103df1fd6d808239682d3302806ba3e07ea27333a17fffae0bcac876fcf",
     "identityprovider.csv": "c884970f063d58a8cd2289be8500b810a022727c407601c503d841844cdf1577",
@@ -111,7 +111,7 @@ DEFAULT_ONE_DAY_HASHES = {
 DEFAULT_SEVEN_DAY_HASHES = {
     "anomalies.csv": "70438be7ed479f9d58fd07f3dce6735a0c1407d678e5949aaf309c85bb92a143",
     "apigateway.csv": "bc7d1a450ed06b4bd4555b467abbea31f363ec4758533a44cf2cb77758d096ad",
-    "authservice.csv": "3f3f41f55f4e31bf71c79d8af971ae5d3f003646ab280c15c2d849b091d1f26e",
+    "authservice.csv": "a5aab875ee8f14aa2070b7647885bbca274305ab7cc69d80c5136e755a0eaabb",
     "cacheservice.csv": "3524a441d5b9e2388d4f62799cc5da1aabcfa912c08bf1192ed84bda6a86d0a6",
     "database.csv": "d8c978c00c933ec9a4d6eb30fbcff26998f8f31b92c91a84ad3645c2d840fd9f",
     "identityprovider.csv": "f4ba4d1a34b45c2e155913af030fb1b44b7001e2a4145f4fb34b5d17f38bc5ba",
@@ -136,7 +136,7 @@ DEFAULT_SEVEN_DAY_HASHES = {
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
     "anomalies.csv": "e0928d1fda99b9e47067aecad9d0f5b86cf51850d3ee11843bf241869d93e63e",
     "apigateway.csv": "749ed6244fcade5e2719b767e49d1a50150afe67b1e31bcb38d5381a8fdfc06c",
-    "authservice.csv": "5b561312f13397642e56886e6fbbeeb21f09b078ff6a5abc5967ceaabf858523",
+    "authservice.csv": "19fc066c4304e0712504819f9f2beda96081eb58ead79c4c2501a845ef12fcb0",
     "cacheservice.csv": "8cacedb1b97abdedbd4b06c0094ea81f6b248c2e7521a1daade81d0078322067",
     "database.csv": "799864dae7dfd08a15c99c76729c895a67754f2a1a0a2fb1de1a7b835bc0ee21",
     "identityprovider.csv": "7f9549edc1f597f2b25b2e20b1b14625ede70f22859ee5cc5582bc17859044e4",
