@@ -274,6 +274,75 @@ def test_value_range_sanity_full_catalog(amc, one_day_full_metrics_run):
     )
 
 
+def _assert_clip_min_invariant(amc, run, emitted_count):
+    """Every emitted value of a ``clip_min``-bearing metric stays at or above
+    its declared floor — across natural rows AND anomaly rows.
+
+    The existing 8σ band test excludes anomaly rows and uses a soft band, so
+    a future anomaly generator that drove a clip_min-declared metric below
+    its floor would slip through. This test treats the MetricSpec.clip_min
+    field as a hard contract on the emitted CSV: declaring it is a promise
+    that no row, anomalous or otherwise, breaches it.
+    """
+    failures = []
+    for component, specs in amc.COMPONENTS.items():
+        clip_specs = [
+            s for s in specs[: emitted_count(component)]
+            if s.clip_min is not None
+        ]
+        if not clip_specs:
+            continue
+        rows, header = read_component_rows(run.out_dir, component)
+        for spec in clip_specs:
+            field_idx = header.index(spec.name)
+            offenders = 0
+            sample = None
+            min_seen = float("inf")
+            for ts, row in rows.items():
+                v = float(row[field_idx])
+                if v < spec.clip_min:
+                    offenders += 1
+                    if v < min_seen:
+                        min_seen = v
+                        sample = (ts, v)
+            if offenders:
+                failures.append(
+                    (component, spec.name, spec.clip_min, offenders, min_seen, sample)
+                )
+    assert not failures, (
+        "Metrics breached their declared clip_min floor in emitted CSV "
+        f"(component, metric, clip_min, count, min, sample): {failures}"
+    )
+
+
+def test_clip_min_invariant_one_day(amc, one_day_run_a):
+    """Default 1-day run: no row breaches any MetricSpec.clip_min floor."""
+    _assert_clip_min_invariant(
+        amc, one_day_run_a, emitted_count=lambda c: DEFAULT_METRIC_COUNT[c]
+    )
+
+
+def test_clip_min_invariant_seven_day(amc, seven_day_run):
+    """Default 7-day run: the longer window exercises every multi-day spec
+    that could otherwise drive a clip_min-declared metric below its floor.
+    Lock-step with the 1-day case so a regression surfaces at either
+    duration."""
+    _assert_clip_min_invariant(
+        amc, seven_day_run, emitted_count=lambda c: DEFAULT_METRIC_COUNT[c]
+    )
+
+
+def test_clip_min_invariant_full_catalog(amc, one_day_full_metrics_run):
+    """With --metrics-per-component 10 every supplemental clip_min-declared
+    metric is also covered, so a supplemental-zone regression cannot hide
+    behind the default-only check."""
+    _assert_clip_min_invariant(
+        amc,
+        one_day_full_metrics_run,
+        emitted_count=lambda c: amc.MAX_METRICS_PER_COMPONENT,
+    )
+
+
 # ------------------------------------------------------------------
 # Derived metric consistency (catches drift in the derivation pass)
 # ------------------------------------------------------------------
