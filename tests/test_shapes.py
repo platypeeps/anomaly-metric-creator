@@ -105,12 +105,6 @@ def test_ramp_exp_endpoints_directly(amc):
     assert np.all(np.diff(values[:, 0]) > 0)
 
 
-def test_ramp_exp_rejects_nonpositive(amc):
-    """Wait! ramp_exp in main doesn't use geomspace, it uses powers,
-    so it doesn't strictly reject nonpositive unless we want it to."""
-    pytest.skip("ramp_exp implementation changed in main to be more robust")
-
-
 # ------------------------------------------------------------------
 # sustained — span has duration / interval rows at the multiplied baseline.
 # ------------------------------------------------------------------
@@ -272,11 +266,6 @@ def test_unknown_shape_raises(amc):
     }
     with pytest.raises(ValueError, match="Unsupported anomaly shape"):
         _apply_anomaly_shape(amc, values, 0, 0, 4, aspec, interval=1.0)
-
-
-def test_sustained_requires_value_or_multiplier(amc):
-    """Wait! sustained in main requires a generator."""
-    pytest.skip("sustained implementation changed in main")
 
 
 # ------------------------------------------------------------------
