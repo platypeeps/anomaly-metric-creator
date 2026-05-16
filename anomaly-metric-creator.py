@@ -575,7 +575,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         # Supplemental metrics
         MetricSpec("evictions_per_sec", 8, 3, clip_min=0),
         MetricSpec("expired_keys_per_sec", 12, 4, clip_min=0),
-        MetricSpec("cpu_util_pct", 15, 3),
+        MetricSpec("cpu_util_pct", 15, 3, clip_min=0),
         MetricSpec("connected_clients", 400, 30, clip_min=0),
     ],
     "apigateway": [
@@ -593,8 +593,8 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
     ],
     "database": [
         MetricSpec("connections", 3000, 400),
-        MetricSpec("read_latency_ms", 10, 2),
-        MetricSpec("write_latency_ms", 12, 3),
+        MetricSpec("read_latency_ms", 10, 2, clip_min=0),
+        MetricSpec("write_latency_ms", 12, 3, clip_min=0),
         MetricSpec("queries_per_sec", 25000, 2000),
         MetricSpec("cpu_util_pct", 18, 3),
         MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
@@ -614,7 +614,7 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
         MetricSpec("pending_messages", 45000, 3000),
         MetricSpec("processed_messages", 43000, 2500),
         MetricSpec("avg_latency_ms", 70, 5),
-        MetricSpec("dead_letter_queue", 5, 1),
+        MetricSpec("dead_letter_queue", 5, 1, clip_min=0),
         MetricSpec("mem_util_pct", 55, 4),
         MetricSpec("error_rate", 0.08, 0.02, clip_min=0),
         # Supplemental metrics
