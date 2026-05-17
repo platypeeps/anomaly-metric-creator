@@ -964,3 +964,107 @@ def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
         assert _sha256(off_path) == _sha256(on_path), (
             f"{filename}: --otel-emit-gauges on/off CSV bytes diverged"
         )
+
+
+# ------------------------------------------------------------------
+# Enriched anomalies.csv schema (VER-132): chronological sort,
+# 12-column schema, cascade->primary linkage via parent_event_id.
+# ------------------------------------------------------------------
+_ENRICHED_MANIFEST_COLUMNS = [
+    "timestamp", "component", "metric", "description",
+    "scenario_id", "severity", "is_cascade",
+    "event_id", "parent_event_id",
+    "span_start", "span_end", "shape",
+]
+
+
+@pytest.mark.parametrize("days", [1, 7])
+def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
+    """anomalies.csv must (a) carry the enriched 12-column schema, (b) be
+    sorted by (span_start, component, metric), and (c) every cascade row
+    must reference a primary row in the same file via parent_event_id.
+
+    The 1-day run exercises the default selector matrix; the 7-day run
+    surfaces multi-day scenarios so jwks_rotation_chaos and the storage
+    scenarios contribute cascades to the linkage check.
+    """
+    out_dir = tmp_path / f"ver132_{days}d"
+    extra = ["--signal-level", "high"] if days == 7 else None
+    run_capture(amc, out_dir, days=days, extra_args=extra)
+
+    rows = read_manifest(out_dir)
+    assert rows, f"manifest empty for {days}-day run"
+
+    # 1. Header has exactly the 12 enriched columns in the locked order.
+    with open(out_dir / "anomalies.csv") as f:
+        header = next(csv.reader(f))
+    assert header == _ENRICHED_MANIFEST_COLUMNS, (
+        f"{days}-day manifest header drift: {header}"
+    )
+
+    # 2. Sorted by (span_start, component, metric).
+    sort_keys = [(r["span_start"], r["component"], r["metric"]) for r in rows]
+    assert sort_keys == sorted(sort_keys), (
+        f"{days}-day manifest not sorted by (span_start, component, metric)"
+    )
+
+    # 3. event_id is unique per row and matches the deterministic helper.
+    event_ids = [r["event_id"] for r in rows]
+    assert len(event_ids) == len(set(event_ids)), (
+        f"{days}-day manifest has duplicate event_id values"
+    )
+    for r in rows:
+        expected = amc._anomaly_event_id({
+            "timestamp": r["timestamp"],
+            "component": r["component"],
+            "metric": r["metric"],
+            "description": r["description"],
+        })
+        assert r["event_id"] == expected, (
+            f"event_id mismatch on row {r}: expected {expected}"
+        )
+
+    # 4. is_cascade is the lowercase string vocabulary and primaries have no parent.
+    primaries_by_event = {}
+    cascade_rows = []
+    for r in rows:
+        assert r["is_cascade"] in {"true", "false"}, (
+            f"is_cascade not in vocabulary: {r['is_cascade']!r}"
+        )
+        if r["is_cascade"] == "true":
+            cascade_rows.append(r)
+        else:
+            assert r["parent_event_id"] == "", (
+                f"primary row should have empty parent_event_id: {r}"
+            )
+            primaries_by_event[r["event_id"]] = r
+
+    # 5. span_start/span_end and shape are populated and internally consistent.
+    allowed_shapes = {"step", "ramp_linear", "ramp_exp", "sustained", "sawtooth", "sine"}
+    for r in rows:
+        assert r["span_start"] == r["timestamp"], (
+            f"span_start must equal timestamp on row {r}"
+        )
+        assert r["span_end"] >= r["span_start"], (
+            f"span_end {r['span_end']} < span_start {r['span_start']} on row {r}"
+        )
+        assert r["shape"] in allowed_shapes, (
+            f"shape {r['shape']!r} not in {allowed_shapes}"
+        )
+
+    # 6. Every cascade with a scenario_id resolves to a primary row of the
+    #    same scenario in this same file.
+    for r in cascade_rows:
+        parent_id = r["parent_event_id"]
+        assert parent_id, (
+            f"cascade row missing parent_event_id (scenario_id={r['scenario_id']}): {r}"
+        )
+        parent = primaries_by_event.get(parent_id)
+        assert parent is not None, (
+            f"cascade row parent_event_id={parent_id} does not resolve to any "
+            f"primary row in the same manifest"
+        )
+        assert parent["scenario_id"] == r["scenario_id"], (
+            f"cascade scenario_id={r['scenario_id']} does not match parent "
+            f"scenario_id={parent['scenario_id']} (event_id={parent_id})"
+        )

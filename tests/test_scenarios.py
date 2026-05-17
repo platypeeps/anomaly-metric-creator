@@ -90,9 +90,16 @@ SCENARIO_CASCADES_BY_SLUG = {
 # main branch (seed 42, default flags). Locking these protects every
 # component output from accidental RNG-order or spec-order drift during
 # the scenario-registry migration.
+#
+# VER-132 (2026-05-17) re-locked the anomalies.csv hashes after adding the
+# 8 enriched columns (scenario_id, severity, is_cascade, event_id,
+# parent_event_id, span_start, span_end, shape) and chronological sort.
+# Per-component CSV hashes were NOT changed by VER-132 — the scenario
+# provenance is stamped into shallow-copied spec dicts so RNG draw order
+# and CSV bytes remain byte-identical to the pre-VER-132 main.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
-    "anomalies.csv": "c17b82d54305156f3574190180537a54bc57b8697e9446dd29d89e59689b76dc",
+    "anomalies.csv": "458703b3da32183889d7a2ca68840f1da05fd00a78cc95aff4e530c2cd5cbb06",
     "apigateway.csv": "23d0e6e3c0ebe47976480a656f393e2c623ea233532679c741c35a8fc5927c22",
     "authservice.csv": "06ab97884f65eb53db6eff0c61147f576809517b841e21b98b2861cb99dd5617",
     "cacheservice.csv": "7ace2f8b8dd6c6ed43ed90058eae8a0f1b1f077a37bbedd88ea9f7523246dde3",
@@ -109,7 +116,7 @@ DEFAULT_ONE_DAY_HASHES = {
 }
 
 DEFAULT_SEVEN_DAY_HASHES = {
-    "anomalies.csv": "70438be7ed479f9d58fd07f3dce6735a0c1407d678e5949aaf309c85bb92a143",
+    "anomalies.csv": "5ab3f0d8d5397b8715c691e82e06e462c6db76b37b985c83d1386a9b63dc2ec0",
     "apigateway.csv": "bc7d1a450ed06b4bd4555b467abbea31f363ec4758533a44cf2cb77758d096ad",
     "authservice.csv": "a5aab875ee8f14aa2070b7647885bbca274305ab7cc69d80c5136e755a0eaabb",
     "cacheservice.csv": "3524a441d5b9e2388d4f62799cc5da1aabcfa912c08bf1192ed84bda6a86d0a6",
@@ -134,7 +141,7 @@ DEFAULT_SEVEN_DAY_HASHES = {
 # out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
 # of per-component append ordering changes which anomalies land in the manifest.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "e0928d1fda99b9e47067aecad9d0f5b86cf51850d3ee11843bf241869d93e63e",
+    "anomalies.csv": "424438f430832ccfe843e1fb1b603cb607e938f7ccfa53ebe89dbdb265a22acd",
     "apigateway.csv": "749ed6244fcade5e2719b767e49d1a50150afe67b1e31bcb38d5381a8fdfc06c",
     "authservice.csv": "19fc066c4304e0712504819f9f2beda96081eb58ead79c4c2501a845ef12fcb0",
     "cacheservice.csv": "8cacedb1b97abdedbd4b06c0094ea81f6b248c2e7521a1daade81d0078322067",

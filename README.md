@@ -235,9 +235,30 @@ Written to `--output-dir` (default `iot_logs/`):
   `--emit-selection` includes `metrics` (the default); explicitly deleted
   from `--output-dir` on runs that omit `metrics` (e.g.
   `--emit-selection logs,traces`). Manifest of injected anomalies whose
-  span anchor row (`span_idx == 0`) survives the packet-loss mask, with
-  columns:  
-  `timestamp, component, metric, description`.
+  span anchor row (`span_idx == 0`) survives the packet-loss mask. Rows are
+  sorted by `(span_start, component, metric)` so the manifest reads
+  chronologically. Columns:  
+  `timestamp, component, metric, description, scenario_id, severity,
+  is_cascade, event_id, parent_event_id, span_start, span_end, shape`.
+  - `timestamp` — the row's wall-clock timestamp; identical to `span_start`.
+  - `description` — human-readable label (preserved as the historic 4th
+    column for backward compatibility).
+  - `scenario_id` — the `SCENARIOS` slug that produced this spec.
+  - `severity` — `low` / `medium` / `high`, copied from the scenario.
+  - `is_cascade` — lowercase `true` / `false` (cascade specs are the
+    secondary blast-radius writes; primaries are `false`).
+  - `event_id` — deterministic `evt_<sha1>` id stable across runs and
+    shared with `metric_report.log` and `metric_traces.jsonl` (see
+    `_anomaly_event_id`); one identity per anomaly across all artifacts.
+  - `parent_event_id` — for cascade rows, the `event_id` of the same
+    scenario's first surviving primary in the manifest's pre-sort order;
+    empty for primaries and for orphan cascades (no surviving primary).
+  - `span_start`, `span_end` — equal to `timestamp` for single-row specs;
+    for shaped specs (`ramp_linear`, `ramp_exp`, `sustained`, `sawtooth`,
+    `sine`) with `duration_seconds`, the actual first/last in-range row
+    timestamps covered by the span.
+  - `shape` — the spec's shape (`step` is the default for single-row and
+    cascade specs).
   - The packet-loss mask (`--drop-rate`) is applied per row, not per anomaly.
     A dropped row is omitted entirely from the per-component CSV (no row is
     emitted for that timestamp), and contributes no influence to neighboring
