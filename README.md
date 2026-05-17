@@ -194,6 +194,14 @@ Batching, dropped rows, and pacing:
   gauge streamer's chronological merge. The parser rejects the combination
   with a clear error — pass `--inject-dst-artifact-day 0` (the default) or
   drop `--otel-emit-gauges`.
+- **`--combine` preserves DST-duplicated rows.**
+  `--inject-dst-artifact-day` duplicates the 02:00–02:59 wall-clock hour
+  inside each per-component CSV. The unified combined CSV preserves both
+  copies — every row in the per-component CSVs appears in the unified
+  output, so the unified row count equals the per-component row count.
+  The DST hour therefore appears with each timestamp duplicated in the
+  unified CSV, mirroring the source files. Consumers that key on
+  timestamp must handle the duplicates explicitly.
 
 Volume note: at `--interval-seconds 1` with the default 13 components × their
 default metric counts (a 1-day run is ≈ 7.5M data points after the natural
