@@ -453,6 +453,71 @@ def test_validate_scenario_spec_five_arg_generator_with_shape_allowed(amc):
     ) is None
 
 
+def test_validate_scenario_spec_non_dict_rejected(amc):
+    """A None or non-dict spec must produce a ValueError, not a raw TypeError."""
+    with pytest.raises(ValueError, match="not a dict"):
+        amc._validate_scenario_spec("test_slug", "apigateway", None, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_string_metric_rejected(amc):
+    """Unhashable metric values would raise TypeError on catalog lookup; must ValueError first."""
+    spec = _good_primary_spec()
+    spec["metric"] = ["error_rate"]
+    with pytest.raises(ValueError, match="non-string metric"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+@pytest.mark.parametrize("bad_arity", [1, 4])
+def test_validate_scenario_spec_step_path_rejects_wrong_arity(amc, bad_arity):
+    """Plain step specs use the step path which calls (ts, col, rng) or
+    (ts, col); 1-arg, 4-arg, and 5-arg generators must be rejected."""
+    spec = _good_primary_spec()
+    if bad_arity == 1:
+        spec["generator"] = lambda ts: 1.0
+    else:  # 4-arg
+        spec["generator"] = lambda ts, idx, t, s: 1.0
+    with pytest.raises(ValueError, match=f"{bad_arity}-arg"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_step_path_rejects_five_arg(amc):
+    """5-arg generators belong on shape/duration specs, not the step path."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, idx, t, s, rng: 1.0
+    with pytest.raises(ValueError, match="5-arg"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_cascade_rejects_wrong_arity(amc):
+    """Cascades use the step path; only 2-arg or 3-arg generators are valid."""
+    spec = _good_cascade_spec()
+    spec["generator"] = lambda ts, idx, t, s, rng: 1.0
+    with pytest.raises(ValueError, match="5-arg"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=True)
+
+
+def test_validate_scenario_spec_kwargs_does_not_bypass_arity(amc):
+    """**kwargs does not add positional capacity; a (ts, col, rng, **kw)
+    generator on a shape spec must still be rejected as 3-arg."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng, **kw: 1.0
+    with pytest.raises(ValueError, match="3-arg"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_var_args_skips_arity_check(amc):
+    """*args makes positional arity unbounded; the validator must skip the check."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, *args: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
 def test_validate_scenario_spec_non_dict_shape_params(amc):
     spec = _good_primary_spec()
     spec["shape_params"] = [1, 2, 3]

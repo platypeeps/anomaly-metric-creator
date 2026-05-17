@@ -254,16 +254,18 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     n_rows = int(total_seconds // interval)
 
     # Require an explicit RNG source so callers cannot silently produce
-    # nondeterministic output. If ctx is provided, take rng from it; if rng
-    # is provided, build a ctx around it. Otherwise raise.
-    if ctx is not None and rng is None:
+    # nondeterministic output. If ctx is provided, ctx.rng is authoritative
+    # (an explicit rng= argument is ignored when ctx is also passed, so the
+    # two cannot drift out of sync). If only rng= is provided, wrap it in a
+    # fresh RunContext.
+    if ctx is not None:
         rng = ctx.rng
-    if rng is None:
+    elif rng is None:
         raise TypeError(
             "generate_component() requires an explicit rng= or ctx= argument; "
             "pass RunContext(rng=np.random.RandomState(seed)) or an rng directly."
         )
-    if ctx is None:
+    else:
         ctx = RunContext(rng=rng)
 
     # Merge primary anomalies with cascading anomalies
@@ -503,20 +505,35 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
     raise ValueError(f"Unsupported anomaly shape: {shape}")
 
 
+_GENERATOR_ARITY_CACHE: "dict[Callable, int | None]" = {}
+
+
+def _cached_generator_arity(gen) -> "int | None":
+    """Cached arity lookup keyed by the generator object itself. Spans can
+    fire over thousands of rows, so introspect each generator once instead
+    of probing arity by raised TypeError on every row. We deliberately key
+    on ``gen`` rather than ``id(gen)`` so the dict keeps a strong reference
+    and prevents Python from reusing the id slot for a different generator
+    with a different arity once the original is garbage-collected."""
+    if gen not in _GENERATOR_ARITY_CACHE:
+        _GENERATOR_ARITY_CACHE[gen] = _generator_positional_arity(gen)
+    return _GENERATOR_ARITY_CACHE[gen]
+
+
 def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
                                 t_within: float, span_idx: int,
                                 rng: "np.random.RandomState" = None):
-    """Backwards-compatible generator call with optional span args."""
-    try:
+    """Backwards-compatible generator call with optional span args. Dispatches
+    by introspected arity (cached) so we don't pay caught-TypeError overhead
+    on every row of a multi-thousand-row span."""
+    arity = _cached_generator_arity(generator)
+    if arity is None or arity == 5:
         return generator(ts, col, t_within, span_idx, rng)
-    except TypeError:
-        try:
-            return generator(ts, col, t_within, span_idx)
-        except TypeError:
-            try:
-                return generator(ts, col, t_within)
-            except TypeError:
-                return generator(ts, col)
+    if arity == 4:
+        return generator(ts, col, t_within, span_idx)
+    if arity == 3:
+        return generator(ts, col, t_within)
+    return generator(ts, col)
 
 
 def _span_fraction(t_within: float, duration_seconds: float) -> float:
@@ -2560,6 +2577,12 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
     kind = "cascade_specs" if is_cascade else "primary_specs"
     location = f"SCENARIOS[{slug!r}].{kind} entry for component {component!r}"
 
+    if not isinstance(spec, dict):
+        raise ValueError(
+            f"{location} is not a dict (got {type(spec).__name__}); every "
+            f"spec must be a dict with keys time_offset/metric/description/generator."
+        )
+
     required = ("time_offset", "metric", "description", "generator")
     missing = [k for k in required if k not in spec]
     if missing:
@@ -2569,6 +2592,11 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
         )
 
     metric = spec["metric"]
+    if not isinstance(metric, str):
+        raise ValueError(
+            f"{location} has non-string metric {metric!r}; expected a "
+            f"metric name from COMPONENTS[{component!r}]."
+        )
     catalog = COMPONENTS.get(component, ())
     catalog_names = {s.name for s in catalog}
     if metric not in catalog_names:
@@ -2621,9 +2649,8 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"shape/duration fields. Move shaped behavior into "
                 f"primary_specs."
             )
-        return
 
-    if "shape" in spec:
+    if not is_cascade and "shape" in spec:
         shape = spec["shape"]
         if not isinstance(shape, str):
             raise ValueError(
@@ -2636,7 +2663,7 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{shape!r}; expected one of {sorted(_VALID_ANOMALY_SHAPES)}."
             )
 
-    if "duration_seconds" in spec:
+    if not is_cascade and "duration_seconds" in spec:
         duration = spec["duration_seconds"]
         if isinstance(duration, bool) or not isinstance(duration, (int, float)):
             raise ValueError(
@@ -2654,7 +2681,7 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{duration!r}; duration must be >= 0 (0 means single-row step)."
             )
 
-    if "shape_params" in spec:
+    if not is_cascade and "shape_params" in spec:
         params = spec["shape_params"]
         if not isinstance(params, dict):
             raise ValueError(
@@ -2662,40 +2689,58 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{params!r}; expected a dict."
             )
 
-    # Generator-arity rule: the 3-arg form (ts, col, rng) is reserved for
-    # single-row step specs (the step path passes rng as the 3rd positional).
-    # If a spec uses shape (other than "step") or duration_seconds > 0 it
-    # goes through _call_generator_within_span whose 3-arg fallback passes
-    # t_within as the 3rd positional — so a 3-arg rng-form generator would
-    # silently receive a float instead of an RNG. Require 2-arg or 5-arg.
+    # Generator-arity rule:
+    #   - Step path (cascades and primary step specs without duration) calls
+    #     the generator as (ts, col, rng) with a (ts, col) fallback. Required
+    #     positional arity: 2 or 3.
+    #   - Span path (primary specs with shape != "step" or duration_seconds > 0)
+    #     calls _call_generator_within_span which dispatches by arity to
+    #     (ts, col, t_within, span_idx, rng) or (ts, col). A 3-arg
+    #     (ts, col, rng) generator would silently receive t_within as its
+    #     third positional. Required positional arity: 2 or 5.
     has_shape = spec.get("shape", "step") != "step"
     has_duration = float(spec.get("duration_seconds", 0) or 0) > 0
+    arity = _generator_positional_arity(spec["generator"])
     if has_shape or has_duration:
-        arity = _generator_positional_arity(spec["generator"])
-        if arity is not None and arity not in (2, 5):
-            raise ValueError(
-                f"{location} metric={metric!r} has a {arity}-arg generator "
-                f"but the spec uses shape/duration; such specs must use the "
-                f"2-arg legacy form (ts, col) or the 5-arg form "
-                f"(ts, col, t_within, span_idx, rng). The 3-arg (ts, col, rng) "
-                f"form is reserved for single-row step specs only."
-            )
+        allowed_arities = (2, 5)
+        path_description = (
+            "shape/duration specs must use the 2-arg legacy form (ts, col) "
+            "or the 5-arg form (ts, col, t_within, span_idx, rng). The "
+            "3-arg (ts, col, rng) form is reserved for single-row step specs."
+        )
+    else:
+        allowed_arities = (2, 3)
+        path_description = (
+            "single-row step specs must use the 2-arg legacy form (ts, col) "
+            "or the 3-arg form (ts, col, rng). The step path does not pass "
+            "t_within or span_idx, so 4- and 5-arg generators would fail at runtime."
+        )
+    if arity is not None and arity not in allowed_arities:
+        raise ValueError(
+            f"{location} metric={metric!r} has a {arity}-arg generator; "
+            f"{path_description}"
+        )
 
 
 def _generator_positional_arity(gen) -> "int | None":
     """Return the count of positional parameters for a generator, or None
-    if the signature cannot be introspected (e.g., builtins, C extensions)."""
+    if the signature cannot be introspected (e.g., builtins, C extensions)
+    or accepts *args (which makes positional arity unbounded). **kwargs is
+    NOT a positional escape hatch — a generator with (ts, col, rng, **kw)
+    still has positional arity 3 and must be checked accordingly.
+    """
     try:
         sig = inspect.signature(gen)
     except (TypeError, ValueError):
         return None
     count = 0
     for p in sig.parameters.values():
-        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            return None  # *args / **kwargs — arity is unbounded; skip the check.
+        if p.kind is inspect.Parameter.VAR_POSITIONAL:
+            return None  # *args — positional arity is unbounded; skip check.
         if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
                       inspect.Parameter.POSITIONAL_OR_KEYWORD):
             count += 1
+        # VAR_KEYWORD (**kwargs), KEYWORD_ONLY do not add positional capacity.
     return count
 
 

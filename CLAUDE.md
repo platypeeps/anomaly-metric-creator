@@ -113,12 +113,16 @@ Anomaly specs are dicts with:
 Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.
 
-Cascade specs use `register_cascade(target_component, time_offset, metric, description,
-generator, *, cascade_registry=…)` internally and simulate blast radius
-(auth → gateway, cache → DB,
-DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Cascades are single-row step writes
-only — express ramps/sustained spans as primary specs in `primary_specs`, not in
-`cascade_specs`.
+Production code does not call `register_cascade()`: `_apply_scenarios()` reads
+each scenario's `cascade_specs` and appends them directly into the per-run
+`RunContext.cascading_anomalies` dict. The `register_cascade(target_component,
+time_offset, metric, description, generator, *, cascade_registry=…)` helper
+exists for tests that need to build a cascade registry without composing a full
+`Scenario`; callers must pass `cascade_registry=` explicitly (the module-level
+registry was removed in VER-131). Cascades simulate blast radius (auth →
+gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Cascades
+are single-row step writes only — express ramps/sustained spans as primary
+specs in `primary_specs`, not in `cascade_specs`.
 
 ### Scenario registry
 
