@@ -3423,16 +3423,24 @@ def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
 _UNIX_EPOCH_UTC = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
 
-def _to_unix_nanos(timestamp: str) -> int:
-    """Convert ``YYYY-MM-DD HH:MM:SS[.SSS]`` timestamp strings to unix-nanoseconds.
+def _dt_to_unix_nanos(dt: datetime.datetime) -> int:
+    """Convert a ``datetime`` (naive UTC or tz-aware) to unix-nanoseconds.
 
     Uses integer arithmetic on ``timedelta`` fields rather than
     ``datetime.timestamp() * 1e9`` so millisecond-precision inputs do not
     accrue floating-point rounding error on the way to a nanosecond integer.
+    Naive inputs are interpreted as UTC, matching the convention used by
+    ``_parse_csv_timestamp`` consumers.
     """
-    dt = _parse_csv_timestamp(timestamp).replace(tzinfo=datetime.timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
     delta = dt - _UNIX_EPOCH_UTC
     return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+
+
+def _to_unix_nanos(timestamp: str) -> int:
+    """Convert ``YYYY-MM-DD HH:MM:SS[.SSS]`` timestamp strings to unix-nanoseconds."""
+    return _dt_to_unix_nanos(_parse_csv_timestamp(timestamp))
 
 
 def _build_otlp_trace_payload(entry: dict) -> dict:
@@ -3619,10 +3627,15 @@ def _build_otlp_metric_protobuf(entry: dict) -> bytes:
 def _build_otlp_gauge_payload(batch: list[dict], *, metric_prefix: str = "") -> dict:
     """Build one OTLP/HTTP JSON ``resourceMetrics`` payload for a batch of per-row gauge values.
 
-    Each ``batch`` entry is ``{"timestamp": str, "component": str, "metric": str, "value": float}``.
-    Entries are grouped first by ``component`` (one ``resourceMetrics`` entry per
-    component) and then by ``metric`` (one ``metrics[]`` entry per metric within
-    the component's scope), with one Gauge data point per row.
+    Each ``batch`` entry is
+    ``{"timestamp": str, "time_unix_nano": int, "component": str, "metric": str, "value": float}``.
+    ``time_unix_nano`` is precomputed once per CSV row in ``stream_otel_gauges``
+    so the builder does not re-parse the timestamp string per data point — the
+    default config emits ~7,800 data points per batch, and per-data-point
+    ``strptime`` was the dominant hotspot at high ``--otel-stream-speedup``.
+    Entries are grouped first by ``component`` (one ``resourceMetrics`` entry
+    per component) and then by ``metric`` (one ``metrics[]`` entry per metric
+    within the component's scope), with one Gauge data point per row.
     """
     grouped: dict[str, dict[str, list[dict]]] = {}
     for entry in batch:
@@ -3636,9 +3649,8 @@ def _build_otlp_gauge_payload(batch: list[dict], *, metric_prefix: str = "") -> 
         for metric_name, entries in metrics_map.items():
             data_points = []
             for entry in entries:
-                ts_nano = _to_unix_nanos(entry["timestamp"])
                 data_points.append({
-                    "timeUnixNano": str(ts_nano),
+                    "timeUnixNano": str(entry["time_unix_nano"]),
                     "asDouble": float(entry["value"]),
                     "attributes": [
                         {"key": "metric.name", "value": {"stringValue": metric_name}},
@@ -3704,9 +3716,8 @@ def _build_otlp_gauge_protobuf(batch: list[dict], *, metric_prefix: str = "") ->
             m = smetric.metrics.add()
             m.name = f"{metric_prefix}{metric_name}"
             for entry in entries:
-                ts_nano = _to_unix_nanos(entry["timestamp"])
                 dp = m.gauge.data_points.add()
-                dp.time_unix_nano = ts_nano
+                dp.time_unix_nano = entry["time_unix_nano"]
                 dp.as_double = float(entry["value"])
                 dp.attributes.extend([
                     KeyValue(key="metric.name", value=AnyValue(string_value=metric_name)),
@@ -4270,9 +4281,14 @@ def stream_otel_gauges(
                     aborted = True
                     break
                 batch_start_dt = dt
+            # Precompute the nanos once per CSV row, not per data point — the
+            # gauge builders read this field directly, skipping the per-point
+            # ``strptime`` that previously dominated request-encoding cost.
+            ts_nano = _dt_to_unix_nanos(dt)
             for metric_name, value in values:
                 batch.append({
                     "timestamp": ts,
+                    "time_unix_nano": ts_nano,
                     "component": comp,
                     "metric": metric_name,
                     "value": value,
