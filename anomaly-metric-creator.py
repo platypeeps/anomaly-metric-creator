@@ -243,8 +243,7 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
-                       dst_inject_day=0, rng: "np.random.RandomState" = None,
-                       ctx: "RunContext" = None):
+                       dst_inject_day=0, ctx: "RunContext"):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -267,20 +266,17 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     fieldnames = [s.name for s in specs]
     n_rows = int(total_seconds // interval)
 
-    # Require an explicit RNG source so callers cannot silently produce
-    # nondeterministic output. If ctx is provided, ctx.rng is authoritative
-    # (an explicit rng= argument is ignored when ctx is also passed, so the
-    # two cannot drift out of sync). If only rng= is provided, wrap it in a
-    # fresh RunContext.
-    if ctx is not None:
-        rng = ctx.rng
-    elif rng is None:
+    # ctx is the sole entry point for per-run state. It carries the RNG
+    # (ctx.rng), the anomaly manifest accumulator (ctx.anomalies), and the
+    # cascade registry (ctx.cascading_anomalies). Callers that need to read
+    # the manifest after generation must own the RunContext; constructing
+    # one inside this function would discard the appended entries.
+    if ctx is None:
         raise TypeError(
-            "generate_component() requires an explicit rng= or ctx= argument; "
-            "pass RunContext(rng=np.random.RandomState(seed)) or an rng directly."
+            "generate_component() requires an explicit ctx= argument; "
+            "pass RunContext(rng=np.random.RandomState(seed))."
         )
-    else:
-        ctx = RunContext(rng=rng)
+    rng = ctx.rng
 
     # Merge primary anomalies with cascading anomalies
     all_anomalies = list(anomaly_specs)
@@ -557,9 +553,17 @@ def _generator_meta(gen) -> dict:
     - ``required_positional``: count of positional-only or
       positional-or-keyword params with no default. The minimum positional
       arity the callable accepts.
-    - ``max_positional``: count of positional-only or positional-or-keyword
-      params total (with or without defaults), or ``None`` if ``*args`` is
-      present (unbounded).
+    - ``fixed_positional_count``: count of positional-only or
+      positional-or-keyword params total (with or without defaults).
+      Preserved even when ``*args`` is present, because a fixed-positional
+      prefix BEFORE ``*args`` still receives the first N positional args
+      of a call before the rest flow into ``*args``.
+    - ``max_positional``: total positional capacity. Equals
+      ``fixed_positional_count`` when ``*args`` is absent; ``None`` when
+      ``*args`` is present (unbounded).
+    - ``has_var_positional``: True iff ``*args`` is in the signature. The
+      validator and both dispatchers consult this flag to decide whether
+      to call the canonical target-arity shape.
     - ``has_required_kwargs``: True iff any ``KEYWORD_ONLY`` param has no
       default. Such generators cannot be called positionally by our runtime.
     - ``inspectable``: True iff ``inspect.signature()`` succeeded. When
@@ -568,11 +572,14 @@ def _generator_meta(gen) -> dict:
     try:
         sig = inspect.signature(gen)
     except (TypeError, ValueError):
-        return {"required_positional": 0, "max_positional": None,
+        return {"required_positional": 0,
+                "fixed_positional_count": 0,
+                "max_positional": None,
                 "has_var_positional": False,
-                "has_required_kwargs": False, "inspectable": False}
+                "has_required_kwargs": False,
+                "inspectable": False}
     required = 0
-    total = 0
+    fixed = 0
     has_var_positional = False
     has_required_kw = False
     for p in sig.parameters.values():
@@ -580,14 +587,15 @@ def _generator_meta(gen) -> dict:
             has_var_positional = True
         elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
                         inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            total += 1
+            fixed += 1
             if p.default is inspect.Parameter.empty:
                 required += 1
         elif p.kind is inspect.Parameter.KEYWORD_ONLY:
             if p.default is inspect.Parameter.empty:
                 has_required_kw = True
     return {"required_positional": required,
-            "max_positional": None if has_var_positional else total,
+            "fixed_positional_count": fixed,
+            "max_positional": None if has_var_positional else fixed,
             "has_var_positional": has_var_positional,
             "has_required_kwargs": has_required_kw,
             "inspectable": True}
@@ -2735,7 +2743,11 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
             f"{location} metric={metric!r} has time_offset {time_offset!r}; "
             f"expected int or float seconds from START."
         )
-    if not math.isfinite(time_offset):
+    # math.isfinite() converts non-floats to a C double first; an
+    # arbitrarily large Python int can raise OverflowError before the
+    # finiteness check completes. Integers are finite by definition, so
+    # only run the finiteness check for floats.
+    if isinstance(time_offset, float) and not math.isfinite(time_offset):
         raise ValueError(
             f"{location} metric={metric!r} has non-finite time_offset "
             f"{time_offset!r}; offsets must be finite seconds from START."
@@ -2784,7 +2796,10 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{location} metric={metric!r} has duration_seconds "
                 f"{duration!r}; expected int or float."
             )
-        if not math.isfinite(duration):
+        # Integers are finite by definition; avoid the C-double conversion
+        # that math.isfinite() does for non-floats (can raise OverflowError
+        # on arbitrarily large Python ints).
+        if isinstance(duration, float) and not math.isfinite(duration):
             raise ValueError(
                 f"{location} metric={metric!r} has non-finite duration_seconds "
                 f"{duration!r}; expected a finite value."
@@ -2814,7 +2829,11 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
     # without silently misbinding ``t_within``/``span_idx`` to a parameter
     # the author intended for a different value (most commonly ``rng``).
     has_shape = spec.get("shape", "step") != "step"
-    has_duration = float(spec.get("duration_seconds", 0) or 0) > 0
+    # Avoid the float() conversion on raw spec data — an arbitrarily large
+    # int duration_seconds would overflow. Test the raw value's positivity
+    # directly; type/finiteness was already validated above.
+    raw_duration = spec.get("duration_seconds", 0)
+    has_duration = bool(raw_duration) and raw_duration > 0
     meta = _generator_meta(spec["generator"])
     # Required keyword-only params can never be supplied by the runtime
     # (the dispatch path uses positional args only); reject up front.
@@ -2837,28 +2856,63 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
     )
     path_name = "shape/duration" if (has_shape or has_duration) else "single-row step"
     required = meta["required_positional"]
-    max_pos = meta["max_positional"]
-    # Accept iff:
-    #   (a) callable with 2 args only — i.e., max_pos == 2 and required <= 2
-    #       (dispatcher will pick the 2-arg call), or
-    #   (b) callable with the target shape AND no fixed-positional prefix
-    #       between 2 and target that would silently absorb t_within /
-    #       span_idx into a wrongly-named parameter:
-    #         required == target  (every positional is required, intentional)
-    #         or required <= 2 AND (max_pos is None or max_pos >= target)
-    callable_exact_2 = max_pos == 2 and required <= 2
-    target_capacity_ok = (max_pos is None) or (max_pos >= target)
-    target_safe_prefix = required == target or required <= 2
-    accept = callable_exact_2 or (target_capacity_ok and target_safe_prefix)
-    if not accept:
+    fixed = meta["fixed_positional_count"]
+    has_var = meta["has_var_positional"]
+    # Mirror the dispatcher logic:
+    #   - if has_var or required == target: dispatcher calls target-arg
+    #   - elif required <= 2: dispatcher calls 2-arg
+    #   - else: no valid dispatch
+    # Safety rules below ensure that whatever shape the dispatcher picks
+    # binds the runtime values to author-intended positions (required
+    # params or *args overflow) and never overwrites a default-having
+    # fixed positional with t_within/span_idx/rng.
+    reject_reason = None
+    if required > target:
+        reject_reason = (
+            f"required_positional={required} > target {target}; no valid "
+            f"dispatch can satisfy this many required params."
+        )
+    elif required != target and required > 2:
+        # required ∈ {3, 4} on span path: dispatcher can't call 2-arg
+        # (would fail required check) or target-arg (would bind t_within
+        # /span_idx to required positional 3/4 — misbind).
+        reject_reason = (
+            f"required_positional={required} is between 2 and target "
+            f"{target}; dispatcher would bind runtime internals to "
+            f"required positions that the author intended for other values."
+        )
+    elif has_var and required <= 2 and fixed > 2:
+        # has_var + default-having fixed positions BEYOND (ts, col).
+        # Dispatcher picks target-arg, fills the default-having fixed
+        # positions with t_within/span_idx/rng before flowing into *args
+        # — overwriting the author's declared defaults.
+        reject_reason = (
+            f"required_positional={required} fixed_positional_count={fixed} "
+            f"with *args: the dispatcher's {target}-arg call would bind "
+            f"runtime internals to default-having fixed positions 3"
+            f"{' through ' + str(min(fixed, target)) if min(fixed, target) > 3 else ''}, "
+            f"overwriting the declared defaults. Move the default-having "
+            f"positions after ``*args`` (kwarg-only with default) or drop them."
+        )
+    elif required == target and fixed > target:
+        # required==target=fixed-but-fixed>target shouldn't happen
+        # (required <= fixed always), but guard anyway.
+        reject_reason = (
+            f"fixed_positional_count={fixed} > target {target}; the "
+            f"{target}-arg dispatch can't satisfy all required positions."
+        )
+    elif not has_var and required <= 2 and fixed < 2:
+        # (ts) or () — dispatcher 2-arg call would fail.
+        reject_reason = (
+            f"fixed_positional_count={fixed} < 2; the 2-arg dispatcher "
+            f"call would fail because the generator can't accept 2 args."
+        )
+    if reject_reason is not None:
         raise ValueError(
             f"{location} metric={metric!r} has a generator with "
-            f"required_positional={required} max_positional={max_pos}; "
-            f"{path_name} specs must use either the 2-arg legacy form "
-            f"(ts, col) or the {target}-arg form {target_form} "
-            f"(or have the same fixed positional prefix). A "
-            f"{required}-fixed-positional signature on this path would "
-            f"silently bind t_within/span_idx/rng to the wrong parameter."
+            f"{reject_reason} {path_name} specs must use either the 2-arg "
+            f"legacy form (ts, col) or the {target}-arg form {target_form}; "
+            f"see CLAUDE.md § Scenario registry for the full dispatch rule."
         )
 
 
@@ -2876,10 +2930,14 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].id is {scenario.id!r}; id must equal "
                 f"the registry key"
             )
-        if scenario.severity not in {"low", "medium", "high"}:
+        # isinstance check first so an unhashable malformed value
+        # (e.g., severity=[]) raises ValueError rather than a raw TypeError
+        # from the set membership lookup.
+        if (not isinstance(scenario.severity, str)
+                or scenario.severity not in {"low", "medium", "high"}):
             raise ValueError(
                 f"SCENARIOS[{slug!r}].severity {scenario.severity!r} must be "
-                "one of low / medium / high"
+                "a string in low / medium / high"
             )
         if not isinstance(scenario.days_required, int) or scenario.days_required < 1:
             raise ValueError(

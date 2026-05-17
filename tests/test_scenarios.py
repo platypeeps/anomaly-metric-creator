@@ -476,16 +476,19 @@ def test_validate_scenario_spec_non_string_metric_rejected(amc):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
-@pytest.mark.parametrize("bad_arity", [1, 4])
-def test_validate_scenario_spec_step_path_rejects_wrong_arity(amc, bad_arity):
-    """Plain step specs use the step path which calls (ts, col, rng) or
-    (ts, col); 1-arg, 4-arg, and 5-arg generators must be rejected."""
+def test_validate_scenario_spec_step_path_rejects_one_arg(amc):
+    """Plain step specs need at least 2 positional params; (ts) fails."""
     spec = _good_primary_spec()
-    if bad_arity == 1:
-        spec["generator"] = lambda ts: 1.0
-    else:  # 4-arg
-        spec["generator"] = lambda ts, idx, t, s: 1.0
-    with pytest.raises(ValueError, match=f"required_positional={bad_arity}"):
+    spec["generator"] = lambda ts: 1.0
+    with pytest.raises(ValueError, match="fixed_positional_count=1"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_step_path_rejects_four_arg(amc):
+    """4 required positional > step target 3."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, idx, t, s: 1.0
+    with pytest.raises(ValueError, match="required_positional=4"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
@@ -552,6 +555,59 @@ def test_validate_scenario_spec_var_args_four_arg_prefix_rejected_step(amc):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
+def test_validate_scenario_spec_var_args_default_prefix_rejected_step(amc):
+    """(ts, col, scale=1.0, *args) on step path: required=2, fixed=3, has_var.
+    Dispatcher would call 3-arg and overwrite the scale default with rng.
+    Misbind — reject."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, col, scale=1.0, *args: 1.0
+    with pytest.raises(ValueError, match="fixed_positional_count=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_var_args_default_prefix_rejected_span(amc):
+    """(ts, col, scale=1.0, *args) on span path: required=2, fixed=3, has_var.
+    Dispatcher would call 5-arg and overwrite the scale default with t_within.
+    Misbind — reject."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, scale=1.0, *args: 1.0
+    with pytest.raises(ValueError, match="fixed_positional_count=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_huge_int_time_offset_no_overflow(amc):
+    """math.isfinite() converts non-floats to a C double which can raise
+    OverflowError on arbitrarily large Python ints. Integers are finite
+    by definition; the validator must skip the isfinite check for them
+    and accept a large but finite int time_offset."""
+    spec = _good_primary_spec()
+    # Pick a value > 2**1024 so float conversion would overflow.
+    spec["time_offset"] = 10 ** 400
+    # No assertion on outcome — just must not raise OverflowError.
+    # (The validator may still accept or reject for other reasons —
+    # negative check or schema. Here we just confirm no overflow.)
+    try:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    except OverflowError:
+        pytest.fail("Validator must not raise OverflowError on a huge int time_offset")
+    except ValueError:
+        pass  # Other validation errors are fine; we only guard against OverflowError.
+
+
+def test_validate_scenario_spec_huge_int_duration_no_overflow(amc):
+    """Same overflow protection for duration_seconds."""
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = 10 ** 400
+    try:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    except OverflowError:
+        pytest.fail("Validator must not raise OverflowError on a huge int duration_seconds")
+    except ValueError:
+        pass
+
+
 def test_validate_scenario_spec_default_positional_accepted_step(amc):
     """Step spec with (ts, col, rng=None, extra=None): required=2, max=4.
     Validator accepts. At runtime the required-based step dispatcher will
@@ -578,17 +634,20 @@ def test_validate_scenario_spec_default_positional_accepted_span(amc):
     ) is None
 
 
-def test_validate_scenario_spec_partial_default_positional_rejected_span(amc):
-    """Span spec with (ts, col, rng=None): required=2, max=3. Span
-    dispatcher would call 2-arg (5-arg fails because max<5), so the
-    author-declared rng=None default is never replaced with the real RNG.
-    This is a silent semantic mismatch; reject."""
+def test_validate_scenario_spec_partial_default_positional_accepted_span(amc):
+    """Span spec with (ts, col, rng=None): required=2, fixed=3, no *args.
+    Under the required-based dispatch contract introduced in pass 6, the
+    span dispatcher calls this generator with 2 args (required=2), so the
+    rng=None default is preserved — no misbind risk. The validator accepts
+    it. Authors who actually need the RNG must declare required=5 or
+    use (ts, col, *args)."""
     spec = _good_primary_spec()
     spec["shape"] = "sustained"
     spec["duration_seconds"] = 30
     spec["generator"] = lambda ts, col, rng=None: 1.0
-    with pytest.raises(ValueError, match="max_positional=3"):
-        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
 
 
 def test_step_dispatcher_does_not_bind_rng_to_optional_third_arg(amc):
@@ -651,6 +710,44 @@ def test_span_dispatcher_calls_five_arg_when_required(amc):
     import datetime as _dt
     amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker")
     assert seen == [(7.5, 3, "rng-marker")]
+
+
+def test_validate_scenarios_registry_rejects_unhashable_scenario_severity(amc):
+    """An unhashable Scenario.severity (e.g., []) must raise the validator's
+    ValueError, not a raw TypeError from set-membership lookup."""
+    scenario = amc.Scenario(
+        id="__t__", name="t", severity=[],  # unhashable
+        days_required=1, category="t", components_touched=("apigateway",),
+        primary_specs=(("apigateway", {
+            "time_offset": 60, "metric": "error_rate",
+            "description": "x", "generator": lambda ts, idx: 0.0,
+        }),),
+        cascade_specs=(),
+    )
+    original = amc.SCENARIOS.copy()
+    amc.SCENARIOS["__t__"] = scenario
+    try:
+        with pytest.raises(ValueError, match="severity"):
+            amc._validate_scenarios_registry()
+    finally:
+        amc.SCENARIOS.clear()
+        amc.SCENARIOS.update(original)
+
+
+def test_generate_component_requires_ctx(amc, tmp_path):
+    """generate_component() must require ctx= so a caller can never
+    silently lose ctx.anomalies / ctx.cascading_anomalies into a private
+    discarded RunContext."""
+    specs = [amc.MetricSpec(name="m0", base=10.0, std=0.0)]
+    ts_array, ts_strings = amc._build_timestamp_arrays(5, 1.0)
+    out = tmp_path / "ctx_required"
+    out.mkdir()
+    with pytest.raises(TypeError, match="ctx"):
+        amc.generate_component(
+            "x", specs, [], base_dir=out, total_seconds=5,
+            drop_rate=0.0, interval=1.0,
+            ts_array=ts_array, ts_strings=ts_strings,
+        )
 
 
 def test_validate_scenarios_registry_rejects_unhashable_severity_primary(amc):

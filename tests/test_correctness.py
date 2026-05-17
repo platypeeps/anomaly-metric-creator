@@ -574,7 +574,7 @@ def test_duration_shape_ramp_linear_and_sine(amc, tmp_path):
         interval=1.0,
         ts_array=ts_array,
         ts_strings=ts_strings,
-        rng=np.random.RandomState(0),
+        ctx=amc.RunContext(rng=np.random.RandomState(0)),
     )
     rows, header = read_component_rows(out, "shape_component")
     idx = header.index("m0")
@@ -616,7 +616,7 @@ def test_duration_step_passes_t_within_to_generator(amc, tmp_path):
         interval=1.0,
         ts_array=ts_array,
         ts_strings=ts_strings,
-        rng=np.random.RandomState(0),
+        ctx=amc.RunContext(rng=np.random.RandomState(0)),
     )
     rows, header = read_component_rows(out, "step_component")
     idx = header.index("m0")
