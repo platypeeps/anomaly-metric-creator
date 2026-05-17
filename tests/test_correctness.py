@@ -1097,3 +1097,89 @@ def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
             f"cascade scenario_id={r['scenario_id']} does not match parent "
             f"scenario_id={parent['scenario_id']} (event_id={parent_id})"
         )
+
+
+def test_span_end_walks_back_when_nominal_end_row_is_dropped(amc, tmp_path):
+    """Deterministic regression test for the ``span_end`` walk-back fix.
+
+    Under the default ``--drop-rate 0.0005`` the seed-42 run happens to
+    keep every shaped span's nominal end row, so a revert of the walk-back
+    fix to ``end_idx = end_idx_nominal`` would silently pass
+    ``test_manifest_sorted_and_cascade_parents_resolve``. Re-run at
+    ``--drop-rate 0.7 --signal-level high``: many shaped spans survive
+    (anchor row retained), and per-span the nominal end is dropped with
+    70% probability, so a regression would (a) emit a ``span_end``
+    timestamp absent from the component CSV (caught by the membership
+    invariant) and (b) leave no span with ``span_end < nominal_end``
+    (caught by the strict walk-back invariant below).
+    """
+    out_dir = tmp_path / "walk_back_high_drop"
+    run_capture(
+        amc, out_dir, days=1, drop_rate=0.7,
+        extra_args=["--signal-level", "high"],
+    )
+
+    rows = read_manifest(out_dir)
+    shaped_rows = [r for r in rows if r["span_end"] > r["span_start"]]
+    assert shaped_rows, (
+        "no shaped rows produced at drop_rate=0.7 high; cannot exercise walk-back"
+    )
+
+    # Membership invariant: span_end must exist in its component CSV.
+    component_ts: dict[str, set[str]] = {}
+    for r in shaped_rows:
+        component_name = r["component"]
+        if component_name not in component_ts:
+            with open(out_dir / f"{component_name}.csv") as f:
+                reader = csv.reader(f)
+                next(reader)
+                component_ts[component_name] = {row[0] for row in reader if row}
+        assert r["span_end"] in component_ts[component_name], (
+            f"span_end {r['span_end']} missing from {component_name}.csv at "
+            f"drop_rate=0.7; walk-back fix appears reverted"
+        )
+
+    # Strong walk-back invariant: at least one shaped row must have
+    # ``span_end`` strictly before the nominal end timestamp implied by
+    # the scenario's ``duration_seconds``. Match the manifest row to its
+    # source spec by (component, metric, time_offset) — disambiguates
+    # scenarios that emit multiple specs at the same (component, metric)
+    # but different time_offsets (e.g. db_stall's two error_rate ramps).
+    interval = 1.0  # default --interval-seconds for this fixture
+    n_rows = 86400  # days=1, interval=1.0
+    start_of_run = datetime.datetime(2026, 3, 10)
+    walked_back_at_least_once = False
+    for r in shaped_rows:
+        scenario = amc.SCENARIOS.get(r["scenario_id"])
+        if scenario is None:
+            continue
+        start_dt = datetime.datetime.fromisoformat(r["span_start"])
+        time_offset = int((start_dt - start_of_run).total_seconds())
+        spec_pairs = list(scenario.primary_specs) + list(scenario.cascade_specs)
+        match = next(
+            (
+                spec_d for comp, spec_d in spec_pairs
+                if comp == r["component"]
+                and spec_d["metric"] == r["metric"]
+                and spec_d.get("time_offset") == time_offset
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        duration_seconds = float(match.get("duration_seconds", 0) or 0)
+        if duration_seconds <= 0:
+            continue
+        # End-row offset matches generate_component: ceil(duration/interval) - 1
+        duration_rows = max(1, int(math.ceil(duration_seconds / interval)))
+        nominal_end_row = min(time_offset + duration_rows - 1, n_rows - 1)
+        nominal_end_dt = start_of_run + datetime.timedelta(seconds=nominal_end_row)
+        actual_end_dt = datetime.datetime.fromisoformat(r["span_end"])
+        if actual_end_dt < nominal_end_dt:
+            walked_back_at_least_once = True
+            break
+
+    assert walked_back_at_least_once, (
+        "no shaped row has span_end strictly before its nominal end at "
+        "drop_rate=0.7; walk-back code path is never exercised (regression?)"
+    )

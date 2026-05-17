@@ -538,6 +538,14 @@ def register_cascade(target_component, time_offset, metric, description, generat
     ``severity`` controls --signal-level eligibility. Defaults to ``medium`` so
     today's cascades fire at the default level; pass ``"high"`` for cascades
     that only belong to the high-pressure catalog.
+
+    Production code routes every cascade through ``_apply_scenarios()`` and
+    does not call this helper; it is retained as a small-surface entry point
+    for tests that want to inject a cascade without standing up a full
+    ``Scenario``. The provenance fields (``_is_cascade``, ``_severity``,
+    ``_scenario_id``) are stamped here so a helper-registered cascade still
+    emits a manifest row with ``is_cascade=true`` and the correct severity,
+    matching what ``_apply_scenarios()`` would have produced.
     """
     cascading_anomalies.setdefault(target_component, []).append({
         "time_offset": time_offset,
@@ -545,6 +553,9 @@ def register_cascade(target_component, time_offset, metric, description, generat
         "description": description,
         "generator": generator,
         "severity": severity,
+        "_is_cascade": True,
+        "_severity": severity,
+        "_scenario_id": "",
     })
 
 # ------------------------------------------------------------------

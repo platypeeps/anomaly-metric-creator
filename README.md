@@ -254,11 +254,17 @@ Written to `--output-dir` (default `iot_logs/`):
     scenario's first surviving primary in the manifest's pre-sort order;
     empty for primaries and for orphan cascades (no surviving primary).
   - `span_start`, `span_end` — equal to `timestamp` for single-row specs;
-    for shaped specs (`ramp_linear`, `ramp_exp`, `sustained`, `sawtooth`,
-    `sine`) with `duration_seconds`, the actual first/last in-range row
-    timestamps covered by the span.
+    for any spec with `duration_seconds > 0` (including catalog entries
+    with `shape: "step"` such as `db_disk_exhaustion`, `jwks_rotation_chaos`,
+    `cache_leak_restart`, and `api_cpu_saturation`, plus all `ramp_linear`,
+    `ramp_exp`, `sustained`, `sawtooth`, `sine` shapes), the actual
+    first/last in-range row timestamps covered by the span. `span_end` is
+    walked back from the nominal end row to the last non-dropped row in
+    the span, so it always names a timestamp that actually appears in the
+    component CSV even under `--drop-rate`.
   - `shape` — the spec's shape (`step` is the default for single-row and
-    cascade specs).
+    cascade specs; a `step` spec may still have `duration_seconds > 0`,
+    in which case `span_end > span_start`).
   - The packet-loss mask (`--drop-rate`) is applied per row, not per anomaly.
     A dropped row is omitted entirely from the per-component CSV (no row is
     emitted for that timestamp), and contributes no influence to neighboring
