@@ -1,11 +1,10 @@
 """End-to-end coverage for the three VER-98 multi-day cascading scenarios.
 
-Each scenario activates at its own ``days_required`` (see
-``amc.SCENARIOS[<slug>].days_required`` — currently ``cache_leak_restart`` at
-day 2, ``jwks_rotation_chaos`` at day 3, ``db_disk_exhaustion`` at day 2), but
-the full primary + cascade sequences span days 2-6 so the asserts run against
-the shared 7-day fixture. A parallel 1-day run confirms every spec is out of
-range under the default duration. A pair of seeded runs locks in deterministic
+Each scenario activates at its own ``days_required`` — see
+``amc.SCENARIOS[<slug>].days_required`` for the current values. The full
+primary + cascade sequences span multiple days, so the asserts run against the
+shared 7-day fixture. A parallel 1-day run confirms every spec is out of range
+under the default duration. A pair of seeded runs locks in deterministic
 ``anomalies.csv`` output.
 """
 
