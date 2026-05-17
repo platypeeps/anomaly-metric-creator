@@ -3284,15 +3284,24 @@ def parse_args(argv=None):
     # Preflight cell-count cap. ``--interval-seconds 0.001`` with default flags
     # would emit 86.4M rows * ~75 default metrics = ~6.5B cells; large
     # combinations of the four knobs below silently chew through tens of GB
-    # before the user notices. Compute the upper-bound cell count from the
-    # already-resolved knobs and reject when the cap trips, unless the user
-    # has explicitly opted in with --allow-huge-output.
+    # of memory and runtime before the user notices. The cost the cap
+    # protects against is the in-memory ``np.empty((n_rows, n_cols),
+    # float64)`` allocation and vectorized math inside ``generate_component``
+    # (~52 GB of RAM at 6.5B cells), not just the on-disk CSV size. Disk
+    # output is gated by ``emit_metrics`` but the matrix work runs
+    # unconditionally for every component in ``args.components`` — so the
+    # cap must apply on every code path that reaches ``generate_component``,
+    # including ``--emit-selection logs`` / ``--emit-selection traces``
+    # runs where no per-component CSV is written. Skipping the cap when
+    # ``"metrics" not in args.emit_selection`` would invite OOMs without
+    # saving any allocation or compute.
     #
-    # --combine-only bypasses generation entirely (main() reads existing CSVs
-    # and returns), so the cap is irrelevant on that path; skip the check
-    # so a user can re-run --combine-only over a dataset that was originally
-    # generated with --allow-huge-output without having to remember the
-    # bypass flag every time.
+    # ``--combine-only`` is the one exception: ``main()`` calls
+    # ``combine_logs()`` and returns before reaching ``generate_component``,
+    # so no per-cell work happens. Skipping the cap on that path lets a
+    # user re-run ``--combine-only`` over a dataset originally generated
+    # with ``--allow-huge-output`` without having to repeat the bypass flag
+    # every time.
     if not args.combine_only:
         # Mirror the generator's row-count derivation byte-for-byte. main()
         # computes ``total_seconds = SECONDS_PER_DAY * args.duration_days``
