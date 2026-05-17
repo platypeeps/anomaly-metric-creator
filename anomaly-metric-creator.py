@@ -332,10 +332,16 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             # shaped specs with ``duration_seconds``. The end row is the
             # last row index covered by the span, clipped to ``n_rows - 1``
             # so specs whose tail spills past the run window still produce
-            # a valid in-range end timestamp.
+            # a valid in-range end timestamp, then walked back to the last
+            # non-dropped row in the span so span_end always names a
+            # timestamp that actually appears in the component CSV.
+            # ``row_idx`` itself is non-dropped (checked above), so the
+            # slice is guaranteed to contain at least one kept row.
             duration_seconds = float(aspec.get("duration_seconds", 0) or 0)
             duration_rows = max(1, int(np.ceil(duration_seconds / interval)))
-            end_idx = min(row_idx + duration_rows - 1, n_rows - 1)
+            end_idx_nominal = min(row_idx + duration_rows - 1, n_rows - 1)
+            span_kept = ~drop_mask[row_idx:end_idx_nominal + 1]
+            end_idx = row_idx + int(np.flatnonzero(span_kept)[-1])
             ts_str = str(ts_strings[row_idx])
             anomalies.append({
                 "timestamp": ts_str,

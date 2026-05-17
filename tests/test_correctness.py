@@ -1052,6 +1052,35 @@ def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
             f"shape {r['shape']!r} not in {allowed_shapes}"
         )
 
+    # 5b. span_end always names a timestamp that exists in the component CSV,
+    #     even when ``--drop-rate`` would have dropped the nominal end row of
+    #     a shaped span. Build one timestamp set per component, then look up
+    #     each manifest row.
+    component_ts: dict[str, set[str]] = {}
+    for component_name in {r["component"] for r in rows}:
+        csv_path = out_dir / f"{component_name}.csv"
+        with open(csv_path) as f:
+            reader = csv.reader(f)
+            next(reader)  # header
+            component_ts[component_name] = {row[0] for row in reader if row}
+    for r in rows:
+        comp_ts = component_ts[r["component"]]
+        assert r["span_start"] in comp_ts, (
+            f"span_start {r['span_start']} missing from {r['component']}.csv on row {r}"
+        )
+        assert r["span_end"] in comp_ts, (
+            f"span_end {r['span_end']} missing from {r['component']}.csv on row {r} "
+            f"(nominal end row likely fell on a --drop-rate gap)"
+        )
+
+    # 5c. At least one shaped row has span_end > span_start so the
+    #     end-of-span code path is exercised by this test rather than relying
+    #     on the smoke-run evidence alone.
+    assert any(r["span_end"] > r["span_start"] for r in rows), (
+        f"{days}-day manifest has no shaped specs with span_end > span_start; "
+        f"end-of-span code path is not exercised"
+    )
+
     # 6. Every cascade with a scenario_id resolves to a primary row of the
     #    same scenario in this same file.
     for r in cascade_rows:
