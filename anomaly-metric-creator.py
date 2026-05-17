@@ -67,6 +67,13 @@ SIGNAL_LEVELS: dict[str, set[str]] = {
 }
 DEFAULT_SEVERITY = "medium"
 
+# Anomaly shape vocabulary recognised by ``_resolve_anomaly_value``. Specs that
+# declare an unknown ``shape`` are rejected at import time by
+# ``_validate_scenario_spec``.
+_VALID_ANOMALY_SHAPES = frozenset({
+    "step", "sustained", "ramp_linear", "ramp_exp", "sawtooth", "sine",
+})
+
 # Stable named sub-seed for the --anomaly-count sampling RNG. Derived from
 # sha256(b"anomaly_count_cap") and fixed at import time so the cap RNG stream
 # is decoupled from any other np.random use that shares the same seed.
@@ -2533,6 +2540,101 @@ SCENARIOS: dict[str, Scenario] = {
 }
 
 
+def _validate_scenario_spec(slug: str, component: str, spec: dict,
+                            *, is_cascade: bool) -> None:
+    """Schema-check one primary or cascade spec dict at import time.
+
+    Raises ``ValueError`` naming the scenario slug, component, and offending
+    field on any drift. Cascade specs reject ``shape`` / ``duration_seconds``
+    / ``shape_params`` because the cascade injection path is single-row step
+    writes only (see CLAUDE.md § Anomaly injection schema).
+    """
+    kind = "cascade_specs" if is_cascade else "primary_specs"
+    location = f"SCENARIOS[{slug!r}].{kind} entry for component {component!r}"
+
+    required = ("time_offset", "metric", "description", "generator")
+    missing = [k for k in required if k not in spec]
+    if missing:
+        raise ValueError(
+            f"{location} is missing required key(s) {missing}; every spec "
+            f"must define {list(required)}."
+        )
+
+    metric = spec["metric"]
+    catalog = COMPONENTS.get(component, ())
+    catalog_names = {s.name for s in catalog}
+    if metric not in catalog_names:
+        raise ValueError(
+            f"{location} references metric {metric!r} not present in "
+            f"COMPONENTS[{component!r}] (full catalog). Catalog: "
+            f"{sorted(catalog_names)}."
+        )
+
+    if not callable(spec["generator"]):
+        raise ValueError(
+            f"{location} metric={metric!r} has non-callable generator "
+            f"{spec['generator']!r}; expected a callable."
+        )
+
+    time_offset = spec["time_offset"]
+    # ``bool`` is a subclass of ``int`` so ``isinstance(True, (int, float))``
+    # is True; reject it explicitly so a stray boolean doesn't silently
+    # round to row 1.
+    if isinstance(time_offset, bool) or not isinstance(time_offset, (int, float)):
+        raise ValueError(
+            f"{location} metric={metric!r} has time_offset {time_offset!r}; "
+            f"expected int or float seconds from START."
+        )
+    if time_offset < 0:
+        raise ValueError(
+            f"{location} metric={metric!r} has negative time_offset "
+            f"{time_offset!r}; offsets are seconds from START and must be >= 0."
+        )
+
+    description = spec["description"]
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(
+            f"{location} metric={metric!r} has empty or non-string "
+            f"description {description!r}; manifest rows require a label."
+        )
+
+    if is_cascade:
+        forbidden = [k for k in ("shape", "duration_seconds", "shape_params")
+                     if k in spec]
+        if forbidden:
+            raise ValueError(
+                f"{location} metric={metric!r} declares {forbidden}; cascade "
+                f"specs are single-row step writes and must not carry "
+                f"shape/duration fields. Move shaped behavior into "
+                f"primary_specs."
+            )
+        return
+
+    if "shape" in spec:
+        shape = spec["shape"]
+        if shape not in _VALID_ANOMALY_SHAPES:
+            raise ValueError(
+                f"{location} metric={metric!r} has unsupported shape "
+                f"{shape!r}; expected one of {sorted(_VALID_ANOMALY_SHAPES)}."
+            )
+
+    if "duration_seconds" in spec:
+        duration = spec["duration_seconds"]
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+            raise ValueError(
+                f"{location} metric={metric!r} has duration_seconds "
+                f"{duration!r}; expected int or float."
+            )
+
+    if "shape_params" in spec:
+        params = spec["shape_params"]
+        if not isinstance(params, dict):
+            raise ValueError(
+                f"{location} metric={metric!r} has shape_params "
+                f"{params!r}; expected a dict."
+            )
+
+
 def _validate_scenarios_registry() -> None:
     """Import-time invariants for ``SCENARIOS``.
 
@@ -2606,6 +2708,7 @@ def _validate_scenarios_registry() -> None:
                     f"SCENARIOS[{slug!r}].primary_specs references unknown "
                     f"component {component!r}"
                 )
+            _validate_scenario_spec(slug, component, spec, is_cascade=False)
             if "severity" in spec and spec["severity"] not in valid_severities:
                 raise ValueError(
                     f"SCENARIOS[{slug!r}].primary_specs entry for component "
@@ -2621,6 +2724,7 @@ def _validate_scenarios_registry() -> None:
                     f"SCENARIOS[{slug!r}].cascade_specs targets unknown "
                     f"component {target!r}"
                 )
+            _validate_scenario_spec(slug, target, cascade, is_cascade=True)
             if "severity" in cascade and cascade["severity"] not in valid_severities:
                 raise ValueError(
                     f"SCENARIOS[{slug!r}].cascade_specs entry targeting "

@@ -145,6 +145,14 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
   `cascade_dict` has `time_offset`, `metric`, `description`, and `generator`
   (no `shape`/`shape_params` — cascades are single-row steps).
 
+Every primary and cascade spec is schema-checked at import time by
+`_validate_scenario_spec()` (called from `_validate_scenarios_registry`):
+required keys present, `metric` in the full `COMPONENTS[component]` catalog,
+`generator` callable, `time_offset` a non-negative non-bool `int`/`float`,
+`description` a non-empty string, `shape` in `_VALID_ANOMALY_SHAPES`,
+`duration_seconds` numeric (non-bool), `shape_params` a dict; cascade specs
+reject `shape`/`duration_seconds`/`shape_params` outright.
+
 `_resolve_scenarios()` applies the resolution pipeline:
 allowlist (`--scenarios`) → exclusion (`--exclude-scenarios`) → severity filter
 (`--signal-level`) → duration filter (`--duration-days`) → component filter

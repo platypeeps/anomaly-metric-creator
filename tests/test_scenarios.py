@@ -240,6 +240,182 @@ def test_three_multi_day_scenarios_require_multi_day_runs(amc):
 
 
 # ------------------------------------------------------------------
+# Spec-schema validator (_validate_scenario_spec, VER-130)
+# ------------------------------------------------------------------
+def _good_primary_spec():
+    """Well-formed primary spec used as a baseline by validator tests."""
+    return {
+        "time_offset": 60,
+        "metric": "error_rate",
+        "description": "Synthetic baseline spec for validator tests",
+        "generator": lambda ts, idx: 0.5,
+    }
+
+
+def _good_cascade_spec():
+    """Well-formed cascade spec used as a baseline by validator tests."""
+    return {
+        "time_offset": 60,
+        "metric": "error_rate",
+        "description": "Synthetic cascade spec for validator tests",
+        "generator": lambda ts, idx: 0.5,
+    }
+
+
+def test_validate_scenario_spec_happy_path_primary(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = 30
+    spec["shape"] = "ramp_linear"
+    spec["shape_params"] = {"start": 0.1, "end": 0.9}
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_happy_path_cascade(amc):
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", _good_cascade_spec(), is_cascade=True
+    ) is None
+
+
+def test_validate_scenario_spec_valid_anomaly_shapes_constant(amc):
+    assert amc._VALID_ANOMALY_SHAPES == frozenset({
+        "step", "sustained", "ramp_linear", "ramp_exp", "sawtooth", "sine",
+    })
+
+
+@pytest.mark.parametrize(
+    "missing_key", ["time_offset", "metric", "description", "generator"]
+)
+def test_validate_scenario_spec_missing_required_key(amc, missing_key):
+    spec = _good_primary_spec()
+    del spec[missing_key]
+    with pytest.raises(ValueError, match=missing_key) as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    assert "test_slug" in str(excinfo.value)
+
+
+def test_validate_scenario_spec_unknown_metric(amc):
+    spec = _good_primary_spec()
+    spec["metric"] = "this_metric_does_not_exist"
+    with pytest.raises(ValueError, match="this_metric_does_not_exist") as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    msg = str(excinfo.value)
+    assert "test_slug" in msg
+    assert "apigateway" in msg
+
+
+def test_validate_scenario_spec_unknown_metric_on_cascade(amc):
+    spec = _good_cascade_spec()
+    spec["metric"] = "ghost_metric"
+    with pytest.raises(ValueError, match="ghost_metric"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=True)
+
+
+def test_validate_scenario_spec_non_callable_generator(amc):
+    spec = _good_primary_spec()
+    spec["generator"] = 42
+    with pytest.raises(ValueError, match="generator") as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    assert "test_slug" in str(excinfo.value)
+
+
+def test_validate_scenario_spec_negative_time_offset(amc):
+    spec = _good_primary_spec()
+    spec["time_offset"] = -1
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_numeric_time_offset(amc):
+    spec = _good_primary_spec()
+    spec["time_offset"] = "5"
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_boolean_time_offset_rejected(amc):
+    """True/False are int subclasses; the validator must reject them so a
+    stray boolean doesn't silently round to row 1."""
+    spec = _good_primary_spec()
+    spec["time_offset"] = True
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_empty_description(amc):
+    spec = _good_primary_spec()
+    spec["description"] = ""
+    with pytest.raises(ValueError, match="description"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_string_description(amc):
+    spec = _good_primary_spec()
+    spec["description"] = 12345
+    with pytest.raises(ValueError, match="description"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_unknown_shape(amc):
+    spec = _good_primary_spec()
+    spec["shape"] = "explode"
+    with pytest.raises(ValueError, match="explode") as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    msg = str(excinfo.value)
+    for valid_shape in ("step", "sustained", "ramp_linear"):
+        assert valid_shape in msg
+
+
+def test_validate_scenario_spec_non_numeric_duration(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = "60"
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_boolean_duration_rejected(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = True
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_dict_shape_params(amc):
+    spec = _good_primary_spec()
+    spec["shape_params"] = [1, 2, 3]
+    with pytest.raises(ValueError, match="shape_params"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+@pytest.mark.parametrize(
+    "forbidden_key,forbidden_value",
+    [
+        ("shape", "step"),
+        ("duration_seconds", 60),
+        ("shape_params", {"start": 0.1, "end": 0.9}),
+    ],
+)
+def test_validate_scenario_spec_cascade_rejects_shape_keys(
+    amc, forbidden_key, forbidden_value
+):
+    spec = _good_cascade_spec()
+    spec[forbidden_key] = forbidden_value
+    with pytest.raises(ValueError, match=forbidden_key) as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=True)
+    msg = str(excinfo.value)
+    assert "test_slug" in msg
+    assert "cascade" in msg.lower()
+
+
+def test_validate_scenarios_registry_walks_every_spec(amc):
+    """Live registry must satisfy the new schema checks today. If this
+    breaks, the offending spec needs fixing in SCENARIOS, not the validator.
+    """
+    amc._validate_scenarios_registry()
+
+
+# ------------------------------------------------------------------
 # CLI flag parsing — case-insensitive variants live in test_args.py
 # ------------------------------------------------------------------
 def test_parse_args_scenarios_default_is_all(amc):
