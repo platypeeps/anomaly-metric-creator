@@ -3060,7 +3060,12 @@ def parse_args(argv=None):
         "--otel-stream-max-events",
         type=int,
         default=None,
-        help="Optional cap on streamed anomaly event count (default: all).",
+        help="Optional cap on streamed HTTP attempt count (default: all). For the "
+             "anomaly-counter stream this caps the number of anomaly events sent. "
+             "For the gauge stream (``--otel-emit-gauges``) it caps the number of "
+             "OTLP request *attempts* (not data points and not successes) — a broken "
+             "endpoint that 500s every request still trips the cap at N. Both streams "
+             "honor the same flag independently in one run.",
     )
     p.add_argument(
         "--otel-stream-auth-scheme",
@@ -4074,7 +4079,10 @@ def stream_otel_gauges(
     ``heapq.merge`` keyed on the parsed timestamp, accumulating rows into
     batches that cover ``batch_seconds`` seconds of timeline coverage. Each
     flush is one OTLP request grouped by component (resource) and metric
-    (scopeMetrics.metrics). Dropped rows (blank CSV lines) are suppressed.
+    (scopeMetrics.metrics). Dropped CSV rows are naturally absent from the
+    gauge stream because ``generate_component`` omits them from each per-
+    component CSV entirely (see ``keep_mask``), so the streamer only ever
+    sees surviving timestamps.
 
     ``max_events`` caps the total number of OTLP requests sent (not data
     points), mirroring ``--otel-stream-max-events`` semantics for the
