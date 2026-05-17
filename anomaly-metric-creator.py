@@ -45,6 +45,17 @@ DEFAULT_INTERVAL_SECONDS = 1.0
 DEFAULT_OTEL_STREAM_AUTH_SCHEME = "Bearer"
 DEFAULT_SIGNAL_LEVEL = "medium"
 
+# Preflight ceiling on total emitted cells per run, where one "cell" is one
+# metric value at one timestamp summed across selected components. Trips on
+# the metric × row × component product to catch the common foot-gun of
+# combining a very small --interval-seconds with the default --duration-days
+# and component allowlist, which silently blows up to billions of cells (and
+# tens of GB of CSV) before the user notices. Override with
+# --allow-huge-output when the size is intentional. 200M cells corresponds
+# to roughly 5-15 GB of output and runs in tens of seconds; well above any
+# default workload but well under "I rebooted my laptop by accident".
+PREFLIGHT_CELL_CAP = 200_000_000
+
 # Inclusion hierarchy for --signal-level: each level keeps its own severity tier
 # plus everything weaker. A spec with no explicit ``severity`` defaults to
 # ``medium`` so today's catalog continues to fire under the default level.
@@ -2947,6 +2958,18 @@ def parse_args(argv=None):
              f"(highest-value first). Anomalies targeting metrics outside "
              f"the trimmed set are filtered out.",
     )
+    p.add_argument(
+        "--allow-huge-output",
+        action="store_true",
+        default=False,
+        help=f"Bypass the preflight cell-count cap "
+             f"({PREFLIGHT_CELL_CAP:,} metric cells across all "
+             f"components and timestamps). Without this flag, parse_args "
+             f"rejects combinations of --interval-seconds, --duration-days, "
+             f"--metrics-per-component, and --components that would emit "
+             f"more cells than the cap. Pass this flag when the size is "
+             f"intentional.",
+    )
     otel_toggle = p.add_mutually_exclusive_group()
     otel_toggle.add_argument(
         "--otel-enabled",
@@ -3256,6 +3279,40 @@ def parse_args(argv=None):
         p.error(
             f"--metrics-per-component must be in [1, {MAX_METRICS_PER_COMPONENT}] "
             f"(omit the flag to use each component's historic default count)"
+        )
+
+    # Preflight cell-count cap. ``--interval-seconds 0.001`` with default flags
+    # would emit 86.4M rows * ~75 default metrics = ~6.5B cells; large
+    # combinations of the four knobs below silently chew through tens of GB
+    # before the user notices. Compute the upper-bound cell count from the
+    # already-resolved knobs and reject when the cap trips, unless the user
+    # has explicitly opted in with --allow-huge-output.
+    rows_per_component = int(
+        (args.duration_days * SECONDS_PER_DAY) // args.interval_seconds
+    )
+    if args.metrics_per_component is None:
+        total_metrics = sum(
+            DEFAULT_METRICS_PER_COMPONENT[c] for c in args.components
+        )
+    else:
+        total_metrics = sum(
+            min(args.metrics_per_component, len(COMPONENTS[c]))
+            for c in args.components
+        )
+    estimated_cells = rows_per_component * total_metrics
+    if estimated_cells > PREFLIGHT_CELL_CAP and not args.allow_huge_output:
+        p.error(
+            f"preflight cell-count cap exceeded: "
+            f"--interval-seconds {args.interval_seconds} "
+            f"x --duration-days {args.duration_days} "
+            f"x --components ({len(args.components)} selected) "
+            f"x --metrics-per-component "
+            f"{args.metrics_per_component if args.metrics_per_component is not None else 'default'} "
+            f"would emit ~{estimated_cells:,} metric cells "
+            f"(cap: {PREFLIGHT_CELL_CAP:,}). "
+            f"Raise --interval-seconds, lower --duration-days, lower "
+            f"--metrics-per-component, narrow --components, or pass "
+            f"--allow-huge-output to bypass."
         )
 
     return args

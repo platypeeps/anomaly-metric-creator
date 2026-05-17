@@ -47,8 +47,16 @@ def test_parse_args_invalid_values(amc, flag, value):
 
 def test_parse_args_interval_seconds_accepts_millisecond_floor(amc):
     """VER-111: --interval-seconds 0.001 (1ms) is the documented floor and
-    must parse cleanly; anything below collapses to identical timestamps."""
-    args = amc.parse_args(["--interval-seconds", "0.001", "--output-dir", "test_out"])
+    must parse cleanly; anything below collapses to identical timestamps.
+
+    The VER-136 preflight cell-count cap rejects 0.001s intervals at
+    default --duration-days / --components, so we opt out with
+    --allow-huge-output to keep exercising the millisecond floor itself."""
+    args = amc.parse_args([
+        "--interval-seconds", "0.001",
+        "--allow-huge-output",
+        "--output-dir", "test_out",
+    ])
     assert args.interval_seconds == 0.001
 
 def test_parse_args_emit_selection(amc):
@@ -515,3 +523,109 @@ def test_env_bool_empty_or_whitespace_honors_default(amc, monkeypatch, value):
     assert amc._env_bool("AMC_TEST_BOOL") is False
     assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
     assert amc._env_bool("AMC_TEST_BOOL", default=False) is False
+
+
+# ----------------------------------------------------------------------
+# VER-136: preflight cell-count cap.
+#
+# The cap (``PREFLIGHT_CELL_CAP``) trips on the product of
+# (duration_days * SECONDS_PER_DAY / interval_seconds) row count and the
+# per-component default (or capped) metric count summed across the
+# selected components. Tests below cover both rejection and the
+# documented bypass paths.
+# ----------------------------------------------------------------------
+
+
+def test_preflight_rejects_subsecond_interval_at_defaults(amc):
+    """``--interval-seconds 0.001`` at default --duration-days/--components/
+    --metrics-per-component produces ~6.5B cells and must be rejected."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--interval-seconds", "0.001",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_preflight_allows_subsecond_interval_with_override(amc):
+    """``--allow-huge-output`` bypasses the cell-count cap. The same args
+    that fail in :func:`test_preflight_rejects_subsecond_interval_at_defaults`
+    must parse cleanly with the override in place."""
+    args = amc.parse_args([
+        "--interval-seconds", "0.001",
+        "--allow-huge-output",
+        "--output-dir", "test_out",
+    ])
+    assert args.interval_seconds == 0.001
+    assert args.allow_huge_output is True
+
+
+def test_preflight_accepts_seven_day_defaults(amc):
+    """Regression for the locked 7-day default-output SHA-256 hash. The
+    7-day default run is well under the cap (~45M cells) and must parse
+    without ``--allow-huge-output``."""
+    args = amc.parse_args([
+        "--duration-days", "7",
+        "--output-dir", "test_out",
+    ])
+    assert args.duration_days == 7
+    assert args.allow_huge_output is False
+
+
+def test_preflight_accepts_seven_day_max_metrics(amc):
+    """7 days at the per-component metric cap (10) across all components
+    is still under the cell cap (~79M cells) and must parse cleanly."""
+    args = amc.parse_args([
+        "--duration-days", "7",
+        "--metrics-per-component", "10",
+        "--output-dir", "test_out",
+    ])
+    assert args.duration_days == 7
+    assert args.metrics_per_component == 10
+
+
+def test_preflight_rejects_narrow_components_when_product_still_huge(amc):
+    """Narrowing ``--components`` to a single component does not bypass
+    the cap when the row x metric product for that one component still
+    exceeds it. apigateway has 6 default metrics; at
+    ``--interval-seconds 0.001`` it emits 86.4M rows x 6 = ~518M cells."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--interval-seconds", "0.001",
+            "--components", "apigateway",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_preflight_accepts_large_run_when_narrow_components_drop_under_cap(amc):
+    """A run that would exceed the cap with the default ``--components all``
+    must parse cleanly once narrowed to a small allowlist that drops the
+    cell estimate under the cap.
+
+    ``--duration-days 7 --interval-seconds 0.1`` emits 6.048M rows. With
+    all components and default metrics (75 total metrics) that is ~454M
+    cells (over the cap), but narrowed to ``observabilitypipeline`` (4
+    default metrics) it is ~24M cells (well under)."""
+    args = amc.parse_args([
+        "--duration-days", "7",
+        "--interval-seconds", "0.1",
+        "--components", "observabilitypipeline",
+        "--output-dir", "test_out",
+    ])
+    assert args.components == {"observabilitypipeline"}
+    assert args.interval_seconds == 0.1
+
+
+def test_preflight_error_message_names_relevant_flags(amc, capsys):
+    """The error must name the four knobs that influence the cap plus
+    ``--allow-huge-output``, so users hitting the cap know what to do."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--interval-seconds", "0.001",
+            "--output-dir", "test_out",
+        ])
+    err = capsys.readouterr().err
+    assert "--interval-seconds" in err
+    assert "--duration-days" in err
+    assert "--metrics-per-component" in err
+    assert "--components" in err
+    assert "--allow-huge-output" in err
