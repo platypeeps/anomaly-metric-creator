@@ -3319,6 +3319,7 @@ def combine_logs_unified(components, input_dir, output_file=None):
         input_path = input_dir / f"{component}.csv"
         print(f"Loading {component}.csv...")
 
+        seen_in_component = {}
         with open(input_path, "r") as infile:
             reader = csv.DictReader(infile)
             metric_names = [f for f in reader.fieldnames if f != "timestamp"]
@@ -3326,7 +3327,11 @@ def combine_logs_unified(components, input_dir, output_file=None):
 
             for row in reader:
                 timestamp = row["timestamp"]
-                bucket = data_by_timestamp.setdefault(timestamp, {})
+                # DST fall-back duplicates the 02:00–02:59 wall-clock hour;
+                # the occurrence index keeps both copies (non-DST rows always 0).
+                occurrence = seen_in_component.get(timestamp, 0)
+                seen_in_component[timestamp] = occurrence + 1
+                bucket = data_by_timestamp.setdefault((timestamp, occurrence), {})
                 bucket[component] = {metric: row[metric] for metric in metric_names}
 
     fieldnames = ["timestamp"]
@@ -3340,10 +3345,11 @@ def combine_logs_unified(components, input_dir, output_file=None):
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
         writer.writeheader()
 
-        for timestamp in sorted(data_by_timestamp.keys()):
+        for bucket_key in sorted(data_by_timestamp.keys()):
+            timestamp, _occurrence = bucket_key
             row = {"timestamp": timestamp}
             for component in components:
-                component_row = data_by_timestamp[timestamp].get(component, {})
+                component_row = data_by_timestamp[bucket_key].get(component, {})
                 for metric in component_metrics[component]:
                     row[f"{component}_{metric}"] = component_row.get(metric, "")
             writer.writerow(row)

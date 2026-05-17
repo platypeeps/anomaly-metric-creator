@@ -7,7 +7,7 @@ import shutil
 
 import pytest
 
-from conftest import COMPONENTS
+from conftest import COMPONENTS, run_capture
 
 
 @pytest.fixture(scope="module")
@@ -276,4 +276,79 @@ def test_combine_only_components_missing_csv_errors(amc, one_day_run_a, tmp_path
     message = str(excinfo.value)
     assert "database.csv" in message, (
         f"SystemExit message {message!r} did not name database.csv"
+    )
+
+
+def test_combine_with_dst_artifact_preserves_all_rows(amc, tmp_path):
+    """--combine + --inject-dst-artifact-day must NOT silently drop rows.
+
+    DST fall-back duplicates the 02:00–02:59 wall-clock hour in each
+    per-component CSV. The unified output must include both copies.
+    """
+    out_dir = tmp_path / "dst_combine"
+    run_capture(
+        amc,
+        out_dir,
+        days=1,
+        drop_rate=0,
+        extra_args=[
+            "--combine",
+            "--inject-dst-artifact-day", "1",
+            "--interval-seconds", "600",
+        ],
+    )
+
+    unified = out_dir / "combined_metrics_unified.csv"
+    assert unified.exists()
+
+    per_component_counts = []
+    for csv_path in sorted(out_dir.glob("*.csv")):
+        if csv_path.name == "anomalies.csv" or csv_path.name.startswith("combined_metrics_"):
+            continue
+        with open(csv_path) as f:
+            per_component_counts.append(sum(1 for _ in f) - 1)  # minus header
+
+    with open(unified) as f:
+        unified_rows = sum(1 for _ in f) - 1
+
+    # With drop_rate=0, every per-component CSV has the same row count and
+    # the unified output must preserve every row.
+    assert len(set(per_component_counts)) == 1, (
+        f"per-component row counts differ at drop_rate=0: {per_component_counts}"
+    )
+    assert unified_rows == per_component_counts[0], (
+        f"unified rows {unified_rows} != per-component rows "
+        f"{per_component_counts[0]}; DST duplicates dropped"
+    )
+
+    # The DST hour at 10-minute sampling has 6 slots, each appearing twice.
+    import csv as _csv
+    with open(unified) as f:
+        reader = _csv.DictReader(f)
+        timestamps = [row["timestamp"] for row in reader]
+    from collections import Counter
+    counts = Counter(timestamps)
+    dst_slots = [ts for ts in counts if " 02:" in ts and ts.endswith(":00")]
+    assert len(dst_slots) == 6, f"expected 6 distinct 02:XX:00 slots, got {dst_slots}"
+    for slot in dst_slots:
+        assert counts[slot] == 2, f"slot {slot} occurs {counts[slot]} times, expected 2"
+
+
+def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
+    """Combine output for a default (non-DST) run is unchanged by the
+    occurrence-keyed combine — every row has occurrence 0 and the sort
+    key (timestamp, 0) collapses to timestamp-only ordering."""
+    out_dir = tmp_path / "no_dst_combine"
+    run_capture(amc, out_dir, days=1, extra_args=["--combine"])
+    unified = out_dir / "combined_metrics_unified.csv"
+    assert unified.exists()
+
+    with open(unified) as f:
+        rows = f.readlines()
+    timestamps = [line.split(",", 1)[0] for line in rows[1:]]
+    assert timestamps == sorted(set(timestamps)), (
+        "non-DST combine output should be timestamp-sorted with no duplicates"
+    )
+    assert len(timestamps) == len(set(timestamps)), (
+        "non-DST combine should produce no duplicate timestamps"
     )
