@@ -151,6 +151,13 @@ allowlist (`--scenarios`) → exclusion (`--exclude-scenarios`) → severity fil
 (`--components`). Scenarios dropped by severity or duration emit a stderr WARNING;
 scenarios excluded silently by the component filter produce no output.
 
+**RNG**: The RNG is an `np.random.RandomState(seed)` instance created in `main()` and
+carried as `RunContext.rng`, passed explicitly through `generate_component()`,
+`_natural_column()`, and the anomaly override path. Draw order is identical to the
+former global `np.random.seed()` + module-level functions (MT19937 + Box-Muller), so
+no locked SHA-256 hashes changed. The module-level `anomalies` list and
+`cascading_anomalies` dict have been removed; all per-run state lives in `RunContext`.
+
 **RNG ordering invariant (with tiebreaker caveat)**: `generate_component()` calls
 Python's stable `sorted()` on override specs with key `(row_idx, metric_name)`. For
 specs that round to **distinct** `(row_idx, metric)` pairs, the declaration order

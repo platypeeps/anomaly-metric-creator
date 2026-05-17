@@ -25,7 +25,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+import dataclasses
+from dataclasses import dataclass, field
 from hashlib import sha1
 from pathlib import Path
 from typing import Callable
@@ -74,10 +75,14 @@ _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
 )
 
 # ------------------------------------------------------------------
-# Anomaly registry and cascade tracking (reset on each main() call)
+# Per-run state container
 # ------------------------------------------------------------------
-anomalies = []
-cascading_anomalies = {}  # {component_name: [anomaly_specs]}
+@dataclasses.dataclass
+class RunContext:
+    """Per-run mutable state: RNG + anomaly manifest accumulator."""
+    rng: "np.random.RandomState"
+    anomalies: list = dataclasses.field(default_factory=list)
+    cascading_anomalies: dict = dataclasses.field(default_factory=dict)
 
 # Derived-metric registry. Each entry maps a component to (derivation_fn,
 # tuple_of_derived_metric_names). generate_component() looks the component
@@ -195,11 +200,12 @@ class Scenario:
     cascade_specs: tuple[tuple[str, dict], ...]
 
 
-def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray) -> np.ndarray:
+def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
+                    rng: "np.random.RandomState") -> np.ndarray:
     """Vectorized natural-value column. Multiplier/additive must accept arrays."""
     col = np.full(elapsed.shape, spec.base, dtype=np.float64)
     if spec.std > 0:
-        col += np.random.normal(0.0, spec.std, elapsed.shape[0])
+        col += rng.normal(0.0, spec.std, elapsed.shape[0])
     if spec.multiplier is not None:
         col *= spec.multiplier(ts_array, elapsed)
     if spec.additive is not None:
@@ -215,7 +221,8 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray)
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
-                       dst_inject_day=0):
+                       dst_inject_day=0, rng: "np.random.RandomState" = None,
+                       ctx: "RunContext" = None):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -238,10 +245,16 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     fieldnames = [s.name for s in specs]
     n_rows = int(total_seconds // interval)
 
+    # Provide defaults for rng and ctx for callers that haven't been updated yet
+    if rng is None:
+        rng = np.random.RandomState()
+    if ctx is None:
+        ctx = RunContext(rng=rng)
+
     # Merge primary anomalies with cascading anomalies
     all_anomalies = list(anomaly_specs)
-    if component_name in cascading_anomalies:
-        all_anomalies.extend(cascading_anomalies[component_name])
+    if component_name in ctx.cascading_anomalies:
+        all_anomalies.extend(ctx.cascading_anomalies[component_name])
 
     # Expand every anomaly spec into concrete row overrides. Out-of-range is
     # anything whose full span lies outside ``[0, n_rows)``.
@@ -301,7 +314,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
 
     if ts_array is None or ts_strings is None:
         ts_array, ts_strings = _build_timestamp_arrays(total_seconds, interval)
-    drop_mask = np.random.random(n_rows) < drop_rate
+    drop_mask = rng.random(n_rows) < drop_rate
 
     # Elapsed seconds (not row index) so daily/hourly seasonality generators
     # produce the same wall-clock shape at any sampling interval.
@@ -311,7 +324,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     n_cols = len(specs)
     values = np.empty((n_rows, n_cols), dtype=np.float64)
     for col, spec in enumerate(specs):
-        values[:, col] = _natural_column(spec, ts_array, elapsed)
+        values[:, col] = _natural_column(spec, ts_array, elapsed, rng)
 
     # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
     # CSV stay coherent: a dropped row has no CSV entry, so it must have no
@@ -324,7 +337,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         col = name_to_col[aspec["metric"]]
         ts_py = START + datetime.timedelta(seconds=float(row_idx * interval))
         values[row_idx, col] = _resolve_anomaly_value(
-            aspec, ts_py, col, t_within, span_idx
+            aspec, ts_py, col, t_within, span_idx, rng
         )
         if span_idx == 0:
             # span_start equals timestamp; span_end equals timestamp for
@@ -343,7 +356,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             span_kept = ~drop_mask[row_idx:end_idx_nominal + 1]
             end_idx = row_idx + int(np.flatnonzero(span_kept)[-1])
             ts_str = str(ts_strings[row_idx])
-            anomalies.append({
+            ctx.anomalies.append({
                 "timestamp": ts_str,
                 "component": component_name,
                 "metric": aspec["metric"],
@@ -424,21 +437,25 @@ def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
 
 
 def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
-                           t_within: float, span_idx: int) -> float:
+                           t_within: float, span_idx: int,
+                           rng: "np.random.RandomState" = None) -> float:
     """Resolve one anomaly value at one row, honoring shape/duration fields."""
     duration_seconds = float(spec.get("duration_seconds", 0) or 0)
     shape = spec.get("shape", "step")
     shape_params = spec.get("shape_params", {}) or {}
 
     if duration_seconds <= 0 and shape == "step":
-        return float(spec["generator"](ts, col))
+        try:
+            return float(spec["generator"](ts, col, rng))
+        except TypeError:
+            return float(spec["generator"](ts, col))
 
     if shape in ("step", "sustained"):
-        return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx))
+        return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx, rng))
 
     start = shape_params.get("start")
     if start is None:
-        start = _call_generator_within_span(spec["generator"], ts, col, 0.0, 0)
+        start = _call_generator_within_span(spec["generator"], ts, col, 0.0, 0, rng)
     start = float(start)
 
     if shape == "ramp_linear":
@@ -472,15 +489,19 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
 
 
 def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
-                                t_within: float, span_idx: int):
+                                t_within: float, span_idx: int,
+                                rng: "np.random.RandomState" = None):
     """Backwards-compatible generator call with optional span args."""
     try:
-        return generator(ts, col, t_within, span_idx)
+        return generator(ts, col, t_within, span_idx, rng)
     except TypeError:
         try:
-            return generator(ts, col, t_within)
+            return generator(ts, col, t_within, span_idx)
         except TypeError:
-            return generator(ts, col)
+            try:
+                return generator(ts, col, t_within)
+            except TypeError:
+                return generator(ts, col)
 
 
 def _span_fraction(t_within: float, duration_seconds: float) -> float:
@@ -531,7 +552,7 @@ def _build_timestamp_arrays(total_seconds: int, interval: float = 1.0):
 # Cascade helper function
 # ------------------------------------------------------------------
 def register_cascade(target_component, time_offset, metric, description, generator,
-                     severity=DEFAULT_SEVERITY):
+                     severity=DEFAULT_SEVERITY, *, cascade_registry: dict | None = None):
     """
     Register a cascading anomaly that will affect another component.
 
@@ -546,8 +567,16 @@ def register_cascade(target_component, time_offset, metric, description, generat
     ``_scenario_id``) are stamped here so a helper-registered cascade still
     emits a manifest row with ``is_cascade=true`` and the correct severity,
     matching what ``_apply_scenarios()`` would have produced.
+
+    ``cascade_registry`` must be provided explicitly (pass
+    ``RunContext.cascading_anomalies`` or an empty dict for tests).
     """
-    cascading_anomalies.setdefault(target_component, []).append({
+    if cascade_registry is None:
+        raise TypeError(
+            "register_cascade() requires a cascade_registry= keyword argument; "
+            "pass the RunContext.cascading_anomalies dict or an empty dict for tests."
+        )
+    cascade_registry.setdefault(target_component, []).append({
         "time_offset": time_offset,
         "metric": metric,
         "description": description,
@@ -938,21 +967,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 6*3600 + 20,
                 "metric": "cache_misses",
                 "description": "Cascading: Cache miss surge before DB cascade lands",
-                "generator": lambda ts, idx: 2400 + np.random.normal(0, 150),
+                "generator": lambda ts, idx, rng: 2400 + rng.normal(0, 150),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 6*3600 + 30,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Cache misses increase database queries",
-                "generator": lambda ts, idx: 38000 + np.random.normal(0, 3000),
+                "generator": lambda ts, idx, rng: 38000 + rng.normal(0, 3000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 6*3600 + 45,
                 "metric": "read_latency_ms",
                 "description": "Cascading: Database read latency increases from cache misses",
-                "generator": lambda ts, idx: 45 + np.random.normal(0, 5),
+                "generator": lambda ts, idx, rng: 45 + rng.normal(0, 5),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1109,7 +1138,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600,
                 "metric": "backend_latency_ms",
                 "description": "Cascading: Database latency affects API backend",
-                "generator": lambda ts, idx: 850 + np.random.normal(0, 50),
+                "generator": lambda ts, idx, rng: 850 + rng.normal(0, 50),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
@@ -1123,14 +1152,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600 + 10,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: Database issues slow auth queries",
-                "generator": lambda ts, idx: 420 + np.random.normal(0, 30),
+                "generator": lambda ts, idx, rng: 420 + rng.normal(0, 30),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("mqservice", {
                 "time_offset": 11*3600 + 20,
                 "metric": "pending_messages",
                 "description": "Cascading: DB stall causes MQ backpressure",
-                "generator": lambda ts, idx: 250000 + np.random.normal(0, 5000),
+                "generator": lambda ts, idx, rng: 250000 + rng.normal(0, 5000),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1167,28 +1196,28 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 14*3600 + 30*60 + 60,
                 "metric": "avg_response_time_ms",
                 "description": "Cascading: MQ backlog delays API responses",
-                "generator": lambda ts, idx: 650 + np.random.normal(0, 40),
+                "generator": lambda ts, idx, rng: 650 + rng.normal(0, 40),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 14*3600 + 30*60 + 90,
                 "metric": "connections",
                 "description": "Cascading: MQ issues cause connection buildup",
-                "generator": lambda ts, idx: 8500 + np.random.normal(0, 500),
+                "generator": lambda ts, idx, rng: 8500 + rng.normal(0, 500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 14*3600 + 30*60 + 95,
                 "metric": "write_latency_ms",
                 "description": "Cascading: MQ backpressure increases write latency",
-                "generator": lambda ts, idx: 85 + np.random.normal(0, 10),
+                "generator": lambda ts, idx, rng: 85 + rng.normal(0, 10),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("authservice", {
                 "time_offset": 14*3600 + 32*60 + 30,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: MQ jam delays session writes",
-                "generator": lambda ts, idx: 280 + np.random.normal(0, 15),
+                "generator": lambda ts, idx, rng: 280 + rng.normal(0, 15),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1231,7 +1260,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 8*3600 + 15*60 + 5,
                 "metric": "active_connections",
                 "description": "Cascading: LB withdraws traffic from a flapping backend pool",
-                "generator": lambda ts, idx: 200 + np.random.normal(0, 25),
+                "generator": lambda ts, idx, rng: 200 + rng.normal(0, 25),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
@@ -1306,7 +1335,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 10*3600 + 30*60 + 15,
                 "metric": "avg_llm_latency_ms",
                 "description": "Cascading: slow ANN retrieval drags LLM latency to 1,900 ms",
-                "generator": lambda ts, idx: 1900 + np.random.normal(0, 80),
+                "generator": lambda ts, idx, rng: 1900 + rng.normal(0, 80),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("llm_analytics", {
@@ -1350,7 +1379,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 10*3600 + 30,
                 "metric": "connections",
                 "description": "Cascading: Scheduler queue overflow drives DB connection buildup",
-                "generator": lambda ts, idx: 7800 + np.random.normal(0, 400),
+                "generator": lambda ts, idx, rng: 7800 + rng.normal(0, 400),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1430,7 +1459,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 4*3600 + 25,
                 "metric": "login_success_rate",
                 "description": "Cascading: JWKS fetch storm degrades auth verification — success ~45%",
-                "generator": lambda ts, idx: 45 + np.random.normal(0, 2),
+                "generator": lambda ts, idx, rng: 45 + rng.normal(0, 2),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1473,7 +1502,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 9*3600 + 20,
                 "metric": "pending_messages",
                 "description": "Cascading: Telemetry pipeline lag backs up downstream queue",
-                "generator": lambda ts, idx: 220000 + np.random.normal(0, 15000),
+                "generator": lambda ts, idx, rng: 220000 + rng.normal(0, 15000),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1545,28 +1574,28 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 30,
                 "metric": "queries_per_sec",
                 "description": "Cascading: LLM surge increases database queries for context retrieval",
-                "generator": lambda ts, idx: 48000 + np.random.normal(0, 4000),
+                "generator": lambda ts, idx, rng: 48000 + rng.normal(0, 4000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 45,
                 "metric": "connections",
                 "description": "Cascading: LLM service creates more database connections",
-                "generator": lambda ts, idx: 7200 + np.random.normal(0, 400),
+                "generator": lambda ts, idx, rng: 7200 + rng.normal(0, 400),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 20,
                 "metric": "cache_misses",
                 "description": "Cascading: LLM context cache misses spike",
-                "generator": lambda ts, idx: 1800 + np.random.normal(0, 150),
+                "generator": lambda ts, idx, rng: 1800 + rng.normal(0, 150),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 10,
                 "metric": "requests_per_sec",
                 "description": "Cascading: LLM viral traffic increases API gateway load",
-                "generator": lambda ts, idx: 2400 + np.random.normal(0, 200),
+                "generator": lambda ts, idx, rng: 2400 + rng.normal(0, 200),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1609,14 +1638,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600 + 60,
                 "metric": "read_latency_ms",
                 "description": "Cascading: Large LLM context windows cause slow DB reads",
-                "generator": lambda ts, idx: 85 + np.random.normal(0, 8),
+                "generator": lambda ts, idx, rng: 85 + rng.normal(0, 8),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600 + 35,
                 "metric": "memory_util_pct",
                 "description": "Cascading: LLM context caching increases memory pressure",
-                "generator": lambda ts, idx: 92 + np.random.normal(0, 3),
+                "generator": lambda ts, idx, rng: 92 + rng.normal(0, 3),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1684,21 +1713,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 15,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Batch LLM processing hammers database",
-                "generator": lambda ts, idx: 65000 + np.random.normal(0, 5000),
+                "generator": lambda ts, idx, rng: 65000 + rng.normal(0, 5000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 120,
                 "metric": "cpu_util_pct",
                 "description": "Cascading: Database CPU saturates from batch analytics",
-                "generator": lambda ts, idx: 94 + np.random.normal(0, 2),
+                "generator": lambda ts, idx, rng: 94 + rng.normal(0, 2),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 45,
                 "metric": "cache_misses",
                 "description": "Cascading: Batch job overwhelms cache — misses ~17,700 (hit ratio ~22%)",
-                "generator": lambda ts, idx: 17727.0 + np.random.normal(0, 800),
+                "generator": lambda ts, idx, rng: 17727.0 + rng.normal(0, 800),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1735,21 +1764,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 5,
                 "metric": "active_connections",
                 "description": "Cascading: Viral LLM traffic maxes out connections",
-                "generator": lambda ts, idx: 4800 + np.random.normal(0, 200),
+                "generator": lambda ts, idx, rng: 4800 + rng.normal(0, 200),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 15,
                 "metric": "cpu_util_pct",
                 "description": "Cascading: API gateway CPU spikes from LLM traffic",
-                "generator": lambda ts, idx: 87 + np.random.normal(0, 4),
+                "generator": lambda ts, idx, rng: 87 + rng.normal(0, 4),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 25,
                 "metric": "connections",
                 "description": "Cascading: Database connection pool exhausted by LLM load",
-                "generator": lambda ts, idx: 9800 + np.random.normal(0, 500),
+                "generator": lambda ts, idx, rng: 9800 + rng.normal(0, 500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
@@ -1795,7 +1824,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 5*3600 + 45,
                 "metric": "connections",
                 "description": "Cascading: Regional failover pile-up — DB connections climb to ~9,000",
-                "generator": lambda ts, idx: 9000 + np.random.normal(0, 250),
+                "generator": lambda ts, idx, rng: 9000 + rng.normal(0, 250),
                 "severity": "high",
             }),
             ("authservice", {
@@ -1809,7 +1838,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 5*3600 + 90,
                 "metric": "pending_messages",
                 "description": "Cascading: Regional failover backs up queue — ~500,000 pending",
-                "generator": lambda ts, idx: 500000 + np.random.normal(0, 12000),
+                "generator": lambda ts, idx, rng: 500000 + rng.normal(0, 12000),
                 "severity": "high",
             }),
         ),
@@ -1848,14 +1877,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600 + 30*60 + 30,
                 "metric": "avg_llm_latency_ms",
                 "description": "Cascading: Cache+DB meltdown doubles LLM latency to ~1,700 ms",
-                "generator": lambda ts, idx: 1700 + np.random.normal(0, 90),
+                "generator": lambda ts, idx, rng: 1700 + rng.normal(0, 90),
                 "severity": "high",
             }),
             ("apigateway", {
                 "time_offset": 11*3600 + 30*60 + 45,
                 "metric": "backend_latency_ms",
                 "description": "Cascading: Cache+DB meltdown drags gateway backend latency to ~950 ms",
-                "generator": lambda ts, idx: 950 + np.random.normal(0, 60),
+                "generator": lambda ts, idx, rng: 950 + rng.normal(0, 60),
                 "severity": "high",
             }),
         ),
@@ -1901,7 +1930,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 20*3600 + 30,
                 "metric": "cache_misses",
                 "description": "Cascading: LLM outage drives context cache miss surge (~3,000)",
-                "generator": lambda ts, idx: 3000 + np.random.normal(0, 200),
+                "generator": lambda ts, idx, rng: 3000 + rng.normal(0, 200),
                 "severity": "high",
             }),
         ),
@@ -1938,21 +1967,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 16*3600 + 60,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: Gateway saturation slows auth path to ~600 ms",
-                "generator": lambda ts, idx: 600 + np.random.normal(0, 25),
+                "generator": lambda ts, idx, rng: 600 + rng.normal(0, 25),
                 "severity": "high",
             }),
             ("database", {
                 "time_offset": 16*3600 + 90,
                 "metric": "cpu_util_pct",
                 "description": "Cascading: Gateway saturation drives DB CPU to ~92%",
-                "generator": lambda ts, idx: 92 + np.random.normal(0, 2),
+                "generator": lambda ts, idx, rng: 92 + rng.normal(0, 2),
                 "severity": "high",
             }),
             ("mqservice", {
                 "time_offset": 16*3600 + 120,
                 "metric": "pending_messages",
                 "description": "Cascading: Gateway saturation queues messages — ~800,000 pending",
-                "generator": lambda ts, idx: 800000 + np.random.normal(0, 15000),
+                "generator": lambda ts, idx, rng: 800000 + rng.normal(0, 15000),
                 "severity": "high",
             }),
         ),
@@ -1990,7 +2019,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 22*3600 + 30,
                 "metric": "write_latency_ms",
                 "description": "Cascading: Storage pressure drags DB write latency to ~90 ms",
-                "generator": lambda ts, idx: 90 + np.random.normal(0, 6),
+                "generator": lambda ts, idx, rng: 90 + rng.normal(0, 6),
                 "severity": "high",
             }),
             ("apigateway", {
@@ -2050,14 +2079,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 15*3600 + 60,
                 "metric": "cache_misses",
                 "description": "Cascading: rollback restart causes cold-cache miss spike (~1,200)",
-                "generator": lambda ts, idx: 1200 + np.random.normal(0, 50),
+                "generator": lambda ts, idx, rng: 1200 + rng.normal(0, 50),
                 "severity": "high",
             }),
             ("database", {
                 "time_offset": 15*3600 + 90,
                 "metric": "connections",
                 "description": "Cascading: retry pile-up drives DB connections to ~5,800",
-                "generator": lambda ts, idx: 5800 + np.random.normal(0, 150),
+                "generator": lambda ts, idx, rng: 5800 + rng.normal(0, 150),
                 "severity": "high",
             }),
         ),
@@ -2103,7 +2132,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600 + 30,
                 "metric": "failed_oidc_flows",
                 "description": "Cascading: federated OIDC callback DNS lookups fail (~150)",
-                "generator": lambda ts, idx: 150 + np.random.normal(0, 8),
+                "generator": lambda ts, idx, rng: 150 + rng.normal(0, 8),
                 "severity": "high",
             }),
             ("paymentservice", {
@@ -2177,7 +2206,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 18*3600 + 20*60 + 30,
                 "metric": "backend_latency_ms",
                 "description": "Cascading: cross-AZ RPC drags gateway backend latency to ~380 ms",
-                "generator": lambda ts, idx: 380 + np.random.normal(0, 20),
+                "generator": lambda ts, idx, rng: 380 + rng.normal(0, 20),
                 "severity": "high",
             }),
             ("authservice", {
@@ -2252,21 +2281,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 1*SECONDS_PER_DAY + 12*3600,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Rising cache miss volume — DB queries climb to ~32k",
-                "generator": lambda ts, idx: 32000 + np.random.normal(0, 1500),
+                "generator": lambda ts, idx, rng: 32000 + rng.normal(0, 1500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 2*SECONDS_PER_DAY + 12*3600 + 30*60,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Cache hit-ratio decline — DB queries climb to ~42k",
-                "generator": lambda ts, idx: 42000 + np.random.normal(0, 2000),
+                "generator": lambda ts, idx, rng: 42000 + rng.normal(0, 2000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 2*SECONDS_PER_DAY + 12*3600 + 30*60,
                 "metric": "read_latency_ms",
                 "description": "Cascading: Cache hit-ratio decline pushes DB read latency to ~55 ms",
-                "generator": lambda ts, idx: 55 + np.random.normal(0, 4),
+                "generator": lambda ts, idx, rng: 55 + rng.normal(0, 4),
                 "severity": DEFAULT_SEVERITY,
             }),
             # Cold-start stampede: cascade specs are single-row step writes
@@ -2276,7 +2305,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600 + 300,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Cache cold-start stampede — DB queries ~60k",
-                "generator": lambda ts, idx: 60000 + np.random.normal(0, 2500),
+                "generator": lambda ts, idx, rng: 60000 + rng.normal(0, 2500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
@@ -2290,7 +2319,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600 + 300,
                 "metric": "pending_messages",
                 "description": "Cascading: Cache restart backs up MQ — ~180,000 pending",
-                "generator": lambda ts, idx: 180000 + np.random.normal(0, 6000),
+                "generator": lambda ts, idx, rng: 180000 + rng.normal(0, 6000),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -2372,7 +2401,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 9*3600 + 30*60,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: Slow JWKS fetch raises auth latency to ~350 ms",
-                "generator": lambda ts, idx: 350 + np.random.normal(0, 15),
+                "generator": lambda ts, idx, rng: 350 + rng.normal(0, 15),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("paymentservice", {
@@ -2480,7 +2509,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 4*SECONDS_PER_DAY + 12*3600,
                 "metric": "pending_messages",
                 "description": "Cascading: Consumers blocked on DB writes — ~320k pending",
-                "generator": lambda ts, idx: 320000 + np.random.normal(0, 10000),
+                "generator": lambda ts, idx, rng: 320000 + rng.normal(0, 10000),
                 "severity": DEFAULT_SEVERITY,
             }),
             # Constant (not noisy) to preserve the seeded global RNG state for
@@ -4532,11 +4561,7 @@ def main(argv=None):
         args.components,
         args.combine,
     )
-    np.random.seed(args.seed)
-
-    # Reset module-level registries so repeated calls (e.g., from tests) don't accumulate.
-    anomalies.clear()
-    cascading_anomalies.clear()
+    ctx = RunContext(rng=np.random.RandomState(args.seed))
 
     # Build component_anomalies and cascading_anomalies entirely from the
     # SCENARIOS registry. _resolve_scenarios() applies the --scenarios /
@@ -4545,16 +4570,16 @@ def main(argv=None):
     # and tail-appends each scenario's primaries and cascades.
     component_anomalies = {name: [] for name in COMPONENTS}
     active_scenarios = _resolve_scenarios(args)
-    _apply_scenarios(component_anomalies, cascading_anomalies, active_scenarios)
+    _apply_scenarios(component_anomalies, ctx.cascading_anomalies, active_scenarios)
 
     effective_specs = _resolve_effective_specs(args.metrics_per_component)
     _filter_anomalies_for_emitted_metrics(
-        component_anomalies, cascading_anomalies, effective_specs
+        component_anomalies, ctx.cascading_anomalies, effective_specs
     )
 
     _apply_signal_level_and_count(
         component_anomalies,
-        cascading_anomalies,
+        ctx.cascading_anomalies,
         signal_level=args.signal_level,
         selected_components=args.components,
         anomaly_count=args.anomaly_count,
@@ -4577,9 +4602,11 @@ def main(argv=None):
                            ts_array=ts_array,
                            ts_strings=ts_strings,
                            emit_metrics="metrics" in args.emit_selection,
-                           dst_inject_day=args.inject_dst_artifact_day)
+                           dst_inject_day=args.inject_dst_artifact_day,
+                           rng=ctx.rng,
+                           ctx=ctx)
 
-    filtered_anomalies = [a for a in anomalies if a["component"] in args.components]
+    filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 
     # Enrich each manifest entry with ``event_id`` and ``parent_event_id`` before
     # sorting. ``event_id`` is a pure function of the four required fields
