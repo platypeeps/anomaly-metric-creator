@@ -11,6 +11,7 @@ import json
 import subprocess
 import sys
 import threading
+import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -611,3 +612,68 @@ def test_stream_otel_gauges_with_auth_header(tmp_path, monkeypatch):
                     if h.get("Authorization")]
     assert any("secret-gauge-token" in v for v in auth_headers), \
         f"no Authorization header carried the configured token; saw: {auth_headers}"
+
+
+def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_path):
+    """Regression for the VER-124 pacing bug: between consecutive batches the
+    streamer must sleep ``batch_seconds / speedup`` of wall-clock — not
+    ``interval_seconds / speedup``. We seed CSVs covering N*batch_seconds of
+    timeline, call ``stream_otel_gauges`` directly in-process against a mock
+    collector, and assert the elapsed wall-clock is within tolerance of the
+    expected ``(N-1) * batch_seconds / speedup``.
+    """
+    # Generate CSVs first (no streaming) so the streamer call below is the
+    # only thing being timed.
+    out = tmp_path / "pacing"
+    out.mkdir()
+    amc.main([
+        "--duration-days", "1",
+        "--interval-seconds", "60",
+        "--drop-rate", "0",
+        "--components", "authservice",
+        "--output-dir", str(out),
+    ])
+
+    server, thread, base = _start_mock()
+    try:
+        batch_seconds = 3600   # 1 hour of timeline per batch
+        speedup = 360000.0     # 1h / 360000 = 10ms wall-clock per batch boundary
+        expected_n_batches = 86400 // batch_seconds  # 24
+
+        start = time.perf_counter()
+        requests_sent = amc.stream_otel_gauges(
+            {"authservice": out / "authservice.csv"},
+            endpoint=f"{base}/v1/metrics",
+            batch_seconds=batch_seconds,
+            metric_prefix="",
+            speedup=speedup,
+            timeout_seconds=5.0,
+            max_events=None,
+            max_retries=2,
+            auth_headers=None,
+            protocol="json",
+            activity_log_path=None,
+            verbose=False,
+        )
+        elapsed = time.perf_counter() - start
+    finally:
+        _stop_mock(server, thread)
+
+    assert requests_sent == expected_n_batches
+    # The streamer sleeps before each batch except the first one, so the
+    # total pacing sleep budget is (N-1) * batch_seconds / speedup. With the
+    # buggy pre-fix code this would collapse to (N-1) * interval_seconds /
+    # speedup, ~60× shorter. Tolerate +200% / -50% for HTTP + scheduler jitter
+    # — the assertion is about the *order of magnitude*, not exact timing.
+    expected_sleep = (expected_n_batches - 1) * batch_seconds / speedup
+    lower = expected_sleep * 0.5
+    # No upper bound stricter than 4x — CI runners can be slow, but the buggy
+    # path would be ~60x faster so even a 4x ceiling distinguishes the two.
+    upper = expected_sleep * 4.0 + 1.0
+    assert lower <= elapsed <= upper, (
+        f"wall-clock {elapsed:.3f}s outside expected pacing window "
+        f"[{lower:.3f}, {upper:.3f}] (expected ~{expected_sleep:.3f}s for "
+        f"{expected_n_batches} batches at batch_seconds={batch_seconds}, "
+        f"speedup={speedup}). The pre-fix bug would produce "
+        f"~{(expected_n_batches - 1) * 60 / speedup:.5f}s — far below the lower bound."
+    )

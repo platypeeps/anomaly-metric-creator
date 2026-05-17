@@ -179,12 +179,21 @@ Batching, dropped rows, and pacing:
 - Dropped CSV rows (`--drop-rate`) are **suppressed from the gauge stream** —
   the streamer reads what was written to disk, so gauges mirror the realistic
   packet-loss view.
-- `--otel-stream-speedup` paces consecutive flushes the same way as the
-  counter stream: between two batches the streamer sleeps
-  `batch_seconds / speedup` seconds.
+- `--otel-stream-speedup` paces consecutive flushes by their **batch anchor
+  spacing**: between two batches the streamer sleeps
+  `(batch_start_dt - prev_batch_start_dt) / speedup` seconds, which equals
+  `batch_seconds / speedup` in steady state. For example, with
+  `--otel-gauge-batch-seconds 60` and `--otel-stream-speedup 3600` the
+  streamer waits ~16.7 ms between flushes.
 - `--otel-stream-max-events` caps the total number of OTLP **requests** the
   gauge stream sends (mirroring its meaning for the counter stream); it
   does **not** cap individual data points.
+- **`--inject-dst-artifact-day` is incompatible with `--otel-emit-gauges`.**
+  The DST artifact duplicates the 02:00–02:59 wall-clock hour inside each
+  per-component CSV, producing non-monotonic timestamps that break the
+  gauge streamer's chronological merge. The parser rejects the combination
+  with a clear error — pass `--inject-dst-artifact-day 0` (the default) or
+  drop `--otel-emit-gauges`.
 
 Volume note: at `--interval-seconds 1` with the default 13 components × their
 default metric counts (a 1-day run is ≈ 7.5M data points after the natural

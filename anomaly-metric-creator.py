@@ -2835,10 +2835,13 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
 # CLI + entry point
 # ------------------------------------------------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
-    """Parse a boolean env var. Truthy = ``1/true/yes/on`` (case-insensitive);
-    anything else (including empty/missing) returns ``default``."""
+    """Parse a boolean env var. Truthy = ``1/true/yes/on`` (case-insensitive)
+    returns ``True``; anything else (including empty/whitespace/missing)
+    returns ``default``. The empty-string case must honor ``default`` so
+    ``MEZMO_FOO=""`` with ``default=True`` does not silently flip to
+    ``False`` — matches the docstring contract."""
     raw = os.environ.get(name)
-    if raw is None:
+    if raw is None or not raw.strip():
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
@@ -3140,6 +3143,19 @@ def parse_args(argv=None):
                     "(via flag or MEZMO_OTEL_METRICS_ENDPOINT)")
         if "metrics" not in selected:
             p.error("--otel-emit-gauges requires --emit-selection to include 'metrics'")
+        # The gauge streamer feeds per-component CSVs into ``heapq.merge``,
+        # which requires each input iterator to be sorted by the timestamp
+        # key. ``--inject-dst-artifact-day`` deliberately duplicates the
+        # 02:00–02:59 wall-clock hour inside each CSV (see
+        # ``_splice_dst_artifact``), producing non-monotonic timestamps that
+        # silently break batching and OTLP payloads. Reject the combination
+        # at parse time — real OTLP consumers wouldn't tolerate the artifact
+        # either, so there's no realistic user for it.
+        if args.inject_dst_artifact_day > 0:
+            p.error("--otel-emit-gauges is incompatible with --inject-dst-artifact-day "
+                    "(the DST artifact produces non-monotonic CSV timestamps that break "
+                    "the gauge streamer's heapq.merge); pass --inject-dst-artifact-day 0 "
+                    "or drop --otel-emit-gauges")
     if args.otel_gauge_batch_seconds <= 0:
         p.error("--otel-gauge-batch-seconds must be > 0")
     if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
@@ -4030,7 +4046,6 @@ def stream_otel_gauges(
     *,
     endpoint: str,
     batch_seconds: int,
-    interval_seconds: float,
     metric_prefix: str,
     speedup: float,
     timeout_seconds: float,
@@ -4084,19 +4099,25 @@ def stream_otel_gauges(
     batch_end_dt: datetime.datetime | None = None
     requests_sent = 0
     data_points_sent = 0
-    prev_flush_end_dt: datetime.datetime | None = None
+    # Pacing key is the previous batch's *start* time so the wall-clock gap
+    # between flushes matches the timeline gap between two batch anchors —
+    # which is ``batch_seconds`` in steady state. Using the previous batch's
+    # *end* time would collapse the gap to roughly ``interval_seconds`` (the
+    # spacing between two adjacent CSV rows), producing a 60× pacing error
+    # at the default 60s batch.
+    prev_batch_start_dt: datetime.datetime | None = None
     aborted = False
 
     def _flush() -> bool:
         nonlocal batch, batch_start_dt, batch_end_dt, requests_sent
-        nonlocal data_points_sent, prev_flush_end_dt
+        nonlocal data_points_sent, prev_batch_start_dt
         if not batch:
             return True
         if max_events is not None and requests_sent >= max_events:
             return False
 
-        if prev_flush_end_dt is not None and batch_start_dt is not None:
-            wait_seconds = max(0.0, (batch_start_dt - prev_flush_end_dt).total_seconds() / speedup)
+        if prev_batch_start_dt is not None and batch_start_dt is not None:
+            wait_seconds = max(0.0, (batch_start_dt - prev_batch_start_dt).total_seconds() / speedup)
             if wait_seconds > 0:
                 time.sleep(wait_seconds)
 
@@ -4202,7 +4223,7 @@ def stream_otel_gauges(
                 )
                 time.sleep(backoff)
 
-        prev_flush_end_dt = batch_end_dt
+        prev_batch_start_dt = batch_start_dt
         batch = []
         batch_start_dt = None
         batch_end_dt = None
@@ -4371,7 +4392,6 @@ def main(argv=None):
             component_csv_paths,
             endpoint=args.otel_metrics_endpoint,
             batch_seconds=args.otel_gauge_batch_seconds,
-            interval_seconds=args.interval_seconds,
             metric_prefix=args.otel_gauge_metric_prefix,
             speedup=args.otel_stream_speedup,
             timeout_seconds=args.otel_stream_timeout_seconds,

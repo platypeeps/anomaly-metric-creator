@@ -448,3 +448,70 @@ def test_otel_gauge_metric_prefix_custom(amc):
         "--output-dir", "test_out",
     ])
     assert args.otel_gauge_metric_prefix == "amc."
+
+
+def test_otel_emit_gauges_rejects_dst_artifact_combo(amc, monkeypatch):
+    """The DST artifact splice (``_splice_dst_artifact``) makes per-component
+    CSV timestamps non-monotonic, which breaks ``heapq.merge`` inside
+    ``stream_otel_gauges``. Reject the combination at parse time."""
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-enabled",
+            "--otel-emit-gauges",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--inject-dst-artifact-day", "1",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_emit_gauges_allows_dst_artifact_zero(amc, monkeypatch):
+    """``--inject-dst-artifact-day 0`` (the default, off) must coexist freely
+    with ``--otel-emit-gauges``."""
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    args = amc.parse_args([
+        "--otel-enabled",
+        "--otel-emit-gauges",
+        "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+        "--inject-dst-artifact-day", "0",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_emit_gauges is True
+    assert args.inject_dst_artifact_day == 0
+
+
+# ------------------------------------------------------------------
+# _env_bool helper (VER-124)
+# ------------------------------------------------------------------
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "Yes", "on", "  ON  "])
+def test_env_bool_truthy_values_return_true(amc, monkeypatch, value):
+    monkeypatch.setenv("AMC_TEST_BOOL", value)
+    assert amc._env_bool("AMC_TEST_BOOL") is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=False) is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "nonsense"])
+def test_env_bool_non_truthy_returns_false(amc, monkeypatch, value):
+    """Non-truthy non-empty values return False regardless of ``default``."""
+    monkeypatch.setenv("AMC_TEST_BOOL", value)
+    assert amc._env_bool("AMC_TEST_BOOL") is False
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is False
+
+
+def test_env_bool_missing_returns_default(amc, monkeypatch):
+    monkeypatch.delenv("AMC_TEST_BOOL", raising=False)
+    assert amc._env_bool("AMC_TEST_BOOL") is False
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=False) is False
+
+
+@pytest.mark.parametrize("value", ["", "   ", "\t", "\n"])
+def test_env_bool_empty_or_whitespace_honors_default(amc, monkeypatch, value):
+    """Regression for the docstring contract: an empty or whitespace-only env
+    var must return ``default`` (not False), so MEZMO_FOO='' with default=True
+    does not silently flip to False."""
+    monkeypatch.setenv("AMC_TEST_BOOL", value)
+    assert amc._env_bool("AMC_TEST_BOOL") is False
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=False) is False
