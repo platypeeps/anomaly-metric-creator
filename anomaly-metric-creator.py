@@ -327,11 +327,33 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             aspec, ts_py, col, t_within, span_idx
         )
         if span_idx == 0:
+            # span_start equals timestamp; span_end equals timestamp for
+            # single-row specs and the formatted end-of-span timestamp for
+            # shaped specs with ``duration_seconds``. The end row is the
+            # last row index covered by the span, clipped to ``n_rows - 1``
+            # so specs whose tail spills past the run window still produce
+            # a valid in-range end timestamp, then walked back to the last
+            # non-dropped row in the span so span_end always names a
+            # timestamp that actually appears in the component CSV.
+            # ``row_idx`` itself is non-dropped (checked above), so the
+            # slice is guaranteed to contain at least one kept row.
+            duration_seconds = float(aspec.get("duration_seconds", 0) or 0)
+            duration_rows = max(1, int(np.ceil(duration_seconds / interval)))
+            end_idx_nominal = min(row_idx + duration_rows - 1, n_rows - 1)
+            span_kept = ~drop_mask[row_idx:end_idx_nominal + 1]
+            end_idx = row_idx + int(np.flatnonzero(span_kept)[-1])
+            ts_str = str(ts_strings[row_idx])
             anomalies.append({
-                "timestamp": str(ts_strings[row_idx]),
+                "timestamp": ts_str,
                 "component": component_name,
                 "metric": aspec["metric"],
                 "description": aspec["description"],
+                "scenario_id": aspec.get("_scenario_id", ""),
+                "severity": aspec.get("_severity", ""),
+                "is_cascade": "true" if aspec.get("_is_cascade") else "false",
+                "span_start": ts_str,
+                "span_end": str(ts_strings[end_idx]),
+                "shape": aspec.get("shape", "step"),
             })
 
     # Derived metrics: rebuild self-consistent relationships after natural and
@@ -516,6 +538,14 @@ def register_cascade(target_component, time_offset, metric, description, generat
     ``severity`` controls --signal-level eligibility. Defaults to ``medium`` so
     today's cascades fire at the default level; pass ``"high"`` for cascades
     that only belong to the high-pressure catalog.
+
+    Production code routes every cascade through ``_apply_scenarios()`` and
+    does not call this helper; it is retained as a small-surface entry point
+    for tests that want to inject a cascade without standing up a full
+    ``Scenario``. The provenance fields (``_is_cascade``, ``_severity``,
+    ``_scenario_id``) are stamped here so a helper-registered cascade still
+    emits a manifest row with ``is_cascade=true`` and the correct severity,
+    matching what ``_apply_scenarios()`` would have produced.
     """
     cascading_anomalies.setdefault(target_component, []).append({
         "time_offset": time_offset,
@@ -523,6 +553,9 @@ def register_cascade(target_component, time_offset, metric, description, generat
         "description": description,
         "generator": generator,
         "severity": severity,
+        "_is_cascade": True,
+        "_severity": severity,
+        "_scenario_id": "",
     })
 
 # ------------------------------------------------------------------
@@ -2839,10 +2872,24 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
     for slug, scenario in SCENARIOS.items():
         if slug not in active_scenarios:
             continue
+        # Shallow-copy each spec dict and stamp scenario provenance with
+        # ``_``-prefixed keys. ``generate_component`` carries the dict reference
+        # forward into the manifest entry, and the manifest writer uses
+        # ``csv.DictWriter(..., extrasaction="ignore")`` so the private keys
+        # never leak into the CSV. Shallow-copying keeps the frozen SCENARIOS
+        # registry pristine across test runs (the registry is reused process-wide).
         for component, spec in scenario.primary_specs:
-            component_anomalies.setdefault(component, []).append(spec)
+            tagged = dict(spec)
+            tagged["_scenario_id"] = slug
+            tagged["_severity"] = scenario.severity
+            tagged["_is_cascade"] = False
+            component_anomalies.setdefault(component, []).append(tagged)
         for target, cascade in scenario.cascade_specs:
-            cascade_registry.setdefault(target, []).append(cascade)
+            tagged = dict(cascade)
+            tagged["_scenario_id"] = slug
+            tagged["_severity"] = scenario.severity
+            tagged["_is_cascade"] = True
+            cascade_registry.setdefault(target, []).append(tagged)
 
 
 # ------------------------------------------------------------------
@@ -4534,9 +4581,50 @@ def main(argv=None):
 
     filtered_anomalies = [a for a in anomalies if a["component"] in args.components]
 
+    # Enrich each manifest entry with ``event_id`` and ``parent_event_id`` before
+    # sorting. ``event_id`` is a pure function of the four required fields
+    # (timestamp, component, metric, description) — sort order does not affect
+    # it. ``parent_event_id`` is computed in original (insertion) order so that
+    # for each scenario the first non-cascade entry observed (which reflects
+    # the COMPONENTS iteration order × per-component row_idx ordering) becomes
+    # the canonical parent for every cascade row of the same scenario.
+    scenario_first_primary_event_id: dict[str, str] = {}
+    for entry in filtered_anomalies:
+        entry["event_id"] = _anomaly_event_id(entry)
+        scenario_id = entry.get("scenario_id", "")
+        is_cascade = entry.get("is_cascade") == "true"
+        if scenario_id and not is_cascade:
+            scenario_first_primary_event_id.setdefault(scenario_id, entry["event_id"])
+    for entry in filtered_anomalies:
+        is_cascade = entry.get("is_cascade") == "true"
+        scenario_id = entry.get("scenario_id", "")
+        if is_cascade and scenario_id:
+            # Orphan cascades (no surviving primary for the scenario, e.g. all
+            # primaries dropped by --drop-rate) leave parent_event_id empty.
+            entry["parent_event_id"] = scenario_first_primary_event_id.get(scenario_id, "")
+        else:
+            entry["parent_event_id"] = ""
+
+    # Sort chronologically by ``(span_start, component, metric)`` so the manifest
+    # is incident-friendly and the correlated reporting artifacts emit in the
+    # same order (test_reporting_artifacts_align_with_manifest pins the index
+    # alignment between anomalies.csv, metric_report.log, and metric_traces.jsonl).
+    filtered_anomalies.sort(key=lambda a: (a["span_start"], a["component"], a["metric"]))
+
+    manifest_fieldnames = [
+        "timestamp", "component", "metric", "description",
+        "scenario_id", "severity", "is_cascade",
+        "event_id", "parent_event_id",
+        "span_start", "span_end", "shape",
+    ]
+
     if "metrics" in args.emit_selection:
         with open(args.output_dir / "anomalies.csv", "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["timestamp", "component", "metric", "description"])
+            # ``extrasaction="ignore"`` is a defensive guard so any future
+            # ``_``-prefixed private keys on entry dicts cannot leak into the CSV.
+            writer = csv.DictWriter(
+                f, fieldnames=manifest_fieldnames, extrasaction="ignore",
+            )
             writer.writeheader()
             for a in filtered_anomalies:
                 writer.writerow(a)
