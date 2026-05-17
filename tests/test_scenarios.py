@@ -214,7 +214,7 @@ def test_scenario_components_touched_exist(amc, slug):
     )
 
 
-def test_three_multi_day_scenarios_require_seven_days(amc):
+def test_three_multi_day_scenarios_require_multi_day_runs(amc):
     """The 3 migrated multi-day cascading scenarios all have specs that span past
     Day 1, so they must declare ``days_required >= 2`` and a default 1-day run
     must drop them with a stderr warning (the VER-103 acceptance criterion).

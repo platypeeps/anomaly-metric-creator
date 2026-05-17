@@ -3,9 +3,11 @@
 Generate IoT-style metric logs for a SaaS stack with built-in anomalies.
 
 Defaults to one day at 1-second resolution. Use ``--duration-days N`` to span
-more days; the multi-day LLM viral/cascade catalog only becomes reachable at
-``--duration-days >= 7``. Anomaly specs whose ``time_offset`` falls outside the
-configured window are skipped with a warning on stderr.
+more days; multi-day scenarios activate based on their own ``days_required``
+(see the README scenario catalog for current values). ``--duration-days 7``
+currently unlocks the complete multi-day catalog. Anomaly specs whose
+``time_offset`` falls outside the configured window are skipped with a warning
+on stderr.
 """
 
 import argparse
