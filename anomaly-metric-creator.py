@@ -462,25 +462,31 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
     shape_params = spec.get("shape_params", {}) or {}
 
     if duration_seconds <= 0 and shape == "step":
-        # Dispatch by introspected callability so an internal TypeError from
-        # a 3-arg generator doesn't silently retry as a 2-arg call (which
-        # would hide the real error and duplicate any side effects/RNG
-        # draws already performed before the TypeError fired). Step path
-        # only ever calls with 3 or 2 positional args; intermediate shapes
-        # are not attempted.
+        # Dispatch by REQUIRED positional count, not by maximum callability.
+        # A generator like (ts, col, scale=1.0) accepts a 3-arg call at the
+        # Python language level, but the author marked the 3rd positional
+        # as optional with a non-rng name — calling 3-arg would silently
+        # bind the RNG object to ``scale``. Required-based dispatch keeps
+        # the default and avoids the misbind. Only generators that
+        # explicitly opt into the RNG (required=3 or *args) receive it.
         meta = _cached_generator_meta(spec["generator"])
         if not meta["inspectable"]:
+            # Conservative fallback: try only the two canonical shapes
+            # (3-arg first, then 2-arg). No intermediate calls.
             try:
                 return float(spec["generator"](ts, col, rng))
             except TypeError:
                 return float(spec["generator"](ts, col))
-        if _can_call_with(meta, 3):
+        if meta["has_var_positional"]:
             return float(spec["generator"](ts, col, rng))
-        if _can_call_with(meta, 2):
+        required = meta["required_positional"]
+        if required == 3:
+            return float(spec["generator"](ts, col, rng))
+        if required <= 2:
             return float(spec["generator"](ts, col))
         raise TypeError(
-            f"Generator {spec['generator']!r} accepts neither 3 nor 2 "
-            f"positional args; step-path specs must use one of those shapes."
+            f"Generator {spec['generator']!r} requires {required} positional "
+            f"args; step-path specs must use a 2-arg or 3-arg required shape."
         )
 
     if shape in ("step", "sustained"):
@@ -549,6 +555,7 @@ def _generator_meta(gen) -> dict:
         sig = inspect.signature(gen)
     except (TypeError, ValueError):
         return {"required_positional": 0, "max_positional": None,
+                "has_var_positional": False,
                 "has_required_kwargs": False, "inspectable": False}
     required = 0
     total = 0
@@ -567,6 +574,7 @@ def _generator_meta(gen) -> dict:
                 has_required_kw = True
     return {"required_positional": required,
             "max_positional": None if has_var_positional else total,
+            "has_var_positional": has_var_positional,
             "has_required_kwargs": has_required_kw,
             "inspectable": True}
 
@@ -604,34 +612,38 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
                                 rng: "np.random.RandomState" = None):
     """Call a span-path generator with either the 5-arg or 2-arg shape.
 
-    Only these two shapes are valid for span specs (see
-    ``_validate_scenario_spec``'s span-path rule). Intermediate 3- or 4-arg
-    calls are not attempted because they would silently bind ``t_within`` to
-    a parameter the author intended for a different value (``rng``).
+    Dispatch by REQUIRED positional count, not by maximum callability. A
+    generator like ``(ts, col, scale=1.0, factor=2.0, baseline=0.0)`` is
+    callable with 5 args at the Python language level, but the author named
+    the 3rd–5th positions for their own values, not for runtime internals.
+    Calling 5-arg would silently bind ``t_within``/``span_idx``/``rng`` to
+    those parameters. Required-based dispatch instead calls 2-arg, keeps
+    the defaults, and avoids the misbind. Only generators that explicitly
+    opt into the runtime internals (``required=5`` or ``*args``) receive
+    the 5-arg call.
 
-    Uninspectable callables (e.g., C extensions) fall back to the legacy
-    try/except chain so the historical contract still works.
+    Uninspectable callables (e.g., C extensions) fall back to a try/except
+    chain that tries only the two canonical shapes (5-arg then 2-arg) — no
+    intermediate 3- or 4-arg attempts, because those would themselves be
+    misbinding vectors.
     """
     meta = _cached_generator_meta(generator)
     if not meta["inspectable"]:
         try:
             return generator(ts, col, t_within, span_idx, rng)
         except TypeError:
-            try:
-                return generator(ts, col, t_within, span_idx)
-            except TypeError:
-                try:
-                    return generator(ts, col, t_within)
-                except TypeError:
-                    return generator(ts, col)
-    if _can_call_with(meta, 5):
+            return generator(ts, col)
+    if meta["has_var_positional"]:
         return generator(ts, col, t_within, span_idx, rng)
-    if _can_call_with(meta, 2):
+    required = meta["required_positional"]
+    if required == 5:
+        return generator(ts, col, t_within, span_idx, rng)
+    if required <= 2:
         return generator(ts, col)
     raise TypeError(
-        f"Generator {generator!r} accepts neither 5 nor 2 positional args; "
-        f"span-path specs must use one of those shapes. _validate_scenario_spec "
-        f"should have rejected this at import time."
+        f"Generator {generator!r} requires {required} positional args; "
+        f"span-path specs must use a 2-arg or 5-arg required shape. "
+        f"_validate_scenario_spec should have rejected this at import time."
     )
 
 

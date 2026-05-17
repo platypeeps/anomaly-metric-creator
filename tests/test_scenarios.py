@@ -279,9 +279,18 @@ def test_validate_scenario_spec_happy_path_cascade(amc):
 
 
 def test_validate_scenario_spec_valid_anomaly_shapes_constant(amc):
-    assert amc._VALID_ANOMALY_SHAPES == frozenset({
-        "step", "sustained", "ramp_linear", "ramp_exp", "sawtooth", "sine",
-    })
+    """Verify the vocabulary covers the shapes the resolver dispatches on.
+    Tests membership rather than full equality so adding a new shape only
+    requires updating ``_VALID_ANOMALY_SHAPES`` and the resolver — not this
+    test."""
+    assert isinstance(amc._VALID_ANOMALY_SHAPES, frozenset)
+    # Every shape branch in _resolve_anomaly_value must be in the vocabulary.
+    for shape in ("step", "sustained", "ramp_linear", "ramp_exp",
+                  "sawtooth", "sine"):
+        assert shape in amc._VALID_ANOMALY_SHAPES, (
+            f"{shape!r} is dispatched by _resolve_anomaly_value but missing "
+            f"from _VALID_ANOMALY_SHAPES"
+        )
 
 
 @pytest.mark.parametrize(
@@ -576,6 +585,94 @@ def test_validate_scenario_spec_partial_default_positional_rejected_span(amc):
     spec["generator"] = lambda ts, col, rng=None: 1.0
     with pytest.raises(ValueError, match="max_positional=3"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_step_dispatcher_does_not_bind_rng_to_optional_third_arg(amc):
+    """Required-based dispatch: a (ts, col, scale=1.0) step generator
+    has required=2, so the dispatcher calls it 2-arg and ``scale`` keeps
+    its default. The previous callability-based dispatch would have
+    called 3-arg and silently bound the RNG object to ``scale``."""
+    seen = []
+    def gen(ts, col, scale=1.0):
+        seen.append(scale)
+        return 1.0
+    import datetime as _dt
+    spec = {"generator": gen}
+    amc._resolve_anomaly_value(
+        spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, "rng-marker"
+    )
+    assert seen == [1.0], (
+        "scale must keep its default 1.0; the dispatcher must not bind the "
+        "RNG object to an optional 3rd positional named scale"
+    )
+
+
+def test_span_dispatcher_does_not_bind_runtime_internals_to_optional_positions(amc):
+    """Required-based dispatch on span path: a generator with
+    (ts, col, scale=1.0, factor=2.0, baseline=0.0) has required=2, so the
+    dispatcher calls it 2-arg. Defaults for scale/factor/baseline are
+    preserved instead of being overwritten by t_within/span_idx/rng."""
+    seen = []
+    def gen(ts, col, scale=1.0, factor=2.0, baseline=0.0):
+        seen.append((scale, factor, baseline))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(
+        gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker"
+    )
+    assert seen == [(1.0, 2.0, 0.0)], (
+        "scale/factor/baseline must keep their defaults; dispatcher must "
+        "not bind t_within/span_idx/rng to optional positions"
+    )
+
+
+def test_step_dispatcher_calls_three_arg_when_required(amc):
+    """Generator with required=3 (canonical step rng form) gets 3-arg call."""
+    seen = []
+    def gen(ts, col, rng):
+        seen.append(rng)
+        return 1.0
+    import datetime as _dt
+    spec = {"generator": gen}
+    amc._resolve_anomaly_value(spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, "rng-marker")
+    assert seen == ["rng-marker"]
+
+
+def test_span_dispatcher_calls_five_arg_when_required(amc):
+    """Generator with required=5 (canonical span form) gets 5-arg call."""
+    seen = []
+    def gen(ts, col, t_within, span_idx, rng):
+        seen.append((t_within, span_idx, rng))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker")
+    assert seen == [(7.5, 3, "rng-marker")]
+
+
+def test_uninspectable_callable_span_dispatch_skips_intermediate_arities(amc):
+    """When inspect.signature() fails, the span dispatcher must attempt only
+    the two canonical shapes (5-arg then 2-arg) — never an intermediate
+    4- or 3-arg call that could silently misbind t_within/span_idx."""
+    import datetime as _dt
+    arities_tried = []
+    class HiddenSig:
+        """Callable whose signature cannot be introspected."""
+        def __call__(self, *args):
+            arities_tried.append(len(args))
+            if len(args) == 5:
+                raise TypeError("simulate 5-arg refusal")
+            if len(args) == 2:
+                return 1.0
+            raise TypeError(f"unexpected arity {len(args)}")
+        # Hide signature from inspect.signature.
+        __signature__ = property(lambda self: (_ for _ in ()).throw(ValueError("hidden")))
+
+    gen = HiddenSig()
+    amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+    # Must have attempted 5 (failed), then 2 (succeeded); never 3 or 4.
+    assert arities_tried == [5, 2], (
+        f"Uninspectable span dispatch must try only [5, 2]; got {arities_tried}"
+    )
 
 
 def test_validate_scenario_spec_required_kwarg_only_rejected(amc):

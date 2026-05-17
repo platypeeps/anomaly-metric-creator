@@ -159,14 +159,30 @@ required keys present, `metric` in the full `COMPONENTS[component]` catalog,
 numeric, `shape_params` a dict; cascade specs reject
 `shape`/`duration_seconds`/`shape_params` outright.
 
-Generator arity rule: the 3-arg form `(ts, col, rng)` is reserved for
-single-row step specs (cascades and primary step specs without
-`duration_seconds`). Specs that declare `shape` (other than `"step"`) or
-`duration_seconds > 0` route through `_call_generator_within_span`, whose
-3-arg fallback passes `t_within` as the third positional; a 3-arg rng-form
-generator would silently receive a float instead of an RNG. The validator
-therefore requires shape/duration specs to use either the 2-arg legacy form
-`(ts, col)` or the canonical 5-arg form `(ts, col, t_within, span_idx, rng)`.
+Generator dispatch rule: the runtime calls each generator with one of
+two canonical positional shapes per path, chosen by the generator's
+**required** positional count (defaults extend capacity but do not change
+the call shape):
+
+- **Step path** (cascades + primary step specs without `duration_seconds`):
+  - `required_positional == 3` or `*args` → call as `(ts, col, rng)`
+  - `required_positional <= 2` → call as `(ts, col)`; any default
+    positional params keep their declared defaults
+- **Span path** (primary specs with `shape != "step"` or
+  `duration_seconds > 0`):
+  - `required_positional == 5` or `*args` → call as
+    `(ts, col, t_within, span_idx, rng)`
+  - `required_positional <= 2` → call as `(ts, col)`; any default
+    positional params keep their declared defaults
+
+Intermediate 3- and 4-arg span calls and 3-arg span calls for non-`*args`
+generators are never attempted: those shapes were the silent-misbind
+vector (a primary spec like `(ts, col, rng)` on a span path would have
+had `t_within` bound to its `rng` parameter). The validator's
+generator-arity rule rejects any generator whose required positional
+count is incompatible with the path's two canonical shapes; see
+`_validate_scenario_spec` for the full rule and the corresponding tests
+in `tests/test_scenarios.py`.
 
 `_resolve_scenarios()` applies the resolution pipeline:
 allowlist (`--scenarios`) → exclusion (`--exclude-scenarios`) → severity filter
