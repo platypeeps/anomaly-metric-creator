@@ -405,6 +405,54 @@ def test_validate_scenario_spec_negative_duration_rejected(amc):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
+def test_validate_scenario_spec_non_string_shape_rejected(amc):
+    """Non-string shape must raise ValueError, not TypeError on unhashable lookup."""
+    spec = _good_primary_spec()
+    spec["shape"] = ["sustained"]
+    with pytest.raises(ValueError, match="shape"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_three_arg_generator_with_shape_rejected(amc):
+    """3-arg (ts, col, rng) generators are step-only; using one with a shape
+    spec would silently pass t_within as rng. Validator must reject."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng: 1.0
+    with pytest.raises(ValueError, match="3-arg"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_three_arg_generator_with_duration_rejected(amc):
+    """A 3-arg generator with duration_seconds > 0 hits the span path; reject."""
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng: 1.0
+    with pytest.raises(ValueError, match="3-arg"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_three_arg_generator_step_only_allowed(amc):
+    """3-arg (ts, col, rng) generators are allowed on plain step specs."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, idx, rng: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_five_arg_generator_with_shape_allowed(amc):
+    """5-arg form is the canonical signature for shape/duration specs."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, t_within, span_idx, rng: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
 def test_validate_scenario_spec_non_dict_shape_params(amc):
     spec = _good_primary_spec()
     spec["shape_params"] = [1, 2, 3]

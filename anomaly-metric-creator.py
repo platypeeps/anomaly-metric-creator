@@ -18,6 +18,7 @@ import datetime
 import hashlib
 import heapq
 import json
+import inspect
 import math
 import os
 import shlex
@@ -252,12 +253,16 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     fieldnames = [s.name for s in specs]
     n_rows = int(total_seconds // interval)
 
-    # Provide defaults for rng and ctx for callers that haven't been updated yet.
-    # If ctx is provided but rng is not, use ctx.rng so they stay in sync.
+    # Require an explicit RNG source so callers cannot silently produce
+    # nondeterministic output. If ctx is provided, take rng from it; if rng
+    # is provided, build a ctx around it. Otherwise raise.
     if ctx is not None and rng is None:
         rng = ctx.rng
     if rng is None:
-        rng = np.random.RandomState()
+        raise TypeError(
+            "generate_component() requires an explicit rng= or ctx= argument; "
+            "pass RunContext(rng=np.random.RandomState(seed)) or an rng directly."
+        )
     if ctx is None:
         ctx = RunContext(rng=rng)
 
@@ -2620,6 +2625,11 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
 
     if "shape" in spec:
         shape = spec["shape"]
+        if not isinstance(shape, str):
+            raise ValueError(
+                f"{location} metric={metric!r} has non-string shape "
+                f"{shape!r}; expected one of {sorted(_VALID_ANOMALY_SHAPES)}."
+            )
         if shape not in _VALID_ANOMALY_SHAPES:
             raise ValueError(
                 f"{location} metric={metric!r} has unsupported shape "
@@ -2651,6 +2661,42 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{location} metric={metric!r} has shape_params "
                 f"{params!r}; expected a dict."
             )
+
+    # Generator-arity rule: the 3-arg form (ts, col, rng) is reserved for
+    # single-row step specs (the step path passes rng as the 3rd positional).
+    # If a spec uses shape (other than "step") or duration_seconds > 0 it
+    # goes through _call_generator_within_span whose 3-arg fallback passes
+    # t_within as the 3rd positional — so a 3-arg rng-form generator would
+    # silently receive a float instead of an RNG. Require 2-arg or 5-arg.
+    has_shape = spec.get("shape", "step") != "step"
+    has_duration = float(spec.get("duration_seconds", 0) or 0) > 0
+    if has_shape or has_duration:
+        arity = _generator_positional_arity(spec["generator"])
+        if arity is not None and arity not in (2, 5):
+            raise ValueError(
+                f"{location} metric={metric!r} has a {arity}-arg generator "
+                f"but the spec uses shape/duration; such specs must use the "
+                f"2-arg legacy form (ts, col) or the 5-arg form "
+                f"(ts, col, t_within, span_idx, rng). The 3-arg (ts, col, rng) "
+                f"form is reserved for single-row step specs only."
+            )
+
+
+def _generator_positional_arity(gen) -> "int | None":
+    """Return the count of positional parameters for a generator, or None
+    if the signature cannot be introspected (e.g., builtins, C extensions)."""
+    try:
+        sig = inspect.signature(gen)
+    except (TypeError, ValueError):
+        return None
+    count = 0
+    for p in sig.parameters.values():
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            return None  # *args / **kwargs — arity is unbounded; skip the check.
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                      inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            count += 1
+    return count
 
 
 def _validate_scenarios_registry() -> None:

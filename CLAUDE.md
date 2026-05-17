@@ -114,7 +114,8 @@ Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.
 
 Cascade specs use `register_cascade(target_component, time_offset, metric, description,
-generator)` internally and simulate blast radius (auth → gateway, cache → DB,
+generator, *, cascade_registry=…)` internally and simulate blast radius
+(auth → gateway, cache → DB,
 DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Cascades are single-row step writes
 only — express ramps/sustained spans as primary specs in `primary_specs`, not in
 `cascade_specs`.
@@ -148,10 +149,20 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
 Every primary and cascade spec is schema-checked at import time by
 `_validate_scenario_spec()` (called from `_validate_scenarios_registry`):
 required keys present, `metric` in the full `COMPONENTS[component]` catalog,
-`generator` callable, `time_offset` a non-negative non-bool `int`/`float`,
-`description` a non-empty string, `shape` in `_VALID_ANOMALY_SHAPES`,
-`duration_seconds` numeric (non-bool), `shape_params` a dict; cascade specs
-reject `shape`/`duration_seconds`/`shape_params` outright.
+`generator` callable, `time_offset` a finite non-negative non-bool
+`int`/`float`, `description` a non-empty string, `shape` a string in
+`_VALID_ANOMALY_SHAPES`, `duration_seconds` a finite non-negative non-bool
+numeric, `shape_params` a dict; cascade specs reject
+`shape`/`duration_seconds`/`shape_params` outright.
+
+Generator arity rule: the 3-arg form `(ts, col, rng)` is reserved for
+single-row step specs (cascades and primary step specs without
+`duration_seconds`). Specs that declare `shape` (other than `"step"`) or
+`duration_seconds > 0` route through `_call_generator_within_span`, whose
+3-arg fallback passes `t_within` as the third positional; a 3-arg rng-form
+generator would silently receive a float instead of an RNG. The validator
+therefore requires shape/duration specs to use either the 2-arg legacy form
+`(ts, col)` or the canonical 5-arg form `(ts, col, t_within, span_idx, rng)`.
 
 `_resolve_scenarios()` applies the resolution pipeline:
 allowlist (`--scenarios`) → exclusion (`--exclude-scenarios`) → severity filter
