@@ -31,6 +31,28 @@ making changes.
 `if __name__ == "__main__"`. Importing the module does not trigger generation, which
 keeps tests and ad-hoc reuse of `generate_component()` cheap.
 
+### Output directory hygiene
+
+`main()` calls `_pre_clean_output_dir()` immediately after `args.output_dir.mkdir(...)`
+and before any generation runs. The helper consumes the `_EMIT_ARTIFACT_FILES`
+registry (plus the `_COMBINE_OUTPUT_FILENAME` slot) and deletes any file from
+a prior run into the same directory that this run will not regenerate:
+per-component CSVs for components no longer in `--components` or when
+`metrics` is dropped from `--emit-selection`, `anomalies.csv` / `metric_report.log`
+/ `metric_traces.jsonl` for emit types not selected, and
+`combined_metrics_unified.csv` when `--combine` is off. Idempotent on missing
+files; files unknown to this script (user notes, the synthetic-extra-component
+CSV used by the combine autodiscovery fixture) are left alone.
+
+The end-of-run `Done - …` summary line is built from the same `args.emit_selection`
++ `args.combine` inputs, so it names exactly the artifacts written this run.
+
+Do **not** call `_pre_clean_output_dir()` from the `--combine-only` branch — that
+path reads existing per-component CSVs as inputs and pre-cleaning them would
+remove the combine inputs. The early `return` in the `--combine-only` branch
+already keeps it out of the cleanup path. `./otel-activity.log` lives outside
+`--output-dir` and is append-only by design; it must stay outside the registry.
+
 ### Combine step
 
 `combine_logs(input_dir, components=None)` joins the per-component CSVs in

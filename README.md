@@ -249,6 +249,16 @@ Written to `--output-dir` (default `iot_logs/`):
 If you omit `--emit-selection`, the default remains the full backward-compatible
 set: metrics, logs, and traces.
 
+Re-running into an existing `--output-dir` pre-cleans stale artifacts for any
+emit type or component this run will not regenerate (e.g. a metrics-only re-run
+deletes `metric_report.log` / `metric_traces.jsonl` from a prior `logs,traces`
+run, a `logs,traces` re-run deletes per-component CSVs and `anomalies.csv`,
+and a narrower `--components` re-run deletes the dropped CSVs). Files unknown
+to this script — user notes or extra CSVs the combine step would otherwise
+autodiscover — are left alone. The `--combine-only` branch is exempt because it
+reads the existing per-component CSVs as inputs. `./otel-activity.log` lives
+outside `--output-dir` and is untouched by design.
+
 ### Per-component metric catalog
 
 Each component declares up to **10** metrics in descending importance. The default

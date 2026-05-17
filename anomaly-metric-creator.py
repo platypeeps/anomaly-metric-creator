@@ -10,6 +10,7 @@ configured window are skipped with a warning on stderr.
 
 import argparse
 import base64
+import contextlib
 import csv
 import datetime
 import hashlib
@@ -3264,6 +3265,19 @@ def parse_args(argv=None):
 # ------------------------------------------------------------------
 _NON_COMPONENT_FILES = {"anomalies.csv"}
 
+# Filenames written into --output-dir for each --emit-selection item.
+# Per-component CSVs are derived from args.components, not listed here.
+# Consumed by _pre_clean_output_dir() and by the end-of-run summary line.
+_EMIT_ARTIFACT_FILES = {
+    "metrics": ("anomalies.csv",),
+    "logs": ("metric_report.log",),
+    "traces": ("metric_traces.jsonl",),
+}
+# Written only when --combine is set (which itself requires "metrics" in
+# --emit-selection). Tracked separately so the pre-clean and summary can
+# treat it as its own slot.
+_COMBINE_OUTPUT_FILENAME = "combined_metrics_unified.csv"
+
 
 def discover_components(input_dir):
     """Return the sorted list of component names found in ``input_dir``.
@@ -3290,7 +3304,7 @@ def combine_logs_unified(components, input_dir, output_file=None):
     """
     input_dir = Path(input_dir)
     if output_file is None:
-        output_file = input_dir / "combined_metrics_unified.csv"
+        output_file = input_dir / _COMBINE_OUTPUT_FILENAME
     output_file = Path(output_file)
 
     print("\nCreating UNIFIED format combined file...")
@@ -3377,13 +3391,33 @@ def _anomaly_event_id(entry: dict) -> str:
     return "evt_" + sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def write_reporting_artifacts(output_dir: Path, anomaly_rows: list[dict]) -> None:
-    """Emit correlated log and trace artifacts aligned to anomaly metric records."""
+def write_reporting_artifacts(
+    output_dir: Path,
+    anomaly_rows: list[dict],
+    *,
+    emit_logs: bool = True,
+    emit_traces: bool = True,
+) -> None:
+    """Emit correlated log and trace artifacts aligned to anomaly metric records.
+
+    ``emit_logs`` / ``emit_traces`` gate which file is written; both default to
+    True to preserve the historic two-file behavior for direct callers.
+    """
     output_dir = Path(output_dir)
     log_path = output_dir / "metric_report.log"
     trace_path = output_dir / "metric_traces.jsonl"
 
-    with open(log_path, "w", newline="") as log_f, open(trace_path, "w", newline="") as trace_f:
+    with contextlib.ExitStack() as stack:
+        log_f = (
+            stack.enter_context(open(log_path, "w", newline=""))
+            if emit_logs
+            else None
+        )
+        trace_f = (
+            stack.enter_context(open(trace_path, "w", newline=""))
+            if emit_traces
+            else None
+        )
         for entry in anomaly_rows:
             event_id = _anomaly_event_id(entry)
             component = entry["component"]
@@ -3391,21 +3425,23 @@ def write_reporting_artifacts(output_dir: Path, anomaly_rows: list[dict]) -> Non
             timestamp = entry["timestamp"]
             description = entry["description"]
 
-            log_f.write(
-                f"{timestamp} INFO metric_report event_id={event_id} "
-                f"component={component} metric={metric} msg=\"{description}\"\n"
-            )
+            if log_f is not None:
+                log_f.write(
+                    f"{timestamp} INFO metric_report event_id={event_id} "
+                    f"component={component} metric={metric} msg=\"{description}\"\n"
+                )
 
-            trace_f.write(json.dumps({
-                "timestamp": timestamp,
-                "trace_id": f"trace_{event_id[4:]}",
-                "span_id": f"span_{event_id[4:12]}",
-                "event_id": event_id,
-                "signal_type": "metric_anomaly",
-                "component": component,
-                "metric": metric,
-                "description": description,
-            }) + "\n")
+            if trace_f is not None:
+                trace_f.write(json.dumps({
+                    "timestamp": timestamp,
+                    "trace_id": f"trace_{event_id[4:]}",
+                    "span_id": f"span_{event_id[4:12]}",
+                    "event_id": event_id,
+                    "signal_type": "metric_anomaly",
+                    "component": component,
+                    "metric": metric,
+                    "description": description,
+                }) + "\n")
 
 
 def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
@@ -4308,6 +4344,35 @@ def stream_otel_gauges(
     return requests_sent
 
 
+def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combine):
+    """Remove stale artifacts from a prior run that this run will not regenerate.
+
+    Called right after --output-dir is created. Idempotent on missing files.
+    Files unknown to this script (e.g. user notes, the synthetic-extra-component
+    CSV the test fixture relies on for combine autodiscovery) are left alone.
+    Not called in the --combine-only branch; that path reads existing
+    per-component CSVs as inputs.
+    """
+    metrics_on = "metrics" in emit_selection
+    # Per-component CSVs: drop any that this run will not (re)write — either
+    # because metrics was dropped from --emit-selection or because the
+    # component is no longer in --components.
+    for component in COMPONENTS:
+        if metrics_on and component in selected_components:
+            continue
+        (output_dir / f"{component}.csv").unlink(missing_ok=True)
+    # Emit-typed artifacts: drop files for any emit type not selected.
+    for emit_type, files in _EMIT_ARTIFACT_FILES.items():
+        if emit_type in emit_selection:
+            continue
+        for filename in files:
+            (output_dir / filename).unlink(missing_ok=True)
+    # combined_metrics_unified.csv: only --combine writes it. Drop stale
+    # output otherwise so it can't masquerade as this run's result.
+    if not combine:
+        (output_dir / _COMBINE_OUTPUT_FILENAME).unlink(missing_ok=True)
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -4329,6 +4394,12 @@ def main(argv=None):
 
     total_seconds = SECONDS_PER_DAY * args.duration_days
     args.output_dir.mkdir(exist_ok=True, parents=True)
+    _pre_clean_output_dir(
+        args.output_dir,
+        args.emit_selection,
+        args.components,
+        args.combine,
+    )
     np.random.seed(args.seed)
 
     # Reset module-level registries so repeated calls (e.g., from tests) don't accumulate.
@@ -4384,15 +4455,14 @@ def main(argv=None):
             writer.writeheader()
             for a in filtered_anomalies:
                 writer.writerow(a)
-    else:
-        (args.output_dir / "anomalies.csv").unlink(missing_ok=True)
 
     if {"logs", "traces"} & args.emit_selection:
-        write_reporting_artifacts(args.output_dir, filtered_anomalies)
-        if "logs" not in args.emit_selection:
-            (args.output_dir / "metric_report.log").unlink(missing_ok=True)
-        if "traces" not in args.emit_selection:
-            (args.output_dir / "metric_traces.jsonl").unlink(missing_ok=True)
+        write_reporting_artifacts(
+            args.output_dir,
+            filtered_anomalies,
+            emit_logs="logs" in args.emit_selection,
+            emit_traces="traces" in args.emit_selection,
+        )
 
     streamed_events = 0
     endpoints = {
@@ -4443,7 +4513,18 @@ def main(argv=None):
             verbose=args.otel_verbose,
         )
 
-    print(f"Done - {len(args.components)} log files + anomalies.csv + reporting artifacts written to {args.output_dir}")
+    if args.combine:
+        combine_logs(args.output_dir, components=combine_components)
+
+    written = []
+    if "metrics" in args.emit_selection:
+        written.append(f"{len(args.components)} component CSV(s)")
+    for emit_type, files in _EMIT_ARTIFACT_FILES.items():
+        if emit_type in args.emit_selection:
+            written.extend(files)
+    if args.combine:
+        written.append(_COMBINE_OUTPUT_FILENAME)
+    print(f"Done - {', '.join(written)} written to {args.output_dir}")
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
     print(f"   Anomalies recorded: {len(filtered_anomalies)}")
@@ -4455,9 +4536,6 @@ def main(argv=None):
                   f"metrics -> {args.otel_metrics_endpoint}")
     elif any(endpoints.values()):
         print("   OTEL streaming disabled (pass --otel-enabled to send to configured endpoints)")
-
-    if args.combine:
-        combine_logs(args.output_dir, components=combine_components)
 
 
 if __name__ == "__main__":
