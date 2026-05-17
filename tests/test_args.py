@@ -343,3 +343,175 @@ def test_parse_args_exclude_scenarios_invalid_name_fails(amc):
             "--exclude-scenarios", "not_a_scenario",
             "--output-dir", "test_out",
         ])
+
+
+# ------------------------------------------------------------------
+# --otel-emit-gauges / --otel-gauge-* (VER-124)
+# ------------------------------------------------------------------
+def test_otel_emit_gauges_defaults_false(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_emit_gauges is False
+    assert args.otel_gauge_batch_seconds == 60
+    assert args.otel_gauge_metric_prefix == ""
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("1", True), ("true", True), ("TRUE", True),
+    ("yes", True), ("YeS", True), ("on", True),
+    ("0", False), ("false", False), ("", False),
+    ("no", False), ("off", False), ("nonsense", False),
+])
+def test_otel_emit_gauges_env_truthy_matrix(amc, monkeypatch, value, expected):
+    monkeypatch.setenv("MEZMO_OTEL_EMIT_GAUGES", value)
+    if expected:
+        # Truthy env value requires the rest of the gauge prerequisites to be
+        # set, otherwise parse_args refuses. Provide them inline.
+        args = amc.parse_args([
+            "--otel-enabled",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--output-dir", "test_out",
+        ])
+        assert args.otel_emit_gauges is True
+    else:
+        args = amc.parse_args(["--output-dir", "test_out"])
+        assert args.otel_emit_gauges is False
+
+
+def test_otel_emit_gauges_env_missing_defaults_false(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_emit_gauges is False
+
+
+def test_otel_emit_gauges_cli_overrides_env(amc, monkeypatch):
+    """--otel-no-emit-gauges on the CLI must beat a truthy env var."""
+    monkeypatch.setenv("MEZMO_OTEL_EMIT_GAUGES", "1")
+    args = amc.parse_args([
+        "--otel-no-emit-gauges",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_emit_gauges is False
+
+
+def test_otel_emit_gauges_requires_otel_enabled(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-emit-gauges",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_emit_gauges_requires_metrics_endpoint(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-enabled",
+            "--otel-emit-gauges",
+            # Only logs endpoint provided, no metrics endpoint.
+            "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_emit_gauges_requires_metrics_in_emit_selection(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-enabled",
+            "--otel-emit-gauges",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--emit-selection", "logs,traces",
+            "--output-dir", "test_out",
+        ])
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "-60"])
+def test_otel_gauge_batch_seconds_must_be_positive(amc, value):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-gauge-batch-seconds", value,
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_gauge_metric_prefix_default_empty(amc):
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_gauge_metric_prefix == ""
+
+
+def test_otel_gauge_metric_prefix_custom(amc):
+    args = amc.parse_args([
+        "--otel-gauge-metric-prefix", "amc.",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_gauge_metric_prefix == "amc."
+
+
+def test_otel_emit_gauges_rejects_dst_artifact_combo(amc, monkeypatch):
+    """The DST artifact splice (``_splice_dst_artifact``) makes per-component
+    CSV timestamps non-monotonic, which breaks ``heapq.merge`` inside
+    ``stream_otel_gauges``. Reject the combination at parse time."""
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-enabled",
+            "--otel-emit-gauges",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--inject-dst-artifact-day", "1",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_emit_gauges_allows_dst_artifact_zero(amc, monkeypatch):
+    """``--inject-dst-artifact-day 0`` (the default, off) must coexist freely
+    with ``--otel-emit-gauges``."""
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    args = amc.parse_args([
+        "--otel-enabled",
+        "--otel-emit-gauges",
+        "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+        "--inject-dst-artifact-day", "0",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_emit_gauges is True
+    assert args.inject_dst_artifact_day == 0
+
+
+# ------------------------------------------------------------------
+# _env_bool helper (VER-124)
+# ------------------------------------------------------------------
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "Yes", "on", "  ON  "])
+def test_env_bool_truthy_values_return_true(amc, monkeypatch, value):
+    monkeypatch.setenv("AMC_TEST_BOOL", value)
+    assert amc._env_bool("AMC_TEST_BOOL") is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=False) is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "nonsense"])
+def test_env_bool_non_truthy_returns_false(amc, monkeypatch, value):
+    """Non-truthy non-empty values return False regardless of ``default``."""
+    monkeypatch.setenv("AMC_TEST_BOOL", value)
+    assert amc._env_bool("AMC_TEST_BOOL") is False
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is False
+
+
+def test_env_bool_missing_returns_default(amc, monkeypatch):
+    monkeypatch.delenv("AMC_TEST_BOOL", raising=False)
+    assert amc._env_bool("AMC_TEST_BOOL") is False
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=False) is False
+
+
+@pytest.mark.parametrize("value", ["", "   ", "\t", "\n"])
+def test_env_bool_empty_or_whitespace_honors_default(amc, monkeypatch, value):
+    """Regression for the docstring contract: an empty or whitespace-only env
+    var must return ``default`` (not False), so MEZMO_FOO='' with default=True
+    does not silently flip to False."""
+    monkeypatch.setenv("AMC_TEST_BOOL", value)
+    assert amc._env_bool("AMC_TEST_BOOL") is False
+    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
+    assert amc._env_bool("AMC_TEST_BOOL", default=False) is False

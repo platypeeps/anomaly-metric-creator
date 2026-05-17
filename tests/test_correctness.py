@@ -898,3 +898,69 @@ def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
             f"{filename}: --scenarios all diverged from the default run bytes "
             f"at --duration-days {days}"
         )
+
+
+def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
+    """VER-124: toggling --otel-emit-gauges on must not perturb any CSV byte.
+
+    The gauge stream reads CSVs after they're written; flipping the flag adds
+    network I/O but no value computation. Two runs against the same seed —
+    one with the flag off, one with it on against a live mock collector —
+    must produce byte-identical per-component CSVs and anomalies.csv. This is
+    the regression that guards the "off by default" promise.
+    """
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    out_off = tmp_path / "off"
+    out_on = tmp_path / "on"
+    out_off.mkdir()
+    out_on.mkdir()
+
+    # Off-path run: no streaming at all, no mock server needed.
+    run_capture(amc, out_off, days=1, extra_args=["--interval-seconds", "600"])
+
+    # On-path run: stream to a mock collector that always returns 200.
+    received = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            received.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        run_capture(amc, out_on, days=1, extra_args=[
+            "--interval-seconds", "600",
+            "--otel-enabled",
+            "--otel-emit-gauges",
+            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-gauge-batch-seconds", "21600",
+            "--otel-activity-log", str(tmp_path / "amc-activity-on.log"),
+        ])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert received, "expected the gauge stream to post at least one request"
+
+    for filename in _all_artifact_filenames():
+        off_path = out_off / filename
+        on_path = out_on / filename
+        assert off_path.exists(), f"flag-off run missing {filename}"
+        assert on_path.exists(), f"flag-on run missing {filename}"
+        assert _sha256(off_path) == _sha256(on_path), (
+            f"{filename}: --otel-emit-gauges on/off CSV bytes diverged"
+        )
