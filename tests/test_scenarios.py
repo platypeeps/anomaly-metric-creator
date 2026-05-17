@@ -518,6 +518,81 @@ def test_validate_scenario_spec_var_args_skips_arity_check(amc):
     ) is None
 
 
+def test_validate_scenario_spec_required_kwarg_only_rejected(amc):
+    """Generators with required keyword-only params cannot be called by
+    positional dispatch; the validator must reject them."""
+    def gen(ts, col, *, rng):
+        return 1.0
+    spec = _good_primary_spec()
+    spec["generator"] = gen
+    with pytest.raises(ValueError, match="keyword-only"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_keyword_only_with_default_allowed(amc):
+    """Keyword-only params with defaults don't block positional dispatch."""
+    def gen(ts, col, *, scale=1.0):
+        return 1.0 * scale
+    spec = _good_primary_spec()
+    spec["generator"] = gen
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_call_generator_within_span_dispatch_by_arity(amc):
+    """_call_generator_within_span dispatches by inspected arity, not by
+    catching TypeError. A 3-arg generator that raises TypeError internally
+    must not be retried as 2-arg (which would hide the error and
+    duplicate any side effects)."""
+    calls = []
+    def buggy_three_arg(ts, col, t_within):
+        calls.append((ts, col, t_within))
+        raise TypeError("internal bug — must not be swallowed")
+    import datetime as _dt
+    with pytest.raises(TypeError, match="internal bug"):
+        amc._call_generator_within_span(buggy_three_arg, _dt.datetime(2026,1,1), 0, 1.0, 0)
+    assert len(calls) == 1, "Generator must be called exactly once, not retried with 2-arg form"
+
+
+def test_call_generator_within_span_var_args_picks_five_arg(amc):
+    """*args generators get called with the 5-arg form (highest info)."""
+    recorded = []
+    def gen(*args):
+        recorded.append(len(args))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(gen, _dt.datetime(2026,1,1), 0, 2.0, 1, "rng-marker")
+    assert recorded == [5]
+
+
+def test_call_generator_within_span_unhashable_callable(amc):
+    """Unhashable callables (e.g., mutable callable instances) must not crash
+    the cache lookup; introspection falls back to uncached path."""
+    class UnhashableCallable:
+        __hash__ = None
+        def __call__(self, ts, col, rng):
+            return 42.0
+    gen = UnhashableCallable()
+    import datetime as _dt
+    result = amc._call_generator_within_span(gen, _dt.datetime(2026,1,1), 0, 0.0, 0, None)
+    assert result == 42.0
+
+
+def test_resolve_anomaly_value_step_path_does_not_retry_on_internal_typeerror(amc):
+    """The step path in _resolve_anomaly_value must dispatch by arity, not
+    catch a 3-arg generator's internal TypeError and retry as 2-arg."""
+    calls = []
+    def buggy_three_arg(ts, col, rng):
+        calls.append((ts, col, rng))
+        raise TypeError("internal bug in step generator")
+    import datetime as _dt
+    spec = {"generator": buggy_three_arg}
+    with pytest.raises(TypeError, match="internal bug"):
+        amc._resolve_anomaly_value(spec, _dt.datetime(2026,1,1), 0, 0.0, 0, None)
+    assert len(calls) == 1
+
+
 def test_validate_scenario_spec_non_dict_shape_params(amc):
     spec = _good_primary_spec()
     spec["shape_params"] = [1, 2, 3]

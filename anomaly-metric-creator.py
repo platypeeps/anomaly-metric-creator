@@ -462,10 +462,21 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
     shape_params = spec.get("shape_params", {}) or {}
 
     if duration_seconds <= 0 and shape == "step":
-        try:
-            return float(spec["generator"](ts, col, rng))
-        except TypeError:
+        # Dispatch by introspected arity so an internal TypeError from a
+        # 3-arg generator doesn't silently retry as a 2-arg call (which
+        # would hide the real error and duplicate any side effects/RNG
+        # draws already performed before the TypeError fired).
+        meta = _cached_generator_meta(spec["generator"])
+        arity = meta["arity"]
+        if meta["has_var_positional"] or not meta["inspectable"]:
+            # *args or uninspectable — try 3-arg first, fall back to 2-arg.
+            try:
+                return float(spec["generator"](ts, col, rng))
+            except TypeError:
+                return float(spec["generator"](ts, col))
+        if arity == 2:
             return float(spec["generator"](ts, col))
+        return float(spec["generator"](ts, col, rng))
 
     if shape in ("step", "sustained"):
         return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx, rng))
@@ -505,19 +516,56 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
     raise ValueError(f"Unsupported anomaly shape: {shape}")
 
 
-_GENERATOR_ARITY_CACHE: "dict[Callable, int | None]" = {}
+_GENERATOR_META_CACHE: "dict[Callable, dict]" = {}
 
 
-def _cached_generator_arity(gen) -> "int | None":
-    """Cached arity lookup keyed by the generator object itself. Spans can
-    fire over thousands of rows, so introspect each generator once instead
-    of probing arity by raised TypeError on every row. We deliberately key
-    on ``gen`` rather than ``id(gen)`` so the dict keeps a strong reference
-    and prevents Python from reusing the id slot for a different generator
-    with a different arity once the original is garbage-collected."""
-    if gen not in _GENERATOR_ARITY_CACHE:
-        _GENERATOR_ARITY_CACHE[gen] = _generator_positional_arity(gen)
-    return _GENERATOR_ARITY_CACHE[gen]
+def _generator_meta(gen) -> dict:
+    """Return introspection metadata for a generator callable:
+    - ``arity``: positional-param count, or None if signature cannot be
+      introspected or accepts ``*args`` (unbounded positional).
+    - ``has_var_positional``: True iff ``*args`` is present.
+    - ``has_required_kwargs``: True iff any KEYWORD_ONLY parameter has no
+      default. Such generators cannot be called positionally by our runtime.
+    - ``inspectable``: True iff inspect.signature() succeeded.
+    """
+    try:
+        sig = inspect.signature(gen)
+    except (TypeError, ValueError):
+        return {"arity": None, "has_var_positional": False,
+                "has_required_kwargs": False, "inspectable": False}
+    count = 0
+    has_var = False
+    has_required_kw = False
+    for p in sig.parameters.values():
+        if p.kind is inspect.Parameter.VAR_POSITIONAL:
+            has_var = True
+        elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            count += 1
+        elif p.kind is inspect.Parameter.KEYWORD_ONLY:
+            if p.default is inspect.Parameter.empty:
+                has_required_kw = True
+    return {"arity": None if has_var else count,
+            "has_var_positional": has_var,
+            "has_required_kwargs": has_required_kw,
+            "inspectable": True}
+
+
+def _cached_generator_meta(gen) -> dict:
+    """Cached introspection lookup. Keys on the generator object itself
+    (not ``id()``) so the dict keeps a strong reference and prevents
+    Python from reusing the id slot for a different generator after gc.
+    Falls back to an uncached lookup for unhashable callables (e.g.,
+    callable dataclass instances with frozen=False)."""
+    try:
+        cached = _GENERATOR_META_CACHE.get(gen)
+        if cached is None:
+            cached = _generator_meta(gen)
+            _GENERATOR_META_CACHE[gen] = cached
+        return cached
+    except TypeError:
+        # Unhashable callable — can't cache; introspect every call. Rare.
+        return _generator_meta(gen)
 
 
 def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
@@ -525,9 +573,26 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
                                 rng: "np.random.RandomState" = None):
     """Backwards-compatible generator call with optional span args. Dispatches
     by introspected arity (cached) so we don't pay caught-TypeError overhead
-    on every row of a multi-thousand-row span."""
-    arity = _cached_generator_arity(generator)
-    if arity is None or arity == 5:
+    on every row of a multi-thousand-row span. Uninspectable callables fall
+    back to a try/except chain to preserve the legacy contract."""
+    meta = _cached_generator_meta(generator)
+    arity = meta["arity"]
+    if meta["has_var_positional"]:
+        # *args accepts any positional count; pick the highest-info call.
+        return generator(ts, col, t_within, span_idx, rng)
+    if not meta["inspectable"]:
+        # Can't dispatch by introspection — fall back to try/except chain.
+        try:
+            return generator(ts, col, t_within, span_idx, rng)
+        except TypeError:
+            try:
+                return generator(ts, col, t_within, span_idx)
+            except TypeError:
+                try:
+                    return generator(ts, col, t_within)
+                except TypeError:
+                    return generator(ts, col)
+    if arity == 5:
         return generator(ts, col, t_within, span_idx, rng)
     if arity == 4:
         return generator(ts, col, t_within, span_idx)
@@ -2700,7 +2765,17 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
     #     third positional. Required positional arity: 2 or 5.
     has_shape = spec.get("shape", "step") != "step"
     has_duration = float(spec.get("duration_seconds", 0) or 0) > 0
-    arity = _generator_positional_arity(spec["generator"])
+    meta = _generator_meta(spec["generator"])
+    # Required keyword-only params can never be supplied by the runtime
+    # (the dispatch path uses positional args only); reject up front.
+    if meta["has_required_kwargs"]:
+        raise ValueError(
+            f"{location} metric={metric!r} has a generator with required "
+            f"keyword-only parameters; generators are called positionally "
+            f"at runtime, so kwarg-only requirements would fail when the "
+            f"spec fires. Provide defaults for keyword-only params, or "
+            f"declare them as positional."
+        )
     if has_shape or has_duration:
         allowed_arities = (2, 5)
         path_description = (
@@ -2715,33 +2790,12 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
             "or the 3-arg form (ts, col, rng). The step path does not pass "
             "t_within or span_idx, so 4- and 5-arg generators would fail at runtime."
         )
+    arity = meta["arity"]
     if arity is not None and arity not in allowed_arities:
         raise ValueError(
             f"{location} metric={metric!r} has a {arity}-arg generator; "
             f"{path_description}"
         )
-
-
-def _generator_positional_arity(gen) -> "int | None":
-    """Return the count of positional parameters for a generator, or None
-    if the signature cannot be introspected (e.g., builtins, C extensions)
-    or accepts *args (which makes positional arity unbounded). **kwargs is
-    NOT a positional escape hatch — a generator with (ts, col, rng, **kw)
-    still has positional arity 3 and must be checked accordingly.
-    """
-    try:
-        sig = inspect.signature(gen)
-    except (TypeError, ValueError):
-        return None
-    count = 0
-    for p in sig.parameters.values():
-        if p.kind is inspect.Parameter.VAR_POSITIONAL:
-            return None  # *args — positional arity is unbounded; skip check.
-        if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                      inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            count += 1
-        # VAR_KEYWORD (**kwargs), KEYWORD_ONLY do not add positional capacity.
-    return count
 
 
 def _validate_scenarios_registry() -> None:
