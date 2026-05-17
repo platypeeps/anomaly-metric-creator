@@ -1,0 +1,126 @@
+"""Output directory hygiene: pre-clean stale artifacts when re-running into
+the same --output-dir with a different --emit-selection or --components."""
+import io
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+from conftest import run_capture
+
+
+# Short-run helper so each test stays under a couple of seconds.
+SHORT_RUN_ARGS = ("--interval-seconds", "60")
+
+
+def _run(amc, out_dir, *, extra_args):
+    """run_capture wrapper that always uses days=1 and forces a short run."""
+    return run_capture(
+        amc, out_dir, days=1, extra_args=list(SHORT_RUN_ARGS) + list(extra_args)
+    )
+
+
+def _component_csv_names(amc):
+    return {f"{c}.csv" for c in amc.COMPONENTS}
+
+
+def test_metrics_only_after_full_run_clears_logs_and_traces(amc, tmp_path):
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics,logs,traces"])
+    assert (tmp_path / "metric_report.log").exists()
+    assert (tmp_path / "metric_traces.jsonl").exists()
+
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    assert not (tmp_path / "metric_report.log").exists()
+    assert not (tmp_path / "metric_traces.jsonl").exists()
+    assert (tmp_path / "anomalies.csv").exists()
+    # Component CSVs from the second metrics run are present.
+    for component in amc.COMPONENTS:
+        assert (tmp_path / f"{component}.csv").exists()
+
+
+def test_logs_traces_after_metrics_run_clears_component_csvs(amc, tmp_path):
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    # Sanity: component CSVs and manifest exist after the metrics run.
+    assert (tmp_path / "anomalies.csv").exists()
+    for component in amc.COMPONENTS:
+        assert (tmp_path / f"{component}.csv").exists()
+
+    _run(amc, tmp_path, extra_args=["--emit-selection", "logs,traces"])
+    for component in amc.COMPONENTS:
+        assert not (tmp_path / f"{component}.csv").exists(), (
+            f"stale {component}.csv survived the logs,traces re-run"
+        )
+    assert not (tmp_path / "anomalies.csv").exists()
+    assert (tmp_path / "metric_report.log").exists()
+    assert (tmp_path / "metric_traces.jsonl").exists()
+
+
+def test_narrowed_components_clears_dropped_csvs(amc, tmp_path):
+    pair = list(amc.COMPONENTS)[:2]
+    keep = pair[0]
+    drop = pair[1]
+    _run(amc, tmp_path, extra_args=[
+        "--emit-selection", "metrics",
+        "--components", ",".join(pair),
+    ])
+    assert (tmp_path / f"{keep}.csv").exists()
+    assert (tmp_path / f"{drop}.csv").exists()
+
+    _run(amc, tmp_path, extra_args=[
+        "--emit-selection", "metrics",
+        "--components", keep,
+    ])
+    assert (tmp_path / f"{keep}.csv").exists()
+    assert not (tmp_path / f"{drop}.csv").exists(), (
+        f"{drop}.csv should have been pre-cleaned when --components was narrowed"
+    )
+
+
+def test_drop_combine_clears_unified(amc, tmp_path):
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics", "--combine"])
+    assert (tmp_path / "combined_metrics_unified.csv").exists()
+
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    assert not (tmp_path / "combined_metrics_unified.csv").exists(), (
+        "combined_metrics_unified.csv from a prior --combine run should be "
+        "pre-cleaned when --combine is not set on the next run"
+    )
+
+
+def test_status_line_only_names_emitted_artifacts(amc, tmp_path, capsys):
+    _run(amc, tmp_path, extra_args=["--emit-selection", "logs,traces"])
+    captured = capsys.readouterr()
+    done_lines = [
+        line for line in captured.out.splitlines() if line.startswith("Done -")
+    ]
+    assert len(done_lines) == 1, f"expected exactly one Done line, got: {done_lines}"
+    done = done_lines[0]
+    assert "metric_report.log" in done
+    assert "metric_traces.jsonl" in done
+    assert "anomalies.csv" not in done
+    assert "component CSV" not in done
+
+    other = tmp_path / "metrics_only"
+    other.mkdir()
+    _run(amc, other, extra_args=["--emit-selection", "metrics"])
+    captured = capsys.readouterr()
+    done_lines = [
+        line for line in captured.out.splitlines() if line.startswith("Done -")
+    ]
+    assert len(done_lines) == 1
+    done = done_lines[0]
+    assert "anomalies.csv" in done
+    assert "metric_report.log" not in done
+    assert "metric_traces.jsonl" not in done
+
+
+def test_pre_clean_leaves_unknown_files_alone(amc, tmp_path):
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    sentinel = tmp_path / "user_notes.txt"
+    sentinel.write_text("user-provided extra file; do not delete")
+
+    _run(amc, tmp_path, extra_args=["--emit-selection", "logs,traces"])
+    assert sentinel.exists(), (
+        "pre-clean should leave user-provided files in --output-dir alone"
+    )
+    assert sentinel.read_text() == "user-provided extra file; do not delete"
