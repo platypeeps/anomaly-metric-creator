@@ -3304,7 +3304,7 @@ def combine_logs_unified(components, input_dir, output_file=None):
     """
     input_dir = Path(input_dir)
     if output_file is None:
-        output_file = input_dir / "combined_metrics_unified.csv"
+        output_file = input_dir / _COMBINE_OUTPUT_FILENAME
     output_file = Path(output_file)
 
     print("\nCreating UNIFIED format combined file...")
@@ -4519,11 +4519,9 @@ def main(argv=None):
     written = []
     if "metrics" in args.emit_selection:
         written.append(f"{len(args.components)} component CSV(s)")
-        written.append("anomalies.csv")
-    if "logs" in args.emit_selection:
-        written.append("metric_report.log")
-    if "traces" in args.emit_selection:
-        written.append("metric_traces.jsonl")
+    for emit_type, files in _EMIT_ARTIFACT_FILES.items():
+        if emit_type in args.emit_selection:
+            written.extend(files)
     if args.combine:
         written.append(_COMBINE_OUTPUT_FILENAME)
     print(f"Done - {', '.join(written)} written to {args.output_dir}")
