@@ -487,9 +487,21 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
                 return float(spec["generator"](ts, col, rng))
             except TypeError:
                 return float(spec["generator"](ts, col))
-        if meta["has_var_positional"]:
-            return float(spec["generator"](ts, col, rng))
         required = meta["required_positional"]
+        fixed = meta["fixed_positional_count"]
+        if meta["has_var_positional"]:
+            # Mirror the validator's *args misbind check so direct callers
+            # (e.g., tests bypassing _validate_scenario_spec) cannot silently
+            # bind the RNG to a default-having fixed positional like
+            # ``scale`` in ``(ts, col, scale=1.0, *args)``.
+            if required <= 2 and fixed > 2:
+                raise TypeError(
+                    f"Generator {spec['generator']!r} has *args with "
+                    f"fixed_positional_count={fixed} > 2; the 3-arg step "
+                    f"call would overwrite the default-having position {fixed}. "
+                    f"Use (ts, col) or (ts, col, rng) instead."
+                )
+            return float(spec["generator"](ts, col, rng))
         if required == 3:
             return float(spec["generator"](ts, col, rng))
         if required <= 2:
@@ -644,9 +656,18 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
             return generator(ts, col, t_within, span_idx, rng)
         except TypeError:
             return generator(ts, col)
-    if meta["has_var_positional"]:
-        return generator(ts, col, t_within, span_idx, rng)
     required = meta["required_positional"]
+    fixed = meta["fixed_positional_count"]
+    if meta["has_var_positional"]:
+        # Mirror the validator's *args misbind check for direct callers.
+        if required <= 2 and fixed > 2:
+            raise TypeError(
+                f"Generator {generator!r} has *args with "
+                f"fixed_positional_count={fixed} > 2; the 5-arg span call "
+                f"would overwrite default-having fixed positions. Use "
+                f"(ts, col) or (ts, col, *args) instead."
+            )
+        return generator(ts, col, t_within, span_idx, rng)
     if required == 5:
         return generator(ts, col, t_within, span_idx, rng)
     if required <= 2:
@@ -2745,13 +2766,26 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
         )
     # math.isfinite() converts non-floats to a C double first; an
     # arbitrarily large Python int can raise OverflowError before the
-    # finiteness check completes. Integers are finite by definition, so
-    # only run the finiteness check for floats.
+    # finiteness check completes. Integers are finite by definition.
     if isinstance(time_offset, float) and not math.isfinite(time_offset):
         raise ValueError(
             f"{location} metric={metric!r} has non-finite time_offset "
             f"{time_offset!r}; offsets must be finite seconds from START."
         )
+    # generate_component() does ``time_offset / interval`` (float divide)
+    # at runtime; a Python int that can't be represented as a float would
+    # raise OverflowError there. Reject at import time so the failure
+    # surfaces with the validator's clear ValueError instead of a deep
+    # runtime crash.
+    if isinstance(time_offset, int) and not isinstance(time_offset, bool):
+        try:
+            float(time_offset)
+        except OverflowError:
+            raise ValueError(
+                f"{location} metric={metric!r} has time_offset "
+                f"{time_offset!r} that overflows float representation; "
+                f"offsets are converted to float at runtime."
+            ) from None
     if time_offset < 0:
         raise ValueError(
             f"{location} metric={metric!r} has negative time_offset "
@@ -2804,6 +2838,17 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{location} metric={metric!r} has non-finite duration_seconds "
                 f"{duration!r}; expected a finite value."
             )
+        # Same float-representability check as time_offset: generate_component
+        # / _resolve_anomaly_value cast duration_seconds to float at runtime.
+        if isinstance(duration, int) and not isinstance(duration, bool):
+            try:
+                float(duration)
+            except OverflowError:
+                raise ValueError(
+                    f"{location} metric={metric!r} has duration_seconds "
+                    f"{duration!r} that overflows float representation; "
+                    f"durations are converted to float at runtime."
+                ) from None
         if duration < 0:
             raise ValueError(
                 f"{location} metric={metric!r} has negative duration_seconds "

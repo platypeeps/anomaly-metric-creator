@@ -278,23 +278,43 @@ def test_validate_scenario_spec_happy_path_cascade(amc):
     ) is None
 
 
+_RESOLVER_SHAPES = frozenset({
+    "step", "sustained", "ramp_linear", "ramp_exp", "sawtooth", "sine",
+})
+
+
+def _load_vocab_shapes_for_parametrize():
+    """Load _VALID_ANOMALY_SHAPES at pytest collection time so the test
+    below is parametrized over the LIVE vocab rather than a hard-coded
+    list. Adding a shape to _VALID_ANOMALY_SHAPES automatically extends
+    test coverage."""
+    import importlib.util as _u
+    import os as _os
+    script = _os.environ.get(
+        "SCRIPT_PATH",
+        _os.path.join(_os.path.dirname(__file__), "..",
+                      "anomaly-metric-creator.py"),
+    )
+    spec = _u.spec_from_file_location("amc_for_parametrize", script)
+    m = _u.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return sorted(m._VALID_ANOMALY_SHAPES)
+
+
 def test_validate_scenario_spec_valid_anomaly_shapes_constant(amc):
-    """Verify the vocabulary covers the shapes the resolver dispatches on.
-    Tests membership rather than full equality so adding a new shape only
-    requires updating ``_VALID_ANOMALY_SHAPES`` and the resolver — not this
-    test."""
+    """Forward consistency: every shape branch the resolver dispatches on
+    must be present in ``_VALID_ANOMALY_SHAPES``. ``_RESOLVER_SHAPES`` is
+    the test-side ground truth for what branches exist in
+    ``_resolve_anomaly_value``; if a branch is added there, add it here."""
     assert isinstance(amc._VALID_ANOMALY_SHAPES, frozenset)
-    # Every shape branch in _resolve_anomaly_value must be in the vocabulary.
-    for shape in ("step", "sustained", "ramp_linear", "ramp_exp",
-                  "sawtooth", "sine"):
-        assert shape in amc._VALID_ANOMALY_SHAPES, (
-            f"{shape!r} is dispatched by _resolve_anomaly_value but missing "
-            f"from _VALID_ANOMALY_SHAPES"
-        )
+    missing = _RESOLVER_SHAPES - amc._VALID_ANOMALY_SHAPES
+    assert not missing, (
+        f"Resolver shapes {sorted(missing)} are dispatched by "
+        f"_resolve_anomaly_value but missing from _VALID_ANOMALY_SHAPES"
+    )
 
 
-@pytest.mark.parametrize("shape", sorted({"step", "sustained", "ramp_linear",
-                                          "ramp_exp", "sawtooth", "sine"}))
+@pytest.mark.parametrize("shape", _load_vocab_shapes_for_parametrize())
 def test_every_valid_shape_is_dispatched_by_resolver(amc, shape):
     """Reverse consistency: every shape in ``_VALID_ANOMALY_SHAPES`` must be
     handled by ``_resolve_anomaly_value``. If a future change adds a shape
@@ -610,35 +630,47 @@ def test_validate_scenario_spec_var_args_default_prefix_rejected_span(amc):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
-def test_validate_scenario_spec_huge_int_time_offset_no_overflow(amc):
-    """math.isfinite() converts non-floats to a C double which can raise
-    OverflowError on arbitrarily large Python ints. Integers are finite
-    by definition; the validator must skip the isfinite check for them
-    and accept a large but finite int time_offset."""
+def test_validate_scenario_spec_huge_int_time_offset_rejected(amc):
+    """A Python int that overflows float representation is now rejected at
+    import time — generate_component does `time_offset / interval` (float
+    divide) at runtime, which would raise OverflowError there. Reject up
+    front with the validator's clear ValueError."""
     spec = _good_primary_spec()
-    # Pick a value > 2**1024 so float conversion would overflow.
     spec["time_offset"] = 10 ** 400
-    # No assertion on outcome — just must not raise OverflowError.
-    # (The validator may still accept or reject for other reasons —
-    # negative check or schema. Here we just confirm no overflow.)
-    try:
+    with pytest.raises(ValueError, match="overflows float"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
-    except OverflowError:
-        pytest.fail("Validator must not raise OverflowError on a huge int time_offset")
-    except ValueError:
-        pass  # Other validation errors are fine; we only guard against OverflowError.
 
 
-def test_validate_scenario_spec_huge_int_duration_no_overflow(amc):
-    """Same overflow protection for duration_seconds."""
+def test_validate_scenario_spec_huge_int_duration_rejected(amc):
+    """Same float-overflow rejection for duration_seconds."""
     spec = _good_primary_spec()
     spec["duration_seconds"] = 10 ** 400
-    try:
+    with pytest.raises(ValueError, match="overflows float"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
-    except OverflowError:
-        pytest.fail("Validator must not raise OverflowError on a huge int duration_seconds")
-    except ValueError:
-        pass
+
+
+def test_step_dispatcher_rejects_var_args_with_default_prefix(amc):
+    """Direct callers of generate_component bypass the validator. The
+    dispatcher itself must refuse the *args+default-prefix misbind case
+    (e.g., (ts, col, scale=1.0, *args)) so unvalidated callers can't
+    silently bind the RNG to the scale parameter."""
+    def bad(ts, col, scale=1.0, *args):
+        return 1.0
+    import datetime as _dt
+    spec = {"generator": bad}
+    with pytest.raises(TypeError, match="fixed_positional_count"):
+        amc._resolve_anomaly_value(spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, None)
+
+
+def test_span_dispatcher_rejects_var_args_with_default_prefix(amc):
+    """Same defensive check on the span path."""
+    def bad(ts, col, scale=1.0, *args):
+        return 1.0
+    import datetime as _dt
+    with pytest.raises(TypeError, match="fixed_positional_count"):
+        amc._call_generator_within_span(bad, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+
+
 
 
 def test_validate_scenario_spec_canonical_required_with_trailing_optional_step(amc):
