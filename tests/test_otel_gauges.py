@@ -614,6 +614,75 @@ def test_stream_otel_gauges_with_auth_header(tmp_path, monkeypatch):
         f"no Authorization header carried the configured token; saw: {auth_headers}"
 
 
+def test_stream_otel_gauges_max_events_caps_attempts_not_successes(amc, tmp_path):
+    """``--otel-stream-max-events`` must cap attempted flushes, not
+    successful ones — matching the counter stream, which pre-truncates its
+    event list up-front so the same flag means the same thing in both
+    streams. With a broken endpoint (every POST returns 500), the gauge
+    cap of N must still trip at exactly N attempts even though zero
+    succeed.
+    """
+    # Pre-generate CSVs (no streaming).
+    out = tmp_path / "cap"
+    out.mkdir()
+    amc.main([
+        "--duration-days", "1",
+        "--interval-seconds", "600",
+        "--drop-rate", "0",
+        "--components", "authservice",
+        "--output-dir", str(out),
+    ])
+
+    attempts = []
+
+    class _BrokenCollector(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            attempts.append(self.path)
+            self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _BrokenCollector)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # max_retries=0 keeps the test fast: one HTTP attempt per flush.
+        # max_events=3 caps attempted flushes at 3 regardless of success.
+        requests_sent = amc.stream_otel_gauges(
+            {"authservice": out / "authservice.csv"},
+            endpoint=f"http://127.0.0.1:{server.server_port}/v1/metrics",
+            batch_seconds=3600,
+            metric_prefix="",
+            speedup=1000000.0,
+            timeout_seconds=2.0,
+            max_events=3,
+            max_retries=0,
+            auth_headers=None,
+            protocol="json",
+            activity_log_path=None,
+            verbose=False,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    # Exactly 3 attempts hit the mock; none succeeded so the return value is 0.
+    assert len(attempts) == 3, (
+        f"expected exactly 3 attempted flushes capped by max_events=3, "
+        f"got {len(attempts)} (regression: cap was gating on successes "
+        f"instead of attempts)"
+    )
+    assert requests_sent == 0, (
+        f"expected zero successful sends against a 500 endpoint, "
+        f"got {requests_sent}"
+    )
+
+
 def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_path):
     """Regression for the VER-124 pacing bug: between consecutive batches the
     streamer must sleep ``batch_seconds / speedup`` of wall-clock — not

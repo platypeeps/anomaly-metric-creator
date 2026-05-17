@@ -2835,11 +2835,16 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
 # CLI + entry point
 # ------------------------------------------------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
-    """Parse a boolean env var. Truthy = ``1/true/yes/on`` (case-insensitive)
-    returns ``True``; anything else (including empty/whitespace/missing)
-    returns ``default``. The empty-string case must honor ``default`` so
-    ``MEZMO_FOO=""`` with ``default=True`` does not silently flip to
-    ``False`` — matches the docstring contract."""
+    """Parse a boolean env var with three-valued contract:
+
+    - missing, empty, or whitespace-only → returns ``default``
+    - truthy (``1``/``true``/``yes``/``on``, case-insensitive) → returns ``True``
+    - any other non-empty value (``0``/``false``/``no``/``off``/garbage) → returns ``False``
+
+    The empty/missing path honors ``default`` so ``MEZMO_FOO=""`` with
+    ``default=True`` does not silently flip to ``False``; explicit falsy
+    values always win over ``default`` so opt-out env vars behave as
+    expected without surprise."""
     raw = os.environ.get(name)
     if raw is None or not raw.strip():
         return default
@@ -4019,8 +4024,14 @@ def stream_otel_signals(
 
 def _iter_component_rows(component: str, csv_path: Path):
     """Yield ``(timestamp_str, component, [(metric_name, value)...])`` for each
-    non-blank row in ``csv_path``. Blank rows (CSV-side dropped rows) are skipped
-    naturally so gauges only mirror what was written to disk.
+    data row in ``csv_path``.
+
+    ``generate_component`` omits dropped rows from the CSV entirely (via the
+    ``keep_mask``) rather than writing them as blank lines, so under normal
+    operation the file has only the header plus one row per surviving
+    timestamp — dropped timestamps are naturally absent from the gauge
+    stream. The streamer still defensively skips any zero-column row to
+    tolerate hand-edited inputs.
     """
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
@@ -4096,8 +4107,8 @@ def stream_otel_gauges(
 
     batch: list[dict] = []
     batch_start_dt: datetime.datetime | None = None
-    batch_end_dt: datetime.datetime | None = None
     requests_sent = 0
+    requests_attempted = 0
     data_points_sent = 0
     # Pacing key is the previous batch's *start* time so the wall-clock gap
     # between flushes matches the timeline gap between two batch anchors —
@@ -4109,17 +4120,24 @@ def stream_otel_gauges(
     aborted = False
 
     def _flush() -> bool:
-        nonlocal batch, batch_start_dt, batch_end_dt, requests_sent
+        nonlocal batch, batch_start_dt, requests_sent, requests_attempted
         nonlocal data_points_sent, prev_batch_start_dt
         if not batch:
             return True
-        if max_events is not None and requests_sent >= max_events:
+        # ``max_events`` mirrors the counter stream's semantics: it caps
+        # *attempts*, not successes. The counter stream pre-truncates its
+        # event list at ``stream_otel_signals`` entry, so the same flag
+        # already means "at most N HTTP attempts" there. If we gated on
+        # ``requests_sent`` instead, a broken endpoint would let the gauge
+        # stream attempt unbounded flushes since none ever succeeds.
+        if max_events is not None and requests_attempted >= max_events:
             return False
 
         if prev_batch_start_dt is not None and batch_start_dt is not None:
             wait_seconds = max(0.0, (batch_start_dt - prev_batch_start_dt).total_seconds() / speedup)
             if wait_seconds > 0:
                 time.sleep(wait_seconds)
+        requests_attempted += 1
 
         if protocol == "protobuf":
             body = _build_otlp_gauge_protobuf(batch, metric_prefix=metric_prefix)
@@ -4226,8 +4244,7 @@ def stream_otel_gauges(
         prev_batch_start_dt = batch_start_dt
         batch = []
         batch_start_dt = None
-        batch_end_dt = None
-        if max_events is not None and requests_sent >= max_events:
+        if max_events is not None and requests_attempted >= max_events:
             return False
         return True
 
@@ -4252,7 +4269,6 @@ def stream_otel_gauges(
                     "metric": metric_name,
                     "value": value,
                 })
-            batch_end_dt = dt
         if not aborted:
             _flush()
     finally:
