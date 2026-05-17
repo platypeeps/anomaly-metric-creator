@@ -1,11 +1,5 @@
 """Output directory hygiene: pre-clean stale artifacts when re-running into
 the same --output-dir with a different --emit-selection or --components."""
-import io
-import sys
-from types import SimpleNamespace
-
-import pytest
-
 from conftest import run_capture
 
 
@@ -18,10 +12,6 @@ def _run(amc, out_dir, *, extra_args):
     return run_capture(
         amc, out_dir, days=1, extra_args=list(SHORT_RUN_ARGS) + list(extra_args)
     )
-
-
-def _component_csv_names(amc):
-    return {f"{c}.csv" for c in amc.COMPONENTS}
 
 
 def test_metrics_only_after_full_run_clears_logs_and_traces(amc, tmp_path):
@@ -112,6 +102,40 @@ def test_status_line_only_names_emitted_artifacts(amc, tmp_path, capsys):
     assert "anomalies.csv" in done
     assert "metric_report.log" not in done
     assert "metric_traces.jsonl" not in done
+
+
+def test_logs_only_after_full_run_clears_traces_and_component_csvs(amc, tmp_path):
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics,logs,traces"])
+    assert (tmp_path / "metric_report.log").exists()
+    assert (tmp_path / "metric_traces.jsonl").exists()
+
+    _run(amc, tmp_path, extra_args=["--emit-selection", "logs"])
+    assert (tmp_path / "metric_report.log").exists()
+    assert not (tmp_path / "metric_traces.jsonl").exists(), (
+        "logs-only re-run should drop the prior metric_traces.jsonl"
+    )
+    assert not (tmp_path / "anomalies.csv").exists()
+    for component in amc.COMPONENTS:
+        assert not (tmp_path / f"{component}.csv").exists(), (
+            f"logs-only re-run should drop the prior {component}.csv"
+        )
+
+
+def test_traces_only_after_full_run_clears_logs_and_component_csvs(amc, tmp_path):
+    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics,logs,traces"])
+    assert (tmp_path / "metric_report.log").exists()
+    assert (tmp_path / "metric_traces.jsonl").exists()
+
+    _run(amc, tmp_path, extra_args=["--emit-selection", "traces"])
+    assert (tmp_path / "metric_traces.jsonl").exists()
+    assert not (tmp_path / "metric_report.log").exists(), (
+        "traces-only re-run should drop the prior metric_report.log"
+    )
+    assert not (tmp_path / "anomalies.csv").exists()
+    for component in amc.COMPONENTS:
+        assert not (tmp_path / f"{component}.csv").exists(), (
+            f"traces-only re-run should drop the prior {component}.csv"
+        )
 
 
 def test_pre_clean_leaves_unknown_files_alone(amc, tmp_path):

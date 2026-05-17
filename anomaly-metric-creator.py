@@ -10,6 +10,7 @@ configured window are skipped with a warning on stderr.
 
 import argparse
 import base64
+import contextlib
 import csv
 import datetime
 import hashlib
@@ -3406,9 +3407,17 @@ def write_reporting_artifacts(
     log_path = output_dir / "metric_report.log"
     trace_path = output_dir / "metric_traces.jsonl"
 
-    log_f = open(log_path, "w", newline="") if emit_logs else None
-    trace_f = open(trace_path, "w", newline="") if emit_traces else None
-    try:
+    with contextlib.ExitStack() as stack:
+        log_f = (
+            stack.enter_context(open(log_path, "w", newline=""))
+            if emit_logs
+            else None
+        )
+        trace_f = (
+            stack.enter_context(open(trace_path, "w", newline=""))
+            if emit_traces
+            else None
+        )
         for entry in anomaly_rows:
             event_id = _anomaly_event_id(entry)
             component = entry["component"]
@@ -3433,11 +3442,6 @@ def write_reporting_artifacts(
                     "metric": metric,
                     "description": description,
                 }) + "\n")
-    finally:
-        if log_f is not None:
-            log_f.close()
-        if trace_f is not None:
-            trace_f.close()
 
 
 def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
@@ -4509,6 +4513,9 @@ def main(argv=None):
             verbose=args.otel_verbose,
         )
 
+    if args.combine:
+        combine_logs(args.output_dir, components=combine_components)
+
     written = []
     if "metrics" in args.emit_selection:
         written.append(f"{len(args.components)} component CSV(s)")
@@ -4531,9 +4538,6 @@ def main(argv=None):
                   f"metrics -> {args.otel_metrics_endpoint}")
     elif any(endpoints.values()):
         print("   OTEL streaming disabled (pass --otel-enabled to send to configured endpoints)")
-
-    if args.combine:
-        combine_logs(args.output_dir, components=combine_components)
 
 
 if __name__ == "__main__":
