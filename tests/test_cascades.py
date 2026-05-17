@@ -45,7 +45,6 @@ def test_cascades_applied_in_generate_component(amc, tmp_path):
         interval=1.0,
         ts_array=ts_array,
         ts_strings=ts_strings,
-        rng=ctx.rng,
         ctx=ctx,
     )
 

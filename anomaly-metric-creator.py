@@ -87,7 +87,21 @@ _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
 # ------------------------------------------------------------------
 @dataclasses.dataclass
 class RunContext:
-    """Per-run mutable state: RNG + anomaly manifest accumulator."""
+    """Per-run mutable state.
+
+    Fields:
+    - ``rng``: ``np.random.RandomState`` instance seeded from ``--seed``.
+      Authoritative RNG for the run; threaded explicitly through
+      ``generate_component()``, ``_natural_column()``, and the anomaly
+      override path.
+    - ``anomalies``: list accumulator for manifest rows. Each call to
+      ``generate_component()`` appends one entry per anomaly span that
+      survives drop-mask filtering.
+    - ``cascading_anomalies``: dict keyed by target component name, value
+      is the list of cascade spec dicts that fire on that component.
+      Populated by ``_apply_scenarios()`` and consumed by
+      ``generate_component()`` when it merges primary + cascade overrides.
+    """
     rng: "np.random.RandomState"
     anomalies: list = dataclasses.field(default_factory=list)
     cascading_anomalies: dict = dataclasses.field(default_factory=dict)
@@ -577,17 +591,6 @@ def _generator_meta(gen) -> dict:
             "has_var_positional": has_var_positional,
             "has_required_kwargs": has_required_kw,
             "inspectable": True}
-
-
-def _can_call_with(meta: dict, n: int) -> bool:
-    """True iff the generator accepts exactly ``n`` positional args."""
-    if not meta["inspectable"]:
-        return True  # Assume so; caller will fall back if it raises.
-    if meta["required_positional"] > n:
-        return False
-    if meta["max_positional"] is None:
-        return True  # *args — unbounded positional capacity.
-    return n <= meta["max_positional"]
 
 
 def _cached_generator_meta(gen) -> dict:
@@ -2900,15 +2903,17 @@ def _validate_scenarios_registry() -> None:
                     f"component {component!r}"
                 )
             _validate_scenario_spec(slug, component, spec, is_cascade=False)
-            if "severity" in spec and spec["severity"] not in valid_severities:
-                raise ValueError(
-                    f"SCENARIOS[{slug!r}].primary_specs entry for component "
-                    f"{component!r} has severity {spec['severity']!r}; "
-                    f"must be one of {sorted(valid_severities)}. "
-                    f"_apply_signal_level_and_count reads spec.get('severity', "
-                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
-                    f"filtered out at every --signal-level."
-                )
+            if "severity" in spec:
+                sev = spec["severity"]
+                if not isinstance(sev, str) or sev not in valid_severities:
+                    raise ValueError(
+                        f"SCENARIOS[{slug!r}].primary_specs entry for component "
+                        f"{component!r} has severity {sev!r}; "
+                        f"must be a string in {sorted(valid_severities)}. "
+                        f"_apply_signal_level_and_count reads spec.get('severity', "
+                        f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                        f"filtered out at every --signal-level."
+                    )
         for target, cascade in scenario.cascade_specs:
             if target not in known_components:
                 raise ValueError(
@@ -2916,15 +2921,17 @@ def _validate_scenarios_registry() -> None:
                     f"component {target!r}"
                 )
             _validate_scenario_spec(slug, target, cascade, is_cascade=True)
-            if "severity" in cascade and cascade["severity"] not in valid_severities:
-                raise ValueError(
-                    f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
-                    f"{target!r} has severity {cascade['severity']!r}; "
-                    f"must be one of {sorted(valid_severities)}. "
-                    f"_apply_signal_level_and_count reads spec.get('severity', "
-                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
-                    f"filtered out at every --signal-level."
-                )
+            if "severity" in cascade:
+                sev = cascade["severity"]
+                if not isinstance(sev, str) or sev not in valid_severities:
+                    raise ValueError(
+                        f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
+                        f"{target!r} has severity {sev!r}; "
+                        f"must be a string in {sorted(valid_severities)}. "
+                        f"_apply_signal_level_and_count reads spec.get('severity', "
+                        f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                        f"filtered out at every --signal-level."
+                    )
         # days_required must equal the day index (1-based) of the earliest
         # time_offset across primary and cascade specs. Setting it too high
         # silently drops in-range specs at the requested --duration-days;
@@ -4934,7 +4941,6 @@ def main(argv=None):
                            ts_strings=ts_strings,
                            emit_metrics="metrics" in args.emit_selection,
                            dst_inject_day=args.inject_dst_artifact_day,
-                           rng=ctx.rng,
                            ctx=ctx)
 
     filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]

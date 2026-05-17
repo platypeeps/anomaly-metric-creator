@@ -554,7 +554,9 @@ def test_validate_scenario_spec_var_args_four_arg_prefix_rejected_step(amc):
 
 def test_validate_scenario_spec_default_positional_accepted_step(amc):
     """Step spec with (ts, col, rng=None, extra=None): required=2, max=4.
-    Runtime calls 3-arg, rng binds correctly, extra uses default. Accept."""
+    Validator accepts. At runtime the required-based step dispatcher will
+    call this generator with just (ts, col) — both rng and extra keep
+    their declared defaults — because required_positional is 2."""
     spec = _good_primary_spec()
     spec["generator"] = lambda ts, col, rng=None, extra=None: 1.0
     assert amc._validate_scenario_spec(
@@ -564,7 +566,9 @@ def test_validate_scenario_spec_default_positional_accepted_step(amc):
 
 def test_validate_scenario_spec_default_positional_accepted_span(amc):
     """Span spec with (ts, col, t=0, s=0, rng=None): required=2, max=5.
-    Runtime calls 5-arg, all positions bound. Accept."""
+    Validator accepts. At runtime the required-based span dispatcher will
+    call this generator with just (ts, col) — t/s/rng keep their declared
+    defaults — because required_positional is 2."""
     spec = _good_primary_spec()
     spec["shape"] = "sustained"
     spec["duration_seconds"] = 30
@@ -647,6 +651,53 @@ def test_span_dispatcher_calls_five_arg_when_required(amc):
     import datetime as _dt
     amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker")
     assert seen == [(7.5, 3, "rng-marker")]
+
+
+def test_validate_scenarios_registry_rejects_unhashable_severity_primary(amc):
+    """A primary spec with unhashable severity (e.g., []) must raise
+    ValueError, not a raw TypeError from set membership lookup."""
+    spec = {
+        "time_offset": 60, "metric": "error_rate",
+        "description": "x", "generator": lambda ts, idx: 0.0,
+        "severity": [],  # unhashable
+    }
+    scenario = amc.Scenario(
+        id="__t__", name="t", severity="low", days_required=1,
+        category="t", components_touched=("apigateway",),
+        primary_specs=(("apigateway", spec),),
+        cascade_specs=(),
+    )
+    original = amc.SCENARIOS.copy()
+    amc.SCENARIOS["__t__"] = scenario
+    try:
+        with pytest.raises(ValueError, match="severity"):
+            amc._validate_scenarios_registry()
+    finally:
+        amc.SCENARIOS.clear()
+        amc.SCENARIOS.update(original)
+
+
+def test_validate_scenarios_registry_rejects_unhashable_severity_cascade(amc):
+    """Same protection on cascade severity."""
+    cascade = {
+        "time_offset": 60, "metric": "error_rate",
+        "description": "x", "generator": lambda ts, idx: 0.0,
+        "severity": [],  # unhashable
+    }
+    scenario = amc.Scenario(
+        id="__t__", name="t", severity="low", days_required=1,
+        category="t", components_touched=("apigateway",),
+        primary_specs=(),
+        cascade_specs=(("apigateway", cascade),),
+    )
+    original = amc.SCENARIOS.copy()
+    amc.SCENARIOS["__t__"] = scenario
+    try:
+        with pytest.raises(ValueError, match="severity"):
+            amc._validate_scenarios_registry()
+    finally:
+        amc.SCENARIOS.clear()
+        amc.SCENARIOS.update(original)
 
 
 def test_uninspectable_callable_span_dispatch_skips_intermediate_arities(amc):

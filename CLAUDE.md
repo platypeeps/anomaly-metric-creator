@@ -314,14 +314,35 @@ reference it in `primary_specs` or `cascade_specs`, and list it in
 
 Validation is split across import time and the test suite:
 
-- **Import time** rejects key drift between `COMPONENTS` and
-  `DEFAULT_METRICS_PER_COMPONENT`, any catalog longer than `MAX_METRICS_PER_COMPONENT`,
-  any default count outside `[1, len(catalog)]`, any scenario referencing a
-  non-existent component, any `days_required` that does not equal the day index
-  (1-based) of the earliest spec offset, and any `components_touched` tuple
-  that does not equal the set of components actually referenced by the
-  scenario's primary and cascade specs. These raise a clear `ValueError`
-  before `main()` runs.
+- **Import time** rejects:
+  - Key drift between `COMPONENTS` and `DEFAULT_METRICS_PER_COMPONENT`.
+  - Any catalog longer than `MAX_METRICS_PER_COMPONENT`.
+  - Any default count outside `[1, len(catalog)]`.
+  - Any scenario referencing a non-existent component.
+  - Any `days_required` that does not equal the day index (1-based) of
+    the earliest spec offset.
+  - Any `components_touched` tuple that does not equal the set of
+    components actually referenced by the scenario's primary and
+    cascade specs.
+  - Any non-string severity, or severity outside `{low, medium, high}`,
+    on a scenario, primary spec, or cascade spec.
+  - **Per-spec schema drift** (via `_validate_scenario_spec`): non-dict
+    specs; missing required keys (`time_offset`, `metric`, `description`,
+    `generator`); non-string or unknown metric (rejected against the
+    full `COMPONENTS[component]` catalog, not the trimmed default); non-
+    callable generator; non-finite, non-numeric, negative, or boolean
+    `time_offset`; non-string or empty `description`; non-string or
+    unknown `shape`; non-numeric, non-finite, negative, or boolean
+    `duration_seconds`; non-dict `shape_params`; cascade specs
+    declaring `shape`/`duration_seconds`/`shape_params`.
+  - **Generator arity drift** (also via `_validate_scenario_spec`):
+    generators with required keyword-only parameters; generators whose
+    `required_positional` / `max_positional` shape doesn't match the
+    canonical 2-arg or path-target form (3 for step, 5 for span) per
+    the dispatch rule above.
+
+  All of these raise a clear `ValueError` naming the scenario slug and
+  the offending field before `main()` runs.
 - **Test suite only.** Drift between `COMPONENTS` and `COMPONENT_FIELDS` /
   `DEFAULT_METRIC_COUNT` is caught only by the test suite. Run it after adding or
   modifying a component — don't rely on import-time validation alone.
