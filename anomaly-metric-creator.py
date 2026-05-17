@@ -3287,33 +3287,44 @@ def parse_args(argv=None):
     # before the user notices. Compute the upper-bound cell count from the
     # already-resolved knobs and reject when the cap trips, unless the user
     # has explicitly opted in with --allow-huge-output.
-    rows_per_component = int(
-        (args.duration_days * SECONDS_PER_DAY) // args.interval_seconds
-    )
-    if args.metrics_per_component is None:
-        total_metrics = sum(
-            DEFAULT_METRICS_PER_COMPONENT[c] for c in args.components
-        )
-    else:
-        total_metrics = sum(
-            min(args.metrics_per_component, len(COMPONENTS[c]))
-            for c in args.components
-        )
-    estimated_cells = rows_per_component * total_metrics
-    if estimated_cells > PREFLIGHT_CELL_CAP and not args.allow_huge_output:
-        p.error(
-            f"preflight cell-count cap exceeded: "
-            f"--interval-seconds {args.interval_seconds} "
-            f"x --duration-days {args.duration_days} "
-            f"x --components ({len(args.components)} selected) "
-            f"x --metrics-per-component "
-            f"{args.metrics_per_component if args.metrics_per_component is not None else 'default'} "
-            f"would emit ~{estimated_cells:,} metric cells "
-            f"(cap: {PREFLIGHT_CELL_CAP:,}). "
-            f"Raise --interval-seconds, lower --duration-days, lower "
-            f"--metrics-per-component, narrow --components, or pass "
-            f"--allow-huge-output to bypass."
-        )
+    #
+    # --combine-only bypasses generation entirely (main() reads existing CSVs
+    # and returns), so the cap is irrelevant on that path; skip the check
+    # so a user can re-run --combine-only over a dataset that was originally
+    # generated with --allow-huge-output without having to remember the
+    # bypass flag every time.
+    if not args.combine_only:
+        # Mirror the generator's row-count derivation byte-for-byte. main()
+        # computes ``total_seconds = SECONDS_PER_DAY * args.duration_days``
+        # and ``n_rows = int(total_seconds // args.interval_seconds)``; use
+        # the same two expressions here so the preflight estimate cannot
+        # diverge from the row count actually emitted by generate_component.
+        total_seconds = SECONDS_PER_DAY * args.duration_days
+        rows_per_component = int(total_seconds // args.interval_seconds)
+        if args.metrics_per_component is None:
+            total_metrics = sum(
+                DEFAULT_METRICS_PER_COMPONENT[c] for c in args.components
+            )
+        else:
+            total_metrics = sum(
+                min(args.metrics_per_component, len(COMPONENTS[c]))
+                for c in args.components
+            )
+        estimated_cells = rows_per_component * total_metrics
+        if estimated_cells > PREFLIGHT_CELL_CAP and not args.allow_huge_output:
+            p.error(
+                f"preflight cell-count cap exceeded: "
+                f"--interval-seconds {args.interval_seconds} "
+                f"x --duration-days {args.duration_days} "
+                f"x --components ({len(args.components)} selected) "
+                f"x --metrics-per-component "
+                f"{args.metrics_per_component if args.metrics_per_component is not None else 'default'} "
+                f"would emit ~{estimated_cells:,} metric cells "
+                f"(cap: {PREFLIGHT_CELL_CAP:,}). "
+                f"Raise --interval-seconds, lower --duration-days, lower "
+                f"--metrics-per-component, narrow --components, or pass "
+                f"--allow-huge-output to bypass."
+            )
 
     return args
 

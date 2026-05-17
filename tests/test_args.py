@@ -629,3 +629,42 @@ def test_preflight_error_message_names_relevant_flags(amc, capsys):
     assert "--metrics-per-component" in err
     assert "--components" in err
     assert "--allow-huge-output" in err
+
+
+def test_preflight_skipped_for_combine_only(amc):
+    """``--combine-only`` reads an existing dataset and never emits new
+    metric cells, so the preflight cap must not apply. A user who
+    originally generated with ``--allow-huge-output --interval-seconds
+    0.001`` should be able to re-run the combine step over the same
+    dataset without remembering to pass the bypass flag again."""
+    args = amc.parse_args([
+        "--combine-only",
+        "--interval-seconds", "0.001",
+        "--output-dir", "test_out",
+    ])
+    assert args.combine_only is True
+    assert args.interval_seconds == 0.001
+    assert args.allow_huge_output is False
+
+
+def test_preflight_row_count_matches_generator_derivation(amc):
+    """The preflight estimate must use the same ``int(total_seconds //
+    interval_seconds)`` expression as the generator's ``n_rows`` so the
+    cap can never reject a config that the generator would actually
+    emit below the cap (and vice versa)."""
+    interval = 0.1
+    duration_days = 7
+    expected_rows = int((amc.SECONDS_PER_DAY * duration_days) // interval)
+    # ``observabilitypipeline`` (4 default metrics) keeps the estimate
+    # under the cap so this case must parse cleanly. Cross-check the
+    # arithmetic: rows * metrics must be under PREFLIGHT_CELL_CAP.
+    metrics = amc.DEFAULT_METRICS_PER_COMPONENT["observabilitypipeline"]
+    assert expected_rows * metrics < amc.PREFLIGHT_CELL_CAP
+    args = amc.parse_args([
+        "--duration-days", str(duration_days),
+        "--interval-seconds", str(interval),
+        "--components", "observabilitypipeline",
+        "--output-dir", "test_out",
+    ])
+    assert args.duration_days == duration_days
+    assert args.interval_seconds == interval
