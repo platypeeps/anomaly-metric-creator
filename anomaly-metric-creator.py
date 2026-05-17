@@ -2894,13 +2894,10 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
             f"overwriting the declared defaults. Move the default-having "
             f"positions after ``*args`` (kwarg-only with default) or drop them."
         )
-    elif required == target and fixed > target:
-        # required==target=fixed-but-fixed>target shouldn't happen
-        # (required <= fixed always), but guard anyway.
-        reject_reason = (
-            f"fixed_positional_count={fixed} > target {target}; the "
-            f"{target}-arg dispatch can't satisfy all required positions."
-        )
+    # Note: ``required == target and fixed > target`` (e.g. (ts, col, rng,
+    # extra=None) for step) is intentionally accepted. The dispatcher calls
+    # exactly target args, all required positions are bound, and any
+    # trailing optional positions keep their declared defaults — no misbind.
     elif not has_var and required <= 2 and fixed < 2:
         # (ts) or () — dispatcher 2-arg call would fail.
         reject_reason = (

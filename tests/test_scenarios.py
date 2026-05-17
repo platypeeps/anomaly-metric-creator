@@ -293,6 +293,39 @@ def test_validate_scenario_spec_valid_anomaly_shapes_constant(amc):
         )
 
 
+@pytest.mark.parametrize("shape", sorted({"step", "sustained", "ramp_linear",
+                                          "ramp_exp", "sawtooth", "sine"}))
+def test_every_valid_shape_is_dispatched_by_resolver(amc, shape):
+    """Reverse consistency: every shape in ``_VALID_ANOMALY_SHAPES`` must be
+    handled by ``_resolve_anomaly_value``. If a future change adds a shape
+    to the vocabulary without wiring it into the resolver, validator would
+    accept specs that fail at runtime with 'Unsupported anomaly shape'.
+    This test fixes that drift by exercising every vocab entry."""
+    assert shape in amc._VALID_ANOMALY_SHAPES
+    import datetime as _dt
+    spec = {
+        "generator": lambda ts, col: 100.0,
+        "shape": shape,
+        "duration_seconds": 10,
+        "shape_params": {"start": 0.0, "end": 1.0, "amplitude": 1.0,
+                         "midline": 0.0, "period_s": 5.0},
+    }
+    # If resolver rejects this shape at runtime, the validator and resolver
+    # have drifted. Any return value is fine; we just must not get the
+    # "Unsupported anomaly shape" ValueError.
+    try:
+        amc._resolve_anomaly_value(spec, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+    except ValueError as e:
+        if "Unsupported anomaly shape" in str(e):
+            pytest.fail(
+                f"Shape {shape!r} is in _VALID_ANOMALY_SHAPES but the resolver "
+                f"raises 'Unsupported anomaly shape' — vocabulary and resolver "
+                f"have drifted. Wire {shape!r} into _resolve_anomaly_value or "
+                f"remove it from the vocab."
+            )
+        raise
+
+
 @pytest.mark.parametrize(
     "missing_key", ["time_offset", "metric", "description", "generator"]
 )
@@ -606,6 +639,30 @@ def test_validate_scenario_spec_huge_int_duration_no_overflow(amc):
         pytest.fail("Validator must not raise OverflowError on a huge int duration_seconds")
     except ValueError:
         pass
+
+
+def test_validate_scenario_spec_canonical_required_with_trailing_optional_step(amc):
+    """Step spec with (ts, col, rng, extra=None): required=3, fixed=4.
+    Dispatcher calls 3-arg (required==target), all required positions
+    bind correctly, ``extra`` keeps its default. No misbind — accept."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, col, rng, extra=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_canonical_required_with_trailing_optional_span(amc):
+    """Span spec with (ts, col, t_within, span_idx, rng, extra=None):
+    required=5, fixed=6. Dispatcher calls 5-arg, all required bind,
+    ``extra`` keeps default. No misbind — accept."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, t_within, span_idx, rng, extra=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
 
 
 def test_validate_scenario_spec_default_positional_accepted_step(amc):
