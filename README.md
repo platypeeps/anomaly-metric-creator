@@ -103,6 +103,15 @@ python3 anomaly-metric-creator.py \
 MEZMO_OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
 MEZMO_OTEL_LOGS_AUTH_TOKEN=secret \
 python3 anomaly-metric-creator.py --otel-enabled
+
+# Additionally stream per-row metric values as OTLP Gauge data points
+# (alongside the existing anomaly-counter stream):
+python3 anomaly-metric-creator.py \
+  --otel-enabled \
+  --otel-emit-gauges \
+  --otel-metrics-endpoint http://localhost:4318/v1/metrics \
+  --otel-gauge-batch-seconds 60 \
+  --otel-gauge-metric-prefix amc.
 ```
 
 ### CLI flags
@@ -127,8 +136,11 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
 | `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
 | `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
-| `--otel-metrics-endpoint` | `MEZMO_OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics when `--otel-enabled`. |
-| `--otel-metrics-auth-token` | `MEZMO_OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. |
+| `--otel-metrics-endpoint` | `MEZMO_OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics when `--otel-enabled`. When `--otel-emit-gauges` is also passed, the same endpoint additionally receives a Gauge stream of per-row metric values (see [Gauge metric streaming](#gauge-metric-streaming-otel-emit-gauges)). |
+| `--otel-metrics-auth-token` | `MEZMO_OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. Applies to both the counter and gauge streams. |
+| `--otel-emit-gauges` / `--otel-no-emit-gauges` | _off_ (env: `MEZMO_OTEL_EMIT_GAUGES`) | Opt-in second OTLP stream that posts per-row metric values from the per-component CSVs as Gauge data points to `--otel-metrics-endpoint`. Off by default; the CLI flag wins over the env var. Truthy env values: `1`, `true`, `yes`, `on` (case-insensitive). Requires `--otel-enabled`, `--otel-metrics-endpoint`, and `metrics` in `--emit-selection`. |
+| `--otel-gauge-batch-seconds` | `60` | When `--otel-emit-gauges` is on, this many seconds of timeline coverage are coalesced into one OTLP request. Larger batches = fewer requests but bigger bodies; tune to your collector's body limit. Must be `> 0`. |
+| `--otel-gauge-metric-prefix` | _empty_ | Optional namespace prefix prepended to the OTLP metric name for each gauge data point (e.g. `amc.` produces `amc.cpu_util_pct`). |
 | `--otel-traces-endpoint` | `MEZMO_OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events when `--otel-enabled`. |
 | `--otel-traces-auth-token` | `MEZMO_OTEL_TRACES_AUTH_TOKEN` | Optional auth token for traces endpoint. |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
@@ -138,6 +150,51 @@ python3 anomaly-metric-creator.py --otel-enabled
 | `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
 | `--otel-activity-log` | `./otel-activity.log` | File that records every OTEL streaming activity (`START`, `SEND`, `OK`, `RETRY`, `FAIL`, `END`) when `--otel-enabled` is set. Only created when streaming actually runs. |
 | `--otel-verbose` / `--no-otel-verbose` | _off_ | When enabled, the activity log captures the raw OTLP payload (`body`), the request `content_type` and other request headers (auth values masked as `<scheme> ***`), the HTTP response `status` on success, and the exception `error_type` (plus HTTP `status` for `HTTPError`) on retry/failure. Useful for offline debugging of receiver behavior. |
+
+### Gauge metric streaming (`--otel-emit-gauges`)
+
+The default OTEL streaming path posts one `anomaly.count` Sum data point per
+injected anomaly. Set `--otel-emit-gauges` (or `MEZMO_OTEL_EMIT_GAUGES=1`) to
+additionally stream **every per-row metric value** from the per-component CSVs
+to `--otel-metrics-endpoint` as OTLP `Gauge` data points. The two streams run
+sequentially: anomaly counters first, then gauges, both against the same
+endpoint (and the same auth token / activity log).
+
+Payload shape:
+
+- One `resourceMetrics` entry per component, with `resource.attributes`
+  carrying `service.name=<component>` and `service.namespace=anomaly-metric-creator`.
+- Inside each, one `scopeMetrics` entry (`scope.name=anomaly-metric-creator`,
+  `scope.version=1.0.0`) holding one `metrics[]` entry per
+  `(component, metric)` pair, with `name=<prefix><metric>` and a
+  `gauge.dataPoints[]` array carrying one data point per CSV row in the batch
+  (each tagged `metric.name`, `component`, `signal.type=metric_value`).
+
+Batching, dropped rows, and pacing:
+
+- `--otel-gauge-batch-seconds` (default `60`) is how many seconds of
+  **timeline coverage** are coalesced into one OTLP request. At
+  `--interval-seconds 1` this is 60 rows per metric per component; at
+  `--interval-seconds 0.1` it's 600 rows per metric per component.
+- Dropped CSV rows (`--drop-rate`) are **suppressed from the gauge stream** —
+  the streamer reads what was written to disk, so gauges mirror the realistic
+  packet-loss view.
+- `--otel-stream-speedup` paces consecutive flushes the same way as the
+  counter stream: between two batches the streamer sleeps
+  `batch_seconds / speedup` seconds.
+- `--otel-stream-max-events` caps the total number of OTLP **requests** the
+  gauge stream sends (mirroring its meaning for the counter stream); it
+  does **not** cap individual data points.
+
+Volume note: at `--interval-seconds 1` with the default 13 components × their
+default metric counts (a 1-day run is ≈ 7.5M data points after the natural
+drop rate), the gauge stream at `--otel-gauge-batch-seconds 60` produces on
+the order of 1,440 OTLP requests per simulated day. Tune
+`--otel-gauge-batch-seconds` up if your collector enforces a small request
+body limit, or down if it limits batch element counts. The activity log file
+(`--otel-activity-log`) is written in append mode for the gauge pass, so
+both the counter and the gauge records share one file with
+`signal=metrics_gauge` tagging the gauge records.
 
 ### Output files
 

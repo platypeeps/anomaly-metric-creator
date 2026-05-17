@@ -13,6 +13,7 @@ import base64
 import csv
 import datetime
 import hashlib
+import heapq
 import json
 import math
 import os
@@ -2833,6 +2834,15 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
 # ------------------------------------------------------------------
 # CLI + entry point
 # ------------------------------------------------------------------
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse a boolean env var. Truthy = ``1/true/yes/on`` (case-insensitive);
+    anything else (including empty/missing) returns ``default``."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Generate synthetic IoT metric logs with anomalies.",
@@ -2941,6 +2951,42 @@ def parse_args(argv=None):
         help="Explicitly disable OTEL streaming (the default). Overrides --otel-enabled.",
     )
     p.set_defaults(otel_enabled=False)
+    gauge_toggle = p.add_mutually_exclusive_group()
+    gauge_toggle.add_argument(
+        "--otel-emit-gauges",
+        dest="otel_emit_gauges",
+        action="store_true",
+        help="Emit a second OTLP stream of per-row metric values as Gauge data points "
+             "to --otel-metrics-endpoint, in addition to the existing anomaly-counter "
+             "stream. Off by default. Requires --otel-enabled, --otel-metrics-endpoint, "
+             "and 'metrics' in --emit-selection. "
+             "Env override: MEZMO_OTEL_EMIT_GAUGES (truthy = 1/true/yes/on).",
+    )
+    gauge_toggle.add_argument(
+        "--otel-no-emit-gauges",
+        dest="otel_emit_gauges",
+        action="store_false",
+        help="Explicitly disable the gauge stream (the default). Overrides "
+             "--otel-emit-gauges and the MEZMO_OTEL_EMIT_GAUGES env var.",
+    )
+    p.set_defaults(otel_emit_gauges=_env_bool("MEZMO_OTEL_EMIT_GAUGES", False))
+    p.add_argument(
+        "--otel-gauge-batch-seconds",
+        type=int,
+        default=60,
+        help="Number of consecutive timestamp ticks (in seconds of timeline coverage, "
+             "not wall-clock) coalesced into one OTLP request when --otel-emit-gauges "
+             "is on. Default: 60. Larger batches mean fewer HTTP requests but bigger "
+             "bodies; tune for your OTLP collector body limit.",
+    )
+    p.add_argument(
+        "--otel-gauge-metric-prefix",
+        type=str,
+        default="",
+        help="Optional namespace prefix prepended to the OTLP metric name for each "
+             "gauge data point (e.g. 'amc.' produces 'amc.cpu_util_pct'). Default: "
+             "empty (use the raw MetricSpec.name).",
+    )
     p.add_argument(
         "--otel-logs-endpoint",
         type=str,
@@ -2961,7 +3007,10 @@ def parse_args(argv=None):
         type=str,
         default=os.environ.get("MEZMO_OTEL_METRICS_ENDPOINT"),
         help="Optional OTLP/HTTP metrics endpoint (for example http://localhost:4318/v1/metrics). "
-             "When set, anomaly events are replayed as metrics to this endpoint. "
+             "Without --otel-emit-gauges this endpoint receives only the "
+             "anomaly-counter stream (one Sum data point per anomaly event); "
+             "with --otel-emit-gauges it additionally receives a Gauge stream of "
+             "per-row metric values. "
              "Env override: MEZMO_OTEL_METRICS_ENDPOINT.",
     )
     p.add_argument(
@@ -3083,6 +3132,16 @@ def parse_args(argv=None):
         p.error("--otel-enabled requires at least one of --otel-logs-endpoint, "
                 "--otel-metrics-endpoint, or --otel-traces-endpoint to be set "
                 "(via flag or env var).")
+    if args.otel_emit_gauges:
+        if not args.otel_enabled:
+            p.error("--otel-emit-gauges requires --otel-enabled")
+        if not args.otel_metrics_endpoint:
+            p.error("--otel-emit-gauges requires --otel-metrics-endpoint to be set "
+                    "(via flag or MEZMO_OTEL_METRICS_ENDPOINT)")
+        if "metrics" not in selected:
+            p.error("--otel-emit-gauges requires --emit-selection to include 'metrics'")
+    if args.otel_gauge_batch_seconds <= 0:
+        p.error("--otel-gauge-batch-seconds must be > 0")
     if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
         endpoints = [
             ("logs", args.otel_logs_endpoint, args.otel_logs_auth_token),
@@ -3531,6 +3590,106 @@ def _build_otlp_metric_protobuf(entry: dict) -> bytes:
     return req.SerializeToString()
 
 
+def _build_otlp_gauge_payload(batch: list[dict], *, metric_prefix: str = "") -> dict:
+    """Build one OTLP/HTTP JSON ``resourceMetrics`` payload for a batch of per-row gauge values.
+
+    Each ``batch`` entry is ``{"timestamp": str, "component": str, "metric": str, "value": float}``.
+    Entries are grouped first by ``component`` (one ``resourceMetrics`` entry per
+    component) and then by ``metric`` (one ``metrics[]`` entry per metric within
+    the component's scope), with one Gauge data point per row.
+    """
+    grouped: dict[str, dict[str, list[dict]]] = {}
+    for entry in batch:
+        comp = entry["component"]
+        metric = entry["metric"]
+        grouped.setdefault(comp, {}).setdefault(metric, []).append(entry)
+
+    resource_metrics = []
+    for component, metrics_map in grouped.items():
+        metrics_list = []
+        for metric_name, entries in metrics_map.items():
+            data_points = []
+            for entry in entries:
+                ts_nano = _to_unix_nanos(entry["timestamp"])
+                data_points.append({
+                    "timeUnixNano": str(ts_nano),
+                    "asDouble": float(entry["value"]),
+                    "attributes": [
+                        {"key": "metric.name", "value": {"stringValue": metric_name}},
+                        {"key": "component", "value": {"stringValue": component}},
+                        {"key": "signal.type", "value": {"stringValue": "metric_value"}},
+                    ],
+                })
+            metrics_list.append({
+                "name": f"{metric_prefix}{metric_name}",
+                "gauge": {"dataPoints": data_points},
+            })
+        resource_metrics.append({
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": component}},
+                    {"key": "service.namespace", "value": {"stringValue": "anomaly-metric-creator"}},
+                ]
+            },
+            "scopeMetrics": [{
+                "scope": {
+                    "name": "anomaly-metric-creator",
+                    "version": "1.0.0",
+                },
+                "metrics": metrics_list,
+            }],
+        })
+    return {"resourceMetrics": resource_metrics}
+
+
+def _build_otlp_gauge_protobuf(batch: list[dict], *, metric_prefix: str = "") -> bytes:
+    """Build one OTLP protobuf ExportMetricsServiceRequest carrying gauge data points.
+
+    Same grouping as ``_build_otlp_gauge_payload``: one ``resource_metrics`` per
+    component, one ``metrics`` entry per (component, metric) pair, with one Gauge
+    data point per batch row for that metric.
+    """
+    try:
+        from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
+        from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
+    except ImportError as exc:
+        raise SystemExit(
+            "OTLP protobuf mode requires opentelemetry-proto + protobuf. "
+            "Install with: pip install opentelemetry-proto protobuf"
+        ) from exc
+
+    grouped: dict[str, dict[str, list[dict]]] = {}
+    for entry in batch:
+        comp = entry["component"]
+        metric = entry["metric"]
+        grouped.setdefault(comp, {}).setdefault(metric, []).append(entry)
+
+    req = ExportMetricsServiceRequest()
+    for component, metrics_map in grouped.items():
+        rmetric = req.resource_metrics.add()
+        rmetric.resource.attributes.extend([
+            KeyValue(key="service.name", value=AnyValue(string_value=component)),
+            KeyValue(key="service.namespace", value=AnyValue(string_value="anomaly-metric-creator")),
+        ])
+        smetric = rmetric.scope_metrics.add()
+        smetric.scope.name = "anomaly-metric-creator"
+        smetric.scope.version = "1.0.0"
+        for metric_name, entries in metrics_map.items():
+            m = smetric.metrics.add()
+            m.name = f"{metric_prefix}{metric_name}"
+            for entry in entries:
+                ts_nano = _to_unix_nanos(entry["timestamp"])
+                dp = m.gauge.data_points.add()
+                dp.time_unix_nano = ts_nano
+                dp.as_double = float(entry["value"])
+                dp.attributes.extend([
+                    KeyValue(key="metric.name", value=AnyValue(string_value=metric_name)),
+                    KeyValue(key="component", value=AnyValue(string_value=component)),
+                    KeyValue(key="signal.type", value=AnyValue(string_value="metric_value")),
+                ])
+    return req.SerializeToString()
+
+
 def _build_otlp_log_payload(entry: dict) -> dict:
     """Build one OTLP/HTTP JSON ``resourceLogs`` payload from one anomaly event."""
     event_id = _anomaly_event_id(entry)
@@ -3842,6 +4001,252 @@ def stream_otel_signals(
     return sent
 
 
+def _iter_component_rows(component: str, csv_path: Path):
+    """Yield ``(timestamp_str, component, [(metric_name, value)...])`` for each
+    non-blank row in ``csv_path``. Blank rows (CSV-side dropped rows) are skipped
+    naturally so gauges only mirror what was written to disk.
+    """
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        metric_cols = header[1:]
+        for row in reader:
+            if not row:
+                continue
+            ts = row[0]
+            values = []
+            for name, raw in zip(metric_cols, row[1:]):
+                if raw == "":
+                    continue
+                try:
+                    values.append((name, float(raw)))
+                except ValueError:
+                    continue
+            yield ts, component, values
+
+
+def stream_otel_gauges(
+    component_csv_paths: dict[str, Path],
+    *,
+    endpoint: str,
+    batch_seconds: int,
+    interval_seconds: float,
+    metric_prefix: str,
+    speedup: float,
+    timeout_seconds: float,
+    max_events: int | None,
+    max_retries: int,
+    auth_headers: dict[str, str] | None,
+    protocol: str,
+    activity_log_path: Path | None,
+    verbose: bool,
+) -> int:
+    """Stream per-row metric values from per-component CSVs to an OTLP/HTTP
+    metrics endpoint as Gauge data points.
+
+    Walks all component CSVs in a unified chronological timeline via
+    ``heapq.merge`` keyed on the parsed timestamp, accumulating rows into
+    batches that cover ``batch_seconds`` seconds of timeline coverage. Each
+    flush is one OTLP request grouped by component (resource) and metric
+    (scopeMetrics.metrics). Dropped rows (blank CSV lines) are suppressed.
+
+    ``max_events`` caps the total number of OTLP requests sent (not data
+    points), mirroring ``--otel-stream-max-events`` semantics for the
+    counter stream.
+    """
+    if not component_csv_paths:
+        return 0
+
+    log_file = None
+    if activity_log_path is not None:
+        activity_log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Append so a prior stream_otel_signals run's records are preserved.
+        log_file = open(activity_log_path, "a", encoding="utf-8")
+
+    _write_activity(
+        log_file,
+        "START",
+        signal="metrics_gauge",
+        components=",".join(sorted(component_csv_paths.keys())),
+        batch_seconds=batch_seconds,
+        protocol=protocol,
+        speedup=speedup,
+    )
+
+    def _keyed_iter(component: str, csv_path: Path):
+        for ts, comp, values in _iter_component_rows(component, csv_path):
+            yield (_parse_csv_timestamp(ts), ts, comp, values)
+
+    iters = [_keyed_iter(c, p) for c, p in component_csv_paths.items() if p.exists()]
+
+    batch: list[dict] = []
+    batch_start_dt: datetime.datetime | None = None
+    batch_end_dt: datetime.datetime | None = None
+    requests_sent = 0
+    data_points_sent = 0
+    prev_flush_end_dt: datetime.datetime | None = None
+    aborted = False
+
+    def _flush() -> bool:
+        nonlocal batch, batch_start_dt, batch_end_dt, requests_sent
+        nonlocal data_points_sent, prev_flush_end_dt
+        if not batch:
+            return True
+        if max_events is not None and requests_sent >= max_events:
+            return False
+
+        if prev_flush_end_dt is not None and batch_start_dt is not None:
+            wait_seconds = max(0.0, (batch_start_dt - prev_flush_end_dt).total_seconds() / speedup)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+
+        if protocol == "protobuf":
+            body = _build_otlp_gauge_protobuf(batch, metric_prefix=metric_prefix)
+            content_type = "application/x-protobuf"
+        else:
+            body = json.dumps(
+                _build_otlp_gauge_payload(batch, metric_prefix=metric_prefix)
+            ).encode("utf-8")
+            content_type = "application/json"
+
+        headers = {"Content-Type": content_type}
+        if auth_headers:
+            headers.update(auth_headers)
+
+        req = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
+        batch_start_ts = batch[0]["timestamp"]
+        batch_end_ts = batch[-1]["timestamp"]
+        data_points = len(batch)
+        verbose_send_fields: dict = {}
+        if verbose:
+            verbose_send_fields["body"] = _verbose_body_repr(body, content_type)
+            for hk, hv in _masked_headers(headers).items():
+                verbose_send_fields[hk.lower().replace("-", "_")] = hv
+
+        attempts = 0
+        while True:
+            _write_activity(
+                log_file,
+                "SEND",
+                signal="metrics_gauge",
+                endpoint=endpoint,
+                batch_start_ts=batch_start_ts,
+                batch_end_ts=batch_end_ts,
+                data_points=data_points,
+                attempt=f"{attempts + 1}/{max_retries + 1}",
+                **verbose_send_fields,
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                    response_status = response.status
+                    if response.status >= 400:
+                        raise urllib.error.HTTPError(
+                            endpoint, response.status, response.reason,
+                            response.headers, None,
+                        )
+                ok_fields: dict = {}
+                if verbose:
+                    ok_fields["status"] = response_status
+                _write_activity(
+                    log_file,
+                    "OK",
+                    signal="metrics_gauge",
+                    batch_start_ts=batch_start_ts,
+                    batch_end_ts=batch_end_ts,
+                    data_points=data_points,
+                    **ok_fields,
+                )
+                requests_sent += 1
+                data_points_sent += data_points
+                break
+            except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+                attempts += 1
+                err_fields: dict = {}
+                if verbose:
+                    err_fields["error_type"] = type(exc).__name__
+                    if isinstance(exc, urllib.error.HTTPError):
+                        err_fields["status"] = exc.code
+                if attempts > max_retries:
+                    print(
+                        f"WARNING: OTEL metrics_gauge stream failed for batch "
+                        f"{batch_start_ts}..{batch_end_ts}: {exc}",
+                        file=sys.stderr,
+                    )
+                    _write_activity(
+                        log_file,
+                        "FAIL",
+                        signal="metrics_gauge",
+                        batch_start_ts=batch_start_ts,
+                        batch_end_ts=batch_end_ts,
+                        data_points=data_points,
+                        error=repr(str(exc)),
+                        **err_fields,
+                    )
+                    break
+                backoff = min(2 ** (attempts - 1), 8)
+                print(
+                    f"WARNING: OTEL metrics_gauge stream retry {attempts}/{max_retries} "
+                    f"for batch {batch_start_ts}..{batch_end_ts}: {exc}",
+                    file=sys.stderr,
+                )
+                _write_activity(
+                    log_file,
+                    "RETRY",
+                    signal="metrics_gauge",
+                    batch_start_ts=batch_start_ts,
+                    batch_end_ts=batch_end_ts,
+                    data_points=data_points,
+                    attempt=f"{attempts}/{max_retries}",
+                    error=repr(str(exc)),
+                    **err_fields,
+                )
+                time.sleep(backoff)
+
+        prev_flush_end_dt = batch_end_dt
+        batch = []
+        batch_start_dt = None
+        batch_end_dt = None
+        if max_events is not None and requests_sent >= max_events:
+            return False
+        return True
+
+    try:
+        for dt, ts, comp, values in heapq.merge(*iters, key=lambda item: item[0]):
+            if not values:
+                continue
+            if batch_start_dt is None:
+                batch_start_dt = dt
+            # Flush when the new row would push the batch beyond batch_seconds
+            # of timeline coverage. Use closed-open semantics: a batch_seconds=60
+            # batch starting at t=0 covers rows with dt in [0, 60).
+            if (dt - batch_start_dt).total_seconds() >= batch_seconds:
+                if not _flush():
+                    aborted = True
+                    break
+                batch_start_dt = dt
+            for metric_name, value in values:
+                batch.append({
+                    "timestamp": ts,
+                    "component": comp,
+                    "metric": metric_name,
+                    "value": value,
+                })
+            batch_end_dt = dt
+        if not aborted:
+            _flush()
+    finally:
+        _write_activity(
+            log_file,
+            "END",
+            signal="metrics_gauge",
+            requests_sent=requests_sent,
+            data_points_sent=data_points_sent,
+        )
+        if log_file is not None:
+            log_file.close()
+    return requests_sent
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -3954,6 +4359,30 @@ def main(argv=None):
             verbose=args.otel_verbose,
         )
 
+    gauge_requests_sent = 0
+    if otel_active and args.otel_emit_gauges:
+        # Gauge stream runs after the anomaly-counter stream and writes to the
+        # same activity log file in append mode so both passes share one log.
+        gauge_auth = auth_headers.get("metrics") if otel_active else None
+        component_csv_paths = {
+            c: args.output_dir / f"{c}.csv" for c in sorted(args.components)
+        }
+        gauge_requests_sent = stream_otel_gauges(
+            component_csv_paths,
+            endpoint=args.otel_metrics_endpoint,
+            batch_seconds=args.otel_gauge_batch_seconds,
+            interval_seconds=args.interval_seconds,
+            metric_prefix=args.otel_gauge_metric_prefix,
+            speedup=args.otel_stream_speedup,
+            timeout_seconds=args.otel_stream_timeout_seconds,
+            max_events=args.otel_stream_max_events,
+            max_retries=3,
+            auth_headers=gauge_auth,
+            protocol=args.otel_stream_protocol,
+            activity_log_path=args.otel_activity_log,
+            verbose=args.otel_verbose,
+        )
+
     print(f"Done - {len(args.components)} log files + anomalies.csv + reporting artifacts written to {args.output_dir}")
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
@@ -3961,6 +4390,9 @@ def main(argv=None):
     if otel_active:
         active = [f"{s} -> {u}" for s, u in endpoints.items() if u]
         print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
+        if args.otel_emit_gauges:
+            print(f"   OTEL gauge requests streamed: {gauge_requests_sent} to "
+                  f"metrics -> {args.otel_metrics_endpoint}")
     elif any(endpoints.values()):
         print("   OTEL streaming disabled (pass --otel-enabled to send to configured endpoints)")
 
