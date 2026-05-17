@@ -65,16 +65,28 @@ def _stop_mock(server, thread):
 # ------------------------------------------------------------------
 # Builder shape tests (in-process)
 # ------------------------------------------------------------------
+def _entry(amc, ts, comp, metric, value):
+    """Shape-correct gauge batch entry with the per-row nanos precomputed.
+
+    Mirrors what ``stream_otel_gauges`` constructs: ``time_unix_nano`` is
+    populated once per CSV row so the builders never re-parse the timestamp
+    string per data point.
+    """
+    return {
+        "timestamp": ts,
+        "time_unix_nano": amc._to_unix_nanos(ts),
+        "component": comp,
+        "metric": metric,
+        "value": value,
+    }
+
+
 def test_build_otlp_gauge_payload_groups_by_component_and_metric(amc):
     batch = [
-        {"timestamp": "2026-03-10 00:00:00", "component": "authservice",
-         "metric": "cpu_util_pct", "value": 12.5},
-        {"timestamp": "2026-03-10 00:00:00", "component": "authservice",
-         "metric": "error_rate", "value": 0.1},
-        {"timestamp": "2026-03-10 00:00:01", "component": "authservice",
-         "metric": "cpu_util_pct", "value": 13.0},
-        {"timestamp": "2026-03-10 00:00:00", "component": "cacheservice",
-         "metric": "cpu_util_pct", "value": 5.0},
+        _entry(amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5),
+        _entry(amc, "2026-03-10 00:00:00", "authservice", "error_rate", 0.1),
+        _entry(amc, "2026-03-10 00:00:01", "authservice", "cpu_util_pct", 13.0),
+        _entry(amc, "2026-03-10 00:00:00", "cacheservice", "cpu_util_pct", 5.0),
     ]
     payload = amc._build_otlp_gauge_payload(batch)
 
@@ -100,8 +112,7 @@ def test_build_otlp_gauge_payload_groups_by_component_and_metric(amc):
 
 
 def test_build_otlp_gauge_payload_applies_metric_prefix(amc):
-    batch = [{"timestamp": "2026-03-10 00:00:00", "component": "authservice",
-              "metric": "cpu_util_pct", "value": 12.5}]
+    batch = [_entry(amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5)]
     payload = amc._build_otlp_gauge_payload(batch, metric_prefix="amc.")
     metrics = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
     assert metrics[0]["name"] == "amc.cpu_util_pct"
@@ -113,12 +124,9 @@ def test_build_otlp_gauge_protobuf_round_trips(amc):
     )
 
     batch = [
-        {"timestamp": "2026-03-10 00:00:00", "component": "authservice",
-         "metric": "cpu_util_pct", "value": 12.5},
-        {"timestamp": "2026-03-10 00:00:01", "component": "authservice",
-         "metric": "cpu_util_pct", "value": 13.0},
-        {"timestamp": "2026-03-10 00:00:00", "component": "cacheservice",
-         "metric": "hit_ratio", "value": 87.5},
+        _entry(amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5),
+        _entry(amc, "2026-03-10 00:00:01", "authservice", "cpu_util_pct", 13.0),
+        _entry(amc, "2026-03-10 00:00:00", "cacheservice", "hit_ratio", 87.5),
     ]
     raw = amc._build_otlp_gauge_protobuf(batch)
     req = ExportMetricsServiceRequest.FromString(raw)
@@ -151,12 +159,9 @@ def test_build_otlp_gauge_json_and_protobuf_parity(amc):
         ExportMetricsServiceRequest,
     )
     batch = [
-        {"timestamp": "2026-03-10 00:00:00", "component": "authservice",
-         "metric": "cpu_util_pct", "value": 12.5},
-        {"timestamp": "2026-03-10 00:00:01", "component": "authservice",
-         "metric": "error_rate", "value": 0.1},
-        {"timestamp": "2026-03-10 00:00:00", "component": "cacheservice",
-         "metric": "hit_ratio", "value": 87.5},
+        _entry(amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5),
+        _entry(amc, "2026-03-10 00:00:01", "authservice", "error_rate", 0.1),
+        _entry(amc, "2026-03-10 00:00:00", "cacheservice", "hit_ratio", 87.5),
     ]
 
     json_payload = amc._build_otlp_gauge_payload(batch)
@@ -186,6 +191,33 @@ def test_build_otlp_gauge_payload_empty_batch(amc):
     """Empty batch produces an empty resourceMetrics list — no crash."""
     payload = amc._build_otlp_gauge_payload([])
     assert payload == {"resourceMetrics": []}
+
+
+def test_build_otlp_gauge_builders_use_precomputed_nanos(amc):
+    """VER-125: builders must read ``time_unix_nano`` from the entry directly
+    and NOT re-parse ``timestamp``. Feed deliberately mismatched values and
+    confirm the precomputed field wins for both JSON and protobuf paths.
+    """
+    from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+        ExportMetricsServiceRequest,
+    )
+
+    sentinel_nanos = 1_700_000_000_123_000_000
+    batch = [{
+        "timestamp": "2026-03-10 00:00:00",  # would parse to a different value
+        "time_unix_nano": sentinel_nanos,
+        "component": "authservice",
+        "metric": "cpu_util_pct",
+        "value": 12.5,
+    }]
+
+    json_payload = amc._build_otlp_gauge_payload(batch)
+    json_dp = json_payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]["dataPoints"][0]
+    assert json_dp["timeUnixNano"] == str(sentinel_nanos)
+
+    proto_req = ExportMetricsServiceRequest.FromString(amc._build_otlp_gauge_protobuf(batch))
+    proto_dp = proto_req.resource_metrics[0].scope_metrics[0].metrics[0].gauge.data_points[0]
+    assert proto_dp.time_unix_nano == sentinel_nanos
 
 
 # ------------------------------------------------------------------
