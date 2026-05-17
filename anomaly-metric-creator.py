@@ -462,21 +462,26 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
     shape_params = spec.get("shape_params", {}) or {}
 
     if duration_seconds <= 0 and shape == "step":
-        # Dispatch by introspected arity so an internal TypeError from a
-        # 3-arg generator doesn't silently retry as a 2-arg call (which
+        # Dispatch by introspected callability so an internal TypeError from
+        # a 3-arg generator doesn't silently retry as a 2-arg call (which
         # would hide the real error and duplicate any side effects/RNG
-        # draws already performed before the TypeError fired).
+        # draws already performed before the TypeError fired). Step path
+        # only ever calls with 3 or 2 positional args; intermediate shapes
+        # are not attempted.
         meta = _cached_generator_meta(spec["generator"])
-        arity = meta["arity"]
-        if meta["has_var_positional"] or not meta["inspectable"]:
-            # *args or uninspectable — try 3-arg first, fall back to 2-arg.
+        if not meta["inspectable"]:
             try:
                 return float(spec["generator"](ts, col, rng))
             except TypeError:
                 return float(spec["generator"](ts, col))
-        if arity == 2:
+        if _can_call_with(meta, 3):
+            return float(spec["generator"](ts, col, rng))
+        if _can_call_with(meta, 2):
             return float(spec["generator"](ts, col))
-        return float(spec["generator"](ts, col, rng))
+        raise TypeError(
+            f"Generator {spec['generator']!r} accepts neither 3 nor 2 "
+            f"positional args; step-path specs must use one of those shapes."
+        )
 
     if shape in ("step", "sustained"):
         return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx, rng))
@@ -520,35 +525,61 @@ _GENERATOR_META_CACHE: "dict[Callable, dict]" = {}
 
 
 def _generator_meta(gen) -> dict:
-    """Return introspection metadata for a generator callable:
-    - ``arity``: positional-param count, or None if signature cannot be
-      introspected or accepts ``*args`` (unbounded positional).
-    - ``has_var_positional``: True iff ``*args`` is present.
-    - ``has_required_kwargs``: True iff any KEYWORD_ONLY parameter has no
+    """Return introspection metadata for a generator callable.
+
+    Tracking *required* and *maximum* positional separately matters because
+    a generator like ``(ts, col, rng=None, extra=None)`` has 2 required +
+    2 optional positional params (4 max), so the runtime can call it with
+    2, 3, or 4 positional args. The validator and dispatcher both consult
+    this metadata to pick a safe call shape.
+
+    Keys returned:
+    - ``required_positional``: count of positional-only or
+      positional-or-keyword params with no default. The minimum positional
+      arity the callable accepts.
+    - ``max_positional``: count of positional-only or positional-or-keyword
+      params total (with or without defaults), or ``None`` if ``*args`` is
+      present (unbounded).
+    - ``has_required_kwargs``: True iff any ``KEYWORD_ONLY`` param has no
       default. Such generators cannot be called positionally by our runtime.
-    - ``inspectable``: True iff inspect.signature() succeeded.
+    - ``inspectable``: True iff ``inspect.signature()`` succeeded. When
+      False, callers must fall back to a try/except call chain.
     """
     try:
         sig = inspect.signature(gen)
     except (TypeError, ValueError):
-        return {"arity": None, "has_var_positional": False,
+        return {"required_positional": 0, "max_positional": None,
                 "has_required_kwargs": False, "inspectable": False}
-    count = 0
-    has_var = False
+    required = 0
+    total = 0
+    has_var_positional = False
     has_required_kw = False
     for p in sig.parameters.values():
         if p.kind is inspect.Parameter.VAR_POSITIONAL:
-            has_var = True
+            has_var_positional = True
         elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
                         inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            count += 1
+            total += 1
+            if p.default is inspect.Parameter.empty:
+                required += 1
         elif p.kind is inspect.Parameter.KEYWORD_ONLY:
             if p.default is inspect.Parameter.empty:
                 has_required_kw = True
-    return {"arity": None if has_var else count,
-            "has_var_positional": has_var,
+    return {"required_positional": required,
+            "max_positional": None if has_var_positional else total,
             "has_required_kwargs": has_required_kw,
             "inspectable": True}
+
+
+def _can_call_with(meta: dict, n: int) -> bool:
+    """True iff the generator accepts exactly ``n`` positional args."""
+    if not meta["inspectable"]:
+        return True  # Assume so; caller will fall back if it raises.
+    if meta["required_positional"] > n:
+        return False
+    if meta["max_positional"] is None:
+        return True  # *args — unbounded positional capacity.
+    return n <= meta["max_positional"]
 
 
 def _cached_generator_meta(gen) -> dict:
@@ -571,17 +602,18 @@ def _cached_generator_meta(gen) -> dict:
 def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
                                 t_within: float, span_idx: int,
                                 rng: "np.random.RandomState" = None):
-    """Backwards-compatible generator call with optional span args. Dispatches
-    by introspected arity (cached) so we don't pay caught-TypeError overhead
-    on every row of a multi-thousand-row span. Uninspectable callables fall
-    back to a try/except chain to preserve the legacy contract."""
+    """Call a span-path generator with either the 5-arg or 2-arg shape.
+
+    Only these two shapes are valid for span specs (see
+    ``_validate_scenario_spec``'s span-path rule). Intermediate 3- or 4-arg
+    calls are not attempted because they would silently bind ``t_within`` to
+    a parameter the author intended for a different value (``rng``).
+
+    Uninspectable callables (e.g., C extensions) fall back to the legacy
+    try/except chain so the historical contract still works.
+    """
     meta = _cached_generator_meta(generator)
-    arity = meta["arity"]
-    if meta["has_var_positional"]:
-        # *args accepts any positional count; pick the highest-info call.
-        return generator(ts, col, t_within, span_idx, rng)
     if not meta["inspectable"]:
-        # Can't dispatch by introspection — fall back to try/except chain.
         try:
             return generator(ts, col, t_within, span_idx, rng)
         except TypeError:
@@ -592,13 +624,15 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
                     return generator(ts, col, t_within)
                 except TypeError:
                     return generator(ts, col)
-    if arity == 5:
+    if _can_call_with(meta, 5):
         return generator(ts, col, t_within, span_idx, rng)
-    if arity == 4:
-        return generator(ts, col, t_within, span_idx)
-    if arity == 3:
-        return generator(ts, col, t_within)
-    return generator(ts, col)
+    if _can_call_with(meta, 2):
+        return generator(ts, col)
+    raise TypeError(
+        f"Generator {generator!r} accepts neither 5 nor 2 positional args; "
+        f"span-path specs must use one of those shapes. _validate_scenario_spec "
+        f"should have rejected this at import time."
+    )
 
 
 def _span_fraction(t_within: float, duration_seconds: float) -> float:
@@ -2754,15 +2788,16 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{params!r}; expected a dict."
             )
 
-    # Generator-arity rule:
-    #   - Step path (cascades and primary step specs without duration) calls
-    #     the generator as (ts, col, rng) with a (ts, col) fallback. Required
-    #     positional arity: 2 or 3.
-    #   - Span path (primary specs with shape != "step" or duration_seconds > 0)
-    #     calls _call_generator_within_span which dispatches by arity to
-    #     (ts, col, t_within, span_idx, rng) or (ts, col). A 3-arg
-    #     (ts, col, rng) generator would silently receive t_within as its
-    #     third positional. Required positional arity: 2 or 5.
+    # Generator signature rules. The runtime always calls a generator with
+    # a fixed positional shape determined by the path:
+    #   - Step path (cascades + primary step specs without duration_seconds):
+    #     3-arg ``(ts, col, rng)`` or 2-arg ``(ts, col)``.
+    #   - Span path (primary specs with shape != "step" or
+    #     duration_seconds > 0): 5-arg ``(ts, col, t_within, span_idx, rng)``
+    #     or 2-arg ``(ts, col)``.
+    # The validator must accept only signatures that the runtime can call
+    # without silently misbinding ``t_within``/``span_idx`` to a parameter
+    # the author intended for a different value (most commonly ``rng``).
     has_shape = spec.get("shape", "step") != "step"
     has_duration = float(spec.get("duration_seconds", 0) or 0) > 0
     meta = _generator_meta(spec["generator"])
@@ -2776,25 +2811,39 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
             f"spec fires. Provide defaults for keyword-only params, or "
             f"declare them as positional."
         )
-    if has_shape or has_duration:
-        allowed_arities = (2, 5)
-        path_description = (
-            "shape/duration specs must use the 2-arg legacy form (ts, col) "
-            "or the 5-arg form (ts, col, t_within, span_idx, rng). The "
-            "3-arg (ts, col, rng) form is reserved for single-row step specs."
-        )
-    else:
-        allowed_arities = (2, 3)
-        path_description = (
-            "single-row step specs must use the 2-arg legacy form (ts, col) "
-            "or the 3-arg form (ts, col, rng). The step path does not pass "
-            "t_within or span_idx, so 4- and 5-arg generators would fail at runtime."
-        )
-    arity = meta["arity"]
-    if arity is not None and arity not in allowed_arities:
+    if not meta["inspectable"]:
+        # Can't introspect — trust the caller; the dispatcher's try/except
+        # fallback will handle it at runtime.
+        return
+    target = 5 if (has_shape or has_duration) else 3
+    target_form = (
+        "(ts, col, t_within, span_idx, rng)" if target == 5
+        else "(ts, col, rng)"
+    )
+    path_name = "shape/duration" if (has_shape or has_duration) else "single-row step"
+    required = meta["required_positional"]
+    max_pos = meta["max_positional"]
+    # Accept iff:
+    #   (a) callable with 2 args only — i.e., max_pos == 2 and required <= 2
+    #       (dispatcher will pick the 2-arg call), or
+    #   (b) callable with the target shape AND no fixed-positional prefix
+    #       between 2 and target that would silently absorb t_within /
+    #       span_idx into a wrongly-named parameter:
+    #         required == target  (every positional is required, intentional)
+    #         or required <= 2 AND (max_pos is None or max_pos >= target)
+    callable_exact_2 = max_pos == 2 and required <= 2
+    target_capacity_ok = (max_pos is None) or (max_pos >= target)
+    target_safe_prefix = required == target or required <= 2
+    accept = callable_exact_2 or (target_capacity_ok and target_safe_prefix)
+    if not accept:
         raise ValueError(
-            f"{location} metric={metric!r} has a {arity}-arg generator; "
-            f"{path_description}"
+            f"{location} metric={metric!r} has a generator with "
+            f"required_positional={required} max_positional={max_pos}; "
+            f"{path_name} specs must use either the 2-arg legacy form "
+            f"(ts, col) or the {target}-arg form {target_form} "
+            f"(or have the same fixed positional prefix). A "
+            f"{required}-fixed-positional signature on this path would "
+            f"silently bind t_within/span_idx/rng to the wrong parameter."
         )
 
 

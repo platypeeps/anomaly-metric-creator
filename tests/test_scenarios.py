@@ -420,7 +420,7 @@ def test_validate_scenario_spec_three_arg_generator_with_shape_rejected(amc):
     spec["shape"] = "sustained"
     spec["duration_seconds"] = 30
     spec["generator"] = lambda ts, idx, rng: 1.0
-    with pytest.raises(ValueError, match="3-arg"):
+    with pytest.raises(ValueError, match="required_positional=3"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
@@ -429,7 +429,7 @@ def test_validate_scenario_spec_three_arg_generator_with_duration_rejected(amc):
     spec = _good_primary_spec()
     spec["duration_seconds"] = 30
     spec["generator"] = lambda ts, idx, rng: 1.0
-    with pytest.raises(ValueError, match="3-arg"):
+    with pytest.raises(ValueError, match="required_positional=3"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
@@ -476,7 +476,7 @@ def test_validate_scenario_spec_step_path_rejects_wrong_arity(amc, bad_arity):
         spec["generator"] = lambda ts: 1.0
     else:  # 4-arg
         spec["generator"] = lambda ts, idx, t, s: 1.0
-    with pytest.raises(ValueError, match=f"{bad_arity}-arg"):
+    with pytest.raises(ValueError, match=f"required_positional={bad_arity}"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
@@ -484,7 +484,7 @@ def test_validate_scenario_spec_step_path_rejects_five_arg(amc):
     """5-arg generators belong on shape/duration specs, not the step path."""
     spec = _good_primary_spec()
     spec["generator"] = lambda ts, idx, t, s, rng: 1.0
-    with pytest.raises(ValueError, match="5-arg"):
+    with pytest.raises(ValueError, match="required_positional=5"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
@@ -492,23 +492,25 @@ def test_validate_scenario_spec_cascade_rejects_wrong_arity(amc):
     """Cascades use the step path; only 2-arg or 3-arg generators are valid."""
     spec = _good_cascade_spec()
     spec["generator"] = lambda ts, idx, t, s, rng: 1.0
-    with pytest.raises(ValueError, match="5-arg"):
+    with pytest.raises(ValueError, match="required_positional=5"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=True)
 
 
 def test_validate_scenario_spec_kwargs_does_not_bypass_arity(amc):
     """**kwargs does not add positional capacity; a (ts, col, rng, **kw)
-    generator on a shape spec must still be rejected as 3-arg."""
+    generator on a shape spec must still be rejected as 3-positional."""
     spec = _good_primary_spec()
     spec["shape"] = "sustained"
     spec["duration_seconds"] = 30
     spec["generator"] = lambda ts, idx, rng, **kw: 1.0
-    with pytest.raises(ValueError, match="3-arg"):
+    with pytest.raises(ValueError, match="required_positional=3"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
-def test_validate_scenario_spec_var_args_skips_arity_check(amc):
-    """*args makes positional arity unbounded; the validator must skip the check."""
+def test_validate_scenario_spec_var_args_safe_prefix_accepted(amc):
+    """*args with a safe 2-arg fixed prefix (ts, idx, *args) on a span spec
+    is valid: the dispatcher calls 5-arg, ts/idx bind to the first 2 fixed
+    positionals, and *args absorbs t_within/span_idx/rng."""
     spec = _good_primary_spec()
     spec["shape"] = "sustained"
     spec["duration_seconds"] = 30
@@ -516,6 +518,64 @@ def test_validate_scenario_spec_var_args_skips_arity_check(amc):
     assert amc._validate_scenario_spec(
         "test_slug", "apigateway", spec, is_cascade=False
     ) is None
+
+
+def test_validate_scenario_spec_var_args_unsafe_prefix_rejected_span(amc):
+    """*args with 3-arg fixed prefix (ts, idx, rng, *args) on a span spec
+    is REJECTED — the 5-arg dispatcher would bind t_within to the 3rd
+    fixed positional (named rng), the exact misbind the validator is
+    meant to catch."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng, *args: 1.0
+    with pytest.raises(ValueError, match="required_positional=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_var_args_four_arg_prefix_rejected_step(amc):
+    """*args with a 4-arg fixed prefix (a, b, c, d, *args) on a step spec
+    must be rejected — the 3-arg dispatcher call cannot satisfy
+    required=4."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda a, b, c, d, *args: 1.0
+    with pytest.raises(ValueError, match="required_positional=4"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_default_positional_accepted_step(amc):
+    """Step spec with (ts, col, rng=None, extra=None): required=2, max=4.
+    Runtime calls 3-arg, rng binds correctly, extra uses default. Accept."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, col, rng=None, extra=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_default_positional_accepted_span(amc):
+    """Span spec with (ts, col, t=0, s=0, rng=None): required=2, max=5.
+    Runtime calls 5-arg, all positions bound. Accept."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, t=0.0, s=0, rng=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_partial_default_positional_rejected_span(amc):
+    """Span spec with (ts, col, rng=None): required=2, max=3. Span
+    dispatcher would call 2-arg (5-arg fails because max<5), so the
+    author-declared rng=None default is never replaced with the real RNG.
+    This is a silent semantic mismatch; reject."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, rng=None: 1.0
+    with pytest.raises(ValueError, match="max_positional=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
 def test_validate_scenario_spec_required_kwarg_only_rejected(amc):
@@ -541,18 +601,18 @@ def test_validate_scenario_spec_keyword_only_with_default_allowed(amc):
 
 
 def test_call_generator_within_span_dispatch_by_arity(amc):
-    """_call_generator_within_span dispatches by inspected arity, not by
-    catching TypeError. A 3-arg generator that raises TypeError internally
-    must not be retried as 2-arg (which would hide the error and
-    duplicate any side effects)."""
+    """_call_generator_within_span dispatches by inspected callability, not
+    by catching TypeError. A 5-arg generator that raises TypeError
+    internally must not be retried with fewer args (which would hide the
+    error and duplicate any side effects)."""
     calls = []
-    def buggy_three_arg(ts, col, t_within):
-        calls.append((ts, col, t_within))
+    def buggy_five_arg(ts, col, t_within, span_idx, rng):
+        calls.append((ts, col, t_within, span_idx, rng))
         raise TypeError("internal bug — must not be swallowed")
     import datetime as _dt
     with pytest.raises(TypeError, match="internal bug"):
-        amc._call_generator_within_span(buggy_three_arg, _dt.datetime(2026,1,1), 0, 1.0, 0)
-    assert len(calls) == 1, "Generator must be called exactly once, not retried with 2-arg form"
+        amc._call_generator_within_span(buggy_five_arg, _dt.datetime(2026,1,1), 0, 1.0, 0, None)
+    assert len(calls) == 1, "Generator must be called exactly once, not retried with shorter forms"
 
 
 def test_call_generator_within_span_var_args_picks_five_arg(amc):
@@ -571,7 +631,7 @@ def test_call_generator_within_span_unhashable_callable(amc):
     the cache lookup; introspection falls back to uncached path."""
     class UnhashableCallable:
         __hash__ = None
-        def __call__(self, ts, col, rng):
+        def __call__(self, ts, col, t_within, span_idx, rng):
             return 42.0
     gen = UnhashableCallable()
     import datetime as _dt

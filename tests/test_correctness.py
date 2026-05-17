@@ -602,7 +602,7 @@ def test_duration_step_passes_t_within_to_generator(amc, tmp_path):
             "metric": "m0",
             "description": "step span with t",
             "shape": "step",
-            "generator": lambda ts, idx, t: 100.0 + t,
+            "generator": lambda ts, idx, t, s, rng: 100.0 + t,
         }
     ]
     ts_array, ts_strings = amc._build_timestamp_arrays(20, 1.0)
