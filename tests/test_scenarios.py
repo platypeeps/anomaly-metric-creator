@@ -343,6 +343,15 @@ def test_validate_scenario_spec_boolean_time_offset_rejected(amc):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 
 
+@pytest.mark.parametrize("bad_offset", [float("nan"), float("inf"), float("-inf")])
+def test_validate_scenario_spec_non_finite_time_offset_rejected(amc, bad_offset):
+    """NaN and infinities must be rejected; they'd crash row-index conversion at runtime."""
+    spec = _good_primary_spec()
+    spec["time_offset"] = bad_offset
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
 def test_validate_scenario_spec_empty_description(amc):
     spec = _good_primary_spec()
     spec["description"] = ""
@@ -377,6 +386,21 @@ def test_validate_scenario_spec_non_numeric_duration(amc):
 def test_validate_scenario_spec_boolean_duration_rejected(amc):
     spec = _good_primary_spec()
     spec["duration_seconds"] = True
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+@pytest.mark.parametrize("bad_dur", [float("nan"), float("inf"), float("-inf")])
+def test_validate_scenario_spec_non_finite_duration_rejected(amc, bad_dur):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = bad_dur
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_negative_duration_rejected(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = -1
     with pytest.raises(ValueError, match="duration_seconds"):
         amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
 

@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 import dataclasses
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from hashlib import sha1
 from pathlib import Path
 from typing import Callable
@@ -252,7 +252,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     fieldnames = [s.name for s in specs]
     n_rows = int(total_seconds // interval)
 
-    # Provide defaults for rng and ctx for callers that haven't been updated yet
+    # Provide defaults for rng and ctx for callers that haven't been updated yet.
+    # If ctx is provided but rng is not, use ctx.rng so they stay in sync.
+    if ctx is not None and rng is None:
+        rng = ctx.rng
     if rng is None:
         rng = np.random.RandomState()
     if ctx is None:
@@ -2585,6 +2588,11 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
             f"{location} metric={metric!r} has time_offset {time_offset!r}; "
             f"expected int or float seconds from START."
         )
+    if not math.isfinite(time_offset):
+        raise ValueError(
+            f"{location} metric={metric!r} has non-finite time_offset "
+            f"{time_offset!r}; offsets must be finite seconds from START."
+        )
     if time_offset < 0:
         raise ValueError(
             f"{location} metric={metric!r} has negative time_offset "
@@ -2624,6 +2632,16 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
             raise ValueError(
                 f"{location} metric={metric!r} has duration_seconds "
                 f"{duration!r}; expected int or float."
+            )
+        if not math.isfinite(duration):
+            raise ValueError(
+                f"{location} metric={metric!r} has non-finite duration_seconds "
+                f"{duration!r}; expected a finite value."
+            )
+        if duration < 0:
+            raise ValueError(
+                f"{location} metric={metric!r} has negative duration_seconds "
+                f"{duration!r}; duration must be >= 0 (0 means single-row step)."
             )
 
     if "shape_params" in spec:
@@ -2666,41 +2684,8 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].components_touched contains unknown "
                 f"component(s): {sorted(unknown_touched)}"
             )
-        # days_required must equal the day index (1-based) of the earliest
-        # time_offset across primary and cascade specs. Setting it too high
-        # silently drops in-range specs at the requested --duration-days;
-        # too low activates the scenario before any spec is in range.
-        offsets = [p["time_offset"] for _, p in scenario.primary_specs]
-        offsets += [c["time_offset"] for _, c in scenario.cascade_specs]
-        if offsets:
-            min_day_required = min(offsets) // SECONDS_PER_DAY + 1
-            if scenario.days_required != min_day_required:
-                raise ValueError(
-                    f"SCENARIOS[{slug!r}].days_required={scenario.days_required} "
-                    f"must equal the day index of its earliest spec offset "
-                    f"({min_day_required}). Too high silently drops in-range "
-                    f"specs at the requested --duration-days; too low activates "
-                    f"the scenario before any spec is in range."
-                )
-        # components_touched must equal exactly the set of components
-        # referenced by primary_specs + cascade_specs. Under-claiming
-        # silently drops the scenario under a narrow --components allowlist;
-        # over-claiming dilutes the filter so the scenario fires for
-        # allowlists that contain none of its actual components.
-        referenced_components = {c for c, _ in scenario.primary_specs}
-        referenced_components.update(c for c, _ in scenario.cascade_specs)
-        declared_components = set(scenario.components_touched)
-        if referenced_components != declared_components:
-            missing = sorted(referenced_components - declared_components)
-            extras = sorted(declared_components - referenced_components)
-            raise ValueError(
-                f"SCENARIOS[{slug!r}].components_touched="
-                f"{sorted(declared_components)} must equal components "
-                f"referenced by specs={sorted(referenced_components)}; "
-                f"missing={missing} extras={extras}. Under-claiming silently "
-                f"drops the scenario under a narrow --components allowlist; "
-                f"over-claiming dilutes the filter."
-            )
+        # Validate each spec first so missing/malformed keys produce a clear
+        # error before we try to read time_offset for the days_required check.
         valid_severities = {"low", "medium", "high"}
         for component, spec in scenario.primary_specs:
             if component not in known_components:
@@ -2734,6 +2719,42 @@ def _validate_scenarios_registry() -> None:
                     f"DEFAULT_SEVERITY), so an unknown value would be silently "
                     f"filtered out at every --signal-level."
                 )
+        # days_required must equal the day index (1-based) of the earliest
+        # time_offset across primary and cascade specs. Setting it too high
+        # silently drops in-range specs at the requested --duration-days;
+        # too low activates the scenario before any spec is in range.
+        # Spec validation above ensures time_offset is a valid finite numeric.
+        offsets = [p["time_offset"] for _, p in scenario.primary_specs]
+        offsets += [c["time_offset"] for _, c in scenario.cascade_specs]
+        if offsets:
+            min_day_required = min(offsets) // SECONDS_PER_DAY + 1
+            if scenario.days_required != min_day_required:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].days_required={scenario.days_required} "
+                    f"must equal the day index of its earliest spec offset "
+                    f"({min_day_required}). Too high silently drops in-range "
+                    f"specs at the requested --duration-days; too low activates "
+                    f"the scenario before any spec is in range."
+                )
+        # components_touched must equal exactly the set of components
+        # referenced by primary_specs + cascade_specs. Under-claiming
+        # silently drops the scenario under a narrow --components allowlist;
+        # over-claiming dilutes the filter so the scenario fires for
+        # allowlists that contain none of its actual components.
+        referenced_components = {c for c, _ in scenario.primary_specs}
+        referenced_components.update(c for c, _ in scenario.cascade_specs)
+        declared_components = set(scenario.components_touched)
+        if referenced_components != declared_components:
+            missing = sorted(referenced_components - declared_components)
+            extras = sorted(declared_components - referenced_components)
+            raise ValueError(
+                f"SCENARIOS[{slug!r}].components_touched="
+                f"{sorted(declared_components)} must equal components "
+                f"referenced by specs={sorted(referenced_components)}; "
+                f"missing={missing} extras={extras}. Under-claiming silently "
+                f"drops the scenario under a narrow --components allowlist; "
+                f"over-claiming dilutes the filter."
+            )
 
 
 _validate_scenarios_registry()
