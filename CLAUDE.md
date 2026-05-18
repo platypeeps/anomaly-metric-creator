@@ -633,6 +633,63 @@ spec whose `time_offset` is `>= SECONDS_PER_DAY * duration_days` is skipped at r
 with a stderr warning naming the duration required to include it — keep the spec,
 increase `--duration-days`, rather than silently truncating.
 
+## Pre-PR checklist (required before marking a PR ready for review)
+
+This checklist maps to the 11 recurring patterns identified in VER-160. Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Copy those 11 bold headings into the PR description as a checklist (Markdown `- [ ]` lines, one per heading) and either confirm each one or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the headings below rather than redefine them.
+
+**Scope & description**
+- PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
+- If the diff touches RNG, `RunContext`, registries, or any module-level state, the description calls it out explicitly and the test plan covers determinism.
+
+**Validators and schema checks**
+- For every field a new validator inspects, enumerate non-canonical inputs: `None`, `NaN`, `±inf`, negative, `bool` (a subtype of `int`), empty string, unhashable, wrong container type.
+- Every *branch* of a discriminator is validated: callable **and** constant `Edge.weight`; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables.
+- Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, etc.) raise on unknown keys; never return `None` or fall through silently.
+
+**Doc / docstring sync**
+- Every changed function with a docstring has its docstring updated in this diff.
+- Grep every changed symbol name against CLAUDE.md and README.md and update prose that describes it.
+- If a public helper was removed or repurposed, CLAUDE.md prose is updated in the same diff.
+
+**Single source of truth**
+- No hand-rolled emit→filename, metric→component, or component→derivation maps alongside a canonical registry. Every consumer reads from `_EMIT_ARTIFACT_FILES`, `COMPONENTS`, `DERIVATIONS`, etc.
+- `_COMBINE_OUTPUT_FILENAME` is used by the actual combine writer, not only the cleanup/summary path.
+
+**Completeness**
+- PR title implies a class of fix (e.g. "add `clip_min` to non-negative metrics") → grep for all instances and confirm coverage.
+
+**Mode / flag combinations**
+- List every other CLI flag, env var, and `--emit-selection` token that interacts with the new flag. Gate invalid combinations in `parse_args` with a clear message, or add a test.
+- New `parse_args` checks must not spuriously reject `--combine-only` or non-default `--emit-selection` invocations.
+
+**Test path determinism**
+- Every new code path has a test whose input deterministically exercises that path (no reliance on "the default seed happens to do X").
+- Each new CLI flag is covered in isolation, not only in the most-permissive bundle.
+
+**Performance in hot paths**
+- No per-row re-parsing of strings or re-computation of constants that could be hoisted above the loop.
+- No broad `try/except` in a per-row loop where the body has side effects such as RNG draws.
+
+**Action order in user-facing output**
+- The end-of-run `Done - … written to …` summary line only names artifacts the run actually wrote, and is printed only after every writer it names has completed successfully.
+
+**Test hygiene**
+- New test files have no unused imports or unused helpers.
+
+**Default-behavior changes**
+- If a default parameter value or fallback path changes (e.g. unseeded `RandomState`, required arg replacing optional), the PR description names it and tests cover both old and new caller shapes.
+
+### Reviewer-before-ready gate
+
+The Code Reviewer agent signs off in the worktree *before* the PR is marked ready for review on GitHub (i.e. before draft status is removed). Pushing the draft branch is fine — and required by step 1 — what this gate blocks is the draft → ready transition. The workflow is:
+
+1. Implementing agent opens the PR as a **draft**.
+2. Implementing agent marks the tracking issue `in_review` and assigns the Code Reviewer.
+3. Code Reviewer walks the pre-PR checklist, fixes any issues in the same worktree, then marks the PR ready (removes draft status) and hands back to the Lead Engineer or Release Engineer.
+4. PRs that go directly to `gh pr create` without the draft+reviewer step skip steps 1–3, but must pass the pre-PR checklist self-attestation before being marked ready.
+
+This process avoids the Copilot round-trip: issues caught by the Code Reviewer in step 3 are fixed before Copilot's first review, not after.
+
 ## Tests
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
