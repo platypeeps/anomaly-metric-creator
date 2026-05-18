@@ -253,16 +253,23 @@ latency/error contributions once load crosses each edge's midpoint.
 
 Two dataclasses model the edges:
 
-- `Edge(target, weight=1.0, saturation=None)` — frozen. `target` is a
-  `COMPONENTS` key. `weight` is either a constant `float` (fan-out
-  share, where the outgoing weights of a routing source sum to 1, or
-  any non-negative scalar for amplification edges) or a callable
-  `(np.ndarray) -> np.ndarray` that derives the per-row weight from a
-  source-side column (e.g. cache-miss ratio driving the cache→database
-  fan-out). `_validate_topology()` smoke-tests every callable weight
-  with a 3-element `np.ndarray` so a zero-arg or scalar-only lambda
-  fails at import time rather than corrupting phase 2's vectorized
-  column writes.
+- `Edge(target, weight=1.0, saturation=None, signal=None)` — frozen.
+  `target` is a `COMPONENTS` key. `weight` is either a constant
+  `float` (fan-out share, where the outgoing weights of a routing
+  source sum to 1, or any non-negative scalar for amplification edges)
+  or a callable `(np.ndarray) -> np.ndarray` that derives the per-row
+  weight from a per-row scalar signal (e.g. cache-miss ratio driving
+  the cache→database fan-out). `signal` is the per-edge
+  `(dict[str, np.ndarray]) -> np.ndarray | None` callable that produces
+  that scalar signal from the upstream's captured load columns;
+  required iff `weight` is callable, must be `None` for constant
+  `weight`. Returning `None` from `signal` means "skip this edge" so a
+  `--metrics-per-component` trim of a required input column degrades
+  gracefully. `_validate_topology()` smoke-tests every callable weight
+  with a 3-element `np.ndarray` and probes every `signal` with a
+  per-key captured-column dict built from `_TOPOLOGY_LOAD_METRICS` so a
+  zero-arg / scalar-only lambda or a mis-shaped signal fails at import
+  time rather than corrupting phase 2's vectorized column writes.
 - `SaturationParams(midpoint, steepness, latency_gain=0.0, error_gain=0.0)`
   — frozen. Parameters of a logistic response curve. Zero gains
   declare the saturation point structurally without contributing to
@@ -366,11 +373,17 @@ metrics from the topology coupling targets.
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside
 `COMPONENTS`, callable weights that fail to accept an `ndarray` or
-return something other than an `ndarray`, and constant weights that
+return something other than an `ndarray`, constant weights that
 are not finite, non-negative `int`/`float` scalars (`bool` is
-rejected explicitly because it is an `int` subclass). Mirror these
-invariants in `tests/test_topology_registry.py` when adding new edges
-or constraints.
+rejected explicitly because it is an `int` subclass), callable
+weights paired with `signal=None` (or a non-callable `signal`),
+constant weights paired with a non-`None` `signal`, `signal`
+callables that raise on the captured-column probe, and `signal`
+callables that return something other than `np.ndarray` or `None`,
+and any cycle in the directed `TOPOLOGY` graph (including
+self-loops). Mirror these invariants in
+`tests/test_topology_registry.py` when adding new edges or
+constraints.
 
 ### Scenario registry
 
