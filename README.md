@@ -502,9 +502,15 @@ upstream load through downstream baselines.
   saturation: midpoint `760`, steepness `6`, latency gain `0.6`,
   error gain `0.015` — drives database `read_latency_ms`,
   `write_latency_ms`, and `error_rate`.
-- `apigateway → llm_analytics` — saturation placeholder for phase 5
-  (token-throttle); weight `0.0` and zero gains keep it inert at
-  phases 2/3/4.
+- `apigateway → llm_analytics` (`1.0`, VER-155 phase 5) — couples
+  `llm_analytics.input_tokens_per_sec` to
+  `apigateway.requests_per_sec` (the renormalization makes any
+  positive single-edge weight equivalent), and adds saturation
+  feedback to the LLM latency / error columns. Saturation: midpoint
+  `760`, steepness `6`, latency gain `0.55`, error gain `0.015` —
+  drives `avg_llm_latency_ms`, `p95_llm_latency_ms`, and
+  `llm_api_error_rate`. The token-budget metering authority is
+  apigateway (no synthetic `token_limiter` virtual node).
 - `cacheservice → database` — callable weight: per-row cache-miss
   ratio (`cache_misses / (cache_hits + cache_misses)`) multiplied by
   the database's natural `queries_per_sec` baseline. Contributes
@@ -534,7 +540,9 @@ upstream load through downstream baselines.
                                  └─────────────────┘
                           callable weight (miss_ratio * db_base)
 
-apigateway → llm_analytics : saturation placeholder (phase 5, weight 0)
+apigateway → llm_analytics : weight=1.0, saturation lat=0.55 err=0.015
+                             couples input_tokens_per_sec, lifts
+                             LLM latency + llm_api_error_rate
 ```
 
 ## Failure modes / anomaly catalog
