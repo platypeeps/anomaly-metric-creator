@@ -297,20 +297,36 @@ The v1 graph declared at phase 1:
   precision) into a shared `upstream_arrays: dict[str, dict[str,
   np.ndarray]]` keyed by `(component_name, metric_name)`. The set
   of captured metrics per component is declared in
-  `_TOPOLOGY_LOAD_METRICS`. Before generating a downstream
-  component, `_compose_topology_coupled_specs` rewrites each of the
-  downstream's load metrics via the incoming edges:
+  `_TOPOLOGY_LOAD_METRICS` as a `(canonical, supplementary)` tuple:
+  `canonical` is the load metric a constant-weight edge from the
+  component reads; `supplementary` lists additional captured columns
+  the component's outgoing edges' `Edge.signal` callables consume
+  (e.g. cacheservice exposes `("cache_hits", ("cache_misses",))`).
+  Before generating a downstream component,
+  `_compose_topology_coupled_specs` rewrites each of the downstream's
+  load metrics (canonical + supplementary) via the incoming edges:
   - **Constant-weight edges** — `contribution = (upstream /
-    upstream_base) * downstream_base * w_norm` where `w_norm =
-    w / Σw` normalizes so the combined constant term equals
-    `downstream_base` at natural upstream load. At least one
+    upstream_base) * downstream_base * w_norm` where the upstream
+    column is the source component's *canonical* load metric and
+    `w_norm = w / Σw` normalizes so the combined constant term
+    equals `downstream_base` at natural upstream load. At least one
     constant-weight edge must have a non-zero captured upstream for
     this path to fire.
-  - **Callable-weight edges** — `_topology_callable_signal` derives
-    a per-row scalar from the upstream's captured columns (e.g.
-    `cache_misses / (cache_hits + cache_misses)` for the
-    `cacheservice → database` edge) and calls `edge.weight(signal)`
+  - **Callable-weight edges** — each callable-weight `Edge` carries
+    its own `signal: Callable[[dict[str, np.ndarray]], np.ndarray
+    | None]` that derives a per-row scalar from the upstream's
+    captured columns (e.g. the `cacheservice → database` edge uses
+    the module-level `_cache_miss_ratio_signal` to compute
+    `cache_misses / (cache_hits + cache_misses)`). The composer
+    calls `edge.signal(upstream_cols)`; a `None` return means
+    "skip this edge" (e.g. `--metrics-per-component` trimmed a
+    required column). The composer then calls `edge.weight(signal)`
     to produce an additive contribution in downstream-metric units.
+    `_validate_topology` enforces the pairing: callable weight
+    requires a `signal`, constant weight forbids one, and the
+    validator probes the `signal` with a captured-column dict
+    built from `_TOPOLOGY_LOAD_METRICS[source]` so a mis-shaped
+    signal fails at import time.
   The final coupled column is `constant_contrib + callable_contrib +
   rng.normal(0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)`. The original
   MetricSpec's declarative metadata (unit, semantic_type, min/max,
