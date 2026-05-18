@@ -159,6 +159,20 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 # ------------------------------------------------------------------
 # Per-metric schema. One MetricSpec per CSV column per component.
 # ------------------------------------------------------------------
+# Vocabulary for ``MetricSpec.semantic_type``. Drives both the ``schema.json``
+# emitter and the ``--validate-output`` checks (e.g. ``counter`` / ``rate``
+# columns must be non-negative). Values map onto the OTLP semantic instrument
+# kinds the generator uses elsewhere (``stream_otel_signals`` Sum data points
+# for counters, ``stream_otel_gauges`` Gauge data points for gauges).
+_VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
+
+# Vocabulary for ``MetricSpec.dtype``. The generator only ever writes finite
+# floats today; ``int`` here means "values are expected to be whole numbers"
+# (the validator surfaces fractional values as schema violations). VER-134
+# will eventually backfill the catalog and the generator together.
+_VALID_DTYPES = frozenset({"float", "int"})
+
+
 @dataclass(frozen=True)
 class MetricSpec:
     """Config for one synthetic metric column.
@@ -166,6 +180,13 @@ class MetricSpec:
     Natural value is ``(base + N(0, std)) * multiplier(ts, sec) + additive(ts, sec)``,
     optionally clipped at ``clip_min``. ``std=0`` skips the RNG draw entirely so
     deterministic series do not perturb the shared numpy random stream.
+
+    Schema fields (``unit``, ``semantic_type``, ``min_value``, ``max_value``,
+    ``dtype``, ``derivation``) are declarative metadata only — they do not
+    affect generation. They flow into ``schema.json`` and the
+    ``--validate-output`` checks. Defaults preserve existing behavior for
+    catalog entries that have not been backfilled yet (the generator still
+    emits the same bytes whether or not these fields are populated).
     """
     name: str
     base: float
@@ -173,6 +194,13 @@ class MetricSpec:
     multiplier: Callable[[datetime.datetime, int], float] | None = None
     additive: Callable[[datetime.datetime, int], float] | None = None
     clip_min: float | None = None
+    # --- VER-139 schema metadata ------------------------------------
+    unit: str | None = None
+    semantic_type: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    dtype: str = "float"
+    derivation: str | None = None
 
 
 # ------------------------------------------------------------------
@@ -862,185 +890,383 @@ def _daily_sine(amplitude: float) -> Callable:
 # preserve byte-for-byte CSV output at default arguments.
 COMPONENTS: dict[str, list[MetricSpec]] = {
     "authservice": [
-        MetricSpec("active_sessions", 200, additive=_daily_sine(20)),
-        MetricSpec("login_attempts", 250, 15),
-        MetricSpec("login_success_rate", 97.0, 0.5),
-        MetricSpec("avg_auth_latency_ms", 110, 5),
-        MetricSpec("cpu_util_pct", 20, 3),
-        MetricSpec("error_rate", 0.2, 0.05, clip_min=0),
+        MetricSpec("active_sessions", 200, additive=_daily_sine(20),
+                   unit="sessions", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("login_attempts", 250, 15,
+                   unit="attempts/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("login_success_rate", 97.0, 0.5,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("avg_auth_latency_ms", 110, 5,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("cpu_util_pct", 20, 3,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("error_rate", 0.2, 0.05, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # Supplemental metrics
-        MetricSpec("avg_session_duration_s", 900, 30, clip_min=0),
-        MetricSpec("password_reset_per_min", 3, 1, clip_min=0),
-        MetricSpec("admin_actions_per_min", 8, 2, clip_min=0),
-        MetricSpec("memory_util_pct", 45, 4),
+        MetricSpec("avg_session_duration_s", 900, 30, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
+        MetricSpec("password_reset_per_min", 3, 1, clip_min=0,
+                   unit="events/min", semantic_type="rate",
+                   min_value=0, dtype="int"),
+        MetricSpec("admin_actions_per_min", 8, 2, clip_min=0,
+                   unit="events/min", semantic_type="rate",
+                   min_value=0, dtype="int"),
+        MetricSpec("memory_util_pct", 45, 4,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
     ],
     "cacheservice": [
-        MetricSpec("cache_hits", 5000, 200, clip_min=0),
-        MetricSpec("cache_misses", 200, 20, clip_min=0),
-        MetricSpec("hit_ratio", 95.0, 0.3),
-        MetricSpec("avg_cache_latency_ms", 15, 1),
-        MetricSpec("memory_util_pct", 70, 5),
-        MetricSpec("error_rate", 0.05, 0.02, clip_min=0),
+        MetricSpec("cache_hits", 5000, 200, clip_min=0,
+                   unit="hits/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("cache_misses", 200, 20, clip_min=0,
+                   unit="misses/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("hit_ratio", 95.0, 0.3,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100,
+                   derivation="100 * cache_hits / (cache_hits + cache_misses)"),
+        MetricSpec("avg_cache_latency_ms", 15, 1,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("memory_util_pct", 70, 5,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("error_rate", 0.05, 0.02, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # Supplemental metrics
-        MetricSpec("evictions_per_sec", 8, 3, clip_min=0),
-        MetricSpec("expired_keys_per_sec", 12, 4, clip_min=0),
-        MetricSpec("cpu_util_pct", 15, 3, clip_min=0),
-        MetricSpec("connected_clients", 400, 30, clip_min=0),
+        MetricSpec("evictions_per_sec", 8, 3, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("expired_keys_per_sec", 12, 4, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("cpu_util_pct", 15, 3, clip_min=0,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("connected_clients", 400, 30, clip_min=0,
+                   unit="clients", semantic_type="gauge",
+                   min_value=0, dtype="int"),
     ],
     "apigateway": [
-        MetricSpec("requests_per_sec", 800, 50),
-        MetricSpec("avg_response_time_ms", 180, 10),
-        MetricSpec("backend_latency_ms", 90, 8),
-        MetricSpec("active_connections", 1200, 60),
-        MetricSpec("cpu_util_pct", 22, 4),
-        MetricSpec("error_rate", 0.15, 0.04, clip_min=0),
+        MetricSpec("requests_per_sec", 800, 50,
+                   unit="requests/s", semantic_type="rate", min_value=0),
+        MetricSpec("avg_response_time_ms", 180, 10,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("backend_latency_ms", 90, 8,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("active_connections", 1200, 60,
+                   unit="connections", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("cpu_util_pct", 22, 4,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("error_rate", 0.15, 0.04, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # Supplemental metrics
-        MetricSpec("rate_limited_per_sec", 4, 2, clip_min=0),
-        MetricSpec("tls_handshakes_per_sec", 140, 15, clip_min=0),
-        MetricSpec("memory_util_pct", 55, 4),
-        MetricSpec("upstream_unhealthy_count", 0.2, 0.4, clip_min=0),
+        MetricSpec("rate_limited_per_sec", 4, 2, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("tls_handshakes_per_sec", 140, 15, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("memory_util_pct", 55, 4,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("upstream_unhealthy_count", 0.2, 0.4, clip_min=0,
+                   unit="hosts", semantic_type="gauge",
+                   min_value=0, dtype="int"),
     ],
     "database": [
-        MetricSpec("connections", 3000, 400),
-        MetricSpec("read_latency_ms", 10, 2, clip_min=0),
-        MetricSpec("write_latency_ms", 12, 3, clip_min=0),
-        MetricSpec("queries_per_sec", 25000, 2000),
-        MetricSpec("cpu_util_pct", 18, 3),
-        MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
+        MetricSpec("connections", 3000, 400,
+                   unit="connections", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("read_latency_ms", 10, 2, clip_min=0,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("write_latency_ms", 12, 3, clip_min=0,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("queries_per_sec", 25000, 2000,
+                   unit="queries/s", semantic_type="rate", min_value=0),
+        MetricSpec("cpu_util_pct", 18, 3,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("error_rate", 0.1, 0.05, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # disk_used_pct trends slightly upward across the day under natural
         # conditions; the disk-exhaustion ramp anomaly drives it to 100%.
         # ``std=0`` keeps this column out of the shared RNG stream so adding
         # it doesn't shift draws on later components.
         MetricSpec("disk_used_pct", 8.0,
                    additive=lambda _ts, elapsed: 2e-5 * elapsed,
-                   clip_min=0),
+                   clip_min=0,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
         # Supplemental metrics
-        MetricSpec("replication_lag_s", 0.4, 0.1, clip_min=0),
-        MetricSpec("buffer_cache_hit_ratio", 98.0, 0.3),
-        MetricSpec("deadlocks_per_min", 0.05, 0.05, clip_min=0),
+        MetricSpec("replication_lag_s", 0.4, 0.1, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
+        MetricSpec("buffer_cache_hit_ratio", 98.0, 0.3,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("deadlocks_per_min", 0.05, 0.05, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
     ],
     "mqservice": [
-        MetricSpec("pending_messages", 45000, 3000),
-        MetricSpec("processed_messages", 43000, 2500),
-        MetricSpec("avg_latency_ms", 70, 5),
-        MetricSpec("dead_letter_queue", 5, 1, clip_min=0),
-        MetricSpec("mem_util_pct", 55, 4),
-        MetricSpec("error_rate", 0.08, 0.02, clip_min=0),
+        MetricSpec("pending_messages", 45000, 3000,
+                   unit="messages", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("processed_messages", 43000, 2500,
+                   unit="messages/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("avg_latency_ms", 70, 5,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("dead_letter_queue", 5, 1, clip_min=0,
+                   unit="messages", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("mem_util_pct", 55, 4,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("error_rate", 0.08, 0.02, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # Supplemental metrics
-        MetricSpec("publish_rate_per_sec", 4500, 200, clip_min=0),
-        MetricSpec("consumer_lag", 300, 80, clip_min=0),
-        MetricSpec("unacked_messages", 120, 25, clip_min=0),
-        MetricSpec("broker_disk_used_pct", 42.0, 2.0),
+        MetricSpec("publish_rate_per_sec", 4500, 200, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("consumer_lag", 300, 80, clip_min=0,
+                   unit="messages", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("unacked_messages", 120, 25, clip_min=0,
+                   unit="messages", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("broker_disk_used_pct", 42.0, 2.0,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
     ],
     "llm_analytics": [
-        MetricSpec("input_tokens_per_sec", 25000, 2000, multiplier=_llm_business_hours),
-        MetricSpec("output_tokens_per_sec", 8000, 800, multiplier=_llm_business_hours),
-        MetricSpec("avg_context_window_size", 4500, 500),
-        MetricSpec("llm_requests_per_sec", 45, 5, multiplier=_llm_business_hours),
-        MetricSpec("avg_llm_latency_ms", 850, 80),
+        MetricSpec("input_tokens_per_sec", 25000, 2000, multiplier=_llm_business_hours,
+                   unit="tokens/s", semantic_type="rate", min_value=0),
+        MetricSpec("output_tokens_per_sec", 8000, 800, multiplier=_llm_business_hours,
+                   unit="tokens/s", semantic_type="rate", min_value=0),
+        MetricSpec("avg_context_window_size", 4500, 500,
+                   unit="tokens", semantic_type="gauge", min_value=0),
+        MetricSpec("llm_requests_per_sec", 45, 5, multiplier=_llm_business_hours,
+                   unit="requests/s", semantic_type="rate", min_value=0),
+        MetricSpec("avg_llm_latency_ms", 850, 80,
+                   unit="ms", semantic_type="gauge", min_value=0),
         MetricSpec("token_limit_hits_per_min", 2, 0.5,
-                   multiplier=_llm_business_hours, clip_min=0),
-        MetricSpec("context_overflow_rate", 0.3, 0.1, clip_min=0),
-        MetricSpec("llm_api_error_rate", 0.05, 0.02, clip_min=0),
+                   multiplier=_llm_business_hours, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
+        MetricSpec("context_overflow_rate", 0.3, 0.1, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("llm_api_error_rate", 0.05, 0.02, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # Supplemental metrics
-        MetricSpec("p95_llm_latency_ms", 1400, 80),
-        MetricSpec("prompt_cache_hit_ratio", 55.0, 2.0, clip_min=0),
+        MetricSpec("p95_llm_latency_ms", 1400, 80,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("prompt_cache_hit_ratio", 55.0, 2.0, clip_min=0,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
     ],
     "loadbalancer": [
-        MetricSpec("requests_per_sec", 900, 60),
-        MetricSpec("healthcheck_failures", 0, 0.1, clip_min=0),
-        MetricSpec("active_tls_handshakes", 120, 10),
-        MetricSpec("tls_handshake_errors", 0.5, 0.2, clip_min=0),
-        MetricSpec("backend_5xx_per_sec", 1.5, 0.5, clip_min=0),
-        MetricSpec("connection_resets", 5, 2, clip_min=0),
-        MetricSpec("cpu_util_pct", 18, 3),
+        MetricSpec("requests_per_sec", 900, 60,
+                   unit="requests/s", semantic_type="rate", min_value=0),
+        MetricSpec("healthcheck_failures", 0, 0.1, clip_min=0,
+                   unit="events/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("active_tls_handshakes", 120, 10,
+                   unit="handshakes", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("tls_handshake_errors", 0.5, 0.2, clip_min=0,
+                   unit="errors/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("backend_5xx_per_sec", 1.5, 0.5, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("connection_resets", 5, 2, clip_min=0,
+                   unit="events/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("cpu_util_pct", 18, 3,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
         # Supplemental metrics
-        MetricSpec("healthy_backends", 12, 0.3),
-        MetricSpec("avg_request_duration_ms", 210, 12),
-        MetricSpec("dropped_connections", 0.2, 0.3, clip_min=0),
+        MetricSpec("healthy_backends", 12, 0.3,
+                   unit="hosts", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("avg_request_duration_ms", 210, 12,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("dropped_connections", 0.2, 0.3, clip_min=0,
+                   unit="events/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
     ],
     "objectstore": [
-        MetricSpec("get_latency_ms", 45, 5),
-        MetricSpec("put_latency_ms", 60, 8),
-        MetricSpec("5xx_rate", 0.1, 0.05, clip_min=0),
-        MetricSpec("bandwidth_mbps", 180, 20),
-        MetricSpec("requests_per_sec", 1200, 80),
+        MetricSpec("get_latency_ms", 45, 5,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("put_latency_ms", 60, 8,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("5xx_rate", 0.1, 0.05, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("bandwidth_mbps", 180, 20,
+                   unit="Mbps", semantic_type="gauge", min_value=0),
+        MetricSpec("requests_per_sec", 1200, 80,
+                   unit="requests/s", semantic_type="rate", min_value=0),
         # Supplemental metrics
-        MetricSpec("p99_get_latency_ms", 140, 10),
-        MetricSpec("avg_object_size_kb", 320, 15, clip_min=0),
-        MetricSpec("error_rate", 0.05, 0.02, clip_min=0),
-        MetricSpec("throttled_requests_per_sec", 0.3, 0.2, clip_min=0),
-        MetricSpec("multipart_upload_rate", 2.0, 0.5, clip_min=0),
+        MetricSpec("p99_get_latency_ms", 140, 10,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("avg_object_size_kb", 320, 15, clip_min=0,
+                   unit="kB", semantic_type="gauge", min_value=0),
+        MetricSpec("error_rate", 0.05, 0.02, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("throttled_requests_per_sec", 0.3, 0.2, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("multipart_upload_rate", 2.0, 0.5, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
     ],
     "vectorstore": [
-        MetricSpec("ann_query_latency_ms", 25, 4),
-        MetricSpec("embeddings_per_sec", 80, 10, multiplier=_llm_business_hours),
-        MetricSpec("recall_at_10", 0.91, 0.01),
-        MetricSpec("cache_hit_ratio", 88, 2),
-        MetricSpec("error_rate", 0.1, 0.05, clip_min=0),
+        MetricSpec("ann_query_latency_ms", 25, 4,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("embeddings_per_sec", 80, 10, multiplier=_llm_business_hours,
+                   unit="embeddings/s", semantic_type="rate", min_value=0),
+        MetricSpec("recall_at_10", 0.91, 0.01,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("cache_hit_ratio", 88, 2,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("error_rate", 0.1, 0.05, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # Supplemental metrics. ``std=0`` skips the RNG draw for near-constant
         # metrics so adding them doesn't perturb downstream column noise.
-        MetricSpec("index_size_gb", 42.0, 0.0, clip_min=0),
-        MetricSpec("queries_per_sec", 140, 12, multiplier=_llm_business_hours, clip_min=0),
-        MetricSpec("avg_vector_dim", 1536.0, 0.0),
-        MetricSpec("shard_skew_pct", 3.0, 0.8, clip_min=0),
-        MetricSpec("compaction_lag_s", 2.5, 0.5, clip_min=0),
+        MetricSpec("index_size_gb", 42.0, 0.0, clip_min=0,
+                   unit="GB", semantic_type="gauge", min_value=0),
+        MetricSpec("queries_per_sec", 140, 12, multiplier=_llm_business_hours, clip_min=0,
+                   unit="queries/s", semantic_type="rate", min_value=0),
+        MetricSpec("avg_vector_dim", 1536.0, 0.0,
+                   unit="dimensions", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("shard_skew_pct", 3.0, 0.8, clip_min=0,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
+        MetricSpec("compaction_lag_s", 2.5, 0.5, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
     ],
     "scheduler": [
-        MetricSpec("jobs_running", 20, 3, clip_min=0),
-        MetricSpec("jobs_queued", 50, 8, clip_min=0),
-        MetricSpec("jobs_failed_per_min", 0.5, 0.15, clip_min=0),
-        MetricSpec("avg_job_duration_s", 120, 12, clip_min=0),
-        MetricSpec("missed_schedules", 0.02, 0.05, clip_min=0),
+        MetricSpec("jobs_running", 20, 3, clip_min=0,
+                   unit="jobs", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("jobs_queued", 50, 8, clip_min=0,
+                   unit="jobs", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("jobs_failed_per_min", 0.5, 0.15, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
+        MetricSpec("avg_job_duration_s", 120, 12, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
+        MetricSpec("missed_schedules", 0.02, 0.05, clip_min=0,
+                   unit="events/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
         # Supplemental metrics
-        MetricSpec("retries_per_min", 4, 1, clip_min=0),
-        MetricSpec("workers_available", 24, 2, clip_min=0),
-        MetricSpec("job_throughput_per_min", 140, 10, clip_min=0),
-        MetricSpec("queue_age_seconds_p95", 85, 10, clip_min=0),
-        MetricSpec("cpu_util_pct", 18, 3),
+        MetricSpec("retries_per_min", 4, 1, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
+        MetricSpec("workers_available", 24, 2, clip_min=0,
+                   unit="workers", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("job_throughput_per_min", 140, 10, clip_min=0,
+                   unit="jobs/min", semantic_type="rate", min_value=0),
+        MetricSpec("queue_age_seconds_p95", 85, 10, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
+        MetricSpec("cpu_util_pct", 18, 3,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
     ],
     "paymentservice": [
         MetricSpec("txn_per_sec", 80, 6,
-                   multiplier=_llm_business_hours, clip_min=0),
-        MetricSpec("provider_5xx_rate", 0.01, 0.005, clip_min=0),
-        MetricSpec("webhook_delivery_lag_s", 2.0, 0.4, clip_min=0),
-        MetricSpec("auth_decline_rate", 0.04, 0.01, clip_min=0),
-        MetricSpec("avg_txn_latency_ms", 180, 12),
+                   multiplier=_llm_business_hours, clip_min=0,
+                   unit="transactions/s", semantic_type="rate", min_value=0),
+        MetricSpec("provider_5xx_rate", 0.01, 0.005, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("webhook_delivery_lag_s", 2.0, 0.4, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
+        MetricSpec("auth_decline_rate", 0.04, 0.01, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("avg_txn_latency_ms", 180, 12,
+                   unit="ms", semantic_type="gauge", min_value=0),
         # Supplemental metrics
-        MetricSpec("chargebacks_per_min", 0.3, 0.1, clip_min=0),
-        MetricSpec("settlement_lag_s", 180, 12, clip_min=0),
-        MetricSpec("fraud_score_avg", 0.05, 0.01, clip_min=0),
-        MetricSpec("retry_rate", 0.02, 0.01, clip_min=0),
-        MetricSpec("error_rate", 0.08, 0.02, clip_min=0),
+        MetricSpec("chargebacks_per_min", 0.3, 0.1, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
+        MetricSpec("settlement_lag_s", 180, 12, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
+        MetricSpec("fraud_score_avg", 0.05, 0.01, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("retry_rate", 0.02, 0.01, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("error_rate", 0.08, 0.02, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
     ],
     "identityprovider": [
-        MetricSpec("token_issuance_per_sec", 150, 12, clip_min=0),
-        MetricSpec("jwks_fetch_latency_ms", 25, 3, clip_min=0),
+        MetricSpec("token_issuance_per_sec", 150, 12, clip_min=0,
+                   unit="tokens/s", semantic_type="rate", min_value=0),
+        MetricSpec("jwks_fetch_latency_ms", 25, 3, clip_min=0,
+                   unit="ms", semantic_type="gauge", min_value=0),
         MetricSpec("mfa_challenges_per_min", 20, 4,
-                   multiplier=_llm_business_hours, clip_min=0),
-        MetricSpec("failed_oidc_flows", 2, 0.6, clip_min=0),
-        MetricSpec("key_rotation_events", 0.0, 0.0, clip_min=0),
+                   multiplier=_llm_business_hours, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
+        MetricSpec("failed_oidc_flows", 2, 0.6, clip_min=0,
+                   unit="events/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
+        MetricSpec("key_rotation_events", 0.0, 0.0, clip_min=0,
+                   unit="events/interval", semantic_type="counter",
+                   min_value=0, dtype="int"),
         # Supplemental metrics
-        MetricSpec("avg_token_size_bytes", 1200, 40, clip_min=0),
-        MetricSpec("revoked_tokens_per_min", 1.5, 0.5, clip_min=0),
-        MetricSpec("session_introspection_rate", 22, 3, clip_min=0),
-        MetricSpec("password_reset_rate", 0.5, 0.2, clip_min=0),
-        MetricSpec("error_rate", 0.04, 0.02, clip_min=0),
+        MetricSpec("avg_token_size_bytes", 1200, 40, clip_min=0,
+                   unit="bytes", semantic_type="gauge", min_value=0),
+        MetricSpec("revoked_tokens_per_min", 1.5, 0.5, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
+        MetricSpec("session_introspection_rate", 22, 3, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("password_reset_rate", 0.5, 0.2, clip_min=0,
+                   unit="events/s", semantic_type="rate", min_value=0),
+        MetricSpec("error_rate", 0.04, 0.02, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
     ],
     # Self-referential: when this degrades, every other component's telemetry
     # becomes suspect — anomalies fire on the pipeline itself.
     "observabilitypipeline": [
-        MetricSpec("metrics_ingested_per_sec", 50000, 2500, clip_min=0),
-        MetricSpec("dropped_metrics_per_sec", 5, 1.5, clip_min=0),
-        MetricSpec("ingest_lag_s", 1.0, 0.2, clip_min=0),
-        MetricSpec("pipeline_error_rate", 0.001, 0.0005, clip_min=0),
+        MetricSpec("metrics_ingested_per_sec", 50000, 2500, clip_min=0,
+                   unit="metrics/s", semantic_type="rate", min_value=0),
+        MetricSpec("dropped_metrics_per_sec", 5, 1.5, clip_min=0,
+                   unit="metrics/s", semantic_type="rate", min_value=0),
+        MetricSpec("ingest_lag_s", 1.0, 0.2, clip_min=0,
+                   unit="s", semantic_type="gauge", min_value=0),
+        MetricSpec("pipeline_error_rate", 0.001, 0.0005, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
         # Supplemental metrics
-        MetricSpec("cardinality_count", 120000, 4000, clip_min=0),
-        MetricSpec("retention_hours", 72.0, 0.0, clip_min=0),
-        MetricSpec("compactions_per_min", 1.5, 0.5, clip_min=0),
-        MetricSpec("shard_count", 12.0, 0.0, clip_min=0),
-        MetricSpec("flush_latency_ms", 22, 3, clip_min=0),
-        MetricSpec("cpu_util_pct", 12, 2),
+        MetricSpec("cardinality_count", 120000, 4000, clip_min=0,
+                   unit="series", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("retention_hours", 72.0, 0.0, clip_min=0,
+                   unit="h", semantic_type="gauge", min_value=0),
+        MetricSpec("compactions_per_min", 1.5, 0.5, clip_min=0,
+                   unit="events/min", semantic_type="rate", min_value=0),
+        MetricSpec("shard_count", 12.0, 0.0, clip_min=0,
+                   unit="shards", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("flush_latency_ms", 22, 3, clip_min=0,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("cpu_util_pct", 12, 2,
+                   unit="pct", semantic_type="ratio",
+                   min_value=0, max_value=100),
     ],
 }
 
@@ -1097,6 +1323,59 @@ for _name, _default in DEFAULT_METRICS_PER_COMPONENT.items():
             f"[1, {len(COMPONENTS[_name])}]"
         )
 del _components_keys, _defaults_keys, _overflowed, _name, _default
+
+
+def _validate_metric_spec_schema_metadata() -> None:
+    """Import-time invariants for the VER-139 schema metadata fields on ``MetricSpec``.
+
+    Rejects nonsense vocabulary (unknown ``semantic_type`` / ``dtype``) and
+    obvious shape errors (``min_value`` > ``max_value``, non-finite bounds)
+    before ``main()`` runs, so ``write_schema_json`` and the validator can
+    rely on the declared metadata being consistent. Backfill is incremental:
+    a spec with all schema fields left at their defaults is still valid
+    (semantic_type is None, dtype defaults to ``float``, bounds default to
+    None). Once a field is populated, it must be sensible.
+    """
+    for component, specs in COMPONENTS.items():
+        for spec in specs:
+            ctx = f"COMPONENTS[{component!r}].{spec.name!r}"
+            if spec.semantic_type is not None and spec.semantic_type not in _VALID_SEMANTIC_TYPES:
+                raise ValueError(
+                    f"{ctx}.semantic_type={spec.semantic_type!r} must be one of "
+                    f"{sorted(_VALID_SEMANTIC_TYPES)} or None"
+                )
+            if spec.dtype not in _VALID_DTYPES:
+                raise ValueError(
+                    f"{ctx}.dtype={spec.dtype!r} must be one of {sorted(_VALID_DTYPES)}"
+                )
+            for bound_name, bound in (("min_value", spec.min_value),
+                                       ("max_value", spec.max_value)):
+                if bound is None:
+                    continue
+                if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                    raise ValueError(
+                        f"{ctx}.{bound_name}={bound!r} must be a finite int or float"
+                    )
+                if not math.isfinite(bound):
+                    raise ValueError(
+                        f"{ctx}.{bound_name}={bound!r} must be finite"
+                    )
+            if (spec.min_value is not None and spec.max_value is not None
+                    and spec.min_value > spec.max_value):
+                raise ValueError(
+                    f"{ctx}.min_value={spec.min_value} > max_value={spec.max_value}"
+                )
+            if spec.unit is not None and not isinstance(spec.unit, str):
+                raise ValueError(
+                    f"{ctx}.unit={spec.unit!r} must be a string or None"
+                )
+            if spec.derivation is not None and not isinstance(spec.derivation, str):
+                raise ValueError(
+                    f"{ctx}.derivation={spec.derivation!r} must be a string or None"
+                )
+
+
+_validate_metric_spec_schema_metadata()
 
 # ------------------------------------------------------------------
 # Anomaly specifications — migrated to SCENARIOS registry (VER-104).
@@ -3469,13 +3748,33 @@ def parse_args(argv=None):
                    help="Skip generation; only run the combine step against an existing "
                         "--output-dir. Useful for re-running the join without regenerating.")
     p.add_argument(
+        "--validate-output",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Standalone mode: skip generation and validate the artifacts in "
+             "PATH against PATH/schema.json. Exits 1 (or 0 with --validate-warn) "
+             "and prints one line per violation. Mutually exclusive with --combine "
+             "and --combine-only.",
+    )
+    p.add_argument(
+        "--validate-warn",
+        action="store_true",
+        default=False,
+        help="Soft mode for --validate-output: report violations on stderr but "
+             "exit 0. Without this flag, --validate-output exits 1 on the first "
+             "violation found across the run.",
+    )
+    p.add_argument(
         "--emit-selection",
         type=str,
         default="metrics,logs,traces",
         help="Comma-separated artifact selection: metrics, logs, traces, "
-             "gauges (default: metrics,logs,traces). 'gauges' writes a "
-             "long-form gauges.csv (timestamp,component,metric,value) "
-             "alongside the per-component CSVs and requires 'metrics'.",
+             "gauges, schema (default: metrics,logs,traces). 'gauges' writes "
+             "a long-form gauges.csv (timestamp,component,metric,value) "
+             "alongside the per-component CSVs and requires 'metrics'. "
+             "'schema' writes a declarative schema.json describing per-metric "
+             "metadata and run-level parameters; consumed by --validate-output.",
     )
     p.add_argument(
         "--components",
@@ -3723,19 +4022,28 @@ def parse_args(argv=None):
         p.error("--interval-seconds must be >= 0.001 (ms-precision floor)")
     if args.combine and args.combine_only:
         p.error("--combine and --combine-only are mutually exclusive")
+    if args.validate_output is not None:
+        if args.combine or args.combine_only:
+            p.error("--validate-output is mutually exclusive with "
+                    "--combine and --combine-only")
+        if not args.validate_output.is_dir():
+            p.error(f"--validate-output PATH must be an existing directory; "
+                    f"{args.validate_output} is not")
+    elif args.validate_warn:
+        p.error("--validate-warn requires --validate-output")
     if args.inject_dst_artifact_day < 0:
         p.error("--inject-dst-artifact-day must be >= 0 (0 disables)")
     if args.inject_dst_artifact_day > args.duration_days:
         p.error(f"--inject-dst-artifact-day {args.inject_dst_artifact_day} "
                 f"is outside the configured --duration-days {args.duration_days}")
     selected = {item.strip().lower() for item in args.emit_selection.split(",") if item.strip()}
-    allowed = {"metrics", "logs", "traces", "gauges"}
+    allowed = {"metrics", "logs", "traces", "gauges", "schema"}
     invalid = sorted(selected - allowed)
     if invalid:
         p.error("--emit-selection contains invalid value(s): "
-                f"{', '.join(invalid)}. Allowed: metrics,logs,traces,gauges")
+                f"{', '.join(invalid)}. Allowed: metrics,logs,traces,gauges,schema")
     if not selected:
-        p.error("--emit-selection must contain at least one of metrics,logs,traces,gauges")
+        p.error("--emit-selection must contain at least one of metrics,logs,traces,gauges,schema")
     if args.combine and "metrics" not in selected:
         p.error("--combine requires --emit-selection to include metrics")
     # ``gauges`` is derived from the per-component CSVs written under
@@ -3941,6 +4249,7 @@ _EMIT_ARTIFACT_FILES = {
     "logs": ("metric_report.log",),
     "traces": ("metric_traces.jsonl",),
     "gauges": ("gauges.csv",),
+    "schema": ("schema.json",),
 }
 # Written only when --combine is set (which itself requires "metrics" in
 # --emit-selection). Tracked separately so the pre-clean and summary can
@@ -4857,6 +5166,524 @@ def write_gauges_csv(
     return rows_written
 
 
+# Schema-document version. Bump on any breaking change to the ``schema.json``
+# shape so consumers (including the validator) can fail fast against a stale
+# document. The validator rejects unknown versions outright.
+SCHEMA_DOCUMENT_VERSION = 1
+
+
+def _metric_spec_to_schema_entry(spec: "MetricSpec") -> dict:
+    """Return the schema.json entry for one ``MetricSpec``.
+
+    Schema metadata is emitted verbatim with stable key order. ``None`` values
+    are preserved (rather than dropped) so consumers can distinguish "field
+    explicitly declared unbounded" from "field absent due to old schema".
+    """
+    return {
+        "name": spec.name,
+        "unit": spec.unit,
+        "semantic_type": spec.semantic_type,
+        "dtype": spec.dtype,
+        "min_value": spec.min_value,
+        "max_value": spec.max_value,
+        "derivation": spec.derivation,
+    }
+
+
+def write_schema_json(
+    output_path: Path,
+    *,
+    components: list[str],
+    effective_specs: dict[str, list["MetricSpec"]],
+    metadata: dict,
+    emitted_files: list[str],
+) -> None:
+    """Write a declarative ``schema.json`` describing the current run's artifacts.
+
+    The document is the single source of truth ``--validate-output`` consumes
+    to check the run after the fact. It captures three slices of information:
+
+    - ``schema_version`` — integer schema-document version (see
+      ``SCHEMA_DOCUMENT_VERSION``).
+    - ``metadata`` — run-level parameters (timestamp anchor, duration, drop
+      rate, scenario set, seed, ...) needed to reconstruct the timeline and
+      row-count expectations from the artifacts on disk.
+    - ``components`` — per-component metric metadata in MetricSpec column
+      order, so the validator can check ``dtype`` / ``min_value`` /
+      ``max_value`` / ``semantic_type`` / ``derivation`` cell-by-cell against
+      the per-component CSV.
+    - ``files`` — sorted list of artifact filenames the run was supposed to
+      write, so the validator can flag missing or extra files.
+
+    The output is byte-deterministic: ``json.dumps`` with ``sort_keys=True``,
+    fixed indent, ``ensure_ascii=False``, and a trailing newline. The
+    per-component ``metrics`` list intentionally preserves MetricSpec column
+    order (not sorted) so the validator can zip it against CSV header columns
+    in one pass.
+    """
+    component_payload = {}
+    for component in components:
+        specs = effective_specs.get(component, [])
+        component_payload[component] = {
+            "csv_filename": f"{component}.csv",
+            "metrics": [_metric_spec_to_schema_entry(spec) for spec in specs],
+        }
+
+    document = {
+        "schema_version": SCHEMA_DOCUMENT_VERSION,
+        "metadata": metadata,
+        "files": sorted(emitted_files),
+        "components": component_payload,
+    }
+
+    # ``sort_keys=True`` gives byte-stable top-level ordering. Nested lists
+    # (metrics, files, scenarios) keep their declared order — they are sorted
+    # by the caller where determinism matters (files, scenarios) and left in
+    # MetricSpec column order where the order carries meaning (metrics).
+    output_path.write_text(
+        json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+# ------------------------------------------------------------------
+# Output validator (--validate-output)
+# ------------------------------------------------------------------
+# Floating-point tolerance for derived-column checks. CSV cells are written
+# at 3-decimal precision (see ``np.round(values, 3)`` in
+# ``generate_component``), so a derivation recomputed from rounded source
+# cells can drift from the stored derived cell by at most a few units of
+# the last digit. 0.01 is conservative enough to absorb that drift while
+# still catching real bugs (e.g. a 5% miscompute of ``hit_ratio``).
+_VALIDATE_DERIVATION_TOLERANCE = 0.01
+
+# Integer-cell tolerance for ``dtype="int"`` checks. CSV cells are 3-decimal
+# floats so a value the generator wrote as ``5.000`` round-trips exactly,
+# while a fractional source value like ``4.567`` lands well outside this
+# band. Using 0.0005 means we reject anything ≥ 0.001 (the smallest
+# representable fractional at 3-decimal precision).
+_VALIDATE_INT_TOLERANCE = 5e-4
+
+
+def _load_schema_document(schema_path: Path) -> dict:
+    """Load and version-check a ``schema.json`` document.
+
+    Raises ``ValueError`` if the file is missing, malformed JSON, or written
+    by a schema-document version this build cannot validate. The validator
+    intentionally rejects unknown versions outright rather than silently
+    skipping unfamiliar fields — a stale schema would produce false-positive
+    or false-negative results.
+    """
+    if not schema_path.exists():
+        raise ValueError(
+            f"--validate-output requires {schema_path}; "
+            "regenerate the run with --emit-selection schema"
+        )
+    try:
+        document = json.loads(schema_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{schema_path} is not valid JSON: {e}") from e
+    version = document.get("schema_version")
+    if version != SCHEMA_DOCUMENT_VERSION:
+        raise ValueError(
+            f"{schema_path} has schema_version={version!r}; "
+            f"this build only validates schema_version="
+            f"{SCHEMA_DOCUMENT_VERSION}"
+        )
+    return document
+
+
+def _validate_required_files_present(output_dir: Path, schema: dict) -> list[str]:
+    """Return one violation per declared file missing from ``output_dir``."""
+    violations = []
+    for filename in schema.get("files", []):
+        if not (output_dir / filename).exists():
+            violations.append(
+                f"missing declared file: {filename!r} (listed in schema.files)"
+            )
+    return violations
+
+
+def _validate_no_unknown_files(output_dir: Path, schema: dict) -> list[str]:
+    """Return one violation per file in ``output_dir`` not declared in the schema.
+
+    Mirrors ``_pre_clean_output_dir``'s registry intent: an unknown file is
+    either stale debris the pre-clean missed, a foreign file in the wrong
+    directory, or a new artifact someone forgot to register.
+    """
+    declared = set(schema.get("files", []))
+    # The schema document itself is always allowed even if a stale schema
+    # somehow omits its own filename — without this exemption the validator
+    # would be unable to bootstrap.
+    declared.add("schema.json")
+    violations = []
+    for path in sorted(output_dir.iterdir()):
+        if not path.is_file():
+            continue
+        if path.name not in declared:
+            violations.append(f"unknown file in output dir: {path.name!r}")
+    return violations
+
+
+def _validate_anomalies_sorted(output_dir: Path, schema: dict) -> list[str]:
+    """Return one violation if ``anomalies.csv`` is not sorted by timestamp.
+
+    ``main()`` sorts the manifest chronologically by ``(span_start, component,
+    metric)`` before writing; the validator only requires the timestamp axis
+    to be non-decreasing (the secondary keys break ties within the same
+    timestamp and don't matter for downstream consumers)."""
+    anomalies_path = output_dir / "anomalies.csv"
+    if not anomalies_path.exists():
+        return []
+    violations = []
+    with open(anomalies_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        prev = None
+        for i, row in enumerate(reader, start=1):
+            ts = row.get("timestamp")
+            if ts is None:
+                violations.append(
+                    f"anomalies.csv row {i} missing 'timestamp' column"
+                )
+                continue
+            if prev is not None and ts < prev:
+                violations.append(
+                    f"anomalies.csv row {i}: timestamp {ts!r} precedes "
+                    f"previous timestamp {prev!r}"
+                )
+            prev = ts
+    return violations
+
+
+def _validate_component_row_count(
+    output_dir: Path, schema: dict, component: str
+) -> list[str]:
+    """Each component CSV may have at most ``rows_per_component`` data rows
+    (plus the DST splice extras when applicable). Dropped rows are absent
+    from the CSV entirely (``generate_component`` filters via ``keep_mask``
+    before serialization), so under-emission is expected and not flagged
+    unless it exceeds the configured ``drop_rate``'s plausible band.
+    """
+    csv_filename = schema["components"][component]["csv_filename"]
+    csv_path = output_dir / csv_filename
+    if not csv_path.exists():
+        return []  # covered by _validate_required_files_present
+
+    metadata = schema["metadata"]
+    base_rows = metadata["rows_per_component"]
+    interval = metadata["interval_seconds"]
+    dst_day = metadata.get("inject_dst_artifact_day", 0)
+    drop_rate = metadata.get("drop_rate", 0.0) or 0.0
+    # The DST splice duplicates the 02:00–02:59 wall-clock hour on one day,
+    # adding 3,600 / interval extra rows to that day. Use floor division to
+    # mirror the generator's row-count derivation.
+    dst_extra = int(3600 // interval) if dst_day and dst_day > 0 else 0
+    expected_max = base_rows + dst_extra
+
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            next(reader)  # skip header
+        except StopIteration:
+            return [f"{csv_filename}: file has no header row"]
+        data = sum(1 for row in reader if row)
+
+    violations = []
+    if data > expected_max:
+        violations.append(
+            f"{csv_filename}: data row count {data} exceeds expected max "
+            f"{expected_max} (rows_per_component={base_rows} "
+            f"+ DST splice {dst_extra})"
+        )
+    # Under-emission lower bound: with drop_rate p and N rows, the expected
+    # surviving count is N*(1-p) with std sqrt(N*p*(1-p)). Allow a generous
+    # 8-sigma band on top of an absolute floor so a tiny N doesn't trigger
+    # a false positive (e.g. a 144-row 600s smoke run).
+    if drop_rate < 1.0:
+        if base_rows > 0:
+            std = math.sqrt(base_rows * drop_rate * (1.0 - drop_rate))
+            lower = int(base_rows * (1.0 - drop_rate) - 8.0 * std)
+            if lower < 0:
+                lower = 0
+        else:
+            lower = 0
+        if data < lower:
+            violations.append(
+                f"{csv_filename}: data row count {data} is below the "
+                f"expected lower bound {lower} for drop_rate={drop_rate} "
+                f"and rows_per_component={base_rows}"
+            )
+    return violations
+
+
+def _validate_component_timestamp_coverage(
+    output_dir: Path, schema: dict, component: str
+) -> list[str]:
+    """Every row's timestamp must fall in the expected window
+    ``[START, START + total_seconds)``. DST duplicates are within range and
+    intentionally not flagged here.
+    """
+    csv_filename = schema["components"][component]["csv_filename"]
+    csv_path = output_dir / csv_filename
+    if not csv_path.exists():
+        return []
+
+    metadata = schema["metadata"]
+    start_dt = datetime.datetime.fromisoformat(metadata["start"])
+    end_dt = start_dt + datetime.timedelta(seconds=metadata["total_seconds"])
+
+    violations = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            next(reader)
+        except StopIteration:
+            return violations
+        for i, row in enumerate(reader, start=2):  # data rows start at line 2
+            if not row:
+                continue
+            try:
+                ts = _parse_csv_timestamp(row[0])
+            except ValueError as e:
+                violations.append(
+                    f"{csv_filename} line {i}: bad timestamp {row[0]!r}: {e}"
+                )
+                continue
+            if ts < start_dt:
+                violations.append(
+                    f"{csv_filename} line {i}: timestamp {row[0]!r} precedes "
+                    f"START {metadata['start']!r}"
+                )
+                return violations  # one is enough; don't flood output
+            if ts >= end_dt:
+                violations.append(
+                    f"{csv_filename} line {i}: timestamp {row[0]!r} is at or "
+                    f"after end {(end_dt.isoformat())!r}"
+                )
+                return violations
+    return violations
+
+
+def _validate_component_cells(
+    output_dir: Path, schema: dict, component: str
+) -> list[str]:
+    """Every cell must respect its MetricSpec's declared schema metadata:
+
+    - column order matches the schema's MetricSpec list,
+    - parseable as a float,
+    - within ``[min_value, max_value]`` if either is declared,
+    - integer-valued (modulo 3-decimal CSV precision) when ``dtype="int"``,
+    - non-negative when ``semantic_type`` is ``counter`` or ``rate`` (even
+      if ``min_value`` was not declared — these semantic kinds are always
+      ≥ 0 by definition).
+
+    Each unique violation is reported once with a line-number example so the
+    output stays bounded even when a whole column is wrong.
+    """
+    csv_filename = schema["components"][component]["csv_filename"]
+    csv_path = output_dir / csv_filename
+    metrics = schema["components"][component]["metrics"]
+    if not csv_path.exists():
+        return []
+
+    violations = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return [f"{csv_filename}: file has no header row"]
+
+        expected_columns = ["timestamp"] + [m["name"] for m in metrics]
+        if header != expected_columns:
+            violations.append(
+                f"{csv_filename}: header {header} does not match schema "
+                f"column order {expected_columns}"
+            )
+            return violations  # cell checks are meaningless once columns drift
+
+        # Track which violations have already fired per (metric, kind) so we
+        # don't flood the output for an entire-column violation.
+        seen: set[tuple[str, str]] = set()
+
+        def _record(metric_name: str, kind: str, msg: str) -> None:
+            key = (metric_name, kind)
+            if key in seen:
+                return
+            seen.add(key)
+            violations.append(msg)
+
+        for i, row in enumerate(reader, start=2):
+            if not row:
+                continue
+            for col_idx, metric_meta in enumerate(metrics, start=1):
+                name = metric_meta["name"]
+                if col_idx >= len(row):
+                    _record(name, "missing_col",
+                            f"{csv_filename} line {i}: missing column for "
+                            f"metric {name!r}")
+                    continue
+                raw = row[col_idx]
+                try:
+                    value = float(raw)
+                except ValueError:
+                    _record(name, "non_numeric",
+                            f"{csv_filename} line {i}: {name}={raw!r} not "
+                            "parseable as float")
+                    continue
+                if metric_meta.get("dtype") == "int":
+                    if abs(value - round(value)) > _VALIDATE_INT_TOLERANCE:
+                        _record(name, "fractional",
+                                f"{csv_filename} line {i}: {name}={value} "
+                                "is fractional but dtype='int'")
+                lo = metric_meta.get("min_value")
+                hi = metric_meta.get("max_value")
+                if lo is not None and value < lo:
+                    _record(name, "below_min",
+                            f"{csv_filename} line {i}: {name}={value} "
+                            f"below min_value={lo}")
+                if hi is not None and value > hi:
+                    _record(name, "above_max",
+                            f"{csv_filename} line {i}: {name}={value} "
+                            f"above max_value={hi}")
+                semantic = metric_meta.get("semantic_type")
+                if semantic in ("counter", "rate") and value < 0:
+                    _record(name, "negative_kind",
+                            f"{csv_filename} line {i}: {name}={value} "
+                            f"is negative but semantic_type={semantic!r}")
+    return violations
+
+
+def _validate_component_derivations(
+    output_dir: Path, schema: dict, component: str
+) -> list[str]:
+    """For every metric with a ``derivation`` string, recompute the value
+    from its source columns and assert agreement within
+    ``_VALIDATE_DERIVATION_TOLERANCE``.
+
+    Only the derivations the generator implements are checked (the
+    string carries the formula for documentation; the validator dispatches
+    by ``(component, metric)``). New derived columns must be added to
+    ``DERIVATIONS`` in the generator and to ``_RECOMPUTERS`` here in
+    lockstep — drift is caught by the test suite (``DERIVATIONS`` and
+    ``_RECOMPUTERS`` keysets must match).
+    """
+    csv_filename = schema["components"][component]["csv_filename"]
+    csv_path = output_dir / csv_filename
+    metrics = schema["components"][component]["metrics"]
+    if not csv_path.exists():
+        return []
+    derived_entries = [m for m in metrics if m.get("derivation")]
+    if not derived_entries:
+        return []
+
+    recompute = _RECOMPUTERS.get(component)
+    if recompute is None:
+        return [
+            f"{csv_filename}: schema declares a derivation for component "
+            f"{component!r} but the validator has no recomputer registered "
+            f"(add an entry to _RECOMPUTERS)"
+        ]
+
+    violations = []
+    name_to_col = {m["name"]: i + 1 for i, m in enumerate(metrics)}
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            next(reader)
+        except StopIteration:
+            return violations
+        seen: set[str] = set()
+        for i, row in enumerate(reader, start=2):
+            if not row:
+                continue
+            for entry in derived_entries:
+                name = entry["name"]
+                if name in seen:
+                    continue
+                col = name_to_col.get(name)
+                if col is None or col >= len(row):
+                    continue
+                try:
+                    actual = float(row[col])
+                    expected = recompute(name, row, name_to_col)
+                except (ValueError, KeyError, ZeroDivisionError):
+                    continue
+                if expected is None:
+                    continue
+                if abs(actual - expected) > _VALIDATE_DERIVATION_TOLERANCE:
+                    seen.add(name)
+                    violations.append(
+                        f"{csv_filename} line {i}: derived {name}={actual} "
+                        f"differs from recomputed {expected} by more than "
+                        f"{_VALIDATE_DERIVATION_TOLERANCE} (formula: "
+                        f"{entry['derivation']})"
+                    )
+    return violations
+
+
+def _recompute_cacheservice(metric: str, row: list[str],
+                             name_to_col: dict[str, int]) -> float | None:
+    """Recompute ``cacheservice.hit_ratio`` from ``cache_hits`` / ``cache_misses``.
+
+    Returns None when source cells are missing or unparseable (the cell
+    validator catches those separately).
+    """
+    if metric != "hit_ratio":
+        return None
+    hits_col = name_to_col.get("cache_hits")
+    misses_col = name_to_col.get("cache_misses")
+    if hits_col is None or misses_col is None:
+        return None
+    if hits_col >= len(row) or misses_col >= len(row):
+        return None
+    hits = float(row[hits_col])
+    misses = float(row[misses_col])
+    denom = hits + misses
+    if denom <= 0:
+        return 0.0
+    return 100.0 * hits / denom
+
+
+# Per-component derivation dispatch table. Keys must mirror
+# ``DERIVATIONS`` in the generator; the validator's
+# ``_validate_component_derivations`` looks up by component name and
+# delegates by metric name. Adding a new derived column requires
+# adding both a ``DERIVATIONS`` entry (for the generator) and a
+# ``_RECOMPUTERS`` entry (for the validator).
+_RECOMPUTERS: dict[str, Callable[[str, list[str], dict[str, int]],
+                                  float | None]] = {
+    "cacheservice": _recompute_cacheservice,
+}
+
+
+def validate_output(output_dir: Path) -> list[str]:
+    """Run every validation against the artifacts in ``output_dir``.
+
+    Returns the list of violation messages (empty when the directory is
+    fully consistent with its ``schema.json``). The CLI layer
+    (``--validate-output``) prints the list, decides the exit code based on
+    ``--validate-warn``, and is the only caller that touches ``sys.exit``.
+    """
+    schema_path = output_dir / "schema.json"
+    schema = _load_schema_document(schema_path)
+    violations: list[str] = []
+    violations += _validate_required_files_present(output_dir, schema)
+    violations += _validate_no_unknown_files(output_dir, schema)
+    if "metrics" in schema["metadata"].get("emit_selection", []):
+        violations += _validate_anomalies_sorted(output_dir, schema)
+    for component in schema["metadata"]["components"]:
+        violations += _validate_component_row_count(output_dir, schema, component)
+        violations += _validate_component_timestamp_coverage(
+            output_dir, schema, component
+        )
+        violations += _validate_component_cells(output_dir, schema, component)
+        violations += _validate_component_derivations(
+            output_dir, schema, component
+        )
+    return violations
+
+
 def stream_otel_gauges(
     component_csv_paths: dict[str, Path],
     *,
@@ -5097,6 +5924,29 @@ def stream_otel_gauges(
     return requests_sent
 
 
+def _collect_emitted_filenames(*, emit_selection, components, combine):
+    """Return the sorted list of filenames a run with the given options writes.
+
+    Same single source of truth ``_pre_clean_output_dir`` and the end-of-run
+    summary already consume: ``_EMIT_ARTIFACT_FILES`` for emit-typed artifacts,
+    ``_COMBINE_OUTPUT_FILENAME`` for the combine output, and one
+    ``{component}.csv`` per allowlisted component when ``metrics`` is selected.
+
+    Used by ``write_schema_json`` and ``--validate-output`` to keep the
+    expected-file-set check anchored to one definition.
+    """
+    files: set[str] = set()
+    if "metrics" in emit_selection:
+        for component in components:
+            files.add(f"{component}.csv")
+    for emit_type, artifact_files in _EMIT_ARTIFACT_FILES.items():
+        if emit_type in emit_selection:
+            files.update(artifact_files)
+    if combine:
+        files.add(_COMBINE_OUTPUT_FILENAME)
+    return sorted(files)
+
+
 def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combine):
     """Remove stale artifacts from a prior run that this run will not regenerate.
 
@@ -5144,6 +5994,27 @@ def main(argv=None):
                              f"{args.output_dir} does not exist")
         combine_logs(args.output_dir, components=combine_components)
         return
+
+    if args.validate_output is not None:
+        # Standalone validator mode. Doesn't pre-clean (we're reading the
+        # directory as input), doesn't run generation, doesn't touch combine
+        # — it loads PATH/schema.json and runs every check the validator
+        # knows about against the artifacts on disk.
+        violations = validate_output(args.validate_output)
+        for line in violations:
+            print(f"VALIDATION: {line}", file=sys.stderr)
+        if not violations:
+            print(f"--validate-output: {args.validate_output} OK "
+                  "(no violations)")
+            return
+        # Soft mode reports and exits 0; default exits 1 so CI / pre-merge
+        # gates can rely on the non-zero status.
+        if args.validate_warn:
+            print(f"--validate-output: {len(violations)} violation(s) in "
+                  f"{args.validate_output} (--validate-warn: returning 0)",
+                  file=sys.stderr)
+            return
+        raise SystemExit(1)
 
     total_seconds = SECONDS_PER_DAY * args.duration_days
     args.output_dir.mkdir(exist_ok=True, parents=True)
@@ -5267,6 +6138,45 @@ def main(argv=None):
         }
         gauge_rows_written = write_gauges_csv(
             gauge_csv_paths, args.output_dir / "gauges.csv"
+        )
+
+    if "schema" in args.emit_selection:
+        # Schema doc reflects exactly what this run wrote so the validator can
+        # cross-check the directory after the fact. Built from the same emit
+        # selection + components + combine flag the pre-clean step and the
+        # end-of-run summary already consume, so the three views stay in sync.
+        schema_components_in_order = [
+            c for c in COMPONENTS if c in args.components
+        ]
+        emitted_files = _collect_emitted_filenames(
+            emit_selection=args.emit_selection,
+            components=schema_components_in_order,
+            combine=args.combine,
+        )
+        schema_metadata = {
+            "seed": args.seed,
+            "start": START.isoformat(),
+            "duration_days": args.duration_days,
+            "interval_seconds": args.interval_seconds,
+            "total_seconds": total_seconds,
+            "rows_per_component": n_rows,
+            "drop_rate": args.drop_rate,
+            "signal_level": args.signal_level,
+            "metrics_per_component": args.metrics_per_component,
+            "anomaly_count": args.anomaly_count,
+            "scenarios": sorted(active_scenarios),
+            "exclude_scenarios": sorted(args.exclude_scenarios),
+            "components": schema_components_in_order,
+            "inject_dst_artifact_day": args.inject_dst_artifact_day,
+            "emit_selection": sorted(args.emit_selection),
+            "combine": args.combine,
+        }
+        write_schema_json(
+            args.output_dir / "schema.json",
+            components=schema_components_in_order,
+            effective_specs=effective_specs,
+            metadata=schema_metadata,
+            emitted_files=emitted_files,
         )
 
     streamed_events = 0
