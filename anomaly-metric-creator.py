@@ -204,6 +204,49 @@ class MetricSpec:
 
 
 # ------------------------------------------------------------------
+# Topology graph (VER-141 phase 1 scaffolding — structural only).
+#
+# ``TOPOLOGY`` declares the directed component graph the future two-pass
+# generator (VER-141 phase 2+) will walk to push upstream pressure into
+# downstream metrics. In this phase the constant is declared and validated
+# at import time but no generation code consumes it; the existing scenario
+# cascades remain the authoritative source of cross-component effects. See
+# ``CLAUDE.md`` § Topology graph for the cascade-vs-topology overlap note.
+# ------------------------------------------------------------------
+@dataclass(frozen=True)
+class SaturationParams:
+    """Logistic-saturation parameters for an inbound ``Edge``.
+
+    Phase 5 (VER-141) will map an upstream's normalized pressure through a
+    logistic ``1 / (1 + exp(-steepness * (pressure - midpoint)))`` curve and
+    multiply the result by ``latency_gain`` (added to downstream latency-like
+    metrics) and ``error_gain`` (added to downstream error-rate-like
+    metrics). A gain of ``0.0`` means the curve has no effect on that family
+    of metrics, so an edge can carry e.g. a latency contribution but no
+    error contribution.
+    """
+    midpoint: float
+    steepness: float
+    latency_gain: float = 0.0
+    error_gain: float = 0.0
+
+
+@dataclass(frozen=True)
+class Edge:
+    """One directed edge in the component topology graph.
+
+    ``weight`` is either a constant fan-out share (float, default ``1.0``)
+    or a vectorized callable that returns a per-row weight column given a
+    per-row upstream signal column (``np.ndarray`` in, ``np.ndarray`` out,
+    same shape). ``saturation`` is an optional ``SaturationParams`` block
+    declaring a non-linear pressure transfer for phase-5 throttle modeling.
+    """
+    target: str
+    weight: float | Callable[[np.ndarray], np.ndarray] = 1.0
+    saturation: SaturationParams | None = None
+
+
+# ------------------------------------------------------------------
 # Named scenario registry (VER-102 / VER-104 — full migration complete).
 #
 # Each Scenario bundles a slug-named set of primary anomaly specs and
@@ -1376,6 +1419,137 @@ def _validate_metric_spec_schema_metadata() -> None:
 
 
 _validate_metric_spec_schema_metadata()
+
+
+# ------------------------------------------------------------------
+# Topology graph (VER-141 phase 1 — structural scaffolding only).
+#
+# v1 graph: a small directed model of how upstream load propagates into
+# downstream components. Phase 1 only declares and validates this graph;
+# no generator code reads it yet (cascades still drive every cross-
+# component effect). Phase 2+ will fold the graph into the generator.
+# ------------------------------------------------------------------
+TOPOLOGY: dict[str, list[Edge]] = {
+    # Load balancer fans all traffic into the API gateway.
+    "loadbalancer": [
+        Edge(target="apigateway", weight=1.0),
+    ],
+    # API gateway fans out to the three primary backends in the documented
+    # default proportions (see CLAUDE.md § Topology graph).
+    "apigateway": [
+        Edge(target="authservice", weight=0.3),
+        Edge(target="cacheservice", weight=0.4),
+        Edge(target="database", weight=0.3),
+    ],
+    # On a cache miss the request falls through to the database, so the
+    # cacheservice → database edge weight is driven by the per-row miss
+    # rate. Phase 2+ will feed the cache-miss column into this callable;
+    # for phase 1 it is enough that the callable accepts and returns a
+    # numpy column of the same shape.
+    "cacheservice": [
+        Edge(
+            target="database",
+            weight=lambda miss_rate: np.clip(np.asarray(miss_rate, dtype=np.float64), 0.0, 1.0),
+        ),
+    ],
+    # LLM analytics carries a saturation placeholder for phase 5: when
+    # token throughput approaches its throttle ceiling, the saturation
+    # curve will add latency / error pressure into the database it relies
+    # on. Phase 1 only declares the edge; phase 5 wires it through.
+    "llm_analytics": [
+        Edge(
+            target="database",
+            weight=1.0,
+            saturation=SaturationParams(
+                midpoint=0.8,
+                steepness=8.0,
+                latency_gain=0.0,
+                error_gain=0.0,
+            ),
+        ),
+    ],
+}
+
+
+def _validate_topology(topology: dict[str, list[Edge]]) -> None:
+    """Import-time invariants for ``TOPOLOGY``.
+
+    Rejects unknown source / target component names, non-``Edge`` entries,
+    and callable weights that can't accept a column-shaped ``np.ndarray``.
+    Probe-calls each callable weight with a small sample column and
+    requires the result to be an ``np.ndarray`` of the same shape, so
+    phase-2 vectorized propagation can rely on shape-preserving weights.
+    """
+    if not isinstance(topology, dict):
+        raise ValueError(
+            f"TOPOLOGY must be a dict[str, list[Edge]]; got "
+            f"{type(topology).__name__}"
+        )
+    known = set(COMPONENTS.keys())
+    probe = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=np.float64)
+    for source, edges in topology.items():
+        if source not in known:
+            raise ValueError(
+                f"TOPOLOGY[{source!r}] is not a known component; expected "
+                f"one of {sorted(known)}"
+            )
+        if not isinstance(edges, list):
+            raise ValueError(
+                f"TOPOLOGY[{source!r}] must be list[Edge]; got "
+                f"{type(edges).__name__}"
+            )
+        for edge in edges:
+            if not isinstance(edge, Edge):
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] contains {edge!r}; every entry "
+                    f"must be an Edge instance"
+                )
+            if edge.target not in known:
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] edge target {edge.target!r} is "
+                    f"not a known component; expected one of {sorted(known)}"
+                )
+            weight = edge.weight
+            if callable(weight):
+                try:
+                    out = weight(probe)
+                except Exception as exc:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] edge → {edge.target!r} has "
+                        f"a callable weight that raised {type(exc).__name__} "
+                        f"when called with a numpy array: {exc}. Callable "
+                        f"weights must accept a column-shaped np.ndarray."
+                    ) from exc
+                if not isinstance(out, np.ndarray):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] edge → {edge.target!r} "
+                        f"callable weight returned {type(out).__name__}; "
+                        f"expected a numpy ndarray of the same shape as the "
+                        f"input column."
+                    )
+                if out.shape != probe.shape:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] edge → {edge.target!r} "
+                        f"callable weight changed shape: in {probe.shape} → "
+                        f"out {out.shape}; weights must be shape-preserving."
+                    )
+            elif isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] edge → {edge.target!r} has weight "
+                    f"{weight!r}; expected float or a numpy-array callable."
+                )
+            if edge.saturation is not None and not isinstance(
+                edge.saturation, SaturationParams
+            ):
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] edge → {edge.target!r} saturation "
+                    f"{edge.saturation!r} must be a SaturationParams instance "
+                    f"or None"
+                )
+
+
+_validate_topology(TOPOLOGY)
+
 
 # ------------------------------------------------------------------
 # Anomaly specifications — migrated to SCENARIOS registry (VER-104).

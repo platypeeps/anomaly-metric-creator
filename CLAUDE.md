@@ -241,6 +241,76 @@ gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Ca
 are single-row step writes only — express ramps/sustained spans as primary
 specs in `primary_specs`, not in `cascade_specs`.
 
+### Topology graph
+
+`TOPOLOGY: dict[str, list[Edge]]` declares the directed component graph the
+two-pass generator (VER-141) will eventually walk to push upstream pressure
+into downstream metrics. In this phase the constant is **structural only**:
+declared and validated at import time, but no generator code consumes it
+yet. `generate_component()`, `main()`, scenarios, and every output artifact
+behave byte-for-byte as before — cascades remain the authoritative source
+of cross-component effects until the two-pass generator lands.
+
+Cascade-vs-topology overlap (VER-134 plan): both mechanisms describe how
+upstream load affects downstream components, but they are not duplicates.
+Cascades fire **once per scenario** at a single timestamp (single-row step
+writes; see § Anomaly injection schema) to model discrete blast radius
+events. Topology edges, once consumed by phase 2+, will instead describe
+**continuous** per-row pressure propagation that the generator applies to
+every timestamp. Phase 1 keeps the two paths disjoint by leaving the graph
+unused; later phases will document how a scenario's cascade and the
+ambient topology pressure combine on the same downstream metric.
+
+`Edge(target, weight=1.0, saturation=None)` is a frozen dataclass:
+
+- `target` — downstream component name; must be a key of `COMPONENTS`.
+- `weight` — either a constant fan-out share (`float`, default `1.0`) or a
+  vectorized callable `np.ndarray → np.ndarray` that returns a per-row
+  weight column. Callables must be **shape-preserving**: input column and
+  output column have the same shape. `_validate_topology` probe-calls every
+  callable weight at import time to reject non-array or shape-changing
+  callables.
+- `saturation` — optional `SaturationParams` block declaring the logistic
+  pressure transfer for phase-5 throttle modeling. Defaults to `None`
+  (linear edge).
+
+`SaturationParams(midpoint, steepness, latency_gain=0.0, error_gain=0.0)` is
+a frozen dataclass. Phase 5 will map an upstream's normalized pressure
+through `1 / (1 + exp(-steepness * (pressure - midpoint)))` and multiply
+the result by `latency_gain` (added to downstream latency-like metrics) and
+`error_gain` (added to downstream error-rate-like metrics). A gain of
+`0.0` means the curve has no effect on that family — an edge can carry
+e.g. a latency contribution but no error contribution.
+
+`_validate_topology(topology)` runs at module load time on `TOPOLOGY` and
+rejects: source keys not in `COMPONENTS`; entries that are not `Edge`
+instances; edges whose `target` is not in `COMPONENTS`; callable weights
+that raise on a probe `np.ndarray` call; callable weights that return
+non-array values or change the column shape; non-numeric, non-callable
+weights; `saturation` values that are not `SaturationParams` or `None`.
+Drift in the graph is therefore caught at import time before `main()`
+runs. The function is exported (rather than inlined) so tests can probe
+it with intentionally bad topologies without mutating the live registry.
+
+v1 graph (this phase):
+
+- `loadbalancer → apigateway` (weight `1.0`).
+- `apigateway → authservice` (`0.3`), `cacheservice` (`0.4`),
+  `database` (`0.3`).
+- `cacheservice → database` (callable weight: clipped per-row cache miss
+  rate). Phase 2+ will feed the `cache_misses`-derived miss rate column
+  into this callable.
+- `llm_analytics → database` (placeholder `SaturationParams(midpoint=0.8,
+  steepness=8.0)`, both gains `0.0`). Phase 5 wires the LLM token-
+  throttle saturation curve through this edge; the zero gains keep the
+  edge inert in phase 1.
+
+No CLI flag in this phase. No change to `generate_component`, `main`, or
+any existing test. `tests/test_topology_registry.py` pins the structural
+contract: dataclass shape (defaults, frozen, `repr` round-trip), the v1
+graph layout, callable-weight shape preservation, and the validator's
+rejection branches.
+
 ### Scenario registry
 
 `SCENARIOS: dict[str, Scenario]` holds every anomaly scenario in the catalog. There
