@@ -1475,14 +1475,21 @@ _validate_metric_spec_schema_metadata()
 # request flow, not anomaly propagation — so the two are intentionally
 # allowed to overlap. Phase 2 will reconcile any double-counting before
 # applying topology-derived effects to natural columns.
-# Cached natural baseline for the ``cacheservice -> database`` callable
-# edge. Resolved from the COMPONENTS catalog at module load so the catalog
-# stays the single source of truth: bumping the database
-# ``queries_per_sec`` baseline automatically rescales the cache-miss
-# contribution and the locked-Pearson coupling tests pick it up.
-_DATABASE_QPS_BASE: float = next(
-    spec.base for spec in COMPONENTS["database"] if spec.name == "queries_per_sec"
-)
+def _component_metric_base(component: str, metric: str) -> float:
+    """Look up the natural ``MetricSpec.base`` for ``component[metric]``.
+
+    Returns ``0.0`` when the metric is not in the component's catalog so
+    callers can branch on the falsy value without raising. Coupling uses
+    the natural baseline to map upstream load (in upstream units) to the
+    downstream metric's scale (e.g. apigateway's ~800 rps to database's
+    ~25k qps). Defined above ``TOPOLOGY`` so the cacheservice → database
+    callable lambda can reference it at the import-time smoke test in
+    ``_validate_topology``.
+    """
+    for spec in COMPONENTS.get(component, ()):
+        if spec.name == metric:
+            return float(spec.base)
+    return 0.0
 
 
 TOPOLOGY: dict[str, list[Edge]] = {
@@ -1512,12 +1519,16 @@ TOPOLOGY: dict[str, list[Edge]] = {
     # the additive QPS contribution to the database baseline:
     # ``weight(miss_ratio) = miss_ratio * base_qps``. At the natural
     # baseline (~4% miss rate, ~25k base QPS) this is ~1000 QPS on top
-    # of the apigateway-driven contribution.
+    # of the apigateway-driven contribution. ``base_qps`` is resolved
+    # lazily via ``_component_metric_base`` so the lambda always reads
+    # the live ``COMPONENTS`` catalog — matching the constant-weight
+    # path's behavior under monkeypatched / test-injected baselines.
     "cacheservice": [
         Edge(
             target="database",
             weight=lambda miss_ratio: (
-                np.asarray(miss_ratio, dtype=np.float64) * _DATABASE_QPS_BASE
+                np.asarray(miss_ratio, dtype=np.float64)
+                * _component_metric_base("database", "queries_per_sec")
             ),
         ),
     ],
@@ -1657,21 +1668,6 @@ _TOPOLOGY_LOAD_METRICS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _component_metric_base(component: str, metric: str) -> float:
-    """Look up the natural ``MetricSpec.base`` for ``component[metric]``.
-
-    Returns ``0.0`` when the metric is not in the component's catalog so
-    callers can branch on the falsy value without raising. Coupling uses
-    the natural baseline to map upstream load (in upstream units) to the
-    downstream metric's scale (e.g. apigateway's ~800 rps to database's
-    ~25k qps).
-    """
-    for spec in COMPONENTS.get(component, ()):
-        if spec.name == metric:
-            return float(spec.base)
-    return 0.0
-
-
 def _topology_callable_signal(
     upstream: str,
     downstream: str,
@@ -1766,6 +1762,19 @@ def _compose_topology_coupled_specs(
       the natural baseline. (Today the v1 graph's three apigateway fan-
       out weights already sum to 1.0; the renormalization keeps the
       formula well-defined if that invariant is ever relaxed.)
+
+      Side-effect under ``--components`` subsetting: the normalization
+      is computed over the *active* edges only, not the full declared
+      fan-out. If a run drops one of apigateway's three fan-out targets
+      (say ``--components apigateway,authservice,database``), the
+      surviving fan-out edges renormalize so each carries its full
+      ``downstream_base`` at natural upstream load — not the routing-
+      fraction-weighted share the raw weights imply. This is intentional
+      (subsetting should not leave the surviving downstreams running at
+      a fraction of their natural baseline), but it does mean the
+      effective per-edge contribution depends on which components are
+      active; pin a full ``--components all`` baseline when comparing
+      coupling magnitudes across runs.
     * Callable-weight edges call ``edge.weight(signal)`` with a per-row
       scalar signal derived from the upstream's captured columns (see
       ``_topology_callable_signal``). The return value is added to the
@@ -1833,7 +1842,13 @@ def _compose_topology_coupled_specs(
                         active_constant.append((ups_cols[lm], ups_base, w))
                     break
 
-        # Second pass: build the callable contributions.
+        # Second pass: build the callable contributions. Track whether any
+        # callable signal was successfully evaluated separately from the
+        # numeric contribution — a callable that happens to be exactly
+        # zero everywhere (e.g. a cache with a 0% miss rate for the whole
+        # run) is still a valid coupling signal, not an absent one, and
+        # must not silently fall back to the natural Gaussian baseline.
+        callable_active = False
         callable_contrib = np.zeros(n_rows, dtype=np.float64)
         for upstream, edge in incoming:
             if not callable(edge.weight):
@@ -1846,8 +1861,9 @@ def _compose_topology_coupled_specs(
             callable_contrib = callable_contrib + np.asarray(
                 edge.weight(signal), dtype=np.float64
             )
+            callable_active = True
 
-        if not active_constant and not np.any(callable_contrib):
+        if not active_constant and not callable_active:
             continue
 
         # Constant contributions: normalize by sum(w) so the constant term

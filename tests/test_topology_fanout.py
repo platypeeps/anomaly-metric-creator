@@ -314,6 +314,14 @@ def test_realistic_db_stall_qps_override_survives_coupling(amc, tmp_path):
 
 # ------------------------------------------------------------------
 # Synthetic cycle rejection (TOPOLOGY itself is acyclic in v1).
+#
+# These tests monkeypatch ``TOPOLOGY`` but leave ``COMPONENTS`` alone, so
+# every node name used below (``apigateway``, ``database``, ``cacheservice``)
+# must remain a real ``COMPONENTS`` key — otherwise ``_validate_topology``
+# raises the "source not in COMPONENTS" error *before* the cycle check
+# runs and the ``match=r"cycle"`` assertion passes for the wrong reason.
+# If those component names are ever renamed/removed, update the patched
+# graphs here in lockstep.
 # ------------------------------------------------------------------
 def test_validate_topology_rejects_two_node_cycle(amc, monkeypatch):
     """A direct A -> B, B -> A cycle must be rejected at import-time."""

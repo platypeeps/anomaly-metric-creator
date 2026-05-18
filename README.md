@@ -501,21 +501,26 @@ upstream load through downstream baselines.
   of the constant-weight apigateway contribution.
 
 ```
-                            ┌───────────────────┐
-                            │   loadbalancer    │
-                            └────────┬──────────┘
-                                     │ weight=1.0
-                                     ▼
-                            ┌───────────────────┐
-                            │    apigateway     │
-                            └──┬──────┬──────┬──┘
-                          0.3  │  0.4 │  0.3 │
-                               ▼      ▼      ▼
-                          authservice cacheservice database
-                          (login_     (cache_hits   ▲ (queries_per_sec)
-                           attempts)  cache_misses) │
-                                            │       │ callable weight
-                                            └───────┘ (miss_ratio * db_base)
+                ┌──────────────────────┐
+                │     loadbalancer     │
+                │   (requests_per_sec) │
+                └───────────┬──────────┘
+                            │ weight=1.0
+                            ▼
+                ┌──────────────────────┐
+                │      apigateway      │
+                │   (requests_per_sec) │
+                └──┬──────────┬─────┬──┘
+              0.3 │      0.4 │ 0.3 │
+                  ▼          ▼     ▼
+        ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+        │ authservice  │  │ cacheservice │  │   database   │
+        │   (login_    │  │ (cache_hits, │  │  (queries_   │
+        │   attempts)  │  │ cache_misses)│  │   per_sec)   │
+        └──────────────┘  └──────┬───────┘  └──────▲───────┘
+                                 │                 │
+                                 └─────────────────┘
+                          callable weight (miss_ratio * db_base)
 
 apigateway → llm_analytics : saturation placeholder (phase 5, weight 0)
 ```
