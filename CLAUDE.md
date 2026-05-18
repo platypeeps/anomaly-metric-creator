@@ -241,6 +241,62 @@ gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Ca
 are single-row step writes only — express ramps/sustained spans as primary
 specs in `primary_specs`, not in `cascade_specs`.
 
+### Topology graph
+
+`TOPOLOGY: dict[str, list[Edge]]` declares the directed service-call graph
+alongside `COMPONENTS`. As of VER-143 (phase 1) the constant is
+**structural-only**: it is validated at import time by `_validate_topology()`
+but **not yet consumed** by `generate_component` or `main`, so emitting
+the constant does not change any byte-output hash. Phase 2 (two-pass
+generation) reads the graph to thread load through downstream
+components, and phase 5 reads `Edge.saturation` to add sigmoid-shaped
+latency/error contributions once load crosses each edge's midpoint.
+
+Two dataclasses model the edges:
+
+- `Edge(target, weight=1.0, saturation=None)` — frozen. `target` is a
+  `COMPONENTS` key. `weight` is either a constant `float` (fan-out
+  share, where the outgoing weights of a routing source sum to 1, or
+  any non-negative scalar for amplification edges) or a callable
+  `(np.ndarray) -> np.ndarray` that derives the per-row weight from a
+  source-side column (e.g. cache-miss ratio driving the cache→database
+  fan-out). `_validate_topology()` smoke-tests every callable weight
+  with a 3-element `np.ndarray` so a zero-arg or scalar-only lambda
+  fails at import time rather than corrupting phase 2's vectorized
+  column writes.
+- `SaturationParams(midpoint, steepness, latency_gain=0.0, error_gain=0.0)`
+  — frozen. Parameters of a logistic response curve. Zero gains
+  declare the saturation point structurally without contributing to
+  the target's metrics; phase 5 will populate non-zero gains for
+  edges that drive observable latency/error responses (e.g. the LLM
+  token-throttle placeholder).
+
+The v1 graph declared at phase 1:
+
+- `loadbalancer → apigateway` (constant weight `1.0`)
+- `apigateway → authservice` (`0.3`), `cacheservice` (`0.4`),
+  `database` (`0.3`) — routing fractions summing to 1.0.
+- `apigateway → llm_analytics` — saturation placeholder for phase 5
+  token-throttle; weight `0.0` and zero gains keep it inert at phase 2.
+- `cacheservice → database` — callable weight (cache-miss ratio).
+
+**Cascade-vs-topology overlap.** Several `SCENARIOS` already encode
+pairwise blast-radius via `cascade_specs` (auth → gateway, cache → DB,
+DB → API/auth, MQ → API/DB, LLM → DB/cache/API). The topology graph is
+an orthogonal structural view: it describes *normal* request flow, not
+anomaly propagation, so the two are intentionally allowed to overlap.
+Cascades remain the path for "metric X drops at exactly row Y"
+behaviors; topology will be the path for "load on source raises latency
+on target". Phase 2 reconciles any double-counting before applying
+topology-derived effects to natural columns; until then, the two views
+coexist without interaction.
+
+`_validate_topology()` rejects, at import time: unknown source keys,
+non-`list` edge containers, non-`Edge` entries, edge targets outside
+`COMPONENTS`, and callable weights that fail to accept an `ndarray` or
+return something other than an `ndarray`. Mirror these invariants in
+`tests/test_topology_registry.py` when adding new edges or constraints.
+
 ### Scenario registry
 
 `SCENARIOS: dict[str, Scenario]` holds every anomaly scenario in the catalog. There

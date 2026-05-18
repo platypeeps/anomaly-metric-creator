@@ -204,6 +204,52 @@ class MetricSpec:
 
 
 # ------------------------------------------------------------------
+# Topology graph dataclasses (VER-143 phase 1 — structural-only).
+# ------------------------------------------------------------------
+# The ``TOPOLOGY`` constant below declares directed service-to-service edges
+# alongside ``COMPONENTS``. At this phase the constant is unused by
+# ``generate_component`` / ``main`` — the dataclasses and validator land
+# first so phase 2 (two-pass generation) and phase 5 (saturation effects)
+# can build on a stable shape without churning byte-output hashes.
+@dataclass(frozen=True)
+class SaturationParams:
+    """Sigmoid-style saturation parameters attached to a topology edge.
+
+    The phase-5 consumer will read these as the parameters of a logistic
+    response curve on the source's load metric: latency and error gains
+    are added to the target's natural latency / error rate columns once
+    load crosses ``midpoint`` at ``steepness``. Zero-gain (the default)
+    means the edge declares the saturation point structurally but does
+    not yet contribute to the target's metrics — useful for placeholder
+    edges declared at phase 1.
+    """
+    midpoint: float
+    steepness: float
+    latency_gain: float = 0.0
+    error_gain: float = 0.0
+
+
+@dataclass(frozen=True)
+class Edge:
+    """A directed edge in the service-call ``TOPOLOGY`` graph.
+
+    ``weight`` is either a constant fan-out share (``float`` in ``[0, 1]``
+    for routing fractions, or any non-negative scalar for amplification
+    edges) or a callable ``(np.ndarray) -> np.ndarray`` that computes the
+    per-row weight from a numpy column (e.g. cache-miss rate driving the
+    cache→database fan-out). Callable weights must accept a numpy array;
+    the import-time ``_validate_topology`` validator enforces this.
+
+    ``saturation`` is optional; when set, phase 5 will add the
+    sigmoid-shaped latency/error contribution to the target component
+    once the source's load metric crosses the configured midpoint.
+    """
+    target: str
+    weight: float | Callable[[np.ndarray], np.ndarray] = 1.0
+    saturation: SaturationParams | None = None
+
+
+# ------------------------------------------------------------------
 # Named scenario registry (VER-102 / VER-104 — full migration complete).
 #
 # Each Scenario bundles a slug-named set of primary anomaly specs and
@@ -1376,6 +1422,127 @@ def _validate_metric_spec_schema_metadata() -> None:
 
 
 _validate_metric_spec_schema_metadata()
+
+
+# ------------------------------------------------------------------
+# Topology graph (VER-143 phase 1 — structural-only).
+# ------------------------------------------------------------------
+# Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
+# instances downstream of ``source``; both source keys and ``Edge.target``
+# values are component names from ``COMPONENTS``. The graph is **not yet
+# consumed by the generator** — phase 2 (two-pass generation) and phase 5
+# (saturation effects) will read it. Declaring the constant in phase 1
+# isolates the structural review from any byte-output churn.
+#
+# v1 graph (per VER-141 design):
+#   loadbalancer -> apigateway                   (constant weight 1.0)
+#   apigateway   -> authservice (0.3),           (request fan-out shares;
+#                   cacheservice (0.4),           the weights here sum to 1
+#                   database (0.3)                so the phase-2 two-pass
+#                                                 generation can treat them
+#                                                 as routing fractions)
+#   cacheservice -> database                     (weight = callable on
+#                                                 cache_miss / total rate)
+#   apigateway   -> llm_analytics                (saturation placeholder
+#                                                 for phase 5 token-throttle)
+#
+# Cascade-vs-topology overlap: several SCENARIOS already encode pairwise
+# blast-radius (e.g. auth -> gateway, cache -> DB) via cascade_specs. The
+# topology graph is a structural orthogonal view — it describes *normal*
+# request flow, not anomaly propagation — so the two are intentionally
+# allowed to overlap. Phase 2 will reconcile any double-counting before
+# applying topology-derived effects to natural columns.
+TOPOLOGY: dict[str, list[Edge]] = {
+    "loadbalancer": [
+        Edge(target="apigateway", weight=1.0),
+    ],
+    "apigateway": [
+        Edge(target="authservice", weight=0.3),
+        Edge(target="cacheservice", weight=0.4),
+        Edge(target="database", weight=0.3),
+        # Saturation placeholder for phase 5: under token-throttle on the
+        # LLM, latency rises and error rate climbs once load crosses the
+        # configured midpoint. Zero gains keep the edge structurally
+        # declared without affecting phase-2 outputs.
+        Edge(
+            target="llm_analytics",
+            weight=0.0,
+            saturation=SaturationParams(
+                midpoint=0.75, steepness=8.0,
+                latency_gain=0.0, error_gain=0.0,
+            ),
+        ),
+    ],
+    # Cache miss rate drives downstream database load. The callable
+    # receives the cache-miss / (hits + misses) ratio column as a numpy
+    # array; phase 2 will pass the per-row cache-miss ratio in here.
+    "cacheservice": [
+        Edge(
+            target="database",
+            weight=lambda miss_ratio: np.asarray(miss_ratio, dtype=np.float64),
+        ),
+    ],
+}
+
+
+def _validate_topology() -> None:
+    """Import-time invariants for ``TOPOLOGY``.
+
+    Catches drift between the topology graph and ``COMPONENTS`` at module
+    load so phase 2's two-pass generator can rely on every source and
+    target being a real component. Callable weights are smoke-tested with
+    a tiny ``np.ndarray`` so a mis-shaped lambda (e.g. zero-arg or scalar-
+    only) fails here instead of corrupting the generator's vectorized
+    column writes downstream.
+    """
+    known_components = set(COMPONENTS.keys())
+    for source, edges in TOPOLOGY.items():
+        if source not in known_components:
+            raise ValueError(
+                f"TOPOLOGY source {source!r} is not in COMPONENTS; "
+                f"known components: {sorted(known_components)}"
+            )
+        if not isinstance(edges, list):
+            raise ValueError(
+                f"TOPOLOGY[{source!r}] must be a list of Edge, got "
+                f"{type(edges).__name__}"
+            )
+        for edge in edges:
+            if not isinstance(edge, Edge):
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] contains a non-Edge entry "
+                    f"{edge!r} (type {type(edge).__name__}); every entry "
+                    f"must be an Edge instance."
+                )
+            if edge.target not in known_components:
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] -> Edge.target={edge.target!r} "
+                    f"is not in COMPONENTS; known components: "
+                    f"{sorted(known_components)}"
+                )
+            if callable(edge.weight):
+                probe = np.array([0.0, 0.5, 1.0], dtype=np.float64)
+                try:
+                    result = edge.weight(probe)
+                except Exception as exc:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} callable "
+                        f"weight {edge.weight!r} raised "
+                        f"{type(exc).__name__}({exc!r}) when called with a "
+                        f"numpy array; callable weights must accept an "
+                        f"ndarray and return an ndarray."
+                    ) from exc
+                if not isinstance(result, np.ndarray):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} callable "
+                        f"weight {edge.weight!r} returned "
+                        f"{type(result).__name__}; callable weights must "
+                        f"return a numpy array."
+                    )
+
+
+_validate_topology()
+
 
 # ------------------------------------------------------------------
 # Anomaly specifications — migrated to SCENARIOS registry (VER-104).
