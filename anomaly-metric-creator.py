@@ -3818,9 +3818,12 @@ def _validate_instances_registry() -> None:
 
     Rejects five classes of drift:
 
-    1. Key drift between ``INSTANCES`` and ``COMPONENTS``: a typo here
-       would silently fall back to ``[Instance()]`` at the call site
-       (or worse, raise ``KeyError`` mid-run) instead of failing fast.
+    1. Key drift between ``INSTANCES`` and ``COMPONENTS``: ``main()``
+       seeds ``ctx.instances`` via ``{name: list(INSTANCES[name]) for
+       name in COMPONENTS}``, so a missing key would raise ``KeyError``
+       mid-run on the first generated component. The symmetric case
+       (extra ``INSTANCES`` key not in ``COMPONENTS``) would silently
+       be ignored. Failing fast at import time surfaces both.
     2. Empty per-component lists: ``generate_component()`` needs at
        least one ``Instance`` to broadcast values into, even the
        anonymous default.
