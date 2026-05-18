@@ -1748,7 +1748,7 @@ def _validate_topology() -> None:
                 if not callable(edge.signal):
                     raise ValueError(
                         f"TOPOLOGY[{source!r}] -> {edge.target!r} signal="
-                        f"{edge.signal!r} must be callable or None; got "
+                        f"{edge.signal!r} must be callable; got "
                         f"{type(edge.signal).__name__}."
                     )
                 ups_entry = _TOPOLOGY_LOAD_METRICS.get(source)
