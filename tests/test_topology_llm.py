@@ -4,13 +4,13 @@ Phase 5 closes the v1 topology graph by promoting the
 ``apigateway -> llm_analytics`` placeholder edge declared in phase 1
 into a real coupling:
 
-* The edge weight makes ``llm_analytics.llm_requests_per_sec`` track
+* The edge weight makes ``llm_analytics.input_tokens_per_sec`` track
   ``apigateway.requests_per_sec`` under ``--topology-mode realistic``
   via the phase-3 constant-weight machinery in
-  ``_compose_topology_coupled_specs``. The natural baseline (~45 rps)
-  is reproduced at natural apigateway load (~800 rps) thanks to the
-  per-downstream renormalization, and variation in apigateway flows
-  through proportionally.
+  ``_compose_topology_coupled_specs``. The natural baseline
+  (~25 000 tokens/s) is reproduced at natural apigateway load
+  (~800 rps) thanks to the per-downstream renormalization, and
+  variation in apigateway flows through proportionally.
 * The edge's ``SaturationParams`` plug into the phase-4
   ``_apply_saturation`` / ``_compose_topology_saturation_specs`` path
   so that as ``apigateway.requests_per_sec`` approaches its
@@ -32,8 +32,10 @@ Acceptance gates exercised here:
   planned ranges.
 * Registry wiring: ``llm_analytics`` appears in both
   ``_TOPOLOGY_LOAD_METRICS`` and ``_TOPOLOGY_SATURATION_TARGETS``.
-* Realistic-mode RPS correlation: Pearson(apigateway.requests_per_sec,
-  llm_analytics.llm_requests_per_sec) >= 0.85 on the 1-day default seed.
+* Realistic-mode load-coupling correlation: Pearson(
+  apigateway.requests_per_sec,
+  llm_analytics.input_tokens_per_sec) >= 0.85 on the 1-day default
+  seed.
 * Realistic-mode latency / error lift: latency and error means under
   realistic mode exceed independent-mode means by a measurable margin.
 * Caps: latency stays non-negative, error rate stays <= 1.0.
@@ -153,7 +155,8 @@ def test_llm_edge_weight_is_active(amc):
     """Phase 5 promotes the placeholder weight=0.0 to a positive,
     finite, non-bool value so ``_compose_topology_coupled_specs``
     treats the edge as an active constant-weight contribution to
-    ``llm_analytics.llm_requests_per_sec``."""
+    ``llm_analytics.input_tokens_per_sec`` (the canonical LLM load
+    metric registered in ``_TOPOLOGY_LOAD_METRICS``)."""
     edge = _find_llm_edge(amc)
     weight = edge.weight
     assert isinstance(weight, (int, float))
@@ -356,8 +359,11 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
     the default ``--metrics-per-component``; covered separately by
     ``test_realistic_llm_supplemental_latency_lifted``. The expected
     lift on the default-emitted ``avg_llm_latency_ms`` is
-    ``base * latency_gain * mean(logistic)`` ≈ 850 * 0.55 * 0.3 ≈
-    140 ms — comfortably above the 5 ms noise floor.
+    ``base * latency_gain * mean(logistic)``. With apigateway at
+    utilization ≈ 1.05 at its natural baseline and oscillating through
+    the day, ``mean(logistic)`` lands around 0.4–0.5, so the lift is
+    roughly 850 * 0.55 * 0.4–0.5 ≈ 190–230 ms — comfortably above the
+    5 ms noise floor used as the test threshold.
     """
     metric = "avg_llm_latency_ms"
     indep_vals, indep_ts = _column_values(
@@ -375,12 +381,13 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
     (indep_x, real_x) = _exclude_anomaly_rows(common, indep_arr, real_arr)
     indep_mean = float(np.mean(indep_x))
     real_mean = float(np.mean(real_x))
-    # The logistic averages roughly 0.3 across the apigateway RPS range
-    # on a default day (the RPS sits below midpoint most of the time);
-    # the analytical lift is ~ base * latency_gain * 0.3. For
-    # avg_llm_latency_ms (~850 base) the lift is ~140 ms even at
-    # gain=0.55. We accept anything above 5 ms to leave headroom for
-    # noise jitter.
+    # apigateway sits at utilization ≈ 1.05 at its natural baseline
+    # (base 800 RPS / midpoint 760 RPS) and the daily envelope swings
+    # around that, so ``mean(logistic)`` lands around 0.4–0.5 — the
+    # analytical lift is ``base * latency_gain * mean(logistic)`` ≈
+    # 850 * 0.55 * 0.4–0.5 ≈ 190–230 ms. We accept anything above 5 ms
+    # to leave headroom for noise jitter and the same-day anomaly rows
+    # that aren't fully scrubbed by the exclusion windows.
     assert real_mean - indep_mean > 5.0, (
         f"realistic-mode llm_analytics.{metric} mean={real_mean:.2f} "
         f"not elevated above independent-mode mean={indep_mean:.2f}; "
@@ -408,9 +415,10 @@ def test_realistic_llm_api_error_rate_mean_elevated_vs_independent(
     (indep_x, real_x) = _exclude_anomaly_rows(common, indep_arr, real_arr)
     indep_mean = float(np.mean(indep_x))
     real_mean = float(np.mean(real_x))
-    # error_gain ~0.015, logistic mean ~0.3 on default day -> ~0.0045
-    # absolute lift. Allow 1/10th of the error_gain (a tenth of the
-    # analytical expectation) as the lift floor.
+    # error_gain = 0.015; with logistic mean around 0.4–0.5 on the
+    # default day (see avg_llm_latency_ms test for the derivation) the
+    # absolute lift is ~0.006–0.0075. Allow 1/10th of the error_gain
+    # (well below the analytical expectation) as the lift floor.
     floor = 0.0015
     assert real_mean - indep_mean > floor, (
         f"realistic-mode llm_analytics.llm_api_error_rate "

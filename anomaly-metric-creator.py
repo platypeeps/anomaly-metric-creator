@@ -1539,7 +1539,7 @@ _validate_metric_spec_schema_metadata()
 #   apigateway   -> llm_analytics                (VER-155 phase 5 token-
 #                                                 throttle: positive
 #                                                 weight couples
-#                                                 llm_requests_per_sec to
+#                                                 input_tokens_per_sec to
 #                                                 apigateway RPS; non-
 #                                                 zero gains lift LLM
 #                                                 latency / error as
@@ -1616,7 +1616,7 @@ TOPOLOGY: dict[str, list[Edge]] = {
         ),
         # VER-155 phase 5: LLM token-throttle. Apigateway serves as the
         # token-budget metering authority for LLM-bound traffic, so this
-        # edge couples ``llm_analytics.llm_requests_per_sec`` to
+        # edge couples ``llm_analytics.input_tokens_per_sec`` to
         # ``apigateway.requests_per_sec`` (the renormalization in
         # ``_compose_topology_coupled_specs`` reproduces the natural
         # LLM baseline at natural apigateway load regardless of the
