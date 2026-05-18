@@ -18,6 +18,7 @@ import datetime
 import hashlib
 import heapq
 import json
+import inspect
 import math
 import os
 import shlex
@@ -25,7 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha1
 from pathlib import Path
 from typing import Callable
@@ -66,6 +67,13 @@ SIGNAL_LEVELS: dict[str, set[str]] = {
 }
 DEFAULT_SEVERITY = "medium"
 
+# Anomaly shape vocabulary recognised by ``_resolve_anomaly_value``. Specs that
+# declare an unknown ``shape`` are rejected at import time by
+# ``_validate_scenario_spec``.
+_VALID_ANOMALY_SHAPES = frozenset({
+    "step", "sustained", "ramp_linear", "ramp_exp", "sawtooth", "sine",
+})
+
 # Stable named sub-seed for the --anomaly-count sampling RNG. Derived from
 # sha256(b"anomaly_count_cap") and fixed at import time so the cap RNG stream
 # is decoupled from any other np.random use that shares the same seed.
@@ -74,10 +82,28 @@ _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
 )
 
 # ------------------------------------------------------------------
-# Anomaly registry and cascade tracking (reset on each main() call)
+# Per-run state container
 # ------------------------------------------------------------------
-anomalies = []
-cascading_anomalies = {}  # {component_name: [anomaly_specs]}
+@dataclass
+class RunContext:
+    """Per-run mutable state.
+
+    Fields:
+    - ``rng``: ``np.random.RandomState`` instance seeded from ``--seed``.
+      Authoritative RNG for the run; threaded explicitly through
+      ``generate_component()``, ``_natural_column()``, and the anomaly
+      override path.
+    - ``anomalies``: list accumulator for manifest rows. Each call to
+      ``generate_component()`` appends one entry per anomaly span that
+      survives drop-mask filtering.
+    - ``cascading_anomalies``: dict keyed by target component name, value
+      is the list of cascade spec dicts that fire on that component.
+      Populated by ``_apply_scenarios()`` and consumed by
+      ``generate_component()`` when it merges primary + cascade overrides.
+    """
+    rng: "np.random.RandomState"
+    anomalies: list = field(default_factory=list)
+    cascading_anomalies: dict = field(default_factory=dict)
 
 # Derived-metric registry. Each entry maps a component to (derivation_fn,
 # tuple_of_derived_metric_names). generate_component() looks the component
@@ -195,11 +221,12 @@ class Scenario:
     cascade_specs: tuple[tuple[str, dict], ...]
 
 
-def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray) -> np.ndarray:
+def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
+                    rng: "np.random.RandomState") -> np.ndarray:
     """Vectorized natural-value column. Multiplier/additive must accept arrays."""
     col = np.full(elapsed.shape, spec.base, dtype=np.float64)
     if spec.std > 0:
-        col += np.random.normal(0.0, spec.std, elapsed.shape[0])
+        col += rng.normal(0.0, spec.std, elapsed.shape[0])
     if spec.multiplier is not None:
         col *= spec.multiplier(ts_array, elapsed)
     if spec.additive is not None:
@@ -215,7 +242,7 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray)
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
-                       dst_inject_day=0):
+                       dst_inject_day=0, ctx: "RunContext"):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -238,10 +265,22 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     fieldnames = [s.name for s in specs]
     n_rows = int(total_seconds // interval)
 
+    # ctx is the sole entry point for per-run state. It carries the RNG
+    # (ctx.rng), the anomaly manifest accumulator (ctx.anomalies), and the
+    # cascade registry (ctx.cascading_anomalies). Callers that need to read
+    # the manifest after generation must own the RunContext; constructing
+    # one inside this function would discard the appended entries.
+    if ctx is None:
+        raise TypeError(
+            "generate_component() requires an explicit ctx= argument; "
+            "pass RunContext(rng=np.random.RandomState(seed))."
+        )
+    rng = ctx.rng
+
     # Merge primary anomalies with cascading anomalies
     all_anomalies = list(anomaly_specs)
-    if component_name in cascading_anomalies:
-        all_anomalies.extend(cascading_anomalies[component_name])
+    if component_name in ctx.cascading_anomalies:
+        all_anomalies.extend(ctx.cascading_anomalies[component_name])
 
     # Expand every anomaly spec into concrete row overrides. Out-of-range is
     # anything whose full span lies outside ``[0, n_rows)``.
@@ -301,7 +340,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
 
     if ts_array is None or ts_strings is None:
         ts_array, ts_strings = _build_timestamp_arrays(total_seconds, interval)
-    drop_mask = np.random.random(n_rows) < drop_rate
+    drop_mask = rng.random(n_rows) < drop_rate
 
     # Elapsed seconds (not row index) so daily/hourly seasonality generators
     # produce the same wall-clock shape at any sampling interval.
@@ -311,7 +350,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     n_cols = len(specs)
     values = np.empty((n_rows, n_cols), dtype=np.float64)
     for col, spec in enumerate(specs):
-        values[:, col] = _natural_column(spec, ts_array, elapsed)
+        values[:, col] = _natural_column(spec, ts_array, elapsed, rng)
 
     # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
     # CSV stay coherent: a dropped row has no CSV entry, so it must have no
@@ -324,7 +363,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         col = name_to_col[aspec["metric"]]
         ts_py = START + datetime.timedelta(seconds=float(row_idx * interval))
         values[row_idx, col] = _resolve_anomaly_value(
-            aspec, ts_py, col, t_within, span_idx
+            aspec, ts_py, col, t_within, span_idx, rng
         )
         if span_idx == 0:
             # span_start equals timestamp; span_end equals timestamp for
@@ -343,7 +382,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             span_kept = ~drop_mask[row_idx:end_idx_nominal + 1]
             end_idx = row_idx + int(np.flatnonzero(span_kept)[-1])
             ts_str = str(ts_strings[row_idx])
-            anomalies.append({
+            ctx.anomalies.append({
                 "timestamp": ts_str,
                 "component": component_name,
                 "metric": aspec["metric"],
@@ -424,21 +463,65 @@ def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
 
 
 def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
-                           t_within: float, span_idx: int) -> float:
+                           t_within: float, span_idx: int,
+                           rng: "np.random.RandomState" = None) -> float:
     """Resolve one anomaly value at one row, honoring shape/duration fields."""
     duration_seconds = float(spec.get("duration_seconds", 0) or 0)
     shape = spec.get("shape", "step")
     shape_params = spec.get("shape_params", {}) or {}
 
     if duration_seconds <= 0 and shape == "step":
-        return float(spec["generator"](ts, col))
+        # Dispatch by REQUIRED positional count, not by maximum callability.
+        # A generator like (ts, col, scale=1.0) accepts a 3-arg call at the
+        # Python language level, but the author marked the 3rd positional
+        # as optional with a non-rng name — calling 3-arg would silently
+        # bind the RNG object to ``scale``. Required-based dispatch keeps
+        # the default and avoids the misbind. Only generators that
+        # explicitly opt into the RNG (required=3 or *args) receive it.
+        meta = _cached_generator_meta(spec["generator"])
+        if not meta["inspectable"]:
+            # Conservative fallback: try only the two canonical shapes
+            # (3-arg first, then 2-arg). No intermediate calls.
+            try:
+                return float(spec["generator"](ts, col, rng))
+            except TypeError:
+                return float(spec["generator"](ts, col))
+        required = meta["required_positional"]
+        fixed = meta["fixed_positional_count"]
+        if meta["has_var_positional"]:
+            # Mirror the validator's *args misbind check so direct callers
+            # (e.g., tests bypassing _validate_scenario_spec) cannot silently
+            # bind the RNG to a default-having fixed positional like
+            # ``scale`` in ``(ts, col, scale=1.0, *args)``.
+            if required <= 2 and fixed > 2:
+                # Step path calls 3-arg, so the only position the dispatcher
+                # could misbind onto is fixed position 3. Positions 4+ are
+                # left at their declared defaults (not bound by the 3-arg
+                # call), so name the actual offender — position 3 — rather
+                # than the count of fixed params.
+                raise TypeError(
+                    f"Generator {spec['generator']!r} has *args with "
+                    f"fixed_positional_count={fixed} > 2 and required <= 2; "
+                    f"the 3-arg step call would overwrite the default-having "
+                    f"fixed positional at position 3. Use (ts, col) or "
+                    f"(ts, col, rng) instead."
+                )
+            return float(spec["generator"](ts, col, rng))
+        if required == 3:
+            return float(spec["generator"](ts, col, rng))
+        if required <= 2:
+            return float(spec["generator"](ts, col))
+        raise TypeError(
+            f"Generator {spec['generator']!r} requires {required} positional "
+            f"args; step-path specs must use a 2-arg or 3-arg required shape."
+        )
 
     if shape in ("step", "sustained"):
-        return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx))
+        return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx, rng))
 
     start = shape_params.get("start")
     if start is None:
-        start = _call_generator_within_span(spec["generator"], ts, col, 0.0, 0)
+        start = _call_generator_within_span(spec["generator"], ts, col, 0.0, 0, rng)
     start = float(start)
 
     if shape == "ramp_linear":
@@ -471,16 +554,186 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
     raise ValueError(f"Unsupported anomaly shape: {shape}")
 
 
-def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
-                                t_within: float, span_idx: int):
-    """Backwards-compatible generator call with optional span args."""
+class _IdentityKey:
+    """Dict key with identity-based equality, used by the generator-meta
+    cache. Two distinct callables that compare equal via custom ``__eq__``
+    must not share cached metadata; keying by identity avoids that.
+    Storing the object inside the key also keeps a strong reference,
+    so Python can't recycle ``id(obj)`` for a different generator after
+    garbage collection."""
+    __slots__ = ("obj",)
+
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __hash__(self):
+        return id(self.obj)
+
+    def __eq__(self, other):
+        return isinstance(other, _IdentityKey) and self.obj is other.obj
+
+
+_GENERATOR_META_CACHE: "dict[_IdentityKey, dict]" = {}
+_GENERATOR_META_CACHE_MAX = 1024
+
+
+def _generator_meta(gen) -> dict:
+    """Return introspection metadata for a generator callable.
+
+    Tracking *required* and *maximum* positional separately matters because
+    a generator like ``(ts, col, rng=None, extra=None)`` has 2 required +
+    2 optional positional params (4 max), so the runtime can call it with
+    2, 3, or 4 positional args. The validator and dispatcher both consult
+    this metadata to pick a safe call shape.
+
+    Keys returned:
+    - ``required_positional``: count of positional-only or
+      positional-or-keyword params with no default. The minimum positional
+      arity the callable accepts.
+    - ``fixed_positional_count``: count of positional-only or
+      positional-or-keyword params total (with or without defaults).
+      Preserved even when ``*args`` is present, because a fixed-positional
+      prefix BEFORE ``*args`` still receives the first N positional args
+      of a call before the rest flow into ``*args``.
+    - ``max_positional``: total positional capacity. Equals
+      ``fixed_positional_count`` when ``*args`` is absent; ``None`` when
+      ``*args`` is present (unbounded).
+    - ``has_var_positional``: True iff ``*args`` is in the signature. The
+      validator and both dispatchers consult this flag to decide whether
+      to call the canonical target-arity shape.
+    - ``has_required_kwargs``: True iff any ``KEYWORD_ONLY`` param has no
+      default. Such generators cannot be called positionally by our runtime.
+    - ``inspectable``: True iff ``inspect.signature()`` succeeded. When
+      False, callers must fall back to a try/except call chain.
+    """
     try:
-        return generator(ts, col, t_within, span_idx)
-    except TypeError:
+        sig = inspect.signature(gen)
+    except (TypeError, ValueError):
+        return {"required_positional": 0,
+                "fixed_positional_count": 0,
+                "max_positional": None,
+                "has_var_positional": False,
+                "has_required_kwargs": False,
+                "inspectable": False}
+    required = 0
+    fixed = 0
+    has_var_positional = False
+    has_required_kw = False
+    for p in sig.parameters.values():
+        if p.kind is inspect.Parameter.VAR_POSITIONAL:
+            has_var_positional = True
+        elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            fixed += 1
+            if p.default is inspect.Parameter.empty:
+                required += 1
+        elif p.kind is inspect.Parameter.KEYWORD_ONLY:
+            if p.default is inspect.Parameter.empty:
+                has_required_kw = True
+    return {"required_positional": required,
+            "fixed_positional_count": fixed,
+            "max_positional": None if has_var_positional else fixed,
+            "has_var_positional": has_var_positional,
+            "has_required_kwargs": has_required_kw,
+            "inspectable": True}
+
+
+def _cached_generator_meta(gen) -> dict:
+    """Cached introspection lookup keyed by callable identity.
+
+    - Identity keying (not object equality) prevents two distinct
+      callables that compare equal via custom ``__eq__`` from sharing
+      stale metadata.
+    - The ``_IdentityKey`` wrapper holds a strong reference, so Python
+      can't recycle ``id(gen)`` for a different callable after garbage
+      collection.
+    - Bounded size with simple insertion-order eviction keeps the cache
+      from growing without bound in long-lived processes that create
+      many fresh callables (e.g., test sessions building lambdas in
+      loops). Dropped wrappers release their callables for gc.
+    """
+    key = _IdentityKey(gen)
+    cached = _GENERATOR_META_CACHE.get(key)
+    if cached is not None:
+        return cached
+    meta = _generator_meta(gen)
+    if len(_GENERATOR_META_CACHE) >= _GENERATOR_META_CACHE_MAX:
+        for stale in list(_GENERATOR_META_CACHE)[: _GENERATOR_META_CACHE_MAX // 2]:
+            del _GENERATOR_META_CACHE[stale]
+    _GENERATOR_META_CACHE[key] = meta
+    return meta
+
+
+def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
+                                t_within: float, span_idx: int,
+                                rng: "np.random.RandomState" = None):
+    """Call a span-path generator with either the 5-arg or 2-arg shape.
+
+    Dispatch by REQUIRED positional count, not by maximum callability. A
+    generator like ``(ts, col, scale=1.0, factor=2.0, baseline=0.0)`` is
+    callable with 5 args at the Python language level, but the author named
+    the 3rd–5th positions for their own values, not for runtime internals.
+    Calling 5-arg would silently bind ``t_within``/``span_idx``/``rng`` to
+    those parameters. Required-based dispatch instead calls 2-arg, keeps
+    the defaults, and avoids the misbind. Only generators that explicitly
+    opt into the runtime internals (``required=5`` or ``*args``) receive
+    the 5-arg call.
+
+    Uninspectable callables (e.g., C extensions) fall back to a try/except
+    chain that tries only the two canonical shapes (5-arg then 2-arg) — no
+    intermediate 3- or 4-arg attempts, because those would themselves be
+    misbinding vectors.
+    """
+    meta = _cached_generator_meta(generator)
+    if not meta["inspectable"]:
         try:
-            return generator(ts, col, t_within)
+            return generator(ts, col, t_within, span_idx, rng)
         except TypeError:
             return generator(ts, col)
+    required = meta["required_positional"]
+    fixed = meta["fixed_positional_count"]
+    if meta["has_var_positional"]:
+        # Mirror the validator's *args misbind checks for direct callers.
+        # Two distinct misbind cases:
+        #   (a) required <= 2 with default-having fixed positions beyond
+        #       (ts, col): the 5-arg call overwrites declared defaults at
+        #       positions 3 through min(fixed, 5).
+        #   (b) required ∈ {3, 4}: the 5-arg call binds t_within (and
+        #       possibly span_idx) into REQUIRED positional slots the
+        #       author intended for other values (e.g. (ts, col, rng,
+        #       *args) where rng would receive t_within).
+        if required <= 2 and fixed > 2:
+            misbind_end = min(fixed, 5)
+            misbind_range = (
+                f"position 3" if misbind_end == 3
+                else f"positions 3 through {misbind_end}"
+            )
+            raise TypeError(
+                f"Generator {generator!r} has *args with "
+                f"fixed_positional_count={fixed} > 2 and required <= 2; "
+                f"the 5-arg span call would overwrite the default-having "
+                f"fixed positional at {misbind_range}. Use (ts, col) or "
+                f"(ts, col, *args) instead."
+            )
+        if required > 2 and required != 5:
+            raise TypeError(
+                f"Generator {generator!r} has *args with "
+                f"required_positional={required} (neither 2 nor 5); "
+                f"the 5-arg span call would bind t_within/span_idx into "
+                f"the required positions the author intended for other "
+                f"values. Use (ts, col, t_within, span_idx, rng) for full "
+                f"control or (ts, col) for the legacy form."
+            )
+        return generator(ts, col, t_within, span_idx, rng)
+    if required == 5:
+        return generator(ts, col, t_within, span_idx, rng)
+    if required <= 2:
+        return generator(ts, col)
+    raise TypeError(
+        f"Generator {generator!r} requires {required} positional args; "
+        f"span-path specs must use a 2-arg or 5-arg required shape. "
+        f"_validate_scenario_spec should have rejected this at import time."
+    )
 
 
 def _span_fraction(t_within: float, duration_seconds: float) -> float:
@@ -531,7 +784,7 @@ def _build_timestamp_arrays(total_seconds: int, interval: float = 1.0):
 # Cascade helper function
 # ------------------------------------------------------------------
 def register_cascade(target_component, time_offset, metric, description, generator,
-                     severity=DEFAULT_SEVERITY):
+                     severity=DEFAULT_SEVERITY, *, cascade_registry: dict | None = None):
     """
     Register a cascading anomaly that will affect another component.
 
@@ -546,8 +799,16 @@ def register_cascade(target_component, time_offset, metric, description, generat
     ``_scenario_id``) are stamped here so a helper-registered cascade still
     emits a manifest row with ``is_cascade=true`` and the correct severity,
     matching what ``_apply_scenarios()`` would have produced.
+
+    ``cascade_registry`` must be provided explicitly (pass
+    ``RunContext.cascading_anomalies`` or an empty dict for tests).
     """
-    cascading_anomalies.setdefault(target_component, []).append({
+    if cascade_registry is None:
+        raise TypeError(
+            "register_cascade() requires a cascade_registry= keyword argument; "
+            "pass the RunContext.cascading_anomalies dict or an empty dict for tests."
+        )
+    cascade_registry.setdefault(target_component, []).append({
         "time_offset": time_offset,
         "metric": metric,
         "description": description,
@@ -938,21 +1199,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 6*3600 + 20,
                 "metric": "cache_misses",
                 "description": "Cascading: Cache miss surge before DB cascade lands",
-                "generator": lambda ts, idx: 2400 + np.random.normal(0, 150),
+                "generator": lambda ts, idx, rng: 2400 + rng.normal(0, 150),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 6*3600 + 30,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Cache misses increase database queries",
-                "generator": lambda ts, idx: 38000 + np.random.normal(0, 3000),
+                "generator": lambda ts, idx, rng: 38000 + rng.normal(0, 3000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 6*3600 + 45,
                 "metric": "read_latency_ms",
                 "description": "Cascading: Database read latency increases from cache misses",
-                "generator": lambda ts, idx: 45 + np.random.normal(0, 5),
+                "generator": lambda ts, idx, rng: 45 + rng.normal(0, 5),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1109,7 +1370,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600,
                 "metric": "backend_latency_ms",
                 "description": "Cascading: Database latency affects API backend",
-                "generator": lambda ts, idx: 850 + np.random.normal(0, 50),
+                "generator": lambda ts, idx, rng: 850 + rng.normal(0, 50),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
@@ -1123,14 +1384,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600 + 10,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: Database issues slow auth queries",
-                "generator": lambda ts, idx: 420 + np.random.normal(0, 30),
+                "generator": lambda ts, idx, rng: 420 + rng.normal(0, 30),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("mqservice", {
                 "time_offset": 11*3600 + 20,
                 "metric": "pending_messages",
                 "description": "Cascading: DB stall causes MQ backpressure",
-                "generator": lambda ts, idx: 250000 + np.random.normal(0, 5000),
+                "generator": lambda ts, idx, rng: 250000 + rng.normal(0, 5000),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1167,28 +1428,28 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 14*3600 + 30*60 + 60,
                 "metric": "avg_response_time_ms",
                 "description": "Cascading: MQ backlog delays API responses",
-                "generator": lambda ts, idx: 650 + np.random.normal(0, 40),
+                "generator": lambda ts, idx, rng: 650 + rng.normal(0, 40),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 14*3600 + 30*60 + 90,
                 "metric": "connections",
                 "description": "Cascading: MQ issues cause connection buildup",
-                "generator": lambda ts, idx: 8500 + np.random.normal(0, 500),
+                "generator": lambda ts, idx, rng: 8500 + rng.normal(0, 500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 14*3600 + 30*60 + 95,
                 "metric": "write_latency_ms",
                 "description": "Cascading: MQ backpressure increases write latency",
-                "generator": lambda ts, idx: 85 + np.random.normal(0, 10),
+                "generator": lambda ts, idx, rng: 85 + rng.normal(0, 10),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("authservice", {
                 "time_offset": 14*3600 + 32*60 + 30,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: MQ jam delays session writes",
-                "generator": lambda ts, idx: 280 + np.random.normal(0, 15),
+                "generator": lambda ts, idx, rng: 280 + rng.normal(0, 15),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1231,7 +1492,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 8*3600 + 15*60 + 5,
                 "metric": "active_connections",
                 "description": "Cascading: LB withdraws traffic from a flapping backend pool",
-                "generator": lambda ts, idx: 200 + np.random.normal(0, 25),
+                "generator": lambda ts, idx, rng: 200 + rng.normal(0, 25),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
@@ -1306,7 +1567,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 10*3600 + 30*60 + 15,
                 "metric": "avg_llm_latency_ms",
                 "description": "Cascading: slow ANN retrieval drags LLM latency to 1,900 ms",
-                "generator": lambda ts, idx: 1900 + np.random.normal(0, 80),
+                "generator": lambda ts, idx, rng: 1900 + rng.normal(0, 80),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("llm_analytics", {
@@ -1350,7 +1611,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 10*3600 + 30,
                 "metric": "connections",
                 "description": "Cascading: Scheduler queue overflow drives DB connection buildup",
-                "generator": lambda ts, idx: 7800 + np.random.normal(0, 400),
+                "generator": lambda ts, idx, rng: 7800 + rng.normal(0, 400),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1430,7 +1691,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 4*3600 + 25,
                 "metric": "login_success_rate",
                 "description": "Cascading: JWKS fetch storm degrades auth verification — success ~45%",
-                "generator": lambda ts, idx: 45 + np.random.normal(0, 2),
+                "generator": lambda ts, idx, rng: 45 + rng.normal(0, 2),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1473,7 +1734,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 9*3600 + 20,
                 "metric": "pending_messages",
                 "description": "Cascading: Telemetry pipeline lag backs up downstream queue",
-                "generator": lambda ts, idx: 220000 + np.random.normal(0, 15000),
+                "generator": lambda ts, idx, rng: 220000 + rng.normal(0, 15000),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1545,28 +1806,28 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 30,
                 "metric": "queries_per_sec",
                 "description": "Cascading: LLM surge increases database queries for context retrieval",
-                "generator": lambda ts, idx: 48000 + np.random.normal(0, 4000),
+                "generator": lambda ts, idx, rng: 48000 + rng.normal(0, 4000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 45,
                 "metric": "connections",
                 "description": "Cascading: LLM service creates more database connections",
-                "generator": lambda ts, idx: 7200 + np.random.normal(0, 400),
+                "generator": lambda ts, idx, rng: 7200 + rng.normal(0, 400),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 20,
                 "metric": "cache_misses",
                 "description": "Cascading: LLM context cache misses spike",
-                "generator": lambda ts, idx: 1800 + np.random.normal(0, 150),
+                "generator": lambda ts, idx, rng: 1800 + rng.normal(0, 150),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60 + 10,
                 "metric": "requests_per_sec",
                 "description": "Cascading: LLM viral traffic increases API gateway load",
-                "generator": lambda ts, idx: 2400 + np.random.normal(0, 200),
+                "generator": lambda ts, idx, rng: 2400 + rng.normal(0, 200),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1609,14 +1870,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600 + 60,
                 "metric": "read_latency_ms",
                 "description": "Cascading: Large LLM context windows cause slow DB reads",
-                "generator": lambda ts, idx: 85 + np.random.normal(0, 8),
+                "generator": lambda ts, idx, rng: 85 + rng.normal(0, 8),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600 + 35,
                 "metric": "memory_util_pct",
                 "description": "Cascading: LLM context caching increases memory pressure",
-                "generator": lambda ts, idx: 92 + np.random.normal(0, 3),
+                "generator": lambda ts, idx, rng: 92 + rng.normal(0, 3),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1684,21 +1945,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 15,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Batch LLM processing hammers database",
-                "generator": lambda ts, idx: 65000 + np.random.normal(0, 5000),
+                "generator": lambda ts, idx, rng: 65000 + rng.normal(0, 5000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 120,
                 "metric": "cpu_util_pct",
                 "description": "Cascading: Database CPU saturates from batch analytics",
-                "generator": lambda ts, idx: 94 + np.random.normal(0, 2),
+                "generator": lambda ts, idx, rng: 94 + rng.normal(0, 2),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 45,
                 "metric": "cache_misses",
                 "description": "Cascading: Batch job overwhelms cache — misses ~17,700 (hit ratio ~22%)",
-                "generator": lambda ts, idx: 17727.0 + np.random.normal(0, 800),
+                "generator": lambda ts, idx, rng: 17727.0 + rng.normal(0, 800),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -1735,21 +1996,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 5,
                 "metric": "active_connections",
                 "description": "Cascading: Viral LLM traffic maxes out connections",
-                "generator": lambda ts, idx: 4800 + np.random.normal(0, 200),
+                "generator": lambda ts, idx, rng: 4800 + rng.normal(0, 200),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 15,
                 "metric": "cpu_util_pct",
                 "description": "Cascading: API gateway CPU spikes from LLM traffic",
-                "generator": lambda ts, idx: 87 + np.random.normal(0, 4),
+                "generator": lambda ts, idx, rng: 87 + rng.normal(0, 4),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60 + 25,
                 "metric": "connections",
                 "description": "Cascading: Database connection pool exhausted by LLM load",
-                "generator": lambda ts, idx: 9800 + np.random.normal(0, 500),
+                "generator": lambda ts, idx, rng: 9800 + rng.normal(0, 500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("cacheservice", {
@@ -1795,7 +2056,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 5*3600 + 45,
                 "metric": "connections",
                 "description": "Cascading: Regional failover pile-up — DB connections climb to ~9,000",
-                "generator": lambda ts, idx: 9000 + np.random.normal(0, 250),
+                "generator": lambda ts, idx, rng: 9000 + rng.normal(0, 250),
                 "severity": "high",
             }),
             ("authservice", {
@@ -1809,7 +2070,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 5*3600 + 90,
                 "metric": "pending_messages",
                 "description": "Cascading: Regional failover backs up queue — ~500,000 pending",
-                "generator": lambda ts, idx: 500000 + np.random.normal(0, 12000),
+                "generator": lambda ts, idx, rng: 500000 + rng.normal(0, 12000),
                 "severity": "high",
             }),
         ),
@@ -1848,14 +2109,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600 + 30*60 + 30,
                 "metric": "avg_llm_latency_ms",
                 "description": "Cascading: Cache+DB meltdown doubles LLM latency to ~1,700 ms",
-                "generator": lambda ts, idx: 1700 + np.random.normal(0, 90),
+                "generator": lambda ts, idx, rng: 1700 + rng.normal(0, 90),
                 "severity": "high",
             }),
             ("apigateway", {
                 "time_offset": 11*3600 + 30*60 + 45,
                 "metric": "backend_latency_ms",
                 "description": "Cascading: Cache+DB meltdown drags gateway backend latency to ~950 ms",
-                "generator": lambda ts, idx: 950 + np.random.normal(0, 60),
+                "generator": lambda ts, idx, rng: 950 + rng.normal(0, 60),
                 "severity": "high",
             }),
         ),
@@ -1901,7 +2162,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 20*3600 + 30,
                 "metric": "cache_misses",
                 "description": "Cascading: LLM outage drives context cache miss surge (~3,000)",
-                "generator": lambda ts, idx: 3000 + np.random.normal(0, 200),
+                "generator": lambda ts, idx, rng: 3000 + rng.normal(0, 200),
                 "severity": "high",
             }),
         ),
@@ -1938,21 +2199,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 16*3600 + 60,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: Gateway saturation slows auth path to ~600 ms",
-                "generator": lambda ts, idx: 600 + np.random.normal(0, 25),
+                "generator": lambda ts, idx, rng: 600 + rng.normal(0, 25),
                 "severity": "high",
             }),
             ("database", {
                 "time_offset": 16*3600 + 90,
                 "metric": "cpu_util_pct",
                 "description": "Cascading: Gateway saturation drives DB CPU to ~92%",
-                "generator": lambda ts, idx: 92 + np.random.normal(0, 2),
+                "generator": lambda ts, idx, rng: 92 + rng.normal(0, 2),
                 "severity": "high",
             }),
             ("mqservice", {
                 "time_offset": 16*3600 + 120,
                 "metric": "pending_messages",
                 "description": "Cascading: Gateway saturation queues messages — ~800,000 pending",
-                "generator": lambda ts, idx: 800000 + np.random.normal(0, 15000),
+                "generator": lambda ts, idx, rng: 800000 + rng.normal(0, 15000),
                 "severity": "high",
             }),
         ),
@@ -1990,7 +2251,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 22*3600 + 30,
                 "metric": "write_latency_ms",
                 "description": "Cascading: Storage pressure drags DB write latency to ~90 ms",
-                "generator": lambda ts, idx: 90 + np.random.normal(0, 6),
+                "generator": lambda ts, idx, rng: 90 + rng.normal(0, 6),
                 "severity": "high",
             }),
             ("apigateway", {
@@ -2050,14 +2311,14 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 15*3600 + 60,
                 "metric": "cache_misses",
                 "description": "Cascading: rollback restart causes cold-cache miss spike (~1,200)",
-                "generator": lambda ts, idx: 1200 + np.random.normal(0, 50),
+                "generator": lambda ts, idx, rng: 1200 + rng.normal(0, 50),
                 "severity": "high",
             }),
             ("database", {
                 "time_offset": 15*3600 + 90,
                 "metric": "connections",
                 "description": "Cascading: retry pile-up drives DB connections to ~5,800",
-                "generator": lambda ts, idx: 5800 + np.random.normal(0, 150),
+                "generator": lambda ts, idx, rng: 5800 + rng.normal(0, 150),
                 "severity": "high",
             }),
         ),
@@ -2103,7 +2364,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 11*3600 + 30,
                 "metric": "failed_oidc_flows",
                 "description": "Cascading: federated OIDC callback DNS lookups fail (~150)",
-                "generator": lambda ts, idx: 150 + np.random.normal(0, 8),
+                "generator": lambda ts, idx, rng: 150 + rng.normal(0, 8),
                 "severity": "high",
             }),
             ("paymentservice", {
@@ -2177,7 +2438,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 18*3600 + 20*60 + 30,
                 "metric": "backend_latency_ms",
                 "description": "Cascading: cross-AZ RPC drags gateway backend latency to ~380 ms",
-                "generator": lambda ts, idx: 380 + np.random.normal(0, 20),
+                "generator": lambda ts, idx, rng: 380 + rng.normal(0, 20),
                 "severity": "high",
             }),
             ("authservice", {
@@ -2252,21 +2513,21 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 1*SECONDS_PER_DAY + 12*3600,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Rising cache miss volume — DB queries climb to ~32k",
-                "generator": lambda ts, idx: 32000 + np.random.normal(0, 1500),
+                "generator": lambda ts, idx, rng: 32000 + rng.normal(0, 1500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 2*SECONDS_PER_DAY + 12*3600 + 30*60,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Cache hit-ratio decline — DB queries climb to ~42k",
-                "generator": lambda ts, idx: 42000 + np.random.normal(0, 2000),
+                "generator": lambda ts, idx, rng: 42000 + rng.normal(0, 2000),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("database", {
                 "time_offset": 2*SECONDS_PER_DAY + 12*3600 + 30*60,
                 "metric": "read_latency_ms",
                 "description": "Cascading: Cache hit-ratio decline pushes DB read latency to ~55 ms",
-                "generator": lambda ts, idx: 55 + np.random.normal(0, 4),
+                "generator": lambda ts, idx, rng: 55 + rng.normal(0, 4),
                 "severity": DEFAULT_SEVERITY,
             }),
             # Cold-start stampede: cascade specs are single-row step writes
@@ -2276,7 +2537,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600 + 300,
                 "metric": "queries_per_sec",
                 "description": "Cascading: Cache cold-start stampede — DB queries ~60k",
-                "generator": lambda ts, idx: 60000 + np.random.normal(0, 2500),
+                "generator": lambda ts, idx, rng: 60000 + rng.normal(0, 2500),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("apigateway", {
@@ -2290,7 +2551,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600 + 300,
                 "metric": "pending_messages",
                 "description": "Cascading: Cache restart backs up MQ — ~180,000 pending",
-                "generator": lambda ts, idx: 180000 + np.random.normal(0, 6000),
+                "generator": lambda ts, idx, rng: 180000 + rng.normal(0, 6000),
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -2372,7 +2633,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 3*SECONDS_PER_DAY + 9*3600 + 30*60,
                 "metric": "avg_auth_latency_ms",
                 "description": "Cascading: Slow JWKS fetch raises auth latency to ~350 ms",
-                "generator": lambda ts, idx: 350 + np.random.normal(0, 15),
+                "generator": lambda ts, idx, rng: 350 + rng.normal(0, 15),
                 "severity": DEFAULT_SEVERITY,
             }),
             ("paymentservice", {
@@ -2480,7 +2741,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 4*SECONDS_PER_DAY + 12*3600,
                 "metric": "pending_messages",
                 "description": "Cascading: Consumers blocked on DB writes — ~320k pending",
-                "generator": lambda ts, idx: 320000 + np.random.normal(0, 10000),
+                "generator": lambda ts, idx, rng: 320000 + rng.normal(0, 10000),
                 "severity": DEFAULT_SEVERITY,
             }),
             # Constant (not noisy) to preserve the seeded global RNG state for
@@ -2504,6 +2765,256 @@ SCENARIOS: dict[str, Scenario] = {
 }
 
 
+def _validate_scenario_spec(slug: str, component: str, spec: dict,
+                            *, is_cascade: bool) -> None:
+    """Schema-check one primary or cascade spec dict at import time.
+
+    Raises ``ValueError`` naming the scenario slug, component, and offending
+    field on any drift. Cascade specs reject ``shape`` / ``duration_seconds``
+    / ``shape_params`` because the cascade injection path is single-row step
+    writes only (see CLAUDE.md § Anomaly injection schema).
+    """
+    kind = "cascade_specs" if is_cascade else "primary_specs"
+    location = f"SCENARIOS[{slug!r}].{kind} entry for component {component!r}"
+
+    if not isinstance(spec, dict):
+        raise ValueError(
+            f"{location} is not a dict (got {type(spec).__name__}); every "
+            f"spec must be a dict with keys time_offset/metric/description/generator."
+        )
+
+    required = ("time_offset", "metric", "description", "generator")
+    missing = [k for k in required if k not in spec]
+    if missing:
+        raise ValueError(
+            f"{location} is missing required key(s) {missing}; every spec "
+            f"must define {list(required)}."
+        )
+
+    metric = spec["metric"]
+    if not isinstance(metric, str):
+        raise ValueError(
+            f"{location} has non-string metric {metric!r}; expected a "
+            f"metric name from COMPONENTS[{component!r}]."
+        )
+    catalog = COMPONENTS.get(component, ())
+    catalog_names = {s.name for s in catalog}
+    if metric not in catalog_names:
+        raise ValueError(
+            f"{location} references metric {metric!r} not present in "
+            f"COMPONENTS[{component!r}] (full catalog). Catalog: "
+            f"{sorted(catalog_names)}."
+        )
+
+    if not callable(spec["generator"]):
+        raise ValueError(
+            f"{location} metric={metric!r} has non-callable generator "
+            f"{spec['generator']!r}; expected a callable."
+        )
+
+    time_offset = spec["time_offset"]
+    # ``bool`` is a subclass of ``int`` so ``isinstance(True, (int, float))``
+    # is True; reject it explicitly so a stray boolean doesn't silently
+    # round to row 1.
+    if isinstance(time_offset, bool) or not isinstance(time_offset, (int, float)):
+        raise ValueError(
+            f"{location} metric={metric!r} has time_offset {time_offset!r}; "
+            f"expected int or float seconds from START."
+        )
+    # math.isfinite() converts non-floats to a C double first; an
+    # arbitrarily large Python int can raise OverflowError before the
+    # finiteness check completes. Integers are finite by definition.
+    if isinstance(time_offset, float) and not math.isfinite(time_offset):
+        raise ValueError(
+            f"{location} metric={metric!r} has non-finite time_offset "
+            f"{time_offset!r}; offsets must be finite seconds from START."
+        )
+    # generate_component() does ``time_offset / interval`` (float divide)
+    # at runtime; a Python int that can't be represented as a float would
+    # raise OverflowError there. Reject at import time so the failure
+    # surfaces with the validator's clear ValueError instead of a deep
+    # runtime crash.
+    if isinstance(time_offset, int) and not isinstance(time_offset, bool):
+        try:
+            float(time_offset)
+        except OverflowError:
+            raise ValueError(
+                f"{location} metric={metric!r} has time_offset "
+                f"{time_offset!r} that overflows float representation; "
+                f"offsets are converted to float at runtime."
+            ) from None
+    if time_offset < 0:
+        raise ValueError(
+            f"{location} metric={metric!r} has negative time_offset "
+            f"{time_offset!r}; offsets are seconds from START and must be >= 0."
+        )
+
+    description = spec["description"]
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(
+            f"{location} metric={metric!r} has empty or non-string "
+            f"description {description!r}; manifest rows require a label."
+        )
+
+    if is_cascade:
+        forbidden = [k for k in ("shape", "duration_seconds", "shape_params")
+                     if k in spec]
+        if forbidden:
+            raise ValueError(
+                f"{location} metric={metric!r} declares {forbidden}; cascade "
+                f"specs are single-row step writes and must not carry "
+                f"shape/duration fields. Move shaped behavior into "
+                f"primary_specs."
+            )
+
+    if not is_cascade and "shape" in spec:
+        shape = spec["shape"]
+        if not isinstance(shape, str):
+            raise ValueError(
+                f"{location} metric={metric!r} has non-string shape "
+                f"{shape!r}; expected one of {sorted(_VALID_ANOMALY_SHAPES)}."
+            )
+        if shape not in _VALID_ANOMALY_SHAPES:
+            raise ValueError(
+                f"{location} metric={metric!r} has unsupported shape "
+                f"{shape!r}; expected one of {sorted(_VALID_ANOMALY_SHAPES)}."
+            )
+
+    if not is_cascade and "duration_seconds" in spec:
+        duration = spec["duration_seconds"]
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+            raise ValueError(
+                f"{location} metric={metric!r} has duration_seconds "
+                f"{duration!r}; expected int or float."
+            )
+        # Integers are finite by definition; avoid the C-double conversion
+        # that math.isfinite() does for non-floats (can raise OverflowError
+        # on arbitrarily large Python ints).
+        if isinstance(duration, float) and not math.isfinite(duration):
+            raise ValueError(
+                f"{location} metric={metric!r} has non-finite duration_seconds "
+                f"{duration!r}; expected a finite value."
+            )
+        # Same float-representability check as time_offset: generate_component
+        # / _resolve_anomaly_value cast duration_seconds to float at runtime.
+        if isinstance(duration, int) and not isinstance(duration, bool):
+            try:
+                float(duration)
+            except OverflowError:
+                raise ValueError(
+                    f"{location} metric={metric!r} has duration_seconds "
+                    f"{duration!r} that overflows float representation; "
+                    f"durations are converted to float at runtime."
+                ) from None
+        if duration < 0:
+            raise ValueError(
+                f"{location} metric={metric!r} has negative duration_seconds "
+                f"{duration!r}; duration must be >= 0 (0 means single-row step)."
+            )
+
+    if not is_cascade and "shape_params" in spec:
+        params = spec["shape_params"]
+        if not isinstance(params, dict):
+            raise ValueError(
+                f"{location} metric={metric!r} has shape_params "
+                f"{params!r}; expected a dict."
+            )
+
+    # Generator signature rules. The runtime always calls a generator with
+    # a fixed positional shape determined by the path:
+    #   - Step path (cascades + primary step specs without duration_seconds):
+    #     3-arg ``(ts, col, rng)`` or 2-arg ``(ts, col)``.
+    #   - Span path (primary specs with shape != "step" or
+    #     duration_seconds > 0): 5-arg ``(ts, col, t_within, span_idx, rng)``
+    #     or 2-arg ``(ts, col)``.
+    # The validator must accept only signatures that the runtime can call
+    # without silently misbinding ``t_within``/``span_idx`` to a parameter
+    # the author intended for a different value (most commonly ``rng``).
+    has_shape = spec.get("shape", "step") != "step"
+    # Avoid the float() conversion on raw spec data — an arbitrarily large
+    # int duration_seconds would overflow. Test the raw value's positivity
+    # directly; type/finiteness was already validated above.
+    raw_duration = spec.get("duration_seconds", 0)
+    has_duration = bool(raw_duration) and raw_duration > 0
+    meta = _generator_meta(spec["generator"])
+    # Required keyword-only params can never be supplied by the runtime
+    # (the dispatch path uses positional args only); reject up front.
+    if meta["has_required_kwargs"]:
+        raise ValueError(
+            f"{location} metric={metric!r} has a generator with required "
+            f"keyword-only parameters; generators are called positionally "
+            f"at runtime, so kwarg-only requirements would fail when the "
+            f"spec fires. Provide defaults for keyword-only params, or "
+            f"declare them as positional."
+        )
+    if not meta["inspectable"]:
+        # Can't introspect — trust the caller; the dispatcher's try/except
+        # fallback will handle it at runtime.
+        return
+    target = 5 if (has_shape or has_duration) else 3
+    target_form = (
+        "(ts, col, t_within, span_idx, rng)" if target == 5
+        else "(ts, col, rng)"
+    )
+    path_name = "shape/duration" if (has_shape or has_duration) else "single-row step"
+    required = meta["required_positional"]
+    fixed = meta["fixed_positional_count"]
+    has_var = meta["has_var_positional"]
+    # Mirror the dispatcher logic:
+    #   - if has_var or required == target: dispatcher calls target-arg
+    #   - elif required <= 2: dispatcher calls 2-arg
+    #   - else: no valid dispatch
+    # Safety rules below ensure that whatever shape the dispatcher picks
+    # binds the runtime values to author-intended positions (required
+    # params or *args overflow) and never overwrites a default-having
+    # fixed positional with t_within/span_idx/rng.
+    reject_reason = None
+    if required > target:
+        reject_reason = (
+            f"required_positional={required} > target {target}; no valid "
+            f"dispatch can satisfy this many required params."
+        )
+    elif required != target and required > 2:
+        # required ∈ {3, 4} on span path: dispatcher can't call 2-arg
+        # (would fail required check) or target-arg (would bind t_within
+        # /span_idx to required positional 3/4 — misbind).
+        reject_reason = (
+            f"required_positional={required} is between 2 and target "
+            f"{target}; dispatcher would bind runtime internals to "
+            f"required positions that the author intended for other values."
+        )
+    elif has_var and required <= 2 and fixed > 2:
+        # has_var + default-having fixed positions BEYOND (ts, col).
+        # Dispatcher picks target-arg, fills the default-having fixed
+        # positions with t_within/span_idx/rng before flowing into *args
+        # — overwriting the author's declared defaults.
+        reject_reason = (
+            f"required_positional={required} fixed_positional_count={fixed} "
+            f"with *args: the dispatcher's {target}-arg call would bind "
+            f"runtime internals to default-having fixed positions 3"
+            f"{' through ' + str(min(fixed, target)) if min(fixed, target) > 3 else ''}, "
+            f"overwriting the declared defaults. Move the default-having "
+            f"positions after ``*args`` (kwarg-only with default) or drop them."
+        )
+    # Note: ``required == target and fixed > target`` (e.g. (ts, col, rng,
+    # extra=None) for step) is intentionally accepted. The dispatcher calls
+    # exactly target args, all required positions are bound, and any
+    # trailing optional positions keep their declared defaults — no misbind.
+    elif not has_var and required <= 2 and fixed < 2:
+        # (ts) or () — dispatcher 2-arg call would fail.
+        reject_reason = (
+            f"fixed_positional_count={fixed} < 2; the 2-arg dispatcher "
+            f"call would fail because the generator can't accept 2 args."
+        )
+    if reject_reason is not None:
+        raise ValueError(
+            f"{location} metric={metric!r} has a generator with "
+            f"{reject_reason} {path_name} specs must use either the 2-arg "
+            f"legacy form (ts, col) or the {target}-arg form {target_form}; "
+            f"see CLAUDE.md § Scenario registry for the full dispatch rule."
+        )
+
+
 def _validate_scenarios_registry() -> None:
     """Import-time invariants for ``SCENARIOS``.
 
@@ -2518,10 +3029,14 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].id is {scenario.id!r}; id must equal "
                 f"the registry key"
             )
-        if scenario.severity not in {"low", "medium", "high"}:
+        # isinstance check first so an unhashable malformed value
+        # (e.g., severity=[]) raises ValueError rather than a raw TypeError
+        # from the set membership lookup.
+        if (not isinstance(scenario.severity, str)
+                or scenario.severity not in {"low", "medium", "high"}):
             raise ValueError(
                 f"SCENARIOS[{slug!r}].severity {scenario.severity!r} must be "
-                "one of low / medium / high"
+                "a string in low / medium / high"
             )
         if not isinstance(scenario.days_required, int) or scenario.days_required < 1:
             raise ValueError(
@@ -2535,10 +3050,50 @@ def _validate_scenarios_registry() -> None:
                 f"SCENARIOS[{slug!r}].components_touched contains unknown "
                 f"component(s): {sorted(unknown_touched)}"
             )
+        # Validate each spec first so missing/malformed keys produce a clear
+        # error before we try to read time_offset for the days_required check.
+        valid_severities = {"low", "medium", "high"}
+        for component, spec in scenario.primary_specs:
+            if component not in known_components:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].primary_specs references unknown "
+                    f"component {component!r}"
+                )
+            _validate_scenario_spec(slug, component, spec, is_cascade=False)
+            if "severity" in spec:
+                sev = spec["severity"]
+                if not isinstance(sev, str) or sev not in valid_severities:
+                    raise ValueError(
+                        f"SCENARIOS[{slug!r}].primary_specs entry for component "
+                        f"{component!r} has severity {sev!r}; "
+                        f"must be a string in {sorted(valid_severities)}. "
+                        f"_apply_signal_level_and_count reads spec.get('severity', "
+                        f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                        f"filtered out at every --signal-level."
+                    )
+        for target, cascade in scenario.cascade_specs:
+            if target not in known_components:
+                raise ValueError(
+                    f"SCENARIOS[{slug!r}].cascade_specs targets unknown "
+                    f"component {target!r}"
+                )
+            _validate_scenario_spec(slug, target, cascade, is_cascade=True)
+            if "severity" in cascade:
+                sev = cascade["severity"]
+                if not isinstance(sev, str) or sev not in valid_severities:
+                    raise ValueError(
+                        f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
+                        f"{target!r} has severity {sev!r}; "
+                        f"must be a string in {sorted(valid_severities)}. "
+                        f"_apply_signal_level_and_count reads spec.get('severity', "
+                        f"DEFAULT_SEVERITY), so an unknown value would be silently "
+                        f"filtered out at every --signal-level."
+                    )
         # days_required must equal the day index (1-based) of the earliest
         # time_offset across primary and cascade specs. Setting it too high
         # silently drops in-range specs at the requested --duration-days;
         # too low activates the scenario before any spec is in range.
+        # Spec validation above ensures time_offset is a valid finite numeric.
         offsets = [p["time_offset"] for _, p in scenario.primary_specs]
         offsets += [c["time_offset"] for _, c in scenario.cascade_specs]
         if offsets:
@@ -2570,37 +3125,6 @@ def _validate_scenarios_registry() -> None:
                 f"drops the scenario under a narrow --components allowlist; "
                 f"over-claiming dilutes the filter."
             )
-        valid_severities = {"low", "medium", "high"}
-        for component, spec in scenario.primary_specs:
-            if component not in known_components:
-                raise ValueError(
-                    f"SCENARIOS[{slug!r}].primary_specs references unknown "
-                    f"component {component!r}"
-                )
-            if "severity" in spec and spec["severity"] not in valid_severities:
-                raise ValueError(
-                    f"SCENARIOS[{slug!r}].primary_specs entry for component "
-                    f"{component!r} has severity {spec['severity']!r}; "
-                    f"must be one of {sorted(valid_severities)}. "
-                    f"_apply_signal_level_and_count reads spec.get('severity', "
-                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
-                    f"filtered out at every --signal-level."
-                )
-        for target, cascade in scenario.cascade_specs:
-            if target not in known_components:
-                raise ValueError(
-                    f"SCENARIOS[{slug!r}].cascade_specs targets unknown "
-                    f"component {target!r}"
-                )
-            if "severity" in cascade and cascade["severity"] not in valid_severities:
-                raise ValueError(
-                    f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
-                    f"{target!r} has severity {cascade['severity']!r}; "
-                    f"must be one of {sorted(valid_severities)}. "
-                    f"_apply_signal_level_and_count reads spec.get('severity', "
-                    f"DEFAULT_SEVERITY), so an unknown value would be silently "
-                    f"filtered out at every --signal-level."
-                )
 
 
 _validate_scenarios_registry()
@@ -4532,11 +5056,7 @@ def main(argv=None):
         args.components,
         args.combine,
     )
-    np.random.seed(args.seed)
-
-    # Reset module-level registries so repeated calls (e.g., from tests) don't accumulate.
-    anomalies.clear()
-    cascading_anomalies.clear()
+    ctx = RunContext(rng=np.random.RandomState(args.seed))
 
     # Build component_anomalies and cascading_anomalies entirely from the
     # SCENARIOS registry. _resolve_scenarios() applies the --scenarios /
@@ -4545,16 +5065,16 @@ def main(argv=None):
     # and tail-appends each scenario's primaries and cascades.
     component_anomalies = {name: [] for name in COMPONENTS}
     active_scenarios = _resolve_scenarios(args)
-    _apply_scenarios(component_anomalies, cascading_anomalies, active_scenarios)
+    _apply_scenarios(component_anomalies, ctx.cascading_anomalies, active_scenarios)
 
     effective_specs = _resolve_effective_specs(args.metrics_per_component)
     _filter_anomalies_for_emitted_metrics(
-        component_anomalies, cascading_anomalies, effective_specs
+        component_anomalies, ctx.cascading_anomalies, effective_specs
     )
 
     _apply_signal_level_and_count(
         component_anomalies,
-        cascading_anomalies,
+        ctx.cascading_anomalies,
         signal_level=args.signal_level,
         selected_components=args.components,
         anomaly_count=args.anomaly_count,
@@ -4577,9 +5097,10 @@ def main(argv=None):
                            ts_array=ts_array,
                            ts_strings=ts_strings,
                            emit_metrics="metrics" in args.emit_selection,
-                           dst_inject_day=args.inject_dst_artifact_day)
+                           dst_inject_day=args.inject_dst_artifact_day,
+                           ctx=ctx)
 
-    filtered_anomalies = [a for a in anomalies if a["component"] in args.components]
+    filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 
     # Enrich each manifest entry with ``event_id`` and ``parent_event_id`` before
     # sorting. ``event_id`` is a pure function of the four required fields

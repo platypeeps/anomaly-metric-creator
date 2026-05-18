@@ -529,6 +529,7 @@ def test_unknown_cascade_metric_raises(tmp_path):
             "not_a_db_metric",
             "Typo cascade (test injection)",
             lambda ts, idx: 0.0,
+            cascade_registry=cascade_reg,
         )
 
     m._apply_scenarios = apply_with_typo
@@ -562,8 +563,6 @@ def test_duration_shape_ramp_linear_and_sine(amc, tmp_path):
         },
     ]
 
-    amc.anomalies.clear()
-    amc.cascading_anomalies.clear()
     ts_array, ts_strings = amc._build_timestamp_arrays(40, 1.0)
     amc.generate_component(
         "shape_component",
@@ -575,6 +574,7 @@ def test_duration_shape_ramp_linear_and_sine(amc, tmp_path):
         interval=1.0,
         ts_array=ts_array,
         ts_strings=ts_strings,
+        ctx=amc.RunContext(rng=np.random.RandomState(0)),
     )
     rows, header = read_component_rows(out, "shape_component")
     idx = header.index("m0")
@@ -602,11 +602,9 @@ def test_duration_step_passes_t_within_to_generator(amc, tmp_path):
             "metric": "m0",
             "description": "step span with t",
             "shape": "step",
-            "generator": lambda ts, idx, t: 100.0 + t,
+            "generator": lambda ts, idx, t, s, rng: 100.0 + t,
         }
     ]
-    amc.anomalies.clear()
-    amc.cascading_anomalies.clear()
     ts_array, ts_strings = amc._build_timestamp_arrays(20, 1.0)
     amc.generate_component(
         "step_component",
@@ -618,6 +616,7 @@ def test_duration_step_passes_t_within_to_generator(amc, tmp_path):
         interval=1.0,
         ts_array=ts_array,
         ts_strings=ts_strings,
+        ctx=amc.RunContext(rng=np.random.RandomState(0)),
     )
     rows, header = read_component_rows(out, "step_component")
     idx = header.index("m0")
@@ -651,8 +650,8 @@ def test_multiplier_scales_jitter_variance(amc):
         return np.where(sec < (n_rows // 2), 1.0, 2.0)
 
     spec = amc.MetricSpec(name="m0", base=0.0, std=1.0, multiplier=stepped_multiplier)
-    np.random.seed(1234)
-    col = amc._natural_column(spec, ts_array, elapsed)
+    rng = np.random.RandomState(1234)
+    col = amc._natural_column(spec, ts_array, elapsed, rng)
 
     first = col[: n_rows // 2]
     second = col[n_rows // 2 :]

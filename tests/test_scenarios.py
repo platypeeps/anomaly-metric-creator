@@ -240,6 +240,812 @@ def test_three_multi_day_scenarios_require_multi_day_runs(amc):
 
 
 # ------------------------------------------------------------------
+# Spec-schema validator (_validate_scenario_spec, VER-130)
+# ------------------------------------------------------------------
+def _good_primary_spec():
+    """Well-formed primary spec used as a baseline by validator tests."""
+    return {
+        "time_offset": 60,
+        "metric": "error_rate",
+        "description": "Synthetic baseline spec for validator tests",
+        "generator": lambda ts, idx: 0.5,
+    }
+
+
+def _good_cascade_spec():
+    """Well-formed cascade spec used as a baseline by validator tests."""
+    return {
+        "time_offset": 60,
+        "metric": "error_rate",
+        "description": "Synthetic cascade spec for validator tests",
+        "generator": lambda ts, idx: 0.5,
+    }
+
+
+def test_validate_scenario_spec_happy_path_primary(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = 30
+    spec["shape"] = "ramp_linear"
+    spec["shape_params"] = {"start": 0.1, "end": 0.9}
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_happy_path_cascade(amc):
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", _good_cascade_spec(), is_cascade=True
+    ) is None
+
+
+_RESOLVER_SHAPES = frozenset({
+    "step", "sustained", "ramp_linear", "ramp_exp", "sawtooth", "sine",
+})
+
+
+def _load_vocab_shapes_for_parametrize():
+    """Load _VALID_ANOMALY_SHAPES at pytest collection time so the test
+    below is parametrized over the LIVE vocab rather than a hard-coded
+    list. Adding a shape to _VALID_ANOMALY_SHAPES automatically extends
+    test coverage."""
+    import importlib.util as _u
+    import os as _os
+    script = _os.environ.get(
+        "SCRIPT_PATH",
+        _os.path.join(_os.path.dirname(__file__), "..",
+                      "anomaly-metric-creator.py"),
+    )
+    spec = _u.spec_from_file_location("amc_for_parametrize", script)
+    m = _u.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return sorted(m._VALID_ANOMALY_SHAPES)
+
+
+def test_validate_scenario_spec_valid_anomaly_shapes_constant(amc):
+    """Forward consistency: every shape branch the resolver dispatches on
+    must be present in ``_VALID_ANOMALY_SHAPES``. ``_RESOLVER_SHAPES`` is
+    the test-side ground truth for what branches exist in
+    ``_resolve_anomaly_value``; if a branch is added there, add it here."""
+    assert isinstance(amc._VALID_ANOMALY_SHAPES, frozenset)
+    missing = _RESOLVER_SHAPES - amc._VALID_ANOMALY_SHAPES
+    assert not missing, (
+        f"Resolver shapes {sorted(missing)} are dispatched by "
+        f"_resolve_anomaly_value but missing from _VALID_ANOMALY_SHAPES"
+    )
+
+
+@pytest.mark.parametrize("shape", _load_vocab_shapes_for_parametrize())
+def test_every_valid_shape_is_dispatched_by_resolver(amc, shape):
+    """Reverse consistency: every shape in ``_VALID_ANOMALY_SHAPES`` must be
+    handled by ``_resolve_anomaly_value``. If a future change adds a shape
+    to the vocabulary without wiring it into the resolver, validator would
+    accept specs that fail at runtime with 'Unsupported anomaly shape'.
+    This test fixes that drift by exercising every vocab entry."""
+    assert shape in amc._VALID_ANOMALY_SHAPES
+    import datetime as _dt
+    spec = {
+        "generator": lambda ts, col: 100.0,
+        "shape": shape,
+        "duration_seconds": 10,
+        "shape_params": {"start": 0.0, "end": 1.0, "amplitude": 1.0,
+                         "midline": 0.0, "period_s": 5.0},
+    }
+    # If resolver rejects this shape at runtime, the validator and resolver
+    # have drifted. Any return value is fine; we just must not get the
+    # "Unsupported anomaly shape" ValueError.
+    try:
+        amc._resolve_anomaly_value(spec, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+    except ValueError as e:
+        if "Unsupported anomaly shape" in str(e):
+            pytest.fail(
+                f"Shape {shape!r} is in _VALID_ANOMALY_SHAPES but the resolver "
+                f"raises 'Unsupported anomaly shape' — vocabulary and resolver "
+                f"have drifted. Wire {shape!r} into _resolve_anomaly_value or "
+                f"remove it from the vocab."
+            )
+        raise
+
+
+@pytest.mark.parametrize(
+    "missing_key", ["time_offset", "metric", "description", "generator"]
+)
+def test_validate_scenario_spec_missing_required_key(amc, missing_key):
+    spec = _good_primary_spec()
+    del spec[missing_key]
+    with pytest.raises(ValueError, match=missing_key) as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    assert "test_slug" in str(excinfo.value)
+
+
+def test_validate_scenario_spec_unknown_metric(amc):
+    spec = _good_primary_spec()
+    spec["metric"] = "this_metric_does_not_exist"
+    with pytest.raises(ValueError, match="this_metric_does_not_exist") as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    msg = str(excinfo.value)
+    assert "test_slug" in msg
+    assert "apigateway" in msg
+
+
+def test_validate_scenario_spec_unknown_metric_on_cascade(amc):
+    spec = _good_cascade_spec()
+    spec["metric"] = "ghost_metric"
+    with pytest.raises(ValueError, match="ghost_metric"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=True)
+
+
+def test_validate_scenario_spec_non_callable_generator(amc):
+    spec = _good_primary_spec()
+    spec["generator"] = 42
+    with pytest.raises(ValueError, match="generator") as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    assert "test_slug" in str(excinfo.value)
+
+
+def test_validate_scenario_spec_negative_time_offset(amc):
+    spec = _good_primary_spec()
+    spec["time_offset"] = -1
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_numeric_time_offset(amc):
+    spec = _good_primary_spec()
+    spec["time_offset"] = "5"
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_boolean_time_offset_rejected(amc):
+    """True/False are int subclasses; the validator must reject them so a
+    stray boolean doesn't silently round to row 1."""
+    spec = _good_primary_spec()
+    spec["time_offset"] = True
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+@pytest.mark.parametrize("bad_offset", [float("nan"), float("inf"), float("-inf")])
+def test_validate_scenario_spec_non_finite_time_offset_rejected(amc, bad_offset):
+    """NaN and infinities must be rejected; they'd crash row-index conversion at runtime."""
+    spec = _good_primary_spec()
+    spec["time_offset"] = bad_offset
+    with pytest.raises(ValueError, match="time_offset"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_empty_description(amc):
+    spec = _good_primary_spec()
+    spec["description"] = ""
+    with pytest.raises(ValueError, match="description"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_string_description(amc):
+    spec = _good_primary_spec()
+    spec["description"] = 12345
+    with pytest.raises(ValueError, match="description"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_unknown_shape(amc):
+    spec = _good_primary_spec()
+    spec["shape"] = "explode"
+    with pytest.raises(ValueError, match="explode") as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    msg = str(excinfo.value)
+    for valid_shape in ("step", "sustained", "ramp_linear"):
+        assert valid_shape in msg
+
+
+def test_validate_scenario_spec_non_numeric_duration(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = "60"
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_boolean_duration_rejected(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = True
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+@pytest.mark.parametrize("bad_dur", [float("nan"), float("inf"), float("-inf")])
+def test_validate_scenario_spec_non_finite_duration_rejected(amc, bad_dur):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = bad_dur
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_negative_duration_rejected(amc):
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = -1
+    with pytest.raises(ValueError, match="duration_seconds"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_string_shape_rejected(amc):
+    """Non-string shape must raise ValueError, not TypeError on unhashable lookup."""
+    spec = _good_primary_spec()
+    spec["shape"] = ["sustained"]
+    with pytest.raises(ValueError, match="shape"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_three_arg_generator_with_shape_rejected(amc):
+    """3-arg (ts, col, rng) generators are step-only; using one with a shape
+    spec would silently pass t_within as rng. Validator must reject."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng: 1.0
+    with pytest.raises(ValueError, match="required_positional=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_three_arg_generator_with_duration_rejected(amc):
+    """A 3-arg generator with duration_seconds > 0 hits the span path; reject."""
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng: 1.0
+    with pytest.raises(ValueError, match="required_positional=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_three_arg_generator_step_only_allowed(amc):
+    """3-arg (ts, col, rng) generators are allowed on plain step specs."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, idx, rng: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_five_arg_generator_with_shape_allowed(amc):
+    """5-arg form is the canonical signature for shape/duration specs."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, t_within, span_idx, rng: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_non_dict_rejected(amc):
+    """A None or non-dict spec must produce a ValueError, not a raw TypeError."""
+    with pytest.raises(ValueError, match="not a dict"):
+        amc._validate_scenario_spec("test_slug", "apigateway", None, is_cascade=False)
+
+
+def test_validate_scenario_spec_non_string_metric_rejected(amc):
+    """Unhashable metric values would raise TypeError on catalog lookup; must ValueError first."""
+    spec = _good_primary_spec()
+    spec["metric"] = ["error_rate"]
+    with pytest.raises(ValueError, match="non-string metric"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_step_path_rejects_one_arg(amc):
+    """Plain step specs need at least 2 positional params; (ts) fails."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts: 1.0
+    with pytest.raises(ValueError, match="fixed_positional_count=1"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_step_path_rejects_four_arg(amc):
+    """4 required positional > step target 3."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, idx, t, s: 1.0
+    with pytest.raises(ValueError, match="required_positional=4"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_step_path_rejects_five_arg(amc):
+    """5-arg generators belong on shape/duration specs, not the step path."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, idx, t, s, rng: 1.0
+    with pytest.raises(ValueError, match="required_positional=5"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_cascade_rejects_wrong_arity(amc):
+    """Cascades use the step path; only 2-arg or 3-arg generators are valid."""
+    spec = _good_cascade_spec()
+    spec["generator"] = lambda ts, idx, t, s, rng: 1.0
+    with pytest.raises(ValueError, match="required_positional=5"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=True)
+
+
+def test_validate_scenario_spec_kwargs_does_not_bypass_arity(amc):
+    """**kwargs does not add positional capacity; a (ts, col, rng, **kw)
+    generator on a shape spec must still be rejected as 3-positional."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng, **kw: 1.0
+    with pytest.raises(ValueError, match="required_positional=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_var_args_safe_prefix_accepted(amc):
+    """*args with a safe 2-arg fixed prefix (ts, idx, *args) on a span spec
+    is valid: the dispatcher calls 5-arg, ts/idx bind to the first 2 fixed
+    positionals, and *args absorbs t_within/span_idx/rng."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, *args: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_var_args_unsafe_prefix_rejected_span(amc):
+    """*args with 3-arg fixed prefix (ts, idx, rng, *args) on a span spec
+    is REJECTED — the 5-arg dispatcher would bind t_within to the 3rd
+    fixed positional (named rng), the exact misbind the validator is
+    meant to catch."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, idx, rng, *args: 1.0
+    with pytest.raises(ValueError, match="required_positional=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_var_args_four_arg_prefix_rejected_step(amc):
+    """*args with a 4-arg fixed prefix (a, b, c, d, *args) on a step spec
+    must be rejected — the 3-arg dispatcher call cannot satisfy
+    required=4."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda a, b, c, d, *args: 1.0
+    with pytest.raises(ValueError, match="required_positional=4"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_var_args_default_prefix_rejected_step(amc):
+    """(ts, col, scale=1.0, *args) on step path: required=2, fixed=3, has_var.
+    Dispatcher would call 3-arg and overwrite the scale default with rng.
+    Misbind — reject."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, col, scale=1.0, *args: 1.0
+    with pytest.raises(ValueError, match="fixed_positional_count=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_var_args_default_prefix_rejected_span(amc):
+    """(ts, col, scale=1.0, *args) on span path: required=2, fixed=3, has_var.
+    Dispatcher would call 5-arg and overwrite the scale default with t_within.
+    Misbind — reject."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, scale=1.0, *args: 1.0
+    with pytest.raises(ValueError, match="fixed_positional_count=3"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_huge_int_time_offset_rejected(amc):
+    """A Python int that overflows float representation is now rejected at
+    import time — generate_component does `time_offset / interval` (float
+    divide) at runtime, which would raise OverflowError there. Reject up
+    front with the validator's clear ValueError."""
+    spec = _good_primary_spec()
+    spec["time_offset"] = 10 ** 400
+    with pytest.raises(ValueError, match="overflows float"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_huge_int_duration_rejected(amc):
+    """Same float-overflow rejection for duration_seconds."""
+    spec = _good_primary_spec()
+    spec["duration_seconds"] = 10 ** 400
+    with pytest.raises(ValueError, match="overflows float"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_step_dispatcher_rejects_var_args_with_default_prefix(amc):
+    """Direct callers of generate_component bypass the validator. The
+    dispatcher itself must refuse the *args+default-prefix misbind case
+    (e.g., (ts, col, scale=1.0, *args)) so unvalidated callers can't
+    silently bind the RNG to the scale parameter."""
+    def bad(ts, col, scale=1.0, *args):
+        return 1.0
+    import datetime as _dt
+    spec = {"generator": bad}
+    with pytest.raises(TypeError, match="fixed_positional_count"):
+        amc._resolve_anomaly_value(spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, None)
+
+
+def test_span_dispatcher_rejects_var_args_with_default_prefix(amc):
+    """Same defensive check on the span path."""
+    def bad(ts, col, scale=1.0, *args):
+        return 1.0
+    import datetime as _dt
+    with pytest.raises(TypeError, match="fixed_positional_count"):
+        amc._call_generator_within_span(bad, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+
+
+def test_span_dispatcher_rejects_var_args_with_required_misbind(amc):
+    """Span path required==3 with *args is a required-misbind, not a
+    default-overwrite. (ts, col, rng, *args) would have t_within bound to
+    the required rng slot. The dispatcher must defensively refuse, even
+    though the validator should have caught this at import time."""
+    def bad(ts, col, rng, *args):
+        return 1.0
+    import datetime as _dt
+    with pytest.raises(TypeError, match="required_positional=3"):
+        amc._call_generator_within_span(bad, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+
+
+def test_span_dispatcher_accepts_var_args_with_required_target(amc):
+    """The canonical required-target+*args form is safe: positions 1-5
+    fill required, *args stays empty. Don't reject."""
+    seen = []
+    def gen(ts, col, t_within, span_idx, rng, *args):
+        seen.append((t_within, span_idx, rng, args))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker")
+    assert seen == [(7.5, 3, "rng-marker", ())]
+
+
+
+
+def test_validate_scenario_spec_canonical_required_with_trailing_optional_step(amc):
+    """Step spec with (ts, col, rng, extra=None): required=3, fixed=4.
+    Dispatcher calls 3-arg (required==target), all required positions
+    bind correctly, ``extra`` keeps its default. No misbind — accept."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, col, rng, extra=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_canonical_required_with_trailing_optional_span(amc):
+    """Span spec with (ts, col, t_within, span_idx, rng, extra=None):
+    required=5, fixed=6. Dispatcher calls 5-arg, all required bind,
+    ``extra`` keeps default. No misbind — accept."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, t_within, span_idx, rng, extra=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_default_positional_accepted_step(amc):
+    """Step spec with (ts, col, rng=None, extra=None): required=2, max=4.
+    Validator accepts. At runtime the required-based step dispatcher will
+    call this generator with just (ts, col) — both rng and extra keep
+    their declared defaults — because required_positional is 2."""
+    spec = _good_primary_spec()
+    spec["generator"] = lambda ts, col, rng=None, extra=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_default_positional_accepted_span(amc):
+    """Span spec with (ts, col, t=0, s=0, rng=None): required=2, max=5.
+    Validator accepts. At runtime the required-based span dispatcher will
+    call this generator with just (ts, col) — t/s/rng keep their declared
+    defaults — because required_positional is 2."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, t=0.0, s=0, rng=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_validate_scenario_spec_partial_default_positional_accepted_span(amc):
+    """Span spec with (ts, col, rng=None): required=2, fixed=3, no *args.
+    Under the required-based dispatch contract introduced in pass 6, the
+    span dispatcher calls this generator with 2 args (required=2), so the
+    rng=None default is preserved — no misbind risk. The validator accepts
+    it. Authors who actually need the RNG must declare required=5 or
+    use (ts, col, *args)."""
+    spec = _good_primary_spec()
+    spec["shape"] = "sustained"
+    spec["duration_seconds"] = 30
+    spec["generator"] = lambda ts, col, rng=None: 1.0
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_step_dispatcher_does_not_bind_rng_to_optional_third_arg(amc):
+    """Required-based dispatch: a (ts, col, scale=1.0) step generator
+    has required=2, so the dispatcher calls it 2-arg and ``scale`` keeps
+    its default. The previous callability-based dispatch would have
+    called 3-arg and silently bound the RNG object to ``scale``."""
+    seen = []
+    def gen(ts, col, scale=1.0):
+        seen.append(scale)
+        return 1.0
+    import datetime as _dt
+    spec = {"generator": gen}
+    amc._resolve_anomaly_value(
+        spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, "rng-marker"
+    )
+    assert seen == [1.0], (
+        "scale must keep its default 1.0; the dispatcher must not bind the "
+        "RNG object to an optional 3rd positional named scale"
+    )
+
+
+def test_span_dispatcher_does_not_bind_runtime_internals_to_optional_positions(amc):
+    """Required-based dispatch on span path: a generator with
+    (ts, col, scale=1.0, factor=2.0, baseline=0.0) has required=2, so the
+    dispatcher calls it 2-arg. Defaults for scale/factor/baseline are
+    preserved instead of being overwritten by t_within/span_idx/rng."""
+    seen = []
+    def gen(ts, col, scale=1.0, factor=2.0, baseline=0.0):
+        seen.append((scale, factor, baseline))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(
+        gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker"
+    )
+    assert seen == [(1.0, 2.0, 0.0)], (
+        "scale/factor/baseline must keep their defaults; dispatcher must "
+        "not bind t_within/span_idx/rng to optional positions"
+    )
+
+
+def test_step_dispatcher_calls_three_arg_when_required(amc):
+    """Generator with required=3 (canonical step rng form) gets 3-arg call."""
+    seen = []
+    def gen(ts, col, rng):
+        seen.append(rng)
+        return 1.0
+    import datetime as _dt
+    spec = {"generator": gen}
+    amc._resolve_anomaly_value(spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, "rng-marker")
+    assert seen == ["rng-marker"]
+
+
+def test_span_dispatcher_calls_five_arg_when_required(amc):
+    """Generator with required=5 (canonical span form) gets 5-arg call."""
+    seen = []
+    def gen(ts, col, t_within, span_idx, rng):
+        seen.append((t_within, span_idx, rng))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker")
+    assert seen == [(7.5, 3, "rng-marker")]
+
+
+def test_validate_scenarios_registry_rejects_unhashable_scenario_severity(amc):
+    """An unhashable Scenario.severity (e.g., []) must raise the validator's
+    ValueError, not a raw TypeError from set-membership lookup."""
+    scenario = amc.Scenario(
+        id="__t__", name="t", severity=[],  # unhashable
+        days_required=1, category="t", components_touched=("apigateway",),
+        primary_specs=(("apigateway", {
+            "time_offset": 60, "metric": "error_rate",
+            "description": "x", "generator": lambda ts, idx: 0.0,
+        }),),
+        cascade_specs=(),
+    )
+    original = amc.SCENARIOS.copy()
+    amc.SCENARIOS["__t__"] = scenario
+    try:
+        with pytest.raises(ValueError, match="severity"):
+            amc._validate_scenarios_registry()
+    finally:
+        amc.SCENARIOS.clear()
+        amc.SCENARIOS.update(original)
+
+
+def test_generate_component_requires_ctx(amc, tmp_path):
+    """generate_component() must require ctx= so a caller can never
+    silently lose ctx.anomalies / ctx.cascading_anomalies into a private
+    discarded RunContext."""
+    specs = [amc.MetricSpec(name="m0", base=10.0, std=0.0)]
+    ts_array, ts_strings = amc._build_timestamp_arrays(5, 1.0)
+    out = tmp_path / "ctx_required"
+    out.mkdir()
+    with pytest.raises(TypeError, match="ctx"):
+        amc.generate_component(
+            "x", specs, [], base_dir=out, total_seconds=5,
+            drop_rate=0.0, interval=1.0,
+            ts_array=ts_array, ts_strings=ts_strings,
+        )
+
+
+def test_validate_scenarios_registry_rejects_unhashable_severity_primary(amc):
+    """A primary spec with unhashable severity (e.g., []) must raise
+    ValueError, not a raw TypeError from set membership lookup."""
+    spec = {
+        "time_offset": 60, "metric": "error_rate",
+        "description": "x", "generator": lambda ts, idx: 0.0,
+        "severity": [],  # unhashable
+    }
+    scenario = amc.Scenario(
+        id="__t__", name="t", severity="low", days_required=1,
+        category="t", components_touched=("apigateway",),
+        primary_specs=(("apigateway", spec),),
+        cascade_specs=(),
+    )
+    original = amc.SCENARIOS.copy()
+    amc.SCENARIOS["__t__"] = scenario
+    try:
+        with pytest.raises(ValueError, match="severity"):
+            amc._validate_scenarios_registry()
+    finally:
+        amc.SCENARIOS.clear()
+        amc.SCENARIOS.update(original)
+
+
+def test_validate_scenarios_registry_rejects_unhashable_severity_cascade(amc):
+    """Same protection on cascade severity."""
+    cascade = {
+        "time_offset": 60, "metric": "error_rate",
+        "description": "x", "generator": lambda ts, idx: 0.0,
+        "severity": [],  # unhashable
+    }
+    scenario = amc.Scenario(
+        id="__t__", name="t", severity="low", days_required=1,
+        category="t", components_touched=("apigateway",),
+        primary_specs=(),
+        cascade_specs=(("apigateway", cascade),),
+    )
+    original = amc.SCENARIOS.copy()
+    amc.SCENARIOS["__t__"] = scenario
+    try:
+        with pytest.raises(ValueError, match="severity"):
+            amc._validate_scenarios_registry()
+    finally:
+        amc.SCENARIOS.clear()
+        amc.SCENARIOS.update(original)
+
+
+def test_uninspectable_callable_span_dispatch_skips_intermediate_arities(amc):
+    """When inspect.signature() fails, the span dispatcher must attempt only
+    the two canonical shapes (5-arg then 2-arg) — never an intermediate
+    4- or 3-arg call that could silently misbind t_within/span_idx."""
+    import datetime as _dt
+    arities_tried = []
+    class HiddenSig:
+        """Callable whose signature cannot be introspected."""
+        def __call__(self, *args):
+            arities_tried.append(len(args))
+            if len(args) == 5:
+                raise TypeError("simulate 5-arg refusal")
+            if len(args) == 2:
+                return 1.0
+            raise TypeError(f"unexpected arity {len(args)}")
+        # Hide signature from inspect.signature.
+        __signature__ = property(lambda self: (_ for _ in ()).throw(ValueError("hidden")))
+
+    gen = HiddenSig()
+    amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+    # Must have attempted 5 (failed), then 2 (succeeded); never 3 or 4.
+    assert arities_tried == [5, 2], (
+        f"Uninspectable span dispatch must try only [5, 2]; got {arities_tried}"
+    )
+
+
+def test_validate_scenario_spec_required_kwarg_only_rejected(amc):
+    """Generators with required keyword-only params cannot be called by
+    positional dispatch; the validator must reject them."""
+    def gen(ts, col, *, rng):
+        return 1.0
+    spec = _good_primary_spec()
+    spec["generator"] = gen
+    with pytest.raises(ValueError, match="keyword-only"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+def test_validate_scenario_spec_keyword_only_with_default_allowed(amc):
+    """Keyword-only params with defaults don't block positional dispatch."""
+    def gen(ts, col, *, scale=1.0):
+        return 1.0 * scale
+    spec = _good_primary_spec()
+    spec["generator"] = gen
+    assert amc._validate_scenario_spec(
+        "test_slug", "apigateway", spec, is_cascade=False
+    ) is None
+
+
+def test_call_generator_within_span_dispatch_by_arity(amc):
+    """_call_generator_within_span dispatches by inspected callability, not
+    by catching TypeError. A 5-arg generator that raises TypeError
+    internally must not be retried with fewer args (which would hide the
+    error and duplicate any side effects)."""
+    calls = []
+    def buggy_five_arg(ts, col, t_within, span_idx, rng):
+        calls.append((ts, col, t_within, span_idx, rng))
+        raise TypeError("internal bug — must not be swallowed")
+    import datetime as _dt
+    with pytest.raises(TypeError, match="internal bug"):
+        amc._call_generator_within_span(buggy_five_arg, _dt.datetime(2026,1,1), 0, 1.0, 0, None)
+    assert len(calls) == 1, "Generator must be called exactly once, not retried with shorter forms"
+
+
+def test_call_generator_within_span_var_args_picks_five_arg(amc):
+    """*args generators get called with the 5-arg form (highest info)."""
+    recorded = []
+    def gen(*args):
+        recorded.append(len(args))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(gen, _dt.datetime(2026,1,1), 0, 2.0, 1, "rng-marker")
+    assert recorded == [5]
+
+
+def test_call_generator_within_span_unhashable_callable(amc):
+    """Unhashable callables (e.g., mutable callable instances) must not crash
+    the cache lookup; introspection falls back to uncached path."""
+    class UnhashableCallable:
+        __hash__ = None
+        def __call__(self, ts, col, t_within, span_idx, rng):
+            return 42.0
+    gen = UnhashableCallable()
+    import datetime as _dt
+    result = amc._call_generator_within_span(gen, _dt.datetime(2026,1,1), 0, 0.0, 0, None)
+    assert result == 42.0
+
+
+def test_resolve_anomaly_value_step_path_does_not_retry_on_internal_typeerror(amc):
+    """The step path in _resolve_anomaly_value must dispatch by arity, not
+    catch a 3-arg generator's internal TypeError and retry as 2-arg."""
+    calls = []
+    def buggy_three_arg(ts, col, rng):
+        calls.append((ts, col, rng))
+        raise TypeError("internal bug in step generator")
+    import datetime as _dt
+    spec = {"generator": buggy_three_arg}
+    with pytest.raises(TypeError, match="internal bug"):
+        amc._resolve_anomaly_value(spec, _dt.datetime(2026,1,1), 0, 0.0, 0, None)
+    assert len(calls) == 1
+
+
+def test_validate_scenario_spec_non_dict_shape_params(amc):
+    spec = _good_primary_spec()
+    spec["shape_params"] = [1, 2, 3]
+    with pytest.raises(ValueError, match="shape_params"):
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+
+
+@pytest.mark.parametrize(
+    "forbidden_key,forbidden_value",
+    [
+        ("shape", "step"),
+        ("duration_seconds", 60),
+        ("shape_params", {"start": 0.1, "end": 0.9}),
+    ],
+)
+def test_validate_scenario_spec_cascade_rejects_shape_keys(
+    amc, forbidden_key, forbidden_value
+):
+    spec = _good_cascade_spec()
+    spec[forbidden_key] = forbidden_value
+    with pytest.raises(ValueError, match=forbidden_key) as excinfo:
+        amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=True)
+    msg = str(excinfo.value)
+    assert "test_slug" in msg
+    assert "cascade" in msg.lower()
+
+
+def test_validate_scenarios_registry_walks_every_spec(amc):
+    """Live registry must satisfy the new schema checks today. If this
+    breaks, the offending spec needs fixing in SCENARIOS, not the validator.
+    """
+    amc._validate_scenarios_registry()
+
+
+# ------------------------------------------------------------------
 # CLI flag parsing — case-insensitive variants live in test_args.py
 # ------------------------------------------------------------------
 def test_parse_args_scenarios_default_is_all(amc):

@@ -23,8 +23,9 @@ def test_import_does_not_run_generation(tmp_path):
         "spec = importlib.util.spec_from_file_location('amc', os.environ['SCRIPT_PATH'])\n"
         "m = importlib.util.module_from_spec(spec)\n"
         "spec.loader.exec_module(m)\n"
-        "assert m.anomalies == [], 'anomalies registry populated on import'\n"
-        "assert m.cascading_anomalies == {}, 'cascading registry populated on import'\n"
+        "assert hasattr(m, 'RunContext'), 'RunContext not defined after import'\n"
+        "assert not hasattr(m, 'anomalies'), 'module-level anomalies list should not exist'\n"
+        "assert not hasattr(m, 'cascading_anomalies'), 'module-level cascading_anomalies should not exist'\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", script],

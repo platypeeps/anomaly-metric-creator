@@ -113,11 +113,16 @@ Anomaly specs are dicts with:
 Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.
 
-Cascade specs use `register_cascade(target_component, time_offset, metric, description,
-generator)` internally and simulate blast radius (auth → gateway, cache → DB,
-DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Cascades are single-row step writes
-only — express ramps/sustained spans as primary specs in `primary_specs`, not in
-`cascade_specs`.
+Production code does not call `register_cascade()`: `_apply_scenarios()` reads
+each scenario's `cascade_specs` and appends them directly into the per-run
+`RunContext.cascading_anomalies` dict. The `register_cascade(target_component,
+time_offset, metric, description, generator, *, cascade_registry=…)` helper
+exists for tests that need to build a cascade registry without composing a full
+`Scenario`; callers must pass `cascade_registry=` explicitly (the module-level
+registry was removed in VER-131). Cascades simulate blast radius (auth →
+gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Cascades
+are single-row step writes only — express ramps/sustained spans as primary
+specs in `primary_specs`, not in `cascade_specs`.
 
 ### Scenario registry
 
@@ -145,11 +150,82 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
   `cascade_dict` has `time_offset`, `metric`, `description`, and `generator`
   (no `shape`/`shape_params` — cascades are single-row steps).
 
+Every primary and cascade spec is schema-checked at import time by
+`_validate_scenario_spec()` (called from `_validate_scenarios_registry`):
+required keys present, `metric` in the full `COMPONENTS[component]` catalog,
+`generator` callable, `time_offset` a finite non-negative non-bool
+`int`/`float`, `description` a non-empty string, `shape` a string in
+`_VALID_ANOMALY_SHAPES`, `duration_seconds` a finite non-negative non-bool
+numeric, `shape_params` a dict; cascade specs reject
+`shape`/`duration_seconds`/`shape_params` outright.
+
+Generator dispatch rule: the runtime calls each generator with one of
+two canonical positional shapes per path, chosen by the generator's
+**required** positional count (defaults extend capacity but do not change
+the call shape):
+
+- **Step path** (cascades + primary step specs without positive
+  `duration_seconds`; note: a spec with `duration_seconds == 0` is still
+  the step path):
+  - `required_positional == 3` → call as `(ts, col, rng)`
+  - `required_positional <= 2` → call as `(ts, col)`; any default
+    positional params keep their declared defaults
+  - `*args` with `fixed_positional_count <= 2` → call as
+    `(ts, col, rng)` (`*args` absorbs position 3)
+  - `*args` with `fixed_positional_count == 3` and
+    `required_positional == 3` (i.e. `(ts, col, rng, *args)`) → call as
+    `(ts, col, rng)` (positions 1–3 fill required, `*args` empty)
+- **Span path** (primary specs with `shape != "step"` or
+  positive `duration_seconds`):
+  - `required_positional == 5` → call as
+    `(ts, col, t_within, span_idx, rng)`
+  - `required_positional <= 2` → call as `(ts, col)`; any default
+    positional params keep their declared defaults
+  - `*args` with `fixed_positional_count <= 2` → call as
+    `(ts, col, t_within, span_idx, rng)` (`*args` absorbs positions 3–5)
+  - `*args` with `fixed_positional_count == 5` and
+    `required_positional == 5` → call as
+    `(ts, col, t_within, span_idx, rng)`
+
+`*args` is rejected when its fixed-positional prefix would cause a
+silent misbind. Two distinct misbind cases the validator and
+dispatchers both reject:
+
+- **Default-overwrite case** — `required_positional <= 2` with
+  `fixed_positional_count > 2`. Example: `(ts, col, scale=1.0, *args)`
+  on either path. The target-arity call would overwrite the author's
+  declared default at position 3 (step) or positions 3–min(fixed,5)
+  (span) before the rest flows into `*args`.
+- **Required-misbind case** (span path only) — `required_positional`
+  in `{3, 4}` with `*args`. Example: `(ts, col, rng, *args)` on a span
+  spec. The 5-arg call would bind `t_within` into the required `rng`
+  slot. (Step path with `required_positional == 3` is the canonical
+  shape, so this case only applies to span.)
+
+Move any extra parameters after `*args` (kwarg-only with defaults)
+instead.
+
+Intermediate 3- and 4-arg span calls and 3-arg span calls for non-`*args`
+generators are never attempted: those shapes were the silent-misbind
+vector (a primary spec like `(ts, col, rng)` on a span path would have
+had `t_within` bound to its `rng` parameter). The validator's
+generator-arity rule rejects any generator whose required positional
+count is incompatible with the path's two canonical shapes; see
+`_validate_scenario_spec` for the full rule and the corresponding tests
+in `tests/test_scenarios.py`.
+
 `_resolve_scenarios()` applies the resolution pipeline:
 allowlist (`--scenarios`) → exclusion (`--exclude-scenarios`) → severity filter
 (`--signal-level`) → duration filter (`--duration-days`) → component filter
 (`--components`). Scenarios dropped by severity or duration emit a stderr WARNING;
 scenarios excluded silently by the component filter produce no output.
+
+**RNG**: The RNG is an `np.random.RandomState(seed)` instance created in `main()` and
+carried as `RunContext.rng`, passed explicitly through `generate_component()`,
+`_natural_column()`, and the anomaly override path. Draw order is identical to the
+former global `np.random.seed()` + module-level functions (MT19937 + Box-Muller), so
+no locked SHA-256 hashes changed. The module-level `anomalies` list and
+`cascading_anomalies` dict have been removed; all per-run state lives in `RunContext`.
 
 **RNG ordering invariant (with tiebreaker caveat)**: `generate_component()` calls
 Python's stable `sorted()` on override specs with key `(row_idx, metric_name)`. For
@@ -268,14 +344,35 @@ reference it in `primary_specs` or `cascade_specs`, and list it in
 
 Validation is split across import time and the test suite:
 
-- **Import time** rejects key drift between `COMPONENTS` and
-  `DEFAULT_METRICS_PER_COMPONENT`, any catalog longer than `MAX_METRICS_PER_COMPONENT`,
-  any default count outside `[1, len(catalog)]`, any scenario referencing a
-  non-existent component, any `days_required` that does not equal the day index
-  (1-based) of the earliest spec offset, and any `components_touched` tuple
-  that does not equal the set of components actually referenced by the
-  scenario's primary and cascade specs. These raise a clear `ValueError`
-  before `main()` runs.
+- **Import time** rejects:
+  - Key drift between `COMPONENTS` and `DEFAULT_METRICS_PER_COMPONENT`.
+  - Any catalog longer than `MAX_METRICS_PER_COMPONENT`.
+  - Any default count outside `[1, len(catalog)]`.
+  - Any scenario referencing a non-existent component.
+  - Any `days_required` that does not equal the day index (1-based) of
+    the earliest spec offset.
+  - Any `components_touched` tuple that does not equal the set of
+    components actually referenced by the scenario's primary and
+    cascade specs.
+  - Any non-string severity, or severity outside `{low, medium, high}`,
+    on a scenario, primary spec, or cascade spec.
+  - **Per-spec schema drift** (via `_validate_scenario_spec`): non-dict
+    specs; missing required keys (`time_offset`, `metric`, `description`,
+    `generator`); non-string or unknown metric (rejected against the
+    full `COMPONENTS[component]` catalog, not the trimmed default); non-
+    callable generator; non-finite, non-numeric, negative, or boolean
+    `time_offset`; non-string or empty `description`; non-string or
+    unknown `shape`; non-numeric, non-finite, negative, or boolean
+    `duration_seconds`; non-dict `shape_params`; cascade specs
+    declaring `shape`/`duration_seconds`/`shape_params`.
+  - **Generator arity drift** (also via `_validate_scenario_spec`):
+    generators with required keyword-only parameters; generators whose
+    `required_positional` / `max_positional` shape doesn't match the
+    canonical 2-arg or path-target form (3 for step, 5 for span) per
+    the dispatch rule above.
+
+  All of these raise a clear `ValueError` naming the scenario slug and
+  the offending field before `main()` runs.
 - **Test suite only.** Drift between `COMPONENTS` and `COMPONENT_FIELDS` /
   `DEFAULT_METRIC_COUNT` is caught only by the test suite. Run it after adding or
   modifying a component — don't rely on import-time validation alone.
