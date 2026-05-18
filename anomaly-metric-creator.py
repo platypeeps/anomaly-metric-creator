@@ -3472,8 +3472,10 @@ def parse_args(argv=None):
         "--emit-selection",
         type=str,
         default="metrics,logs,traces",
-        help="Comma-separated artifact selection: metrics, logs, traces "
-             "(default: metrics,logs,traces).",
+        help="Comma-separated artifact selection: metrics, logs, traces, "
+             "gauges (default: metrics,logs,traces). 'gauges' writes a "
+             "long-form gauges.csv (timestamp,component,metric,value) "
+             "alongside the per-component CSVs and requires 'metrics'.",
     )
     p.add_argument(
         "--components",
@@ -3727,15 +3729,21 @@ def parse_args(argv=None):
         p.error(f"--inject-dst-artifact-day {args.inject_dst_artifact_day} "
                 f"is outside the configured --duration-days {args.duration_days}")
     selected = {item.strip().lower() for item in args.emit_selection.split(",") if item.strip()}
-    allowed = {"metrics", "logs", "traces"}
+    allowed = {"metrics", "logs", "traces", "gauges"}
     invalid = sorted(selected - allowed)
     if invalid:
         p.error("--emit-selection contains invalid value(s): "
-                f"{', '.join(invalid)}. Allowed: metrics,logs,traces")
+                f"{', '.join(invalid)}. Allowed: metrics,logs,traces,gauges")
     if not selected:
-        p.error("--emit-selection must contain at least one of metrics,logs,traces")
+        p.error("--emit-selection must contain at least one of metrics,logs,traces,gauges")
     if args.combine and "metrics" not in selected:
         p.error("--combine requires --emit-selection to include metrics")
+    # ``gauges`` is derived from the per-component CSVs written under
+    # ``metrics`` (same input as the OTEL gauge stream). Without ``metrics``,
+    # the per-component CSVs are not written this run, so we have nothing to
+    # derive ``gauges.csv`` from. Reject up-front with a clear message.
+    if "gauges" in selected and "metrics" not in selected:
+        p.error("--emit-selection 'gauges' requires --emit-selection to include 'metrics'")
     if args.otel_enabled and not any([
         args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint
     ]):
@@ -3750,19 +3758,29 @@ def parse_args(argv=None):
                     "(via flag or MEZMO_OTEL_METRICS_ENDPOINT)")
         if "metrics" not in selected:
             p.error("--otel-emit-gauges requires --emit-selection to include 'metrics'")
-        # The gauge streamer feeds per-component CSVs into ``heapq.merge``,
-        # which requires each input iterator to be sorted by the timestamp
-        # key. ``--inject-dst-artifact-day`` deliberately duplicates the
-        # 02:00–02:59 wall-clock hour inside each CSV (see
-        # ``_splice_dst_artifact``), producing non-monotonic timestamps that
-        # silently break batching and OTLP payloads. Reject the combination
-        # at parse time — real OTLP consumers wouldn't tolerate the artifact
-        # either, so there's no realistic user for it.
-        if args.inject_dst_artifact_day > 0:
-            p.error("--otel-emit-gauges is incompatible with --inject-dst-artifact-day "
-                    "(the DST artifact produces non-monotonic CSV timestamps that break "
-                    "the gauge streamer's heapq.merge); pass --inject-dst-artifact-day 0 "
-                    "or drop --otel-emit-gauges")
+    # Both gauge paths (``--otel-emit-gauges`` and ``--emit-selection gauges``)
+    # feed per-component CSVs into ``heapq.merge``, which requires each input
+    # iterator to be sorted by the timestamp key.
+    # ``--inject-dst-artifact-day`` deliberately duplicates the 02:00–02:59
+    # wall-clock hour inside each CSV (see ``_splice_dst_artifact``),
+    # producing non-monotonic timestamps that silently break batching, OTLP
+    # payloads, and the merged ``gauges.csv`` ordering. Reject the
+    # combination at parse time for both paths — real OTLP consumers wouldn't
+    # tolerate the artifact either, so there's no realistic user for it.
+    if args.inject_dst_artifact_day > 0 and (
+        args.otel_emit_gauges or "gauges" in selected
+    ):
+        flags = []
+        if args.otel_emit_gauges:
+            flags.append("--otel-emit-gauges")
+        if "gauges" in selected:
+            flags.append("--emit-selection 'gauges'")
+        p.error(
+            f"{' / '.join(flags)} is incompatible with --inject-dst-artifact-day "
+            "(the DST artifact produces non-monotonic CSV timestamps that break "
+            "the heapq.merge over per-component CSVs); pass "
+            "--inject-dst-artifact-day 0 or drop the gauge emission flag"
+        )
     if args.otel_gauge_batch_seconds <= 0:
         p.error("--otel-gauge-batch-seconds must be > 0")
     if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
@@ -3913,7 +3931,7 @@ def parse_args(argv=None):
 # Combine step: join per-component CSVs into a single unified CSV.
 # One row per timestamp; columns prefixed with the component name.
 # ------------------------------------------------------------------
-_NON_COMPONENT_FILES = {"anomalies.csv"}
+_NON_COMPONENT_FILES = {"anomalies.csv", "gauges.csv"}
 
 # Filenames written into --output-dir for each --emit-selection item.
 # Per-component CSVs are derived from args.components, not listed here.
@@ -3922,6 +3940,7 @@ _EMIT_ARTIFACT_FILES = {
     "metrics": ("anomalies.csv",),
     "logs": ("metric_report.log",),
     "traces": ("metric_traces.jsonl",),
+    "gauges": ("gauges.csv",),
 }
 # Written only when --combine is set (which itself requires "metrics" in
 # --emit-selection). Tracked separately so the pre-clean and summary can
@@ -4760,6 +4779,84 @@ def _iter_component_rows(component: str, csv_path: Path):
             yield ts, component, values
 
 
+def write_gauges_csv(
+    component_csv_paths: dict[str, Path],
+    output_path: Path,
+) -> int:
+    """Write a long-form ``gauges.csv`` with one row per
+    ``(timestamp, component, metric, value)`` tuple from the given
+    per-component CSVs.
+
+    Rows are emitted in a chronologically merged timeline via ``heapq.merge``
+    keyed on the parsed timestamp — the same ordering ``stream_otel_gauges``
+    produces over its OTLP data points, so the file artifact can be
+    cross-checked against an OTLP collector recording.
+
+    Equal-timestamp ties tie-break on sorted component name, then on the
+    per-component CSV's column order (``MetricSpec`` order). The function
+    sorts ``component_csv_paths.keys()`` internally so the tiebreaker holds
+    regardless of how the caller built the mapping.
+
+    Values are written through verbatim from the per-component CSV's raw
+    cell string — no ``float(raw)`` coercion is attempted, so the on-disk
+    bytes never depend on Python's ``str(float)`` repr and any malformed
+    cell would propagate as-is (this is intentionally narrower than
+    ``stream_otel_gauges``, which ``float(raw)``-coerces and silently skips
+    unparseable cells; ``generate_component`` only ever writes finite
+    floats, so in practice the two paths emit the same data points).
+    Empty / dropped cells are skipped (mirroring the OTEL gauge stream's
+    behavior on dropped rows).
+
+    Returns the number of data rows written (header excluded).
+    """
+    if not component_csv_paths:
+        with open(output_path, "w", encoding="utf-8", newline="") as f:
+            f.write("timestamp,component,metric,value\n")
+        return 0
+
+    def _row_iter(component: str, csv_path: Path):
+        with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+            reader = csv.reader(fh)
+            header = next(reader, None)
+            if header is None:
+                return
+            metric_cols = header[1:]
+            for row in reader:
+                if not row:
+                    continue
+                ts = row[0]
+                ts_dt = _parse_csv_timestamp(ts)
+                yield (ts_dt, ts, component, list(zip(metric_cols, row[1:])))
+
+    # Sort the component iterators by component name so equal-timestamp
+    # ties tie-break on sorted-component order regardless of how the caller
+    # built ``component_csv_paths``. This is what the locked golden hashes
+    # encode (callers in this module already pass ``sorted(args.components)``,
+    # so the sort is idempotent in the happy path).
+    iters = [
+        _row_iter(c, component_csv_paths[c])
+        for c in sorted(component_csv_paths)
+        if component_csv_paths[c].exists()
+    ]
+
+    rows_written = 0
+    # ``newline=""`` lets ``csv.writer`` own line termination. ``\n`` (instead
+    # of ``\r\n``) matches the per-component CSV writes elsewhere in the
+    # script, keeping the locked SHA-256 golden hashes platform-stable.
+    with open(output_path, "w", encoding="utf-8", newline="") as out_f:
+        writer = csv.writer(out_f, lineterminator="\n")
+        writer.writerow(("timestamp", "component", "metric", "value"))
+        for _dt, ts, comp, name_value_pairs in heapq.merge(
+            *iters, key=lambda item: item[0]
+        ):
+            for name, raw in name_value_pairs:
+                if raw == "":
+                    continue
+                writer.writerow((ts, comp, name, raw))
+                rows_written += 1
+    return rows_written
+
+
 def stream_otel_gauges(
     component_csv_paths: dict[str, Path],
     *,
@@ -5158,6 +5255,20 @@ def main(argv=None):
             emit_traces="traces" in args.emit_selection,
         )
 
+    gauge_rows_written = 0
+    if "gauges" in args.emit_selection:
+        # Long-form file peer of the OTEL gauge stream. Derived from the
+        # per-component CSVs just written above (guaranteed present because
+        # the parse_args gate requires "metrics" alongside "gauges"). The
+        # sorted-components iterator order makes equal-timestamp ties
+        # deterministic regardless of dict iteration order.
+        gauge_csv_paths = {
+            c: args.output_dir / f"{c}.csv" for c in sorted(args.components)
+        }
+        gauge_rows_written = write_gauges_csv(
+            gauge_csv_paths, args.output_dir / "gauges.csv"
+        )
+
     streamed_events = 0
     endpoints = {
         "logs": args.otel_logs_endpoint,
@@ -5222,6 +5333,8 @@ def main(argv=None):
     print(f"   Duration: {args.duration_days} day(s) ({total_seconds:,} seconds)")
     print(f"   Interval: {args.interval_seconds}s ({n_rows:,} rows per component)")
     print(f"   Anomalies recorded: {len(filtered_anomalies)}")
+    if "gauges" in args.emit_selection:
+        print(f"   Gauge rows written: {gauge_rows_written:,} to gauges.csv")
     if otel_active:
         active = [f"{s} -> {u}" for s, u in endpoints.items() if u]
         print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
