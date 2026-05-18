@@ -629,7 +629,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to the 11 recurring patterns identified in VER-160. Work through each item before pushing for Copilot or human review. Tick the box or write "N/A — _reason_" in the PR description. This file is the canonical source; a companion `.github/PULL_REQUEST_TEMPLATE.md` (added separately) mirrors the same items so they prefill on every new PR.
+This checklist maps to the 11 recurring patterns identified in VER-160. Work through each item before marking the PR ready for review (i.e. before removing draft status). Tick the box or write "N/A — _reason_" in the PR description. This file is the canonical source; a companion `.github/PULL_REQUEST_TEMPLATE.md` (added separately) mirrors the same items so they prefill on every new PR.
 
 **Scope & description**
 - PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
