@@ -100,10 +100,16 @@ class RunContext:
       is the list of cascade spec dicts that fire on that component.
       Populated by ``_apply_scenarios()`` and consumed by
       ``generate_component()`` when it merges primary + cascade overrides.
+    - ``instances``: optional per-run override of the module-level
+      ``INSTANCES`` registry, keyed by component name. ``main()``
+      populates it from ``INSTANCES`` by default (preserving today's
+      single-anonymous-instance contract) and Phase 2+ CLI flags will
+      replace the per-component list when the user asks for fan-out.
     """
     rng: "np.random.RandomState"
     anomalies: list = field(default_factory=list)
     cascading_anomalies: dict = field(default_factory=dict)
+    instances: dict = field(default_factory=dict)
 
 # Derived-metric registry. Each entry maps a component to (derivation_fn,
 # tuple_of_derived_metric_names). generate_component() looks the component
@@ -204,6 +210,32 @@ class MetricSpec:
 
 
 # ------------------------------------------------------------------
+# Instance dimensions (VER-140 Phase 1)
+# ------------------------------------------------------------------
+@dataclass(frozen=True)
+class Instance:
+    """One emitting instance of a component.
+
+    Phase 1 introduces this dataclass as the foundational dimension model for
+    multi-instance output. The CSV writer still emits one anonymous
+    ``Instance()`` per component, so default byte output is unchanged; later
+    phases plug ``--instances-per-component`` / ``--instance-config`` into the
+    same shape and surface the dimensions as CSV columns, anomaly
+    ``instance_filter`` selectors, OTEL resource attributes, and
+    ``schema.json`` dimension declarations.
+
+    All fields default to ``None`` so today's catalog can build the registry
+    in lockstep with ``COMPONENTS`` without naming dimensions yet.
+    """
+    id: str | None = None
+    host: str | None = None
+    pod: str | None = None
+    az: str | None = None
+    region: str | None = None
+    tenant: str | None = None
+
+
+# ------------------------------------------------------------------
 # Named scenario registry (VER-102 / VER-104 — full migration complete).
 #
 # Each Scenario bundles a slug-named set of primary anomaly specs and
@@ -270,10 +302,16 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
-                       dst_inject_day=0, ctx: "RunContext"):
+                       dst_inject_day=0, ctx: "RunContext",
+                       instances: list["Instance"] | None = None):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
+    instances: optional list of ``Instance`` carrying the per-component
+        dimension topology (VER-140 Phase 1). ``None`` resolves to a single
+        anonymous ``Instance()`` so today's output stays byte-identical;
+        Phase 2 will start emitting dimension columns when ``len > 1`` or
+        any instance has non-None dimension fields.
 
     Vectorized: natural-value math is one numpy op per metric; anomaly overrides
     are masked writes on the column arrays; packet loss is a single boolean mask
@@ -304,6 +342,18 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             "pass RunContext(rng=np.random.RandomState(seed))."
         )
     rng = ctx.rng
+
+    # Resolve the active per-component instance topology. Phase 1 only
+    # validates the shape and falls back to a single anonymous ``Instance()``
+    # so today's dimensionless CSV output is preserved. Phases 2–8 wire the
+    # dimension columns, anomaly filtering, and OTEL attributes.
+    if instances is None:
+        instances = [Instance()]
+    if not instances:
+        raise ValueError(
+            f"generate_component({component_name!r}) requires at least one "
+            f"Instance; got an empty list."
+        )
 
     # Merge primary anomalies with cascading anomalies
     all_anomalies = list(anomaly_specs)
@@ -1323,6 +1373,18 @@ for _name, _default in DEFAULT_METRICS_PER_COMPONENT.items():
             f"[1, {len(COMPONENTS[_name])}]"
         )
 del _components_keys, _defaults_keys, _overflowed, _name, _default
+
+
+# Per-component instance topology registry (VER-140 Phase 1). Default = one
+# anonymous ``Instance()`` per component, which keeps the emitted CSVs
+# byte-identical to today: ``Instance()`` carries no dimension labels, so
+# Phase 2's CSV writer treats the run as "no dimension columns" and falls
+# back to today's ``timestamp, m0, m1, ...`` header. Keys MUST match
+# ``COMPONENTS`` exactly — drift is rejected at import time by
+# ``_validate_instances_registry``.
+INSTANCES: dict[str, list["Instance"]] = {
+    name: [Instance()] for name in COMPONENTS
+}
 
 
 def _validate_metric_spec_schema_metadata() -> None:
@@ -3437,6 +3499,63 @@ def _validate_derivations_registry() -> None:
 
 
 _validate_derivations_registry()
+
+
+def _validate_instances_registry() -> None:
+    """Import-time invariants for ``INSTANCES`` (VER-140 Phase 1).
+
+    Rejects three classes of drift:
+
+    1. Key drift between ``INSTANCES`` and ``COMPONENTS``: a typo here
+       would silently fall back to ``[Instance()]`` at the call site
+       (or worse, raise ``KeyError`` mid-run) instead of failing fast.
+    2. Empty per-component lists: ``generate_component()`` needs at
+       least one ``Instance`` to broadcast values into, even the
+       anonymous default.
+    3. Duplicate non-None ``id`` within one component's instance list:
+       Phase 4's ``instance_filter=["..."]`` field looks up instances
+       by id, so collisions would silently target multiple rows.
+       ``None`` ids are allowed (the anonymous default) but at most
+       one per list.
+    """
+    known = set(COMPONENTS.keys())
+    declared = set(INSTANCES.keys())
+    if declared != known:
+        missing = sorted(known - declared)
+        extra = sorted(declared - known)
+        raise ValueError(
+            "INSTANCES and COMPONENTS keys must match. "
+            f"Missing from INSTANCES: {missing}. "
+            f"Extra in INSTANCES: {extra}."
+        )
+    for component, instance_list in INSTANCES.items():
+        if not instance_list:
+            raise ValueError(
+                f"INSTANCES[{component!r}] is empty; needs at least one "
+                f"Instance (Instance() preserves the dimensionless default)."
+            )
+        seen_ids: set[str] = set()
+        anon_count = 0
+        for inst in instance_list:
+            if inst.id is None:
+                anon_count += 1
+                continue
+            if inst.id in seen_ids:
+                raise ValueError(
+                    f"INSTANCES[{component!r}] declares duplicate "
+                    f"Instance.id={inst.id!r}; ids must be unique per "
+                    f"component for instance_filter lookups (Phase 4)."
+                )
+            seen_ids.add(inst.id)
+        if anon_count > 1:
+            raise ValueError(
+                f"INSTANCES[{component!r}] contains {anon_count} anonymous "
+                f"Instance(id=None) entries; at most one anonymous instance "
+                f"is allowed per component."
+            )
+
+
+_validate_instances_registry()
 
 
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
@@ -6025,6 +6144,11 @@ def main(argv=None):
         args.combine,
     )
     ctx = RunContext(rng=np.random.RandomState(args.seed))
+    # Phase 1: seed the per-run instance map from the module-level
+    # ``INSTANCES`` registry (default = one anonymous ``Instance()`` per
+    # component → byte-identical to today). Phase 2 CLI flags will
+    # overwrite ``ctx.instances`` entries with fan-out lists.
+    ctx.instances = {name: list(INSTANCES[name]) for name in COMPONENTS}
 
     # Build component_anomalies and cascading_anomalies entirely from the
     # SCENARIOS registry. _resolve_scenarios() applies the --scenarios /
@@ -6066,7 +6190,8 @@ def main(argv=None):
                            ts_strings=ts_strings,
                            emit_metrics="metrics" in args.emit_selection,
                            dst_inject_day=args.inject_dst_artifact_day,
-                           ctx=ctx)
+                           ctx=ctx,
+                           instances=ctx.instances[name])
 
     filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 
