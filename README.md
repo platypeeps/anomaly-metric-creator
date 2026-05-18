@@ -136,7 +136,7 @@ python3 anomaly-metric-creator.py \
 | `--validate-output` | _off_       | Standalone validator mode (mutually exclusive with `--combine` / `--combine-only`). Loads `PATH/schema.json` and checks the artifacts in `PATH` against it (file presence, row counts, timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds, `counter`/`rate` non-negativity, derived-column consistency, and `anomalies.csv` sort order). Hard-fails on first violation (`exit 1`) unless `--validate-warn` is also passed. See [Output validation (`--validate-output`)](#output-validation---validate-output). |
 | `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. Useful during the VER-134 re-baseline window when known fractional-counter and unit-mismatch issues would otherwise fail CI. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
-| `--topology-mode`   | `independent` | Topology-aware baseline coupling (phase 2; VER-141 / VER-152). `independent` (default) keeps every component's baseline an independent Gaussian — byte-identical to the pre-VER-152 default output. `realistic` walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream `requests_per_sec` baselines as `Σ(upstream_rps * edge.weight) + small_noise`. In practice the v1 graph has only one edge whose both endpoints declare `requests_per_sec` (`loadbalancer → apigateway`), so `realistic` mode currently couples just that pair; phase 3 will extend it to additional downstream metrics. Anomaly overrides on the coupled column still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
+| `--topology-mode`   | `independent` | Topology-aware baseline coupling (VER-152/VER-153). `independent` (default) keeps every component's baseline an independent Gaussian — byte-identical to the pre-VER-152 default output. `realistic` walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight). Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
 | `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
 | `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
 | `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
@@ -481,25 +481,30 @@ The `TOPOLOGY` constant declares the directed service-call graph alongside
 default is `independent`, see the [CLI flags](#cli-flags) table) to thread
 upstream load through downstream baselines.
 
-- `loadbalancer → apigateway` — constant weight `1.0`. The only edge whose
-  both endpoints declare `requests_per_sec` and therefore the only edge
-  that actually fires baseline coupling in phase 2.
-- `apigateway → authservice` (`0.3`), `cacheservice` (`0.4`),
-  `database` (`0.3`) — routing fractions summing to `1.0`. Declared
-  structurally; phase 3 will extend coupling to the relevant downstream
-  RPS-equivalent metrics on these targets.
+- `loadbalancer → apigateway` — constant weight `1.0`. Couples
+  `apigateway.requests_per_sec` to `loadbalancer.requests_per_sec`.
+- `apigateway → authservice` (`0.3`) — couples
+  `authservice.login_attempts` to `apigateway.requests_per_sec`.
+- `apigateway → cacheservice` (`0.4`) — couples both
+  `cacheservice.cache_hits` and `cacheservice.cache_misses` to
+  `apigateway.requests_per_sec`.
+- `apigateway → database` (`0.3`) — couples
+  `database.queries_per_sec` to `apigateway.requests_per_sec`.
+  The three apigateway fan-out weights sum to `1.0`.
 - `apigateway → llm_analytics` — saturation placeholder for phase 5
-  (token-throttle); weight `0.0` and zero gains keep it inert at
-  phase 2.
-- `cacheservice → database` — callable weight (cache-miss ratio). Picked
-  up in phase 3 once the runtime threads source-side context into the
-  callable.
+  (token-throttle); weight `0.0` and zero gains keep it inert until
+  phase 5.
+- `cacheservice → database` — callable weight: per-row cache-miss
+  ratio (`cache_misses / (cache_hits + cache_misses)`) multiplied by
+  the database's natural `queries_per_sec` baseline. Contributes
+  additional DB load when the cache miss rate rises; additive on top
+  of the constant-weight apigateway contribution.
 
 ```
                             ┌───────────────────┐
                             │   loadbalancer    │
                             └────────┬──────────┘
-                                     │ weight=1.0  (phase 2 active)
+                                     │ weight=1.0
                                      ▼
                             ┌───────────────────┐
                             │    apigateway     │
@@ -507,9 +512,10 @@ upstream load through downstream baselines.
                           0.3  │  0.4 │  0.3 │
                                ▼      ▼      ▼
                           authservice cacheservice database
-                                            │   ▲
-                                            └───┘ callable weight
-                                              (cache-miss ratio)
+                          (login_     (cache_hits   ▲ (queries_per_sec)
+                           attempts)  cache_misses) │
+                                            │       │ callable weight
+                                            └───────┘ (miss_ratio * db_base)
 
 apigateway → llm_analytics : saturation placeholder (phase 5, weight 0)
 ```

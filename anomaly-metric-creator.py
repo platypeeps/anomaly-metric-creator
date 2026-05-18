@@ -320,7 +320,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
                        dst_inject_day=0, ctx: "RunContext",
-                       topology_capture: dict[str, np.ndarray] | None = None):
+                       topology_capture: dict[str, dict[str, np.ndarray]] | None = None):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -484,15 +484,24 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         derive_fn, _ = derivation
         derive_fn(values, name_to_col)
 
-    # Topology phase 2 (VER-152): expose the post-natural / post-anomaly /
-    # post-derivation ``requests_per_sec`` column to downstream components
-    # via the ``topology_capture`` dict. Capturing pre-round keeps the
-    # signal at full float precision so the downstream noise doesn't ride
-    # on a quantized upstream. ``None`` (the default) short-circuits so
-    # callers in ``--topology-mode independent`` see zero new work.
-    if topology_capture is not None and "requests_per_sec" in name_to_col:
-        rps_col = name_to_col["requests_per_sec"]
-        topology_capture[component_name] = values[:, rps_col].copy()
+    # Topology phase 2/3 (VER-152/VER-153): expose post-natural /
+    # post-anomaly / post-derivation load-metric columns to downstream
+    # components via the ``topology_capture`` dict. Phase 3 extends the
+    # capture from a single ``requests_per_sec`` column to all metrics
+    # listed in ``_TOPOLOGY_LOAD_METRICS[component_name]`` so callable
+    # edges (e.g. cacheservice -> database via miss ratio) can read the
+    # full upstream state. Capturing pre-round keeps the signal at full
+    # float precision. ``None`` (the default) short-circuits so callers
+    # in ``--topology-mode independent`` see zero new work.
+    if topology_capture is not None:
+        load_metrics = _TOPOLOGY_LOAD_METRICS.get(component_name, ())
+        if load_metrics:
+            captured: dict[str, np.ndarray] = {}
+            for lm in load_metrics:
+                if lm in name_to_col:
+                    captured[lm] = values[:, name_to_col[lm]].copy()
+            if captured:
+                topology_capture[component_name] = captured
 
     np.round(values, 3, out=values)
 
@@ -1466,6 +1475,16 @@ _validate_metric_spec_schema_metadata()
 # request flow, not anomaly propagation — so the two are intentionally
 # allowed to overlap. Phase 2 will reconcile any double-counting before
 # applying topology-derived effects to natural columns.
+# Cached natural baseline for the ``cacheservice -> database`` callable
+# edge. Resolved from the COMPONENTS catalog at module load so the catalog
+# stays the single source of truth: bumping the database
+# ``queries_per_sec`` baseline automatically rescales the cache-miss
+# contribution and the locked-Pearson coupling tests pick it up.
+_DATABASE_QPS_BASE: float = next(
+    spec.base for spec in COMPONENTS["database"] if spec.name == "queries_per_sec"
+)
+
+
 TOPOLOGY: dict[str, list[Edge]] = {
     "loadbalancer": [
         Edge(target="apigateway", weight=1.0),
@@ -1477,7 +1496,7 @@ TOPOLOGY: dict[str, list[Edge]] = {
         # Saturation placeholder for phase 5: under token-throttle on the
         # LLM, latency rises and error rate climbs once load crosses the
         # configured midpoint. Zero gains keep the edge structurally
-        # declared without affecting phase-2 outputs.
+        # declared without affecting phase-2/3 outputs.
         Edge(
             target="llm_analytics",
             weight=0.0,
@@ -1487,13 +1506,19 @@ TOPOLOGY: dict[str, list[Edge]] = {
             ),
         ),
     ],
-    # Cache miss rate drives downstream database load. The callable
-    # receives the cache-miss / (hits + misses) ratio column as a numpy
-    # array; phase 2 will pass the per-row cache-miss ratio in here.
+    # Cache miss rate drives extra database load on top of apigateway's
+    # routing fraction. The callable receives the per-row cache-miss
+    # ratio (``cache_misses / (cache_hits + cache_misses)``) and returns
+    # the additive QPS contribution to the database baseline:
+    # ``weight(miss_ratio) = miss_ratio * base_qps``. At the natural
+    # baseline (~4% miss rate, ~25k base QPS) this is ~1000 QPS on top
+    # of the apigateway-driven contribution.
     "cacheservice": [
         Edge(
             target="database",
-            weight=lambda miss_ratio: np.asarray(miss_ratio, dtype=np.float64),
+            weight=lambda miss_ratio: (
+                np.asarray(miss_ratio, dtype=np.float64) * _DATABASE_QPS_BASE
+            ),
         ),
     ],
 }
@@ -1577,17 +1602,103 @@ def _validate_topology() -> None:
                         f"{edge.weight!r} must be non-negative."
                     )
 
+    # Cycle detection (VER-153 phase 3): the two-pass realistic-mode
+    # generator walks TOPOLOGY in Kahn order and expects a DAG. Reject
+    # any cycle (including self-loops) at import time so a cyclic edit
+    # fails fast instead of silently falling back to COMPONENTS order.
+    incoming: dict[str, set[str]] = {}
+    for source, edges in TOPOLOGY.items():
+        incoming.setdefault(source, set())
+        for edge in edges:
+            incoming.setdefault(edge.target, set()).add(source)
+    remaining = {node: set(deps) for node, deps in incoming.items()}
+    while remaining:
+        ready = [n for n, deps in remaining.items() if not deps]
+        if not ready:
+            cycle_nodes = sorted(remaining.keys())
+            raise ValueError(
+                f"TOPOLOGY must be acyclic; cycle detected among "
+                f"nodes {cycle_nodes}"
+            )
+        for n in ready:
+            del remaining[n]
+            for deps in remaining.values():
+                deps.discard(n)
+
 
 _validate_topology()
 
 
-# Phase 2 (VER-152): standard deviation of the additive noise injected on
-# top of the coupled upstream signal in ``--topology-mode realistic``. The
-# value is small relative to the upstream RPS baselines (~800-900) so the
-# Pearson correlation between upstream and downstream stays well above the
-# 0.95 acceptance threshold while the column still looks like a noisy
-# signal rather than a perfect copy of the upstream.
-_TOPOLOGY_COUPLE_NOISE_STD = 10.0
+# Phase 2/3 (VER-152/VER-153): standard deviation of the additive noise
+# injected on top of the coupled upstream signal in
+# ``--topology-mode realistic``. Kept small (5.0) relative to the typical
+# coupling signal std (~15–1600 depending on component) so the Pearson
+# correlation between upstream and downstream stays well above the 0.9/0.95
+# acceptance thresholds while the column still looks like a noisy signal
+# rather than a perfect copy of the upstream.
+_TOPOLOGY_COUPLE_NOISE_STD = 5.0
+
+
+# Phase 3 (VER-153): per-component "load metrics" the topology coupling
+# operates on. Each entry maps a component to the ordered tuple of
+# MetricSpec.name values that (a) get rewritten under
+# ``--topology-mode realistic`` when the component has incoming edges,
+# and (b) get captured into ``topology_capture`` so downstream consumers
+# can read the upstream's column. The first entry is the canonical load
+# metric used by constant-weight edges from this component; later
+# entries (cacheservice's ``cache_hits`` + ``cache_misses``) are
+# supplementary signals the callable-weight handler needs.
+_TOPOLOGY_LOAD_METRICS: dict[str, tuple[str, ...]] = {
+    "loadbalancer": ("requests_per_sec",),
+    "apigateway": ("requests_per_sec",),
+    "authservice": ("login_attempts",),
+    "cacheservice": ("cache_hits", "cache_misses"),
+    "database": ("queries_per_sec",),
+}
+
+
+def _component_metric_base(component: str, metric: str) -> float:
+    """Look up the natural ``MetricSpec.base`` for ``component[metric]``.
+
+    Returns ``0.0`` when the metric is not in the component's catalog so
+    callers can branch on the falsy value without raising. Coupling uses
+    the natural baseline to map upstream load (in upstream units) to the
+    downstream metric's scale (e.g. apigateway's ~800 rps to database's
+    ~25k qps).
+    """
+    for spec in COMPONENTS.get(component, ()):
+        if spec.name == metric:
+            return float(spec.base)
+    return 0.0
+
+
+def _topology_callable_signal(
+    upstream: str,
+    downstream: str,
+    upstream_arrays: dict[str, dict[str, np.ndarray]],
+) -> np.ndarray | None:
+    """Derive the per-row scalar signal that a callable-weight edge consumes.
+
+    For the ``cacheservice -> database`` edge the signal is the per-row
+    cache-miss ratio ``cache_misses / (cache_hits + cache_misses)`` (0
+    when both columns are zero). Returns ``None`` when the upstream's
+    captured columns are missing — the caller treats this as "skip this
+    edge" so a ``--metrics-per-component`` selection that trims away a
+    required column degrades gracefully instead of raising.
+    """
+    cols = upstream_arrays.get(upstream, {})
+    if (upstream, downstream) == ("cacheservice", "database"):
+        hits = cols.get("cache_hits")
+        misses = cols.get("cache_misses")
+        if hits is None or misses is None:
+            return None
+        total = hits + misses
+        return np.divide(
+            misses, total,
+            out=np.zeros_like(misses, dtype=np.float64),
+            where=total > 0,
+        )
+    return None
 
 
 def _topology_generation_order(active_components: set[str]) -> list[str]:
@@ -1633,59 +1744,137 @@ def _topology_generation_order(active_components: set[str]) -> list[str]:
 def _compose_topology_coupled_specs(
     component_name: str,
     specs: list[MetricSpec],
-    upstream_arrays: dict[str, np.ndarray],
+    upstream_arrays: dict[str, dict[str, np.ndarray]],
     rng: "np.random.RandomState",
     n_rows: int,
 ) -> list[MetricSpec]:
-    """Return a possibly-modified spec list with the RPS baseline coupled
-    to upstream component(s) via the TOPOLOGY graph.
+    """Return a possibly-modified spec list with the downstream's load
+    metric(s) coupled to upstream component(s) via the TOPOLOGY graph.
 
-    Phase 2 (VER-152): only ``requests_per_sec`` is coupled, via constant-
-    weight edges whose source has already been generated and stashed in
-    ``upstream_arrays``. Callable-weight edges (e.g. the cacheservice ->
-    database cache-miss-rate driver) need source-side context that's not
-    wired through phase 2; they are skipped here and pick up in phase 3.
+    Phase 3 (VER-153) extends VER-152's coupling to every constant-weight
+    edge in the v1 graph plus the ``cacheservice -> database`` callable
+    edge:
 
-    When no incoming edge qualifies, the spec list is returned unchanged
-    so the downstream falls back to its natural-Gaussian baseline (and
-    ``--topology-mode realistic`` reduces to ``independent`` for it).
+    * Constant-weight edges scale the upstream's captured load column to
+      the downstream metric's natural baseline:
+      ``contribution = (upstream / upstream_base) * downstream_base * w``.
+      At natural upstream load this delivers ``downstream_base * w`` so a
+      fan-out routing fraction summing to 1.0 across incoming edges
+      reproduces the downstream's natural baseline. Edges with weights
+      that sum to less than 1 leave the remaining fraction at the
+      natural baseline (modelling "uncoupled" load not captured by the
+      graph).
+    * Callable-weight edges call ``edge.weight(signal)`` with a per-row
+      scalar signal derived from the upstream's captured columns (see
+      ``_topology_callable_signal``). The return value is added to the
+      downstream baseline directly (in downstream-metric units) — e.g.
+      the ``cacheservice -> database`` callable returns the per-row
+      cache-miss QPS contribution.
+
+    When neither path delivers any signal (no upstream captured, all
+    constant weights are zero, callable signal absent) the spec list is
+    returned unchanged so the downstream falls back to its natural
+    Gaussian baseline.
+
+    The natural per-metric ``MetricSpec`` (multiplier, additive,
+    clip_min, declarative schema metadata) is preserved via
+    ``dataclasses.replace``; only ``base``, ``std``, ``multiplier``,
+    and ``additive`` change so the coupled column writes the baked
+    coupled column verbatim.
     """
-    name_to_idx = {s.name: i for i, s in enumerate(specs)}
-    if "requests_per_sec" not in name_to_idx:
+    coupled_metric_names = _TOPOLOGY_LOAD_METRICS.get(component_name, ())
+    if not coupled_metric_names:
         return specs
-    contributions: list[tuple[str, float]] = []
+    name_to_idx = {s.name: i for i, s in enumerate(specs)}
+    if not any(m in name_to_idx for m in coupled_metric_names):
+        return specs
+    incoming: list[tuple[str, Edge]] = []
     for upstream, edges in TOPOLOGY.items():
+        if upstream not in upstream_arrays:
+            continue
         for edge in edges:
-            if edge.target != component_name:
+            if edge.target == component_name:
+                incoming.append((upstream, edge))
+    if not incoming:
+        return specs
+
+    new_specs = list(specs)
+    for metric_name in coupled_metric_names:
+        if metric_name not in name_to_idx:
+            continue
+        original = specs[name_to_idx[metric_name]]
+        downstream_base = float(original.base)
+        if downstream_base <= 0:
+            continue
+
+        # First pass: collect all active constant-weight edges to compute
+        # the normalization factor that maps ``sum(weight)`` to 1.0 so the
+        # combined contribution equals ``downstream_base`` at natural
+        # upstream load.
+        active_constant: list[tuple[np.ndarray, float, float]] = []  # (arr, base, w)
+        for upstream, edge in incoming:
+            if callable(edge.weight):
                 continue
-            if upstream not in upstream_arrays:
-                continue
-            # Reject ``bool`` first: ``isinstance(True, int)`` is True.
             if isinstance(edge.weight, bool) or not isinstance(
                 edge.weight, (int, float)
             ):
                 continue
-            contributions.append((upstream, float(edge.weight)))
-    if not contributions:
-        return specs
-    coupled = np.zeros(n_rows, dtype=np.float64)
-    for upstream, weight in contributions:
-        coupled += upstream_arrays[upstream] * weight
-    coupled += rng.normal(0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)
-    original = specs[name_to_idx["requests_per_sec"]]
-    # ``dataclasses.replace`` preserves the original spec's declarative
-    # metadata (unit, semantic_type, min/max, dtype, derivation, clip_min)
-    # so ``schema.json`` / ``--validate-output`` see identical metadata
-    # regardless of the topology mode in effect.
-    coupled_spec = dataclasses.replace(
-        original,
-        base=0.0,
-        std=0.0,
-        multiplier=None,
-        additive=lambda ts, elapsed, baked=coupled: baked,
-    )
-    new_specs = list(specs)
-    new_specs[name_to_idx["requests_per_sec"]] = coupled_spec
+            w = float(edge.weight)
+            if w == 0.0:
+                continue
+            ups_cols = upstream_arrays.get(upstream, {})
+            upstream_metrics = _TOPOLOGY_LOAD_METRICS.get(upstream, ())
+            for lm in upstream_metrics:
+                if lm in ups_cols:
+                    ups_base = _component_metric_base(upstream, lm)
+                    if ups_base > 0:
+                        active_constant.append((ups_cols[lm], ups_base, w))
+                    break
+
+        # Second pass: build the callable contributions.
+        callable_contrib = np.zeros(n_rows, dtype=np.float64)
+        for upstream, edge in incoming:
+            if not callable(edge.weight):
+                continue
+            signal = _topology_callable_signal(
+                upstream, component_name, upstream_arrays
+            )
+            if signal is None:
+                continue
+            callable_contrib = callable_contrib + np.asarray(
+                edge.weight(signal), dtype=np.float64
+            )
+
+        if not active_constant and not np.any(callable_contrib):
+            continue
+
+        # Constant contributions: normalize by sum(w) so the constant term
+        # equals ``downstream_base`` at natural upstream load regardless of
+        # how many contributing edges exist. Each upstream's array is scaled
+        # by ``(upstream / upstream_base) * downstream_base * w_normalized``
+        # so variation in the upstream flows through at a proportional scale
+        # to the downstream metric's natural magnitude.
+        constant_contrib = np.zeros(n_rows, dtype=np.float64)
+        if active_constant:
+            sum_w = sum(w for _, _, w in active_constant)
+            for ups_arr, ups_base, w in active_constant:
+                w_norm = w / sum_w  # normalise so contributions sum to 1.0
+                constant_contrib = constant_contrib + (
+                    ups_arr / ups_base * downstream_base * w_norm
+                )
+
+        coupled = (
+            constant_contrib
+            + callable_contrib
+            + rng.normal(0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)
+        )
+        new_specs[name_to_idx[metric_name]] = dataclasses.replace(
+            original,
+            base=0.0,
+            std=0.0,
+            multiplier=None,
+            additive=lambda ts, elapsed, baked=coupled: baked,
+        )
     return new_specs
 
 
@@ -6394,7 +6583,7 @@ def main(argv=None):
             name for name in _topology_generation_order(active)
             if name in effective_specs
         ]
-        upstream_arrays: dict[str, np.ndarray] | None = {}
+        upstream_arrays: dict[str, dict[str, np.ndarray]] | None = {}
     else:
         generation_order = [name for name in effective_specs if name in args.components]
         upstream_arrays = None
