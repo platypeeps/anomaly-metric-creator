@@ -26,6 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import dataclasses
 from dataclasses import dataclass, field
 from hashlib import sha1
 from pathlib import Path
@@ -236,6 +237,54 @@ class Instance:
 
 
 # ------------------------------------------------------------------
+# Topology graph dataclasses (VER-143 phase 1 — structural-only).
+# ------------------------------------------------------------------
+# The ``TOPOLOGY`` constant below declares directed service-to-service edges
+# alongside ``COMPONENTS``. At this phase the constant is unused by
+# ``generate_component`` / ``main`` — the dataclasses and validator land
+# first so phase 2 (two-pass generation) and phase 5 (saturation effects)
+# can build on a stable shape without churning byte-output hashes.
+@dataclass(frozen=True)
+class SaturationParams:
+    """Sigmoid-style saturation parameters attached to a topology edge.
+
+    The phase-5 consumer will read these as the parameters of a logistic
+    response curve on the source's load metric: latency and error gains
+    are added to the target's natural latency / error rate columns once
+    load crosses ``midpoint`` at ``steepness``. Zero-gain (the default)
+    means the edge declares the saturation point structurally but does
+    not yet contribute to the target's metrics — useful for placeholder
+    edges declared at phase 1.
+    """
+    midpoint: float
+    steepness: float
+    latency_gain: float = 0.0
+    error_gain: float = 0.0
+
+
+@dataclass(frozen=True)
+class Edge:
+    """A directed edge in the service-call ``TOPOLOGY`` graph.
+
+    ``weight`` is either a constant fan-out share (``float`` in ``[0, 1]``
+    for routing fractions, or any non-negative scalar for amplification
+    edges) or a callable ``(np.ndarray) -> np.ndarray`` that computes the
+    per-row weight from a numpy column (e.g. cache-miss rate driving the
+    cache→database fan-out). The import-time ``_validate_topology``
+    validator enforces both branches: constant weights must be a finite
+    non-negative ``int``/``float`` (``bool`` is rejected); callable
+    weights must accept a numpy array and return a numpy array.
+
+    ``saturation`` is optional; when set, phase 5 will add the
+    sigmoid-shaped latency/error contribution to the target component
+    once the source's load metric crosses the configured midpoint.
+    """
+    target: str
+    weight: float | Callable[[np.ndarray], np.ndarray] = 1.0
+    saturation: SaturationParams | None = None
+
+
+# ------------------------------------------------------------------
 # Named scenario registry (VER-102 / VER-104 — full migration complete).
 #
 # Each Scenario bundles a slug-named set of primary anomaly specs and
@@ -303,7 +352,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
                        dst_inject_day=0, ctx: "RunContext",
-                       instances: list["Instance"] | None = None):
+                       instances: list["Instance"] | None = None,
+                       topology_capture: dict[str, np.ndarray] | None = None):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -483,6 +533,16 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if derivation is not None:
         derive_fn, _ = derivation
         derive_fn(values, name_to_col)
+
+    # Topology phase 2 (VER-152): expose the post-natural / post-anomaly /
+    # post-derivation ``requests_per_sec`` column to downstream components
+    # via the ``topology_capture`` dict. Capturing pre-round keeps the
+    # signal at full float precision so the downstream noise doesn't ride
+    # on a quantized upstream. ``None`` (the default) short-circuits so
+    # callers in ``--topology-mode independent`` see zero new work.
+    if topology_capture is not None and "requests_per_sec" in name_to_col:
+        rps_col = name_to_col["requests_per_sec"]
+        topology_capture[component_name] = values[:, rps_col].copy()
 
     np.round(values, 3, out=values)
 
@@ -1438,6 +1498,258 @@ def _validate_metric_spec_schema_metadata() -> None:
 
 
 _validate_metric_spec_schema_metadata()
+
+
+# ------------------------------------------------------------------
+# Topology graph (VER-143 phase 1 — structural-only).
+# ------------------------------------------------------------------
+# Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
+# instances downstream of ``source``; both source keys and ``Edge.target``
+# values are component names from ``COMPONENTS``. The graph is **not yet
+# consumed by the generator** — phase 2 (two-pass generation) and phase 5
+# (saturation effects) will read it. Declaring the constant in phase 1
+# isolates the structural review from any byte-output churn.
+#
+# v1 graph (per VER-141 design):
+#   loadbalancer -> apigateway                   (constant weight 1.0)
+#   apigateway   -> authservice (0.3),           (request fan-out shares;
+#                   cacheservice (0.4),           the weights here sum to 1
+#                   database (0.3)                so the phase-2 two-pass
+#                                                 generation can treat them
+#                                                 as routing fractions)
+#   cacheservice -> database                     (weight = callable on
+#                                                 cache_miss / total rate)
+#   apigateway   -> llm_analytics                (saturation placeholder
+#                                                 for phase 5 token-throttle)
+#
+# Cascade-vs-topology overlap: several SCENARIOS already encode pairwise
+# blast-radius (e.g. auth -> gateway, cache -> DB) via cascade_specs. The
+# topology graph is a structural orthogonal view — it describes *normal*
+# request flow, not anomaly propagation — so the two are intentionally
+# allowed to overlap. Phase 2 will reconcile any double-counting before
+# applying topology-derived effects to natural columns.
+TOPOLOGY: dict[str, list[Edge]] = {
+    "loadbalancer": [
+        Edge(target="apigateway", weight=1.0),
+    ],
+    "apigateway": [
+        Edge(target="authservice", weight=0.3),
+        Edge(target="cacheservice", weight=0.4),
+        Edge(target="database", weight=0.3),
+        # Saturation placeholder for phase 5: under token-throttle on the
+        # LLM, latency rises and error rate climbs once load crosses the
+        # configured midpoint. Zero gains keep the edge structurally
+        # declared without affecting phase-2 outputs.
+        Edge(
+            target="llm_analytics",
+            weight=0.0,
+            saturation=SaturationParams(
+                midpoint=0.75, steepness=8.0,
+                latency_gain=0.0, error_gain=0.0,
+            ),
+        ),
+    ],
+    # Cache miss rate drives downstream database load. The callable
+    # receives the cache-miss / (hits + misses) ratio column as a numpy
+    # array; phase 2 will pass the per-row cache-miss ratio in here.
+    "cacheservice": [
+        Edge(
+            target="database",
+            weight=lambda miss_ratio: np.asarray(miss_ratio, dtype=np.float64),
+        ),
+    ],
+}
+
+
+def _validate_topology() -> None:
+    """Import-time invariants for ``TOPOLOGY``.
+
+    Catches drift between the topology graph and ``COMPONENTS`` at module
+    load so phase 2's two-pass generator can rely on every source and
+    target being a real component. Callable weights are smoke-tested with
+    a tiny ``np.ndarray`` so a mis-shaped lambda (e.g. zero-arg or scalar-
+    only) fails here instead of corrupting the generator's vectorized
+    column writes downstream.
+    """
+    known_components = set(COMPONENTS.keys())
+    for source, edges in TOPOLOGY.items():
+        if source not in known_components:
+            raise ValueError(
+                f"TOPOLOGY source {source!r} is not in COMPONENTS; "
+                f"known components: {sorted(known_components)}"
+            )
+        if not isinstance(edges, list):
+            raise ValueError(
+                f"TOPOLOGY[{source!r}] must be a list of Edge, got "
+                f"{type(edges).__name__}"
+            )
+        for edge in edges:
+            if not isinstance(edge, Edge):
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] contains a non-Edge entry "
+                    f"{edge!r} (type {type(edge).__name__}); every entry "
+                    f"must be an Edge instance."
+                )
+            if edge.target not in known_components:
+                raise ValueError(
+                    f"TOPOLOGY[{source!r}] -> Edge.target={edge.target!r} "
+                    f"is not in COMPONENTS; known components: "
+                    f"{sorted(known_components)}"
+                )
+            if callable(edge.weight):
+                probe = np.array([0.0, 0.5, 1.0], dtype=np.float64)
+                try:
+                    result = edge.weight(probe)
+                except Exception as exc:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} callable "
+                        f"weight {edge.weight!r} raised "
+                        f"{type(exc).__name__}({exc!r}) when called with a "
+                        f"numpy array; callable weights must accept an "
+                        f"ndarray and return an ndarray."
+                    ) from exc
+                if not isinstance(result, np.ndarray):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} callable "
+                        f"weight {edge.weight!r} returned "
+                        f"{type(result).__name__}; callable weights must "
+                        f"return a numpy array."
+                    )
+            else:
+                # Constant weight: must be a finite, non-negative scalar.
+                # ``bool`` is a subclass of ``int`` so ``isinstance(True,
+                # (int, float))`` is True; reject it explicitly before the
+                # numeric check.
+                if (isinstance(edge.weight, bool)
+                        or not isinstance(edge.weight, (int, float))):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
+                        f"{edge.weight!r} must be a finite non-negative "
+                        f"int/float or a callable (np.ndarray) -> "
+                        f"np.ndarray; got {type(edge.weight).__name__}."
+                    )
+                if not math.isfinite(edge.weight):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
+                        f"{edge.weight!r} must be finite."
+                    )
+                if edge.weight < 0:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
+                        f"{edge.weight!r} must be non-negative."
+                    )
+
+
+_validate_topology()
+
+
+# Phase 2 (VER-152): standard deviation of the additive noise injected on
+# top of the coupled upstream signal in ``--topology-mode realistic``. The
+# value is small relative to the upstream RPS baselines (~800-900) so the
+# Pearson correlation between upstream and downstream stays well above the
+# 0.95 acceptance threshold while the column still looks like a noisy
+# signal rather than a perfect copy of the upstream.
+_TOPOLOGY_COUPLE_NOISE_STD = 10.0
+
+
+def _topology_generation_order(active_components: set[str]) -> list[str]:
+    """Return ``active_components`` in topological generation order.
+
+    Roots (no incoming TOPOLOGY edges from any other active component) come
+    first; downstream components come after their upstream(s). Only edges
+    where both endpoints are in ``active_components`` are considered, so
+    ``--components`` filtering naturally restricts the dependency graph.
+    Cycles are not expected in TOPOLOGY (v1 graph is a DAG); if one ever
+    appears, fall back to ``COMPONENTS`` insertion order for the cycle
+    members so we always make forward progress.
+
+    Ties (multiple roots / multiple ready nodes at the same Kahn step)
+    break on ``COMPONENTS`` insertion order so the result is deterministic
+    regardless of how the caller iterates ``args.components``.
+    """
+    incoming: dict[str, set[str]] = {c: set() for c in active_components}
+    for source, edges in TOPOLOGY.items():
+        if source not in active_components:
+            continue
+        for edge in edges:
+            if edge.target in incoming and edge.target != source:
+                incoming[edge.target].add(source)
+    component_index = {name: i for i, name in enumerate(COMPONENTS.keys())}
+    ordered: list[str] = []
+    remaining = {c: set(deps) for c, deps in incoming.items()}
+    while remaining:
+        ready = sorted(
+            (c for c, deps in remaining.items() if not deps),
+            key=lambda c: component_index[c],
+        )
+        if not ready:
+            ready = sorted(remaining.keys(), key=lambda c: component_index[c])
+        for c in ready:
+            ordered.append(c)
+            del remaining[c]
+            for deps in remaining.values():
+                deps.discard(c)
+    return ordered
+
+
+def _compose_topology_coupled_specs(
+    component_name: str,
+    specs: list[MetricSpec],
+    upstream_arrays: dict[str, np.ndarray],
+    rng: "np.random.RandomState",
+    n_rows: int,
+) -> list[MetricSpec]:
+    """Return a possibly-modified spec list with the RPS baseline coupled
+    to upstream component(s) via the TOPOLOGY graph.
+
+    Phase 2 (VER-152): only ``requests_per_sec`` is coupled, via constant-
+    weight edges whose source has already been generated and stashed in
+    ``upstream_arrays``. Callable-weight edges (e.g. the cacheservice ->
+    database cache-miss-rate driver) need source-side context that's not
+    wired through phase 2; they are skipped here and pick up in phase 3.
+
+    When no incoming edge qualifies, the spec list is returned unchanged
+    so the downstream falls back to its natural-Gaussian baseline (and
+    ``--topology-mode realistic`` reduces to ``independent`` for it).
+    """
+    name_to_idx = {s.name: i for i, s in enumerate(specs)}
+    if "requests_per_sec" not in name_to_idx:
+        return specs
+    contributions: list[tuple[str, float]] = []
+    for upstream, edges in TOPOLOGY.items():
+        for edge in edges:
+            if edge.target != component_name:
+                continue
+            if upstream not in upstream_arrays:
+                continue
+            # Reject ``bool`` first: ``isinstance(True, int)`` is True.
+            if isinstance(edge.weight, bool) or not isinstance(
+                edge.weight, (int, float)
+            ):
+                continue
+            contributions.append((upstream, float(edge.weight)))
+    if not contributions:
+        return specs
+    coupled = np.zeros(n_rows, dtype=np.float64)
+    for upstream, weight in contributions:
+        coupled += upstream_arrays[upstream] * weight
+    coupled += rng.normal(0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)
+    original = specs[name_to_idx["requests_per_sec"]]
+    # ``dataclasses.replace`` preserves the original spec's declarative
+    # metadata (unit, semantic_type, min/max, dtype, derivation, clip_min)
+    # so ``schema.json`` / ``--validate-output`` see identical metadata
+    # regardless of the topology mode in effect.
+    coupled_spec = dataclasses.replace(
+        original,
+        base=0.0,
+        std=0.0,
+        multiplier=None,
+        additive=lambda ts, elapsed, baked=coupled: baked,
+    )
+    new_specs = list(specs)
+    new_specs[name_to_idx["requests_per_sec"]] = coupled_spec
+    return new_specs
+
 
 # ------------------------------------------------------------------
 # Anomaly specifications — migrated to SCENARIOS registry (VER-104).
@@ -4144,6 +4456,20 @@ def parse_args(argv=None):
                         "on the given 1-based day of the run. 0 (default) disables. Generator "
                         "quirk, not an anomaly spec — does not appear in anomalies.csv. The "
                         "affected CSVs end up with 3,600/interval extra rows for that day.")
+    p.add_argument(
+        "--topology-mode",
+        choices=["independent", "realistic"],
+        default="independent",
+        help="Phase 2 (VER-141 / VER-152) opt-in: switch downstream baseline "
+             "generation to read from the upstream component's RPS column via "
+             "the TOPOLOGY graph. 'independent' (default) keeps every "
+             "component's baseline as an independent Gaussian (byte-identical "
+             "to today's output). 'realistic' generates loadbalancer first, "
+             "stashes its requests_per_sec column, and feeds it into "
+             "apigateway's requests_per_sec baseline as upstream_rps * "
+             "edge.weight + small_noise. Anomaly overrides on downstream "
+             "components still apply on top of the coupled baseline.",
+    )
     args = p.parse_args(argv)
 
     if args.duration_days < 1:
@@ -6202,9 +6528,31 @@ def main(argv=None):
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
 
-    for name, specs in effective_specs.items():
-        if name not in args.components:
-            continue
+    # Topology phase 2 (VER-152): in ``--topology-mode realistic`` we walk
+    # ``args.components`` in topological order (roots first) and stash each
+    # generated component's ``requests_per_sec`` column so downstream
+    # components can reshape their baseline via
+    # ``_compose_topology_coupled_specs``. In ``--topology-mode independent``
+    # (the default) the order falls back to ``effective_specs`` iteration
+    # order (which is ``COMPONENTS`` insertion order) and no capture/coupling
+    # runs — byte-identical to the pre-VER-152 generation path.
+    if args.topology_mode == "realistic":
+        active = set(args.components)
+        generation_order = [
+            name for name in _topology_generation_order(active)
+            if name in effective_specs
+        ]
+        upstream_arrays: dict[str, np.ndarray] | None = {}
+    else:
+        generation_order = [name for name in effective_specs if name in args.components]
+        upstream_arrays = None
+
+    for name in generation_order:
+        specs = effective_specs[name]
+        if args.topology_mode == "realistic":
+            specs = _compose_topology_coupled_specs(
+                name, specs, upstream_arrays, ctx.rng, n_rows
+            )
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
@@ -6215,7 +6563,8 @@ def main(argv=None):
                            emit_metrics="metrics" in args.emit_selection,
                            dst_inject_day=args.inject_dst_artifact_day,
                            ctx=ctx,
-                           instances=ctx.instances[name])
+                           instances=ctx.instances[name],
+                           topology_capture=upstream_arrays)
 
     filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 
