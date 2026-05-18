@@ -495,11 +495,17 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
             # bind the RNG to a default-having fixed positional like
             # ``scale`` in ``(ts, col, scale=1.0, *args)``.
             if required <= 2 and fixed > 2:
+                # Step path calls 3-arg, so the only position the dispatcher
+                # could misbind onto is fixed position 3. Positions 4+ are
+                # left at their declared defaults (not bound by the 3-arg
+                # call), so name the actual offender — position 3 — rather
+                # than the count of fixed params.
                 raise TypeError(
                     f"Generator {spec['generator']!r} has *args with "
-                    f"fixed_positional_count={fixed} > 2; the 3-arg step "
-                    f"call would overwrite the default-having position {fixed}. "
-                    f"Use (ts, col) or (ts, col, rng) instead."
+                    f"fixed_positional_count={fixed} > 2 and required <= 2; "
+                    f"the 3-arg step call would overwrite the default-having "
+                    f"fixed positional at position 3. Use (ts, col) or "
+                    f"(ts, col, rng) instead."
                 )
             return float(spec["generator"](ts, col, rng))
         if required == 3:
@@ -660,12 +666,21 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
     fixed = meta["fixed_positional_count"]
     if meta["has_var_positional"]:
         # Mirror the validator's *args misbind check for direct callers.
+        # Span path calls 5-arg, so the dispatcher could misbind onto
+        # fixed positions 3 through min(fixed, 5). Positions 6+ are left
+        # at their declared defaults (not bound by the 5-arg call).
         if required <= 2 and fixed > 2:
+            misbind_end = min(fixed, 5)
+            misbind_range = (
+                f"position 3" if misbind_end == 3
+                else f"positions 3 through {misbind_end}"
+            )
             raise TypeError(
                 f"Generator {generator!r} has *args with "
-                f"fixed_positional_count={fixed} > 2; the 5-arg span call "
-                f"would overwrite default-having fixed positions. Use "
-                f"(ts, col) or (ts, col, *args) instead."
+                f"fixed_positional_count={fixed} > 2 and required <= 2; "
+                f"the 5-arg span call would overwrite the default-having "
+                f"fixed positional at {misbind_range}. Use (ts, col) or "
+                f"(ts, col, *args) instead."
             )
         return generator(ts, col, t_within, span_idx, rng)
     if required == 5:

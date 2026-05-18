@@ -175,6 +175,15 @@ the call shape):
   - `required_positional <= 2` → call as `(ts, col)`; any default
     positional params keep their declared defaults
 
+`*args` is only safe when the fixed-positional prefix is `(ts, col)`
+(i.e., `fixed_positional_count <= 2`). Signatures like
+`(ts, col, scale=1.0, *args)` or `(ts, col, rng, *args)` on a span path
+are rejected by `_validate_scenario_spec` and by both dispatchers,
+because the target-arity call would bind `rng`/`t_within`/`span_idx` to
+the default-having fixed positionals at positions 3+ before the rest
+flows into `*args`. Move any extra parameters after `*args` (kwarg-only
+with defaults) instead.
+
 Intermediate 3- and 4-arg span calls and 3-arg span calls for non-`*args`
 generators are never attempted: those shapes were the silent-misbind
 vector (a primary spec like `(ts, col, rng)` on a span path would have
