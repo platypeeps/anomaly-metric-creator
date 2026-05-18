@@ -442,9 +442,18 @@ non-`list` edge containers, non-`Edge` entries, edge targets outside
 `COMPONENTS`, callable weights that fail to accept an `ndarray` or
 return something other than an `ndarray`, and constant weights that
 are not finite, non-negative `int`/`float` scalars (`bool` is
-rejected explicitly because it is an `int` subclass). Mirror these
-invariants in `tests/test_topology_registry.py` when adding new edges
-or constraints.
+rejected explicitly because it is an `int` subclass).
+
+Each non-`None` `Edge.saturation` is also validated at import time via
+the shared `_validate_saturation_params(sat, *, context=…)` helper:
+`midpoint` and `steepness` must be finite positive non-`bool`
+`int`/`float`; `latency_gain` and `error_gain` must be finite
+non-negative non-`bool` `int`/`float`. `_apply_saturation()` re-runs
+the same check at call time so direct callers (tests, future
+consumers) cannot smuggle in `NaN`/`inf`/`bool`/negative values.
+
+Mirror these invariants in `tests/test_topology_registry.py` when
+adding new edges or constraints.
 
 ### Scenario registry
 

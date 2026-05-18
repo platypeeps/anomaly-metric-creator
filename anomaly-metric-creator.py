@@ -1643,6 +1643,59 @@ TOPOLOGY: dict[str, list[Edge]] = {
 }
 
 
+def _validate_saturation_params(sat: SaturationParams, *, context: str) -> None:
+    """Field-level invariants for a ``SaturationParams`` instance.
+
+    Used by ``_validate_topology()`` at import time on every edge that
+    carries saturation, and re-checked at call time inside
+    ``_apply_saturation()`` so direct callers (tests, future consumers)
+    cannot smuggle in bad params. ``context`` is a short string naming
+    the source of the params (an edge identifier or the function name)
+    so the raised ``ValueError`` points at the offending site.
+
+    Rejected inputs per field:
+
+    - ``midpoint`` — must be a finite positive non-``bool``
+      ``int``/``float``. Zero divides; negative or non-finite
+      contaminates ``utilization`` with non-finite values; ``bool`` is
+      an ``int`` subtype so ``True`` would otherwise slip through.
+    - ``steepness`` — must be a finite positive non-``bool``
+      ``int``/``float``. Zero collapses the logistic to a constant
+      0.5; negative inverts the curve.
+    - ``latency_gain`` / ``error_gain`` — must be finite non-negative
+      non-``bool`` ``int``/``float``. Negative gains would make
+      ``latency_multiplier < 1`` (violating the "latency multiplier
+      never negative" acceptance test once a multiplier-of-multipliers
+      flips sign) or push the error offset below zero.
+    """
+    def _check(name: str, value, *, positive: bool) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(
+                f"{context}: SaturationParams.{name}={value!r} must be a "
+                f"finite {'positive' if positive else 'non-negative'} "
+                f"int/float; got {type(value).__name__}."
+            )
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{context}: SaturationParams.{name}={value!r} must be "
+                f"finite."
+            )
+        if positive and value <= 0:
+            raise ValueError(
+                f"{context}: SaturationParams.{name}={value!r} must be > 0."
+            )
+        if not positive and value < 0:
+            raise ValueError(
+                f"{context}: SaturationParams.{name}={value!r} must be "
+                f">= 0."
+            )
+
+    _check("midpoint", sat.midpoint, positive=True)
+    _check("steepness", sat.steepness, positive=True)
+    _check("latency_gain", sat.latency_gain, positive=False)
+    _check("error_gain", sat.error_gain, positive=False)
+
+
 def _validate_topology() -> None:
     """Import-time invariants for ``TOPOLOGY``.
 
@@ -1651,7 +1704,10 @@ def _validate_topology() -> None:
     target being a real component. Callable weights are smoke-tested with
     a tiny ``np.ndarray`` so a mis-shaped lambda (e.g. zero-arg or scalar-
     only) fails here instead of corrupting the generator's vectorized
-    column writes downstream.
+    column writes downstream. Each non-``None`` ``Edge.saturation`` has
+    its ``SaturationParams`` field invariants enforced via
+    ``_validate_saturation_params`` so phase 4's saturation feedback
+    cannot silently consume ``NaN``/``inf``/``bool``/negative values.
     """
     known_components = set(COMPONENTS.keys())
     for source, edges in TOPOLOGY.items():
@@ -1677,6 +1733,18 @@ def _validate_topology() -> None:
                     f"TOPOLOGY[{source!r}] -> Edge.target={edge.target!r} "
                     f"is not in COMPONENTS; known components: "
                     f"{sorted(known_components)}"
+                )
+            if edge.saturation is not None:
+                if not isinstance(edge.saturation, SaturationParams):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} "
+                        f"Edge.saturation={edge.saturation!r} must be a "
+                        f"SaturationParams instance or None; got "
+                        f"{type(edge.saturation).__name__}."
+                    )
+                _validate_saturation_params(
+                    edge.saturation,
+                    context=f"TOPOLOGY[{source!r}] -> {edge.target!r}",
                 )
             if callable(edge.weight):
                 probe = np.array([0.0, 0.5, 1.0], dtype=np.float64)
@@ -2038,10 +2106,7 @@ def _apply_saturation(
     than the downstream's own load column, which is still being
     constructed at composition time.
     """
-    if not isinstance(sat.midpoint, (int, float)) or sat.midpoint <= 0:
-        raise ValueError(
-            f"SaturationParams.midpoint={sat.midpoint!r} must be > 0"
-        )
+    _validate_saturation_params(sat, context="_apply_saturation")
     utilization = np.maximum(
         np.asarray(upstream_load, dtype=np.float64), 0.0
     ) / float(sat.midpoint)

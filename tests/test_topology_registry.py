@@ -259,3 +259,111 @@ def test_validate_topology_accepts_int_constant_weight(amc, monkeypatch):
     patched = {src: [amc.Edge(target=tgt, weight=2)]}
     monkeypatch.setattr(amc, "TOPOLOGY", patched)
     amc._validate_topology()  # must not raise
+
+
+# ----------------------------------------------------------------------
+# VER-154 phase 4: ``Edge.saturation`` field invariants enforced at
+# import-time by ``_validate_topology`` (mirroring the constant-weight
+# checks above so ``_apply_saturation`` cannot silently consume bad
+# values).
+# ----------------------------------------------------------------------
+def _edge_with_saturation(amc, **overrides):
+    """Construct an Edge carrying SaturationParams patched with overrides.
+
+    Defaults to params that ``_validate_saturation_params`` accepts, so
+    the test only exercises the field under test.
+    """
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    defaults = dict(midpoint=100.0, steepness=6.0,
+                    latency_gain=0.4, error_gain=0.01)
+    defaults.update(overrides)
+    sat = amc.SaturationParams(**defaults)
+    return src, tgt, amc.Edge(target=tgt, weight=1.0, saturation=sat)
+
+
+@pytest.mark.parametrize("field", ["midpoint", "steepness"])
+def test_validate_topology_rejects_zero_saturation_positive_field(
+    amc, monkeypatch, field
+):
+    """``midpoint`` and ``steepness`` must be > 0 (zero would divide /
+    collapse the logistic to a constant)."""
+    src, _tgt, edge = _edge_with_saturation(amc, **{field: 0.0})
+    monkeypatch.setattr(amc, "TOPOLOGY", {src: [edge]})
+    with pytest.raises(ValueError, match=field):
+        amc._validate_topology()
+
+
+@pytest.mark.parametrize(
+    "field", ["midpoint", "steepness", "latency_gain", "error_gain"],
+)
+def test_validate_topology_rejects_negative_saturation_field(
+    amc, monkeypatch, field
+):
+    """No saturation field accepts a negative value (negative midpoint /
+    steepness inverts the curve; negative gains flip the sign of the
+    contribution)."""
+    src, _tgt, edge = _edge_with_saturation(amc, **{field: -1.0})
+    monkeypatch.setattr(amc, "TOPOLOGY", {src: [edge]})
+    with pytest.raises(ValueError, match=field):
+        amc._validate_topology()
+
+
+@pytest.mark.parametrize(
+    "field", ["midpoint", "steepness", "latency_gain", "error_gain"],
+)
+def test_validate_topology_rejects_nan_saturation_field(
+    amc, monkeypatch, field
+):
+    """``NaN`` in any saturation field is rejected at import-time."""
+    src, _tgt, edge = _edge_with_saturation(amc, **{field: float("nan")})
+    monkeypatch.setattr(amc, "TOPOLOGY", {src: [edge]})
+    with pytest.raises(ValueError, match=r"finite"):
+        amc._validate_topology()
+
+
+@pytest.mark.parametrize(
+    "field", ["midpoint", "steepness", "latency_gain", "error_gain"],
+)
+def test_validate_topology_rejects_inf_saturation_field(
+    amc, monkeypatch, field
+):
+    """``inf`` in any saturation field is rejected at import-time."""
+    src, _tgt, edge = _edge_with_saturation(amc, **{field: float("inf")})
+    monkeypatch.setattr(amc, "TOPOLOGY", {src: [edge]})
+    with pytest.raises(ValueError, match=r"finite"):
+        amc._validate_topology()
+
+
+@pytest.mark.parametrize(
+    "field", ["midpoint", "steepness", "latency_gain", "error_gain"],
+)
+def test_validate_topology_rejects_bool_saturation_field(
+    amc, monkeypatch, field
+):
+    """``bool`` is an ``int`` subtype, so ``True`` would otherwise slip
+    through; reject it explicitly to mirror the constant-weight rule."""
+    src, _tgt, edge = _edge_with_saturation(amc, **{field: True})
+    monkeypatch.setattr(amc, "TOPOLOGY", {src: [edge]})
+    with pytest.raises(ValueError, match=field):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_non_saturationparams_saturation(
+    amc, monkeypatch
+):
+    """``Edge.saturation`` must be ``None`` or a ``SaturationParams``."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    bogus = amc.Edge(target=tgt, weight=1.0, saturation="not-a-saturation")  # type: ignore[arg-type]
+    monkeypatch.setattr(amc, "TOPOLOGY", {src: [bogus]})
+    with pytest.raises(ValueError, match=r"SaturationParams"):
+        amc._validate_topology()
+
+
+def test_validate_topology_accepts_zero_gain_saturation(amc, monkeypatch):
+    """Zero ``latency_gain`` and ``error_gain`` are valid — the LLM
+    phase-5 placeholder edge relies on this."""
+    src, _tgt, edge = _edge_with_saturation(
+        amc, latency_gain=0.0, error_gain=0.0,
+    )
+    monkeypatch.setattr(amc, "TOPOLOGY", {src: [edge]})
+    amc._validate_topology()  # must not raise
