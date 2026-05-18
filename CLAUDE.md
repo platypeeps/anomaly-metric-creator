@@ -164,25 +164,46 @@ two canonical positional shapes per path, chosen by the generator's
 **required** positional count (defaults extend capacity but do not change
 the call shape):
 
-- **Step path** (cascades + primary step specs without `duration_seconds`):
-  - `required_positional == 3` or `*args` → call as `(ts, col, rng)`
+- **Step path** (cascades + primary step specs without positive
+  `duration_seconds`; note: a spec with `duration_seconds == 0` is still
+  the step path):
+  - `required_positional == 3` → call as `(ts, col, rng)`
   - `required_positional <= 2` → call as `(ts, col)`; any default
     positional params keep their declared defaults
+  - `*args` with `fixed_positional_count <= 2` → call as
+    `(ts, col, rng)` (`*args` absorbs position 3)
+  - `*args` with `fixed_positional_count == 3` and
+    `required_positional == 3` (i.e. `(ts, col, rng, *args)`) → call as
+    `(ts, col, rng)` (positions 1–3 fill required, `*args` empty)
 - **Span path** (primary specs with `shape != "step"` or
-  `duration_seconds > 0`):
-  - `required_positional == 5` or `*args` → call as
+  positive `duration_seconds`):
+  - `required_positional == 5` → call as
     `(ts, col, t_within, span_idx, rng)`
   - `required_positional <= 2` → call as `(ts, col)`; any default
     positional params keep their declared defaults
+  - `*args` with `fixed_positional_count <= 2` → call as
+    `(ts, col, t_within, span_idx, rng)` (`*args` absorbs positions 3–5)
+  - `*args` with `fixed_positional_count == 5` and
+    `required_positional == 5` → call as
+    `(ts, col, t_within, span_idx, rng)`
 
-`*args` is only safe when the fixed-positional prefix is `(ts, col)`
-(i.e., `fixed_positional_count <= 2`). Signatures like
-`(ts, col, scale=1.0, *args)` or `(ts, col, rng, *args)` on a span path
-are rejected by `_validate_scenario_spec` and by both dispatchers,
-because the target-arity call would bind `rng`/`t_within`/`span_idx` to
-the default-having fixed positionals at positions 3+ before the rest
-flows into `*args`. Move any extra parameters after `*args` (kwarg-only
-with defaults) instead.
+`*args` is rejected when its fixed-positional prefix would cause a
+silent misbind. Two distinct misbind cases the validator and
+dispatchers both reject:
+
+- **Default-overwrite case** — `required_positional <= 2` with
+  `fixed_positional_count > 2`. Example: `(ts, col, scale=1.0, *args)`
+  on either path. The target-arity call would overwrite the author's
+  declared default at position 3 (step) or positions 3–min(fixed,5)
+  (span) before the rest flows into `*args`.
+- **Required-misbind case** (span path only) — `required_positional`
+  in `{3, 4}` with `*args`. Example: `(ts, col, rng, *args)` on a span
+  spec. The 5-arg call would bind `t_within` into the required `rng`
+  slot. (Step path with `required_positional == 3` is the canonical
+  shape, so this case only applies to span.)
+
+Move any extra parameters after `*args` (kwarg-only with defaults)
+instead.
 
 Intermediate 3- and 4-arg span calls and 3-arg span calls for non-`*args`
 generators are never attempted: those shapes were the silent-misbind

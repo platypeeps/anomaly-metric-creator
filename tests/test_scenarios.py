@@ -671,6 +671,30 @@ def test_span_dispatcher_rejects_var_args_with_default_prefix(amc):
         amc._call_generator_within_span(bad, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
 
 
+def test_span_dispatcher_rejects_var_args_with_required_misbind(amc):
+    """Span path required==3 with *args is a required-misbind, not a
+    default-overwrite. (ts, col, rng, *args) would have t_within bound to
+    the required rng slot. The dispatcher must defensively refuse, even
+    though the validator should have caught this at import time."""
+    def bad(ts, col, rng, *args):
+        return 1.0
+    import datetime as _dt
+    with pytest.raises(TypeError, match="required_positional=3"):
+        amc._call_generator_within_span(bad, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
+
+
+def test_span_dispatcher_accepts_var_args_with_required_target(amc):
+    """The canonical required-target+*args form is safe: positions 1-5
+    fill required, *args stays empty. Don't reject."""
+    seen = []
+    def gen(ts, col, t_within, span_idx, rng, *args):
+        seen.append((t_within, span_idx, rng, args))
+        return 1.0
+    import datetime as _dt
+    amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 7.5, 3, "rng-marker")
+    assert seen == [(7.5, 3, "rng-marker", ())]
+
+
 
 
 def test_validate_scenario_spec_canonical_required_with_trailing_optional_step(amc):

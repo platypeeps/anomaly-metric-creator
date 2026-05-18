@@ -26,8 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha1
 from pathlib import Path
 from typing import Callable
@@ -85,7 +84,7 @@ _ANOMALY_COUNT_CAP_SALT = int.from_bytes(
 # ------------------------------------------------------------------
 # Per-run state container
 # ------------------------------------------------------------------
-@dataclasses.dataclass
+@dataclass
 class RunContext:
     """Per-run mutable state.
 
@@ -103,8 +102,8 @@ class RunContext:
       ``generate_component()`` when it merges primary + cascade overrides.
     """
     rng: "np.random.RandomState"
-    anomalies: list = dataclasses.field(default_factory=list)
-    cascading_anomalies: dict = dataclasses.field(default_factory=dict)
+    anomalies: list = field(default_factory=list)
+    cascading_anomalies: dict = field(default_factory=dict)
 
 # Derived-metric registry. Each entry maps a component to (derivation_fn,
 # tuple_of_derived_metric_names). generate_component() looks the component
@@ -555,7 +554,27 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
     raise ValueError(f"Unsupported anomaly shape: {shape}")
 
 
-_GENERATOR_META_CACHE: "dict[Callable, dict]" = {}
+class _IdentityKey:
+    """Dict key with identity-based equality, used by the generator-meta
+    cache. Two distinct callables that compare equal via custom ``__eq__``
+    must not share cached metadata; keying by identity avoids that.
+    Storing the object inside the key also keeps a strong reference,
+    so Python can't recycle ``id(obj)`` for a different generator after
+    garbage collection."""
+    __slots__ = ("obj",)
+
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __hash__(self):
+        return id(self.obj)
+
+    def __eq__(self, other):
+        return isinstance(other, _IdentityKey) and self.obj is other.obj
+
+
+_GENERATOR_META_CACHE: "dict[_IdentityKey, dict]" = {}
+_GENERATOR_META_CACHE_MAX = 1024
 
 
 def _generator_meta(gen) -> dict:
@@ -620,20 +639,29 @@ def _generator_meta(gen) -> dict:
 
 
 def _cached_generator_meta(gen) -> dict:
-    """Cached introspection lookup. Keys on the generator object itself
-    (not ``id()``) so the dict keeps a strong reference and prevents
-    Python from reusing the id slot for a different generator after gc.
-    Falls back to an uncached lookup for unhashable callables (e.g.,
-    callable dataclass instances with frozen=False)."""
-    try:
-        cached = _GENERATOR_META_CACHE.get(gen)
-        if cached is None:
-            cached = _generator_meta(gen)
-            _GENERATOR_META_CACHE[gen] = cached
+    """Cached introspection lookup keyed by callable identity.
+
+    - Identity keying (not object equality) prevents two distinct
+      callables that compare equal via custom ``__eq__`` from sharing
+      stale metadata.
+    - The ``_IdentityKey`` wrapper holds a strong reference, so Python
+      can't recycle ``id(gen)`` for a different callable after garbage
+      collection.
+    - Bounded size with simple insertion-order eviction keeps the cache
+      from growing without bound in long-lived processes that create
+      many fresh callables (e.g., test sessions building lambdas in
+      loops). Dropped wrappers release their callables for gc.
+    """
+    key = _IdentityKey(gen)
+    cached = _GENERATOR_META_CACHE.get(key)
+    if cached is not None:
         return cached
-    except TypeError:
-        # Unhashable callable — can't cache; introspect every call. Rare.
-        return _generator_meta(gen)
+    meta = _generator_meta(gen)
+    if len(_GENERATOR_META_CACHE) >= _GENERATOR_META_CACHE_MAX:
+        for stale in list(_GENERATOR_META_CACHE)[: _GENERATOR_META_CACHE_MAX // 2]:
+            del _GENERATOR_META_CACHE[stale]
+    _GENERATOR_META_CACHE[key] = meta
+    return meta
 
 
 def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
@@ -665,10 +693,15 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
     required = meta["required_positional"]
     fixed = meta["fixed_positional_count"]
     if meta["has_var_positional"]:
-        # Mirror the validator's *args misbind check for direct callers.
-        # Span path calls 5-arg, so the dispatcher could misbind onto
-        # fixed positions 3 through min(fixed, 5). Positions 6+ are left
-        # at their declared defaults (not bound by the 5-arg call).
+        # Mirror the validator's *args misbind checks for direct callers.
+        # Two distinct misbind cases:
+        #   (a) required <= 2 with default-having fixed positions beyond
+        #       (ts, col): the 5-arg call overwrites declared defaults at
+        #       positions 3 through min(fixed, 5).
+        #   (b) required ∈ {3, 4}: the 5-arg call binds t_within (and
+        #       possibly span_idx) into REQUIRED positional slots the
+        #       author intended for other values (e.g. (ts, col, rng,
+        #       *args) where rng would receive t_within).
         if required <= 2 and fixed > 2:
             misbind_end = min(fixed, 5)
             misbind_range = (
@@ -681,6 +714,15 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
                 f"the 5-arg span call would overwrite the default-having "
                 f"fixed positional at {misbind_range}. Use (ts, col) or "
                 f"(ts, col, *args) instead."
+            )
+        if required > 2 and required != 5:
+            raise TypeError(
+                f"Generator {generator!r} has *args with "
+                f"required_positional={required} (neither 2 nor 5); "
+                f"the 5-arg span call would bind t_within/span_idx into "
+                f"the required positions the author intended for other "
+                f"values. Use (ts, col, t_within, span_idx, rng) for full "
+                f"control or (ts, col) for the legacy form."
             )
         return generator(ts, col, t_within, span_idx, rng)
     if required == 5:
