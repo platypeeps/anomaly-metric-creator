@@ -646,7 +646,7 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 - If a public helper was removed or repurposed, CLAUDE.md prose is updated in the same diff.
 
 **Single source of truth**
-- No hand-rolled emit→filename, metric→component, or component→derivation maps alongside a canonical registry. Every consumer reads from `_EMIT_ARTIFACT_FILES`, `COMPONENTS`, `DERIVED_METRICS`, etc.
+- No hand-rolled emit→filename, metric→component, or component→derivation maps alongside a canonical registry. Every consumer reads from `_EMIT_ARTIFACT_FILES`, `COMPONENTS`, `DERIVATIONS`, etc.
 - `_COMBINE_OUTPUT_FILENAME` is used by the actual combine writer, not only the cleanup/summary path.
 
 **Completeness**
@@ -665,10 +665,10 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 - No broad `try/except` in a per-row loop where the body has side effects such as RNG draws.
 
 **Action order in user-facing output**
-- "Done — wrote X" lines appear only *after* the writer for X completes successfully.
+- The end-of-run `Done - … written to …` summary line only names artifacts the run actually wrote, and is printed only after every writer it names has completed successfully.
 
 **Test hygiene**
-- New test files have no unused imports or unused helpers (confirm with `ruff check tests/`).
+- New test files have no unused imports or unused helpers.
 
 **Default-behavior changes**
 - If a default parameter value or fallback path changes (e.g. unseeded `RandomState`, required arg replacing optional), the PR description names it and tests cover both old and new caller shapes.
