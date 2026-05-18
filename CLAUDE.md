@@ -287,29 +287,35 @@ The v1 graph declared at phase 1:
   which is `COMPONENTS` insertion order. No coupling, no upstream
   capture, byte-identical to the pre-VER-152 generator. All locked
   SHA-256 hashes were produced under this mode.
-- `realistic` (opt-in, VER-152 phase 2) — topological order via
+- `realistic` (opt-in, VER-152/VER-153) — topological order via
   `_topology_generation_order(args.components)`. Kahn's algorithm
   walks reverse-adjacency of `TOPOLOGY` restricted to
   `args.components`; ties break on `COMPONENTS` insertion order so
   the result is deterministic. As each component finishes,
   `generate_component()` stashes its post-natural / post-anomaly /
-  post-derivation `requests_per_sec` column (pre-round, full float
-  precision) into a shared `upstream_arrays` dict keyed by
-  component name. Before generating a downstream component,
-  `_compose_topology_coupled_specs` looks up incoming
-  constant-weight edges from active upstreams and replaces the
-  downstream's `requests_per_sec` MetricSpec with a coupled version
-  whose baseline is `Σ(upstream * edge.weight) +
+  post-derivation load-metric columns (pre-round, full float
+  precision) into a shared `upstream_arrays: dict[str, dict[str,
+  np.ndarray]]` keyed by `(component_name, metric_name)`. The set
+  of captured metrics per component is declared in
+  `_TOPOLOGY_LOAD_METRICS`. Before generating a downstream
+  component, `_compose_topology_coupled_specs` rewrites each of the
+  downstream's load metrics via the incoming edges:
+  - **Constant-weight edges** — `contribution = (upstream /
+    upstream_base) * downstream_base * w_norm` where `w_norm =
+    w / Σw` normalizes so the combined constant term equals
+    `downstream_base` at natural upstream load. At least one
+    constant-weight edge must have a non-zero captured upstream for
+    this path to fire.
+  - **Callable-weight edges** — `_topology_callable_signal` derives
+    a per-row scalar from the upstream's captured columns (e.g.
+    `cache_misses / (cache_hits + cache_misses)` for the
+    `cacheservice → database` edge) and calls `edge.weight(signal)`
+    to produce an additive contribution in downstream-metric units.
+  The final coupled column is `constant_contrib + callable_contrib +
   rng.normal(0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)`. The original
-  spec's declarative metadata (unit, semantic_type, min/max, dtype,
-  derivation, clip_min) survives the swap via
-  `dataclasses.replace`, so `schema.json` and `--validate-output`
-  see identical metadata in either mode.
-
-In phase 2 only the `loadbalancer → apigateway` edge ever actually
-fires the coupling — it is the single edge whose both endpoints
-declare a `requests_per_sec` metric. Callable-weight edges (e.g.
-`cacheservice → database`) are skipped here and pick up in phase 3.
+  MetricSpec's declarative metadata (unit, semantic_type, min/max,
+  dtype, derivation, clip_min) survives via `dataclasses.replace`;
+  only `base`, `std`, `multiplier`, and `additive` change.
 
 Realistic mode shares the same `RunContext.rng` as independent mode;
 because the generation order differs, every component's RNG draws
@@ -334,12 +340,12 @@ anomaly propagation, so the two are intentionally allowed to overlap.
 Cascades remain the path for "metric X drops at exactly row Y"
 behaviors; topology is the path for "load on source raises the
 downstream baseline" (and phase 5 will extend it to "latency on
-target"). Phase 2 does no explicit double-counting reconciliation;
-because the coupling target (`requests_per_sec` baseline) and most
-cascade targets (`error_rate`, latency, `cpu_util_pct`) are
-different metrics, double-counting is not actually observable in
-the v1 graph. Revisit the question when phase 3 expands the
-coupling to additional downstream metrics.
+target"). Phase 3 (VER-153) expanded coupling to all front-half fan-out edges, so
+`authservice.login_attempts`, `cacheservice.cache_hits/cache_misses`,
+and `database.queries_per_sec` are all now coupled under realistic mode.
+The cascade-vs-topology double-counting question remains dormant because
+cascade targets (`error_rate`, latency, `cpu_util_pct`) are different
+metrics from the topology coupling targets.
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside
