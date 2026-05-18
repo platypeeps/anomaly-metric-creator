@@ -64,5 +64,5 @@ Do not flag these as bugs in code review.
 
 - Tests write only into `tmp_path`, never into `iot_logs/`.
 - Locked SHA-256 golden hashes for 1d/7d runs live in `tests/test_scenarios.py`, `tests/test_gauges_file.py`, and `tests/test_schema_file.py`. Hash mismatches indicate an unintentional byte-output change.
-- Parametrized scenario tests are driven from `amc.SCENARIOS` — hard-coding slug lists in tests is a bug waiting to happen.
+- Parametrized scenario tests that exercise the *whole* catalog (severity coverage, components-touched coverage, registry-wide invariants) should derive from `amc.SCENARIOS` rather than hard-coding the full slug list, so new scenarios are covered automatically. Targeted pinned sets that name a specific subset on purpose are intentional and exempt — current examples include `tests/test_scenarios.py::THREE_MULTI_DAY_SCENARIOS` (the three multi-day cascade scenarios that need bespoke per-day-index assertions) and `tests/test_registry.py::test_expected_scenario_slugs_present` (the registry snapshot that fails loudly if a slug is added or removed without intent). Don't flag those as bugs.
 - `conftest.py` holds `COMPONENT_FIELDS` and `DEFAULT_METRIC_COUNT`; drift from `COMPONENTS` / `DEFAULT_METRICS_PER_COMPONENT` is caught only by the test suite, not import-time validation.
