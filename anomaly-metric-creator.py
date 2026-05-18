@@ -1738,10 +1738,13 @@ def _validate_saturation_params(sat: SaturationParams, *, context: str) -> None:
       ``int``/``float``. Zero collapses the logistic to a constant
       0.5; negative inverts the curve.
     - ``latency_gain`` / ``error_gain`` — must be finite non-negative
-      non-``bool`` ``int``/``float``. Negative gains would make
-      ``latency_multiplier < 1`` (violating the "latency multiplier
-      never negative" acceptance test once a multiplier-of-multipliers
-      flips sign) or push the error offset below zero.
+      non-``bool`` ``int``/``float``. The saturation curve models
+      load-driven *degradation*: a positive gain raises latency and
+      error rate as upstream load climbs. Negative gains would invert
+      that physics (saturation reducing latency / pushing
+      ``error_offset`` below zero) and, when multiplied across two
+      saturating edges into the same downstream, could flip
+      ``latency_multiplier`` past zero into negative latency.
     """
     def _check(name: str, value, *, positive: bool) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -2307,8 +2310,12 @@ def _compose_topology_saturation_specs(
             sat = edge.saturation
             if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
                 continue  # placeholder edge (phase-5 llm_analytics).
+            ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
+            if ups_entry is None:
+                continue
+            ups_canonical, ups_supplementary = ups_entry
             driver = None
-            for lm in _TOPOLOGY_LOAD_METRICS.get(upstream, ()):
+            for lm in (ups_canonical, *ups_supplementary):
                 if lm in ups_cols:
                     driver = ups_cols[lm]
                     break

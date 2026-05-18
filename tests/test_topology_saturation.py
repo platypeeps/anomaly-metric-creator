@@ -298,7 +298,7 @@ def test_compose_saturation_specs_composes_with_existing_multiplier(amc):
         ]
         # Ensure the helper picks the right load metric for "synthup".
         saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
-        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload",)
+        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ())
         try:
             upstream_arrays = {"synthup": {"synthload": load}}
             out = amc._compose_topology_saturation_specs(
