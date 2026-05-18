@@ -29,9 +29,7 @@ These tests cover:
 """
 from __future__ import annotations
 
-import dataclasses
 import hashlib
-import math
 
 import numpy as np
 import pytest
