@@ -237,8 +237,10 @@ class Edge:
     for routing fractions, or any non-negative scalar for amplification
     edges) or a callable ``(np.ndarray) -> np.ndarray`` that computes the
     per-row weight from a numpy column (e.g. cache-miss rate driving the
-    cache→database fan-out). Callable weights must accept a numpy array;
-    the import-time ``_validate_topology`` validator enforces this.
+    cache→database fan-out). The import-time ``_validate_topology``
+    validator enforces both branches: constant weights must be a finite
+    non-negative ``int``/``float`` (``bool`` is rejected); callable
+    weights must accept a numpy array and return a numpy array.
 
     ``saturation`` is optional; when set, phase 5 will add the
     sigmoid-shaped latency/error contribution to the target component
@@ -1538,6 +1540,29 @@ def _validate_topology() -> None:
                         f"weight {edge.weight!r} returned "
                         f"{type(result).__name__}; callable weights must "
                         f"return a numpy array."
+                    )
+            else:
+                # Constant weight: must be a finite, non-negative scalar.
+                # ``bool`` is a subclass of ``int`` so ``isinstance(True,
+                # (int, float))`` is True; reject it explicitly before the
+                # numeric check.
+                if (isinstance(edge.weight, bool)
+                        or not isinstance(edge.weight, (int, float))):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
+                        f"{edge.weight!r} must be a finite non-negative "
+                        f"int/float or a callable (np.ndarray) -> "
+                        f"np.ndarray; got {type(edge.weight).__name__}."
+                    )
+                if not math.isfinite(edge.weight):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
+                        f"{edge.weight!r} must be finite."
+                    )
+                if edge.weight < 0:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
+                        f"{edge.weight!r} must be non-negative."
                     )
 
 

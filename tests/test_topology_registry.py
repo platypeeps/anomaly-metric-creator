@@ -198,3 +198,64 @@ def test_validate_topology_rejects_non_edge_entry(amc, monkeypatch):
     monkeypatch.setattr(amc, "TOPOLOGY", patched)
     with pytest.raises(ValueError, match=r"Edge"):
         amc._validate_topology()
+
+
+def test_validate_topology_rejects_negative_constant_weight(amc, monkeypatch):
+    """Constant ``Edge.weight`` < 0 is rejected at import-time."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, weight=-0.5)]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"non-negative"):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_nan_constant_weight(amc, monkeypatch):
+    """NaN constant ``Edge.weight`` is rejected at import-time."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, weight=float("nan"))]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"finite"):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_inf_constant_weight(amc, monkeypatch):
+    """Infinite constant ``Edge.weight`` is rejected at import-time."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, weight=float("inf"))]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"finite"):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_bool_constant_weight(amc, monkeypatch):
+    """``bool`` constant ``Edge.weight`` is rejected even though it subclasses ``int``."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, weight=True)]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"finite non-negative"):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_non_numeric_constant_weight(amc, monkeypatch):
+    """Non-numeric, non-callable ``Edge.weight`` (e.g. a string) is rejected."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, weight="0.5")]}  # type: ignore[arg-type]
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"finite non-negative"):
+        amc._validate_topology()
+
+
+def test_validate_topology_accepts_zero_constant_weight(amc, monkeypatch):
+    """A ``0`` constant ``Edge.weight`` (e.g. saturation-only placeholder) is accepted."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, weight=0)]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    amc._validate_topology()  # must not raise
+
+
+def test_validate_topology_accepts_int_constant_weight(amc, monkeypatch):
+    """An ``int`` constant ``Edge.weight`` is accepted (auto-coerces in numpy math)."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, weight=2)]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    amc._validate_topology()  # must not raise

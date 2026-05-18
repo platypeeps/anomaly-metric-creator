@@ -293,9 +293,12 @@ coexist without interaction.
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside
-`COMPONENTS`, and callable weights that fail to accept an `ndarray` or
-return something other than an `ndarray`. Mirror these invariants in
-`tests/test_topology_registry.py` when adding new edges or constraints.
+`COMPONENTS`, callable weights that fail to accept an `ndarray` or
+return something other than an `ndarray`, and constant weights that
+are not finite, non-negative `int`/`float` scalars (`bool` is
+rejected explicitly because it is an `int` subclass). Mirror these
+invariants in `tests/test_topology_registry.py` when adding new edges
+or constraints.
 
 ### Scenario registry
 
