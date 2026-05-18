@@ -249,3 +249,93 @@ def test_validator_rejects_non_string_instance_id(amc, monkeypatch):
     monkeypatch.setattr(amc, "INSTANCES", patched)
     with pytest.raises(ValueError, match="authservice.*id must be None or a string"):
         amc._validate_instances_registry()
+
+
+# ---------------------------------------------------------------------------
+# generate_component() instances kwarg per-entry validation
+# ---------------------------------------------------------------------------
+
+def _gc_kwargs(amc, tmp_path):
+    """Common kwargs for a 5-row authservice run (parametric inputs only —
+    each call must still pass its own ``instances`` and a fresh ``ctx``)."""
+    out = tmp_path / "instances_validation"
+    out.mkdir(exist_ok=True)
+    ts_array, ts_strings = amc._build_timestamp_arrays(5, 1.0)
+    return dict(
+        component_name="authservice",
+        specs=amc.COMPONENTS["authservice"][:2],
+        anomaly_specs=[],
+        base_dir=out,
+        total_seconds=5,
+        drop_rate=0.0,
+        interval=1.0,
+        ts_array=ts_array,
+        ts_strings=ts_strings,
+    )
+
+
+def test_generate_component_rejects_non_instance_entry(amc, tmp_path):
+    """A non-Instance entry in the ``instances`` kwarg must raise a clear
+    ValueError naming the call site, not a bare AttributeError once Phases
+    2–4 start consuming ``.id`` / dimension fields."""
+    kw = _gc_kwargs(amc, tmp_path)
+    ctx = amc.RunContext(rng=np.random.RandomState(42))
+    with pytest.raises(ValueError, match="generate_component.*non-Instance"):
+        amc.generate_component(
+            kw["component_name"], kw["specs"], kw["anomaly_specs"],
+            base_dir=kw["base_dir"], total_seconds=kw["total_seconds"],
+            drop_rate=kw["drop_rate"], interval=kw["interval"],
+            ts_array=kw["ts_array"], ts_strings=kw["ts_strings"],
+            ctx=ctx,
+            instances=[{"id": "not-a-dataclass"}],
+        )
+
+
+def test_generate_component_rejects_non_string_instance_id(amc, tmp_path):
+    """An Instance with a non-None, non-string id must be rejected by
+    ``generate_component`` with the same message convention the registry
+    validator uses."""
+    kw = _gc_kwargs(amc, tmp_path)
+    ctx = amc.RunContext(rng=np.random.RandomState(42))
+    with pytest.raises(ValueError, match="generate_component.*id must be None or a string"):
+        amc.generate_component(
+            kw["component_name"], kw["specs"], kw["anomaly_specs"],
+            base_dir=kw["base_dir"], total_seconds=kw["total_seconds"],
+            drop_rate=kw["drop_rate"], interval=kw["interval"],
+            ts_array=kw["ts_array"], ts_strings=kw["ts_strings"],
+            ctx=ctx,
+            instances=[amc.Instance(id=42)],
+        )
+
+
+def test_generate_component_rejects_duplicate_instance_ids(amc, tmp_path):
+    """Two Instances sharing the same non-None id must be rejected at the
+    call site — Phase 4's ``instance_filter`` lookup by id would silently
+    target multiple rows otherwise."""
+    kw = _gc_kwargs(amc, tmp_path)
+    ctx = amc.RunContext(rng=np.random.RandomState(42))
+    with pytest.raises(ValueError, match="generate_component.*duplicate"):
+        amc.generate_component(
+            kw["component_name"], kw["specs"], kw["anomaly_specs"],
+            base_dir=kw["base_dir"], total_seconds=kw["total_seconds"],
+            drop_rate=kw["drop_rate"], interval=kw["interval"],
+            ts_array=kw["ts_array"], ts_strings=kw["ts_strings"],
+            ctx=ctx,
+            instances=[amc.Instance(id="dup"), amc.Instance(id="dup")],
+        )
+
+
+def test_generate_component_rejects_multiple_anonymous_instances(amc, tmp_path):
+    """Two anonymous (``id=None``) Instances must be rejected — Phase 4's
+    id-based anomaly routing cannot distinguish them."""
+    kw = _gc_kwargs(amc, tmp_path)
+    ctx = amc.RunContext(rng=np.random.RandomState(42))
+    with pytest.raises(ValueError, match="generate_component.*anonymous"):
+        amc.generate_component(
+            kw["component_name"], kw["specs"], kw["anomaly_specs"],
+            base_dir=kw["base_dir"], total_seconds=kw["total_seconds"],
+            drop_rate=kw["drop_rate"], interval=kw["interval"],
+            ts_array=kw["ts_array"], ts_strings=kw["ts_strings"],
+            ctx=ctx,
+            instances=[amc.Instance(), amc.Instance()],
+        )
