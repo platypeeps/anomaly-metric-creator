@@ -123,7 +123,7 @@ python3 anomaly-metric-creator.py \
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 | `--drop-rate`       | `0.0005`    | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Simulated packet loss. |
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. Combinations of this flag with `--duration-days`, `--metrics-per-component`, and `--components` are validated against a preflight cell-count cap (200M cells total); see `--allow-huge-output`. |
-| `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`, `gauges`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, and `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv). The `gauges` token requires `metrics`. |
+| `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`, `gauges`, `schema`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv), and `schema` (opt-in) writes a declarative [`schema.json`](#output-schema-document-schemajson). The `gauges` token requires `metrics`; `schema` has no other requirements. |
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
 | `--scenarios`       | `all`       | Comma-separated allowlist of named scenario slugs (case-insensitive). Use `all` (default) to include every scenario in the `SCENARIOS` registry that passes the severity and duration gates. The `all` sentinel is mutually exclusive with explicit slugs (`all,foo` is rejected). Scenarios outside the active `--signal-level` severity hierarchy or whose `days_required` exceeds `--duration-days` are dropped with a stderr `WARNING: scenario <slug> requires …` message; scenarios whose `components_touched` is disjoint from `--components` are dropped silently. See the [scenario catalog](#scenario-catalog) for all known slugs and the composition order. |
 | `--exclude-scenarios` | _empty_   | Comma-separated denylist of scenario slugs to subtract from the resolved set (applied after `--scenarios`, before the severity/duration/components gates). Case-insensitive. Useful for `--exclude-scenarios jwks_rotation_chaos` to get every scenario except one; on overlap with `--scenarios`, exclusion wins. |
@@ -133,6 +133,8 @@ python3 anomaly-metric-creator.py \
 | `--allow-huge-output` | _off_       | Bypass the preflight cell-count cap (200,000,000 metric cells across all components and timestamps). Without this flag, `parse_args` rejects combinations of `--interval-seconds`, `--duration-days`, `--metrics-per-component`, and `--components` whose row × metric × component product exceeds the cap, and the error message names the offending flags. Pass `--allow-huge-output` when the size is intentional (the actual run can still be truncated by other flags). |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
+| `--validate-output` | _off_       | Standalone validator mode (mutually exclusive with `--combine` / `--combine-only`). Loads `PATH/schema.json` and checks the artifacts in `PATH` against it (file presence, row counts, timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds, `counter`/`rate` non-negativity, derived-column consistency, and `anomalies.csv` sort order). Hard-fails on first violation (`exit 1`) unless `--validate-warn` is also passed. See [Output validation (`--validate-output`)](#output-validation---validate-output). |
+| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. Useful during the VER-134 re-baseline window when known fractional-counter and unit-mismatch issues would otherwise fail CI. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
 | `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
 | `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
@@ -281,6 +283,84 @@ awk -F, 'NR==1 || $3=="cpu_util_pct"' gauges.csv > cpu_util_pct.csv
 # df_pivot = df.pivot_table(index="timestamp", columns=["component","metric"], values="value")
 ```
 
+### Output schema document (`schema.json`)
+
+Opt in by adding `schema` to `--emit-selection` and a declarative
+`schema.json` is written alongside the rest of the artifacts. The
+document is the single source of truth `--validate-output` consumes to
+check the run after the fact.
+
+```
+python3 anomaly-metric-creator.py --emit-selection metrics,schema
+```
+
+Top-level shape (`schema_version=1`):
+
+- `schema_version` — integer schema-document version (bumped on any
+  breaking shape change; the validator rejects unknown versions).
+- `metadata` — run-level parameters: `seed`, `start` (ISO 8601),
+  `duration_days`, `interval_seconds`, `total_seconds`,
+  `rows_per_component`, `drop_rate`, `signal_level`,
+  `metrics_per_component`, `anomaly_count`, `scenarios` (sorted active
+  set), `exclude_scenarios`, `components`, `inject_dst_artifact_day`,
+  `emit_selection` (sorted), `combine`.
+- `files` — sorted list of artifact filenames the run wrote, derived
+  from the same registry that drives `_pre_clean_output_dir` (per-
+  component CSVs, `anomalies.csv`, `metric_report.log`,
+  `metric_traces.jsonl`, `gauges.csv`, `combined_metrics_unified.csv`,
+  `schema.json`).
+- `components` — keyed by component name. Each entry has
+  `csv_filename` plus a `metrics` array in MetricSpec column order.
+  Each metric entry carries `name`, `unit`, `semantic_type` (one of
+  `counter`, `gauge`, `ratio`, `rate`), `dtype` (`float` or `int`),
+  `min_value`, `max_value`, and `derivation` (formula string when the
+  column is computed from siblings, else `null`).
+
+Output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
+with trailing newline) and locked SHA-256 hashes at 1d and 7d live in
+`tests/test_schema_file.py`.
+
+`--combine-only` does **not** regenerate `schema.json` (mirrors the
+`gauges.csv` invariant); rerun a normal generation to refresh it.
+
+### Output validation (`--validate-output`)
+
+Pair the schema document with the standalone validator to assert a
+run's artifacts are consistent with its declared shape:
+
+```sh
+# Hard-fail mode: exits 1 on the first violation.
+python3 anomaly-metric-creator.py --validate-output iot_logs
+
+# Soft mode: violations go to stderr, exit code stays 0.
+python3 anomaly-metric-creator.py --validate-output iot_logs --validate-warn
+```
+
+The validator loads `PATH/schema.json` and runs:
+
+- Every declared file is present on disk.
+- No undeclared files in the directory (the registry intent that
+  `_pre_clean_output_dir` enforces during generation).
+- `anomalies.csv` rows are non-decreasing by timestamp.
+- Per-component data row counts ≤ `rows_per_component` (plus the DST
+  splice when applicable); the under-emission band is 8 σ around the
+  expected drop count so a normal run doesn't false-positive.
+- Every row's timestamp falls in `[START, START + total_seconds)`.
+- CSV header matches the schema's MetricSpec column order.
+- Each cell parses as float, falls in `[min_value, max_value]` when
+  declared, is whole-integer (modulo 3-decimal CSV precision) when
+  `dtype="int"`, and is non-negative when `semantic_type` is `counter`
+  or `rate`.
+- Derived columns (today: `cacheservice.hit_ratio`) recompute from
+  their source columns within `0.01` of the stored value.
+
+Known out-of-scope violations against the default 1d/7d outputs:
+fractional-counter columns (`active_connections`, `pending_messages`,
+`jobs_running`, `failed_oidc_flows`, …) and the LLM
+`context_overflow_rate` unit overrun. Generator-side fixes are bundled
+with the VER-134 topology-aware re-baseline; until then, run the
+validator with `--validate-warn` to surface them informationally.
+
 ### Output files
 
 Written to `--output-dir` (default `iot_logs/`):
@@ -348,6 +428,7 @@ Written to `--output-dir` (default `iot_logs/`):
 - `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
 - `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
 - `gauges.csv` — long-form CSV with one row per `(timestamp, component, metric, value)` data point, written only when `--emit-selection` includes `gauges` (which itself requires `metrics`). See [Gauge metric file](#gauge-metric-file-gaugescsv).
+- `schema.json` — declarative per-metric and run-level schema, written only when `--emit-selection` includes `schema`. Consumed by `--validate-output`. See [Output schema document](#output-schema-document-schemajson).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
 
 If you omit `--emit-selection`, the default remains the full backward-compatible

@@ -68,6 +68,90 @@ so the combine output honors the same allowlist as generation,
 `--components all` keeps autodiscovery active, which preserves the
 synthetic-extra-component path used by the existing test fixture.
 
+### Output schema document (`schema.json`)
+
+`write_schema_json(output_path, *, components, effective_specs, metadata,
+emitted_files)` writes a declarative `schema.json` alongside the rest of
+the artifacts. It is opt-in via `schema` in `--emit-selection` (parallel
+to `metrics`, `logs`, `traces`, `gauges`) and is the single source of
+truth `--validate-output` consumes.
+
+The document carries three slices of information:
+
+- `schema_version` — integer (`SCHEMA_DOCUMENT_VERSION`, currently `1`).
+  `_load_schema_document` rejects unknown versions outright.
+- `metadata` — run-level parameters (`seed`, `start`, `duration_days`,
+  `interval_seconds`, `total_seconds`, `rows_per_component`,
+  `drop_rate`, `signal_level`, `scenarios`, `exclude_scenarios`,
+  `components`, `inject_dst_artifact_day`, `metrics_per_component`,
+  `anomaly_count`, `emit_selection`, `combine`).
+- `components` — per-component metric metadata in MetricSpec column
+  order (each entry carries `name`, `unit`, `semantic_type`, `dtype`,
+  `min_value`, `max_value`, `derivation`).
+- `files` — sorted list of artifact filenames the run wrote, built via
+  `_collect_emitted_filenames` (the same registry that drives
+  `_pre_clean_output_dir` and the end-of-run summary, so the three views
+  cannot drift).
+
+The output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
+with trailing newline). Locked SHA-256 golden hashes at 1d and 7d live
+in `tests/test_schema_file.py`. The `--combine-only` branch does not
+regenerate `schema.json` (it returns before pre-clean), matching the
+`gauges.csv` invariant.
+
+### MetricSpec schema metadata (VER-139)
+
+`MetricSpec` carries six optional declarative fields that flow into
+`schema.json` and `--validate-output` but never affect generation:
+`unit`, `semantic_type`, `min_value`, `max_value`, `dtype` (default
+`"float"`), `derivation`. `_validate_metric_spec_schema_metadata`
+enforces the vocabulary at import time (`semantic_type ∈ {counter,
+gauge, ratio, rate}`, `dtype ∈ {float, int}`, finite numeric bounds,
+`min_value <= max_value`).
+
+The fields are independent of generation: today's `COMPONENTS` catalog
+still produces fractional values for many `dtype="int"` columns (e.g.
+`active_connections`, `pending_messages`, `jobs_running`,
+`failed_oidc_flows`), and the LLM context-overflow scenario drives
+`context_overflow_rate` above its declared `max_value=1`. These are the
+known-out-of-scope violations VER-139 surfaces; generator-side fixes are
+bundled with VER-134's topology-aware re-baseline.
+
+### Output validator (`--validate-output`)
+
+`--validate-output PATH` runs the validator in a standalone mode (peer
+of `--combine-only`) that loads `PATH/schema.json` and runs every check
+the validator knows about against the artifacts in `PATH`:
+
+- `_validate_required_files_present` — every declared file is on disk.
+- `_validate_no_unknown_files` — every file on disk is declared (mirrors
+  `_pre_clean_output_dir`'s registry intent; `schema.json` is always
+  allowed even if undeclared so the validator can bootstrap).
+- `_validate_anomalies_sorted` — `anomalies.csv` rows are non-decreasing
+  by `timestamp`.
+- `_validate_component_row_count` — data rows ≤ `rows_per_component`
+  plus the DST splice extras when applicable; under-emission is checked
+  against an 8-sigma band around the expected drop count.
+- `_validate_component_timestamp_coverage` — every row's timestamp is in
+  `[START, START + total_seconds)`.
+- `_validate_component_cells` — header column order matches the schema's
+  MetricSpec list; each cell parses as float, falls in
+  `[min_value, max_value]` when declared, is whole-integer (modulo
+  3-decimal CSV precision) when `dtype="int"`, and is ≥ 0 when
+  `semantic_type` is `counter` or `rate`. Each unique
+  `(metric, kind)` violation reports once per CSV so the output stays
+  bounded.
+- `_validate_component_derivations` — for every metric whose schema entry
+  declares a `derivation`, recompute the value from its source columns
+  and assert agreement within `_VALIDATE_DERIVATION_TOLERANCE` (0.01).
+  Dispatched by `(component, metric)` via the `_RECOMPUTERS` table —
+  add a `DERIVATIONS` entry (generator) and a `_RECOMPUTERS` entry
+  (validator) in lockstep.
+
+CLI semantics: default mode hard-fails (`exit 1` on any violation);
+`--validate-warn` downgrades to a stderr report and `exit 0`. Mutually
+exclusive with `--combine` and `--combine-only`.
+
 ### Gauge metric file (`gauges.csv`)
 
 `write_gauges_csv(component_csv_paths, output_path)` is the file peer of the
