@@ -1563,16 +1563,55 @@ def _component_metric_base(component: str, metric: str) -> float:
 
 TOPOLOGY: dict[str, list[Edge]] = {
     "loadbalancer": [
-        Edge(target="apigateway", weight=1.0),
+        # VER-154 phase 4: saturation feedback. ``midpoint`` is the
+        # upstream's load value at which the logistic curve sits at 0.5
+        # (~80% of the natural peak of ~1080 rps for loadbalancer). The
+        # gains shape latency and error responses as the gateway nears
+        # capacity. See ``_apply_saturation`` for the exact formula and
+        # ``_TOPOLOGY_SATURATION_TARGETS`` for the affected downstream
+        # latency/error columns.
+        Edge(
+            target="apigateway", weight=1.0,
+            saturation=SaturationParams(
+                midpoint=860.0, steepness=6.0,
+                latency_gain=0.4, error_gain=0.010,
+            ),
+        ),
     ],
     "apigateway": [
-        Edge(target="authservice", weight=0.3),
-        Edge(target="cacheservice", weight=0.4),
-        Edge(target="database", weight=0.3),
+        # VER-154 phase 4: saturation feedback on the three fan-out
+        # downstreams. ``midpoint`` is ~80% of the apigateway natural
+        # peak (~950 rps). ``latency_gain`` scales with each downstream's
+        # sensitivity to upstream load: database is most sensitive
+        # (heavy I/O), authservice next (per-request crypto work),
+        # cacheservice least (in-memory ops). ``error_gain`` follows the
+        # same ordering, kept inside the issue's [0.005, 0.02] band.
+        Edge(
+            target="authservice", weight=0.3,
+            saturation=SaturationParams(
+                midpoint=760.0, steepness=6.0,
+                latency_gain=0.5, error_gain=0.012,
+            ),
+        ),
+        Edge(
+            target="cacheservice", weight=0.4,
+            saturation=SaturationParams(
+                midpoint=760.0, steepness=6.0,
+                latency_gain=0.3, error_gain=0.008,
+            ),
+        ),
+        Edge(
+            target="database", weight=0.3,
+            saturation=SaturationParams(
+                midpoint=760.0, steepness=6.0,
+                latency_gain=0.6, error_gain=0.015,
+            ),
+        ),
         # Saturation placeholder for phase 5: under token-throttle on the
         # LLM, latency rises and error rate climbs once load crosses the
         # configured midpoint. Zero gains keep the edge structurally
-        # declared without affecting phase-2/3 outputs.
+        # declared without affecting phase-2/3/4 outputs; phase 5 will
+        # populate the gains.
         Edge(
             target="llm_analytics",
             weight=0.0,
@@ -1962,6 +2001,185 @@ def _compose_topology_coupled_specs(
             multiplier=None,
             additive=lambda ts, elapsed, baked=coupled: baked,
         )
+    return new_specs
+
+
+# Phase 4 (VER-154): Maximum utilization clamp before the logistic. Keeps
+# ``np.exp`` numerically stable for arbitrary load magnitudes; the logistic
+# is already > 0.99 at utilization = 2 with the smallest planned steepness
+# (5), so a cap at 5x has no practical effect on the shape.
+_SATURATION_MAX_UTILIZATION = 5.0
+
+
+def _apply_saturation(
+    upstream_load: np.ndarray, sat: SaturationParams,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the per-row ``(latency_multiplier, error_offset)`` arrays
+    for one saturating TOPOLOGY edge.
+
+    The logistic response curve:
+
+        utilization = upstream_load / sat.midpoint
+                       (clamped to ``[0, _SATURATION_MAX_UTILIZATION]`` so
+                       ``np.exp`` stays finite for any input)
+        logistic    = 1 / (1 + exp(-sat.steepness * (utilization - 1)))
+        latency_multiplier = 1 + sat.latency_gain * logistic
+        error_offset       = sat.error_gain * logistic
+
+    Bounds: ``latency_multiplier`` ∈ ``[1, 1 + latency_gain]`` (always
+    positive given non-negative gains); ``error_offset`` ∈
+    ``[0, error_gain]`` (capped by the gain itself).
+
+    ``upstream_load`` is the captured load metric of the saturating edge's
+    *source* component (e.g. ``loadbalancer.requests_per_sec`` for the
+    ``loadbalancer -> apigateway`` edge). Phase 4 drives the curve from
+    upstream load — which Kahn ordering guarantees is already captured
+    in ``upstream_arrays`` when the downstream is composed — rather
+    than the downstream's own load column, which is still being
+    constructed at composition time.
+    """
+    if not isinstance(sat.midpoint, (int, float)) or sat.midpoint <= 0:
+        raise ValueError(
+            f"SaturationParams.midpoint={sat.midpoint!r} must be > 0"
+        )
+    utilization = np.maximum(
+        np.asarray(upstream_load, dtype=np.float64), 0.0
+    ) / float(sat.midpoint)
+    np.minimum(utilization, _SATURATION_MAX_UTILIZATION, out=utilization)
+    logistic = 1.0 / (1.0 + np.exp(-sat.steepness * (utilization - 1.0)))
+    latency_multiplier = 1.0 + sat.latency_gain * logistic
+    error_offset = sat.error_gain * logistic
+    return latency_multiplier, error_offset
+
+
+# Phase 4 (VER-154): per-component map of ``(latency_metrics, error_metrics)``
+# that incoming saturating TOPOLOGY edges modulate. The latency metrics
+# get the per-edge ``latency_multiplier`` composed multiplicatively into
+# their ``MetricSpec.multiplier``; the error metrics get the per-edge
+# ``error_offset`` added to their ``MetricSpec.additive``. Components
+# absent from this map are saturation-inert even when they have incoming
+# saturating edges, so phase-5's llm_analytics work can land here later
+# without touching the front-half wiring.
+_TOPOLOGY_SATURATION_TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "apigateway": (
+        ("avg_response_time_ms", "backend_latency_ms"),
+        ("error_rate",),
+    ),
+    "authservice": (
+        ("avg_auth_latency_ms",),
+        ("error_rate",),
+    ),
+    "cacheservice": (
+        ("avg_cache_latency_ms",),
+        ("error_rate",),
+    ),
+    "database": (
+        ("read_latency_ms", "write_latency_ms"),
+        ("error_rate",),
+    ),
+}
+
+
+def _compose_topology_saturation_specs(
+    component_name: str,
+    specs: list[MetricSpec],
+    upstream_arrays: dict[str, dict[str, np.ndarray]],
+    n_rows: int,
+) -> list[MetricSpec]:
+    """Apply saturation feedback from every incoming TOPOLOGY edge with
+    non-None ``SaturationParams`` to the downstream's latency-family and
+    error-family ``MetricSpec`` entries (as declared in
+    ``_TOPOLOGY_SATURATION_TARGETS``).
+
+    For each saturating incoming edge the upstream's primary captured
+    load metric drives ``_apply_saturation`` once. Multiple incoming
+    saturating edges to the same downstream compose multiplicatively for
+    the latency factor (each edge layers an additional load-dependent
+    slowdown) and additively for the error offset (each edge contributes
+    its own failure surface).
+
+    The natural ``MetricSpec.multiplier`` / ``MetricSpec.additive`` (e.g.
+    a ``_daily_sine`` envelope) is preserved by closing over the
+    saturation array and composing on top of the existing callable — so
+    seasonal patterns remain visible underneath the saturation curve.
+    Only ``multiplier`` and ``additive`` change; ``std``, ``clip_min``,
+    and the declarative schema metadata pass through unchanged.
+
+    Phase 4 returns ``specs`` unchanged when:
+
+    * the component is not in ``_TOPOLOGY_SATURATION_TARGETS``;
+    * no incoming saturating edge has its upstream captured (e.g. a
+      ``--components`` subset that removes the upstream);
+    * every incoming saturating edge declares zero ``latency_gain`` and
+      zero ``error_gain`` (today's ``apigateway -> llm_analytics``
+      placeholder).
+    """
+    targets = _TOPOLOGY_SATURATION_TARGETS.get(component_name)
+    if targets is None:
+        return specs
+    latency_metrics, error_metrics = targets
+    if not latency_metrics and not error_metrics:
+        return specs
+
+    name_to_idx = {s.name: i for i, s in enumerate(specs)}
+    latency_factor = np.ones(n_rows, dtype=np.float64)
+    error_offset = np.zeros(n_rows, dtype=np.float64)
+    any_active = False
+    for upstream, edges in TOPOLOGY.items():
+        ups_cols = upstream_arrays.get(upstream)
+        if not ups_cols:
+            continue
+        for edge in edges:
+            if edge.target != component_name or edge.saturation is None:
+                continue
+            sat = edge.saturation
+            if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
+                continue  # placeholder edge (phase-5 llm_analytics).
+            driver = None
+            for lm in _TOPOLOGY_LOAD_METRICS.get(upstream, ()):
+                if lm in ups_cols:
+                    driver = ups_cols[lm]
+                    break
+            if driver is None or driver.shape[0] != n_rows:
+                continue
+            lat_mult, err_off = _apply_saturation(driver, sat)
+            latency_factor = latency_factor * lat_mult
+            error_offset = error_offset + err_off
+            any_active = True
+
+    if not any_active:
+        return specs
+
+    new_specs = list(specs)
+    for metric_name in latency_metrics:
+        idx = name_to_idx.get(metric_name)
+        if idx is None:
+            continue
+        original = specs[idx]
+        old_mult = original.multiplier
+        if old_mult is None:
+            new_mult = lambda ts, elapsed, baked=latency_factor: baked
+        else:
+            new_mult = (
+                lambda ts, elapsed, baked=latency_factor, base=old_mult:
+                base(ts, elapsed) * baked
+            )
+        new_specs[idx] = dataclasses.replace(original, multiplier=new_mult)
+    for metric_name in error_metrics:
+        idx = name_to_idx.get(metric_name)
+        if idx is None:
+            continue
+        original = specs[idx]
+        old_add = original.additive
+        if old_add is None:
+            new_add = lambda ts, elapsed, baked=error_offset: baked
+        else:
+            new_add = (
+                lambda ts, elapsed, baked=error_offset, base=old_add:
+                base(ts, elapsed) + baked
+            )
+        new_specs[idx] = dataclasses.replace(original, additive=new_add)
+
     return new_specs
 
 
@@ -6788,6 +7006,14 @@ def main(argv=None):
         if args.topology_mode == "realistic":
             specs = _compose_topology_coupled_specs(
                 name, specs, upstream_arrays, ctx.rng, n_rows
+            )
+            # Phase 4 (VER-154): saturation feedback. Layers logistic-shaped
+            # latency multipliers and error offsets on top of the coupled
+            # baseline so downstream latency/error metrics respond to
+            # upstream load. Composes on top of any existing multiplier /
+            # additive (e.g. ``_daily_sine``) so seasonal patterns survive.
+            specs = _compose_topology_saturation_specs(
+                name, specs, upstream_arrays, n_rows
             )
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,

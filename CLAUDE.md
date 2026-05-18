@@ -248,8 +248,13 @@ alongside `COMPONENTS`. Phase 1 (VER-143) landed the constant and its
 import-time validator; phase 2 (VER-152) added the opt-in
 `--topology-mode realistic` consumer (see "Generation order" below)
 that re-shapes downstream RPS baselines from upstream RPS columns.
-Phase 5 will read `Edge.saturation` to add sigmoid-shaped
-latency/error contributions once load crosses each edge's midpoint.
+Phase 3 (VER-153) extended coupling to every front-half fan-out edge.
+Phase 4 (VER-154) reads `Edge.saturation` and adds a logistic-shaped
+latency multiplier and error offset onto each downstream's
+latency-family and error-family `MetricSpec` (see "Saturation
+feedback" below). Phase 5 will populate the gain values on the
+`apigateway → llm_analytics` edge so the LLM token-throttle reads as
+load-driven saturation.
 
 Two dataclasses model the edges:
 
@@ -264,20 +269,27 @@ Two dataclasses model the edges:
   fails at import time rather than corrupting phase 2's vectorized
   column writes.
 - `SaturationParams(midpoint, steepness, latency_gain=0.0, error_gain=0.0)`
-  — frozen. Parameters of a logistic response curve. Zero gains
-  declare the saturation point structurally without contributing to
-  the target's metrics; phase 5 will populate non-zero gains for
-  edges that drive observable latency/error responses (e.g. the LLM
-  token-throttle placeholder).
+  — frozen. Parameters of a logistic response curve consumed by
+  `_apply_saturation()` (phase 4). Zero gains declare the saturation
+  point structurally without contributing to the target's metrics; the
+  apigateway → llm_analytics edge keeps zero gains as a phase-5
+  placeholder.
 
-The v1 graph declared at phase 1:
+The v1 graph (phase 1 declarations + phase 4 saturation tuning):
 
-- `loadbalancer → apigateway` (constant weight `1.0`)
-- `apigateway → authservice` (`0.3`), `cacheservice` (`0.4`),
-  `database` (`0.3`) — routing fractions summing to 1.0.
+- `loadbalancer → apigateway` (constant weight `1.0`, saturation
+  `midpoint=860, steepness=6, latency_gain=0.4, error_gain=0.010`).
+- `apigateway → authservice` (`0.3`, saturation `midpoint=760,
+  steepness=6, latency_gain=0.5, error_gain=0.012`).
+- `apigateway → cacheservice` (`0.4`, saturation `midpoint=760,
+  steepness=6, latency_gain=0.3, error_gain=0.008`).
+- `apigateway → database` (`0.3`, saturation `midpoint=760,
+  steepness=6, latency_gain=0.6, error_gain=0.015`).
 - `apigateway → llm_analytics` — saturation placeholder for phase 5
-  token-throttle; weight `0.0` and zero gains keep it inert at phase 2.
-- `cacheservice → database` — callable weight (cache-miss ratio).
+  token-throttle; weight `0.0` and zero gains keep it inert at
+  phase 2/3/4.
+- `cacheservice → database` — callable weight (cache-miss ratio); no
+  saturation in v1.
 
 **Generation order (`--topology-mode`).** `main()` walks
 `args.components` in one of two orders depending on
@@ -339,13 +351,91 @@ an orthogonal structural view: it describes *normal* request flow, not
 anomaly propagation, so the two are intentionally allowed to overlap.
 Cascades remain the path for "metric X drops at exactly row Y"
 behaviors; topology is the path for "load on source raises the
-downstream baseline" (and phase 5 will extend it to "latency on
-target"). Phase 3 (VER-153) expanded coupling to all front-half fan-out edges, so
+downstream baseline" (phase 2/3) and "load on source elevates
+downstream latency + error rate" (phase 4 saturation). Phase 3
+(VER-153) expanded coupling to all front-half fan-out edges, so
 `authservice.login_attempts`, `cacheservice.cache_hits/cache_misses`,
-and `database.queries_per_sec` are all now coupled under realistic mode.
-The cascade-vs-topology double-counting question remains dormant because
-cascade targets (`error_rate`, latency, `cpu_util_pct`) are different
-metrics from the topology coupling targets.
+and `database.queries_per_sec` are all coupled under realistic mode.
+Phase 4 (VER-154) extends realistic mode to latency and error
+columns: cascade overrides (`error_rate`, latency, `cpu_util_pct`)
+now share the same column space as the saturation offset, but the
+cascade override path *replaces* the cell at the targeted row (post
+saturation, since the override is applied after the natural-column
+build), so the cascade value still wins at exactly that row.
+
+### Saturation feedback (`--topology-mode realistic`, phase 4)
+
+Each saturating edge (`Edge.saturation is not None` and at least one
+non-zero gain) contributes a logistic-shaped response to its downstream
+component, computed by `_apply_saturation(upstream_load, sat)`:
+
+```
+utilization        = max(upstream_load, 0) / sat.midpoint
+                     clipped to [0, _SATURATION_MAX_UTILIZATION]
+logistic           = 1 / (1 + exp(-sat.steepness * (utilization - 1)))
+latency_multiplier = 1 + sat.latency_gain * logistic
+error_offset       = sat.error_gain * logistic
+```
+
+`upstream_load` is the *upstream* component's primary load column
+captured in `upstream_arrays` (per `_TOPOLOGY_LOAD_METRICS`); the
+downstream's own load is still being assembled at saturation time, so
+the curve cannot read it directly. The utilization clamp keeps
+`np.exp` numerically stable for arbitrary load magnitudes (logistic
+already exceeds 0.99 at utilization = 2 with steepness = 5, so a 5x
+cap has no practical effect on the shape).
+
+`_TOPOLOGY_SATURATION_TARGETS[downstream]` declares which of the
+downstream's metrics receive the saturation effect:
+
+- `apigateway` → latency `avg_response_time_ms`, `backend_latency_ms`;
+  error `error_rate`.
+- `authservice` → latency `avg_auth_latency_ms`; error `error_rate`.
+- `cacheservice` → latency `avg_cache_latency_ms`; error `error_rate`.
+- `database` → latency `read_latency_ms`, `write_latency_ms`; error
+  `error_rate`.
+
+`_compose_topology_saturation_specs(component, specs, upstream_arrays,
+n_rows)` runs immediately after `_compose_topology_coupled_specs` in
+the realistic-mode generation loop. It sums incoming saturating
+contributions — multiplicatively for the latency factor (each edge
+layers an additional load-dependent slowdown) and additively for the
+error offset (each edge contributes its own failure surface) — then
+composes the resulting per-row arrays on top of the metric's existing
+`multiplier` / `additive` via lambda closures. The natural seasonal
+patterns (e.g. `_daily_sine`, `_llm_business_hours`) therefore stay
+visible underneath the saturation curve. Only `multiplier` and
+`additive` change; `std`, `clip_min`, and the declarative schema
+metadata pass through unchanged.
+
+**Tuning rationale (per-edge).** Midpoints are set to ~80% of each
+upstream's natural peak load (`base + ~3σ`):
+
+- `loadbalancer → apigateway`: loadbalancer base = 900 rps, peak
+  ≈ 1080, midpoint = 860 → utilization ~1.05 at natural load
+  (logistic ~0.6 with steepness = 6).
+- `apigateway → {authservice, cacheservice, database}`: apigateway
+  base = 800 rps, peak ≈ 950, midpoint = 760 → same shape.
+
+`latency_gain` scales with each downstream's sensitivity: `database`
+gets the largest (`0.6`, heavy I/O), `authservice` next (`0.5`,
+per-request crypto work), `apigateway` (`0.4`, request routing),
+`cacheservice` smallest (`0.3`, in-memory ops). `error_gain` follows
+the same ordering, kept inside `[0.005, 0.02]` so the saturation
+offset alone cannot push `error_rate` above 1.0 (worst case
+`base + 4σ + error_gain` stays well below the declared
+`max_value=1`).
+
+**Bounds and cap tests.** `latency_multiplier ∈ [1, 1 + latency_gain]`
+(always positive given non-negative gains; latency never flips sign);
+`error_offset ∈ [0, error_gain]` (bounded by the per-edge gain so the
+saturation contribution alone cannot exceed the gain). End-to-end
+tests in `tests/test_topology_saturation.py` assert both invariants on
+the realized CSV columns.
+
+**Independent mode** never invokes `_compose_topology_saturation_specs`;
+default output stays byte-for-byte identical to the pre-VER-154
+baseline (`test_independent_mode_latency_csvs_byte_identical_to_default`).
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside
