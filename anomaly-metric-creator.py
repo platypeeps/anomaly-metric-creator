@@ -3504,7 +3504,7 @@ _validate_derivations_registry()
 def _validate_instances_registry() -> None:
     """Import-time invariants for ``INSTANCES`` (VER-140 Phase 1).
 
-    Rejects three classes of drift:
+    Rejects five classes of drift:
 
     1. Key drift between ``INSTANCES`` and ``COMPONENTS``: a typo here
        would silently fall back to ``[Instance()]`` at the call site
@@ -3512,7 +3512,13 @@ def _validate_instances_registry() -> None:
     2. Empty per-component lists: ``generate_component()`` needs at
        least one ``Instance`` to broadcast values into, even the
        anonymous default.
-    3. Duplicate non-None ``id`` within one component's instance list:
+    3. Non-``Instance`` entries in a per-component list: would raise a
+       bare ``AttributeError`` on ``.id`` access mid-validation rather
+       than a clear ``ValueError`` naming the offending component.
+    4. Non-string (and non-``None``) ``Instance.id`` values: would raise
+       a bare ``TypeError`` on set-membership lookup; Phase 4's
+       ``instance_filter`` expects string ids.
+    5. Duplicate non-None ``id`` within one component's instance list:
        Phase 4's ``instance_filter=["..."]`` field looks up instances
        by id, so collisions would silently target multiple rows.
        ``None`` ids are allowed (the anonymous default) but at most
@@ -3537,6 +3543,24 @@ def _validate_instances_registry() -> None:
         seen_ids: set[str] = set()
         anon_count = 0
         for inst in instance_list:
+            # Type-check before .id access / set membership so a malformed
+            # entry (e.g. a bare dict, or Instance(id=42)) raises ValueError
+            # naming the component rather than AttributeError/TypeError from
+            # the lookup below. Mirrors _validate_scenarios_registry's
+            # isinstance-first pattern.
+            if not isinstance(inst, Instance):
+                raise ValueError(
+                    f"INSTANCES[{component!r}] contains non-Instance entry "
+                    f"{inst!r} (type {type(inst).__name__}); every entry "
+                    f"must be an Instance dataclass."
+                )
+            if inst.id is not None and not isinstance(inst.id, str):
+                raise ValueError(
+                    f"INSTANCES[{component!r}] entry has Instance.id="
+                    f"{inst.id!r} (type {type(inst.id).__name__}); id must "
+                    f"be None or a string (instance_filter looks up ids by "
+                    f"string equality)."
+                )
             if inst.id is None:
                 anon_count += 1
                 continue

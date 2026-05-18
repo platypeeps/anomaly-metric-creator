@@ -226,3 +226,26 @@ def test_validator_allows_one_anonymous_among_named(amc, monkeypatch):
     monkeypatch.setattr(amc, "INSTANCES", patched)
     with pytest.raises(ValueError, match="authservice"):
         amc._validate_instances_registry()
+
+
+def test_validator_rejects_non_instance_entry(amc, monkeypatch):
+    """A non-Instance entry (e.g. a bare dict slipped into the list) must
+    raise a clear ValueError naming the component, not a bare AttributeError
+    from ``.id`` access mid-validation."""
+    patched = dict(amc.INSTANCES)
+    patched["authservice"] = [{"id": "not-a-dataclass"}]
+    monkeypatch.setattr(amc, "INSTANCES", patched)
+    with pytest.raises(ValueError, match="authservice.*non-Instance"):
+        amc._validate_instances_registry()
+
+
+def test_validator_rejects_non_string_instance_id(amc, monkeypatch):
+    """An ``Instance.id`` that is neither None nor a string must raise a
+    clear ValueError naming the component, not a bare TypeError from set
+    membership lookup. ``instance_filter`` Phase 4 looks up ids by string
+    equality, so non-string ids would silently never match."""
+    patched = dict(amc.INSTANCES)
+    patched["authservice"] = [amc.Instance(id=42)]
+    monkeypatch.setattr(amc, "INSTANCES", patched)
+    with pytest.raises(ValueError, match="authservice.*id must be None or a string"):
+        amc._validate_instances_registry()
