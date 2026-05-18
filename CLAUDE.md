@@ -682,3 +682,27 @@ Selector composition order (locked by the VER-102 plan):
 → `--components`. Severity and duration drops are loud (WARNING); the
 component filter drop is silent because the user already restricted the
 allowlist on purpose.
+
+## Pull request workflow
+
+Every PR to this repo follows the reviewer-before-push gate:
+
+1. Implementer opens the PR as a **draft** (`gh pr create --draft …`). This is
+   non-negotiable: a non-draft PR triggers Copilot's automatic review before any
+   internal reviewer has seen the change.
+2. Implementer hands the worktree off to the Code Reviewer (branch name, summary
+   of changes, link to the plan / spec the change is implementing).
+3. Code Reviewer runs the pre-PR checklist (TODO: cross-reference the canonical
+   pre-PR checklist section name once it lands) against the worktree, posts
+   findings as inline comments or change requests, and works with the
+   implementer until the checklist is satisfied or every box has a documented
+   "N/A because…".
+4. Only after the Code Reviewer signs off does the PR flip to ready-for-review
+   (`gh pr ready <pr-number>`). The Code Reviewer is the one who runs that
+   command; it is the in-tree signal that internal review has happened.
+5. Copilot, external reviewers, and the Release Engineer pick up from there.
+
+Rationale: of the 111 Copilot comments analysed across recent PRs, the large
+majority would have been caught by an internal reviewer first. The remainder
+are legitimate second-opinion value worth waiting on — but they should land on
+top of a clean PR, not a noisy one.
