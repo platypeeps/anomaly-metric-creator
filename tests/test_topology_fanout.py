@@ -302,9 +302,13 @@ def test_realistic_db_stall_qps_override_survives_coupling(amc, tmp_path):
         f"no row at {spike_ts} for database.queries_per_sec; row may have "
         f"been dropped"
     )
-    assert matches[0] >= 50000, (
-        f"db_stall override appears clamped by coupling: row={matches[0]}, "
-        f"expected ~55000"
+    # Tight band around the 55,000 override: the anomaly path writes the
+    # generator's value verbatim *replacing* the coupled baseline, so the
+    # cell must land within rounding distance of 55000. A loose lower-only
+    # bound would miss a regression where coupling additively layers on top.
+    assert 54000.0 <= matches[0] <= 56000.0, (
+        f"db_stall override at {spike_ts} = {matches[0]}; expected ~55000 "
+        f"(coupling must replace, not stack on, the override value)"
     )
 
 

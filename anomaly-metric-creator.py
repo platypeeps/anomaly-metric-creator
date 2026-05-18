@@ -1757,13 +1757,15 @@ def _compose_topology_coupled_specs(
 
     * Constant-weight edges scale the upstream's captured load column to
       the downstream metric's natural baseline:
-      ``contribution = (upstream / upstream_base) * downstream_base * w``.
-      At natural upstream load this delivers ``downstream_base * w`` so a
-      fan-out routing fraction summing to 1.0 across incoming edges
-      reproduces the downstream's natural baseline. Edges with weights
-      that sum to less than 1 leave the remaining fraction at the
-      natural baseline (modelling "uncoupled" load not captured by the
-      graph).
+      ``contribution = (upstream / upstream_base) * downstream_base *
+      w_norm`` where ``w_norm = w / Σw`` across all active constant edges
+      to this downstream. The normalization makes the combined constant
+      term equal ``downstream_base`` at natural upstream load *regardless*
+      of the raw weights' sum — relative weights set the fan-out shares,
+      but the absolute values do not leave any "uncoupled" residue at
+      the natural baseline. (Today the v1 graph's three apigateway fan-
+      out weights already sum to 1.0; the renormalization keeps the
+      formula well-defined if that invariant is ever relaxed.)
     * Callable-weight edges call ``edge.weight(signal)`` with a per-row
       scalar signal derived from the upstream's captured columns (see
       ``_topology_callable_signal``). The return value is added to the
