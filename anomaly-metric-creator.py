@@ -1756,9 +1756,15 @@ def _validate_topology() -> None:
                     probe_cols: dict[str, np.ndarray] = {}
                 else:
                     canonical_src, supplementary_src = ups_entry
-                    probe_arr = np.array([0.0, 0.5, 1.0], dtype=np.float64)
+                    # Distinct array per key: real captured columns are
+                    # always per-column buffers, and a future signal that
+                    # mutates an input in-place (e.g. via ``out=``) must
+                    # not silently alias other "columns" in the probe.
+                    probe_template = np.array(
+                        [0.0, 0.5, 1.0], dtype=np.float64
+                    )
                     probe_cols = {
-                        name: probe_arr
+                        name: probe_template.copy()
                         for name in (canonical_src, *supplementary_src)
                         if name
                     }
@@ -1767,8 +1773,7 @@ def _validate_topology() -> None:
                 except Exception as exc:
                     raise ValueError(
                         f"TOPOLOGY[{source!r}] -> {edge.target!r} signal "
-                        f"{edge.signal!r} raised "
-                        f"{type(exc).__name__}({exc!r}) when called with "
+                        f"{edge.signal!r} raised {exc!r} when called with "
                         f"the upstream's captured-column probe; signal "
                         f"callables must accept a dict[str, np.ndarray] "
                         f"and return np.ndarray or None."
