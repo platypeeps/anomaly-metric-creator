@@ -90,15 +90,19 @@ def test_edge_dataclass_round_trip(amc):
     sat = amc.SaturationParams(midpoint=0.5, steepness=4.0)
     edge = amc.Edge(target="apigateway", weight=0.7, saturation=sat)
     fields = {f.name for f in dataclasses.fields(amc.Edge)}
-    assert fields == {"target", "weight", "saturation"}
+    assert fields == {"target", "weight", "saturation", "signal"}
     rebuilt = amc.Edge(
-        target=edge.target, weight=edge.weight, saturation=edge.saturation
+        target=edge.target,
+        weight=edge.weight,
+        saturation=edge.saturation,
+        signal=edge.signal,
     )
     assert rebuilt == edge
     # default values
     bare = amc.Edge(target="database")
     assert bare.weight == 1.0
     assert bare.saturation is None
+    assert bare.signal is None
 
 
 def test_saturation_params_dataclass_round_trip(amc):
@@ -184,9 +188,17 @@ def test_validate_topology_rejects_callable_weight_that_raises_on_ndarray(amc, m
 
 
 def test_validate_topology_accepts_callable_weight_taking_ndarray(amc, monkeypatch):
-    """A well-behaved callable weight (ndarray -> ndarray) must pass validation."""
+    """A well-behaved callable weight (ndarray -> ndarray) with a matching ``signal`` passes validation."""
     src, tgt = list(amc.COMPONENTS.keys())[:2]
-    patched = {src: [amc.Edge(target=tgt, weight=lambda x: np.asarray(x) * 2.0)]}
+    patched = {
+        src: [
+            amc.Edge(
+                target=tgt,
+                weight=lambda x: np.asarray(x) * 2.0,
+                signal=lambda cols: np.zeros(3, dtype=np.float64),
+            )
+        ]
+    }
     monkeypatch.setattr(amc, "TOPOLOGY", patched)
     amc._validate_topology()  # must not raise
 
@@ -259,3 +271,89 @@ def test_validate_topology_accepts_int_constant_weight(amc, monkeypatch):
     patched = {src: [amc.Edge(target=tgt, weight=2)]}
     monkeypatch.setattr(amc, "TOPOLOGY", patched)
     amc._validate_topology()  # must not raise
+
+
+def test_validate_topology_rejects_callable_weight_without_signal(amc, monkeypatch):
+    """A callable ``Edge.weight`` paired with ``signal=None`` is rejected.
+
+    The composer feeds ``edge.signal(upstream_cols)``'s return value
+    straight into ``edge.weight(signal)``; without a signal the edge
+    would silently never fire.
+    """
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {
+        src: [
+            amc.Edge(
+                target=tgt,
+                weight=lambda x: np.asarray(x) * 2.0,
+                signal=None,
+            )
+        ]
+    }
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"signal"):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_constant_weight_with_signal(amc, monkeypatch):
+    """A constant ``Edge.weight`` paired with a non-None ``signal`` is rejected.
+
+    Signal is meaningless for constant-weight edges because the composer
+    never reads it; rejecting the combination up front prevents a stale
+    signal from being silently ignored.
+    """
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {
+        src: [
+            amc.Edge(
+                target=tgt,
+                weight=0.5,
+                signal=lambda cols: np.zeros(3, dtype=np.float64),
+            )
+        ]
+    }
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"signal"):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_signal_that_raises(amc, monkeypatch):
+    """A ``signal`` callable that raises on the captured-column probe is rejected."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+
+    def raising_signal(cols):
+        raise RuntimeError("synthetic signal failure")
+
+    patched = {
+        src: [
+            amc.Edge(
+                target=tgt,
+                weight=lambda x: np.asarray(x) * 2.0,
+                signal=raising_signal,
+            )
+        ]
+    }
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"signal"):
+        amc._validate_topology()
+
+
+def test_validate_topology_rejects_signal_returning_non_ndarray(amc, monkeypatch):
+    """A ``signal`` callable that returns a scalar (not ``ndarray`` / ``None``) is rejected."""
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+
+    def scalar_signal(cols):
+        return 0.5  # plain float, not an ndarray and not None
+
+    patched = {
+        src: [
+            amc.Edge(
+                target=tgt,
+                weight=lambda x: np.asarray(x) * 2.0,
+                signal=scalar_signal,
+            )
+        ]
+    }
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match=r"signal"):
+        amc._validate_topology()
