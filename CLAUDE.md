@@ -629,7 +629,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to the 11 recurring patterns identified in VER-160. Work through each item before pushing for Copilot or human review. Tick the box or write "N/A — _reason_" in the PR description. See `.github/PULL_REQUEST_TEMPLATE.md` for the canonical form embedded in every PR.
+This checklist maps to the 11 recurring patterns identified in VER-160. Work through each item before pushing for Copilot or human review. Tick the box or write "N/A — _reason_" in the PR description. This file is the canonical source; a companion `.github/PULL_REQUEST_TEMPLATE.md` (added separately) mirrors the same items so they prefill on every new PR.
 
 **Scope & description**
 - PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
@@ -678,7 +678,7 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 The Code Reviewer agent signs off in the worktree *before* the PR is marked ready for review on GitHub. The workflow is:
 
 1. Implementing agent opens the PR as a **draft**.
-2. Implementing agent marks the Paperclip issue `in_review` and assigns the Code Reviewer.
+2. Implementing agent marks the tracking issue `in_review` and assigns the Code Reviewer.
 3. Code Reviewer walks the pre-PR checklist, fixes any issues in the same worktree, then marks the PR ready (removes draft status) and hands back to the Lead Engineer or Release Engineer.
 4. PRs that go directly to `gh pr create` without the draft+reviewer step may be pushed, but must pass the pre-PR checklist self-attestation before becoming ready.
 
