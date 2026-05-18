@@ -629,7 +629,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to the 11 recurring patterns identified in VER-160. Work through each item before marking the PR ready for review (i.e. before removing draft status). Tick the box or write "N/A — _reason_" in the PR description. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the items below rather than redefine them.
+This checklist maps to the 11 recurring patterns identified in VER-160. Work through each item before marking the PR ready for review (i.e. before removing draft status). Copy the items into the PR description as a checklist (Markdown `- [ ]` lines, one per item) and either confirm each one or write "N/A — _reason_". This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the items below rather than redefine them.
 
 **Scope & description**
 - PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
@@ -673,14 +673,14 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 **Default-behavior changes**
 - If a default parameter value or fallback path changes (e.g. unseeded `RandomState`, required arg replacing optional), the PR description names it and tests cover both old and new caller shapes.
 
-### Reviewer-before-push gate
+### Reviewer-before-ready gate
 
-The Code Reviewer agent signs off in the worktree *before* the PR is marked ready for review on GitHub. The workflow is:
+The Code Reviewer agent signs off in the worktree *before* the PR is marked ready for review on GitHub (i.e. before draft status is removed). Pushing the draft branch is fine — and required by step 1 — what this gate blocks is the draft → ready transition. The workflow is:
 
 1. Implementing agent opens the PR as a **draft**.
 2. Implementing agent marks the tracking issue `in_review` and assigns the Code Reviewer.
 3. Code Reviewer walks the pre-PR checklist, fixes any issues in the same worktree, then marks the PR ready (removes draft status) and hands back to the Lead Engineer or Release Engineer.
-4. PRs that go directly to `gh pr create` without the draft+reviewer step may be pushed, but must pass the pre-PR checklist self-attestation before becoming ready.
+4. PRs that go directly to `gh pr create` without the draft+reviewer step skip steps 1–3, but must pass the pre-PR checklist self-attestation before being marked ready.
 
 This process avoids the Copilot round-trip: issues caught by the Code Reviewer in step 3 are fixed before Copilot's first review, not after.
 
