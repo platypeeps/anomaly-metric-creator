@@ -123,7 +123,7 @@ python3 anomaly-metric-creator.py \
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 | `--drop-rate`       | `0.0005`    | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Simulated packet loss. |
 | `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. Combinations of this flag with `--duration-days`, `--metrics-per-component`, and `--components` are validated against a preflight cell-count cap (200M cells total); see `--allow-huge-output`. |
-| `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, and `traces` writes `metric_traces.jsonl`. |
+| `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`, `gauges`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, and `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv). The `gauges` token requires `metrics`. |
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
 | `--scenarios`       | `all`       | Comma-separated allowlist of named scenario slugs (case-insensitive). Use `all` (default) to include every scenario in the `SCENARIOS` registry that passes the severity and duration gates. The `all` sentinel is mutually exclusive with explicit slugs (`all,foo` is rejected). Scenarios outside the active `--signal-level` severity hierarchy or whose `days_required` exceeds `--duration-days` are dropped with a stderr `WARNING: scenario <slug> requires …` message; scenarios whose `components_touched` is disjoint from `--components` are dropped silently. See the [scenario catalog](#scenario-catalog) for all known slugs and the composition order. |
 | `--exclude-scenarios` | _empty_   | Comma-separated denylist of scenario slugs to subtract from the resolved set (applied after `--scenarios`, before the severity/duration/components gates). Case-insensitive. Useful for `--exclude-scenarios jwks_rotation_chaos` to get every scenario except one; on overlap with `--scenarios`, exclusion wins. |
@@ -214,6 +214,73 @@ body limit, or down if it limits batch element counts. The activity log file
 both the counter and the gauge records share one file with
 `signal=metrics_gauge` tagging the gauge records.
 
+### Gauge metric file (`gauges.csv`)
+
+The OTEL gauge stream (`--otel-emit-gauges`) requires an OTLP collector to
+consume the per-row metric values. The file peer is `gauges.csv`: opt in by
+adding `gauges` to `--emit-selection` (requires `metrics`) and a long-form
+CSV is written alongside the per-component CSVs.
+
+```
+python3 anomaly-metric-creator.py --emit-selection metrics,gauges
+```
+
+Schema (header row 1; columns locked):
+
+```
+timestamp,component,metric,value
+```
+
+- `timestamp` — identical formatting to the per-component CSV `timestamp`
+  column (second precision at `--interval-seconds >= 1.0`, millisecond
+  precision below).
+- `component` — `COMPONENTS` key.
+- `metric` — raw `MetricSpec.name` (no namespace prefix; see below).
+- `value` — written through from the per-component CSV cell verbatim, so the
+  file bytes never depend on Python's `str(float)` repr.
+
+Rows are emitted in a chronologically merged timeline across all selected
+components (the same ordering `stream_otel_gauges` produces over its OTLP
+data points). Equal timestamps tie-break on `sorted(args.components)` order,
+then per-component CSV column order (`MetricSpec` order). Dropped CSV rows
+(`--drop-rate`) are absent from the file, matching the OTEL gauge stream's
+behavior.
+
+Filter passthrough:
+
+- `--components` — restricts the rows to the named components.
+- `--metrics-per-component` — drops the trimmed metric rows from the long
+  form (the metric is absent from the per-component CSV column set, so it
+  cannot appear in `gauges.csv`).
+- `--drop-rate` — dropped rows are absent (skipped at the per-component CSV
+  read).
+
+Naming: `gauges.csv` uses the raw `MetricSpec.name`. The OTEL counterpart's
+`--otel-gauge-metric-prefix` is an OTLP collector namespace convention and
+does **not** apply to the file. Consumers that need a prefix join on the
+`metric` column and prepend their own namespace.
+
+Volume: long-form row count equals wide-form cell count
+(rows-per-component × selected metrics × components). The existing preflight
+cell-count cap (`PREFLIGHT_CELL_CAP`) bounds the wide form, so it transitively
+bounds `gauges.csv` size. At default knobs a 1-day run produces roughly 7.5M
+data rows.
+
+`--combine-only` does **not** regenerate `gauges.csv`; it's a derived
+artifact of a fresh generation run only. A pre-existing `gauges.csv` is left
+untouched on the combine-only path (mirrors `anomalies.csv`).
+
+Consumer one-liners:
+
+```sh
+# Filter to one metric across all components, then plot via your tool of choice.
+awk -F, 'NR==1 || $3=="cpu_util_pct"' gauges.csv > cpu_util_pct.csv
+
+# Pandas long-form read:
+# df = pd.read_csv("gauges.csv", parse_dates=["timestamp"])
+# df_pivot = df.pivot_table(index="timestamp", columns=["component","metric"], values="value")
+```
+
 ### Output files
 
 Written to `--output-dir` (default `iot_logs/`):
@@ -280,6 +347,7 @@ Written to `--output-dir` (default `iot_logs/`):
     to a later timestamp.
 - `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
 - `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
+- `gauges.csv` — long-form CSV with one row per `(timestamp, component, metric, value)` data point, written only when `--emit-selection` includes `gauges` (which itself requires `metrics`). See [Gauge metric file](#gauge-metric-file-gaugescsv).
 - `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
 
 If you omit `--emit-selection`, the default remains the full backward-compatible
@@ -289,6 +357,7 @@ Re-running into an existing `--output-dir` pre-cleans stale artifacts for any
 emit type or component this run will not regenerate (e.g. a metrics-only re-run
 deletes `metric_report.log` / `metric_traces.jsonl` from a prior `logs,traces`
 run, a `logs,traces` re-run deletes per-component CSVs and `anomalies.csv`,
+a re-run without `gauges` in `--emit-selection` deletes a prior `gauges.csv`,
 and a narrower `--components` re-run deletes the dropped CSVs). Files unknown
 to this script — user notes or extra CSVs the combine step would otherwise
 autodiscover — are left alone. The `--combine-only` branch is exempt because it
