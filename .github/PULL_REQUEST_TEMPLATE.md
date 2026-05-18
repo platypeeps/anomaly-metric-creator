@@ -13,7 +13,7 @@ Work through each item before marking the PR ready for review. Tick the box or w
 ### Validators and schema checks
 - [ ] For every field a new validator inspects, I enumerated non-canonical inputs: `None`, `NaN`, `±inf`, negative, bool-as-number, empty string, unhashable, wrong container type. Each is tested or explicitly documented as out-of-scope.
 - [ ] Every *branch* of a discriminator is validated (callable **and** constant weights; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables).
-- [ ] Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, `COMPONENTS`, etc.) raise on unknown keys instead of returning `None` or falling through silently.
+- [ ] New exhaustive dispatch tables raise on unknown keys instead of returning `None` or falling through silently. (Existing partial contracts are exempt: `DERIVATIONS` is optional for components with no derived metrics, and `_RECOMPUTERS` raises at the component level but per-component recomputers return `None` for metric names they do not handle. Don't break those — replicate the same shape only when the new table has the same partial coverage.)
 
 ### Doc / docstring sync
 - [ ] Every changed function with a docstring has its docstring updated in this diff.

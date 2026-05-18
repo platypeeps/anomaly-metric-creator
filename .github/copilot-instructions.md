@@ -15,9 +15,10 @@ The following constants are the **single source of truth** for their domain. Any
 - `SCENARIOS` — the full anomaly scenario catalog. All anomaly specs live here; there are no legacy `anoms_*` module-level lists.
 - `_EMIT_ARTIFACT_FILES` — maps `emit_selection` token → artifact filename. Used by pre-clean, run summary ("Done —"), and `schema.json`. Adding an artifact without updating this registry is a bug.
 - `_COMBINE_OUTPUT_FILENAME` — the single source for the unified CSV filename. The combine writer, pre-clean, and the Done summary all read from it.
-- `DERIVED_METRICS` — marks derived columns (e.g. `cacheservice.hit_ratio`). The derivation recompute in `generate_component()` must reference this, not hard-code component names.
-- `_RECOMPUTERS` — validator-side dispatch for `--validate-output` derivation checks. Keyed by `(component, metric)`. Must raise on unknown keys; never fall through silently.
-- `TOPOLOGY` — the service-call graph. Edges with callable `weight` are coupled in generation; constant weights are validated at import time.
+- `DERIVATIONS` — the single source of truth for derived columns. Keyed by component name; each entry is `(derive_fn, (metric_names,))`. `generate_component()` looks up the component in `DERIVATIONS` and runs `derive_fn` after the anomaly override pass.
+- `DERIVED_METRICS` — a `set[(component, metric)]` computed from `DERIVATIONS`. Used only as a membership/exemption check (e.g. anomaly-override pass skipping derived columns), never as the generation-path source. Tests and validators should treat it as derived data, not as a separate registry.
+- `_RECOMPUTERS` — validator-side dispatch for `--validate-output` derivation checks. Keyed by **component name only**; each value is a `recompute(metric, row, name_to_col)` callable that returns `None` when it doesn't handle that metric (so adding new derived metrics to an existing component doesn't require a registry edit on the validator side). `_validate_component_derivations` does raise — as a validation violation — if a component declares a derivation but no entry exists in `_RECOMPUTERS`. Adding a new derived component requires lockstep entries in `DERIVATIONS` and `_RECOMPUTERS`.
+- `TOPOLOGY` — the service-call graph. Both constant and callable `Edge.weight` values are validated at import time. Under `--topology-mode realistic` (phase 2), only **constant-weight** edges currently feed `_compose_topology_coupled_specs` and re-shape the downstream `requests_per_sec` baseline; callable-weight edges (e.g. `cacheservice → database` driven by cache-miss ratio) are declared and validated but intentionally **not yet coupled** — they are wired up in phase 3.
 
 ## RNG / determinism model
 
@@ -32,7 +33,7 @@ When adding a new import-time validator (`_validate_*`), it must handle all non-
 
 - `None`, `NaN`, `±inf`, negative, `bool` (a subtype of `int`), empty string, unhashable value, wrong container type.
 - Every discriminator branch: callable **and** constant weights; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables.
-- Dispatch tables must raise on unknown keys. Returning `None` or silently falling through is not acceptable.
+- New exhaustive dispatch tables (one entry required per declared instance) must raise on unknown keys instead of returning `None` or silently falling through. Existing partial-dispatch contracts are intentional and documented: `DERIVATIONS` is optional for components with no derived metrics, and `_RECOMPUTERS` raises at the component level but its per-component recomputers return `None` for metric names they do not handle. Don't flag those as bugs; replicate the same pattern only when the new table has the same partial-coverage shape.
 
 ## Anomaly generator dispatch
 

@@ -638,7 +638,7 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 **Validators and schema checks**
 - For every field a new validator inspects, enumerate non-canonical inputs: `None`, `NaN`, `±inf`, negative, `bool` (a subtype of `int`), empty string, unhashable, wrong container type.
 - Every *branch* of a discriminator is validated: callable **and** constant `Edge.weight`; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables.
-- Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, etc.) raise on unknown keys; never return `None` or fall through silently.
+- New exhaustive dispatch tables raise on unknown keys; never return `None` or fall through silently. Existing partial contracts are intentional and exempt: `DERIVATIONS` is optional for components with no derived metrics, and `_RECOMPUTERS` raises at the component level (a component with a declared derivation must have a recomputer registered) but per-component recomputers return `None` for metric names they do not handle. Don't tighten those; replicate the same shape only when the new table has the same partial coverage.
 
 **Doc / docstring sync**
 - Every changed function with a docstring has its docstring updated in this diff.
