@@ -26,6 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import dataclasses
 from dataclasses import dataclass, field
 from hashlib import sha1
 from pathlib import Path
@@ -318,7 +319,8 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
-                       dst_inject_day=0, ctx: "RunContext"):
+                       dst_inject_day=0, ctx: "RunContext",
+                       topology_capture: dict[str, np.ndarray] | None = None):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -481,6 +483,16 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if derivation is not None:
         derive_fn, _ = derivation
         derive_fn(values, name_to_col)
+
+    # Topology phase 2 (VER-152): expose the post-natural / post-anomaly /
+    # post-derivation ``requests_per_sec`` column to downstream components
+    # via the ``topology_capture`` dict. Capturing pre-round keeps the
+    # signal at full float precision so the downstream noise doesn't ride
+    # on a quantized upstream. ``None`` (the default) short-circuits so
+    # callers in ``--topology-mode independent`` see zero new work.
+    if topology_capture is not None and "requests_per_sec" in name_to_col:
+        rps_col = name_to_col["requests_per_sec"]
+        topology_capture[component_name] = values[:, rps_col].copy()
 
     np.round(values, 3, out=values)
 
@@ -1567,6 +1579,114 @@ def _validate_topology() -> None:
 
 
 _validate_topology()
+
+
+# Phase 2 (VER-152): standard deviation of the additive noise injected on
+# top of the coupled upstream signal in ``--topology-mode realistic``. The
+# value is small relative to the upstream RPS baselines (~800-900) so the
+# Pearson correlation between upstream and downstream stays well above the
+# 0.95 acceptance threshold while the column still looks like a noisy
+# signal rather than a perfect copy of the upstream.
+_TOPOLOGY_COUPLE_NOISE_STD = 10.0
+
+
+def _topology_generation_order(active_components: set[str]) -> list[str]:
+    """Return ``active_components`` in topological generation order.
+
+    Roots (no incoming TOPOLOGY edges from any other active component) come
+    first; downstream components come after their upstream(s). Only edges
+    where both endpoints are in ``active_components`` are considered, so
+    ``--components`` filtering naturally restricts the dependency graph.
+    Cycles are not expected in TOPOLOGY (v1 graph is a DAG); if one ever
+    appears, fall back to ``COMPONENTS`` insertion order for the cycle
+    members so we always make forward progress.
+
+    Ties (multiple roots / multiple ready nodes at the same Kahn step)
+    break on ``COMPONENTS`` insertion order so the result is deterministic
+    regardless of how the caller iterates ``args.components``.
+    """
+    incoming: dict[str, set[str]] = {c: set() for c in active_components}
+    for source, edges in TOPOLOGY.items():
+        if source not in active_components:
+            continue
+        for edge in edges:
+            if edge.target in incoming and edge.target != source:
+                incoming[edge.target].add(source)
+    component_index = {name: i for i, name in enumerate(COMPONENTS.keys())}
+    ordered: list[str] = []
+    remaining = {c: set(deps) for c, deps in incoming.items()}
+    while remaining:
+        ready = sorted(
+            (c for c, deps in remaining.items() if not deps),
+            key=lambda c: component_index[c],
+        )
+        if not ready:
+            ready = sorted(remaining.keys(), key=lambda c: component_index[c])
+        for c in ready:
+            ordered.append(c)
+            del remaining[c]
+            for deps in remaining.values():
+                deps.discard(c)
+    return ordered
+
+
+def _compose_topology_coupled_specs(
+    component_name: str,
+    specs: list[MetricSpec],
+    upstream_arrays: dict[str, np.ndarray],
+    rng: "np.random.RandomState",
+    n_rows: int,
+) -> list[MetricSpec]:
+    """Return a possibly-modified spec list with the RPS baseline coupled
+    to upstream component(s) via the TOPOLOGY graph.
+
+    Phase 2 (VER-152): only ``requests_per_sec`` is coupled, via constant-
+    weight edges whose source has already been generated and stashed in
+    ``upstream_arrays``. Callable-weight edges (e.g. the cacheservice ->
+    database cache-miss-rate driver) need source-side context that's not
+    wired through phase 2; they are skipped here and pick up in phase 3.
+
+    When no incoming edge qualifies, the spec list is returned unchanged
+    so the downstream falls back to its natural-Gaussian baseline (and
+    ``--topology-mode realistic`` reduces to ``independent`` for it).
+    """
+    name_to_idx = {s.name: i for i, s in enumerate(specs)}
+    if "requests_per_sec" not in name_to_idx:
+        return specs
+    contributions: list[tuple[str, float]] = []
+    for upstream, edges in TOPOLOGY.items():
+        for edge in edges:
+            if edge.target != component_name:
+                continue
+            if upstream not in upstream_arrays:
+                continue
+            # Reject ``bool`` first: ``isinstance(True, int)`` is True.
+            if isinstance(edge.weight, bool) or not isinstance(
+                edge.weight, (int, float)
+            ):
+                continue
+            contributions.append((upstream, float(edge.weight)))
+    if not contributions:
+        return specs
+    coupled = np.zeros(n_rows, dtype=np.float64)
+    for upstream, weight in contributions:
+        coupled += upstream_arrays[upstream] * weight
+    coupled += rng.normal(0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)
+    original = specs[name_to_idx["requests_per_sec"]]
+    # ``dataclasses.replace`` preserves the original spec's declarative
+    # metadata (unit, semantic_type, min/max, dtype, derivation, clip_min)
+    # so ``schema.json`` / ``--validate-output`` see identical metadata
+    # regardless of the topology mode in effect.
+    coupled_spec = dataclasses.replace(
+        original,
+        base=0.0,
+        std=0.0,
+        multiplier=None,
+        additive=lambda ts, elapsed, baked=coupled: baked,
+    )
+    new_specs = list(specs)
+    new_specs[name_to_idx["requests_per_sec"]] = coupled_spec
+    return new_specs
 
 
 # ------------------------------------------------------------------
@@ -4193,6 +4313,20 @@ def parse_args(argv=None):
                         "on the given 1-based day of the run. 0 (default) disables. Generator "
                         "quirk, not an anomaly spec — does not appear in anomalies.csv. The "
                         "affected CSVs end up with 3,600/interval extra rows for that day.")
+    p.add_argument(
+        "--topology-mode",
+        choices=["independent", "realistic"],
+        default="independent",
+        help="Phase 2 (VER-141 / VER-152) opt-in: switch downstream baseline "
+             "generation to read from the upstream component's RPS column via "
+             "the TOPOLOGY graph. 'independent' (default) keeps every "
+             "component's baseline as an independent Gaussian (byte-identical "
+             "to today's output). 'realistic' generates loadbalancer first, "
+             "stashes its requests_per_sec column, and feeds it into "
+             "apigateway's requests_per_sec baseline as upstream_rps * "
+             "edge.weight + small_noise. Anomaly overrides on downstream "
+             "components still apply on top of the coupled baseline.",
+    )
     args = p.parse_args(argv)
 
     if args.duration_days < 1:
@@ -6246,9 +6380,31 @@ def main(argv=None):
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
 
-    for name, specs in effective_specs.items():
-        if name not in args.components:
-            continue
+    # Topology phase 2 (VER-152): in ``--topology-mode realistic`` we walk
+    # ``args.components`` in topological order (roots first) and stash each
+    # generated component's ``requests_per_sec`` column so downstream
+    # components can reshape their baseline via
+    # ``_compose_topology_coupled_specs``. In ``--topology-mode independent``
+    # (the default) the order falls back to ``effective_specs`` iteration
+    # order (which is ``COMPONENTS`` insertion order) and no capture/coupling
+    # runs — byte-identical to the pre-VER-152 generation path.
+    if args.topology_mode == "realistic":
+        active = set(args.components)
+        generation_order = [
+            name for name in _topology_generation_order(active)
+            if name in effective_specs
+        ]
+        upstream_arrays: dict[str, np.ndarray] | None = {}
+    else:
+        generation_order = [name for name in effective_specs if name in args.components]
+        upstream_arrays = None
+
+    for name in generation_order:
+        specs = effective_specs[name]
+        if args.topology_mode == "realistic":
+            specs = _compose_topology_coupled_specs(
+                name, specs, upstream_arrays, ctx.rng, n_rows
+            )
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
@@ -6258,7 +6414,8 @@ def main(argv=None):
                            ts_strings=ts_strings,
                            emit_metrics="metrics" in args.emit_selection,
                            dst_inject_day=args.inject_dst_artifact_day,
-                           ctx=ctx)
+                           ctx=ctx,
+                           topology_capture=upstream_arrays)
 
     filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 

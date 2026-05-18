@@ -244,12 +244,11 @@ specs in `primary_specs`, not in `cascade_specs`.
 ### Topology graph
 
 `TOPOLOGY: dict[str, list[Edge]]` declares the directed service-call graph
-alongside `COMPONENTS`. As of VER-143 (phase 1) the constant is
-**structural-only**: it is validated at import time by `_validate_topology()`
-but **not yet consumed** by `generate_component` or `main`, so emitting
-the constant does not change any byte-output hash. Phase 2 (two-pass
-generation) reads the graph to thread load through downstream
-components, and phase 5 reads `Edge.saturation` to add sigmoid-shaped
+alongside `COMPONENTS`. Phase 1 (VER-143) landed the constant and its
+import-time validator; phase 2 (VER-152) added the opt-in
+`--topology-mode realistic` consumer (see "Generation order" below)
+that re-shapes downstream RPS baselines from upstream RPS columns.
+Phase 5 will read `Edge.saturation` to add sigmoid-shaped
 latency/error contributions once load crosses each edge's midpoint.
 
 Two dataclasses model the edges:
@@ -280,16 +279,67 @@ The v1 graph declared at phase 1:
   token-throttle; weight `0.0` and zero gains keep it inert at phase 2.
 - `cacheservice → database` — callable weight (cache-miss ratio).
 
+**Generation order (`--topology-mode`).** `main()` walks
+`args.components` in one of two orders depending on
+`--topology-mode`:
+
+- `independent` (default) — iteration order of `effective_specs`,
+  which is `COMPONENTS` insertion order. No coupling, no upstream
+  capture, byte-identical to the pre-VER-152 generator. All locked
+  SHA-256 hashes were produced under this mode.
+- `realistic` (opt-in, VER-152 phase 2) — topological order via
+  `_topology_generation_order(args.components)`. Kahn's algorithm
+  walks reverse-adjacency of `TOPOLOGY` restricted to
+  `args.components`; ties break on `COMPONENTS` insertion order so
+  the result is deterministic. As each component finishes,
+  `generate_component()` stashes its post-natural / post-anomaly /
+  post-derivation `requests_per_sec` column (pre-round, full float
+  precision) into a shared `upstream_arrays` dict keyed by
+  component name. Before generating a downstream component,
+  `_compose_topology_coupled_specs` looks up incoming
+  constant-weight edges from active upstreams and replaces the
+  downstream's `requests_per_sec` MetricSpec with a coupled version
+  whose baseline is `Σ(upstream * edge.weight) +
+  rng.normal(0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)`. The original
+  spec's declarative metadata (unit, semantic_type, min/max, dtype,
+  derivation, clip_min) survives the swap via
+  `dataclasses.replace`, so `schema.json` and `--validate-output`
+  see identical metadata in either mode.
+
+In phase 2 only the `loadbalancer → apigateway` edge ever actually
+fires the coupling — it is the single edge whose both endpoints
+declare a `requests_per_sec` metric. Callable-weight edges (e.g.
+`cacheservice → database`) are skipped here and pick up in phase 3.
+
+Realistic mode shares the same `RunContext.rng` as independent mode;
+because the generation order differs, every component's RNG draws
+shift. Realistic-mode CSV bytes therefore do **not** match
+independent-mode CSV bytes for any component — even uncoupled
+roots like `loadbalancer`. Tests that pin behavior under
+`--topology-mode realistic` use statistical assertions (means,
+correlations, in-window values) rather than locked SHA-256 hashes.
+
+Anomaly overrides apply on top of the coupled baseline: the
+two-pass pipeline (natural → anomaly overrides → derivations →
+capture → round → drop → format) is unchanged inside
+`generate_component()`, so a scenario primary on
+`apigateway.requests_per_sec` still rewrites the cell at its row
+index after coupling has set the baseline.
+
 **Cascade-vs-topology overlap.** Several `SCENARIOS` already encode
 pairwise blast-radius via `cascade_specs` (auth → gateway, cache → DB,
 DB → API/auth, MQ → API/DB, LLM → DB/cache/API). The topology graph is
 an orthogonal structural view: it describes *normal* request flow, not
 anomaly propagation, so the two are intentionally allowed to overlap.
 Cascades remain the path for "metric X drops at exactly row Y"
-behaviors; topology will be the path for "load on source raises latency
-on target". Phase 2 reconciles any double-counting before applying
-topology-derived effects to natural columns; until then, the two views
-coexist without interaction.
+behaviors; topology is the path for "load on source raises the
+downstream baseline" (and phase 5 will extend it to "latency on
+target"). Phase 2 does no explicit double-counting reconciliation;
+because the coupling target (`requests_per_sec` baseline) and most
+cascade targets (`error_rate`, latency, `cpu_util_pct`) are
+different metrics, double-counting is not actually observable in
+the v1 graph. Revisit the question when phase 3 expands the
+coupling to additional downstream metrics.
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside
