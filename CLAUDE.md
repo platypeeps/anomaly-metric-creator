@@ -71,19 +71,34 @@ synthetic-extra-component path used by the existing test fixture.
 ### Gauge metric file (`gauges.csv`)
 
 `write_gauges_csv(component_csv_paths, output_path)` is the file peer of the
-OTEL gauge stream (`stream_otel_gauges`). It walks the per-component CSVs via
-the same `_iter_component_rows` helper, merges them chronologically with
-`heapq.merge` on the parsed timestamp, and writes one row per
+OTEL gauge stream (`stream_otel_gauges`). Both walk the same per-component
+CSVs and merge them chronologically with `heapq.merge` on the parsed
+timestamp; the file writer emits one row per
 `(timestamp, component, metric, value)` tuple into a long-form `gauges.csv`.
-Equal-timestamp ties tie-break on the order of `component_csv_paths`
-(callers pass `sorted(args.components)`), then per-component CSV column
-order (`MetricSpec` order). Dropped CSV rows are absent from the file, the
-same way `stream_otel_gauges` never sees them. Values are written through
-verbatim from the CSV cell string so the byte hash never depends on Python's
-`str(float)` repr. `gauges.csv` is opt-in via `gauges` in `--emit-selection`
-(which the parser enforces alongside `metrics`); `--combine-only` does not
-regenerate it. Locked SHA-256 golden hashes at 1d and 7d live in
-`tests/test_gauges_file.py`.
+Equal-timestamp ties tie-break on sorted component name (the writer sorts
+`component_csv_paths` internally so the tiebreaker holds regardless of how
+the caller built the dict), then per-component CSV column order
+(`MetricSpec` order). Dropped CSV rows are absent from the file, the same
+way `stream_otel_gauges` never sees them.
+
+Parity with `stream_otel_gauges` has one intentional asymmetry: the file
+writer passes raw cell strings through verbatim (so the byte hash never
+depends on Python's `str(float)` repr), whereas `stream_otel_gauges`
+`float(raw)`-coerces and silently skips unparseable cells. In practice
+`generate_component` only writes finite floats, so both paths emit the
+same data points — the difference only matters for hand-edited CSVs.
+
+Both gauge paths are mutually exclusive with `--inject-dst-artifact-day > 0`
+(the DST splice produces non-monotonic CSV timestamps that break
+`heapq.merge`); the parser rejects the combination for both
+`--otel-emit-gauges` and `--emit-selection gauges` up front.
+
+`gauges.csv` is opt-in via `gauges` in `--emit-selection` (which the
+parser enforces alongside `metrics`); `--combine-only` does not
+regenerate it. The end-of-run `Done -` summary additionally prints
+`Gauge rows written: N to gauges.csv` so a CI run records how many
+data points landed in the file. Locked SHA-256 golden hashes at 1d and
+7d live in `tests/test_gauges_file.py`.
 
 ### Metric specs (value generation)
 

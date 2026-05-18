@@ -118,7 +118,6 @@ def test_emit_selection_rejects_unknown_token(capsys, amc, tmp_path):
 
 
 def test_emit_selection_help_advertises_gauges(amc):
-    parser = None
     # parse_args() builds the parser and returns the parsed namespace; the
     # parser instance isn't exposed, so probe through --help output instead.
     result = subprocess.run(
@@ -126,6 +125,36 @@ def test_emit_selection_help_advertises_gauges(amc):
         capture_output=True, text=True,
     )
     assert "gauges" in result.stdout
+
+
+def test_emit_selection_gauges_rejects_dst_artifact_combo(amc, capsys, tmp_path):
+    """The DST artifact splice (``_splice_dst_artifact``) makes per-component
+    CSV timestamps non-monotonic, which breaks the ``heapq.merge`` inside
+    ``write_gauges_csv`` (the file peer of ``stream_otel_gauges``). The
+    parse-time guard must reject the combination just as it does for the
+    OTEL gauge stream (`test_otel_emit_gauges_rejects_dst_artifact_combo`)."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--output-dir", str(tmp_path),
+            "--duration-days", "2",
+            "--emit-selection", "metrics,gauges",
+            "--inject-dst-artifact-day", "1",
+        ])
+    err = capsys.readouterr().err
+    assert "gauges" in err and "inject-dst-artifact-day" in err
+
+
+def test_emit_selection_gauges_allows_dst_artifact_zero(amc, tmp_path):
+    """``--inject-dst-artifact-day 0`` (the default, off) must coexist freely
+    with ``--emit-selection gauges``."""
+    args = amc.parse_args([
+        "--output-dir", str(tmp_path),
+        "--duration-days", "1",
+        "--emit-selection", "metrics,gauges",
+        "--inject-dst-artifact-day", "0",
+    ])
+    assert "gauges" in args.emit_selection
+    assert args.inject_dst_artifact_day == 0
 
 
 # ------------------------------------------------------------------
@@ -439,3 +468,165 @@ def test_emit_artifact_files_registry_has_gauges(amc):
 def test_non_component_files_excludes_gauges_csv_from_combine_discovery(amc):
     # combine_logs autodiscovery must not treat gauges.csv as a component CSV.
     assert "gauges.csv" in amc._NON_COMPONENT_FILES
+
+
+# ------------------------------------------------------------------
+# Coverage gaps — sub-second interval, tie-break order, --combine,
+# --drop-rate parity. Recommended additions from the Code Reviewer
+# hand-back on PR #38.
+# ------------------------------------------------------------------
+def test_gauges_csv_sub_second_interval(amc, tmp_path):
+    """Millisecond timestamps (``--interval-seconds`` < 1.0) flow through the
+    ``"." in timestamp`` branch of ``_parse_csv_timestamp``. Confirm the
+    chronological ordering invariant holds when the per-component CSVs
+    contain millisecond-precision timestamps."""
+    out = tmp_path / "sub_second"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,gauges",
+            # 0.5s cadence renders millisecond-suffixed timestamps and
+            # exercises ``_parse_csv_timestamp``'s "." branch. Restrict to
+            # one component / one metric to keep the row count modest.
+            "--interval-seconds", "0.5",
+            "--components", list(amc.COMPONENTS)[0],
+            "--metrics-per-component", "1",
+        ],
+    )
+    path = out / "gauges.csv"
+    assert path.exists()
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    assert rows, "sub-second gauges.csv must contain at least one data row"
+    assert any("." in r["timestamp"] for r in rows), (
+        "0.5s --interval-seconds must render millisecond timestamps "
+        "(timestamp must contain a '.' separator)"
+    )
+    prev_dt = None
+    for row in rows:
+        dt = amc._parse_csv_timestamp(row["timestamp"])
+        if prev_dt is not None:
+            assert dt >= prev_dt, (
+                "gauges.csv rows must stay in non-decreasing timestamp order "
+                "even when --interval-seconds < 1.0"
+            )
+        prev_dt = dt
+
+
+def test_gauges_csv_tie_break_follows_sorted_component_order(amc, tmp_path):
+    """At any single timestamp, multiple components emit data points. The
+    file artifact's tiebreaker is sorted-component order; assert that
+    explicitly so a future caller reordering ``component_csv_paths`` (or a
+    regression in ``write_gauges_csv``'s internal sort) is caught with a
+    readable failure rather than only a golden-hash drift."""
+    out = tmp_path / "tie_break"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,gauges",
+            "--interval-seconds", "60",
+        ],
+    )
+    rows = _read_rows(out / "gauges.csv")
+    # Group rows by timestamp. Within a single timestamp, gather component
+    # names in the order they appear in gauges.csv (preserving consecutive
+    # duplicates so we see the per-component block boundaries) — then
+    # collapse to a per-block "first appearance" list and verify it's
+    # sorted.
+    from itertools import groupby
+    for ts, group in groupby(rows, key=lambda r: r["timestamp"]):
+        components_in_order = []
+        for comp, _ in groupby(group, key=lambda r: r["component"]):
+            components_in_order.append(comp)
+        assert components_in_order == sorted(components_in_order), (
+            f"timestamp {ts!r}: components appeared in {components_in_order} "
+            f"but must appear in sorted order {sorted(components_in_order)}"
+        )
+
+
+def test_gauges_csv_drop_rate_skips_dropped_rows(amc, tmp_path):
+    """The docstring promises dropped CSV rows are absent from ``gauges.csv``
+    (mirroring ``stream_otel_gauges``'s behavior on dropped rows). Pin that
+    invariant: with ``--drop-rate > 0`` the gauges.csv timestamps must be a
+    subset of the per-component CSV timestamps."""
+    out = tmp_path / "drop_rate"
+    component = list(amc.COMPONENTS)[0]
+    run_capture(
+        amc, out, days=1,
+        drop_rate=0.5,
+        extra_args=[
+            "--emit-selection", "metrics,gauges",
+            "--interval-seconds", "60",
+            "--components", component,
+            "--metrics-per-component", "1",
+        ],
+    )
+    component_csv = out / f"{component}.csv"
+    gauges_csv = out / "gauges.csv"
+    # Collect surviving timestamps from the per-component CSV.
+    survivors = set()
+    with open(component_csv, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        next(reader)  # header
+        for row in reader:
+            if not row:
+                continue
+            survivors.add(row[0])
+    # Every gauge row's timestamp must be a survivor; never a dropped row.
+    with open(gauges_csv, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        gauge_timestamps = {r["timestamp"] for r in reader}
+    assert gauge_timestamps, "gauges.csv must contain at least one data row"
+    assert gauge_timestamps <= survivors, (
+        f"gauges.csv emitted {len(gauge_timestamps - survivors)} timestamps "
+        "that don't exist in the per-component CSV (dropped rows must be "
+        "absent from the file peer of the gauge stream)"
+    )
+    # Sanity: --drop-rate=0.5 over a full day at 60s cadence should drop
+    # *some* rows, so survivors should be a strict subset of the expected
+    # row count (otherwise the test isn't actually exercising drops).
+    full_row_count = 24 * 60  # 1 day at 60s cadence
+    assert len(survivors) < full_row_count, (
+        "--drop-rate=0.5 must drop at least one row at 1d / 60s — "
+        f"got {len(survivors)} survivors out of {full_row_count}"
+    )
+
+
+def test_gauges_csv_works_with_combine_flag(amc, tmp_path):
+    """``--combine`` and ``--emit-selection gauges`` together: both
+    artifacts must be written, and the combine autodiscovery must NOT
+    treat ``gauges.csv`` as a per-component CSV (the ``_NON_COMPONENT_FILES``
+    guard, validated at set-membership level by
+    ``test_non_component_files_excludes_gauges_csv_from_combine_discovery``,
+    must also hold end-to-end)."""
+    out = tmp_path / "combine_and_gauges"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,gauges",
+            "--combine",
+            "--interval-seconds", "60",
+        ],
+    )
+    gauges_path = out / "gauges.csv"
+    combined_path = out / "combined_metrics_unified.csv"
+    assert gauges_path.exists(), "gauges.csv must exist when 'gauges' is emitted"
+    assert combined_path.exists(), "combined_metrics_unified.csv must exist when --combine is set"
+    # Read the combined CSV header. ``combine_logs`` uses a wide
+    # ``timestamp + <component>_<metric>...`` schema; if gauges.csv had
+    # leaked into autodiscovery we'd see ``gauges_component``,
+    # ``gauges_metric``, ``gauges_value`` columns. Assert their absence.
+    with open(combined_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+    assert header[0] == "timestamp"
+    leaked = [
+        h for h in header
+        if h in ("gauges_component", "gauges_metric", "gauges_value")
+    ]
+    assert not leaked, (
+        f"combined_metrics_unified.csv contains leaked gauges.csv columns "
+        f"{leaked}: --combine autodiscovery must filter gauges.csv via "
+        "_NON_COMPONENT_FILES"
+    )
