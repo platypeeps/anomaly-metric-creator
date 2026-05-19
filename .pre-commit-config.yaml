@@ -1,4 +1,4 @@
-# See README.md "Development workflow" and CLAUDE.md "Pre-PR checklist >
+# See README.md "Test-hygiene lint" and CLAUDE.md "Pre-PR checklist >
 # Test hygiene" for the rule this hook enforces. Install with
 # `pre-commit install` after `pip install -e ".[dev]"`.
 repos:

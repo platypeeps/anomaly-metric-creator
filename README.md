@@ -670,7 +670,8 @@ radius to additional components.
 
 ## Tests
 
-Dev dependencies (`pytest`, `numpy`, `ruff`) ship under the `dev` extra.
+Dev dependencies (`pytest`, `numpy`, `ruff`, `pre-commit`) ship under the
+`dev` extra.
 
 ```bash
 python3 -m venv .venv

@@ -880,10 +880,11 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 - The end-of-run `Done - … written to …` summary line only names artifacts the run actually wrote, and is printed only after every writer it names has completed successfully.
 
 **Test hygiene**
-- New test files have no unused imports or unused helpers. `ruff --select F401`
-  enforces this on `tests/` via the `.pre-commit-config.yaml` hook (config in
-  `pyproject.toml`); run `.venv/bin/pre-commit run --all-files` or
-  `.venv/bin/ruff check tests/` locally if the commit hook is not installed.
+- New test files have no unused imports or unused helpers. The
+  `.pre-commit-config.yaml` ruff hook enforces this on `tests/` using the rule
+  selection in `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); run
+  `.venv/bin/pre-commit run --all-files` or `.venv/bin/ruff check tests/`
+  locally if the commit hook is not installed.
 
 **Default-behavior changes**
 - If a default parameter value or fallback path changes (e.g. unseeded `RandomState`, required arg replacing optional), the PR description names it and tests cover both old and new caller shapes.
