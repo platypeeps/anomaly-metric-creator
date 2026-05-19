@@ -22,13 +22,17 @@ Recent significant additions to the generator:
 - **Flag-day default flip + integer-cast bundle** (VER-156, phase 6 of VER-141) —
   `--topology-mode realistic` is now the default; `--topology-mode independent`
   is retained as a deprecation alias that emits a stderr `DeprecationWarning`
-  and is scheduled for removal after VER-141 phase 9. Every `MetricSpec` column
-  declared `dtype="int"` is now cast via `np.rint` in `generate_component()`
-  before derivations run, clearing all fractional-integer
-  `--validate-output` violations on the default 1-day output. All locked
-  SHA-256 hashes in `tests/` were re-baselined under realistic mode in this
-  PR; the pre-flag-day baseline is still reproducible via the deprecation
-  alias and is pinned by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
+  and is scheduled for removal after VER-141 phase 9. Under the new default,
+  every `MetricSpec` column declared `dtype="int"` is cast via `np.rint` in
+  `generate_component()` before derivations run, clearing all
+  fractional-integer `--validate-output` violations on the default 1-day
+  output. The integer cast is intentionally tied to realistic mode only:
+  the `--topology-mode independent` alias skips it (via
+  `apply_dtype_int_cast=False`) so its CSV bytes stay byte-for-byte
+  identical to the pre-flag-day baseline. All locked SHA-256 hashes in
+  `tests/` were re-baselined under realistic mode in this PR; the
+  pre-flag-day baseline is still reproducible via the deprecation alias
+  and is pinned by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
 - **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155;
   default since VER-156) — declares a directed service-call graph (`TOPOLOGY`)
   and wires it into generation. Phase 2 couples downstream RPS baselines from

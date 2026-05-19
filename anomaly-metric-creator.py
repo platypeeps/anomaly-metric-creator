@@ -1565,14 +1565,16 @@ _validate_metric_spec_schema_metadata()
 # ------------------------------------------------------------------
 # Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
 # instances downstream of ``source``; both source keys and ``Edge.target``
-# values are component names from ``COMPONENTS``. Under
-# ``--topology-mode realistic`` the graph is consumed by
-# ``_compose_topology_coupled_specs`` (phase 2/3: rewrites downstream
-# load-metric baselines from upstream RPS/token columns) and
-# ``_compose_topology_saturation_specs`` (phase 4/5: lifts downstream
-# latency/error specs via the logistic saturation curve). Under the
-# default ``--topology-mode independent`` the graph is not read, so
-# byte-for-byte CSV output stays identical to the pre-VER-152 baseline.
+# values are component names from ``COMPONENTS``. Under the default
+# ``--topology-mode realistic`` (VER-156 phase 6 flag day) the graph
+# is consumed by ``_compose_topology_coupled_specs`` (phase 2/3:
+# rewrites downstream load-metric baselines from upstream RPS/token
+# columns) and ``_compose_topology_saturation_specs`` (phase 4/5:
+# lifts downstream latency/error specs via the logistic saturation
+# curve). Under the deprecated ``--topology-mode independent`` alias
+# the graph is not read, so byte-for-byte CSV output stays identical
+# to the pre-VER-152 baseline; the alias is scheduled for removal
+# after VER-141 phase 9.
 #
 # v1 graph (per VER-141 design):
 #   loadbalancer -> apigateway                   (constant weight 1.0)
@@ -7249,14 +7251,18 @@ def main(argv=None):
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
 
-    # Topology phase 2 (VER-152): in ``--topology-mode realistic`` we walk
-    # ``args.components`` in topological order (roots first) and stash each
-    # generated component's ``requests_per_sec`` column so downstream
+    # Topology phase 2 (VER-152) / phase 6 flag day (VER-156): under
+    # the default ``--topology-mode realistic`` we walk
+    # ``args.components`` in topological order (roots first) and stash
+    # each generated component's load-metric columns so downstream
     # components can reshape their baseline via
-    # ``_compose_topology_coupled_specs``. In ``--topology-mode independent``
-    # (the default) the order falls back to ``effective_specs`` iteration
-    # order (which is ``COMPONENTS`` insertion order) and no capture/coupling
-    # runs — byte-identical to the pre-VER-152 generation path.
+    # ``_compose_topology_coupled_specs`` and layer saturation feedback
+    # via ``_compose_topology_saturation_specs``. Under the deprecated
+    # ``--topology-mode independent`` alias the order falls back to
+    # ``effective_specs`` iteration order (which is ``COMPONENTS``
+    # insertion order) and no capture/coupling runs — byte-identical to
+    # the pre-VER-152 generation path and pinned by
+    # ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``.
     if args.topology_mode == "realistic":
         active = set(args.components)
         generation_order = [

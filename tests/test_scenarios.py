@@ -86,17 +86,22 @@ SCENARIO_CASCADES_BY_SLUG = {
 
 
 # ------------------------------------------------------------------
-# SHA-256 hashes of per-component CSVs from the immediately-pre-refactor
-# main branch (seed 42, default flags). Locking these protects every
-# component output from accidental RNG-order or spec-order drift during
-# the scenario-registry migration.
+# SHA-256 hashes of per-component CSVs under the current default flags
+# (seed 42, ``--topology-mode realistic``, integer-cast bundle on).
+# Locking these protects every component output from accidental
+# RNG-order, spec-order, or topology-coupling drift.
 #
-# VER-132 (2026-05-17) re-locked the anomalies.csv hashes after adding the
-# 8 enriched columns (scenario_id, severity, is_cascade, event_id,
-# parent_event_id, span_start, span_end, shape) and chronological sort.
-# Per-component CSV hashes were NOT changed by VER-132 — the scenario
-# provenance is stamped into shallow-copied spec dicts so RNG draw order
-# and CSV bytes remain byte-identical to the pre-VER-132 main.
+# VER-156 (2026-05-19) re-baselined every entry here as the phase-6
+# flag-day landing: ``--topology-mode realistic`` is now the default
+# and ``dtype="int"`` columns are rounded via ``np.rint`` before
+# derivations. The pre-flag-day independent baseline (the lineage
+# locked by VER-132 / VER-104 historical commits) lives in
+# ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is pinned by
+# ``test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``;
+# the legacy table is the byte-for-byte parity reference for the
+# deprecation alias and is scheduled for removal after VER-141 phase 9.
+# When updating these hashes again, regenerate against the realistic
+# default rather than the legacy alias.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
     "anomalies.csv": "458703b3da32183889d7a2ca68840f1da05fd00a78cc95aff4e530c2cd5cbb06",
@@ -157,13 +162,21 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 }
 
 # SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
-# at seed 42, captured against the post-VER-104 registry-only spec ordering
-# (commit f6bd453). Locking these protects the deterministic --anomaly-count
-# sampling pool from drift in the positional order of registry specs:
-# _apply_signal_level_and_count() seeds a SeedSequence with
-# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count`` positions
-# out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
-# of per-component append ordering changes which anomalies land in the manifest.
+# at seed 42 under the current defaults (``--topology-mode realistic``,
+# integer-cast bundle on). VER-156 (2026-05-19) re-baselined this block
+# alongside ``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` as
+# part of the phase-6 flag-day landing; the lineage of this golden set
+# (the post-VER-104 registry-only spec ordering, commit f6bd453, that
+# stabilizes the ``--anomaly-count`` sampling pool) is unchanged, only
+# the resulting bytes shifted under realistic-mode coupling.
+# Locking these protects the deterministic ``--anomaly-count`` sampling
+# pool from drift in the positional order of registry specs:
+# ``_apply_signal_level_and_count()`` seeds a ``SeedSequence`` with
+# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count``
+# positions out of the in-range pool, so any reshuffle of SCENARIOS
+# insertion order or of per-component append ordering changes which
+# anomalies land in the manifest. Regenerate against the realistic
+# default when re-baselining.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
     "anomalies.csv": "ecb240779f48662e028c86541b8069feab257ef19cfb7aa3fc0c4045dca0478d",
     "apigateway.csv": "b8182e5688ad165dbf2cbbeea67a4a026c91bd1cbd9f8b886bd8aed61d775b65",

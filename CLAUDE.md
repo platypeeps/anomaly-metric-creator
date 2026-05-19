@@ -102,25 +102,34 @@ regenerate `schema.json` (it returns before pre-clean), matching the
 ### MetricSpec schema metadata (VER-139)
 
 `MetricSpec` carries six optional declarative fields that flow into
-`schema.json` and `--validate-output` but never affect generation
-shape (only column rendering): `unit`, `semantic_type`, `min_value`,
-`max_value`, `dtype` (default `"float"`), `derivation`.
+`schema.json` and `--validate-output`: `unit`, `semantic_type`,
+`min_value`, `max_value`, `dtype` (default `"float"`), `derivation`.
+Five of the six are metadata-only and do not affect generation —
+they exist only so the validator can range-check, dtype-check, and
+recompute derived columns. `dtype` is the exception: under the
+default `--topology-mode realistic` (VER-156 phase 6 flag day) every
+column declared `dtype="int"` is rounded via `np.rint` in
+`generate_component()` before derivations run and before the
+`topology_capture` snapshot, so the recorded value is whole-integer
+on disk. The deprecated `--topology-mode independent` alias skips
+the cast (`apply_dtype_int_cast=False` in `main()`) to preserve
+byte-for-byte parity with the pre-flag-day baseline, so `dtype="int"`
+columns there are still emitted as fractional floats — the rounding
+is a realistic-mode behavior, not a declarative-metadata behavior.
 `_validate_metric_spec_schema_metadata` enforces the vocabulary at
 import time (`semantic_type ∈ {counter, gauge, ratio, rate}`,
 `dtype ∈ {float, int}`, finite numeric bounds,
 `min_value <= max_value`).
 
-VER-156 phase 6 (flag day) wired `dtype="int"` into
-`generate_component()`: every column declared `dtype="int"` is cast
-via `np.rint` before derivations run, so derived columns
+Within `generate_component()` the cast runs after the anomaly-override
+pass and *before* the derivation pass, so derived columns
 (`cacheservice.hit_ratio`) consume rounded integer source cells and
-match what the CSV writes. The cast happens *before* the
-`topology_capture` snapshot in realistic mode, so downstream coupling
-signals see the same integer values the CSV records (cache miss
-ratios derived from cache_hits/cache_misses are therefore computed
-from the int-cast values, not the pre-cast floats; the qualitative
-behaviour is unchanged because the ratio is bounded in [0, 1] in
-either case).
+match what the CSV writes. It also runs *before* the
+`topology_capture` snapshot, so downstream coupling signals see the
+same integer values the CSV records (cache miss ratios derived from
+`cache_hits` / `cache_misses` are therefore computed from the
+int-cast values, not the pre-cast floats; the qualitative behavior
+is unchanged because the ratio is bounded in [0, 1] in either case).
 
 After phase 6 the only known validator violation on default output is
 the LLM context-overflow scenario driving `context_overflow_rate`
@@ -128,7 +137,10 @@ above its declared `max_value=1` (8.5 at day 5 + 2h, exercising the
 context-window saturation pattern). That overshoot is a
 scenario-catalog issue tracked for VER-141 phase 9 re-tune — it is
 *not* the integer-cast bundle's scope and is intentionally left in
-place by VER-156.
+place by VER-156. Under `--topology-mode independent` the validator
+additionally surfaces every previously-flagged fractional-int
+violation (the alias intentionally skips the cast to keep its
+pre-flag-day byte parity).
 
 ### Output validator (`--validate-output`)
 
