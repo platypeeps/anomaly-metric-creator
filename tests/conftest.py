@@ -107,6 +107,39 @@ def one_day_full_metrics_run(amc, tmp_path_factory):
     )
 
 
+@pytest.fixture(scope="session")
+def one_day_independent_run(amc, tmp_path_factory):
+    """1-day run with ``--topology-mode independent`` so ``test_value_range_sanity``
+    can validate the natural-baseline statistical model (the 8σ band derived
+    from each MetricSpec's base/std/multiplier) without being thrown off by
+    realistic-mode topology coupling or saturation feedback. Pinning to the
+    deprecation alias is intentional: the natural-band invariant is a property
+    of the independent baseline model, which is the building block of both
+    modes; realistic-mode behaviour is exercised by the topology-specific
+    tests (coupling correlation, saturation lift). Schedule this fixture's
+    retirement together with the alias removal after VER-141 phase 9."""
+    out = tmp_path_factory.mktemp("one_day_independent")
+    return run_capture(
+        amc, out, days=1, extra_args=["--topology-mode", "independent"]
+    )
+
+
+@pytest.fixture(scope="session")
+def one_day_full_metrics_independent_run(amc, tmp_path_factory):
+    """1-day run with ``--metrics-per-component 10 --topology-mode independent``
+    so ``test_value_range_sanity_full_catalog`` exercises every supplemental
+    metric column without being thrown off by topology coupling / saturation.
+    See the comment on ``one_day_independent_run`` for the rationale around
+    pinning to the deprecation alias."""
+    out = tmp_path_factory.mktemp("one_day_full_metrics_independent")
+    return run_capture(
+        amc,
+        out,
+        days=1,
+        extra_args=["--metrics-per-component", "10", "--topology-mode", "independent"],
+    )
+
+
 # total metric count in COMPONENTS (all catalogs are at the MAX_METRICS_PER_COMPONENT cap)
 COMPONENT_FIELDS = {
     "authservice": 10,

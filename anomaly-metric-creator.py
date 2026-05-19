@@ -366,7 +366,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        ts_array=None, ts_strings=None, emit_metrics=True,
                        dst_inject_day=0, ctx: "RunContext",
                        instances: list["Instance"] | None = None,
-                       topology_capture: dict[str, dict[str, np.ndarray]] | None = None):
+                       topology_capture: dict[str, dict[str, np.ndarray]] | None = None,
+                       apply_dtype_int_cast: bool = True):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -543,12 +544,34 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 "shape": aspec.get("shape", "step"),
             })
 
+    # Phase 6 (VER-156) integer-cast bundle. Every MetricSpec declared with
+    # ``dtype="int"`` must render as a whole-integer CSV cell so the
+    # VER-139 validator's ``_validate_component_cells`` ``dtype="int"``
+    # check passes. The cast runs *before* derivations so derived columns
+    # (e.g. ``cacheservice.hit_ratio``) are recomputed from the rounded
+    # integer source cells and stay self-consistent with what the CSV
+    # actually writes — otherwise the validator's
+    # ``_validate_component_derivations`` recompute step would flag the
+    # derived cell as drifting from the recomputed value. ``np.rint``
+    # rounds half-to-even into floats, which is consistent with
+    # ``_format_fixed3`` printing "1235.000" for an underlying float of
+    # ``1235.0``. ``apply_dtype_int_cast=False`` (passed by main() in the
+    # deprecated ``--topology-mode independent`` alias) skips the cast so
+    # the alias preserves the pre-flag-day byte-for-byte baseline; the
+    # validator still flags those columns as fractional in that mode.
+    if apply_dtype_int_cast:
+        for col_idx, spec in enumerate(specs):
+            if spec.dtype == "int":
+                np.rint(values[:, col_idx], out=values[:, col_idx])
+
     # Derived metrics: rebuild self-consistent relationships after natural and
-    # anomaly values have settled. The registered function recomputes the
-    # derived column(s) from their sibling columns; without this pass,
-    # anomalies that drove only a source column (or that overrode a derived
-    # column in isolation) would leave the columns internally inconsistent —
-    # exactly the consistency anomaly real telemetry would flag.
+    # anomaly values have settled (and after the integer-cast bundle above
+    # so derivations consume the same values the CSV emits). The registered
+    # function recomputes the derived column(s) from their sibling columns;
+    # without this pass, anomalies that drove only a source column (or that
+    # overrode a derived column in isolation) would leave the columns
+    # internally inconsistent — exactly the consistency anomaly real
+    # telemetry would flag.
     derivation = DERIVATIONS.get(component_name)
     if derivation is not None:
         derive_fn, _ = derivation
@@ -5138,18 +5161,33 @@ def parse_args(argv=None):
     p.add_argument(
         "--topology-mode",
         choices=["independent", "realistic"],
-        default="independent",
-        help="Phase 2 (VER-141 / VER-152) opt-in: switch downstream baseline "
-             "generation to read from the upstream component's RPS column via "
-             "the TOPOLOGY graph. 'independent' (default) keeps every "
-             "component's baseline as an independent Gaussian (byte-identical "
-             "to today's output). 'realistic' generates loadbalancer first, "
-             "stashes its requests_per_sec column, and feeds it into "
-             "apigateway's requests_per_sec baseline as upstream_rps * "
-             "edge.weight + small_noise. Anomaly overrides on downstream "
-             "components still apply on top of the coupled baseline.",
+        default="realistic",
+        help="Phase 6 (VER-156) flag-day: 'realistic' is now the default. "
+             "Routes downstream baseline generation through the TOPOLOGY "
+             "graph (upstream RPS * edge.weight + small noise; phase 4 "
+             "saturation feedback layers logistic latency/error responses "
+             "on top). 'independent' is a deprecation alias retained for "
+             "byte-for-byte parity with the pre-flag-day baseline; it "
+             "emits a stderr DeprecationWarning on use and is scheduled "
+             "for removal after VER-141 phase 9.",
     )
     args = p.parse_args(argv)
+
+    # Phase 6 (VER-156): --topology-mode independent is a deprecation alias.
+    # The default flipped to "realistic" in this PR; "independent" stays
+    # callable only so the pre-flag-day byte-for-byte baseline can be
+    # regenerated for diffing. The alias is scheduled for removal after
+    # VER-141 phase 9. Emit one stderr DeprecationWarning per invocation so
+    # users see it; tests can match the prefix.
+    if args.topology_mode == "independent":
+        print(
+            "DeprecationWarning: --topology-mode independent is deprecated. "
+            "The default flipped to 'realistic' (VER-156); 'independent' is "
+            "retained only for byte-for-byte parity with the pre-flag-day "
+            "baseline and will be removed after VER-141 phase 9. Drop the "
+            "flag or pass --topology-mode realistic.",
+            file=sys.stderr,
+        )
 
     if args.duration_days < 1:
         p.error("--duration-days must be >= 1")
@@ -7251,7 +7289,10 @@ def main(argv=None):
                            dst_inject_day=args.inject_dst_artifact_day,
                            ctx=ctx,
                            instances=ctx.instances[name],
-                           topology_capture=upstream_arrays)
+                           topology_capture=upstream_arrays,
+                           apply_dtype_int_cast=(
+                               args.topology_mode == "realistic"
+                           ))
 
     filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 

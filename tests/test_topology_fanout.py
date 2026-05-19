@@ -94,18 +94,23 @@ def _aligned_columns(out_dir, *pairs):
 
 
 # ------------------------------------------------------------------
-# Default independent-mode byte equivalence (no Phase-2/3 drift).
+# Default realistic-mode byte equivalence: explicit --topology-mode
+# realistic must match the no-flag default byte-for-byte after the
+# VER-156 phase 6 flag day. Pre-flag-day this was checked the other way
+# round (independent matched default); under realistic-mode default the
+# parity check moves to the realistic alias and the legacy-baseline
+# check lives in ``test_topology_loadbalancer_gateway``.
 # ------------------------------------------------------------------
-def test_topology_fanout_independent_matches_default_byte_for_byte(
+def test_topology_fanout_realistic_matches_default_byte_for_byte(
     amc, one_day_run_a, tmp_path
 ):
-    """``--topology-mode independent`` (the default) still matches the
-    session ``one_day_run_a`` byte-for-byte across every coupled
-    downstream CSV. Locks the Phase-3 implementation to the invariant
-    that fan-out coupling cannot leak into the default path."""
+    """Explicit ``--topology-mode realistic`` matches the session
+    ``one_day_run_a`` byte-for-byte across every coupled downstream
+    CSV. Locks VER-156 phase 6 to the invariant that realistic mode
+    is the default path and explicitly passing the flag is a no-op."""
     explicit = run_capture(
-        amc, tmp_path / "explicit_independent", days=1,
-        extra_args=["--topology-mode", "independent"],
+        amc, tmp_path / "explicit_realistic", days=1,
+        extra_args=["--topology-mode", "realistic"],
     )
     for filename in (
         "loadbalancer.csv", "apigateway.csv", "authservice.csv",
@@ -115,7 +120,7 @@ def test_topology_fanout_independent_matches_default_byte_for_byte(
         explicit_hash = _sha256_path(explicit.out_dir / filename)
         assert default_hash == explicit_hash, (
             f"{filename} drifted between default run and "
-            f"--topology-mode independent run"
+            f"--topology-mode realistic run"
         )
 
 
