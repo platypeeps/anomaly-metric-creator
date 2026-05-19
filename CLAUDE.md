@@ -252,9 +252,12 @@ Phase 3 (VER-153) extended coupling to every front-half fan-out edge.
 Phase 4 (VER-154) reads `Edge.saturation` and adds a logistic-shaped
 latency multiplier and error offset onto each downstream's
 latency-family and error-family `MetricSpec` (see "Saturation
-feedback" below). Phase 5 will populate the gain values on the
-`apigateway → llm_analytics` edge so the LLM token-throttle reads as
-load-driven saturation.
+feedback" below). Phase 5 (VER-155) closes the v1 graph by promoting
+the `apigateway → llm_analytics` placeholder to a real coupling +
+saturation edge so the LLM token-throttle reads as load-driven
+saturation; see "LLM token-throttle" below for the decision to keep
+apigateway as the metering authority instead of introducing a
+synthetic `token_limiter` virtual node.
 
 Two dataclasses model the edges:
 
@@ -277,12 +280,13 @@ Two dataclasses model the edges:
   time rather than corrupting phase 2's vectorized column writes.
 - `SaturationParams(midpoint, steepness, latency_gain=0.0, error_gain=0.0)`
   — frozen. Parameters of a logistic response curve consumed by
-  `_apply_saturation()` (phase 4). Zero gains declare the saturation
-  point structurally without contributing to the target's metrics; the
-  apigateway → llm_analytics edge keeps zero gains as a phase-5
-  placeholder.
+  `_apply_saturation()`. Zero gains declare the saturation
+  point structurally without contributing to the target's metrics;
+  after VER-155 phase 5 the v1 graph no longer has any zero-gain
+  saturating edges, so the "structurally inert" branch only triggers
+  for synthetic test edges.
 
-The v1 graph (phase 1 declarations + phase 4 saturation tuning):
+The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
 
 - `loadbalancer → apigateway` (constant weight `1.0`, saturation
   `midpoint=860, steepness=6, latency_gain=0.4, error_gain=0.010`).
@@ -292,9 +296,12 @@ The v1 graph (phase 1 declarations + phase 4 saturation tuning):
   steepness=6, latency_gain=0.3, error_gain=0.008`).
 - `apigateway → database` (`0.3`, saturation `midpoint=760,
   steepness=6, latency_gain=0.6, error_gain=0.015`).
-- `apigateway → llm_analytics` — saturation placeholder for phase 5
-  token-throttle; weight `0.0` and zero gains keep it inert at
-  phase 2/3/4.
+- `apigateway → llm_analytics` (constant weight `1.0`, saturation
+  `midpoint=760, steepness=6, latency_gain=0.55, error_gain=0.015`).
+  VER-155 phase 5: under realistic mode, couples
+  `llm_analytics.input_tokens_per_sec` to apigateway RPS, and lifts
+  `avg_llm_latency_ms` / `p95_llm_latency_ms` / `llm_api_error_rate`
+  as apigateway saturates the token budget.
 - `cacheservice → database` — callable weight (cache-miss ratio); no
   saturation in v1.
 
@@ -417,6 +424,9 @@ downstream's metrics receive the saturation effect:
 - `cacheservice` → latency `avg_cache_latency_ms`; error `error_rate`.
 - `database` → latency `read_latency_ms`, `write_latency_ms`; error
   `error_rate`.
+- `llm_analytics` → latency `avg_llm_latency_ms`, `p95_llm_latency_ms`;
+  error `llm_api_error_rate` (the LLM-specific error column the
+  catalog exposes, not the generic `error_rate`). Phase 5 (VER-155).
 
 `_compose_topology_saturation_specs(component, specs, upstream_arrays,
 n_rows)` runs immediately after `_compose_topology_coupled_specs` in
@@ -459,6 +469,74 @@ the realized CSV columns.
 **Independent mode** never invokes `_compose_topology_saturation_specs`;
 default output stays byte-for-byte identical to the pre-VER-154
 baseline (`test_independent_mode_latency_csvs_byte_identical_to_default`).
+
+### LLM token-throttle (`--topology-mode realistic`, phase 5)
+
+Phase 5 (VER-155) closes the v1 topology graph by promoting the
+phase-1 `apigateway → llm_analytics` placeholder into a real
+coupling + saturation edge. The edge sits inside the same
+phase-3 / phase-4 machinery as the front-half fan-out — no new
+generator branch, no new validator, no new file format.
+
+**Decision: no synthetic `token_limiter` virtual node.** The issue
+left the upstream choice open (apigateway vs. a synthetic
+`token_limiter` node that does not appear in `COMPONENTS`).
+Apigateway is the natural metering authority for LLM-bound traffic
+in the v1 graph: every LLM call enters the system through it, so its
+RPS is a faithful proxy for the token budget being consumed. A
+virtual node would require `_validate_topology` to accept upstream
+keys outside `COMPONENTS`, would not produce any observable column
+of its own, and would not improve the saturation shape (apigateway
+RPS already drives every front-half edge). The synthetic-node path
+is documented here only to record the decision; revisit it if a
+future LLM scenario needs token-counting behavior independent of
+apigateway throughput.
+
+**Coupling.** `_TOPOLOGY_LOAD_METRICS["llm_analytics"] =
+("input_tokens_per_sec", ())` makes `input_tokens_per_sec` the
+canonical load metric for the LLM (no supplementary captures; the
+canonical-shape `(canonical_metric, supplementary_tuple)` rule is
+preserved). The
+edge weight is positive (`1.0`); the per-downstream renormalization
+in `_compose_topology_coupled_specs` collapses single-incoming
+edges to `w_norm = 1.0`, so any positive weight is structurally
+equivalent. Token throughput is the right unit here (not request
+rate): the token budget governs tokens/second, not requests/second,
+and the larger downstream baseline (25 000 tokens/s vs. 45
+requests/s for the LLM RPS) keeps the upstream-driven signal well
+above the absolute coupling noise floor
+(`_TOPOLOGY_COUPLE_NOISE_STD = 5.0`) and clears the issue's
+`>= 0.85 Pearson` correlation gate against
+`apigateway.requests_per_sec` on the 1-day default seed.
+
+**Saturation.** The edge's `SaturationParams` sit in the same
+phase-4 issue ranges as the other front-half edges (`midpoint=760`
+in apigateway RPS units, `steepness=6`, `latency_gain=0.55` between
+authservice 0.5 and database 0.6, `error_gain=0.015` inside
+`[0.005, 0.02]`). `_TOPOLOGY_SATURATION_TARGETS["llm_analytics"]`
+covers both the default-emitted `avg_llm_latency_ms` and the
+supplemental `p95_llm_latency_ms`; the additive error offset goes
+onto `llm_api_error_rate` (the LLM-specific error column the
+catalog exposes — not the generic `error_rate`, which
+`llm_analytics` does not declare).
+
+**Tests.** `tests/test_topology_llm.py` pins:
+
+- structural invariants on the `apigateway → llm_analytics` edge
+  (active positive weight, non-zero gains, ranges);
+- registry entries in `_TOPOLOGY_LOAD_METRICS` and
+  `_TOPOLOGY_SATURATION_TARGETS`;
+- `>= 0.85 Pearson` correlation between
+  `apigateway.requests_per_sec` and
+  `llm_analytics.input_tokens_per_sec` in realistic mode;
+- realistic-mode mean lifts for `avg_llm_latency_ms`,
+  `p95_llm_latency_ms` (under `--metrics-per-component 10`), and
+  `llm_api_error_rate` against the independent-mode baseline;
+- caps (latency non-negative, error rate `<= 1.0`);
+- LLM scenarios still fire under realistic mode (no anomaly cell
+  overrides are masked by the coupling); and
+- `llm_analytics.csv` byte-identity between default and explicit
+  `--topology-mode independent` runs.
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside

@@ -24,8 +24,9 @@ These tests cover:
 * Cap tests: error_rate column stays <= 1.0 under realistic mode; latency
   multiplier is always positive (no negative latency).
 * TOPOLOGY structure: every saturating edge in v1 has `SaturationParams` with
-  values inside the planned ranges, and the llm_analytics phase-5 placeholder
-  still has zero gains.
+  values inside the planned ranges. The apigateway -> llm_analytics edge has
+  also been promoted to a real saturating edge by VER-155 phase 5 (see
+  `tests/test_topology_llm.py` for the full LLM coupling acceptance tests).
 """
 from __future__ import annotations
 
@@ -322,20 +323,48 @@ def test_compose_saturation_specs_composes_with_existing_multiplier(amc):
 
 
 def test_compose_saturation_specs_zero_gain_edges_skipped(amc):
-    """Edges with zero latency_gain AND zero error_gain (the phase-5 LLM
-    placeholder shape) must not modify the downstream specs even though
-    they are saturating edges by structure."""
+    """Edges with zero ``latency_gain`` AND zero ``error_gain`` must
+    not modify the downstream specs even though they are saturating
+    edges by structure. After VER-155 phase 5 the v1 graph no longer
+    declares any zero-gain saturating edges, so this test stubs a
+    synthetic edge to exercise the skip branch."""
     n_rows = 50
     load = np.linspace(0.0, 1000.0, n_rows, dtype=np.float64)
-    upstream_arrays = {"apigateway": {"requests_per_sec": load}}
-    # llm_analytics receives a saturating edge with zero gains today.
-    specs = list(amc.COMPONENTS["llm_analytics"])
-    out = amc._compose_topology_saturation_specs(
-        "llm_analytics", specs, upstream_arrays, n_rows=n_rows,
+    zero_sat = amc.SaturationParams(
+        midpoint=500.0, steepness=6.0,
+        latency_gain=0.0, error_gain=0.0,
     )
-    # llm_analytics has no entry in _TOPOLOGY_SATURATION_TARGETS in phase 4,
-    # so its specs should be unchanged regardless of the edge.
-    assert all(a is b for a, b in zip(out, specs))
+
+    saved_targets = amc._TOPOLOGY_SATURATION_TARGETS.copy()
+    saved_topology = dict(amc.TOPOLOGY)
+    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
+    try:
+        amc._TOPOLOGY_SATURATION_TARGETS["synthcomp"] = (
+            ("latency_ms",), ("error_rate",),
+        )
+        amc.TOPOLOGY["synthup"] = [
+            amc.Edge(target="synthcomp", weight=1.0, saturation=zero_sat)
+        ]
+        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ())
+
+        specs = [
+            amc.MetricSpec(name="latency_ms", base=100.0, std=0.0),
+            amc.MetricSpec(name="error_rate", base=0.1, std=0.0),
+        ]
+        upstream_arrays = {"synthup": {"synthload": load}}
+        out = amc._compose_topology_saturation_specs(
+            "synthcomp", specs, upstream_arrays, n_rows=n_rows,
+        )
+        # Zero-gain edge contributes nothing, so the specs come back
+        # untouched by identity.
+        assert all(a is b for a, b in zip(out, specs))
+    finally:
+        amc._TOPOLOGY_SATURATION_TARGETS.clear()
+        amc._TOPOLOGY_SATURATION_TARGETS.update(saved_targets)
+        amc.TOPOLOGY.clear()
+        amc.TOPOLOGY.update(saved_topology)
+        amc._TOPOLOGY_LOAD_METRICS.clear()
+        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)
 
 
 # ------------------------------------------------------------------
@@ -353,9 +382,13 @@ def _saturating_edges(amc):
 
 
 def test_topology_has_saturating_edges_for_phase4(amc):
-    """Phase 4 must declare SaturationParams on the four front-half edges
-    so saturation feedback actually fires under --topology-mode realistic.
-    Also keeps the llm_analytics phase-5 placeholder in the list."""
+    """Phase 4 declared SaturationParams on the four front-half edges
+    so saturation feedback actually fires under --topology-mode
+    realistic. VER-155 phase 5 then promoted the
+    ``apigateway -> llm_analytics`` placeholder into a real saturating
+    edge as well (covered by
+    ``test_topology_llm_analytics_edge_carries_phase5_gains`` below);
+    this test only pins the original four."""
     saturating = _saturating_edges(amc)
     pairs = {(src, edge.target) for src, edge in saturating}
     assert ("loadbalancer", "apigateway") in pairs
@@ -364,26 +397,47 @@ def test_topology_has_saturating_edges_for_phase4(amc):
     assert ("apigateway", "database") in pairs
 
 
-def test_topology_llm_analytics_edge_still_zero_gain_placeholder(amc):
-    """Phase 5 reserves the apigateway -> llm_analytics token-throttle
-    saturation; phase 4 must leave its gains at zero."""
+def test_topology_llm_analytics_edge_carries_phase5_gains(amc):
+    """VER-155 phase 5 promoted the apigateway -> llm_analytics
+    placeholder into a real saturating edge. The exact phase-5 gain
+    values (``latency_gain=0.55``, ``error_gain=0.015``) are
+    documented in CLAUDE.md / README.md, and their planned-range
+    membership is enforced by
+    ``test_topology_saturation_params_in_planned_ranges`` below and by
+    the dedicated range assertions in ``tests/test_topology_llm.py``;
+    this assertion just guards against an accidental revert to the
+    phase-4 zero-gain placeholder shape (which would silently
+    re-disable the LLM token-throttle response)."""
     for src, edge in _saturating_edges(amc):
         if (src, edge.target) == ("apigateway", "llm_analytics"):
-            assert edge.saturation.latency_gain == 0.0
-            assert edge.saturation.error_gain == 0.0
+            assert edge.saturation.latency_gain > 0.0, (
+                "apigateway -> llm_analytics latency_gain reverted to "
+                "the phase-4 zero placeholder"
+            )
+            assert edge.saturation.error_gain > 0.0, (
+                "apigateway -> llm_analytics error_gain reverted to "
+                "the phase-4 zero placeholder"
+            )
             return
-    pytest.fail("apigateway -> llm_analytics saturation placeholder edge missing")
+    pytest.fail("apigateway -> llm_analytics saturation edge missing")
 
 
 def test_topology_saturation_params_in_planned_ranges(amc):
-    """All non-placeholder saturating edges declared in phase 4 must use
-    gains within the issue's recommended ranges:
+    """Every saturating edge declared on the v1 graph (phase 4 +
+    VER-155 phase 5) must use gains within the issue's recommended
+    ranges:
       steepness ∈ [5, 8], latency_gain ∈ [0.3, 0.8], error_gain ∈ [0.005, 0.02].
+
+    After VER-155 phase 5 the v1 graph no longer has any zero-gain
+    saturating edges, so every `_saturating_edges()` entry should
+    satisfy the range bounds. The zero-gain skip below is kept as a
+    defensive guard for future placeholder edges (and synthetic
+    fixtures that may register zero-gain edges at test time).
     """
     for src, edge in _saturating_edges(amc):
         sat = edge.saturation
         if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
-            continue  # phase-5 placeholder
+            continue  # defensive: skip any future zero-gain placeholder
         assert 5.0 <= sat.steepness <= 8.0, (
             f"{src} -> {edge.target} steepness={sat.steepness} out of "
             f"[5, 8] range"

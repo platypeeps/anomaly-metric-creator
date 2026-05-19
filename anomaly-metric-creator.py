@@ -240,21 +240,21 @@ class Instance:
 # Topology graph dataclasses (VER-143 phase 1 — structural-only).
 # ------------------------------------------------------------------
 # The ``TOPOLOGY`` constant below declares directed service-to-service edges
-# alongside ``COMPONENTS``. At this phase the constant is unused by
-# ``generate_component`` / ``main`` — the dataclasses and validator land
-# first so phase 2 (two-pass generation) and phase 5 (saturation effects)
-# can build on a stable shape without churning byte-output hashes.
+# alongside ``COMPONENTS``. The dataclasses landed first (VER-143 phase 1)
+# so the structural shape stays stable across the two-pass coupling
+# generator (VER-152 phase 2 / VER-153 phase 3) and the saturation
+# feedback layer (VER-154 phase 4 / VER-155 phase 5).
 @dataclass(frozen=True)
 class SaturationParams:
     """Sigmoid-style saturation parameters attached to a topology edge.
 
-    The phase-5 consumer will read these as the parameters of a logistic
+    Read by ``_apply_saturation`` as the parameters of a logistic
     response curve on the source's load metric: latency and error gains
     are added to the target's natural latency / error rate columns once
     load crosses ``midpoint`` at ``steepness``. Zero-gain (the default)
     means the edge declares the saturation point structurally but does
-    not yet contribute to the target's metrics — useful for placeholder
-    edges declared at phase 1.
+    not contribute to the target's metrics — handy for placeholder
+    edges declared at phase 1 that have not been wired up to gains yet.
     """
     midpoint: float
     steepness: float
@@ -286,9 +286,10 @@ class Edge:
     ``weight``. The validator probes the callable with a tiny captured-
     column dict so a mis-shaped signal fails at import time.
 
-    ``saturation`` is optional; when set, phase 5 will add the
-    sigmoid-shaped latency/error contribution to the target component
-    once the source's load metric crosses the configured midpoint.
+    ``saturation`` is optional; when set, the phase-4 saturation feedback
+    layer adds a sigmoid-shaped latency/error contribution to the target
+    component once the source's load metric crosses the configured
+    midpoint.
     """
     target: str
     weight: float | Callable[[np.ndarray], np.ndarray] = 1.0
@@ -1537,10 +1538,14 @@ _validate_metric_spec_schema_metadata()
 # ------------------------------------------------------------------
 # Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
 # instances downstream of ``source``; both source keys and ``Edge.target``
-# values are component names from ``COMPONENTS``. The graph is **not yet
-# consumed by the generator** — phase 2 (two-pass generation) and phase 5
-# (saturation effects) will read it. Declaring the constant in phase 1
-# isolates the structural review from any byte-output churn.
+# values are component names from ``COMPONENTS``. Under
+# ``--topology-mode realistic`` the graph is consumed by
+# ``_compose_topology_coupled_specs`` (phase 2/3: rewrites downstream
+# load-metric baselines from upstream RPS/token columns) and
+# ``_compose_topology_saturation_specs`` (phase 4/5: lifts downstream
+# latency/error specs via the logistic saturation curve). Under the
+# default ``--topology-mode independent`` the graph is not read, so
+# byte-for-byte CSV output stays identical to the pre-VER-152 baseline.
 #
 # v1 graph (per VER-141 design):
 #   loadbalancer -> apigateway                   (constant weight 1.0)
@@ -1551,15 +1556,23 @@ _validate_metric_spec_schema_metadata()
 #                                                 as routing fractions)
 #   cacheservice -> database                     (weight = callable on
 #                                                 cache_miss / total rate)
-#   apigateway   -> llm_analytics                (saturation placeholder
-#                                                 for phase 5 token-throttle)
+#   apigateway   -> llm_analytics                (VER-155 phase 5 token-
+#                                                 throttle: positive
+#                                                 weight couples
+#                                                 input_tokens_per_sec to
+#                                                 apigateway RPS; non-
+#                                                 zero gains lift LLM
+#                                                 latency / error as
+#                                                 apigateway saturates)
 #
 # Cascade-vs-topology overlap: several SCENARIOS already encode pairwise
 # blast-radius (e.g. auth -> gateway, cache -> DB) via cascade_specs. The
 # topology graph is a structural orthogonal view — it describes *normal*
 # request flow, not anomaly propagation — so the two are intentionally
-# allowed to overlap. Phase 2 will reconcile any double-counting before
-# applying topology-derived effects to natural columns.
+# allowed to overlap. The realistic-mode pipeline applies topology
+# coupling and saturation to the natural baseline before the per-row
+# anomaly override loop runs, so a cascade write at row i still wins at
+# exactly that row regardless of the topology-derived baseline.
 def _component_metric_base(component: str, metric: str) -> float:
     """Look up the natural ``MetricSpec.base`` for ``component[metric]``.
 
@@ -1605,6 +1618,16 @@ _TOPOLOGY_LOAD_METRICS: dict[str, tuple[str, tuple[str, ...]]] = {
     "authservice": ("login_attempts", ()),
     "cacheservice": ("cache_hits", ("cache_misses",)),
     "database": ("queries_per_sec", ()),
+    # VER-155 phase 5: llm_analytics couples its token throughput to
+    # apigateway under realistic mode. ``input_tokens_per_sec`` is the
+    # canonical "load" metric here because the token budget governs
+    # tokens/second (not requests/second) — pinning the load metric to
+    # tokens also gives the coupling enough signal-to-noise to clear
+    # the >= 0.85 Pearson correlation gate, given the noise floor at
+    # ``_TOPOLOGY_COUPLE_NOISE_STD`` is fixed in absolute units.
+    # No downstream consumes llm_analytics in the v1 graph, so there
+    # are no supplementary columns.
+    "llm_analytics": ("input_tokens_per_sec", ()),
 }
 
 
@@ -1678,17 +1701,27 @@ TOPOLOGY: dict[str, list[Edge]] = {
                 latency_gain=0.6, error_gain=0.015,
             ),
         ),
-        # Saturation placeholder for phase 5: under token-throttle on the
-        # LLM, latency rises and error rate climbs once load crosses the
-        # configured midpoint. Zero gains keep the edge structurally
-        # declared without affecting phase-2/3/4 outputs; phase 5 will
-        # populate the gains.
+        # VER-155 phase 5: LLM token-throttle. Apigateway serves as the
+        # token-budget metering authority for LLM-bound traffic, so this
+        # edge couples ``llm_analytics.input_tokens_per_sec`` to
+        # ``apigateway.requests_per_sec`` (the renormalization in
+        # ``_compose_topology_coupled_specs`` reproduces the natural
+        # LLM baseline at natural apigateway load regardless of the
+        # raw weight magnitude — any positive weight makes the edge
+        # active). ``midpoint`` is expressed in apigateway RPS units
+        # (same scale as the other apigateway -> * edges) so the
+        # saturation curve shifts the LLM-side response in lockstep
+        # with the rest of the front-half fan-out. ``latency_gain``
+        # sits between authservice (0.5) and database (0.6); the LLM
+        # is moderately sensitive to upstream throttle because every
+        # token call queues behind the budget. ``error_gain`` follows
+        # the same band as the other downstream edges.
         Edge(
             target="llm_analytics",
-            weight=0.0,
+            weight=1.0,
             saturation=SaturationParams(
-                midpoint=0.75, steepness=8.0,
-                latency_gain=0.0, error_gain=0.0,
+                midpoint=760.0, steepness=6.0,
+                latency_gain=0.55, error_gain=0.015,
             ),
         ),
     ],
@@ -2227,14 +2260,17 @@ def _apply_saturation(
     return latency_multiplier, error_offset
 
 
-# Phase 4 (VER-154): per-component map of ``(latency_metrics, error_metrics)``
-# that incoming saturating TOPOLOGY edges modulate. The latency metrics
-# get the per-edge ``latency_multiplier`` composed multiplicatively into
+# Per-component map of ``(latency_metrics, error_metrics)`` that
+# incoming saturating TOPOLOGY edges modulate. The latency metrics get
+# the per-edge ``latency_multiplier`` composed multiplicatively into
 # their ``MetricSpec.multiplier``; the error metrics get the per-edge
 # ``error_offset`` added to their ``MetricSpec.additive``. Components
-# absent from this map are saturation-inert even when they have incoming
-# saturating edges, so phase-5's llm_analytics work can land here later
-# without touching the front-half wiring.
+# absent from this map are saturation-inert even when they have
+# incoming saturating edges, so additional downstream targets can be
+# added here without touching the front-half wiring. VER-154 phase 4
+# wired the four front-half targets (apigateway and its three fan-out
+# downstreams); VER-155 phase 5 added ``llm_analytics`` for the
+# token-throttle response.
 _TOPOLOGY_SATURATION_TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "apigateway": (
         ("avg_response_time_ms", "backend_latency_ms"),
@@ -2251,6 +2287,16 @@ _TOPOLOGY_SATURATION_TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]]
     "database": (
         ("read_latency_ms", "write_latency_ms"),
         ("error_rate",),
+    ),
+    # VER-155 phase 5: under apigateway saturation (the LLM token
+    # budget), the llm_analytics latency family lifts via the logistic
+    # multiplier and the LLM-specific error rate lifts via the additive
+    # offset. The catalog exposes ``llm_api_error_rate`` (not the
+    # generic ``error_rate``) so the LLM error column is the right
+    # additive target.
+    "llm_analytics": (
+        ("avg_llm_latency_ms", "p95_llm_latency_ms"),
+        ("llm_api_error_rate",),
     ),
 }
 
@@ -2280,14 +2326,14 @@ def _compose_topology_saturation_specs(
     Only ``multiplier`` and ``additive`` change; ``std``, ``clip_min``,
     and the declarative schema metadata pass through unchanged.
 
-    Phase 4 returns ``specs`` unchanged when:
+    Returns ``specs`` unchanged when:
 
     * the component is not in ``_TOPOLOGY_SATURATION_TARGETS``;
     * no incoming saturating edge has its upstream captured (e.g. a
       ``--components`` subset that removes the upstream);
     * every incoming saturating edge declares zero ``latency_gain`` and
-      zero ``error_gain`` (today's ``apigateway -> llm_analytics``
-      placeholder).
+      zero ``error_gain`` (no v1 edges sit in this state after
+      VER-155 phase 5 promoted the LLM placeholder).
     """
     targets = _TOPOLOGY_SATURATION_TARGETS.get(component_name)
     if targets is None:
@@ -2309,7 +2355,7 @@ def _compose_topology_saturation_specs(
                 continue
             sat = edge.saturation
             if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
-                continue  # placeholder edge (phase-5 llm_analytics).
+                continue  # structurally-declared but inert edge.
             ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
             if ups_entry is None:
                 continue
