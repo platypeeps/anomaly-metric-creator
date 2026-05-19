@@ -121,7 +121,7 @@ SCENARIO_CASCADES_BY_SLUG = {
 # default rather than the legacy alias.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
-    "anomalies.csv": "88f87bd2d0b2a7f5016a7bcc39e9b229efa3d889db1a10feedf5a09077d7b9c4",
+    "anomalies.csv": "b2978b6a5abdfc3e253120a04302895c6f678f382fd6fea1acba569b28f355e5",
     "apigateway.csv": "bd4cad461c8c5d09c057f0cd40081e31c3987441ee4cfee1610ac9b33a171044",
     "authservice.csv": "b199dc119b6780725729f557208d6437b60f059d21d98dcd975771c5c34b3594",
     "cacheservice.csv": "aaea7333b9cd47bf2806129945f0dddeef861cfdd8c7bd0c665a29c4d62b3158",
@@ -138,7 +138,7 @@ DEFAULT_ONE_DAY_HASHES = {
 }
 
 DEFAULT_SEVEN_DAY_HASHES = {
-    "anomalies.csv": "e742307f91b2e8b7ffd0bf8df99f1b51f88308037935c2be058b0f90267c7151",
+    "anomalies.csv": "97e4cb8b63d2629a0499dd27c07d5dce68003e0306bc68a22bcbd60b827ae725",
     "apigateway.csv": "9b0ebf5457784bac311e9b318d7d4e30b5017678f16bda9ab46b778841050040",
     "authservice.csv": "8fe3ade4c6b1a7e93f6d8918d9b7ef98acc4bd4b786e196e6dfc6907f756fca8",
     "cacheservice.csv": "a92c39968368f9ecc468b36e55edbae6461bc9e4b84631f4084236d4ad7f0d19",
@@ -204,7 +204,7 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 # anomalies land in the manifest. Regenerate against the realistic
 # default when re-baselining.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "ab1a3b2a0cd0a4843962c1d1fe81b62a4e95c8f2ffa1966bd76f645155e3b8bf",
+    "anomalies.csv": "c5dac23dd22800a00180e3b3db1a5a93cd1f252a23f3c3f11ffc02405006c987",
     "apigateway.csv": "b922a67bb003635031c22b95f279f0bd87736846c6f82872390944177969cb36",
     "authservice.csv": "f7bec62d2e4c55e187b20d6064a166b62dccb8022bdff340a6a280bff44d9f06",
     "cacheservice.csv": "79bf073239f0dcfddfb4cc0b60b05ad36b923840b00655f2a69e3a5cc350fee8",

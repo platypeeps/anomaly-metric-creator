@@ -2723,7 +2723,7 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 11*3600 + 5,
                 "metric": "error_rate",
-                "description": "Cascading: Database errors propagate to API (~30 %)",
+                "description": "Cascading: Database errors propagate to API (~30%)",
                 "generator": lambda ts, idx: 0.30,
                 "severity": DEFAULT_SEVERITY,
             }),

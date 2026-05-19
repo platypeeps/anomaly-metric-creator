@@ -10,11 +10,13 @@ The test compares two runs per scenario:
   set is empty: no anomaly overrides, but the RNG draw order, topology
   coupling, and saturation feedback machinery still run.
 
-Because no anomalies fire in the baseline run, every component CSV column
-is identical to the active run's natural baseline at every row that is
-*not* an anomaly target. The deviation at an anomaly row is therefore a
-direct measurement of the spec's effect, and the column-wide std of the
-baseline is a fair noise floor.
+Because no anomalies fire in the baseline run, the component CSV columns
+provide a representative "natural baseline" for comparison. While not
+strictly identical to the active run's baseline (as anomaly overrides can
+shift the shared ``ctx.rng`` and realistic-mode saturation feedback can
+propagate effects outside the targeted cell), the deviation at an anomaly
+row remains a direct measurement of the spec's primary effect, and the
+column-wide std of the baseline remains a fair noise floor.
 
 Acceptance per VER-159: ``max|active[span] - baseline[span]| > std(
 baseline_column)`` for every (component, metric, span) recorded in the
@@ -46,12 +48,17 @@ def _run_scenario(amc, out_dir: Path, *, scenario: str, days: int,
     ``amc.main`` call, which is safer than globally reassigning
     ``sys.stderr`` (the global swap is not thread-safe and can swallow
     output from concurrent loggers).
+
+    Explicitly sets ``--drop-rate 0`` so that active and baseline runs
+    have perfectly aligned row counts (no stochastic packet loss to
+    jitter the timestamp lists).
     """
     if out_dir.exists():
         shutil.rmtree(out_dir)
     argv = [
         "--seed", "42",
         "--duration-days", str(days),
+        "--drop-rate", "0",
         "--output-dir", str(out_dir),
         "--scenarios", scenario,
         "--signal-level", signal_level,
@@ -65,8 +72,12 @@ def _run_scenario(amc, out_dir: Path, *, scenario: str, days: int,
 
 def _load_component_column(out_dir: Path, component: str, metric: str):
     """Return (list_of_row_timestamps, np.ndarray_of_values) for the named
-    metric. Dropped rows (blank lines from ``--drop-rate``) are skipped, but
-    the default run uses ``drop_rate=0`` so this only matters defensively.
+    metric.
+
+    While the CLI default has a non-zero ``--drop-rate`` (omitting rows
+    entirely from the CSV), this test explicitly sets it to 0 in
+    ``_run_scenario`` to ensure row alignment between runs. We still check
+    for empty rows defensively.
 
     Opens with ``newline=""`` and ``encoding="utf-8"`` so the ``csv``
     module sees the file's raw line terminators (CSV's universal-newlines
