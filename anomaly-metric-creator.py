@@ -366,7 +366,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        ts_array=None, ts_strings=None, emit_metrics=True,
                        dst_inject_day=0, ctx: "RunContext",
                        instances: list["Instance"] | None = None,
-                       topology_capture: dict[str, dict[str, np.ndarray]] | None = None):
+                       topology_capture: dict[str, dict[str, np.ndarray]] | None = None,
+                       apply_dtype_int_cast: bool = True):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
@@ -375,6 +376,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         anonymous ``Instance()`` so today's output stays byte-identical;
         Phase 2 will start emitting dimension columns when ``len > 1`` or
         any instance has non-None dimension fields.
+    apply_dtype_int_cast: if True (default), round columns with ``dtype="int"``
+        to whole numbers via ``np.rint`` before derivations. Pass False
+        to preserve pre-flag-day float parity in the deprecated
+        independent mode.
 
     Vectorized: natural-value math is one numpy op per metric; anomaly overrides
     are masked writes on the column arrays; packet loss is a single boolean mask
@@ -543,12 +548,34 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 "shape": aspec.get("shape", "step"),
             })
 
+    # Phase 6 (VER-156) integer-cast bundle. Every MetricSpec declared with
+    # ``dtype="int"`` must render as a whole-integer CSV cell so the
+    # VER-139 validator's ``_validate_component_cells`` ``dtype="int"``
+    # check passes. The cast runs *before* derivations so derived columns
+    # (e.g. ``cacheservice.hit_ratio``) are recomputed from the rounded
+    # integer source cells and stay self-consistent with what the CSV
+    # actually writes — otherwise the validator's
+    # ``_validate_component_derivations`` recompute step would flag the
+    # derived cell as drifting from the recomputed value. ``np.rint``
+    # rounds half-to-even into floats, which is consistent with
+    # ``_format_fixed3`` printing "1235.000" for an underlying float of
+    # ``1235.0``. ``apply_dtype_int_cast=False`` (passed by main() in the
+    # deprecated ``--topology-mode independent`` alias) skips the cast so
+    # the alias preserves the pre-flag-day byte-for-byte baseline; the
+    # validator still flags those columns as fractional in that mode.
+    if apply_dtype_int_cast:
+        for col_idx, spec in enumerate(specs):
+            if spec.dtype == "int":
+                np.rint(values[:, col_idx], out=values[:, col_idx])
+
     # Derived metrics: rebuild self-consistent relationships after natural and
-    # anomaly values have settled. The registered function recomputes the
-    # derived column(s) from their sibling columns; without this pass,
-    # anomalies that drove only a source column (or that overrode a derived
-    # column in isolation) would leave the columns internally inconsistent —
-    # exactly the consistency anomaly real telemetry would flag.
+    # anomaly values have settled (and after the integer-cast bundle above
+    # so derivations consume the same values the CSV emits). The registered
+    # function recomputes the derived column(s) from their sibling columns;
+    # without this pass, anomalies that drove only a source column (or that
+    # overrode a derived column in isolation) would leave the columns
+    # internally inconsistent — exactly the consistency anomaly real
+    # telemetry would flag.
     derivation = DERIVATIONS.get(component_name)
     if derivation is not None:
         derive_fn, _ = derivation
@@ -561,10 +588,18 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # listed in ``_TOPOLOGY_LOAD_METRICS[component_name]`` (the canonical
     # load metric plus any supplementary columns) so per-edge ``signal``
     # callables (e.g. the cacheservice -> database miss-ratio derivation)
-    # can read the full upstream state. Capturing pre-round keeps the
-    # signal at full float precision. ``None`` (the default)
-    # short-circuits so callers in ``--topology-mode independent`` see
-    # zero new work.
+    # can read the full upstream state. Capturing pre-round (before the
+    # ``np.round(values, 3, ...)`` below) keeps the signal at full
+    # 3+-decimal float precision *for ``dtype="float"`` columns*. After
+    # the VER-156 phase 6 integer-cast bundle, ``dtype="int"`` upstream
+    # load metrics (notably ``cache_hits`` / ``cache_misses`` driving the
+    # cacheservice -> database miss-ratio signal) are captured at their
+    # post-cast whole-integer values, which matches what the CSV emits
+    # and what the validator's derivation recompute reads — the
+    # downstream coupling signal therefore stays self-consistent with
+    # the on-disk row. ``None`` (the default for ``--topology-mode
+    # independent``, set by ``main()``) short-circuits so the deprecated
+    # alias sees zero new work and reproduces the pre-flag-day bytes.
     if topology_capture is not None:
         entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
         if entry is not None:
@@ -1538,14 +1573,16 @@ _validate_metric_spec_schema_metadata()
 # ------------------------------------------------------------------
 # Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
 # instances downstream of ``source``; both source keys and ``Edge.target``
-# values are component names from ``COMPONENTS``. Under
-# ``--topology-mode realistic`` the graph is consumed by
-# ``_compose_topology_coupled_specs`` (phase 2/3: rewrites downstream
-# load-metric baselines from upstream RPS/token columns) and
-# ``_compose_topology_saturation_specs`` (phase 4/5: lifts downstream
-# latency/error specs via the logistic saturation curve). Under the
-# default ``--topology-mode independent`` the graph is not read, so
-# byte-for-byte CSV output stays identical to the pre-VER-152 baseline.
+# values are component names from ``COMPONENTS``. Under the default
+# ``--topology-mode realistic`` (VER-156 phase 6 flag day) the graph
+# is consumed by ``_compose_topology_coupled_specs`` (phase 2/3:
+# rewrites downstream load-metric baselines from upstream RPS/token
+# columns) and ``_compose_topology_saturation_specs`` (phase 4/5:
+# lifts downstream latency/error specs via the logistic saturation
+# curve). Under the deprecated ``--topology-mode independent`` alias
+# the graph is not read, so byte-for-byte CSV output stays identical
+# to the pre-VER-152 baseline; the alias is scheduled for removal
+# after VER-141 phase 9.
 #
 # v1 graph (per VER-141 design):
 #   loadbalancer -> apigateway                   (constant weight 1.0)
@@ -2617,8 +2654,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("database", {
                 "time_offset": 11*3600,
                 "metric": "error_rate",
-                "description": "Backend errors rise 23 %",
-                "generator": lambda ts, idx: 0.23,
+                "description": "Backend errors rise 35 %",
+                "generator": lambda ts, idx: 0.35,
             }),
             ("database", {
                 "time_offset": 4*3600,
@@ -2723,8 +2760,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("mqservice", {
                 "time_offset": 14*3600 + 30*60,
                 "metric": "error_rate",
-                "description": "Error rate jumps to 10 %",
-                "generator": lambda ts, idx: 0.10,
+                "description": "Error rate jumps to 25 %",
+                "generator": lambda ts, idx: 0.25,
             }),
             ("mqservice", {
                 "time_offset": 12*3600 + 30*60,
@@ -2808,8 +2845,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 20*3600 + 30*60 + 10,
                 "metric": "error_rate",
-                "description": "Cascading: LB region failover propagates 5xx to gateway",
-                "generator": lambda ts, idx: 0.09,
+                "description": "Cascading: LB region failover propagates 5xx to gateway (~30 %)",
+                "generator": lambda ts, idx: 0.30,
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -5138,18 +5175,33 @@ def parse_args(argv=None):
     p.add_argument(
         "--topology-mode",
         choices=["independent", "realistic"],
-        default="independent",
-        help="Phase 2 (VER-141 / VER-152) opt-in: switch downstream baseline "
-             "generation to read from the upstream component's RPS column via "
-             "the TOPOLOGY graph. 'independent' (default) keeps every "
-             "component's baseline as an independent Gaussian (byte-identical "
-             "to today's output). 'realistic' generates loadbalancer first, "
-             "stashes its requests_per_sec column, and feeds it into "
-             "apigateway's requests_per_sec baseline as upstream_rps * "
-             "edge.weight + small_noise. Anomaly overrides on downstream "
-             "components still apply on top of the coupled baseline.",
+        default="realistic",
+        help="Phase 6 (VER-156) flag-day: 'realistic' is now the default. "
+             "Routes downstream baseline generation through the TOPOLOGY "
+             "graph (upstream RPS * edge.weight + small noise; phase 4 "
+             "saturation feedback layers logistic latency/error responses "
+             "on top). 'independent' is a deprecation alias retained for "
+             "byte-for-byte parity with the pre-flag-day baseline; it "
+             "emits a stderr DeprecationWarning on use and is scheduled "
+             "for removal after VER-141 phase 9.",
     )
     args = p.parse_args(argv)
+
+    # Phase 6 (VER-156): --topology-mode independent is a deprecation alias.
+    # The default flipped to "realistic" in this PR; "independent" stays
+    # callable only so the pre-flag-day byte-for-byte baseline can be
+    # regenerated for diffing. The alias is scheduled for removal after
+    # VER-141 phase 9. Emit one stderr DeprecationWarning per invocation so
+    # users see it; tests can match the prefix.
+    if args.topology_mode == "independent":
+        print(
+            "DeprecationWarning: --topology-mode independent is deprecated. "
+            "The default flipped to 'realistic' (VER-156); 'independent' is "
+            "retained only for byte-for-byte parity with the pre-flag-day "
+            "baseline and will be removed after VER-141 phase 9. Drop the "
+            "flag or pass --topology-mode realistic.",
+            file=sys.stderr,
+        )
 
     if args.duration_days < 1:
         p.error("--duration-days must be >= 1")
@@ -7207,14 +7259,18 @@ def main(argv=None):
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
 
-    # Topology phase 2 (VER-152): in ``--topology-mode realistic`` we walk
-    # ``args.components`` in topological order (roots first) and stash each
-    # generated component's ``requests_per_sec`` column so downstream
+    # Topology phase 2 (VER-152) / phase 6 flag day (VER-156): under
+    # the default ``--topology-mode realistic`` we walk
+    # ``args.components`` in topological order (roots first) and stash
+    # each generated component's load-metric columns so downstream
     # components can reshape their baseline via
-    # ``_compose_topology_coupled_specs``. In ``--topology-mode independent``
-    # (the default) the order falls back to ``effective_specs`` iteration
-    # order (which is ``COMPONENTS`` insertion order) and no capture/coupling
-    # runs — byte-identical to the pre-VER-152 generation path.
+    # ``_compose_topology_coupled_specs`` and layer saturation feedback
+    # via ``_compose_topology_saturation_specs``. Under the deprecated
+    # ``--topology-mode independent`` alias the order falls back to
+    # ``effective_specs`` iteration order (which is ``COMPONENTS``
+    # insertion order) and no capture/coupling runs — byte-identical to
+    # the pre-VER-152 generation path and pinned by
+    # ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``.
     if args.topology_mode == "realistic":
         active = set(args.components)
         generation_order = [
@@ -7251,7 +7307,10 @@ def main(argv=None):
                            dst_inject_day=args.inject_dst_artifact_day,
                            ctx=ctx,
                            instances=ctx.instances[name],
-                           topology_capture=upstream_arrays)
+                           topology_capture=upstream_arrays,
+                           apply_dtype_int_cast=(
+                               args.topology_mode == "realistic"
+                           ))
 
     filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 

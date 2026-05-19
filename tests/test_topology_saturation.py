@@ -10,15 +10,21 @@ saturation curve on top of incoming edges that carry `SaturationParams`:
 - `_compose_topology_saturation_specs(...)` modifies the downstream's
   latency-family `MetricSpec.multiplier` and error-family `MetricSpec.additive`
   by composing on top of any pre-existing multiplier/additive.
-- Default `--topology-mode independent` never invokes the saturation path,
-  so per-component CSVs stay byte-identical to the pre-VER-154 baseline.
+- The deprecated `--topology-mode independent` alias never invokes the
+  saturation path, so per-component CSVs stay byte-identical to the
+  pre-VER-154 baseline (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES`
+  in `tests/test_topology_loadbalancer_gateway.py`). The default
+  flipped to `--topology-mode realistic` in VER-156 phase 6, so the
+  saturation path is now on by default.
 
 These tests cover:
 
 * `_apply_saturation` shape, range, monotonicity, and edge cases.
 * `_compose_topology_saturation_specs` composition correctness with absent /
   present natural multiplier/additive on the downstream MetricSpec.
-* Default-mode byte-identity (no saturation under `--topology-mode independent`).
+* Default-vs-explicit realistic-mode byte-identity: the no-flag run
+  and explicit `--topology-mode realistic` produce the same latency
+  CSVs (locks the VER-156 default flip).
 * Realistic-mode positive correlation between upstream load and downstream
   latency and error rate.
 * Cap tests: error_rate column stays <= 1.0 under realistic mode; latency
@@ -454,18 +460,22 @@ def test_topology_saturation_params_in_planned_ranges(amc):
 
 
 # ------------------------------------------------------------------
-# Default mode byte-identical (no saturation under independent)
+# Default mode byte-identical: after VER-156 phase 6 the no-flag default
+# is realistic mode, so explicit ``--topology-mode realistic`` must
+# match the default per-component CSVs byte-for-byte under the
+# saturation phase. The legacy ``--topology-mode independent`` parity
+# check (against the pre-flag-day baseline) lives in
+# ``test_topology_loadbalancer_gateway``.
 # ------------------------------------------------------------------
-def test_independent_mode_latency_csvs_byte_identical_to_default(
+def test_realistic_mode_latency_csvs_byte_identical_to_default(
     amc, one_day_run_a, tmp_path
 ):
-    """Default `--topology-mode independent` must not invoke saturation,
-    so latency and error CSVs stay byte-for-byte identical to the
-    pre-VER-154 baseline (which is captured by the session-scoped
-    `one_day_run_a` fixture)."""
+    """Explicit ``--topology-mode realistic`` invokes saturation, so
+    latency and error CSVs must match the no-flag default 1-day run
+    byte-for-byte (the session-scoped ``one_day_run_a`` fixture)."""
     explicit = run_capture(
-        amc, tmp_path / "explicit_independent", days=1,
-        extra_args=["--topology-mode", "independent"],
+        amc, tmp_path / "explicit_realistic", days=1,
+        extra_args=["--topology-mode", "realistic"],
     )
     for filename in (
         "loadbalancer.csv", "apigateway.csv", "authservice.csv",
@@ -475,7 +485,7 @@ def test_independent_mode_latency_csvs_byte_identical_to_default(
         explicit_hash = _sha256_path(explicit.out_dir / filename)
         assert default_hash == explicit_hash, (
             f"{filename} drifted between default run and "
-            f"--topology-mode independent run under saturation phase"
+            f"--topology-mode realistic run under saturation phase"
         )
 
 

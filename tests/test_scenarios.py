@@ -12,11 +12,19 @@ These tests cover:
   and whitespace-tolerant variants).
 * End-to-end smoke flags — allowlist, exclusion, out-of-duration warn-and-skip,
   unknown-slug hard error.
-* Default-output byte-for-byte regression — locked SHA-256 hashes for every
-  per-component CSV and ``anomalies.csv`` from a default 1-day run at seed
-  42 and a 7-day run at seed 42 (the VER-104 baseline; the high-signal +
-  ``--anomaly-count`` capped 7-day hashes below were captured after the
-  full migration and lock the post-VER-104 sampling pool).
+* Default-output byte-for-byte regression — locked SHA-256 hashes for
+  every per-component CSV and ``anomalies.csv`` from a default 1-day
+  run at seed 42 and a 7-day run at seed 42. After VER-156 phase 6
+  the default is ``--topology-mode realistic`` with the integer-cast
+  bundle on, so the constants below
+  (``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` /
+  ``HIGH_SEVEN_DAY_CAPPED_HASHES``) capture realistic-mode bytes;
+  the high-signal + ``--anomaly-count`` capped 7-day hashes were
+  captured against the post-VER-104 sampling-pool ordering, which
+  this PR did not change. The pre-flag-day independent baseline is
+  preserved verbatim in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` and is
+  pinned by
+  ``tests/test_topology_loadbalancer_gateway.py::test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``.
 """
 
 from __future__ import annotations
@@ -86,33 +94,81 @@ SCENARIO_CASCADES_BY_SLUG = {
 
 
 # ------------------------------------------------------------------
-# SHA-256 hashes of per-component CSVs from the immediately-pre-refactor
-# main branch (seed 42, default flags). Locking these protects every
-# component output from accidental RNG-order or spec-order drift during
-# the scenario-registry migration.
+# SHA-256 hashes of per-component CSVs under the current default flags
+# (seed 42, ``--topology-mode realistic``, integer-cast bundle on).
+# Locking these protects every component output from accidental
+# RNG-order, spec-order, or topology-coupling drift.
 #
-# VER-132 (2026-05-17) re-locked the anomalies.csv hashes after adding the
-# 8 enriched columns (scenario_id, severity, is_cascade, event_id,
-# parent_event_id, span_start, span_end, shape) and chronological sort.
-# Per-component CSV hashes were NOT changed by VER-132 — the scenario
-# provenance is stamped into shallow-copied spec dicts so RNG draw order
-# and CSV bytes remain byte-identical to the pre-VER-132 main.
-#
-# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
-# llm_analytics.csv after re-tuning four medium-severity error_rate
-# generator values to clear the new realistic-mode saturation floor
-# (api_cpu_saturation primary 0.12→0.25, db_stall cascade 0.19→0.30,
-# vectorstore_pressure cascade 0.08→0.15, payment_5xx cascade
-# 0.15→0.28). Other per-component CSV hashes are unchanged.
+# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv + 
+# database.csv + llm_analytics.csv + mqservice.csv + authservice.csv 
+# after re-tuning eleven error_rate generator values to clear the new 
+# realistic-mode saturation floor. This includes the eight re-tunes 
+# from the initial VER-159 PR plus three additional ones (database.error_rate 
+# in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate 
+# in mq_jam) identified by the deviation regression test. 
+# 
+
+# VER-156 (2026-05-19) re-baselined every entry here as the phase-6
+# flag-day landing: ``--topology-mode realistic`` is now the default
+# and ``dtype="int"`` columns are rounded via ``np.rint`` before
+# derivations. The pre-flag-day independent baseline (the lineage
+# locked by VER-132 / VER-104 historical commits) lives in
+# ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is pinned by
+# ``test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``;
+# the legacy table is the byte-for-byte parity reference for the
+# deprecation alias and is scheduled for removal after VER-141 phase 9.
+# When updating these hashes again, regenerate against the realistic
+# default rather than the legacy alias.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
-    "anomalies.csv": "501c3879c212f3399868c6bf4bb59bfd26eb35f8964707d98ca27659cc4d4ad9",
-    "apigateway.csv": "f845f5d80b3ba0e5462f442d0c2d043d07abbb3c341ea3350e82e78e90246de5",
+    "anomalies.csv": "88f87bd2d0b2a7f5016a7bcc39e9b229efa3d889db1a10feedf5a09077d7b9c4",
+    "apigateway.csv": "bd4cad461c8c5d09c057f0cd40081e31c3987441ee4cfee1610ac9b33a171044",
+    "authservice.csv": "b199dc119b6780725729f557208d6437b60f059d21d98dcd975771c5c34b3594",
+    "cacheservice.csv": "aaea7333b9cd47bf2806129945f0dddeef861cfdd8c7bd0c665a29c4d62b3158",
+    "database.csv": "9687021257678a2bdf3316b3452f548e527e855f2f24dca78a015b419f9155fc",
+    "identityprovider.csv": "6ccf54d998faadb8cf2bee8a7e35b4b6f6ec406b6cff920121b2066220aeb4e1",
+    "llm_analytics.csv": "3c18b9f444a61950c8b9d9eadbcacd59fee1642f5ce274e05a616c605de2da6c",
+    "loadbalancer.csv": "c1e1ea63928870c6905b863f4f14ed0e990012ddab7919ab00707a82c4ab00b2",
+    "mqservice.csv": "6bcaa3310232f13fa018f99f71583397cf39c7b2d07530f92098b2b84f9be7d9",
+    "objectstore.csv": "a6993057d62c0565cc9ca495db85d08e4a6186660b3c220ff7389bb4be21bc69",
+    "observabilitypipeline.csv": "dfd89b922312ee53c8afc5ebcb26d310f6466ca4fc8753f53ea6e69e901748fc",
+    "paymentservice.csv": "f60145f9f360c2a0c785c869cd046eda5895672d40b0ec2ec0caef5af1f27ba1",
+    "scheduler.csv": "1ae06a98848fe404da0af873826ed7de8e653eed78deb8f67ef49c973e7752a1",
+    "vectorstore.csv": "e3a0b6e511ca879eebbe08cffff59fb02df7d36bb2f30ae0b8075dcda84e0955",
+}
+
+DEFAULT_SEVEN_DAY_HASHES = {
+    "anomalies.csv": "e742307f91b2e8b7ffd0bf8df99f1b51f88308037935c2be058b0f90267c7151",
+    "apigateway.csv": "9b0ebf5457784bac311e9b318d7d4e30b5017678f16bda9ab46b778841050040",
+    "authservice.csv": "8fe3ade4c6b1a7e93f6d8918d9b7ef98acc4bd4b786e196e6dfc6907f756fca8",
+    "cacheservice.csv": "a92c39968368f9ecc468b36e55edbae6461bc9e4b84631f4084236d4ad7f0d19",
+    "database.csv": "9c56abe6bf559d21593f8057a0d1563688074033e3f02a9a9c4352aa49a97522",
+    "identityprovider.csv": "926b28780af3efc4815ed964dd03c3ac8d686dcb3f8236e5cce71dea7530ae67",
+    "llm_analytics.csv": "2c195cdc46d203ee316689c09195558c1d747803e78b6b3b7513055dc17fb87b",
+    "loadbalancer.csv": "fcb55773a22331cbf249aadc0b4e7f5eb5fcfe9d4c1dede58270366fa8ac7c6f",
+    "mqservice.csv": "265e99ecfebf21d5cb6cb11a068454873faafc861c156b88fef7dc2609c6896e",
+    "objectstore.csv": "a21108e432b068a15bde2c8790b48b8961f792a87bd00227e3d18f965a75b88f",
+    "observabilitypipeline.csv": "5e6cae855793d2e14b258b6b0801f7a7958775281baa43809d99a86e28daf6b4",
+    "paymentservice.csv": "923dc4369f426c66146fabbce6b3306d81213fcb731bc43a15642913cd743425",
+    "scheduler.csv": "27a47467d91902604ac182b661bada4ac92daafa4b980b6071d8d5e803d1bd7b",
+    "vectorstore.csv": "5fafee33e0e394a20d11b0984b8856ff8d708ef109bdc72f83d84ae476cd4e93",
+}
+
+# Pre-flag-day baseline hashes captured under the original
+# ``--topology-mode independent`` mode (no topology coupling, no
+# integer-cast bundle). VER-156 phase 6 retained ``--topology-mode
+# independent`` as a deprecation alias whose CSV bytes must remain
+# byte-for-byte identical to this baseline, so test_topology_loadbalancer_gateway
+# pins them against the alias output to catch any silent drift in the
+# deprecated path before it is removed (scheduled for after VER-141 phase 9).
+LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
+    "anomalies.csv": "458703b3da32183889d7a2ca68840f1da05fd00a78cc95aff4e530c2cd5cbb06",
+    "apigateway.csv": "23d0e6e3c0ebe47976480a656f393e2c623ea233532679c741c35a8fc5927c22",
     "authservice.csv": "06ab97884f65eb53db6eff0c61147f576809517b841e21b98b2861cb99dd5617",
     "cacheservice.csv": "7ace2f8b8dd6c6ed43ed90058eae8a0f1b1f077a37bbedd88ea9f7523246dde3",
     "database.csv": "d9f6249464da8fef4e9456df653923b8a4eceac0ad9c403d2c66783106c1a750",
     "identityprovider.csv": "c884970f063d58a8cd2289be8500b810a022727c407601c503d841844cdf1577",
-    "llm_analytics.csv": "bb8c614dc7b0b3e5a88d185b3b8cc4cac8c5a079fdaa1e67ed5bef55003bceba",
+    "llm_analytics.csv": "84dbc8c47045a870d01b567f7794e3281f7a0290fb78b2bfc7e3d4ef3beccb6b",
     "loadbalancer.csv": "a1de03bfba5aabbeaf86c2346e603218fd23e38bfa3cb31f51453e15077656b1",
     "mqservice.csv": "2aab1b3bc389c4c5b80e13347c1da37f8848c07bed927e8bad80ba3fdd686d07",
     "objectstore.csv": "fc4ea917e6591cd6839eb315775bf20371bd4569c53df05a7dd7f9323c2e899d",
@@ -122,55 +178,46 @@ DEFAULT_ONE_DAY_HASHES = {
     "vectorstore.csv": "45f40482e8fffbe0d0e0bd6b871cdbb984ccf1e3d79e65600e8da2e34853fa88",
 }
 
-DEFAULT_SEVEN_DAY_HASHES = {
-    "anomalies.csv": "260ed2e43604ea12e5f7d4927946bd32ab673a7eb73859023cfd50ab14e2edbd",
-    "apigateway.csv": "5b02a5ae6bd71fc3d76b0040380d8569c03af44c89879d87cc39757406384542",
-    "authservice.csv": "a5aab875ee8f14aa2070b7647885bbca274305ab7cc69d80c5136e755a0eaabb",
-    "cacheservice.csv": "3524a441d5b9e2388d4f62799cc5da1aabcfa912c08bf1192ed84bda6a86d0a6",
-    "database.csv": "8815d53fcb1abbea704c3af519635743d12e1b05dfda47224a343bb52c01c9c2",
-    "identityprovider.csv": "f4ba4d1a34b45c2e155913af030fb1b44b7001e2a4145f4fb34b5d17f38bc5ba",
-    "llm_analytics.csv": "e310906ecc6aaa1ccc2cc7057985704ac6228f8d716666d26fd21b877e1bf4c8",
-    "loadbalancer.csv": "28429668c0880a6b2cac9299e2eb5eabe4594efbe1eaecb5107c0e3c032c5f9a",
-    "mqservice.csv": "33aa01c12460f405e38cc50c33fcbbd0d561015fd2cd59cd2e2d19b44308ec9c",
-    "objectstore.csv": "f7959a62b01ca59e98ae84edc7f77d1ef97bd47cfae929ef3c569c50acb52c57",
-    "observabilitypipeline.csv": "60e5b94ce8fea80de4115986d079046c191d15731579e8b8ac131b9247dab020",
-    "paymentservice.csv": "bd477a89fcc4279799b479db685cef4efedf88db588d385eaafcab4717bdecbf",
-    "scheduler.csv": "de482da5f5552b463b666d2e1e124c853125e9fc18af8167e65f812bd7c73cd1",
-    "vectorstore.csv": "00bda8d310a34db9e08c3dd5e26c01378f58f9a2669ee776ac01e0c985d4d5ea",
-}
-
 # SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
-# at seed 42, captured against the post-VER-104 registry-only spec ordering
-# (commit f6bd453). Locking these protects the deterministic --anomaly-count
-# sampling pool from drift in the positional order of registry specs:
-# _apply_signal_level_and_count() seeds a SeedSequence with
-# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count`` positions
-# out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
-# of per-component append ordering changes which anomalies land in the manifest.
-#
-# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
-# authservice.csv + llm_analytics.csv after re-tuning four high-severity
-# cascade error_rate generator values (regional_failover_storm
-# authservice 0.25→0.40, llm_provider_outage apigateway 0.25→0.35,
-# storage_layer_pressure apigateway 0.15→0.30, network_partition_az_split
-# authservice 0.22→0.40) so every cascade row clears the realistic-mode
-# saturation floor for its target metric. Other per-component CSV hashes
-# are unchanged.
+# at seed 42 under the current defaults (``--topology-mode realistic``,
+# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv + 
+# database.csv + llm_analytics.csv + mqservice.csv + authservice.csv 
+# after re-tuning eleven error_rate generator values to clear the new 
+# realistic-mode saturation floor. This includes the eight re-tunes 
+# from the initial VER-159 PR plus three additional ones (database.error_rate 
+# in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate 
+# in mq_jam) identified by the deviation regression test. 
+# 
+
+# integer-cast bundle on). VER-156 (2026-05-19) re-baselined this block
+# alongside ``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` as
+# part of the phase-6 flag-day landing; the lineage of this golden set
+# (the post-VER-104 registry-only spec ordering, commit f6bd453, that
+# stabilizes the ``--anomaly-count`` sampling pool) is unchanged, only
+# the resulting bytes shifted under realistic-mode coupling.
+# Locking these protects the deterministic ``--anomaly-count`` sampling
+# pool from drift in the positional order of registry specs:
+# ``_apply_signal_level_and_count()`` seeds a ``SeedSequence`` with
+# ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count``
+# positions out of the in-range pool, so any reshuffle of SCENARIOS
+# insertion order or of per-component append ordering changes which
+# anomalies land in the manifest. Regenerate against the realistic
+# default when re-baselining.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "dff8b388eb42e9d71eb2ea7e5a67f90cd4b6a63576df88387a3fabe9ab2a37e4",
-    "apigateway.csv": "6946839f7ae11dc92189e4527a98250d5b2cca9717f536293abd2a146732c784",
-    "authservice.csv": "6656c77802f96cf893076de22f9f2cf519c6f6e59b61ef57c88b2075059658f1",
-    "cacheservice.csv": "8cacedb1b97abdedbd4b06c0094ea81f6b248c2e7521a1daade81d0078322067",
-    "database.csv": "3c40f26dfa68dad837c7b86facc44d6d50c1037152ea35c20d6e68e4e21c3815",
-    "identityprovider.csv": "7f9549edc1f597f2b25b2e20b1b14625ede70f22859ee5cc5582bc17859044e4",
-    "llm_analytics.csv": "812e5ea2ae8b20f092a9231ab73e43b4ab096b4e134ed7f1e6d60099be41d37d",
-    "loadbalancer.csv": "aa593986a8c026e828b426ef3896341b3d0a6dd7b4cb7327e363419d2cd438f1",
-    "mqservice.csv": "064107f4214bdb8715de9ffee6658873ae408747faf98762eacaf9fe536538b1",
-    "objectstore.csv": "176d8a59c6e302d0ccdb4438c3c2e90c19afab7234ed163e5dc1b988c8df7f04",
-    "observabilitypipeline.csv": "d5f94960af80e52366a1ca26725cc38f8933b59c558ddf13faa0101c9dce9cc4",
-    "paymentservice.csv": "ab847d6ca94990dc254bdecd2430cec826192e85248dfd190f6d41f2023e49c3",
-    "scheduler.csv": "597e72aef32163ade0c676f64eb482376e5e48c3761e9dc44a71bb569c24933e",
-    "vectorstore.csv": "bcdb9c00e505815fa0c4ded0b8f508ae94104b8d0de06b0c309c6c1d3e27faf6",
+    "anomalies.csv": "ab1a3b2a0cd0a4843962c1d1fe81b62a4e95c8f2ffa1966bd76f645155e3b8bf",
+    "apigateway.csv": "b922a67bb003635031c22b95f279f0bd87736846c6f82872390944177969cb36",
+    "authservice.csv": "f7bec62d2e4c55e187b20d6064a166b62dccb8022bdff340a6a280bff44d9f06",
+    "cacheservice.csv": "79bf073239f0dcfddfb4cc0b60b05ad36b923840b00655f2a69e3a5cc350fee8",
+    "database.csv": "b082c02d538d00b87a0b62bac9e823ee523a9bb1a94cf4cefe7f25c3449075b6",
+    "identityprovider.csv": "176a04f1f66fe0cafc515af0d57dad175625c20d7c10721fd4a65541b48b22f0",
+    "llm_analytics.csv": "cbbf667e8ddb475d2e850419c5d548d77ffd76147e8800af9f39c94124eed641",
+    "loadbalancer.csv": "534153413847720ba23bbbf96eeb0f2143e4e183626c847ebf5b0e777718d705",
+    "mqservice.csv": "a3a5e8b01a9b14472fbc72e6b6788489c7494c9be7d8935652a216c0e4205883",
+    "objectstore.csv": "2581e0799ed8906fa3c10a2785c4645a34be11dd1952126c4786ada9ce5ae888",
+    "observabilitypipeline.csv": "c9cf7d9f2a7ab4a8fff351adae2fd94da66da5d1e0e7be78361bfffabcc03947",
+    "paymentservice.csv": "9958a7913fc6a79b72990f261e7cdba4afc0ab76d933ec3c6e1a9b25d1f0ba19",
+    "scheduler.csv": "a85429392998b5bf207e83ca543d2cf90473d69d21fd60fe70a77758667fdb00",
+    "vectorstore.csv": "b2fb7639cde8d2944e39adbeb91ae6d42cce5d7fe0210e8a4d0357e6e2b24ccc",
 }
 
 

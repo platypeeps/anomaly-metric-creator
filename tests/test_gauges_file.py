@@ -13,7 +13,6 @@ Covers:
 """
 import csv
 import hashlib
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,17 +35,11 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 # - the chronological merge tiebreaker (sorted-component order on ties),
 # - the per-row metric column order,
 # - the dropped-cell skip behavior on ``--drop-rate`` survivors.
-#
-# VER-159 (2026-05-19) re-baselined both hashes after re-tuning four
-# medium-severity error_rate generator values whose output flows into
-# the long-form gauges merge via the apigateway + llm_analytics CSVs
-# (api_cpu_saturation, db_stall, vectorstore_pressure, payment_5xx;
-# see tests/test_scenarios.py header for full details).
 GAUGES_ONE_DAY_HASH = (
-    "4fc831e5f4841eb69d1ca04ab1032642f315913fce892abfa8a820e3dd0f2172"
+    "f1b760f0cf1da0dc3eaeb55a4278cd56b024f758c26cdd5fc9693b6f3a5e9c08"
 )
 GAUGES_SEVEN_DAY_HASH = (
-    "9d86e51cd6d9f1cdeca2bc713f4c656fd3dc1f02d9b78e3bc2cec7bc510057ee"
+    "1076e0ac35a6b4e2bc3fc0532f4308eab684aadaa59243a47a52048f59045747"
 )
 
 

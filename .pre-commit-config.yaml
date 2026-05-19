@@ -1,0 +1,10 @@
+# See README.md "Test-hygiene lint" and CLAUDE.md "Pre-PR checklist >
+# Test hygiene" for the rule this hook enforces. Install with
+# `pre-commit install` after `pip install -e ".[dev]"`.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff
+        name: ruff F401 (tests/)
+        files: ^tests/.*\.py$
