@@ -2322,8 +2322,8 @@ def _compose_topology_saturation_specs(
             if driver is None or driver.shape[0] != n_rows:
                 continue
             lat_mult, err_off = _apply_saturation(driver, sat)
-            latency_factor = latency_factor * lat_mult
-            error_offset = error_offset + err_off
+            latency_factor *= lat_mult
+            error_offset += err_off
             any_active = True
 
     if not any_active:
