@@ -1,14 +1,18 @@
-"""VER-152 phase 2: --topology-mode loadbalancer -> apigateway coupling.
+"""VER-152 phase 2 / VER-156 phase 6 flag day: --topology-mode coupling.
 
 These tests cover:
 
-* The new ``--topology-mode`` CLI flag (default ``independent``, opt-in
-  ``realistic``).
-* Byte-identical default output: ``--topology-mode independent`` must
-  produce the same per-component CSVs as today's default behavior.
-* Realistic coupling: ``--topology-mode realistic`` makes
-  ``apigateway.requests_per_sec`` track ``loadbalancer.requests_per_sec``
-  with Pearson correlation >= 0.95 (edge weight = 1.0 + small noise).
+* The ``--topology-mode`` CLI flag (default ``realistic`` after the
+  VER-156 phase 6 flag day; ``independent`` retained as a deprecation
+  alias that emits a stderr ``DeprecationWarning``).
+* Byte-identical default output: explicit ``--topology-mode realistic``
+  must produce the same per-component CSVs as the no-flag default.
+* Legacy regression: ``--topology-mode independent`` must reproduce the
+  pre-flag-day baseline byte-for-byte so the deprecated alias keeps
+  working until its post-phase-9 removal.
+* Realistic coupling: makes ``apigateway.requests_per_sec`` track
+  ``loadbalancer.requests_per_sec`` with Pearson correlation >= 0.95
+  (edge weight = 1.0 + small noise).
 * Anomaly preservation: scenario primaries that target
   ``apigateway.requests_per_sec`` still land in the coupled column and
   in ``anomalies.csv``.
@@ -23,6 +27,7 @@ import numpy as np
 import pytest
 
 from conftest import read_component_rows, read_manifest, run_capture
+from test_scenarios import LEGACY_INDEPENDENT_ONE_DAY_HASHES
 
 
 def _sha256_path(path) -> str:
@@ -43,9 +48,9 @@ def _column_values(out_dir, component, metric):
 # ------------------------------------------------------------------
 # CLI parsing
 # ------------------------------------------------------------------
-def test_topology_mode_default_is_independent(amc):
+def test_topology_mode_default_is_realistic(amc):
     args = amc.parse_args(["--output-dir", "test_out"])
-    assert args.topology_mode == "independent"
+    assert args.topology_mode == "realistic"
 
 
 def test_topology_mode_accepts_realistic(amc):
@@ -73,23 +78,79 @@ def test_topology_mode_rejects_invalid_value(amc, bad_value):
         ])
 
 
+def test_topology_mode_independent_emits_deprecation_warning(amc, capsys):
+    """``--topology-mode independent`` must print a stderr DeprecationWarning
+    so callers see they are on a deprecated path scheduled for removal
+    after VER-141 phase 9. The warning fires inside ``parse_args`` so the
+    capsys hook below catches it without a full generation run."""
+    amc.parse_args([
+        "--topology-mode", "independent",
+        "--output-dir", "test_out",
+    ])
+    cap = capsys.readouterr()
+    assert "DeprecationWarning" in cap.err
+    assert "--topology-mode independent" in cap.err
+
+
+def test_topology_mode_realistic_no_deprecation_warning(amc, capsys):
+    """The default realistic mode must not emit any deprecation warning."""
+    amc.parse_args([
+        "--topology-mode", "realistic",
+        "--output-dir", "test_out",
+    ])
+    cap = capsys.readouterr()
+    assert "DeprecationWarning" not in cap.err
+
+
+def test_topology_mode_default_no_deprecation_warning(amc, capsys):
+    """Default invocation (no flag) must not emit any deprecation warning —
+    the user is on the new default, not the deprecated alias."""
+    amc.parse_args(["--output-dir", "test_out"])
+    cap = capsys.readouterr()
+    assert "DeprecationWarning" not in cap.err
+
+
 # ------------------------------------------------------------------
-# Default-equivalence: explicit --topology-mode independent matches
-# no-flag output byte-for-byte for apigateway and loadbalancer CSVs.
+# Default-equivalence: explicit --topology-mode realistic matches the
+# no-flag default byte-for-byte for apigateway, loadbalancer, and
+# the anomalies manifest.
 # ------------------------------------------------------------------
-def test_topology_mode_independent_matches_default_byte_for_byte(
+def test_topology_mode_realistic_matches_default_byte_for_byte(
     amc, one_day_run_a, tmp_path
 ):
     explicit = run_capture(
-        amc, tmp_path / "explicit_independent", days=1,
-        extra_args=["--topology-mode", "independent"],
+        amc, tmp_path / "explicit_realistic", days=1,
+        extra_args=["--topology-mode", "realistic"],
     )
     for filename in ("apigateway.csv", "loadbalancer.csv", "anomalies.csv"):
         default_hash = _sha256_path(one_day_run_a.out_dir / filename)
         explicit_hash = _sha256_path(explicit.out_dir / filename)
         assert default_hash == explicit_hash, (
-            f"{filename} drifted between default run and "
-            f"--topology-mode independent run"
+            f"{filename} drifted between default run and explicit "
+            f"--topology-mode realistic run"
+        )
+
+
+# ------------------------------------------------------------------
+# Legacy regression: ``--topology-mode independent`` must reproduce the
+# pre-flag-day baseline byte-for-byte. This guards the deprecated alias
+# from silent drift before it is removed after VER-141 phase 9.
+# ------------------------------------------------------------------
+def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
+    amc, tmp_path
+):
+    explicit = run_capture(
+        amc, tmp_path / "explicit_independent", days=1,
+        extra_args=["--topology-mode", "independent"],
+    )
+    for filename, expected_hash in sorted(LEGACY_INDEPENDENT_ONE_DAY_HASHES.items()):
+        actual = _sha256_path(explicit.out_dir / filename)
+        assert actual == expected_hash, (
+            f"{filename} drifted from the pre-flag-day independent baseline "
+            f"under --topology-mode independent. expected={expected_hash} "
+            f"actual={actual}. The deprecated alias must remain byte-for-byte "
+            f"identical to its pre-VER-156 output until VER-141 phase 9 "
+            f"removes it."
         )
 
 

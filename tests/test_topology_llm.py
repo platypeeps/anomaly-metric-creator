@@ -39,8 +39,14 @@ Acceptance gates exercised here:
 * Realistic-mode latency / error lift: latency and error means under
   realistic mode exceed independent-mode means by a measurable margin.
 * Caps: latency stays non-negative, error rate stays <= 1.0.
-* Default (independent) llm_analytics.csv is byte-identical to the
-  pre-VER-155 baseline, so no locked SHA-256 hashes drift.
+* Default (now ``--topology-mode realistic`` since VER-156 phase 6)
+  ``llm_analytics.csv`` bytes match an explicit ``--topology-mode
+  realistic`` run (the in-file ``test_realistic_mode_llm_analytics_
+  byte_identical_to_default`` asserts this). The deprecated
+  ``--topology-mode independent`` alias still reproduces the
+  pre-VER-155 / pre-VER-156 baseline byte-for-byte but is pinned in
+  ``tests/test_topology_loadbalancer_gateway.py`` against
+  ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 """
 from __future__ import annotations
 
@@ -304,23 +310,25 @@ def test_llm_analytics_in_saturation_targets_registry(amc):
 
 
 # ------------------------------------------------------------------
-# Default (independent) mode: byte-identical pre-VER-155 baseline
+# Default (realistic) mode: byte-identical to explicit --topology-mode
+# realistic. After the VER-156 phase 6 flag day the no-flag default and
+# the realistic alias must produce the same llm_analytics CSV bytes.
 # ------------------------------------------------------------------
-def test_independent_mode_llm_analytics_byte_identical_to_default(
-    amc, one_day_run_a, independent_one_day_llm,
+def test_realistic_mode_llm_analytics_byte_identical_to_default(
+    amc, one_day_run_a, realistic_one_day_llm,
 ):
-    """``--topology-mode independent`` (the default) must not touch the
-    LLM coupling or saturation paths, so ``llm_analytics.csv`` stays
-    byte-for-byte identical to the default 1-day run captured by the
-    session-scoped fixture."""
+    """Explicit ``--topology-mode realistic`` produces the same
+    ``llm_analytics.csv`` bytes as the no-flag default 1-day run
+    captured by the session-scoped fixture (post-VER-156 phase 6)."""
     default_hash = _sha256_path(one_day_run_a.out_dir / "llm_analytics.csv")
     explicit_hash = _sha256_path(
-        independent_one_day_llm.out_dir / "llm_analytics.csv"
+        realistic_one_day_llm.out_dir / "llm_analytics.csv"
     )
     assert default_hash == explicit_hash, (
         "llm_analytics.csv drifted between the default 1-day run and "
-        "an explicit --topology-mode independent run; phase 5 must "
-        "keep the independent baseline byte-identical"
+        "an explicit --topology-mode realistic run; after the VER-156 "
+        "phase 6 flag day the no-flag default and the realistic alias "
+        "must stay byte-identical"
     )
 
 

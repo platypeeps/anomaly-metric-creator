@@ -5,12 +5,14 @@ schema or a target CSV, run the function, assert the expected violation),
 plus end-to-end integration coverage of the CLI mode against the default
 1-day and 7-day outputs.
 
-Known out-of-scope violations: the ticket explicitly bundles the
-fractional-counter and unit-mismatch fixes with the
-[Topology-aware workload model](VER-134) re-baseline window, so the
-integration test asserts a precise expected set of violations against the
-default output — extra violations are regressions; fewer are progress and
-require updating the constant below.
+Known residual violations after VER-156 (phase 6 flag day): the
+fractional-counter set previously flagged here was cleared by VER-156's
+integer-cast bundle, so the 1-day default integration test now asserts
+an empty violation set. The 7-day default still surfaces one
+``above_max`` violation on ``llm_analytics.context_overflow_rate`` —
+that scenario-amplitude reconciliation is explicitly deferred to
+VER-141 phase 9. Extra violations are regressions; fewer are progress
+and require updating the constants below.
 """
 import json
 import re
@@ -471,46 +473,30 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 # ------------------------------------------------------------------
 # Integration against the default 1-day and 7-day outputs
 # ------------------------------------------------------------------
-# Known out-of-scope violations bundled with VER-134's topology-aware
-# re-baseline. The validator MUST find exactly this set on the default
-# 1-day and 7-day runs; extras are regressions, missing ones are progress
-# that requires updating this list. Each entry is
-# ``(component_csv, metric, kind)``. Kinds are normalized to:
+# Known residual violations after VER-156 (phase 6 flag-day). The
+# validator MUST find exactly this set on the default 1-day and 7-day
+# runs; extras are regressions, missing ones are progress that requires
+# updating this list. Each entry is ``(component_csv, metric, kind)``.
+# Kinds are normalized to:
 #  - ``fractional``  — value not whole-integer despite ``dtype="int"``
 #  - ``above_max``   — value above declared ``max_value``
 #  - ``below_min``   — value below declared ``min_value``
 #  - ``negative_kind`` — value negative despite counter/rate semantic_type
-# All entries here are tracked in the VER-139 follow-up tickets and are
-# expected to be cleared by the topology-aware workload model re-baseline.
-_FRACTIONAL_INT_VIOLATIONS = {
-    ("authservice.csv", "login_attempts", "fractional"),
-    ("authservice.csv", "active_sessions", "fractional"),
-    ("cacheservice.csv", "cache_hits", "fractional"),
-    ("cacheservice.csv", "cache_misses", "fractional"),
-    ("apigateway.csv", "active_connections", "fractional"),
-    ("database.csv", "connections", "fractional"),
-    ("mqservice.csv", "pending_messages", "fractional"),
-    ("mqservice.csv", "processed_messages", "fractional"),
-    ("mqservice.csv", "dead_letter_queue", "fractional"),
-    ("loadbalancer.csv", "healthcheck_failures", "fractional"),
-    ("loadbalancer.csv", "active_tls_handshakes", "fractional"),
-    ("loadbalancer.csv", "tls_handshake_errors", "fractional"),
-    ("loadbalancer.csv", "connection_resets", "fractional"),
-    ("scheduler.csv", "jobs_running", "fractional"),
-    ("scheduler.csv", "jobs_queued", "fractional"),
-    ("scheduler.csv", "missed_schedules", "fractional"),
-    ("identityprovider.csv", "failed_oidc_flows", "fractional"),
-}
+#
+# VER-156 phase 6 cleared every fractional-int violation flagged by
+# VER-139 by adding the integer-cast bundle in ``generate_component``.
+# Both default runs are now violation-free, with one exception:
+#
+# The 7-day run still surfaces a single ``above_max`` violation on
+# ``llm_analytics.context_overflow_rate``. The LLM context-overflow
+# scenario (``llm_weekend_batch_overflow``) drives that ratio to 8.5
+# at day 5 + 2h to simulate context-window saturation, which exceeds
+# the metric's declared ``max_value=1``. Reconciling the scenario
+# amplitude with the ratio bound is a scenario-catalog re-tune
+# explicitly deferred to VER-141 phase 9.
+_EXPECTED_VIOLATIONS_ONE_DAY: set[tuple[str, str, str]] = set()
 
-# 1-day default emission surfaces only the fractional-int violations.
-_EXPECTED_VIOLATIONS_ONE_DAY = set(_FRACTIONAL_INT_VIOLATIONS)
-
-# 7-day emission additionally activates the high-pressure multi-day
-# scenarios (e.g. LLM context overflow), which push ``context_overflow_rate``
-# above the declared ratio bound. Filed as a separate follow-up so the
-# unit definition and the anomaly amplitude can be reconciled in the
-# re-baseline window.
-_EXPECTED_VIOLATIONS_SEVEN_DAY = set(_FRACTIONAL_INT_VIOLATIONS) | {
+_EXPECTED_VIOLATIONS_SEVEN_DAY = {
     ("llm_analytics.csv", "context_overflow_rate", "above_max"),
 }
 

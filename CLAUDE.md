@@ -102,20 +102,45 @@ regenerate `schema.json` (it returns before pre-clean), matching the
 ### MetricSpec schema metadata (VER-139)
 
 `MetricSpec` carries six optional declarative fields that flow into
-`schema.json` and `--validate-output` but never affect generation:
-`unit`, `semantic_type`, `min_value`, `max_value`, `dtype` (default
-`"float"`), `derivation`. `_validate_metric_spec_schema_metadata`
-enforces the vocabulary at import time (`semantic_type ∈ {counter,
-gauge, ratio, rate}`, `dtype ∈ {float, int}`, finite numeric bounds,
+`schema.json` and `--validate-output`: `unit`, `semantic_type`,
+`min_value`, `max_value`, `dtype` (default `"float"`), `derivation`.
+Five of the six are metadata-only and do not affect generation —
+they exist only so the validator can range-check, dtype-check, and
+recompute derived columns. `dtype` is the exception: under the
+default `--topology-mode realistic` (VER-156 phase 6 flag day) every
+column declared `dtype="int"` is rounded via `np.rint` in
+`generate_component()` before derivations run and before the
+`topology_capture` snapshot, so the recorded value is whole-integer
+on disk. The deprecated `--topology-mode independent` alias skips
+the cast (`apply_dtype_int_cast=False` in `main()`) to preserve
+byte-for-byte parity with the pre-flag-day baseline, so `dtype="int"`
+columns there are still emitted as fractional floats — the rounding
+is a realistic-mode behavior, not a declarative-metadata behavior.
+`_validate_metric_spec_schema_metadata` enforces the vocabulary at
+import time (`semantic_type ∈ {counter, gauge, ratio, rate}`,
+`dtype ∈ {float, int}`, finite numeric bounds,
 `min_value <= max_value`).
 
-The fields are independent of generation: today's `COMPONENTS` catalog
-still produces fractional values for many `dtype="int"` columns (e.g.
-`active_connections`, `pending_messages`, `jobs_running`,
-`failed_oidc_flows`), and the LLM context-overflow scenario drives
-`context_overflow_rate` above its declared `max_value=1`. These are the
-known-out-of-scope violations VER-139 surfaces; generator-side fixes are
-bundled with VER-134's topology-aware re-baseline.
+Within `generate_component()` the cast runs after the anomaly-override
+pass and *before* the derivation pass, so derived columns
+(`cacheservice.hit_ratio`) consume rounded integer source cells and
+match what the CSV writes. It also runs *before* the
+`topology_capture` snapshot, so downstream coupling signals see the
+same integer values the CSV records (cache miss ratios derived from
+`cache_hits` / `cache_misses` are therefore computed from the
+int-cast values, not the pre-cast floats; the qualitative behavior
+is unchanged because the ratio is bounded in [0, 1] in either case).
+
+After phase 6 the only known validator violation on default output is
+the LLM context-overflow scenario driving `context_overflow_rate`
+above its declared `max_value=1` (8.5 at day 5 + 2h, exercising the
+context-window saturation pattern). That overshoot is a
+scenario-catalog issue tracked for VER-141 phase 9 re-tune — it is
+*not* the integer-cast bundle's scope and is intentionally left in
+place by VER-156. Under `--topology-mode independent` the validator
+additionally surfaces every previously-flagged fractional-int
+violation (the alias intentionally skips the cast to keep its
+pre-flag-day byte parity).
 
 ### Output validator (`--validate-output`)
 
@@ -245,9 +270,12 @@ specs in `primary_specs`, not in `cascade_specs`.
 
 `TOPOLOGY: dict[str, list[Edge]]` declares the directed service-call graph
 alongside `COMPONENTS`. Phase 1 (VER-143) landed the constant and its
-import-time validator; phase 2 (VER-152) added the opt-in
+import-time validator; phase 2 (VER-152) added the
 `--topology-mode realistic` consumer (see "Generation order" below)
-that re-shapes downstream RPS baselines from upstream RPS columns.
+that re-shapes downstream RPS baselines from upstream RPS columns. The
+consumer was opt-in through phase 5 and flipped to the default in
+phase 6 (VER-156); `--topology-mode independent` survives only as a
+deprecation alias for pre-flag-day byte parity.
 Phase 3 (VER-153) extended coupling to every front-half fan-out edge.
 Phase 4 (VER-154) reads `Edge.saturation` and adds a logistic-shaped
 latency multiplier and error offset onto each downstream's
@@ -309,18 +337,17 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
 `args.components` in one of two orders depending on
 `--topology-mode`:
 
-- `independent` (default) — iteration order of `effective_specs`,
-  which is `COMPONENTS` insertion order. No coupling, no upstream
-  capture, byte-identical to the pre-VER-152 generator. All locked
-  SHA-256 hashes were produced under this mode.
-- `realistic` (opt-in, VER-152/VER-153) — topological order via
+- `realistic` (default since VER-156 phase 6) — topological order via
   `_topology_generation_order(args.components)`. Kahn's algorithm
   walks reverse-adjacency of `TOPOLOGY` restricted to
   `args.components`; ties break on `COMPONENTS` insertion order so
   the result is deterministic. As each component finishes,
   `generate_component()` stashes its post-natural / post-anomaly /
-  post-derivation load-metric columns (pre-round, full float
-  precision) into a shared `upstream_arrays: dict[str, dict[str,
+  post-derivation load-metric columns (pre-round; full float
+  precision for `dtype="float"` columns, post-`np.rint` whole
+  integers for `dtype="int"` columns after the VER-156 phase 6
+  integer-cast bundle so the captured signal matches what the CSV
+  emits) into a shared `upstream_arrays: dict[str, dict[str,
   np.ndarray]]` keyed by `(component_name, metric_name)`. The set
   of captured metrics per component is declared in
   `_TOPOLOGY_LOAD_METRICS` as a `(canonical, supplementary)` tuple:
@@ -358,14 +385,22 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
   MetricSpec's declarative metadata (unit, semantic_type, min/max,
   dtype, derivation, clip_min) survives via `dataclasses.replace`;
   only `base`, `std`, `multiplier`, and `additive` change.
+- `independent` (deprecation alias since VER-156 phase 6) — iteration
+  order of `effective_specs`, which is `COMPONENTS` insertion order.
+  No coupling, no upstream capture. Pre-flag-day baseline path kept
+  only so the pre-VER-152 byte-for-byte output can be regenerated for
+  diffing; emits a stderr `DeprecationWarning` on use and is scheduled
+  for removal after VER-141 phase 9.
 
-Realistic mode shares the same `RunContext.rng` as independent mode;
-because the generation order differs, every component's RNG draws
+The realistic and independent modes share the same `RunContext.rng`,
+but because the generation order differs every component's RNG draws
 shift. Realistic-mode CSV bytes therefore do **not** match
-independent-mode CSV bytes for any component — even uncoupled
-roots like `loadbalancer`. Tests that pin behavior under
-`--topology-mode realistic` use statistical assertions (means,
-correlations, in-window values) rather than locked SHA-256 hashes.
+independent-mode CSV bytes for any component — even uncoupled roots
+like `loadbalancer`. All locked SHA-256 hashes in `tests/` were
+re-baselined under realistic mode in VER-156 (phase 6 flag day);
+tests pinning behavior under either mode now either use locked
+hashes against realistic output or statistical assertions (means,
+correlations, in-window values) that hold across both modes.
 
 Anomaly overrides apply on top of the coupled baseline: the
 two-pass pipeline (natural → anomaly overrides → derivations →
@@ -466,9 +501,14 @@ saturation contribution alone cannot exceed the gain). End-to-end
 tests in `tests/test_topology_saturation.py` assert both invariants on
 the realized CSV columns.
 
-**Independent mode** never invokes `_compose_topology_saturation_specs`;
-default output stays byte-for-byte identical to the pre-VER-154
-baseline (`test_independent_mode_latency_csvs_byte_identical_to_default`).
+The deprecated `--topology-mode independent` alias never invokes
+`_compose_topology_saturation_specs`, so its output stays byte-for-byte
+identical to the pre-VER-154 baseline (pinned alongside the broader
+pre-flag-day baseline via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
+`tests/test_scenarios.py` and `tests/test_topology_loadbalancer_gateway.py`).
+The no-flag default and explicit `--topology-mode realistic` now produce
+identical latency CSV bytes; that invariant is pinned by
+`tests/test_topology_saturation.py::test_realistic_mode_latency_csvs_byte_identical_to_default`.
 
 ### LLM token-throttle (`--topology-mode realistic`, phase 5)
 
@@ -535,8 +575,10 @@ catalog exposes — not the generic `error_rate`, which
 - caps (latency non-negative, error rate `<= 1.0`);
 - LLM scenarios still fire under realistic mode (no anomaly cell
   overrides are masked by the coupling); and
-- `llm_analytics.csv` byte-identity between default and explicit
-  `--topology-mode independent` runs.
+- `llm_analytics.csv` byte-identity between the no-flag default and an
+  explicit `--topology-mode realistic` run (after VER-156 phase 6 the
+  default is realistic; the deprecation alias's pre-flag-day parity
+  lives in `tests/test_topology_loadbalancer_gateway.py`).
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside

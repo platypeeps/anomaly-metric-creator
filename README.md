@@ -19,14 +19,29 @@ sampling interval, drop rate, and output directory are all CLI-configurable.
 
 Recent significant additions to the generator:
 
-- **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155) —
-  declares a directed service-call graph (`TOPOLOGY`) and wires it into generation.
-  Phase 2 couples downstream RPS baselines from upstream load columns; phase 3
-  extends coupling to all front-half fan-out edges; phase 4 adds logistic-shaped
-  latency multiplier and error-rate offset when an upstream saturates; phase 5
-  closes the graph by coupling `apigateway → llm_analytics` (token-throttle
-  reads as load-driven saturation). See [docs/topology.md](docs/topology.md) and
-  the [Topology graph (v1)](#topology-graph-v1) section.
+- **Flag-day default flip + integer-cast bundle** (VER-156, phase 6 of VER-141) —
+  `--topology-mode realistic` is now the default; `--topology-mode independent`
+  is retained as a deprecation alias that emits a stderr `DeprecationWarning`
+  and is scheduled for removal after VER-141 phase 9. Under the new default,
+  every `MetricSpec` column declared `dtype="int"` is cast via `np.rint` in
+  `generate_component()` before derivations run, clearing all
+  fractional-integer `--validate-output` violations on the default 1-day
+  output. The integer cast is intentionally tied to realistic mode only:
+  the `--topology-mode independent` alias skips it (via
+  `apply_dtype_int_cast=False`) so its CSV bytes stay byte-for-byte
+  identical to the pre-flag-day baseline. All locked SHA-256 hashes in
+  `tests/` were re-baselined under realistic mode in this PR; the
+  pre-flag-day baseline is still reproducible via the deprecation alias
+  and is pinned by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
+- **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155;
+  default since VER-156) — declares a directed service-call graph (`TOPOLOGY`)
+  and wires it into generation. Phase 2 couples downstream RPS baselines from
+  upstream load columns; phase 3 extends coupling to all front-half fan-out
+  edges; phase 4 adds logistic-shaped latency multiplier and error-rate
+  offset when an upstream saturates; phase 5 closes the graph by coupling
+  `apigateway → llm_analytics` (token-throttle reads as load-driven
+  saturation). See [docs/topology.md](docs/topology.md) and the
+  [Topology graph (v1)](#topology-graph-v1) section.
 - **Schema document + output validator** (`--emit-selection schema` /
   `--validate-output PATH`, VER-139) — `schema.json` captures run-level
   parameters and per-metric metadata; `--validate-output` checks required files,
@@ -161,9 +176,9 @@ python3 anomaly-metric-creator.py \
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--validate-output` | _off_       | Standalone validator mode (mutually exclusive with `--combine` / `--combine-only`). Loads `PATH/schema.json` and checks the artifacts in `PATH` against it (file presence, row counts, timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds, `counter`/`rate` non-negativity, derived-column consistency, and `anomalies.csv` sort order). Hard-fails on first violation (`exit 1`) unless `--validate-warn` is also passed. See [Output validation (`--validate-output`)](#output-validation---validate-output). |
-| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. Useful during the VER-134 re-baseline window when known fractional-counter and unit-mismatch issues would otherwise fail CI. |
+| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. After VER-156 the default 1-day output is violation-free; 7-day output still surfaces one `context_overflow_rate` overshoot (scenario-catalog re-tune deferred to VER-141 phase 9), so `--validate-warn` is the right mode when piping 7-day output through CI until phase 9 lands. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
-| `--topology-mode`   | `independent` | Topology-aware baseline coupling (VER-152/VER-153/VER-154). `independent` (default) keeps every component's baseline an independent Gaussian — byte-identical to the pre-VER-152 default output. `realistic` walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 (VER-154) added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
+| `--topology-mode`   | `realistic`  | Topology-aware baseline coupling (VER-152/VER-153/VER-154; default since VER-156 phase 6 flag day). `realistic` (default) walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 (VER-154) added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. `independent` is a deprecation alias retained only for regenerating the pre-flag-day byte-for-byte baseline; it emits a stderr `DeprecationWarning` on use and is scheduled for removal after VER-141 phase 9. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
 | `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
 | `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
 | `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
@@ -382,12 +397,14 @@ The validator loads `PATH/schema.json` and runs:
 - Derived columns (today: `cacheservice.hit_ratio`) recompute from
   their source columns within `0.01` of the stored value.
 
-Known out-of-scope violations against the default 1d/7d outputs:
-fractional-counter columns (`active_connections`, `pending_messages`,
-`jobs_running`, `failed_oidc_flows`, …) and the LLM
-`context_overflow_rate` unit overrun. Generator-side fixes are bundled
-with the VER-134 topology-aware re-baseline; until then, run the
-validator with `--validate-warn` to surface them informationally.
+After VER-156 phase 6 (flag day) the default 1-day output is
+violation-free. The 7-day output still surfaces a single known
+violation — the LLM context-overflow scenario drives
+`llm_analytics.context_overflow_rate` to 8.5 at day 5 + 2h to
+simulate context-window saturation, which exceeds the metric's
+declared `max_value=1`. Reconciling that scenario amplitude with the
+ratio bound is a scenario-catalog re-tune deferred to VER-141 phase
+9. Pass `--validate-warn` to keep CI green on 7-day runs until then.
 
 ### Output files
 
@@ -504,9 +521,10 @@ reporting artifact for that run.
 ### Topology graph (v1)
 
 The `TOPOLOGY` constant declares the directed service-call graph alongside
-`COMPONENTS`. It is consulted by `--topology-mode realistic` (opt-in;
-default is `independent`, see the [CLI flags](#cli-flags) table) to thread
-upstream load through downstream baselines.
+`COMPONENTS`. It is consulted by `--topology-mode realistic` (the default
+since VER-156 phase 6 flag day; `independent` is now a deprecation alias —
+see the [CLI flags](#cli-flags) table) to thread upstream load through
+downstream baselines.
 
 - `loadbalancer → apigateway` — constant weight `1.0`. Couples
   `apigateway.requests_per_sec` to `loadbalancer.requests_per_sec`.

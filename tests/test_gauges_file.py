@@ -36,10 +36,10 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 # - the per-row metric column order,
 # - the dropped-cell skip behavior on ``--drop-rate`` survivors.
 GAUGES_ONE_DAY_HASH = (
-    "910cee987c99fa6f126d7f023af521cefa46041ce3887603e7c3e4d3f5cb50d3"
+    "9027f94f8c91e208eb5366c09297110a8e14d40b13c78509d97aa43d5c9806eb"
 )
 GAUGES_SEVEN_DAY_HASH = (
-    "f2f6b7afee3762bab95522160ea6fa63fa018f91b2c860421d774c6fd892a440"
+    "2e2b5830c46ff97a0e16906f8f11f82dd19ab41cf0b2be5530e633087c4b60b2"
 )
 
 
