@@ -15,6 +15,33 @@ components: `authservice`, `cacheservice`, `apigateway`, `database`, `mqservice`
 `paymentservice`, `identityprovider`, `observabilitypipeline`. Duration,
 sampling interval, drop rate, and output directory are all CLI-configurable.
 
+## Significant changes
+
+Recent significant additions to the generator:
+
+- **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155) —
+  declares a directed service-call graph (`TOPOLOGY`) and wires it into generation.
+  Phase 2 couples downstream RPS baselines from upstream load columns; phase 3
+  extends coupling to all front-half fan-out edges; phase 4 adds logistic-shaped
+  latency multiplier and error-rate offset when an upstream saturates; phase 5
+  closes the graph by coupling `apigateway → llm_analytics` (token-throttle
+  reads as load-driven saturation). See [docs/topology.md](docs/topology.md) and
+  the [Topology graph (v1)](#topology-graph-v1) section.
+- **Schema document + output validator** (`--emit-selection schema` /
+  `--validate-output PATH`, VER-139) — `schema.json` captures run-level
+  parameters and per-metric metadata; `--validate-output` checks required files,
+  row counts, timestamps, cell ranges and dtypes, and derived-metric consistency.
+- **Gauges file** (`--emit-selection gauges`, VER-138) — long-form
+  `gauges.csv` with one `(timestamp, component, metric, value)` row per data
+  point, chronologically merged across components.
+- **Output directory hygiene** (VER-127) — `_pre_clean_output_dir` removes
+  stale artifacts from prior runs (dropped components, deselected emit types)
+  before generation starts.
+- **Scenario registry refactor + RNG instance** (VER-131) — all anomaly
+  scenarios live in the `SCENARIOS` dict; per-run state moves into `RunContext`
+  with an explicit `np.random.RandomState` so seed behaviour is deterministic
+  regardless of import order.
+
 ## Install
 
 Requires Python 3.11+.
@@ -526,16 +553,6 @@ upstream load through downstream baselines.
 See [docs/topology.md](docs/topology.md) for a rendered mermaid diagram
 of the edge set above.
 
-Edge labels are constant fan-out weights unless otherwise noted; the
-`auth` / `cache` / `database` routing trio shares the `0.3 / 0.4 / 0.3`
-request-share fractions, while the `apigateway → llm_analytics` weight
-is independent (single-incoming-edge renormalization). The
-`cacheservice → database` callable contribution is additive on top of
-the `apigateway → database` constant contribution. Every constant-weight
-edge except `cacheservice → database` also carries `SaturationParams`
-(see the per-edge bullet list above for midpoint / steepness /
-latency-gain / error-gain values).
-
 ## Application flow
 
 End-to-end execution of `main(argv=None)` covers three top-level modes:
@@ -545,22 +562,6 @@ validator against the artifacts on disk), and the default generation
 pipeline. See [docs/application-flow.md](docs/application-flow.md) for a
 rendered mermaid diagram of the full pipeline and the emit-selection /
 validator gating notes.
-
-Notes:
-
-- `--emit-selection` gates the four downstream writers
-  (`anomalies.csv` is part of `metrics`; `metric_report.log` is
-  `logs`; `metric_traces.jsonl` is `traces`; `gauges.csv` is `gauges`;
-  `schema.json` is `schema`). Skipped writers are no-ops on this
-  run, and `_pre_clean_output_dir` removes any matching artifact left
-  over from a prior run.
-- `--validate-output` is mutually exclusive with `--combine` /
-  `--combine-only`; it short-circuits before any generation.
-- Topology coupling and saturation (the right branch of the
-  `--topology-mode` decision) re-shape downstream `MetricSpec`
-  baselines from upstream load columns captured during generation.
-  See [Topology graph (v1)](#topology-graph-v1) for the edge set and
-  saturation parameters.
 
 ## Failure modes / anomaly catalog
 
