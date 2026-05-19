@@ -38,10 +38,10 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 # - the ``files`` registry,
 # - the new ``topology`` block (source -> [{target, weight, saturation}, ...]).
 SCHEMA_ONE_DAY_HASH = (
-    "3e95f4c69623429b20fe9d6a7c10a3a50486e35da0817bcd359f6c130e169751"
+    "6032c2e6b3205478a1037711c5df0f5596fbc315f0b30fbd8ba57fe5e58c385c"
 )
 SCHEMA_SEVEN_DAY_HASH = (
-    "eea8991041318307f078d495da6bc53c8af00341593707b84f0d4e7607e4372a"
+    "6a31e3e9616f6b23425989ac8551d825c784ffef89ffd62d6e2b032ec484b0eb"
 )
 
 
@@ -412,7 +412,10 @@ def test_schema_topology_edge_shape(one_day_schema_run):
         "authservice", "cacheservice", "database", "llm_analytics",
     }
     for edge in apigateway_edges:
-        assert set(edge.keys()) == {"target", "weight", "saturation"}
+        assert set(edge.keys()) == {
+            "target", "weight", "saturation", "correlation_threshold",
+        }
+
         assert isinstance(edge["weight"], (int, float))
         sat = edge["saturation"]
         assert sat is not None

@@ -6486,6 +6486,7 @@ def _edge_to_schema_entry(edge: "Edge") -> dict:
         "target": edge.target,
         "weight": weight,
         "saturation": _saturation_params_to_schema_entry(edge.saturation),
+        "correlation_threshold": edge.correlation_threshold,
     }
 
 
@@ -7216,6 +7217,12 @@ def _validate_topology_coupling(
             continue
         source_ts, source_vals = source_data
 
+        # Align on the intersection of timestamps (drop-rate noise
+        # means a given second can appear in one CSV but not the
+        # other). Build a dict lookup for the source side and walk
+        # each target side to keep this O(N) rather than O(N^2).
+        source_map = {ts: v for ts, v in zip(source_ts, source_vals)}
+
         for edge_entry in topology[source]:
             target = edge_entry["target"]
             weight = edge_entry["weight"]
@@ -7232,11 +7239,6 @@ def _validate_topology_coupling(
                 continue
             target_ts, target_vals = target_data
 
-            # Align on the intersection of timestamps (drop-rate noise
-            # means a given second can appear in one CSV but not the
-            # other). Build a dict lookup for the longer side and walk
-            # the shorter to keep this O(N) rather than O(N^2).
-            source_map = {ts: v for ts, v in zip(source_ts, source_vals)}
             common_ts: list[datetime.datetime] = []
             target_aligned: list[float] = []
             source_aligned: list[float] = []
@@ -7275,9 +7277,11 @@ def _validate_topology_coupling(
             # mutation the validator is supposed to flag.
             if (np.std(source_kept) == 0.0
                     or np.std(target_kept) == 0.0):
-                threshold = _resolve_edge_correlation_threshold(
-                    source, target
-                )
+                threshold = edge_entry.get("correlation_threshold")
+                if threshold is None:
+                    threshold = _resolve_edge_correlation_threshold(
+                        source, target
+                    )
                 violations.append(
                     f"topology coupling {source}->{target}: zero-variance "
                     f"column "
@@ -7287,7 +7291,9 @@ def _validate_topology_coupling(
                 )
                 continue
             corr = float(np.corrcoef(source_kept, target_kept)[0, 1])
-            threshold = _resolve_edge_correlation_threshold(source, target)
+            threshold = edge_entry.get("correlation_threshold")
+            if threshold is None:
+                threshold = _resolve_edge_correlation_threshold(source, target)
             if corr < threshold:
                 violations.append(
                     f"topology coupling {source}->{target}: "

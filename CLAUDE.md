@@ -99,13 +99,14 @@ The document carries five slices of information:
 - `topology` (VER-157 phase 7) — the directed coupling graph snapshot,
   built from the live `TOPOLOGY` constant via `_serialize_topology` and
   restricted to the active component set. Shape:
-  `{source: [{target, weight, saturation}, ...]}` with each source's
-  edge list sorted by `target` for byte-deterministic output.
-  Constant-weight edges serialize their numeric weight verbatim;
+  `{source: [{target, weight, saturation, correlation_threshold}, ...]}`
+  with each source's edge list sorted by `target` for byte-deterministic
+  output. Constant-weight edges serialize their numeric weight verbatim;
   callable-weight edges serialize the literal string `"callable"`
   (full reproducibility is a code concern — the schema only declares
   the coupling exists). `saturation` is either `null` or a
-  `{midpoint, steepness, latency_gain, error_gain}` dict. Sources whose
+  `{midpoint, steepness, latency_gain, error_gain}` dict.
+  `correlation_threshold` is a float or `null`. Sources whose
   source or every target was filtered out of `--components` are omitted
   so the validator does not try to correlate columns the run did not
   write. The validator's `_validate_topology_coupling` reads this

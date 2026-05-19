@@ -360,12 +360,14 @@ Top-level shape (`schema_version=2`, bumped in VER-157 phase 7):
   `min_value`, `max_value`, and `derivation` (formula string when the
   column is computed from siblings, else `null`).
 - `topology` (VER-157 phase 7) — `{source: [{target, weight,
-  saturation}, ...]}` snapshot of the directed coupling graph,
-  restricted to the active component set. Constant-weight edges
-  serialize their numeric weight verbatim; callable-weight edges
-  serialize the literal string `"callable"`. `saturation` is either
-  `null` or `{midpoint, steepness, latency_gain, error_gain}`.
-  Consumed by `--validate-output`'s topology coupling check.
+  saturation, correlation_threshold}, ...]}` snapshot of the directed
+  coupling graph, restricted to the active component set.
+  Constant-weight edges serialize their numeric weight verbatim;
+  callable-weight edges serialize the literal string `"callable"`.
+  `saturation` is either `null` or `{midpoint, steepness,
+  latency_gain, error_gain}`. `correlation_threshold` is either a
+  float or `null` (defaults to 0.85). Consumed by
+  `--validate-output`'s topology coupling check.
 
 Output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
 with trailing newline) and locked SHA-256 hashes at 1d and 7d live in
