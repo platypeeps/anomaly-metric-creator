@@ -588,10 +588,18 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # listed in ``_TOPOLOGY_LOAD_METRICS[component_name]`` (the canonical
     # load metric plus any supplementary columns) so per-edge ``signal``
     # callables (e.g. the cacheservice -> database miss-ratio derivation)
-    # can read the full upstream state. Capturing pre-round keeps the
-    # signal at full float precision. ``None`` (the default)
-    # short-circuits so callers in ``--topology-mode independent`` see
-    # zero new work.
+    # can read the full upstream state. Capturing pre-round (before the
+    # ``np.round(values, 3, ...)`` below) keeps the signal at full
+    # 3+-decimal float precision *for ``dtype="float"`` columns*. After
+    # the VER-156 phase 6 integer-cast bundle, ``dtype="int"`` upstream
+    # load metrics (notably ``cache_hits`` / ``cache_misses`` driving the
+    # cacheservice -> database miss-ratio signal) are captured at their
+    # post-cast whole-integer values, which matches what the CSV emits
+    # and what the validator's derivation recompute reads — the
+    # downstream coupling signal therefore stays self-consistent with
+    # the on-disk row. ``None`` (the default for ``--topology-mode
+    # independent``, set by ``main()``) short-circuits so the deprecated
+    # alias sees zero new work and reproduces the pre-flag-day bytes.
     if topology_capture is not None:
         entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
         if entry is not None:

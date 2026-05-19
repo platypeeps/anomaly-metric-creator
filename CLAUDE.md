@@ -270,9 +270,12 @@ specs in `primary_specs`, not in `cascade_specs`.
 
 `TOPOLOGY: dict[str, list[Edge]]` declares the directed service-call graph
 alongside `COMPONENTS`. Phase 1 (VER-143) landed the constant and its
-import-time validator; phase 2 (VER-152) added the opt-in
+import-time validator; phase 2 (VER-152) added the
 `--topology-mode realistic` consumer (see "Generation order" below)
-that re-shapes downstream RPS baselines from upstream RPS columns.
+that re-shapes downstream RPS baselines from upstream RPS columns. The
+consumer was opt-in through phase 5 and flipped to the default in
+phase 6 (VER-156); `--topology-mode independent` survives only as a
+deprecation alias for pre-flag-day byte parity.
 Phase 3 (VER-153) extended coupling to every front-half fan-out edge.
 Phase 4 (VER-154) reads `Edge.saturation` and adds a logistic-shaped
 latency multiplier and error offset onto each downstream's
@@ -340,8 +343,11 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
   `args.components`; ties break on `COMPONENTS` insertion order so
   the result is deterministic. As each component finishes,
   `generate_component()` stashes its post-natural / post-anomaly /
-  post-derivation load-metric columns (pre-round, full float
-  precision) into a shared `upstream_arrays: dict[str, dict[str,
+  post-derivation load-metric columns (pre-round; full float
+  precision for `dtype="float"` columns, post-`np.rint` whole
+  integers for `dtype="int"` columns after the VER-156 phase 6
+  integer-cast bundle so the captured signal matches what the CSV
+  emits) into a shared `upstream_arrays: dict[str, dict[str,
   np.ndarray]]` keyed by `(component_name, metric_name)`. The set
   of captured metrics per component is declared in
   `_TOPOLOGY_LOAD_METRICS` as a `(canonical, supplementary)` tuple:

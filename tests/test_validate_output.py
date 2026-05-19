@@ -5,12 +5,14 @@ schema or a target CSV, run the function, assert the expected violation),
 plus end-to-end integration coverage of the CLI mode against the default
 1-day and 7-day outputs.
 
-Known out-of-scope violations: the ticket explicitly bundles the
-fractional-counter and unit-mismatch fixes with the
-[Topology-aware workload model](VER-134) re-baseline window, so the
-integration test asserts a precise expected set of violations against the
-default output — extra violations are regressions; fewer are progress and
-require updating the constant below.
+Known residual violations after VER-156 (phase 6 flag day): the
+fractional-counter set previously flagged here was cleared by VER-156's
+integer-cast bundle, so the 1-day default integration test now asserts
+an empty violation set. The 7-day default still surfaces one
+``above_max`` violation on ``llm_analytics.context_overflow_rate`` —
+that scenario-amplitude reconciliation is explicitly deferred to
+VER-141 phase 9. Extra violations are regressions; fewer are progress
+and require updating the constants below.
 """
 import csv
 import json

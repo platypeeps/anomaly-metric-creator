@@ -39,8 +39,14 @@ Acceptance gates exercised here:
 * Realistic-mode latency / error lift: latency and error means under
   realistic mode exceed independent-mode means by a measurable margin.
 * Caps: latency stays non-negative, error rate stays <= 1.0.
-* Default (independent) llm_analytics.csv is byte-identical to the
-  pre-VER-155 baseline, so no locked SHA-256 hashes drift.
+* Default (now ``--topology-mode realistic`` since VER-156 phase 6)
+  ``llm_analytics.csv`` bytes match an explicit ``--topology-mode
+  realistic`` run (the in-file ``test_realistic_mode_llm_analytics_
+  byte_identical_to_default`` asserts this). The deprecated
+  ``--topology-mode independent`` alias still reproduces the
+  pre-VER-155 / pre-VER-156 baseline byte-for-byte but is pinned in
+  ``tests/test_topology_loadbalancer_gateway.py`` against
+  ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 """
 from __future__ import annotations
 
