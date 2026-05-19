@@ -553,6 +553,16 @@ upstream load through downstream baselines.
 See [docs/topology.md](docs/topology.md) for a rendered mermaid diagram
 of the edge set above.
 
+Edge labels are constant fan-out weights unless otherwise noted; the
+`auth` / `cache` / `database` routing trio shares the `0.3 / 0.4 / 0.3`
+request-share fractions, while the `apigateway → llm_analytics` weight
+is independent (single-incoming-edge renormalization). The
+`cacheservice → database` callable contribution is additive on top of
+the `apigateway → database` constant contribution. Every constant-weight
+edge except `cacheservice → database` also carries `SaturationParams`
+(see the per-edge bullet list above for midpoint / steepness /
+latency-gain / error-gain values).
+
 ## Application flow
 
 End-to-end execution of `main(argv=None)` covers three top-level modes:
@@ -562,6 +572,22 @@ validator against the artifacts on disk), and the default generation
 pipeline. See [docs/application-flow.md](docs/application-flow.md) for a
 rendered mermaid diagram of the full pipeline and the emit-selection /
 validator gating notes.
+
+Notes:
+
+- `--emit-selection` gates the four downstream writers
+  (`anomalies.csv` is part of `metrics`; `metric_report.log` is
+  `logs`; `metric_traces.jsonl` is `traces`; `gauges.csv` is `gauges`;
+  `schema.json` is `schema`). Skipped writers are no-ops on this
+  run, and `_pre_clean_output_dir` removes any matching artifact left
+  over from a prior run.
+- `--validate-output` is mutually exclusive with `--combine` /
+  `--combine-only`; it short-circuits before any generation.
+- Topology coupling and saturation (the right branch of the
+  `--topology-mode` decision) re-shape downstream `MetricSpec`
+  baselines from upstream load columns captured during generation.
+  See [Topology graph (v1)](#topology-graph-v1) for the edge set and
+  saturation parameters.
 
 ## Failure modes / anomaly catalog
 
