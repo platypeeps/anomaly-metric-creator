@@ -45,7 +45,7 @@ Acceptance gates exercised here:
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import numpy as np
 import pytest

@@ -1538,10 +1538,14 @@ _validate_metric_spec_schema_metadata()
 # ------------------------------------------------------------------
 # Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
 # instances downstream of ``source``; both source keys and ``Edge.target``
-# values are component names from ``COMPONENTS``. The graph is **not yet
-# consumed by the generator** — phase 2 (two-pass generation) and phase 5
-# (saturation effects) will read it. Declaring the constant in phase 1
-# isolates the structural review from any byte-output churn.
+# values are component names from ``COMPONENTS``. Under
+# ``--topology-mode realistic`` the graph is consumed by
+# ``_compose_topology_coupled_specs`` (phase 2/3: rewrites downstream
+# load-metric baselines from upstream RPS/token columns) and
+# ``_compose_topology_saturation_specs`` (phase 4/5: lifts downstream
+# latency/error specs via the logistic saturation curve). Under the
+# default ``--topology-mode independent`` the graph is not read, so
+# byte-for-byte CSV output stays identical to the pre-VER-152 baseline.
 #
 # v1 graph (per VER-141 design):
 #   loadbalancer -> apigateway                   (constant weight 1.0)
@@ -1565,8 +1569,10 @@ _validate_metric_spec_schema_metadata()
 # blast-radius (e.g. auth -> gateway, cache -> DB) via cascade_specs. The
 # topology graph is a structural orthogonal view — it describes *normal*
 # request flow, not anomaly propagation — so the two are intentionally
-# allowed to overlap. Phase 2 will reconcile any double-counting before
-# applying topology-derived effects to natural columns.
+# allowed to overlap. The realistic-mode pipeline applies topology
+# coupling and saturation to the natural baseline before the per-row
+# anomaly override loop runs, so a cascade write at row i still wins at
+# exactly that row regardless of the topology-derived baseline.
 def _component_metric_base(component: str, metric: str) -> float:
     """Look up the natural ``MetricSpec.base`` for ``component[metric]``.
 

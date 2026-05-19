@@ -493,8 +493,10 @@ future LLM scenario needs token-counting behavior independent of
 apigateway throughput.
 
 **Coupling.** `_TOPOLOGY_LOAD_METRICS["llm_analytics"] =
-("input_tokens_per_sec",)` makes
-`input_tokens_per_sec` the canonical load metric for the LLM. The
+("input_tokens_per_sec", ())` makes `input_tokens_per_sec` the
+canonical load metric for the LLM (no supplementary captures; the
+canonical-shape `(canonical_metric, supplementary_tuple)` rule is
+preserved). The
 edge weight is positive (`1.0`); the per-downstream renormalization
 in `_compose_topology_coupled_specs` collapses single-incoming
 edges to `w_norm = 1.0`, so any positive weight is structurally
