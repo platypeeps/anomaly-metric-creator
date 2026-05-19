@@ -19,14 +19,25 @@ sampling interval, drop rate, and output directory are all CLI-configurable.
 
 Recent significant additions to the generator:
 
-- **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155) —
-  declares a directed service-call graph (`TOPOLOGY`) and wires it into generation.
-  Phase 2 couples downstream RPS baselines from upstream load columns; phase 3
-  extends coupling to all front-half fan-out edges; phase 4 adds logistic-shaped
-  latency multiplier and error-rate offset when an upstream saturates; phase 5
-  closes the graph by coupling `apigateway → llm_analytics` (token-throttle
-  reads as load-driven saturation). See [docs/topology.md](docs/topology.md) and
-  the [Topology graph (v1)](#topology-graph-v1) section.
+- **Flag-day default flip + integer-cast bundle** (VER-156, phase 6 of VER-141) —
+  `--topology-mode realistic` is now the default; `--topology-mode independent`
+  is retained as a deprecation alias that emits a stderr `DeprecationWarning`
+  and is scheduled for removal after VER-141 phase 9. Every `MetricSpec` column
+  declared `dtype="int"` is now cast via `np.rint` in `generate_component()`
+  before derivations run, clearing all fractional-integer
+  `--validate-output` violations on the default 1-day output. All locked
+  SHA-256 hashes in `tests/` were re-baselined under realistic mode in this
+  PR; the pre-flag-day baseline is still reproducible via the deprecation
+  alias and is pinned by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
+- **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155;
+  default since VER-156) — declares a directed service-call graph (`TOPOLOGY`)
+  and wires it into generation. Phase 2 couples downstream RPS baselines from
+  upstream load columns; phase 3 extends coupling to all front-half fan-out
+  edges; phase 4 adds logistic-shaped latency multiplier and error-rate
+  offset when an upstream saturates; phase 5 closes the graph by coupling
+  `apigateway → llm_analytics` (token-throttle reads as load-driven
+  saturation). See [docs/topology.md](docs/topology.md) and the
+  [Topology graph (v1)](#topology-graph-v1) section.
 - **Schema document + output validator** (`--emit-selection schema` /
   `--validate-output PATH`, VER-139) — `schema.json` captures run-level
   parameters and per-metric metadata; `--validate-output` checks required files,
