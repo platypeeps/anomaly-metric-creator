@@ -218,14 +218,11 @@ def scenario_deviation_results(amc, tmp_path_factory):
 
 
 def _scenario_slugs():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "anomaly_metric_creator",
-        Path(__file__).resolve().parent.parent / "anomaly-metric-creator.py",
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return sorted(module.SCENARIOS.keys())
+    # Reuse the memoized loader from conftest so collection-time
+    # parametrize() and the session-scoped ``amc`` fixture share a single
+    # ``exec_module`` build of the registry rather than paying for two.
+    from conftest import _load_amc  # type: ignore[import-not-found]
+    return sorted(_load_amc().SCENARIOS.keys())
 
 
 @pytest.mark.parametrize("slug", _scenario_slugs())
@@ -244,9 +241,12 @@ def test_scenario_every_recorded_anomaly_fires_above_baseline_sigma(
     """
     rows = scenario_deviation_results[slug]
     assert rows, (
-        f"Scenario {slug!r} recorded no anomaly rows under default flags. "
-        f"Either the scenario silently no-ops or the resolution filters "
-        f"(--signal-level / --duration-days / --components) dropped it."
+        f"Scenario {slug!r} recorded no anomaly rows under the test's "
+        f"fixture flags (--seed 42 --drop-rate 0 --duration-days "
+        f"<scenario.days_required> --signal-level <scenario.severity> "
+        f"--scenarios {slug}). Either the scenario silently no-ops or the "
+        f"resolution filters (--signal-level / --duration-days / "
+        f"--components) dropped it."
     )
     weak = [r for r in rows if r["ratio"] is None or r["ratio"] <= 1.0]
     if weak:

@@ -12,11 +12,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
 
 
+_AMC_MODULE_CACHE = None
+
+
 def _load_amc():
-    spec = importlib.util.spec_from_file_location("anomaly_metric_creator", SCRIPT_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    # Memoized so test-collection helpers (e.g. parametrize keys) and the
+    # session-scoped ``amc`` fixture can share a single module load instead
+    # of paying for two full ``exec_module`` builds of the registry.
+    global _AMC_MODULE_CACHE
+    if _AMC_MODULE_CACHE is None:
+        spec = importlib.util.spec_from_file_location("anomaly_metric_creator", SCRIPT_PATH)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _AMC_MODULE_CACHE = module
+    return _AMC_MODULE_CACHE
 
 
 def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None, extra_args=None):
