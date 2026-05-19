@@ -704,6 +704,7 @@ Install and run locally (the `dev` extra installs both `ruff` and
 .venv/bin/ruff check tests/                 # same check, no pre-commit
 ```
 
-The hook runs automatically on `git commit` for any staged `tests/*.py`. Adding
-or moving an unused import to `tests/` makes the commit fail with a `F401`
-diagnostic; `ruff check --fix tests/` removes it.
+The hook runs automatically on `git commit` for any staged Python file under
+`tests/` (the `files: ^tests/.*\.py$` pattern matches subdirectories too).
+Adding or moving an unused import to `tests/` makes the commit fail with an
+`F401` diagnostic; `ruff check --fix tests/` removes it.
