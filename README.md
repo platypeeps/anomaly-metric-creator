@@ -644,7 +644,7 @@ radius to additional components.
 
 ## Tests
 
-Dev dependencies (`pytest`, `numpy`) ship under the `dev` extra.
+Dev dependencies (`pytest`, `numpy`, `ruff`) ship under the `dev` extra.
 
 ```bash
 python3 -m venv .venv
@@ -658,3 +658,24 @@ coverage for `--scenarios` / `--exclude-scenarios` lives in
 `tests/test_scenarios.py` (selector intersection, WARNING content, `--anomaly-count`
 interaction); the canonical slug catalog is the [scenario catalog](#scenario-catalog)
 table in this file.
+
+### Test-hygiene lint
+
+`ruff` is wired up to enforce **F401** (unused imports) on `tests/` so the rule
+called out in [CLAUDE.md](CLAUDE.md) ("Pre-PR checklist > Test hygiene") is a
+mechanical check rather than a human-reviewer task. The configuration lives in
+`pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); the
+`.pre-commit-config.yaml` hook scopes it to `tests/`.
+
+Install and run locally:
+
+```bash
+.venv/bin/pip install pre-commit            # already in the dev extra via ruff
+.venv/bin/pre-commit install                # one-time per clone
+.venv/bin/pre-commit run --all-files        # ad-hoc full sweep
+.venv/bin/ruff check tests/                 # same check, no pre-commit
+```
+
+The hook runs automatically on `git commit` for any staged `tests/*.py`. Adding
+or moving an unused import to `tests/` makes the commit fail with a `F401`
+diagnostic; `ruff check --fix tests/` removes it.

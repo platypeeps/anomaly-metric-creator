@@ -15,8 +15,19 @@ dev = [
   "numpy>=1.26",
   "opentelemetry-proto>=1.25.0",
   "protobuf>=5.27.0",
+  "ruff>=0.15.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# F401 (unused imports) is enforced repo-wide; the pre-commit hook
+# scopes the check to tests/ where the test-hygiene churn lives, but
+# keeping the rule in pyproject.toml lets `ruff check` work as a one-
+# shot on any path. See CLAUDE.md "Pre-PR checklist > Test hygiene".
+select = ["F401"]

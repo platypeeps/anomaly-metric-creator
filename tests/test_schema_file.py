@@ -11,10 +11,8 @@ Covers:
   is dropped from the next run's emit-selection.
 - ``--combine-only`` does NOT regenerate ``schema.json``.
 """
-import csv
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
