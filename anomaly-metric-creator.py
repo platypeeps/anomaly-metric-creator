@@ -2545,8 +2545,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 21*3600 + 45*60,
                 "metric": "error_rate",
-                "description": "5xx burst from bad config push — 12 %",
-                "generator": lambda ts, idx: 0.12,
+                "description": "5xx burst from bad config push — 25 %",
+                "generator": lambda ts, idx: 0.25,
             }),
             ("apigateway", {
                 "time_offset": 9*3600 + 30*60,
@@ -2686,8 +2686,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 11*3600 + 5,
                 "metric": "error_rate",
-                "description": "Cascading: Database errors propagate to API",
-                "generator": lambda ts, idx: 0.19,
+                "description": "Cascading: Database errors propagate to API (~30 %)",
+                "generator": lambda ts, idx: 0.30,
                 "severity": DEFAULT_SEVERITY,
             }),
             ("authservice", {
@@ -2883,8 +2883,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("llm_analytics", {
                 "time_offset": 15*3600 + 30,
                 "metric": "llm_api_error_rate",
-                "description": "Cascading: low-recall results trigger LLM fallback retries (8 % errors)",
-                "generator": lambda ts, idx: 0.08,
+                "description": "Cascading: low-recall results trigger LLM fallback retries (15 % errors)",
+                "generator": lambda ts, idx: 0.15,
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -2957,8 +2957,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 12*3600 + 12,
                 "metric": "error_rate",
-                "description": "Cascading: Payment provider 5xx propagates to gateway",
-                "generator": lambda ts, idx: 0.15,
+                "description": "Cascading: Payment provider 5xx propagates to gateway (~28 %)",
+                "generator": lambda ts, idx: 0.28,
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -3372,8 +3372,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("authservice", {
                 "time_offset": 5*3600 + 60,
                 "metric": "error_rate",
-                "description": "Cascading: Regional failover propagates auth errors (~25%)",
-                "generator": lambda ts, idx: 0.25,
+                "description": "Cascading: Regional failover propagates auth errors (~40%)",
+                "generator": lambda ts, idx: 0.40,
                 "severity": "high",
             }),
             ("mqservice", {
@@ -3464,8 +3464,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 20*3600 + 15,
                 "metric": "error_rate",
-                "description": "Cascading: LLM outage propagates to gateway (~25%)",
-                "generator": lambda ts, idx: 0.25,
+                "description": "Cascading: LLM outage propagates to gateway (~35%)",
+                "generator": lambda ts, idx: 0.35,
                 "severity": "high",
             }),
             ("cacheservice", {
@@ -3567,8 +3567,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 22*3600 + 45,
                 "metric": "error_rate",
-                "description": "Cascading: Storage 5xx surge propagates to gateway (~15%)",
-                "generator": lambda ts, idx: 0.15,
+                "description": "Cascading: Storage 5xx surge propagates to gateway (~30%)",
+                "generator": lambda ts, idx: 0.30,
                 "severity": "high",
             }),
         ),
@@ -3754,8 +3754,8 @@ SCENARIOS: dict[str, Scenario] = {
             ("authservice", {
                 "time_offset": 18*3600 + 20*60 + 60,
                 "metric": "error_rate",
-                "description": "Cascading: AZ partition fails auth replica reads (~22%)",
-                "generator": lambda ts, idx: 0.22,
+                "description": "Cascading: AZ partition fails auth replica reads (~40%)",
+                "generator": lambda ts, idx: 0.40,
                 "severity": "high",
             }),
         ),

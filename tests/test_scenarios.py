@@ -97,15 +97,22 @@ SCENARIO_CASCADES_BY_SLUG = {
 # Per-component CSV hashes were NOT changed by VER-132 — the scenario
 # provenance is stamped into shallow-copied spec dicts so RNG draw order
 # and CSV bytes remain byte-identical to the pre-VER-132 main.
+#
+# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# llm_analytics.csv after re-tuning four medium-severity error_rate
+# generator values to clear the new realistic-mode saturation floor
+# (api_cpu_saturation primary 0.12→0.25, db_stall cascade 0.19→0.30,
+# vectorstore_pressure cascade 0.08→0.15, payment_5xx cascade
+# 0.15→0.28). Other per-component CSV hashes are unchanged.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
-    "anomalies.csv": "458703b3da32183889d7a2ca68840f1da05fd00a78cc95aff4e530c2cd5cbb06",
-    "apigateway.csv": "23d0e6e3c0ebe47976480a656f393e2c623ea233532679c741c35a8fc5927c22",
+    "anomalies.csv": "501c3879c212f3399868c6bf4bb59bfd26eb35f8964707d98ca27659cc4d4ad9",
+    "apigateway.csv": "f845f5d80b3ba0e5462f442d0c2d043d07abbb3c341ea3350e82e78e90246de5",
     "authservice.csv": "06ab97884f65eb53db6eff0c61147f576809517b841e21b98b2861cb99dd5617",
     "cacheservice.csv": "7ace2f8b8dd6c6ed43ed90058eae8a0f1b1f077a37bbedd88ea9f7523246dde3",
     "database.csv": "d9f6249464da8fef4e9456df653923b8a4eceac0ad9c403d2c66783106c1a750",
     "identityprovider.csv": "c884970f063d58a8cd2289be8500b810a022727c407601c503d841844cdf1577",
-    "llm_analytics.csv": "84dbc8c47045a870d01b567f7794e3281f7a0290fb78b2bfc7e3d4ef3beccb6b",
+    "llm_analytics.csv": "bb8c614dc7b0b3e5a88d185b3b8cc4cac8c5a079fdaa1e67ed5bef55003bceba",
     "loadbalancer.csv": "a1de03bfba5aabbeaf86c2346e603218fd23e38bfa3cb31f51453e15077656b1",
     "mqservice.csv": "2aab1b3bc389c4c5b80e13347c1da37f8848c07bed927e8bad80ba3fdd686d07",
     "objectstore.csv": "fc4ea917e6591cd6839eb315775bf20371bd4569c53df05a7dd7f9323c2e899d",
@@ -116,13 +123,13 @@ DEFAULT_ONE_DAY_HASHES = {
 }
 
 DEFAULT_SEVEN_DAY_HASHES = {
-    "anomalies.csv": "5ab3f0d8d5397b8715c691e82e06e462c6db76b37b985c83d1386a9b63dc2ec0",
-    "apigateway.csv": "bc7d1a450ed06b4bd4555b467abbea31f363ec4758533a44cf2cb77758d096ad",
+    "anomalies.csv": "260ed2e43604ea12e5f7d4927946bd32ab673a7eb73859023cfd50ab14e2edbd",
+    "apigateway.csv": "5b02a5ae6bd71fc3d76b0040380d8569c03af44c89879d87cc39757406384542",
     "authservice.csv": "a5aab875ee8f14aa2070b7647885bbca274305ab7cc69d80c5136e755a0eaabb",
     "cacheservice.csv": "3524a441d5b9e2388d4f62799cc5da1aabcfa912c08bf1192ed84bda6a86d0a6",
     "database.csv": "8815d53fcb1abbea704c3af519635743d12e1b05dfda47224a343bb52c01c9c2",
     "identityprovider.csv": "f4ba4d1a34b45c2e155913af030fb1b44b7001e2a4145f4fb34b5d17f38bc5ba",
-    "llm_analytics.csv": "a3161f50f7bf862e57da090585a2969ac97d57624f87c021cff53fc1b4f6f698",
+    "llm_analytics.csv": "e310906ecc6aaa1ccc2cc7057985704ac6228f8d716666d26fd21b877e1bf4c8",
     "loadbalancer.csv": "28429668c0880a6b2cac9299e2eb5eabe4594efbe1eaecb5107c0e3c032c5f9a",
     "mqservice.csv": "33aa01c12460f405e38cc50c33fcbbd0d561015fd2cd59cd2e2d19b44308ec9c",
     "objectstore.csv": "f7959a62b01ca59e98ae84edc7f77d1ef97bd47cfae929ef3c569c50acb52c57",
@@ -140,14 +147,23 @@ DEFAULT_SEVEN_DAY_HASHES = {
 # ``spawn_key=(_ANOMALY_COUNT_CAP_SALT,)`` and picks ``anomaly_count`` positions
 # out of the in-range pool, so any reshuffle of SCENARIOS insertion order or
 # of per-component append ordering changes which anomalies land in the manifest.
+#
+# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# authservice.csv + llm_analytics.csv after re-tuning four high-severity
+# cascade error_rate generator values (regional_failover_storm
+# authservice 0.25→0.40, llm_provider_outage apigateway 0.25→0.35,
+# storage_layer_pressure apigateway 0.15→0.30, network_partition_az_split
+# authservice 0.22→0.40) so every cascade row clears the realistic-mode
+# saturation floor for its target metric. Other per-component CSV hashes
+# are unchanged.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "424438f430832ccfe843e1fb1b603cb607e938f7ccfa53ebe89dbdb265a22acd",
-    "apigateway.csv": "749ed6244fcade5e2719b767e49d1a50150afe67b1e31bcb38d5381a8fdfc06c",
-    "authservice.csv": "19fc066c4304e0712504819f9f2beda96081eb58ead79c4c2501a845ef12fcb0",
+    "anomalies.csv": "dff8b388eb42e9d71eb2ea7e5a67f90cd4b6a63576df88387a3fabe9ab2a37e4",
+    "apigateway.csv": "6946839f7ae11dc92189e4527a98250d5b2cca9717f536293abd2a146732c784",
+    "authservice.csv": "6656c77802f96cf893076de22f9f2cf519c6f6e59b61ef57c88b2075059658f1",
     "cacheservice.csv": "8cacedb1b97abdedbd4b06c0094ea81f6b248c2e7521a1daade81d0078322067",
     "database.csv": "3c40f26dfa68dad837c7b86facc44d6d50c1037152ea35c20d6e68e4e21c3815",
     "identityprovider.csv": "7f9549edc1f597f2b25b2e20b1b14625ede70f22859ee5cc5582bc17859044e4",
-    "llm_analytics.csv": "56e975cc0e08eb315ed772c0d338ce0203b4ae88d32e20644dd5fe10c7dcb79c",
+    "llm_analytics.csv": "812e5ea2ae8b20f092a9231ab73e43b4ab096b4e134ed7f1e6d60099be41d37d",
     "loadbalancer.csv": "aa593986a8c026e828b426ef3896341b3d0a6dd7b4cb7327e363419d2cd438f1",
     "mqservice.csv": "064107f4214bdb8715de9ffee6658873ae408747faf98762eacaf9fe536538b1",
     "objectstore.csv": "176d8a59c6e302d0ccdb4438c3c2e90c19afab7234ed163e5dc1b988c8df7f04",

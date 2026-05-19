@@ -36,11 +36,17 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 # - the chronological merge tiebreaker (sorted-component order on ties),
 # - the per-row metric column order,
 # - the dropped-cell skip behavior on ``--drop-rate`` survivors.
+#
+# VER-159 (2026-05-19) re-baselined both hashes after re-tuning four
+# medium-severity error_rate generator values whose output flows into
+# the long-form gauges merge via the apigateway + llm_analytics CSVs
+# (api_cpu_saturation, db_stall, vectorstore_pressure, payment_5xx;
+# see tests/test_scenarios.py header for full details).
 GAUGES_ONE_DAY_HASH = (
-    "910cee987c99fa6f126d7f023af521cefa46041ce3887603e7c3e4d3f5cb50d3"
+    "4fc831e5f4841eb69d1ca04ab1032642f315913fce892abfa8a820e3dd0f2172"
 )
 GAUGES_SEVEN_DAY_HASH = (
-    "f2f6b7afee3762bab95522160ea6fa63fa018f91b2c860421d774c6fd892a440"
+    "9d86e51cd6d9f1cdeca2bc713f4c656fd3dc1f02d9b78e3bc2cec7bc510057ee"
 )
 
 
