@@ -99,14 +99,14 @@ SCENARIO_CASCADES_BY_SLUG = {
 # Locking these protects every component output from accidental
 # RNG-order, spec-order, or topology-coupling drift.
 #
-# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv + 
-# database.csv + llm_analytics.csv + mqservice.csv + authservice.csv 
-# after re-tuning eleven error_rate generator values to clear the new 
-# realistic-mode saturation floor. This includes the eight re-tunes 
-# from the initial VER-159 PR plus three additional ones (database.error_rate 
-# in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate 
-# in mq_jam) identified by the deviation regression test. 
-# 
+# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# database.csv + llm_analytics.csv + mqservice.csv + authservice.csv
+# after re-tuning eleven error_rate generator values to clear the new
+# realistic-mode saturation floor. This includes the eight re-tunes
+# from the initial VER-159 PR plus three additional ones (database.error_rate
+# in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate
+# in mq_jam) identified by the deviation regression test.
+#
 
 # VER-156 (2026-05-19) re-baselined every entry here as the phase-6
 # flag-day landing: ``--topology-mode realistic`` is now the default
@@ -180,14 +180,14 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 
 # SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
 # at seed 42 under the current defaults (``--topology-mode realistic``,
-# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv + 
-# database.csv + llm_analytics.csv + mqservice.csv + authservice.csv 
-# after re-tuning eleven error_rate generator values to clear the new 
-# realistic-mode saturation floor. This includes the eight re-tunes 
-# from the initial VER-159 PR plus three additional ones (database.error_rate 
-# in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate 
-# in mq_jam) identified by the deviation regression test. 
-# 
+# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# database.csv + llm_analytics.csv + mqservice.csv + authservice.csv
+# after re-tuning eleven error_rate generator values to clear the new
+# realistic-mode saturation floor. This includes the eight re-tunes
+# from the initial VER-159 PR plus three additional ones (database.error_rate
+# in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate
+# in mq_jam) identified by the deviation regression test.
+#
 
 # integer-cast bundle on). VER-156 (2026-05-19) re-baselined this block
 # alongside ``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` as

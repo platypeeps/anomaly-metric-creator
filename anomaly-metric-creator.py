@@ -2845,7 +2845,7 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 20*3600 + 30*60 + 10,
                 "metric": "error_rate",
-                "description": "Cascading: LB region failover propagates 5xx to gateway (~30 %)",
+                "description": "Cascading: LB region failover propagates 5xx to gateway (~30%)",
                 "generator": lambda ts, idx: 0.30,
                 "severity": DEFAULT_SEVERITY,
             }),
@@ -2920,7 +2920,7 @@ SCENARIOS: dict[str, Scenario] = {
             ("llm_analytics", {
                 "time_offset": 15*3600 + 30,
                 "metric": "llm_api_error_rate",
-                "description": "Cascading: low-recall results trigger LLM fallback retries (15 % errors)",
+                "description": "Cascading: low-recall results trigger LLM fallback retries (15% errors)",
                 "generator": lambda ts, idx: 0.15,
                 "severity": DEFAULT_SEVERITY,
             }),
@@ -2994,7 +2994,7 @@ SCENARIOS: dict[str, Scenario] = {
             ("apigateway", {
                 "time_offset": 12*3600 + 12,
                 "metric": "error_rate",
-                "description": "Cascading: Payment provider 5xx propagates to gateway (~28 %)",
+                "description": "Cascading: Payment provider 5xx propagates to gateway (~28%)",
                 "generator": lambda ts, idx: 0.28,
                 "severity": DEFAULT_SEVERITY,
             }),
