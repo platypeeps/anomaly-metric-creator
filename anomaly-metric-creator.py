@@ -7248,6 +7248,13 @@ def _validate_topology_coupling(
     An invalid ``correlation_threshold`` additionally falls back to
     ``_resolve_edge_correlation_threshold(source, target)`` so the
     rest of the coupling check still runs.
+
+    Non-finite cell values (NaN, +/-inf) in either canonical load
+    column are also flagged: ``np.std`` and ``np.corrcoef`` both
+    return NaN on such input, and ``corr < threshold`` would
+    silently evaluate False and bypass the check. Well-formed runs
+    only emit finite floats, so this guard only fires on
+    hand-edited or otherwise corrupted CSVs.
     """
     if schema["metadata"].get("topology_mode") != "realistic":
         return []
@@ -7407,6 +7414,29 @@ def _validate_topology_coupling(
                 source_kept = source_arr
                 target_kept = target_arr
             if len(source_kept) < 100:
+                continue
+            # Non-finite values (NaN/+/-inf) in either column would
+            # poison ``np.std`` and ``np.corrcoef`` (both return NaN),
+            # silently flipping ``corr < threshold`` to False and
+            # bypassing the coupling check. Treat any non-finite cell
+            # as a regression — well-formed runs only ever write
+            # finite floats, so this only fires on hand-edited or
+            # otherwise corrupted CSVs.
+            source_finite = np.isfinite(source_kept)
+            target_finite = np.isfinite(target_kept)
+            if not (source_finite.all() and target_finite.all()):
+                sides: list[str] = []
+                if not source_finite.all():
+                    sides.append(f"{source}.{source_canonical}")
+                if not target_finite.all():
+                    sides.append(f"{target}.{target_canonical}")
+                violations.append(
+                    f"topology coupling {source}->{target}: "
+                    f"non-finite values in "
+                    f"{' and '.join(sides)} "
+                    f"(NaN/+/-inf); Pearson correlation undefined "
+                    f"(expected >= {threshold:.4f})"
+                )
                 continue
             # Pearson is undefined when either side is constant
             # (zero-variance column). Treat that as a coupling

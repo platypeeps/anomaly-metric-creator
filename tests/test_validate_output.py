@@ -649,12 +649,24 @@ def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
 
 def test_topology_coupling_flags_random_downstream(amc, tmp_path):
     """A downstream replaced with values uniformly random within its
-    natural range must drive Pearson well below the 0.85 threshold."""
+    natural range must drive Pearson well below the 0.85 threshold.
+
+    The apigateway -> database edge is the only constant-weight edge
+    we exercise here, so narrow ``--components`` to the source plus
+    the target and use a coarse ``--interval-seconds`` to keep the
+    end-to-end run quick. 60s interval gives 1440 rows over one day
+    — well above the 100-row floor and dense enough to make the
+    Pearson coefficient meaningful, while cutting the generation
+    cost from 86,400 rows/component to 1,440."""
     import random
     out = tmp_path / "random_db"
     run_capture(
         amc, out, days=1,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "apigateway,database",
+            "--interval-seconds", "60",
+        ],
     )
     csv_path = out / "database.csv"
     rows = csv_path.read_text().splitlines()
@@ -675,6 +687,62 @@ def test_topology_coupling_flags_random_downstream(amc, tmp_path):
     ), (
         f"validator must flag a randomized downstream load as a coupling "
         f"regression; got: {violations}"
+    )
+
+
+@pytest.mark.parametrize("bad_cell,side", [
+    ("nan", "target"),
+    ("inf", "target"),
+    ("-inf", "target"),
+    ("nan", "source"),
+])
+def test_topology_coupling_flags_non_finite_values(
+    amc, tmp_path, bad_cell, side,
+):
+    """A hand-edited CSV with non-finite (NaN/+/-inf) cells in either
+    canonical load column must be flagged. ``np.std`` and
+    ``np.corrcoef`` both return NaN on non-finite input, and
+    ``corr < threshold`` evaluates False — silently bypassing the
+    check. The dedicated non-finite branch must catch this before
+    the std/corrcoef calls run."""
+    out = tmp_path / f"nonfinite_{side}_{bad_cell.replace('-', 'neg')}"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "apigateway,database",
+            "--interval-seconds", "60",
+        ],
+    )
+    target_file = "database.csv" if side == "target" else "apigateway.csv"
+    target_metric = (
+        "queries_per_sec" if side == "target" else "requests_per_sec"
+    )
+    csv_path = out / target_file
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index(target_metric)
+    new_rows = [rows[0]]
+    # Inject the non-finite cell into the middle of the file so the
+    # surrounding data still parses cleanly and the row count stays
+    # well above the 100-row floor.
+    mid = len(rows) // 2
+    for i, r in enumerate(rows[1:], start=1):
+        parts = r.split(",")
+        if i == mid:
+            parts[col] = bad_cell
+        new_rows.append(",".join(parts))
+    csv_path.write_text("\n".join(new_rows) + "\n")
+    schema = _load_schema(out)
+    violations = amc._validate_topology_coupling(out, schema)
+    assert any(
+        "apigateway->database" in v
+        and "non-finite values" in v
+        and "NaN/+/-inf" in v
+        for v in violations
+    ), (
+        f"validator must flag non-finite {side} cell ({bad_cell}); "
+        f"got: {violations}"
     )
 
 
