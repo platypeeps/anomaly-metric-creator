@@ -1109,6 +1109,66 @@ def test_topology_coupling_invalid_threshold_falls_back_to_live_topology(
     )
 
 
+@pytest.mark.parametrize("bad_topology", [
+    [],
+    "not-a-dict",
+    42,
+    3.14,
+    True,
+])
+def test_topology_coupling_malformed_top_level_block_reports_violation(
+    amc, schema_run, bad_topology,
+):
+    """A hand-edited schema where ``topology`` is a truthy non-dict
+    must not crash on ``topology.keys()``. The validator must report
+    a single up-front violation instead of raising
+    ``AttributeError``."""
+    schema = _load_schema(schema_run)
+    schema["topology"] = bad_topology
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "topology block malformed in schema.json" in v
+        for v in violations
+    ), (
+        f"expected up-front violation for non-dict topology block "
+        f"{bad_topology!r}; got: {violations}"
+    )
+
+
+@pytest.mark.parametrize("bad_weight", [
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+])
+def test_topology_coupling_non_finite_weight_reports_violation(
+    amc, schema_run, bad_weight,
+):
+    """Python's ``json`` loader parses ``NaN``/``Infinity``/
+    ``-Infinity`` as floats; ``_validate_topology()`` rejects those
+    values on the live ``Edge``, and the validator's schema-side
+    view must match. A non-finite weight cannot drive a meaningful
+    Pearson check, so surface a dedicated violation and skip the
+    edge."""
+    schema = _load_schema(schema_run)
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["weight"] = bad_weight
+            break
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "apigateway->cacheservice" in v
+        and "edge weight in schema.json must be finite" in v
+        for v in violations
+    ), (
+        f"expected non-finite-weight violation for {bad_weight!r}; "
+        f"got: {violations}"
+    )
+
+
 def test_topology_coupling_malformed_edge_list_reports_violation(
     amc, schema_run,
 ):

@@ -7240,15 +7240,18 @@ def _validate_topology_coupling(
     (``Edge.correlation_threshold`` on the live ``TOPOLOGY``, falling
     back to ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD``).
 
-    Malformed schema entries — a non-``list`` edge container, a
-    non-``dict`` edge entry, a missing/non-string ``target``, a
-    missing ``weight`` field, a ``weight`` that is neither numeric
-    nor the literal string ``"callable"``, or a
-    ``correlation_threshold`` that is non-numeric, ``bool``, not
-    finite, or outside the half-open range ``(-1, 1]`` — surface as
-    dedicated violation messages rather than crashing the validator.
-    A hand-edited or older ``schema.json`` therefore degrades to a
-    clear report instead of a ``KeyError`` or ``TypeError`` traceback.
+    Malformed schema entries — a non-``dict`` ``topology`` block, a
+    non-``list`` edge container, a non-``dict`` edge entry, a
+    missing/non-string ``target``, a missing ``weight`` field, a
+    ``weight`` that is neither numeric nor the literal string
+    ``"callable"``, a non-finite numeric ``weight`` (Python's
+    ``json`` parses ``NaN``/``Infinity``/``-Infinity`` as float by
+    default), or a ``correlation_threshold`` that is non-numeric,
+    ``bool``, not finite, or outside the half-open range
+    ``(-1, 1]`` — surface as dedicated violation messages rather
+    than crashing the validator. A hand-edited or older
+    ``schema.json`` therefore degrades to a clear report instead of
+    a ``KeyError``, ``AttributeError``, or ``TypeError`` traceback.
     An invalid ``correlation_threshold`` additionally falls back to
     ``_resolve_edge_correlation_threshold(source, target)`` so the
     rest of the coupling check still runs.
@@ -7262,9 +7265,19 @@ def _validate_topology_coupling(
     """
     if schema["metadata"].get("topology_mode") != "realistic":
         return []
-    topology = schema.get("topology") or {}
-    if not topology:
+    topology = schema.get("topology")
+    if topology is None or topology == {}:
+        # Missing or empty block is the older-schema / narrow-run
+        # case; degrade silently. Anything else must be a dict —
+        # ``topology.keys()`` would crash on a list/string/scalar
+        # before any per-edge violation could surface, so surface
+        # one dedicated violation up front instead.
         return []
+    if not isinstance(topology, dict):
+        return [
+            f"topology block malformed in schema.json (expected "
+            f"dict, got {type(topology).__name__})"
+        ]
 
     anomaly_windows = _read_anomaly_exclusion_windows(
         output_dir / "anomalies.csv"
@@ -7334,6 +7347,19 @@ def _validate_topology_coupling(
                     f"topology coupling {source}->{target}: edge weight "
                     f"in schema.json must be a number or the literal "
                     f"\"callable\" (got {weight!r})"
+                )
+                continue
+            # Python's ``json`` loader parses ``NaN``/``Infinity``/
+            # ``-Infinity`` as float by default (a CPython extension);
+            # ``_validate_topology()`` rejects those values on the live
+            # ``Edge`` so the validator's schema view must match. A
+            # non-finite weight cannot drive a meaningful Pearson check
+            # either, so flag it and skip the edge.
+            if not math.isfinite(float(weight)):
+                violations.append(
+                    f"topology coupling {source}->{target}: edge weight "
+                    f"in schema.json must be finite "
+                    f"(got {weight!r})"
                 )
                 continue
             if weight == 0.0:
