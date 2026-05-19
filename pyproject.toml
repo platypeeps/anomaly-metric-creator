@@ -15,7 +15,7 @@ dev = [
   "numpy>=1.26",
   "opentelemetry-proto>=1.25.0",
   "protobuf>=5.27.0",
-  "ruff>=0.15.0",
+  "ruff==0.15.13",
   "pre-commit>=3.7.0",
 ]
 
