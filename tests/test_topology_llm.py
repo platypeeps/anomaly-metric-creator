@@ -87,26 +87,33 @@ def _aligned_columns(out_dir, *pairs):
     return common, arrays
 
 
-# Anomaly windows that override coupled / saturated llm_analytics cells
+# Anomaly windows that override topology-affected llm_analytics cells
 # (or the upstream apigateway.requests_per_sec used to drive them) on
 # the default 1-day seed. Excluding them keeps correlations / means
-# reflective of the topology coupling, not the scenario overrides.
+# reflective of the topology coupling + saturation, not the scenario
+# overrides.
 #
 # Derived from the live SCENARIOS catalog so future scenario edits
 # don't silently drift the test: we walk every same-day,
 # non-high-severity scenario and add a window for every primary or
 # cascade spec whose target is either ``apigateway.requests_per_sec``
 # (the upstream of the LLM coupling) or one of the LLM columns the
-# saturation layer rewrites (``input_tokens_per_sec``,
-# ``avg_llm_latency_ms``, ``p95_llm_latency_ms``, ``llm_api_error_rate``).
-# Each window covers ``[time_offset, time_offset + duration_seconds]``
-# padded by ``_EXCLUSION_PAD_SECONDS`` on either side so the single-row
-# cascades that round to the nearest 1s row aren't included in the
-# correlation pool.
+# topology pipeline rewrites under ``--topology-mode realistic`` —
+# ``input_tokens_per_sec`` (rewritten by the coupling layer via
+# ``_TOPOLOGY_LOAD_METRICS["llm_analytics"]``), plus
+# ``avg_llm_latency_ms`` / ``p95_llm_latency_ms`` / ``llm_api_error_rate``
+# (rewritten by the saturation layer via
+# ``_TOPOLOGY_SATURATION_TARGETS["llm_analytics"]``). Each window
+# covers ``[time_offset, time_offset + duration_seconds]`` padded by
+# ``_EXCLUSION_PAD_SECONDS`` on either side so the single-row cascades
+# that round to the nearest 1s row aren't included in the correlation
+# pool.
 _EXCLUSION_PAD_SECONDS = 30
 
-_LLM_SATURATION_AFFECTED_METRICS = frozenset({
+_LLM_TOPOLOGY_AFFECTED_METRICS = frozenset({
+    # Coupling layer (load metric):
     "input_tokens_per_sec",
+    # Saturation layer (latency + error targets):
     "avg_llm_latency_ms",
     "p95_llm_latency_ms",
     "llm_api_error_rate",
@@ -125,11 +132,11 @@ def _compute_llm_exclusion_windows():
                 component == "apigateway"
                 and spec["metric"] == "requests_per_sec"
             )
-            is_llm_saturation = (
+            is_llm_topology_target = (
                 component == "llm_analytics"
-                and spec["metric"] in _LLM_SATURATION_AFFECTED_METRICS
+                and spec["metric"] in _LLM_TOPOLOGY_AFFECTED_METRICS
             )
-            if not (is_upstream or is_llm_saturation):
+            if not (is_upstream or is_llm_topology_target):
                 continue
             duration = spec.get("duration_seconds", 0) or 0
             t_start = max(0, spec["time_offset"] - _EXCLUSION_PAD_SECONDS)
@@ -581,48 +588,50 @@ def test_llm_scenarios_still_fire_in_realistic_mode(
     """Issue acceptance: 'LLM-specific scenarios in the catalog still
     fire (no shifting needed yet — phase 9 handles catalog re-tuning).'
 
-    Check that the manifest contains every scenario id that touches
-    ``llm_analytics`` in the SCENARIOS catalog at default
-    --signal-level medium / --duration-days 1, so phase-5 coupling
-    didn't inadvertently override the anomaly cells.
+    For every (scenario_id, component="llm_analytics", metric) tuple
+    declared in primary_specs / cascade_specs of the default 1-day
+    medium catalog, assert the manifest contains a matching row in
+    realistic mode. Tracking per-(scenario, component, metric) rather
+    than just per-scenario_id is what makes the test non-vacuous:
 
-    On the default 1-day medium catalog today there are no scenarios
-    whose *primary* specs land on ``llm_analytics`` — the only LLM
-    activity in that slice is the ``vectorstore_pressure`` cascades
-    on ``avg_llm_latency_ms`` / ``llm_api_error_rate``. The check
-    therefore considers both primary and cascade specs and asserts
-    the expected set is non-empty so it cannot pass vacuously.
+    - A scenario like ``vectorstore_pressure`` declares both
+      ``avg_llm_latency_ms`` and ``llm_api_error_rate`` cascades on
+      ``llm_analytics``. The previous per-scenario_id check would have
+      passed if one of those two rows had silently disappeared (the
+      other row still carries the same scenario_id). The
+      (scenario_id, component, metric) check fails the moment any
+      single expected row is absent.
+    - Filtering on ``component == "llm_analytics"`` keeps the
+      vectorstore primary rows of the same scenario out of the seen
+      set, so a scenario can't pass by virtue of its non-LLM cells.
     """
     import csv
-    expected_scenario_ids: set[str] = set()
+    expected_rows: set[tuple[str, str, str]] = set()
     for scen_id, scen in amc.SCENARIOS.items():
         if scen.days_required > 1:
             continue
         if scen.severity == "high":
             continue
-        for comp, _spec in (*scen.primary_specs, *scen.cascade_specs):
+        for comp, spec in (*scen.primary_specs, *scen.cascade_specs):
             if comp == "llm_analytics":
-                expected_scenario_ids.add(scen_id)
-                break
-    assert expected_scenario_ids, (
+                expected_rows.add((scen_id, comp, spec["metric"]))
+    assert expected_rows, (
         "default 1-day medium catalog has no llm_analytics-touching "
-        "scenarios; this test would pass vacuously — update the filter "
-        "or pick a different acceptance signal"
+        "scenario rows; this test would pass vacuously — update the "
+        "filter or pick a different acceptance signal"
     )
-    # We assert llm_analytics-targeted rows are present per scenario, not
-    # just that the scenario_id appears anywhere in the manifest. A
-    # scenario like ``vectorstore_pressure`` writes both vectorstore
-    # primaries and llm_analytics cascades; if the llm_analytics rows
-    # were silently overridden or filtered, the scenario_id would still
-    # appear via the vectorstore rows and the test would pass falsely.
-    seen_llm_ids: set[str] = set()
+    seen_rows: set[tuple[str, str, str]] = set()
     with open(realistic_one_day_llm.out_dir / "anomalies.csv") as f:
         for row in csv.DictReader(f):
-            if row.get("component") == "llm_analytics" and row.get("scenario_id"):
-                seen_llm_ids.add(row["scenario_id"])
-    missing = expected_scenario_ids - seen_llm_ids
+            comp = row.get("component")
+            metric = row.get("metric")
+            scen_id = row.get("scenario_id")
+            if comp == "llm_analytics" and scen_id and metric:
+                seen_rows.add((scen_id, comp, metric))
+    missing = expected_rows - seen_rows
     assert not missing, (
         f"realistic-mode 1-day run missed llm_analytics rows for "
-        f"scenarios: {sorted(missing)}; phase-5 coupling may be "
-        f"overriding scenario primary/cascade cells on llm_analytics"
+        f"(scenario_id, component, metric) tuples: {sorted(missing)}; "
+        f"phase-5 coupling may be overriding scenario primary/cascade "
+        f"cells on llm_analytics"
     )
