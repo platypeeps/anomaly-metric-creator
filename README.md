@@ -497,10 +497,15 @@ upstream load through downstream baselines.
   steepness `6`, latency gain `0.3`, error gain `0.008` — drives
   cacheservice `avg_cache_latency_ms` and `error_rate`.
 - `apigateway → database` (`0.3`) — couples
-  `database.queries_per_sec` to `apigateway.requests_per_sec`.
-  The three apigateway fan-out weights sum to `1.0`. Phase 4
-  saturation: midpoint `760`, steepness `6`, latency gain `0.6`,
-  error gain `0.015` — drives database `read_latency_ms`,
+  `database.queries_per_sec` to `apigateway.requests_per_sec`. The
+  three weights on the auth/cache/database routing trio sum to `1.0`
+  (these are request-share fractions). The `apigateway → llm_analytics`
+  edge below is **not** part of that routing trio — its constant
+  weight is independent because the per-downstream renormalization
+  in `_compose_topology_coupled_specs` normalizes the incoming edges
+  to each downstream, not the outgoing edges from each upstream.
+  Phase 4 saturation: midpoint `760`, steepness `6`, latency gain
+  `0.6`, error gain `0.015` — drives database `read_latency_ms`,
   `write_latency_ms`, and `error_rate`.
 - `apigateway → llm_analytics` (`1.0`, VER-155 phase 5) — couples
   `llm_analytics.input_tokens_per_sec` to

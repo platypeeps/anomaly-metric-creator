@@ -600,11 +600,20 @@ def test_llm_scenarios_still_fire_in_realistic_mode(
         "scenarios; this test would pass vacuously — update the filter "
         "or pick a different acceptance signal"
     )
+    # We assert llm_analytics-targeted rows are present per scenario, not
+    # just that the scenario_id appears anywhere in the manifest. A
+    # scenario like ``vectorstore_pressure`` writes both vectorstore
+    # primaries and llm_analytics cascades; if the llm_analytics rows
+    # were silently overridden or filtered, the scenario_id would still
+    # appear via the vectorstore rows and the test would pass falsely.
+    seen_llm_ids: set[str] = set()
     with open(realistic_one_day_llm.out_dir / "anomalies.csv") as f:
-        reader = csv.DictReader(f)
-        seen_ids = {row["scenario_id"] for row in reader if row["scenario_id"]}
-    missing = expected_scenario_ids - seen_ids
+        for row in csv.DictReader(f):
+            if row.get("component") == "llm_analytics" and row.get("scenario_id"):
+                seen_llm_ids.add(row["scenario_id"])
+    missing = expected_scenario_ids - seen_llm_ids
     assert not missing, (
-        f"realistic-mode 1-day run missed LLM scenarios: {sorted(missing)}; "
-        f"phase-5 coupling may be overriding scenario primary cells"
+        f"realistic-mode 1-day run missed llm_analytics rows for "
+        f"scenarios: {sorted(missing)}; phase-5 coupling may be "
+        f"overriding scenario primary/cascade cells on llm_analytics"
     )
