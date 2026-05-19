@@ -376,6 +376,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         anonymous ``Instance()`` so today's output stays byte-identical;
         Phase 2 will start emitting dimension columns when ``len > 1`` or
         any instance has non-None dimension fields.
+    apply_dtype_int_cast: if True (default), round columns with ``dtype="int"``
+        to whole numbers via ``np.rint`` before derivations. Pass False
+        to preserve pre-flag-day float parity in the deprecated
+        independent mode.
 
     Vectorized: natural-value math is one numpy op per metric; anomaly overrides
     are masked writes on the column arrays; packet loss is a single boolean mask
