@@ -2,12 +2,10 @@ import csv
 import datetime
 import importlib.util
 import io
-import math
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

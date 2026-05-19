@@ -14,9 +14,7 @@ import threading
 import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
-import pytest
 
 from conftest import SCRIPT_PATH
 

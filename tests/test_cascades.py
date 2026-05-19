@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-from pathlib import Path
 
 def test_register_cascade(amc):
     registry = {}

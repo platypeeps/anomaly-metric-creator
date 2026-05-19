@@ -12,17 +12,13 @@ integration test asserts a precise expected set of violations against the
 default output — extra violations are regressions; fewer are progress and
 require updating the constant below.
 """
-import csv
 import json
 import re
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-from conftest import SCRIPT_PATH, run_capture
+from conftest import run_capture
 
 
 # ------------------------------------------------------------------
