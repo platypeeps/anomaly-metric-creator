@@ -45,11 +45,12 @@ Acceptance gates exercised here:
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta
 
 import numpy as np
 import pytest
 
-from conftest import read_component_rows, run_capture
+from conftest import _load_amc, read_component_rows, run_capture
 
 
 # ------------------------------------------------------------------
@@ -87,30 +88,61 @@ def _aligned_columns(out_dir, *pairs):
 
 
 # Anomaly windows that override coupled / saturated llm_analytics cells
-# on the default 1-day seed; excluding them keeps correlations / means
+# (or the upstream apigateway.requests_per_sec used to drive them) on
+# the default 1-day seed. Excluding them keeps correlations / means
 # reflective of the topology coupling, not the scenario overrides.
-# START = 2026-03-10 00:00:00.
 #
-# Same-day llm_analytics scenarios at default --signal-level medium:
-# * vector_search_failover @ 08:00:00 — single-row primaries on
-#   llm_analytics latency / error / token columns.
-# * llm_context_overflow @ 10:30:00 — single-row primaries on
-#   llm_analytics token / latency / error columns.
-# * llm_token_blowup_with_db_pressure @ 11:00:00 — same shape.
-# * llm_throttle_storm @ 14:00:00 — same shape.
-# * llm_quality_dip @ 16:30:00 — single-row primaries.
-# * llm_provider_change_chaos @ 04:00:00 — single-row primaries.
-# Also exclude api_cpu_saturation 19:00-19:08 since the upstream RPS
-# cell is overridden and would distort the upstream-driven correlation.
-_EXCLUSION_WINDOWS = [
-    ("2026-03-10 04:00:00", "2026-03-10 04:01:00"),
-    ("2026-03-10 08:00:00", "2026-03-10 08:01:00"),
-    ("2026-03-10 10:30:00", "2026-03-10 10:31:00"),
-    ("2026-03-10 11:00:00", "2026-03-10 11:01:00"),
-    ("2026-03-10 14:00:00", "2026-03-10 14:01:00"),
-    ("2026-03-10 16:30:00", "2026-03-10 16:31:00"),
-    ("2026-03-10 19:00:00", "2026-03-10 19:08:00"),
-]
+# Derived from the live SCENARIOS catalog so future scenario edits
+# don't silently drift the test: we walk every same-day,
+# non-high-severity scenario and add a window for every primary or
+# cascade spec whose target is either ``apigateway.requests_per_sec``
+# (the upstream of the LLM coupling) or one of the LLM columns the
+# saturation layer rewrites (``input_tokens_per_sec``,
+# ``avg_llm_latency_ms``, ``p95_llm_latency_ms``, ``llm_api_error_rate``).
+# Each window covers ``[time_offset, time_offset + duration_seconds]``
+# padded by ``_EXCLUSION_PAD_SECONDS`` on either side so the single-row
+# cascades that round to the nearest 1s row aren't included in the
+# correlation pool.
+_EXCLUSION_PAD_SECONDS = 30
+
+_LLM_SATURATION_AFFECTED_METRICS = frozenset({
+    "input_tokens_per_sec",
+    "avg_llm_latency_ms",
+    "p95_llm_latency_ms",
+    "llm_api_error_rate",
+})
+
+
+def _compute_llm_exclusion_windows():
+    amc = _load_amc()
+    start = amc.START
+    windows: list[tuple[str, str]] = []
+    for scen in amc.SCENARIOS.values():
+        if scen.days_required > 1 or scen.severity == "high":
+            continue
+        for component, spec in (*scen.primary_specs, *scen.cascade_specs):
+            is_upstream = (
+                component == "apigateway"
+                and spec["metric"] == "requests_per_sec"
+            )
+            is_llm_saturation = (
+                component == "llm_analytics"
+                and spec["metric"] in _LLM_SATURATION_AFFECTED_METRICS
+            )
+            if not (is_upstream or is_llm_saturation):
+                continue
+            duration = spec.get("duration_seconds", 0) or 0
+            t_start = max(0, spec["time_offset"] - _EXCLUSION_PAD_SECONDS)
+            t_end = spec["time_offset"] + duration + _EXCLUSION_PAD_SECONDS
+            windows.append((
+                (start + timedelta(seconds=t_start)).strftime("%Y-%m-%d %H:%M:%S"),
+                (start + timedelta(seconds=t_end)).strftime("%Y-%m-%d %H:%M:%S"),
+            ))
+    windows.sort()
+    return windows
+
+
+_EXCLUSION_WINDOWS = _compute_llm_exclusion_windows()
 
 
 def _exclude_anomaly_rows(ts_list, *arrays):
@@ -544,6 +576,13 @@ def test_llm_scenarios_still_fire_in_realistic_mode(
     ``llm_analytics`` in the SCENARIOS catalog at default
     --signal-level medium / --duration-days 1, so phase-5 coupling
     didn't inadvertently override the anomaly cells.
+
+    On the default 1-day medium catalog today there are no scenarios
+    whose *primary* specs land on ``llm_analytics`` — the only LLM
+    activity in that slice is the ``vectorstore_pressure`` cascades
+    on ``avg_llm_latency_ms`` / ``llm_api_error_rate``. The check
+    therefore considers both primary and cascade specs and asserts
+    the expected set is non-empty so it cannot pass vacuously.
     """
     import csv
     expected_scenario_ids: set[str] = set()
@@ -552,10 +591,15 @@ def test_llm_scenarios_still_fire_in_realistic_mode(
             continue
         if scen.severity == "high":
             continue
-        for comp, _spec in scen.primary_specs:
+        for comp, _spec in (*scen.primary_specs, *scen.cascade_specs):
             if comp == "llm_analytics":
                 expected_scenario_ids.add(scen_id)
                 break
+    assert expected_scenario_ids, (
+        "default 1-day medium catalog has no llm_analytics-touching "
+        "scenarios; this test would pass vacuously — update the filter "
+        "or pick a different acceptance signal"
+    )
     with open(realistic_one_day_llm.out_dir / "anomalies.csv") as f:
         reader = csv.DictReader(f)
         seen_ids = {row["scenario_id"] for row in reader if row["scenario_id"]}

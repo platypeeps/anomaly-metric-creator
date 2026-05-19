@@ -30,9 +30,7 @@ These tests cover:
 """
 from __future__ import annotations
 
-import dataclasses
 import hashlib
-import math
 
 import numpy as np
 import pytest
@@ -301,7 +299,7 @@ def test_compose_saturation_specs_composes_with_existing_multiplier(amc):
         ]
         # Ensure the helper picks the right load metric for "synthup".
         saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
-        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload",)
+        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ())
         try:
             upstream_arrays = {"synthup": {"synthload": load}}
             out = amc._compose_topology_saturation_specs(
@@ -477,6 +475,19 @@ def realistic_one_day_sat(amc, tmp_path_factory):
     )
 
 
+@pytest.fixture(scope="module")
+def independent_one_day_sat(amc, tmp_path_factory):
+    """Module-scoped independent-mode run for the realistic-vs-independent
+    contrast tests. Shared across the latency- and error-elevation
+    parametrizations so we do one ``run_capture`` per mode for this
+    module instead of one per (component, metric) case (Copilot
+    feedback on PR #49)."""
+    out = tmp_path_factory.mktemp("phase4_independent")
+    return run_capture(
+        amc, out, days=1, extra_args=["--topology-mode", "independent"]
+    )
+
+
 @pytest.mark.parametrize(
     "upstream_metric,downstream_metric",
     [
@@ -528,7 +539,8 @@ def test_realistic_latency_correlates_with_upstream_load(
     ],
 )
 def test_realistic_error_rate_mean_elevated_vs_independent(
-    amc, tmp_path, component, natural_base, error_gain
+    independent_one_day_sat, realistic_one_day_sat,
+    component, natural_base, error_gain,
 ):
     """Per-edge ``error_gain`` is small (≤ 0.02) relative to the natural
     noise sigma on the error_rate column (~0.02-0.05), so a row-level
@@ -539,16 +551,12 @@ def test_realistic_error_rate_mean_elevated_vs_independent(
     the order of ``error_gain * 0.5`` (logistic averages roughly 0.5
     around its midpoint), so we accept anything materially above zero.
     """
-    indep = run_capture(
-        amc, tmp_path / f"phase4_err_indep_{component}", days=1,
-        extra_args=["--topology-mode", "independent"],
+    indep_vals, _ = _column_values(
+        independent_one_day_sat.out_dir, component, "error_rate"
     )
-    real = run_capture(
-        amc, tmp_path / f"phase4_err_real_{component}", days=1,
-        extra_args=["--topology-mode", "realistic"],
+    real_vals, _ = _column_values(
+        realistic_one_day_sat.out_dir, component, "error_rate"
     )
-    indep_vals, _ = _column_values(indep.out_dir, component, "error_rate")
-    real_vals, _ = _column_values(real.out_dir, component, "error_rate")
     lift = float(np.mean(real_vals) - np.mean(indep_vals))
     # Allow for noise jitter: the lift floor is a tenth of the error_gain
     # which is well below the analytical expectation but well above zero.
@@ -619,7 +627,7 @@ def test_realistic_latency_never_negative(
     ],
 )
 def test_realistic_latency_mean_elevated_vs_independent(
-    amc, tmp_path, component, metric
+    independent_one_day_sat, realistic_one_day_sat, component, metric,
 ):
     """Under realistic mode the saturation curve must lift the latency
     column's mean above the independent-mode mean. We can't pin the
@@ -630,16 +638,12 @@ def test_realistic_latency_mean_elevated_vs_independent(
     saturation must produce a measurable positive lift that survives
     those baked-in overrides.
     """
-    indep = run_capture(
-        amc, tmp_path / f"phase4_lat_indep_{component}_{metric}",
-        days=1, extra_args=["--topology-mode", "independent"],
+    indep_vals, _ = _column_values(
+        independent_one_day_sat.out_dir, component, metric
     )
-    real = run_capture(
-        amc, tmp_path / f"phase4_lat_real_{component}_{metric}",
-        days=1, extra_args=["--topology-mode", "realistic"],
+    real_vals, _ = _column_values(
+        realistic_one_day_sat.out_dir, component, metric
     )
-    indep_vals, _ = _column_values(indep.out_dir, component, metric)
-    real_vals, _ = _column_values(real.out_dir, component, metric)
     indep_mean = float(np.mean(indep_vals))
     real_mean = float(np.mean(real_vals))
     assert real_mean > indep_mean + 1.0, (

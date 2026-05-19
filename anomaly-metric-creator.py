@@ -275,14 +275,26 @@ class Edge:
     non-negative ``int``/``float`` (``bool`` is rejected); callable
     weights must accept a numpy array and return a numpy array.
 
-    ``saturation`` is optional; when set, the phase-4 saturation
-    feedback layer adds a sigmoid-shaped latency/error contribution to
-    the target component once the source's load metric crosses the
-    configured midpoint.
+    ``signal`` is the per-edge derivation that feeds a callable ``weight``.
+    It receives a ``dict[str, np.ndarray]`` of the upstream component's
+    captured load columns (the canonical metric plus any supplementary
+    metrics declared in ``_TOPOLOGY_LOAD_METRICS``) and returns either an
+    ``np.ndarray`` of per-row signal values (passed verbatim into
+    ``weight(signal)``) or ``None`` to skip the edge entirely (e.g. when
+    ``--metrics-per-component`` has trimmed a required input column).
+    Required iff ``weight`` is callable; must be ``None`` for constant
+    ``weight``. The validator probes the callable with a tiny captured-
+    column dict so a mis-shaped signal fails at import time.
+
+    ``saturation`` is optional; when set, the phase-4 saturation feedback
+    layer adds a sigmoid-shaped latency/error contribution to the target
+    component once the source's load metric crosses the configured
+    midpoint.
     """
     target: str
     weight: float | Callable[[np.ndarray], np.ndarray] = 1.0
     saturation: SaturationParams | None = None
+    signal: Callable[[dict[str, np.ndarray]], "np.ndarray | None"] | None = None
 
 
 # ------------------------------------------------------------------
@@ -546,17 +558,21 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # post-anomaly / post-derivation load-metric columns to downstream
     # components via the ``topology_capture`` dict. Phase 3 extends the
     # capture from a single ``requests_per_sec`` column to all metrics
-    # listed in ``_TOPOLOGY_LOAD_METRICS[component_name]`` so callable
-    # edges (e.g. cacheservice -> database via miss ratio) can read the
-    # full upstream state. Capturing pre-round keeps the signal at full
-    # float precision. ``None`` (the default) short-circuits so callers
-    # in ``--topology-mode independent`` see zero new work.
+    # listed in ``_TOPOLOGY_LOAD_METRICS[component_name]`` (the canonical
+    # load metric plus any supplementary columns) so per-edge ``signal``
+    # callables (e.g. the cacheservice -> database miss-ratio derivation)
+    # can read the full upstream state. Capturing pre-round keeps the
+    # signal at full float precision. ``None`` (the default)
+    # short-circuits so callers in ``--topology-mode independent`` see
+    # zero new work.
     if topology_capture is not None:
-        load_metrics = _TOPOLOGY_LOAD_METRICS.get(component_name, ())
-        if load_metrics:
+        entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
+        if entry is not None:
+            canonical_up, supplementary_up = entry
+            load_metrics = (canonical_up, *supplementary_up)
             captured: dict[str, np.ndarray] = {}
             for lm in load_metrics:
-                if lm in name_to_col:
+                if lm and lm in name_to_col:
                     captured[lm] = values[:, name_to_col[lm]].copy()
             if captured:
                 topology_capture[component_name] = captured
@@ -1568,6 +1584,71 @@ def _component_metric_base(component: str, metric: str) -> float:
     return 0.0
 
 
+# Phase 3 (VER-153): per-component "load metrics" the topology coupling
+# operates on. Each entry maps a component to a
+# ``(canonical, supplementary)`` tuple where:
+#
+# * ``canonical`` is the single MetricSpec.name a constant-weight edge
+#   from this component reads to produce its contribution. Required;
+#   must be a captured MetricSpec on the component.
+# * ``supplementary`` is the (possibly empty) tuple of additional
+#   MetricSpec.name values captured alongside the canonical metric so
+#   ``Edge.signal`` callables on outgoing edges can derive a per-row
+#   scalar from multiple columns (e.g. cacheservice exposes both
+#   ``cache_hits`` and ``cache_misses`` so the cache→database miss-ratio
+#   signal can compute ``misses / (hits + misses)``).
+#
+# Components with a single load metric have ``supplementary = ()``.
+# Constant-weight edges always read ``canonical``; the capture loop
+# captures ``(canonical, *supplementary)`` into ``topology_capture``;
+# ``_compose_topology_coupled_specs`` rewrites both canonical and
+# supplementary metrics on downstream components that have incoming
+# edges. Declared above ``TOPOLOGY`` so ``_validate_topology()`` (which
+# runs at import time) can build a captured-column probe for callable-
+# weight edges' ``signal`` callables.
+_TOPOLOGY_LOAD_METRICS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "loadbalancer": ("requests_per_sec", ()),
+    "apigateway": ("requests_per_sec", ()),
+    "authservice": ("login_attempts", ()),
+    "cacheservice": ("cache_hits", ("cache_misses",)),
+    "database": ("queries_per_sec", ()),
+    # VER-155 phase 5: llm_analytics couples its token throughput to
+    # apigateway under realistic mode. ``input_tokens_per_sec`` is the
+    # canonical "load" metric here because the token budget governs
+    # tokens/second (not requests/second) — pinning the load metric to
+    # tokens also gives the coupling enough signal-to-noise to clear
+    # the >= 0.85 Pearson correlation gate, given the noise floor at
+    # ``_TOPOLOGY_COUPLE_NOISE_STD`` is fixed in absolute units.
+    # No downstream consumes llm_analytics in the v1 graph, so there
+    # are no supplementary columns.
+    "llm_analytics": ("input_tokens_per_sec", ()),
+}
+
+
+def _cache_miss_ratio_signal(
+    cols: dict[str, np.ndarray],
+) -> "np.ndarray | None":
+    """Per-edge ``Edge.signal`` for the ``cacheservice -> database`` edge.
+
+    Receives ``cacheservice``'s captured load columns and returns the
+    per-row cache-miss ratio ``cache_misses / (cache_hits + cache_misses)``
+    (0.0 where the combined total is non-positive). Returns ``None`` when
+    either required column is missing — the composer treats this as
+    "skip this edge" so a ``--metrics-per-component`` selection that
+    trims a required column degrades gracefully instead of raising.
+    """
+    hits = cols.get("cache_hits")
+    misses = cols.get("cache_misses")
+    if hits is None or misses is None:
+        return None
+    total = hits + misses
+    return np.divide(
+        misses, total,
+        out=np.zeros_like(misses, dtype=np.float64),
+        where=total > 0,
+    )
+
+
 TOPOLOGY: dict[str, list[Edge]] = {
     "loadbalancer": [
         # VER-154 phase 4: saturation feedback. ``midpoint`` is the
@@ -1639,18 +1720,22 @@ TOPOLOGY: dict[str, list[Edge]] = {
         ),
     ],
     # Cache miss rate drives extra database load on top of apigateway's
-    # routing fraction. The callable receives the per-row cache-miss
-    # ratio (``cache_misses / (cache_hits + cache_misses)``) and returns
-    # the additive QPS contribution to the database baseline:
-    # ``weight(miss_ratio) = miss_ratio * base_qps``. At the natural
-    # baseline (~4% miss rate, ~25k base QPS) this is ~1000 QPS on top
-    # of the apigateway-driven contribution. ``base_qps`` is resolved
-    # lazily via ``_component_metric_base`` so the lambda always reads
-    # the live ``COMPONENTS`` catalog — matching the constant-weight
-    # path's behavior under monkeypatched / test-injected baselines.
+    # routing fraction. ``signal`` is the module-level
+    # ``_cache_miss_ratio_signal`` which derives the per-row cache-miss
+    # ratio (``cache_misses / (cache_hits + cache_misses)``) from
+    # cacheservice's captured columns; the callable ``weight`` then
+    # maps that ratio onto the additive QPS contribution to the
+    # database baseline: ``weight(miss_ratio) = miss_ratio * base_qps``.
+    # At the natural baseline (~4% miss rate, ~25k base QPS) this is
+    # ~1000 QPS on top of the apigateway-driven contribution.
+    # ``base_qps`` is resolved lazily via ``_component_metric_base`` so
+    # the lambda always reads the live ``COMPONENTS`` catalog — matching
+    # the constant-weight path's behavior under monkeypatched / test-
+    # injected baselines.
     "cacheservice": [
         Edge(
             target="database",
+            signal=_cache_miss_ratio_signal,
             weight=lambda miss_ratio: (
                 np.asarray(miss_ratio, dtype=np.float64)
                 * _component_metric_base("database", "queries_per_sec")
@@ -1680,10 +1765,13 @@ def _validate_saturation_params(sat: SaturationParams, *, context: str) -> None:
       ``int``/``float``. Zero collapses the logistic to a constant
       0.5; negative inverts the curve.
     - ``latency_gain`` / ``error_gain`` — must be finite non-negative
-      non-``bool`` ``int``/``float``. Negative gains would make
-      ``latency_multiplier < 1`` (violating the "latency multiplier
-      never negative" acceptance test once a multiplier-of-multipliers
-      flips sign) or push the error offset below zero.
+      non-``bool`` ``int``/``float``. The saturation curve models
+      load-driven *degradation*: a positive gain raises latency and
+      error rate as upstream load climbs. Negative gains would invert
+      that physics (saturation reducing latency / pushing
+      ``error_offset`` below zero) and, when multiplied across two
+      saturating edges into the same downstream, could flip
+      ``latency_multiplier`` past zero into negative latency.
     """
     def _check(name: str, value, *, positive: bool) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -1782,6 +1870,59 @@ def _validate_topology() -> None:
                         f"{type(result).__name__}; callable weights must "
                         f"return a numpy array."
                     )
+                # Callable weights require a per-edge signal: the composer
+                # feeds ``edge.signal(upstream_cols)``'s return value
+                # straight into ``edge.weight(signal)``. Without a signal
+                # the composer has no per-row input and would silently
+                # skip the edge — exactly the soft footgun this refactor
+                # is removing.
+                if edge.signal is None:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} has "
+                        f"callable weight but signal=None; callable "
+                        f"weights require a per-edge signal callable."
+                    )
+                if not callable(edge.signal):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} signal="
+                        f"{edge.signal!r} must be callable; got "
+                        f"{type(edge.signal).__name__}."
+                    )
+                ups_entry = _TOPOLOGY_LOAD_METRICS.get(source)
+                if ups_entry is None:
+                    probe_cols: dict[str, np.ndarray] = {}
+                else:
+                    canonical_src, supplementary_src = ups_entry
+                    # Distinct array per key: real captured columns are
+                    # always per-column buffers, and a future signal that
+                    # mutates an input in-place (e.g. via ``out=``) must
+                    # not silently alias other "columns" in the probe.
+                    probe_template = np.array(
+                        [0.0, 0.5, 1.0], dtype=np.float64
+                    )
+                    probe_cols = {
+                        name: probe_template.copy()
+                        for name in (canonical_src, *supplementary_src)
+                        if name
+                    }
+                try:
+                    sig_result = edge.signal(probe_cols)
+                except Exception as exc:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} signal "
+                        f"{edge.signal!r} raised {exc!r} when called with "
+                        f"the upstream's captured-column probe; signal "
+                        f"callables must accept a dict[str, np.ndarray] "
+                        f"and return np.ndarray or None."
+                    ) from exc
+                if sig_result is not None and not isinstance(
+                    sig_result, np.ndarray
+                ):
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} signal "
+                        f"returned {type(sig_result).__name__}; signal "
+                        f"callables must return np.ndarray or None."
+                    )
             else:
                 # Constant weight: must be a finite, non-negative scalar.
                 # ``bool`` is a subclass of ``int`` so ``isinstance(True,
@@ -1804,6 +1945,17 @@ def _validate_topology() -> None:
                     raise ValueError(
                         f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
                         f"{edge.weight!r} must be non-negative."
+                    )
+                # Constant weight: signal is meaningless because the
+                # composer never reads it. Reject up-front so an edge
+                # author cannot stash a stale signal on a constant edge
+                # and assume it will fire.
+                if edge.signal is not None:
+                    raise ValueError(
+                        f"TOPOLOGY[{source!r}] -> {edge.target!r} has "
+                        f"constant weight={edge.weight!r} but signal is "
+                        f"set; signal is only valid with a callable "
+                        f"weight."
                     )
 
     # Cycle detection (VER-153 phase 3): the two-pass realistic-mode
@@ -1841,62 +1993,6 @@ _validate_topology()
 # acceptance thresholds while the column still looks like a noisy signal
 # rather than a perfect copy of the upstream.
 _TOPOLOGY_COUPLE_NOISE_STD = 5.0
-
-
-# Phase 3 (VER-153): per-component "load metrics" the topology coupling
-# operates on. Each entry maps a component to the ordered tuple of
-# MetricSpec.name values that (a) get rewritten under
-# ``--topology-mode realistic`` when the component has incoming edges,
-# and (b) get captured into ``topology_capture`` so downstream consumers
-# can read the upstream's column. The first entry is the canonical load
-# metric used by constant-weight edges from this component; later
-# entries (cacheservice's ``cache_hits`` + ``cache_misses``) are
-# supplementary signals the callable-weight handler needs.
-_TOPOLOGY_LOAD_METRICS: dict[str, tuple[str, ...]] = {
-    "loadbalancer": ("requests_per_sec",),
-    "apigateway": ("requests_per_sec",),
-    "authservice": ("login_attempts",),
-    "cacheservice": ("cache_hits", "cache_misses"),
-    "database": ("queries_per_sec",),
-    # VER-155 phase 5: llm_analytics couples its token throughput to
-    # apigateway under realistic mode. ``input_tokens_per_sec`` is the
-    # canonical "load" metric here because the token budget governs
-    # tokens/second (not requests/second) — pinning the load metric to
-    # tokens also gives the coupling enough signal-to-noise to clear
-    # the >= 0.85 Pearson correlation gate, given the noise floor at
-    # ``_TOPOLOGY_COUPLE_NOISE_STD`` is fixed in absolute units.
-    # No downstream consumes llm_analytics in the v1 graph.
-    "llm_analytics": ("input_tokens_per_sec",),
-}
-
-
-def _topology_callable_signal(
-    upstream: str,
-    downstream: str,
-    upstream_arrays: dict[str, dict[str, np.ndarray]],
-) -> np.ndarray | None:
-    """Derive the per-row scalar signal that a callable-weight edge consumes.
-
-    For the ``cacheservice -> database`` edge the signal is the per-row
-    cache-miss ratio ``cache_misses / (cache_hits + cache_misses)`` (0
-    when both columns are zero). Returns ``None`` when the upstream's
-    captured columns are missing — the caller treats this as "skip this
-    edge" so a ``--metrics-per-component`` selection that trims away a
-    required column degrades gracefully instead of raising.
-    """
-    cols = upstream_arrays.get(upstream, {})
-    if (upstream, downstream) == ("cacheservice", "database"):
-        hits = cols.get("cache_hits")
-        misses = cols.get("cache_misses")
-        if hits is None or misses is None:
-            return None
-        total = hits + misses
-        return np.divide(
-            misses, total,
-            out=np.zeros_like(misses, dtype=np.float64),
-            where=total > 0,
-        )
-    return None
 
 
 def _topology_generation_order(active_components: set[str]) -> list[str]:
@@ -1978,11 +2074,15 @@ def _compose_topology_coupled_specs(
       active; pin a full ``--components all`` baseline when comparing
       coupling magnitudes across runs.
     * Callable-weight edges call ``edge.weight(signal)`` with a per-row
-      scalar signal derived from the upstream's captured columns (see
-      ``_topology_callable_signal``). The return value is added to the
-      downstream baseline directly (in downstream-metric units) — e.g.
-      the ``cacheservice -> database`` callable returns the per-row
-      cache-miss QPS contribution.
+      scalar signal derived from the upstream's captured columns by
+      ``edge.signal(upstream_cols)``. The signal callable is paired
+      with the callable weight on the same ``Edge`` (the import-time
+      validator enforces the pairing); ``signal`` returning ``None``
+      means "skip this edge" (e.g. a ``--metrics-per-component``
+      selection trimmed a required input column). The weight's return
+      value is added to the downstream baseline directly (in
+      downstream-metric units) — e.g. the ``cacheservice -> database``
+      callable returns the per-row cache-miss QPS contribution.
 
     When neither path delivers any signal (no upstream captured, all
     constant weights are zero, callable signal absent) the spec list is
@@ -1995,9 +2095,11 @@ def _compose_topology_coupled_specs(
     and ``additive`` change so the coupled column writes the baked
     coupled column verbatim.
     """
-    coupled_metric_names = _TOPOLOGY_LOAD_METRICS.get(component_name, ())
-    if not coupled_metric_names:
+    coupled_entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
+    if coupled_entry is None:
         return specs
+    canonical_down, supplementary_down = coupled_entry
+    coupled_metric_names = (canonical_down, *supplementary_down)
     name_to_idx = {s.name: i for i, s in enumerate(specs)}
     if not any(m in name_to_idx for m in coupled_metric_names):
         return specs
@@ -2036,13 +2138,16 @@ def _compose_topology_coupled_specs(
             if w == 0.0:
                 continue
             ups_cols = upstream_arrays.get(upstream, {})
-            upstream_metrics = _TOPOLOGY_LOAD_METRICS.get(upstream, ())
-            for lm in upstream_metrics:
-                if lm in ups_cols:
-                    ups_base = _component_metric_base(upstream, lm)
-                    if ups_base > 0:
-                        active_constant.append((ups_cols[lm], ups_base, w))
-                    break
+            ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
+            if ups_entry is None:
+                continue
+            ups_canonical, _ = ups_entry
+            if ups_canonical and ups_canonical in ups_cols:
+                ups_base = _component_metric_base(upstream, ups_canonical)
+                if ups_base > 0:
+                    active_constant.append(
+                        (ups_cols[ups_canonical], ups_base, w)
+                    )
 
         # Second pass: build the callable contributions. Track whether any
         # callable signal was successfully evaluated separately from the
@@ -2055,9 +2160,15 @@ def _compose_topology_coupled_specs(
         for upstream, edge in incoming:
             if not callable(edge.weight):
                 continue
-            signal = _topology_callable_signal(
-                upstream, component_name, upstream_arrays
-            )
+            if edge.signal is None:
+                # Defence-in-depth: the validator rejects callable-weight
+                # edges without ``signal`` at import-time. A missing
+                # ``signal`` here means a future contributor bypassed the
+                # validator (e.g. via a monkeypatched TOPOLOGY in a test);
+                # skip the edge rather than crashing the generator.
+                continue
+            ups_cols = upstream_arrays.get(upstream, {})
+            signal = edge.signal(ups_cols)
             if signal is None:
                 continue
             callable_contrib = callable_contrib + np.asarray(
@@ -2239,16 +2350,20 @@ def _compose_topology_saturation_specs(
             sat = edge.saturation
             if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
                 continue  # structurally-declared but inert edge.
+            ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
+            if ups_entry is None:
+                continue
+            ups_canonical, ups_supplementary = ups_entry
             driver = None
-            for lm in _TOPOLOGY_LOAD_METRICS.get(upstream, ()):
+            for lm in (ups_canonical, *ups_supplementary):
                 if lm in ups_cols:
                     driver = ups_cols[lm]
                     break
             if driver is None or driver.shape[0] != n_rows:
                 continue
             lat_mult, err_off = _apply_saturation(driver, sat)
-            latency_factor = latency_factor * lat_mult
-            error_offset = error_offset + err_off
+            latency_factor *= lat_mult
+            error_offset += err_off
             any_active = True
 
     if not any_active:
