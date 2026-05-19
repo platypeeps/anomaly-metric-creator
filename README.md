@@ -474,42 +474,6 @@ metric cap below a component's default count will filter out anomalies whose tar
 metric is no longer emitted — they simply will not appear in `anomalies.csv` or any
 reporting artifact for that run.
 
-### Generator pipeline
-
-`main()` at `anomaly-metric-creator.py:6305` has three top-level branches: `--combine-only` and `--validate-output` short-circuit early; the default path runs the full generation pipeline. The diagram below traces the default path; alternate entry branches are shown at the top.
-
-```mermaid
-flowchart TD
-    cli[CLI: parse_args]
-    cli --> mode{Mode?}
-    mode -->|--combine-only| combineOnly["combine_logs<br/>→ combined_metrics_unified.csv"]
-    mode -->|--validate-output PATH| validate["validate_output<br/>→ stderr violations / exit code"]
-    mode -->|default| preclean[_pre_clean_output_dir]
-
-    preclean --> ctx["RunContext(rng = np.random.RandomState(seed))"]
-    ctx --> resolve["_resolve_scenarios<br/>allowlist → exclude → severity → duration → components"]
-    resolve --> apply["_apply_scenarios<br/>→ component_anomalies, cascading_anomalies"]
-    apply --> specs["_resolve_effective_specs<br/>(--metrics-per-component trim)"]
-    specs --> filter[_filter_anomalies_for_emitted_metrics]
-    filter --> cap["_apply_signal_level_and_count<br/>(--signal-level, --anomaly-count)"]
-    cap --> ts[_build_timestamp_arrays]
-    ts --> order{--topology-mode}
-    order -->|independent| indep[COMPONENTS insertion order]
-    order -->|realistic| topo["topological order +<br/>_compose_topology_coupled_specs"]
-    indep --> gen
-    topo --> gen
-    gen["generate_component (per component)<br/>natural → anomaly override → derivation<br/>→ row capture → round → drop mask → format"]
-    gen --> emit{emit_selection / flags}
-    emit --> csvs[per-component CSVs]
-    emit --> anom[anomalies.csv]
-    emit --> rpt["metric_report.log<br/>metric_traces.jsonl"]
-    emit --> gauges["gauges.csv<br/>(opt-in: 'gauges' in --emit-selection)"]
-    emit --> schema["schema.json<br/>(opt-in: 'schema' in --emit-selection)"]
-    emit --> otelA["stream_otel_signals<br/>(opt-in: --otel-enabled)"]
-    emit --> otelG["stream_otel_gauges<br/>(opt-in: --otel-emit-gauges)"]
-    emit --> combined["combined_metrics_unified.csv<br/>(opt-in: --combine)"]
-```
-
 ### Topology graph (v1)
 
 The `TOPOLOGY` constant declares the directed service-call graph alongside
@@ -574,49 +538,13 @@ latency-gain / error-gain values).
 
 ## Application flow
 
-End-to-end execution of `main(argv=None)` in `anomaly-metric-creator.py`.
-The script has three top-level modes — `--combine-only` (rebuild the
-unified CSV from existing per-component CSVs), `--validate-output PATH`
-(load `PATH/schema.json` and run every validator against the artifacts
-on disk), and the default generation pipeline.
-
-```mermaid
-flowchart TD
-    start(["python anomaly-metric-creator.py …"]) --> parse["parse_args"]
-    parse --> mode{"mode?"}
-
-    mode -- "--combine-only" --> combineonly["combine_logs<br/>(reads existing per-component CSVs)<br/>→ combined_metrics_unified.csv"]
-    combineonly --> finish([exit])
-
-    mode -- "--validate-output PATH" --> validate["validate_output<br/>(load schema.json,<br/>run required/no-unknown/sorted/<br/>row-count/timestamp/cell/derivation checks)"]
-    validate -- "no violations" --> finish
-    validate -- "violations + --validate-warn" --> finish
-    validate -- "violations (default)" --> failexit([exit 1])
-
-    mode -- "default: generate" --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit-selection / --components / --combine)"]
-    preclean --> ctx["RunContext(rng=np.random.RandomState(--seed))"]
-    ctx --> resolve["_resolve_scenarios<br/>--scenarios → --exclude-scenarios<br/>→ --signal-level → --duration-days<br/>→ --components"]
-    resolve --> apply["_apply_scenarios<br/>build component_anomalies +<br/>cascading_anomalies from registry"]
-    apply --> specs["_resolve_effective_specs (--metrics-per-component)<br/>+ _filter_anomalies_for_emitted_metrics"]
-    specs --> cap["_apply_signal_level_and_count<br/>(severity filter + --anomaly-count sampling)"]
-    cap --> ts["_build_timestamp_arrays(total_seconds,<br/>--interval-seconds)"]
-
-    ts --> torder{"--topology-mode?"}
-    torder -- "independent (default)" --> indorder["walk components in<br/>COMPONENTS insertion order<br/>(no coupling — byte-identical<br/>to pre-VER-152 output)"]
-    torder -- "realistic" --> realorder["_topology_generation_order<br/>(Kahn's algorithm, topological order)<br/>+ _compose_topology_coupled_specs<br/>+ _compose_topology_saturation_specs"]
-
-    indorder --> gen["for each component:<br/>generate_component<br/>natural → anomaly overrides →<br/>derivations → capture →<br/>round → drop → write {component}.csv"]
-    realorder --> gen
-
-    gen --> anomcsv["sort filtered_anomalies +<br/>write anomalies.csv<br/>(when 'metrics' in --emit-selection)"]
-    anomcsv --> reports["write_reporting_artifacts<br/>→ metric_report.log, metric_traces.jsonl<br/>(when 'logs'/'traces' in --emit-selection)"]
-    reports --> gauges["write_gauges_csv<br/>→ gauges.csv<br/>(when 'gauges' in --emit-selection)"]
-    gauges --> schema["write_schema_json<br/>→ schema.json<br/>(when 'schema' in --emit-selection)"]
-    schema --> otel["stream_otel_signals +<br/>stream_otel_gauges<br/>(when --otel-enabled)"]
-    otel --> combine["combine_logs<br/>→ combined_metrics_unified.csv<br/>(when --combine)"]
-    combine --> summary["print 'Done -' summary line<br/>(only names artifacts actually written)"]
-    summary --> finish
-```
+End-to-end execution of `main(argv=None)` covers three top-level modes:
+`--combine-only` (rebuild the unified CSV from existing per-component
+CSVs), `--validate-output PATH` (load `PATH/schema.json` and run every
+validator against the artifacts on disk), and the default generation
+pipeline. See [docs/application-flow.md](docs/application-flow.md) for a
+rendered mermaid diagram of the full pipeline and the emit-selection /
+validator gating notes.
 
 Notes:
 
