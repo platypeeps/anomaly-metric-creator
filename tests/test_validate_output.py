@@ -726,9 +726,10 @@ def test_topology_coupling_per_edge_threshold_override(amc, tmp_path,
                                                        monkeypatch):
     """``Edge.correlation_threshold`` overrides
     ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD`` per edge. Setting a
-    threshold > 1.0 on a real edge (via monkeypatched TOPOLOGY) must
-    flag the otherwise-passing coupling because no realized
-    correlation can clear it."""
+    threshold near 1.0 (the upper bound of the valid ``(-1, 1]``
+    range) on a real edge via a monkeypatched TOPOLOGY must flag the
+    otherwise-passing coupling because the realized ~0.99 correlation
+    cannot clear a 0.9999 gate."""
     out = tmp_path / "override"
     run_capture(
         amc, out, days=1,
@@ -832,6 +833,116 @@ def test_anomaly_exclusion_windows_use_span_columns(
         f"anomaly manifest; got durations: "
         f"{[d.total_seconds() for d, _, _ in spans]}"
     )
+
+
+def test_topology_coupling_malformed_edge_entries_report_violations(
+    amc, schema_run,
+):
+    """A hand-edited ``schema.json`` with malformed topology entries
+    must not crash the validator with a ``KeyError``. Each malformed
+    shape — non-dict edge entry, missing/non-string ``target``,
+    missing ``weight``, non-numeric / non-callable ``weight`` — must
+    instead surface as a dedicated violation message naming the
+    offending edge."""
+    schema = _load_schema(schema_run)
+    # Build a deliberately broken topology block with four common
+    # hand-edit mistakes. The validator must report each one as a
+    # violation rather than raise.
+    schema["topology"] = {
+        "apigateway": [
+            "not-a-dict",                           # non-dict entry
+            {"weight": 0.5},                        # missing target
+            {"target": "cacheservice"},             # missing weight
+            {"target": "database", "weight": "x"},  # bogus weight
+        ],
+    }
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any("malformed" in v and "expected dict" in v for v in violations), (
+        f"expected non-dict edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+    assert any(
+        "missing or invalid 'target'" in v for v in violations
+    ), (
+        f"expected missing-target edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+    assert any("missing 'weight'" in v for v in violations), (
+        f"expected missing-weight edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+    assert any(
+        "must be a number or the literal \"callable\"" in v
+        for v in violations
+    ), (
+        f"expected bogus-weight edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+
+
+def test_topology_coupling_malformed_edge_list_reports_violation(
+    amc, schema_run,
+):
+    """A schema whose topology source maps to a non-list value (e.g. a
+    dict from a partial serializer) must surface as a single
+    violation rather than crash."""
+    schema = _load_schema(schema_run)
+    schema["topology"] = {"apigateway": {"target": "cacheservice"}}
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "apigateway: edge list malformed" in v for v in violations
+    ), (
+        f"expected non-list edge container to surface as a violation; "
+        f"got: {violations}"
+    )
+
+
+def test_compute_anomaly_keep_mask_matches_legacy_behavior(amc):
+    """The vectorized ``_compute_anomaly_keep_mask`` must produce the
+    same row-keep decisions as the original nested-loop implementation
+    on representative inputs: empty windows, isolated windows,
+    overlapping windows, and timestamps falling on the boundary."""
+    import datetime
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    timestamps = [
+        base + datetime.timedelta(seconds=i) for i in range(0, 60, 5)
+    ]
+    # Two overlapping windows merged into one effective range [10s, 25s]
+    # plus one isolated window covering exactly the 40s row.
+    windows = [
+        (base + datetime.timedelta(seconds=10),
+         base + datetime.timedelta(seconds=20)),
+        (base + datetime.timedelta(seconds=15),
+         base + datetime.timedelta(seconds=25)),
+        (base + datetime.timedelta(seconds=40),
+         base + datetime.timedelta(seconds=40)),
+    ]
+    mask = amc._compute_anomaly_keep_mask(timestamps, windows)
+    # Expected: 0,5 keep; 10,15,20,25 drop; 30,35 keep; 40 drop; 45,50,55 keep.
+    expected = [True, True, False, False, False, False,
+                True, True, False, True, True, True]
+    assert list(mask) == expected, (
+        f"keep mask differs from expected nested-loop semantics: "
+        f"got {list(mask)}, want {expected}"
+    )
+
+
+def test_compute_anomaly_keep_mask_empty_inputs(amc):
+    """Empty windows and empty timestamps degenerate cleanly: no rows
+    excluded and an empty mask, respectively."""
+    import datetime
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    ts = [base + datetime.timedelta(seconds=i) for i in range(5)]
+    mask_no_windows = amc._compute_anomaly_keep_mask(ts, [])
+    assert list(mask_no_windows) == [True] * 5
+    mask_no_timestamps = amc._compute_anomaly_keep_mask(
+        [], [(base, base + datetime.timedelta(seconds=1))]
+    )
+    assert list(mask_no_timestamps) == []
 
 
 def test_filter_windows_for_pair_keeps_only_relevant(amc):

@@ -384,25 +384,32 @@ def test_schema_records_topology_mode_independent(amc, tmp_path):
 
 def test_schema_has_topology_block(one_day_schema_run):
     """The top-level ``topology`` block is the directed coupling graph
-    snapshot the validator's ``_validate_topology_coupling`` consumes."""
+    snapshot the validator's ``_validate_topology_coupling`` consumes.
+
+    The default 1-day run covers every component, so the snapshot must
+    contain *exactly* the live ``TOPOLOGY`` source set — both missing
+    and unknown keys are regressions. Asserting set equality catches
+    the case where the serializer silently drops a real source (e.g.
+    ``apigateway`` or ``cacheservice``) which a looser subset check
+    would let through."""
     doc = _load_schema(one_day_schema_run.out_dir)
     assert "topology" in doc, (
         "VER-157 phase 7 adds a top-level 'topology' section to schema.json"
     )
     topology = doc["topology"]
     assert isinstance(topology, dict)
-    # The default 1-day run covers every component, so every TOPOLOGY
-    # source should be present in the snapshot.
-    assert set(topology.keys()).issubset({"loadbalancer", "apigateway",
-                                          "cacheservice"})
-    assert "loadbalancer" in topology
+    assert set(topology.keys()) == {
+        "loadbalancer", "apigateway", "cacheservice",
+    }
 
 
 def test_schema_topology_edge_shape(one_day_schema_run):
     """Each edge entry carries exactly ``target``, ``weight``,
-    ``saturation``. Callable weights serialize as the literal string
-    ``"callable"``; ``saturation`` is either ``None`` or the four
-    ``SaturationParams`` fields."""
+    ``saturation``, and ``correlation_threshold``. Callable weights
+    serialize as the literal string ``"callable"``; ``saturation`` is
+    either ``None`` or the four ``SaturationParams`` fields;
+    ``correlation_threshold`` is either ``None`` (fall back to the
+    module default) or a float in ``(-1, 1]``."""
     doc = _load_schema(one_day_schema_run.out_dir)
     topology = doc["topology"]
 

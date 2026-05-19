@@ -6533,7 +6533,7 @@ def write_schema_json(
     """Write a declarative ``schema.json`` describing the current run's artifacts.
 
     The document is the single source of truth ``--validate-output`` consumes
-    to check the run after the fact. It captures four slices of information:
+    to check the run after the fact. It captures five slices of information:
 
     - ``schema_version`` — integer schema-document version (see
       ``SCHEMA_DOCUMENT_VERSION``).
@@ -6548,11 +6548,15 @@ def write_schema_json(
       write, so the validator can flag missing or extra files.
     - ``topology`` (VER-157 phase 7) — the directed coupling graph
       restricted to the active component set: ``{source:
-      [{target, weight, saturation}, ...]}``. Callable weights serialize
-      as the literal string ``"callable"``; ``saturation`` is either a
+      [{target, weight, saturation, correlation_threshold}, ...]}``.
+      Callable weights serialize as the literal string ``"callable"``;
+      ``saturation`` is either a
       ``{midpoint, steepness, latency_gain, error_gain}`` dict or
-      ``null``. The validator reads this to run
-      ``_validate_topology_coupling`` under ``--topology-mode realistic``.
+      ``null``; ``correlation_threshold`` is either a float in
+      ``(-1, 1]`` (per-edge override) or ``null`` (fall back to
+      ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD``). The validator reads
+      this to run ``_validate_topology_coupling`` under
+      ``--topology-mode realistic``.
 
     The output is byte-deterministic: ``json.dumps`` with ``sort_keys=True``,
     fixed indent, ``ensure_ascii=False``, and a trailing newline. The
@@ -7139,20 +7143,64 @@ def _filter_windows_for_pair(
     ]
 
 
+def _compute_anomaly_keep_mask(
+    timestamps: list[datetime.datetime],
+    windows: list[tuple[datetime.datetime, datetime.datetime]],
+) -> np.ndarray:
+    """Build a boolean ``keep`` mask flagging rows outside every window.
+
+    ``True`` at position ``i`` means ``timestamps[i]`` falls in *no*
+    exclusion window. ``False`` means at least one window covers it.
+
+    Runs in ``O(N + W log W)`` time: windows are sorted by start and
+    overlapping windows are merged into disjoint intervals; a single
+    forward sweep over ``timestamps`` (which the validator passes in
+    chronological row-emission order) advances an index over the
+    merged intervals so each timestamp checks at most one interval.
+    This replaces the previous ``O(N * W)`` nested-loop check; on a
+    7-day run (~604,800 rows) with ~30 exclusion windows per pair,
+    the cost drops from ~18M comparisons to ~604,800 across all pairs.
+    """
+    n = len(timestamps)
+    keep = np.ones(n, dtype=bool)
+    if not windows or n == 0:
+        return keep
+    sorted_windows = sorted(windows)
+    merged: list[tuple[datetime.datetime, datetime.datetime]] = []
+    for w_start, w_end in sorted_windows:
+        if merged and w_start <= merged[-1][1]:
+            prev_start, prev_end = merged[-1]
+            merged[-1] = (prev_start, max(prev_end, w_end))
+        else:
+            merged.append((w_start, w_end))
+    w_idx = 0
+    w_count = len(merged)
+    for i, ts in enumerate(timestamps):
+        while w_idx < w_count and merged[w_idx][1] < ts:
+            w_idx += 1
+        if w_idx == w_count:
+            break
+        if merged[w_idx][0] <= ts:
+            keep[i] = False
+    return keep
+
+
 def _apply_anomaly_exclusion(
     timestamps: list[datetime.datetime],
     values: np.ndarray,
     windows: list[tuple[datetime.datetime, datetime.datetime]],
 ) -> np.ndarray:
-    """Drop rows whose timestamp falls in any anomaly exclusion window."""
+    """Drop rows whose timestamp falls in any anomaly exclusion window.
+
+    Thin wrapper around ``_compute_anomaly_keep_mask`` retained as the
+    single-array entry point; callers that need to filter two arrays
+    aligned on the same timestamps (e.g. source/target in
+    ``_validate_topology_coupling``) should compute the mask once via
+    ``_compute_anomaly_keep_mask`` and index both arrays directly.
+    """
     if not windows:
         return values
-    keep = np.ones(len(timestamps), dtype=bool)
-    for i, ts in enumerate(timestamps):
-        for w_start, w_end in windows:
-            if w_start <= ts <= w_end:
-                keep[i] = False
-                break
+    keep = _compute_anomaly_keep_mask(timestamps, windows)
     return values[keep]
 
 
@@ -7187,6 +7235,14 @@ def _validate_topology_coupling(
     realized Pearson correlation falls below the per-edge threshold
     (``Edge.correlation_threshold`` on the live ``TOPOLOGY``, falling
     back to ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD``).
+
+    Malformed schema entries — a non-``list`` edge container, a
+    non-``dict`` edge entry, a missing/non-string ``target``, a
+    missing ``weight`` field, or a ``weight`` that is neither numeric
+    nor the literal string ``"callable"`` — surface as dedicated
+    violation messages rather than crashing the validator. A
+    hand-edited or older ``schema.json`` therefore degrades to a
+    clear report instead of a ``KeyError`` traceback.
     """
     if schema["metadata"].get("topology_mode") != "realistic":
         return []
@@ -7209,6 +7265,14 @@ def _validate_topology_coupling(
             # mean a schema doc that names a source the current build
             # doesn't recognize, which is a separate concern.
             continue
+        source_edges = topology.get(source)
+        if not isinstance(source_edges, list):
+            violations.append(
+                f"topology coupling {source}: edge list malformed in "
+                f"schema.json (expected list, got "
+                f"{type(source_edges).__name__})"
+            )
+            continue
         source_canonical = source_entry[0]
         source_data = _read_component_metric_column(
             output_dir / f"{source}.csv", source_canonical
@@ -7223,10 +7287,38 @@ def _validate_topology_coupling(
         # each target side to keep this O(N) rather than O(N^2).
         source_map = {ts: v for ts, v in zip(source_ts, source_vals)}
 
-        for edge_entry in topology[source]:
-            target = edge_entry["target"]
+        for edge_entry in source_edges:
+            if not isinstance(edge_entry, dict):
+                violations.append(
+                    f"topology coupling {source}: edge entry malformed "
+                    f"in schema.json (expected dict, got "
+                    f"{type(edge_entry).__name__})"
+                )
+                continue
+            target = edge_entry.get("target")
+            if not isinstance(target, str) or not target:
+                violations.append(
+                    f"topology coupling {source}: edge entry missing or "
+                    f"invalid 'target' in schema.json (got {target!r})"
+                )
+                continue
+            if "weight" not in edge_entry:
+                violations.append(
+                    f"topology coupling {source}->{target}: edge entry "
+                    f"missing 'weight' in schema.json"
+                )
+                continue
             weight = edge_entry["weight"]
             if weight == "callable":
+                continue
+            if not isinstance(weight, (int, float)) or isinstance(
+                weight, bool
+            ):
+                violations.append(
+                    f"topology coupling {source}->{target}: edge weight "
+                    f"in schema.json must be a number or the literal "
+                    f"\"callable\" (got {weight!r})"
+                )
                 continue
             target_entry = _TOPOLOGY_LOAD_METRICS.get(target)
             if target_entry is None:
@@ -7263,12 +7355,19 @@ def _validate_topology_coupling(
                 source, source_canonical,
                 target, target_canonical,
             )
-            source_kept = _apply_anomaly_exclusion(
-                common_ts, source_arr, pair_windows
-            )
-            target_kept = _apply_anomaly_exclusion(
-                common_ts, target_arr, pair_windows
-            )
+            # Source and target share ``common_ts`` and ``pair_windows``,
+            # so compute the keep mask once and apply it to both arrays.
+            # This halves the exclusion cost per edge and keeps the
+            # validator's hot path linear in the number of rows.
+            if pair_windows:
+                keep_mask = _compute_anomaly_keep_mask(
+                    common_ts, pair_windows
+                )
+                source_kept = source_arr[keep_mask]
+                target_kept = target_arr[keep_mask]
+            else:
+                source_kept = source_arr
+                target_kept = target_arr
             if len(source_kept) < 100:
                 continue
             # Pearson is undefined when either side is constant
