@@ -615,14 +615,17 @@ def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
     canonical load metric set to a single constant — must be flagged
     as a coupling violation (zero-variance branch).
 
-    Uses the 1s default interval so we have enough rows for a
-    meaningful correlation even before exclusion."""
+    60s interval gives 1,440 rows over one day — well above the
+    100-row correlation floor and dense enough to drive the
+    zero-variance branch deterministically — while keeping the
+    end-to-end run cheap."""
     out = tmp_path / "bad_coupling"
     run_capture(
         amc, out, days=1,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "loadbalancer,apigateway",
+            "--interval-seconds", "60",
         ],
     )
     csv_path = out / "apigateway.csv"
@@ -754,9 +757,17 @@ def test_topology_coupling_skips_callable_weight_edges(amc, tmp_path):
     coupling check silent on this edge (any flag would come from the
     apigateway -> database edge instead, which we leave clean here)."""
     out = tmp_path / "callable_skip"
+    # Narrowed to the source/target of the callable edge under test
+    # plus apigateway (its upstream contribution to database is still
+    # required so the realistic-mode generator can compose the
+    # database load column). 60s interval keeps the run short.
     run_capture(
         amc, out, days=1,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "apigateway,cacheservice,database",
+            "--interval-seconds", "60",
+        ],
     )
     # Read schema and confirm the callable edge is declared.
     schema = _load_schema(out)
@@ -797,13 +808,18 @@ def test_topology_coupling_per_edge_threshold_override(amc, tmp_path,
     threshold near 1.0 (the upper bound of the valid ``(-1, 1]``
     range) on a real edge via a monkeypatched TOPOLOGY must flag the
     otherwise-passing coupling because the realized ~0.99 correlation
-    cannot clear a 0.9999 gate."""
+    cannot clear a 0.9999 gate.
+
+    60s interval gives 1,440 rows over one day — well above the
+    100-row correlation floor — so the override threshold still
+    fails the gate at a fraction of the all-rows cost."""
     out = tmp_path / "override"
     run_capture(
         amc, out, days=1,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "loadbalancer,apigateway",
+            "--interval-seconds", "60",
         ],
     )
     # Build a TOPOLOGY clone with a 0.999 threshold on the
@@ -838,13 +854,18 @@ def test_topology_coupling_per_edge_threshold_override(amc, tmp_path,
 def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
     """End-to-end CLI: mutate the downstream so it decouples from
     upstream, then run ``--validate-output`` and confirm a non-zero
-    exit and a violation line in stderr naming the broken edge."""
+    exit and a violation line in stderr naming the broken edge.
+
+    60s interval keeps the end-to-end run cheap — the coupling
+    check needs only 100 aligned rows and a 1d/60s run gives
+    1,440."""
     out = tmp_path / "cli_broken_coupling"
     run_capture(
         amc, out, days=1,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "loadbalancer,apigateway",
+            "--interval-seconds", "60",
         ],
     )
     csv_path = out / "apigateway.csv"
@@ -900,6 +921,48 @@ def test_anomaly_exclusion_windows_use_span_columns(
         f"expected at least one multi-minute span in the default "
         f"anomaly manifest; got durations: "
         f"{[d.total_seconds() for d, _, _ in spans]}"
+    )
+
+
+def test_topology_coupling_skips_zero_weight_edges(amc, schema_run):
+    """``_validate_topology()`` accepts ``weight == 0`` as a
+    saturation-only placeholder that contributes no load to the
+    downstream baseline; ``_compose_topology_coupled_specs`` skips
+    it for the same reason. The coupling check must follow that
+    contract — mutate a real edge's weight to ``0`` in the schema
+    and confirm no correlation violation fires on the otherwise
+    decoupled column. The downstream is pinned constant to make
+    the test deterministic: a real run would normally pass anyway,
+    but the constant downstream proves the validator no longer
+    reaches its zero-variance branch on a zero-weight edge."""
+    schema = _load_schema(schema_run)
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["weight"] = 0
+            break
+    _write_schema(schema_run, schema)
+
+    csv_path = schema_run / "cacheservice.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("cache_hits")
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        if len(parts) > col:
+            parts[col] = "100.000"
+            new_rows.append(",".join(parts))
+        else:
+            new_rows.append(r)
+    csv_path.write_text("\n".join(new_rows) + "\n")
+
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert not any(
+        "apigateway->cacheservice" in v for v in violations
+    ), (
+        f"zero-weight edge apigateway->cacheservice must be skipped "
+        f"by the coupling check; got: {violations}"
     )
 
 

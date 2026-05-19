@@ -7227,9 +7227,13 @@ def _validate_topology_coupling(
     Each edge whose weight is the literal string ``"callable"`` is also
     skipped — the per-row weight is the dominant signal in that case
     (e.g. cache-miss ratio driving database QPS), not the upstream load
-    column the Pearson check inspects. The intent of the check is to
-    catch silent coupling regressions on the constant-weight edges
-    where upstream→downstream load tracking is the contract.
+    column the Pearson check inspects. Edges with ``weight == 0`` are
+    likewise skipped because ``_validate_topology`` accepts them as a
+    saturation-only placeholder that does not contribute to the
+    downstream load baseline. The intent of the check is to catch
+    silent coupling regressions on the constant-weight edges with
+    non-zero load contribution, where upstream→downstream load
+    tracking is the contract.
 
     Each surviving edge contributes one violation message when the
     realized Pearson correlation falls below the per-edge threshold
@@ -7331,6 +7335,15 @@ def _validate_topology_coupling(
                     f"in schema.json must be a number or the literal "
                     f"\"callable\" (got {weight!r})"
                 )
+                continue
+            if weight == 0.0:
+                # ``_validate_topology()`` accepts ``weight == 0`` as a
+                # saturation-only placeholder: the edge declares the
+                # logistic feedback shape (`Edge.saturation`) without
+                # contributing to the downstream's canonical load
+                # baseline. ``_compose_topology_coupled_specs`` skips
+                # zero-weight constant edges for the same reason, so
+                # there is no load-coupling contract to check here.
                 continue
             target_entry = _TOPOLOGY_LOAD_METRICS.get(target)
             if target_entry is None:
