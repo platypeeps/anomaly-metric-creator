@@ -13,3 +13,4 @@ otel-activity.log
 *.egg-info
 uv.lock
 
+.worktrees
