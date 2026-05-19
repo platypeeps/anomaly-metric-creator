@@ -882,6 +882,102 @@ def test_topology_coupling_malformed_edge_entries_report_violations(
     )
 
 
+@pytest.mark.parametrize("bad_threshold,expected_fragment", [
+    ("not-a-number", "'not-a-number'"),
+    (True, "True"),
+    (float("nan"), "nan"),
+    (float("inf"), "inf"),
+    (float("-inf"), "-inf"),
+    (1.5, "1.5"),
+    (-1.0, "-1.0"),
+    (-2.0, "-2.0"),
+])
+def test_topology_coupling_invalid_correlation_threshold_reports_violation(
+    amc, schema_run, bad_threshold, expected_fragment,
+):
+    """Each non-canonical ``correlation_threshold`` shape — non-numeric
+    string, ``bool``, NaN, +/-inf, and values outside the half-open
+    ``(-1, 1]`` interval — must surface as a dedicated violation and
+    not raise ``TypeError`` during the ``corr < threshold`` comparison
+    or ``threshold:.4f`` formatting. The validator must continue to
+    evaluate the other edges in the same run; the fallback threshold
+    keeps the rest of the check meaningful."""
+    schema = _load_schema(schema_run)
+    # Inject the bad threshold onto a single real edge so the rest of
+    # the topology block remains structurally valid and the validator
+    # exercises both the threshold path and the surrounding edges.
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["correlation_threshold"] = bad_threshold
+            break
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "apigateway->cacheservice" in v
+        and "correlation_threshold in schema.json" in v
+        and expected_fragment in v
+        for v in violations
+    ), (
+        f"expected dedicated violation for bad correlation_threshold "
+        f"{bad_threshold!r}; got: {violations}"
+    )
+
+
+def test_topology_coupling_invalid_threshold_falls_back_to_live_topology(
+    amc, schema_run,
+):
+    """When the schema's ``correlation_threshold`` is invalid, the
+    validator must still evaluate the edge against the live TOPOLOGY's
+    threshold (or the module default) so a hand-edit cannot silently
+    disable the coupling check. We mutate the downstream to be
+    constant so the zero-variance branch fires regardless of the
+    fallback value, proving the edge is still evaluated."""
+    schema = _load_schema(schema_run)
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["correlation_threshold"] = "not-a-number"
+            break
+    _write_schema(schema_run, schema)
+    # Pin the target column to a single value so np.std() is zero and
+    # the zero-variance branch fires deterministically.
+    csv_path = schema_run / "cacheservice.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("cache_hits")
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        if len(parts) > col:
+            parts[col] = "100.000"
+            new_rows.append(",".join(parts))
+        else:
+            new_rows.append(r)
+    csv_path.write_text("\n".join(new_rows) + "\n")
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    # Two violations expected on this edge: the threshold-shape
+    # complaint and the zero-variance complaint that proves the
+    # fallback threshold was actually used to evaluate the edge.
+    threshold_violations = [
+        v for v in violations
+        if "apigateway->cacheservice" in v
+        and "correlation_threshold in schema.json" in v
+    ]
+    variance_violations = [
+        v for v in violations
+        if "apigateway->cacheservice" in v
+        and "zero-variance" in v
+    ]
+    assert threshold_violations, (
+        f"expected threshold-shape violation; got: {violations}"
+    )
+    assert variance_violations, (
+        f"expected the edge to still be evaluated (zero-variance "
+        f"detected) after the threshold fallback; got: {violations}"
+    )
+
+
 def test_topology_coupling_malformed_edge_list_reports_violation(
     amc, schema_run,
 ):

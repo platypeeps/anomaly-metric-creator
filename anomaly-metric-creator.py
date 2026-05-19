@@ -7238,11 +7238,16 @@ def _validate_topology_coupling(
 
     Malformed schema entries — a non-``list`` edge container, a
     non-``dict`` edge entry, a missing/non-string ``target``, a
-    missing ``weight`` field, or a ``weight`` that is neither numeric
-    nor the literal string ``"callable"`` — surface as dedicated
-    violation messages rather than crashing the validator. A
-    hand-edited or older ``schema.json`` therefore degrades to a
-    clear report instead of a ``KeyError`` traceback.
+    missing ``weight`` field, a ``weight`` that is neither numeric
+    nor the literal string ``"callable"``, or a
+    ``correlation_threshold`` that is non-numeric, ``bool``, not
+    finite, or outside the half-open range ``(-1, 1]`` — surface as
+    dedicated violation messages rather than crashing the validator.
+    A hand-edited or older ``schema.json`` therefore degrades to a
+    clear report instead of a ``KeyError`` or ``TypeError`` traceback.
+    An invalid ``correlation_threshold`` additionally falls back to
+    ``_resolve_edge_correlation_threshold(source, target)`` so the
+    rest of the coupling check still runs.
     """
     if schema["metadata"].get("topology_mode") != "realistic":
         return []
@@ -7348,6 +7353,39 @@ def _validate_topology_coupling(
                 # selections; not a coupling regression.
                 continue
 
+            # Resolve and validate the per-edge correlation threshold
+            # exactly once per edge, before any comparison or
+            # formatting. A hand-edited schema can carry any JSON value
+            # here; treat the same set of invalid shapes the live
+            # ``Edge.correlation_threshold`` validator rejects
+            # (non-numeric, ``bool``, NaN, +/-inf, outside ``(-1, 1]``)
+            # as a dedicated violation and fall back to the live
+            # ``TOPOLOGY``'s value (or the module default) so the rest
+            # of the check still runs cleanly.
+            raw_threshold = edge_entry.get("correlation_threshold")
+            if raw_threshold is None:
+                threshold = _resolve_edge_correlation_threshold(
+                    source, target
+                )
+            elif (
+                isinstance(raw_threshold, bool)
+                or not isinstance(raw_threshold, (int, float))
+                or not math.isfinite(float(raw_threshold))
+                or not (-1.0 < float(raw_threshold) <= 1.0)
+            ):
+                violations.append(
+                    f"topology coupling {source}->{target}: "
+                    f"correlation_threshold in schema.json must be a "
+                    f"finite number in (-1, 1] or null "
+                    f"(got {raw_threshold!r}); falling back to live "
+                    f"TOPOLOGY"
+                )
+                threshold = _resolve_edge_correlation_threshold(
+                    source, target
+                )
+            else:
+                threshold = float(raw_threshold)
+
             source_arr = np.array(source_aligned, dtype=np.float64)
             target_arr = np.array(target_aligned, dtype=np.float64)
             pair_windows = _filter_windows_for_pair(
@@ -7376,23 +7414,15 @@ def _validate_topology_coupling(
             # mutation the validator is supposed to flag.
             if (np.std(source_kept) == 0.0
                     or np.std(target_kept) == 0.0):
-                threshold = edge_entry.get("correlation_threshold")
-                if threshold is None:
-                    threshold = _resolve_edge_correlation_threshold(
-                        source, target
-                    )
                 violations.append(
                     f"topology coupling {source}->{target}: zero-variance "
                     f"column "
                     f"({source}.{source_canonical} or "
                     f"{target}.{target_canonical}); Pearson correlation "
-                    f"undefined (expected >= {threshold})"
+                    f"undefined (expected >= {threshold:.4f})"
                 )
                 continue
             corr = float(np.corrcoef(source_kept, target_kept)[0, 1])
-            threshold = edge_entry.get("correlation_threshold")
-            if threshold is None:
-                threshold = _resolve_edge_correlation_threshold(source, target)
             if corr < threshold:
                 violations.append(
                     f"topology coupling {source}->{target}: "
