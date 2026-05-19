@@ -76,15 +76,19 @@ the artifacts. It is opt-in via `schema` in `--emit-selection` (parallel
 to `metrics`, `logs`, `traces`, `gauges`) and is the single source of
 truth `--validate-output` consumes.
 
-The document carries three slices of information:
+The document carries five slices of information:
 
-- `schema_version` — integer (`SCHEMA_DOCUMENT_VERSION`, currently `1`).
-  `_load_schema_document` rejects unknown versions outright.
+- `schema_version` — integer (`SCHEMA_DOCUMENT_VERSION`, currently `2`
+  after the VER-157 phase 7 bump that added the `topology` section).
+  `_load_schema_document` rejects unknown versions outright, so v1
+  documents fail-fast under a v2 reader and vice versa.
 - `metadata` — run-level parameters (`seed`, `start`, `duration_days`,
   `interval_seconds`, `total_seconds`, `rows_per_component`,
   `drop_rate`, `signal_level`, `scenarios`, `exclude_scenarios`,
   `components`, `inject_dst_artifact_day`, `metrics_per_component`,
-  `anomaly_count`, `emit_selection`, `combine`).
+  `anomaly_count`, `emit_selection`, `combine`, `topology_mode`).
+  `topology_mode` (`realistic` | `independent`) lets the validator
+  short-circuit the new coupling check under `independent`.
 - `components` — per-component metric metadata in MetricSpec column
   order (each entry carries `name`, `unit`, `semantic_type`, `dtype`,
   `min_value`, `max_value`, `derivation`).
@@ -92,10 +96,25 @@ The document carries three slices of information:
   `_collect_emitted_filenames` (the same registry that drives
   `_pre_clean_output_dir` and the end-of-run summary, so the three views
   cannot drift).
+- `topology` (VER-157 phase 7) — the directed coupling graph snapshot,
+  built from the live `TOPOLOGY` constant via `_serialize_topology` and
+  restricted to the active component set. Shape:
+  `{source: [{target, weight, saturation}, ...]}` with each source's
+  edge list sorted by `target` for byte-deterministic output.
+  Constant-weight edges serialize their numeric weight verbatim;
+  callable-weight edges serialize the literal string `"callable"`
+  (full reproducibility is a code concern — the schema only declares
+  the coupling exists). `saturation` is either `null` or a
+  `{midpoint, steepness, latency_gain, error_gain}` dict. Sources whose
+  source or every target was filtered out of `--components` are omitted
+  so the validator does not try to correlate columns the run did not
+  write. The validator's `_validate_topology_coupling` reads this
+  section under `topology_mode == "realistic"`.
 
 The output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
 with trailing newline). Locked SHA-256 golden hashes at 1d and 7d live
-in `tests/test_schema_file.py`. The `--combine-only` branch does not
+in `tests/test_schema_file.py` and were re-locked at the VER-157
+phase 7 schema-version bump. The `--combine-only` branch does not
 regenerate `schema.json` (it returns before pre-clean), matching the
 `gauges.csv` invariant.
 
@@ -172,6 +191,31 @@ the validator knows about against the artifacts in `PATH`:
   Dispatched by `(component, metric)` via the `_RECOMPUTERS` table —
   add a `DERIVATIONS` entry (generator) and a `_RECOMPUTERS` entry
   (validator) in lockstep.
+- `_validate_topology_coupling` (VER-157 phase 7) — for every edge in
+  the schema's `topology` section with a numeric weight, compute the
+  Pearson correlation between the source's canonical load metric and
+  the target's canonical load metric (from `_TOPOLOGY_LOAD_METRICS`)
+  and flag the edge when it falls below the per-edge threshold
+  (`Edge.correlation_threshold`, defaulting to
+  `_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD = 0.85`). Skipped silently
+  under `metadata.topology_mode == "independent"` (which decouples by
+  construction), when the schema has no `topology` block (older v1
+  docs), on callable-weight edges (the per-row weight signal is the
+  dominant contributor, not the upstream load), and when the aligned
+  row count falls below 100 (narrow `--components` or coarse
+  `--interval-seconds`). Anomaly windows from `anomalies.csv` are
+  excluded via `_read_anomaly_exclusion_windows` and
+  `_filter_windows_for_pair`: each `[span_start, span_end]` is padded
+  by `_TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS = 30` and applied
+  only to windows whose `(component, metric)` matches the source's
+  canonical, the target's canonical, *or* any other upstream
+  contributor's captured load columns (so an anomaly on
+  `cacheservice.cache_misses` excludes the corresponding rows from
+  the `apigateway -> database` correlation, since the cacheservice
+  contribution is composed into `database.queries_per_sec` via the
+  callable edge). A zero-variance source or target column is treated
+  as a coupling regression (Pearson is undefined; the validator emits
+  a violation naming the side).
 
 CLI semantics: default mode hard-fails (`exit 1` on any violation);
 `--validate-warn` downgrades to a stderr report and `exit 0`. Mutually
@@ -289,7 +333,8 @@ synthetic `token_limiter` virtual node.
 
 Two dataclasses model the edges:
 
-- `Edge(target, weight=1.0, saturation=None, signal=None)` — frozen.
+- `Edge(target, weight=1.0, saturation=None, signal=None,
+  correlation_threshold=None)` — frozen.
   `target` is a `COMPONENTS` key. `weight` is either a constant
   `float` (fan-out share, where the outgoing weights of a routing
   source sum to 1, or any non-negative scalar for amplification edges)
@@ -301,11 +346,21 @@ Two dataclasses model the edges:
   required iff `weight` is callable, must be `None` for constant
   `weight`. Returning `None` from `signal` means "skip this edge" so a
   `--metrics-per-component` trim of a required input column degrades
-  gracefully. `_validate_topology()` smoke-tests every callable weight
-  with a 3-element `np.ndarray` and probes every `signal` with a
-  per-key captured-column dict built from `_TOPOLOGY_LOAD_METRICS` so a
-  zero-arg / scalar-only lambda or a mis-shaped signal fails at import
-  time rather than corrupting phase 2's vectorized column writes.
+  gracefully. `correlation_threshold` is a validator-only override
+  (VER-157 phase 7) for the minimum Pearson correlation
+  `_validate_topology_coupling` requires between the source's
+  canonical load metric and the target's canonical load metric; `None`
+  (the default) falls back to
+  `_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD = 0.85`. The field does
+  not affect generation and is ignored on callable-weight edges
+  (which are skipped by the coupling check). `_validate_topology()`
+  smoke-tests every callable weight with a 3-element `np.ndarray` and
+  probes every `signal` with a per-key captured-column dict built
+  from `_TOPOLOGY_LOAD_METRICS` so a zero-arg / scalar-only lambda or
+  a mis-shaped signal fails at import time rather than corrupting
+  phase 2's vectorized column writes. The same validator rejects
+  `correlation_threshold` values that aren't finite, that fall
+  outside the half-open interval `(-1, 1]`, or are `bool`.
 - `SaturationParams(midpoint, steepness, latency_gain=0.0, error_gain=0.0)`
   — frozen. Parameters of a logistic response curve consumed by
   `_apply_saturation()`. Zero gains declare the saturation

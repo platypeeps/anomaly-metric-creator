@@ -337,7 +337,7 @@ check the run after the fact.
 python3 anomaly-metric-creator.py --emit-selection metrics,schema
 ```
 
-Top-level shape (`schema_version=1`):
+Top-level shape (`schema_version=2`, bumped in VER-157 phase 7):
 
 - `schema_version` — integer schema-document version (bumped on any
   breaking shape change; the validator rejects unknown versions).
@@ -346,7 +346,8 @@ Top-level shape (`schema_version=1`):
   `rows_per_component`, `drop_rate`, `signal_level`,
   `metrics_per_component`, `anomaly_count`, `scenarios` (sorted active
   set), `exclude_scenarios`, `components`, `inject_dst_artifact_day`,
-  `emit_selection` (sorted), `combine`.
+  `emit_selection` (sorted), `combine`, `topology_mode` (`realistic`
+  or `independent`).
 - `files` — sorted list of artifact filenames the run wrote, derived
   from the same registry that drives `_pre_clean_output_dir` (per-
   component CSVs, `anomalies.csv`, `metric_report.log`,
@@ -358,6 +359,13 @@ Top-level shape (`schema_version=1`):
   `counter`, `gauge`, `ratio`, `rate`), `dtype` (`float` or `int`),
   `min_value`, `max_value`, and `derivation` (formula string when the
   column is computed from siblings, else `null`).
+- `topology` (VER-157 phase 7) — `{source: [{target, weight,
+  saturation}, ...]}` snapshot of the directed coupling graph,
+  restricted to the active component set. Constant-weight edges
+  serialize their numeric weight verbatim; callable-weight edges
+  serialize the literal string `"callable"`. `saturation` is either
+  `null` or `{midpoint, steepness, latency_gain, error_gain}`.
+  Consumed by `--validate-output`'s topology coupling check.
 
 Output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
 with trailing newline) and locked SHA-256 hashes at 1d and 7d live in
@@ -396,6 +404,15 @@ The validator loads `PATH/schema.json` and runs:
   or `rate`.
 - Derived columns (today: `cacheservice.hit_ratio`) recompute from
   their source columns within `0.01` of the stored value.
+- Topology coupling (VER-157 phase 7): for every constant-weight edge
+  declared in `topology`, the source's canonical load metric and the
+  target's canonical load metric must correlate at Pearson ≥ 0.85
+  (per-edge override via `Edge.correlation_threshold`). Skipped under
+  `topology_mode == "independent"` and on callable-weight edges where
+  the per-row weight signal — not the upstream load — drives the
+  target. Anomaly spans (from `anomalies.csv`'s `span_start` /
+  `span_end`, padded by 30s) are excluded from the row pool so
+  scenario overrides don't dominate the realized correlation.
 
 After VER-156 phase 6 (flag day) the default 1-day output is
 violation-free. The 7-day output still surfaces a single known

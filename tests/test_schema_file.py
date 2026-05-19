@@ -28,17 +28,20 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 
 # Locked SHA-256 golden hashes for ``schema.json`` at the default --seed (42)
 # and the default scenario / signal-level / metrics-per-component knobs at
-# --duration-days 1 and 7. Captured against the merged main commit 8dc8ec1
-# plus this VER-139 patch and protect against silent drift in:
+# --duration-days 1 and 7. Re-locked for VER-157 phase 7 (schema document
+# version bumped from 1 to 2, topology section added, metadata gained
+# ``topology_mode``). Protects against silent drift in:
 # - the MetricSpec schema metadata (unit/semantic_type/min/max/dtype/derivation),
 # - the active-scenario / component list,
-# - the run-level metadata (duration, interval, drop_rate, seed, ...),
-# - the ``files`` registry.
+# - the run-level metadata (duration, interval, drop_rate, seed,
+#   topology_mode, ...),
+# - the ``files`` registry,
+# - the new ``topology`` block (source -> [{target, weight, saturation}, ...]).
 SCHEMA_ONE_DAY_HASH = (
-    "c372e7f725b913bd9857b34e6ff18e3e0abcafd9c02790c0f27558cb9ec677a1"
+    "3e95f4c69623429b20fe9d6a7c10a3a50486e35da0817bcd359f6c130e169751"
 )
 SCHEMA_SEVEN_DAY_HASH = (
-    "ccb33cc39994f4373a03ff6268270f84ce8aa1092bba2a81bc41e061e2984968"
+    "eea8991041318307f078d495da6bc53c8af00341593707b84f0d4e7607e4372a"
 )
 
 
@@ -351,3 +354,121 @@ def test_schema_records_dst_inject_day(amc, tmp_path):
                             "--interval-seconds", "600"])
     doc = _load_schema(out)
     assert doc["metadata"]["inject_dst_artifact_day"] == 1
+
+
+# ------------------------------------------------------------------
+# Topology section (VER-157 phase 7)
+# ------------------------------------------------------------------
+def test_schema_records_topology_mode_in_metadata(one_day_schema_run):
+    """``metadata.topology_mode`` echoes ``--topology-mode`` so the
+    validator can short-circuit the coupling check under
+    ``independent`` (which produces decoupled baselines by
+    construction)."""
+    doc = _load_schema(one_day_schema_run.out_dir)
+    assert doc["metadata"]["topology_mode"] == "realistic"
+
+
+def test_schema_records_topology_mode_independent(amc, tmp_path):
+    out = tmp_path / "topology_independent"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--topology-mode", "independent",
+            "--interval-seconds", "600",
+        ],
+    )
+    doc = _load_schema(out)
+    assert doc["metadata"]["topology_mode"] == "independent"
+
+
+def test_schema_has_topology_block(one_day_schema_run):
+    """The top-level ``topology`` block is the directed coupling graph
+    snapshot the validator's ``_validate_topology_coupling`` consumes."""
+    doc = _load_schema(one_day_schema_run.out_dir)
+    assert "topology" in doc, (
+        "VER-157 phase 7 adds a top-level 'topology' section to schema.json"
+    )
+    topology = doc["topology"]
+    assert isinstance(topology, dict)
+    # The default 1-day run covers every component, so every TOPOLOGY
+    # source should be present in the snapshot.
+    assert set(topology.keys()).issubset({"loadbalancer", "apigateway",
+                                          "cacheservice"})
+    assert "loadbalancer" in topology
+
+
+def test_schema_topology_edge_shape(one_day_schema_run):
+    """Each edge entry carries exactly ``target``, ``weight``,
+    ``saturation``. Callable weights serialize as the literal string
+    ``"callable"``; ``saturation`` is either ``None`` or the four
+    ``SaturationParams`` fields."""
+    doc = _load_schema(one_day_schema_run.out_dir)
+    topology = doc["topology"]
+
+    # apigateway -> {authservice, cacheservice, database, llm_analytics}
+    apigateway_edges = topology["apigateway"]
+    assert {e["target"] for e in apigateway_edges} == {
+        "authservice", "cacheservice", "database", "llm_analytics",
+    }
+    for edge in apigateway_edges:
+        assert set(edge.keys()) == {"target", "weight", "saturation"}
+        assert isinstance(edge["weight"], (int, float))
+        sat = edge["saturation"]
+        assert sat is not None
+        assert set(sat.keys()) == {
+            "midpoint", "steepness", "latency_gain", "error_gain"
+        }
+
+    # cacheservice -> database has callable weight (cache-miss ratio)
+    # and no saturation in v1.
+    cache_edges = topology["cacheservice"]
+    db_edge = next(e for e in cache_edges if e["target"] == "database")
+    assert db_edge["weight"] == "callable"
+    assert db_edge["saturation"] is None
+
+
+def test_schema_topology_edges_sorted_by_target(one_day_schema_run):
+    """Each source's edge list must be sorted by target name for
+    byte-deterministic output."""
+    doc = _load_schema(one_day_schema_run.out_dir)
+    topology = doc["topology"]
+    for source, edges in topology.items():
+        targets = [e["target"] for e in edges]
+        assert targets == sorted(targets), (
+            f"topology[{source!r}] edges not sorted by target: {targets}"
+        )
+
+
+def test_schema_topology_omits_filtered_components(amc, tmp_path):
+    """A run that drops a component via ``--components`` must omit edges
+    whose source or target was filtered out — the validator should not
+    try to correlate columns the run did not write."""
+    out = tmp_path / "narrowed_topology"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "loadbalancer,apigateway",
+            "--interval-seconds", "600",
+        ],
+    )
+    doc = _load_schema(out)
+    topology = doc["topology"]
+    # loadbalancer -> apigateway survives.
+    assert "loadbalancer" in topology
+    lb_edges = topology["loadbalancer"]
+    assert len(lb_edges) == 1 and lb_edges[0]["target"] == "apigateway"
+    # apigateway is in the run but every downstream (authservice,
+    # cacheservice, database, llm_analytics) was filtered out, so the
+    # apigateway source key should be absent.
+    assert "apigateway" not in topology
+
+
+def test_schema_topology_version_is_two(one_day_schema_run, amc):
+    """VER-157 phase 7 bumps the schema-document version from 1 to 2 so
+    older readers can refuse to validate a v2 doc and v2 readers reject
+    stale v1 docs."""
+    doc = _load_schema(one_day_schema_run.out_dir)
+    assert doc["schema_version"] == 2
+    assert amc.SCHEMA_DOCUMENT_VERSION == 2

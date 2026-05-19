@@ -90,12 +90,15 @@ def test_edge_dataclass_round_trip(amc):
     sat = amc.SaturationParams(midpoint=0.5, steepness=4.0)
     edge = amc.Edge(target="apigateway", weight=0.7, saturation=sat)
     fields = {f.name for f in dataclasses.fields(amc.Edge)}
-    assert fields == {"target", "weight", "saturation", "signal"}
+    assert fields == {
+        "target", "weight", "saturation", "signal", "correlation_threshold",
+    }
     rebuilt = amc.Edge(
         target=edge.target,
         weight=edge.weight,
         saturation=edge.saturation,
         signal=edge.signal,
+        correlation_threshold=edge.correlation_threshold,
     )
     assert rebuilt == edge
     # default values
@@ -103,6 +106,7 @@ def test_edge_dataclass_round_trip(amc):
     assert bare.weight == 1.0
     assert bare.saturation is None
     assert bare.signal is None
+    assert bare.correlation_threshold is None
 
 
 def test_saturation_params_dataclass_round_trip(amc):
@@ -271,6 +275,64 @@ def test_validate_topology_accepts_int_constant_weight(amc, monkeypatch):
     patched = {src: [amc.Edge(target=tgt, weight=2)]}
     monkeypatch.setattr(amc, "TOPOLOGY", patched)
     amc._validate_topology()  # must not raise
+
+
+# ----------------------------------------------------------------------
+# VER-157 phase 7: ``Edge.correlation_threshold`` field invariants
+# enforced at import-time by ``_validate_topology`` so the validator-
+# side override cannot smuggle in NaN/inf/bool/out-of-range thresholds.
+# ----------------------------------------------------------------------
+@pytest.mark.parametrize("bad_value", [
+    True,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    1.5,    # above the (-1, 1] interval
+    -1.0,   # on the open boundary (-1, ...
+    -2.0,
+    "0.9",  # not numeric
+])
+def test_validate_topology_rejects_bad_correlation_threshold(
+    amc, monkeypatch, bad_value,
+):
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, correlation_threshold=bad_value)]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    with pytest.raises(ValueError, match="correlation_threshold"):
+        amc._validate_topology()
+
+
+@pytest.mark.parametrize("good_value", [None, 0.0, 0.5, 0.85, 1.0])
+def test_validate_topology_accepts_good_correlation_threshold(
+    amc, monkeypatch, good_value,
+):
+    src, tgt = list(amc.COMPONENTS.keys())[:2]
+    patched = {src: [amc.Edge(target=tgt, correlation_threshold=good_value)]}
+    monkeypatch.setattr(amc, "TOPOLOGY", patched)
+    amc._validate_topology()  # must not raise
+
+
+def test_topology_default_correlation_threshold_constant(amc):
+    """The default threshold sits at the issue acceptance bound (0.85)."""
+    assert amc._TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD == 0.85
+
+
+def test_resolve_edge_correlation_threshold_falls_back_to_default(amc):
+    """An edge declared without ``correlation_threshold`` resolves to the
+    module-level default."""
+    # apigateway -> authservice in the live TOPOLOGY has no override.
+    assert amc._resolve_edge_correlation_threshold(
+        "apigateway", "authservice"
+    ) == amc._TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD
+
+
+def test_resolve_edge_correlation_threshold_falls_back_for_unknown_edge(amc):
+    """A schema-declared edge that no longer exists in the live TOPOLOGY
+    falls back to the default (graceful degradation when the build's
+    edge set drifts from the schema's snapshot)."""
+    assert amc._resolve_edge_correlation_threshold(
+        "loadbalancer", "database"
+    ) == amc._TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD
 
 
 # ----------------------------------------------------------------------
