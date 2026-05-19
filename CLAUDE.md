@@ -501,9 +501,14 @@ saturation contribution alone cannot exceed the gain). End-to-end
 tests in `tests/test_topology_saturation.py` assert both invariants on
 the realized CSV columns.
 
-**Independent mode** never invokes `_compose_topology_saturation_specs`;
-default output stays byte-for-byte identical to the pre-VER-154
-baseline (`test_independent_mode_latency_csvs_byte_identical_to_default`).
+The deprecated `--topology-mode independent` alias never invokes
+`_compose_topology_saturation_specs`, so its output stays byte-for-byte
+identical to the pre-VER-154 baseline (pinned alongside the broader
+pre-flag-day baseline via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
+`tests/test_scenarios.py` and `tests/test_topology_loadbalancer_gateway.py`).
+The no-flag default and explicit `--topology-mode realistic` now produce
+identical latency CSV bytes; that invariant is pinned by
+`tests/test_topology_saturation.py::test_realistic_mode_latency_csvs_byte_identical_to_default`.
 
 ### LLM token-throttle (`--topology-mode realistic`, phase 5)
 
@@ -570,8 +575,10 @@ catalog exposes — not the generic `error_rate`, which
 - caps (latency non-negative, error rate `<= 1.0`);
 - LLM scenarios still fire under realistic mode (no anomaly cell
   overrides are masked by the coupling); and
-- `llm_analytics.csv` byte-identity between default and explicit
-  `--topology-mode independent` runs.
+- `llm_analytics.csv` byte-identity between the no-flag default and an
+  explicit `--topology-mode realistic` run (after VER-156 phase 6 the
+  default is realistic; the deprecation alias's pre-flag-day parity
+  lives in `tests/test_topology_loadbalancer_gateway.py`).
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside

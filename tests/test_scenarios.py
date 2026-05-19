@@ -12,11 +12,19 @@ These tests cover:
   and whitespace-tolerant variants).
 * End-to-end smoke flags — allowlist, exclusion, out-of-duration warn-and-skip,
   unknown-slug hard error.
-* Default-output byte-for-byte regression — locked SHA-256 hashes for every
-  per-component CSV and ``anomalies.csv`` from a default 1-day run at seed
-  42 and a 7-day run at seed 42 (the VER-104 baseline; the high-signal +
-  ``--anomaly-count`` capped 7-day hashes below were captured after the
-  full migration and lock the post-VER-104 sampling pool).
+* Default-output byte-for-byte regression — locked SHA-256 hashes for
+  every per-component CSV and ``anomalies.csv`` from a default 1-day
+  run at seed 42 and a 7-day run at seed 42. After VER-156 phase 6
+  the default is ``--topology-mode realistic`` with the integer-cast
+  bundle on, so the constants below
+  (``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` /
+  ``HIGH_SEVEN_DAY_CAPPED_HASHES``) capture realistic-mode bytes;
+  the high-signal + ``--anomaly-count`` capped 7-day hashes were
+  captured against the post-VER-104 sampling-pool ordering, which
+  this PR did not change. The pre-flag-day independent baseline is
+  preserved verbatim in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` and is
+  pinned by
+  ``tests/test_topology_loadbalancer_gateway.py::test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``.
 """
 
 from __future__ import annotations

@@ -15,8 +15,14 @@ the front-half graph:
 
 These tests cover:
 
-* Default (``--topology-mode independent``) byte-identical with the
-  pre-VER-153 baseline.
+* Default (``--topology-mode realistic`` since VER-156 phase 6
+  flag day) byte-identical with an explicit ``--topology-mode
+  realistic`` run, so the no-flag default and the explicit alias stay
+  in lockstep on every coupled downstream CSV. The deprecated
+  ``--topology-mode independent`` alias's byte-for-byte parity with
+  the pre-VER-153 baseline is pinned in
+  ``tests/test_topology_loadbalancer_gateway.py`` against
+  ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 * Realistic-mode correlations between downstream load metrics and
   apigateway ``requests_per_sec`` (Pearson >= 0.9), and the cache
   miss-rate edge (Pearson >= 0.7 against ``miss_rate * gateway_rps``).

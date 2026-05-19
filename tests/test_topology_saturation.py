@@ -10,15 +10,21 @@ saturation curve on top of incoming edges that carry `SaturationParams`:
 - `_compose_topology_saturation_specs(...)` modifies the downstream's
   latency-family `MetricSpec.multiplier` and error-family `MetricSpec.additive`
   by composing on top of any pre-existing multiplier/additive.
-- Default `--topology-mode independent` never invokes the saturation path,
-  so per-component CSVs stay byte-identical to the pre-VER-154 baseline.
+- The deprecated `--topology-mode independent` alias never invokes the
+  saturation path, so per-component CSVs stay byte-identical to the
+  pre-VER-154 baseline (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES`
+  in `tests/test_topology_loadbalancer_gateway.py`). The default
+  flipped to `--topology-mode realistic` in VER-156 phase 6, so the
+  saturation path is now on by default.
 
 These tests cover:
 
 * `_apply_saturation` shape, range, monotonicity, and edge cases.
 * `_compose_topology_saturation_specs` composition correctness with absent /
   present natural multiplier/additive on the downstream MetricSpec.
-* Default-mode byte-identity (no saturation under `--topology-mode independent`).
+* Default-vs-explicit realistic-mode byte-identity: the no-flag run
+  and explicit `--topology-mode realistic` produce the same latency
+  CSVs (locks the VER-156 default flip).
 * Realistic-mode positive correlation between upstream load and downstream
   latency and error rate.
 * Cap tests: error_rate column stays <= 1.0 under realistic mode; latency
