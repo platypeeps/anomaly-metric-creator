@@ -484,6 +484,23 @@ cascade override path *replaces* the cell at the targeted row (post
 saturation, since the override is applied after the natural-column
 build), so the cascade value still wins at exactly that row.
 
+**Phase 9 (VER-159) catalog re-tune.** The saturation lift from phase 4/5 raised the column-wide std of `apigateway.error_rate` (from ~0.018 to ~0.040) and `authservice.error_rate` (from ~0.018 to ~0.050), pushing eleven hand-tuned cascade and primary generator values close to or below the new noise floor. Those eleven specs (8 from the initial audit + 3 surfaced by the regression test) were re-tuned in VER-159 to clear the floor by >3σ under realistic mode: `api_cpu_saturation` (primary 0.25), `db_stall` (primary 0.35, cascade 0.30), `lb_flapping` (cascade 0.30), `mq_jam` (primary 0.25), `vectorstore_pressure` (cascade 0.15), `payment_5xx` (cascade 0.28), `regional_failover_storm` (cascade 0.40), `llm_provider_outage` (cascade 0.35), `storage_layer_pressure` (cascade 0.30), and `network_partition_az_split` (cascade 0.40). `tests/test_scenario_deviation.py` is the regression guard: it walks every `SCENARIOS` entry under realistic mode, compares the active CSV against an `--exclude-scenarios <slug>` baseline run that fires zero anomalies, and asserts every recorded `anomalies.csv` row deviates by >1σ. A future saturation re-tune or new edge that quietly lifts a
+column's std past a generator's headroom will fail this test on the
+specific row that no-ops.
+
+No `SCENARIOS` cascades were structurally removed in VER-159 —
+they are kept in place per the VER-134 decision even where the
+saturation feedback would now produce a similar downstream effect.
+The cascade override is a single-row step write applied *after*
+saturation, so it still pins the targeted cell to a specific value
+regardless of upstream load; saturation only lifts the surrounding
+band. Cascades that target `error_rate` on `apigateway` or
+`authservice` are the most overlap-prone (the saturation curve also
+elevates `error_rate` on those components under load) but remain
+distinguishable: the cascade override produces a sharp step at the
+recorded row, while saturation produces a smooth load-shaped band
+underneath it.
+
 ### Saturation feedback (`--topology-mode realistic`, phase 4)
 
 Each saturating edge (`Edge.saturation is not None` and at least one
