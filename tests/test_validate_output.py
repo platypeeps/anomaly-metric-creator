@@ -573,3 +573,689 @@ def test_validator_default_only_known_violation_kinds(
                 "(file presence / coverage / sort / row-count / derivation "
                 "are all expected to be clean)"
             )
+
+
+# ------------------------------------------------------------------
+# Topology coupling correlation (VER-157 phase 7)
+# ------------------------------------------------------------------
+def test_topology_coupling_clean_on_fresh_realistic_run(
+    amc, one_day_schema_run,
+):
+    """Default 1-day run in realistic mode (the post-VER-156 default)
+    must produce no topology coupling violations — every constant-weight
+    edge's Pearson correlation between source and target canonical load
+    metrics meets or exceeds its threshold (0.85 default)."""
+    schema = _load_schema(one_day_schema_run.out_dir)
+    assert schema["metadata"]["topology_mode"] == "realistic"
+    assert amc._validate_topology_coupling(
+        one_day_schema_run.out_dir, schema
+    ) == []
+
+
+def test_topology_coupling_skipped_under_independent_mode(amc, tmp_path):
+    """Independent mode produces decoupled baselines by construction;
+    the coupling check must not even run, regardless of the actual
+    correlation realized on disk."""
+    out = tmp_path / "indep"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--topology-mode", "independent",
+            "--interval-seconds", "60",
+        ],
+    )
+    schema = _load_schema(out)
+    assert schema["metadata"]["topology_mode"] == "independent"
+    assert amc._validate_topology_coupling(out, schema) == []
+
+
+def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
+    """A deliberately broken downstream — every row of the target's
+    canonical load metric set to a single constant — must be flagged
+    as a coupling violation (zero-variance branch).
+
+    60s interval gives 1,440 rows over one day — well above the
+    100-row correlation floor and dense enough to drive the
+    zero-variance branch deterministically — while keeping the
+    end-to-end run cheap."""
+    out = tmp_path / "bad_coupling"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "loadbalancer,apigateway",
+            "--interval-seconds", "60",
+        ],
+    )
+    csv_path = out / "apigateway.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("requests_per_sec")
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        parts[col] = "800.000"
+        new_rows.append(",".join(parts))
+    csv_path.write_text("\n".join(new_rows) + "\n")
+    schema = _load_schema(out)
+    violations = amc._validate_topology_coupling(out, schema)
+    assert any(
+        "loadbalancer->apigateway" in v
+        and ("zero-variance" in v or "below threshold" in v)
+        for v in violations
+    ), (
+        f"validator must flag a constant downstream as a coupling "
+        f"regression; got: {violations}"
+    )
+
+
+def test_topology_coupling_flags_random_downstream(amc, tmp_path):
+    """A downstream replaced with values uniformly random within its
+    natural range must drive Pearson well below the 0.85 threshold.
+
+    The apigateway -> database edge is the only constant-weight edge
+    we exercise here, so narrow ``--components`` to the source plus
+    the target and use a coarse ``--interval-seconds`` to keep the
+    end-to-end run quick. 60s interval gives 1440 rows over one day
+    — well above the 100-row floor and dense enough to make the
+    Pearson coefficient meaningful, while cutting the generation
+    cost from 86,400 rows/component to 1,440."""
+    import random
+    out = tmp_path / "random_db"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "apigateway,database",
+            "--interval-seconds", "60",
+        ],
+    )
+    csv_path = out / "database.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("queries_per_sec")
+    rng = random.Random(123)
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        parts[col] = f"{rng.uniform(20000, 35000):.3f}"
+        new_rows.append(",".join(parts))
+    csv_path.write_text("\n".join(new_rows) + "\n")
+    schema = _load_schema(out)
+    violations = amc._validate_topology_coupling(out, schema)
+    assert any(
+        "apigateway->database" in v and "below threshold" in v
+        for v in violations
+    ), (
+        f"validator must flag a randomized downstream load as a coupling "
+        f"regression; got: {violations}"
+    )
+
+
+@pytest.mark.parametrize("bad_cell,side", [
+    ("nan", "target"),
+    ("inf", "target"),
+    ("-inf", "target"),
+    ("nan", "source"),
+])
+def test_topology_coupling_flags_non_finite_values(
+    amc, tmp_path, bad_cell, side,
+):
+    """A hand-edited CSV with non-finite (NaN/+/-inf) cells in either
+    canonical load column must be flagged. ``np.std`` and
+    ``np.corrcoef`` both return NaN on non-finite input, and
+    ``corr < threshold`` evaluates False — silently bypassing the
+    check. The dedicated non-finite branch must catch this before
+    the std/corrcoef calls run."""
+    out = tmp_path / f"nonfinite_{side}_{bad_cell.replace('-', 'neg')}"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "apigateway,database",
+            "--interval-seconds", "60",
+        ],
+    )
+    target_file = "database.csv" if side == "target" else "apigateway.csv"
+    target_metric = (
+        "queries_per_sec" if side == "target" else "requests_per_sec"
+    )
+    csv_path = out / target_file
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index(target_metric)
+    new_rows = [rows[0]]
+    # Inject the non-finite cell into the middle of the file so the
+    # surrounding data still parses cleanly and the row count stays
+    # well above the 100-row floor.
+    mid = len(rows) // 2
+    for i, r in enumerate(rows[1:], start=1):
+        parts = r.split(",")
+        if i == mid:
+            parts[col] = bad_cell
+        new_rows.append(",".join(parts))
+    csv_path.write_text("\n".join(new_rows) + "\n")
+    schema = _load_schema(out)
+    violations = amc._validate_topology_coupling(out, schema)
+    assert any(
+        "apigateway->database" in v
+        and "non-finite values" in v
+        and "NaN/+/-inf" in v
+        for v in violations
+    ), (
+        f"validator must flag non-finite {side} cell ({bad_cell}); "
+        f"got: {violations}"
+    )
+
+
+def test_topology_coupling_skips_callable_weight_edges(amc, tmp_path):
+    """The ``cacheservice -> database`` edge has a callable weight
+    (cache-miss ratio); the validator skips it because the per-row
+    weight signal — not the upstream load — is the dominant
+    contributor. Mutating cacheservice.cache_hits should leave the
+    coupling check silent on this edge (any flag would come from the
+    apigateway -> database edge instead, which we leave clean here)."""
+    out = tmp_path / "callable_skip"
+    # Narrowed to the source/target of the callable edge under test
+    # plus apigateway (its upstream contribution to database is still
+    # required so the realistic-mode generator can compose the
+    # database load column). 60s interval keeps the run short.
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "apigateway,cacheservice,database",
+            "--interval-seconds", "60",
+        ],
+    )
+    # Read schema and confirm the callable edge is declared.
+    schema = _load_schema(out)
+    cache_edges = schema["topology"]["cacheservice"]
+    assert any(e["weight"] == "callable" for e in cache_edges)
+
+    # Don't mutate any CSV — just verify the callable edge is silent in
+    # a clean run. (A separate test confirms mutation of the
+    # apigateway -> database constant edge still fires.)
+    violations = amc._validate_topology_coupling(out, schema)
+    callable_violations = [
+        v for v in violations
+        if "cacheservice->database" in v
+    ]
+    assert callable_violations == [], (
+        f"callable-weight edge cacheservice->database must be skipped "
+        f"by the coupling check; got: {callable_violations}"
+    )
+
+
+def test_topology_coupling_skips_when_topology_block_missing(
+    amc, schema_run,
+):
+    """A schema document without a ``topology`` block (older schema or
+    a doc someone hand-edited) must skip the check silently rather
+    than crash."""
+    schema = _load_schema(schema_run)
+    schema.pop("topology", None)
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    assert amc._validate_topology_coupling(schema_run, schema) == []
+
+
+def test_topology_coupling_per_edge_threshold_override(amc, tmp_path,
+                                                       monkeypatch):
+    """``Edge.correlation_threshold`` overrides
+    ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD`` per edge. Setting a
+    threshold near 1.0 (the upper bound of the valid ``(-1, 1]``
+    range) on a real edge via a monkeypatched TOPOLOGY must flag the
+    otherwise-passing coupling because the realized ~0.99 correlation
+    cannot clear a 0.9999 gate.
+
+    60s interval gives 1,440 rows over one day — well above the
+    100-row correlation floor — so the override threshold still
+    fails the gate at a fraction of the all-rows cost."""
+    out = tmp_path / "override"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "loadbalancer,apigateway",
+            "--interval-seconds", "60",
+        ],
+    )
+    # Build a TOPOLOGY clone with a 0.999 threshold on the
+    # loadbalancer -> apigateway edge so the realized ~0.99 correlation
+    # fails the gate. ``Edge`` is frozen so we replace the list
+    # in-place; the original constants are restored when the
+    # monkeypatch unwinds.
+    orig = amc.TOPOLOGY["loadbalancer"]
+    new_edges = [
+        amc.Edge(
+            target=edge.target,
+            weight=edge.weight,
+            saturation=edge.saturation,
+            signal=edge.signal,
+            correlation_threshold=0.9999,
+        )
+        for edge in orig
+    ]
+    monkeypatch.setitem(amc.TOPOLOGY, "loadbalancer", new_edges)
+    schema = _load_schema(out)
+    violations = amc._validate_topology_coupling(out, schema)
+    assert any(
+        "loadbalancer->apigateway" in v
+        and "0.9999" in v
+        for v in violations
+    ), (
+        f"per-edge override must drive a coupling failure on an "
+        f"otherwise-passing run; got: {violations}"
+    )
+
+
+def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
+    """End-to-end CLI: mutate the downstream so it decouples from
+    upstream, then run ``--validate-output`` and confirm a non-zero
+    exit and a violation line in stderr naming the broken edge.
+
+    60s interval keeps the end-to-end run cheap — the coupling
+    check needs only 100 aligned rows and a 1d/60s run gives
+    1,440."""
+    out = tmp_path / "cli_broken_coupling"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--components", "loadbalancer,apigateway",
+            "--interval-seconds", "60",
+        ],
+    )
+    csv_path = out / "apigateway.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("requests_per_sec")
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        parts[col] = "800.000"
+        new_rows.append(",".join(parts))
+    csv_path.write_text("\n".join(new_rows) + "\n")
+
+    with pytest.raises(SystemExit) as exc_info:
+        amc.main(["--validate-output", str(out)])
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "loadbalancer->apigateway" in err
+
+
+def test_topology_coupling_rejects_old_schema_version(amc, tmp_path):
+    """v1 schema documents written before VER-157 phase 7 must be
+    rejected by ``_load_schema_document``; the version bump is part of
+    the contract that v2 readers do not silently skip the coupling
+    check on a stale v1 doc."""
+    p = tmp_path / "schema.json"
+    p.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema_version"):
+        amc._load_schema_document(p)
+
+
+# ------------------------------------------------------------------
+# Window helpers (VER-157 phase 7 unit coverage)
+# ------------------------------------------------------------------
+def test_anomaly_exclusion_windows_use_span_columns(
+    amc, schema_run,
+):
+    """``_read_anomaly_exclusion_windows`` should read ``span_start`` /
+    ``span_end`` so a multi-hour span produces one wide exclusion
+    rather than a 60s point exclusion around the row timestamp."""
+    import datetime
+    windows = amc._read_anomaly_exclusion_windows(
+        schema_run / "anomalies.csv"
+    )
+    spans = [(e - s, c, m) for s, e, c, m in windows]
+    # At least one non-trivial span (> 5 minutes after the 30s pad
+    # on each side, i.e. body > 4 minutes) should be present in the
+    # default 1-day scenario set (api_cpu_saturation retry storm,
+    # deploy regression, etc.).
+    assert any(
+        delta > datetime.timedelta(minutes=5) for delta, _c, _m in spans
+    ), (
+        f"expected at least one multi-minute span in the default "
+        f"anomaly manifest; got durations: "
+        f"{[d.total_seconds() for d, _, _ in spans]}"
+    )
+
+
+def test_topology_coupling_skips_zero_weight_edges(amc, schema_run):
+    """``_validate_topology()`` accepts ``weight == 0`` as a
+    saturation-only placeholder that contributes no load to the
+    downstream baseline; ``_compose_topology_coupled_specs`` skips
+    it for the same reason. The coupling check must follow that
+    contract — mutate a real edge's weight to ``0`` in the schema
+    and confirm no correlation violation fires on the otherwise
+    decoupled column. The downstream is pinned constant to make
+    the test deterministic: a real run would normally pass anyway,
+    but the constant downstream proves the validator no longer
+    reaches its zero-variance branch on a zero-weight edge."""
+    schema = _load_schema(schema_run)
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["weight"] = 0
+            break
+    _write_schema(schema_run, schema)
+
+    csv_path = schema_run / "cacheservice.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("cache_hits")
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        if len(parts) > col:
+            parts[col] = "100.000"
+            new_rows.append(",".join(parts))
+        else:
+            new_rows.append(r)
+    csv_path.write_text("\n".join(new_rows) + "\n")
+
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert not any(
+        "apigateway->cacheservice" in v for v in violations
+    ), (
+        f"zero-weight edge apigateway->cacheservice must be skipped "
+        f"by the coupling check; got: {violations}"
+    )
+
+
+def test_topology_coupling_malformed_edge_entries_report_violations(
+    amc, schema_run,
+):
+    """A hand-edited ``schema.json`` with malformed topology entries
+    must not crash the validator with a ``KeyError``. Each malformed
+    shape — non-dict edge entry, missing/non-string ``target``,
+    missing ``weight``, non-numeric / non-callable ``weight`` — must
+    instead surface as a dedicated violation message naming the
+    offending edge."""
+    schema = _load_schema(schema_run)
+    # Build a deliberately broken topology block with four common
+    # hand-edit mistakes. The validator must report each one as a
+    # violation rather than raise.
+    schema["topology"] = {
+        "apigateway": [
+            "not-a-dict",                           # non-dict entry
+            {"weight": 0.5},                        # missing target
+            {"target": "cacheservice"},             # missing weight
+            {"target": "database", "weight": "x"},  # bogus weight
+        ],
+    }
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any("malformed" in v and "expected dict" in v for v in violations), (
+        f"expected non-dict edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+    assert any(
+        "missing or invalid 'target'" in v for v in violations
+    ), (
+        f"expected missing-target edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+    assert any("missing 'weight'" in v for v in violations), (
+        f"expected missing-weight edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+    assert any(
+        "must be a number or the literal \"callable\"" in v
+        for v in violations
+    ), (
+        f"expected bogus-weight edge entry to surface as a violation; "
+        f"got: {violations}"
+    )
+
+
+@pytest.mark.parametrize("bad_threshold,expected_fragment", [
+    ("not-a-number", "'not-a-number'"),
+    (True, "True"),
+    (float("nan"), "nan"),
+    (float("inf"), "inf"),
+    (float("-inf"), "-inf"),
+    (1.5, "1.5"),
+    (-1.0, "-1.0"),
+    (-2.0, "-2.0"),
+])
+def test_topology_coupling_invalid_correlation_threshold_reports_violation(
+    amc, schema_run, bad_threshold, expected_fragment,
+):
+    """Each non-canonical ``correlation_threshold`` shape — non-numeric
+    string, ``bool``, NaN, +/-inf, and values outside the half-open
+    ``(-1, 1]`` interval — must surface as a dedicated violation and
+    not raise ``TypeError`` during the ``corr < threshold`` comparison
+    or ``threshold:.4f`` formatting. The validator must continue to
+    evaluate the other edges in the same run; the fallback threshold
+    keeps the rest of the check meaningful."""
+    schema = _load_schema(schema_run)
+    # Inject the bad threshold onto a single real edge so the rest of
+    # the topology block remains structurally valid and the validator
+    # exercises both the threshold path and the surrounding edges.
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["correlation_threshold"] = bad_threshold
+            break
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "apigateway->cacheservice" in v
+        and "correlation_threshold in schema.json" in v
+        and expected_fragment in v
+        for v in violations
+    ), (
+        f"expected dedicated violation for bad correlation_threshold "
+        f"{bad_threshold!r}; got: {violations}"
+    )
+
+
+def test_topology_coupling_invalid_threshold_falls_back_to_live_topology(
+    amc, schema_run,
+):
+    """When the schema's ``correlation_threshold`` is invalid, the
+    validator must still evaluate the edge against the live TOPOLOGY's
+    threshold (or the module default) so a hand-edit cannot silently
+    disable the coupling check. We mutate the downstream to be
+    constant so the zero-variance branch fires regardless of the
+    fallback value, proving the edge is still evaluated."""
+    schema = _load_schema(schema_run)
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["correlation_threshold"] = "not-a-number"
+            break
+    _write_schema(schema_run, schema)
+    # Pin the target column to a single value so np.std() is zero and
+    # the zero-variance branch fires deterministically.
+    csv_path = schema_run / "cacheservice.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("cache_hits")
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        if len(parts) > col:
+            parts[col] = "100.000"
+            new_rows.append(",".join(parts))
+        else:
+            new_rows.append(r)
+    csv_path.write_text("\n".join(new_rows) + "\n")
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    # Two violations expected on this edge: the threshold-shape
+    # complaint and the zero-variance complaint that proves the
+    # fallback threshold was actually used to evaluate the edge.
+    threshold_violations = [
+        v for v in violations
+        if "apigateway->cacheservice" in v
+        and "correlation_threshold in schema.json" in v
+    ]
+    variance_violations = [
+        v for v in violations
+        if "apigateway->cacheservice" in v
+        and "zero-variance" in v
+    ]
+    assert threshold_violations, (
+        f"expected threshold-shape violation; got: {violations}"
+    )
+    assert variance_violations, (
+        f"expected the edge to still be evaluated (zero-variance "
+        f"detected) after the threshold fallback; got: {violations}"
+    )
+
+
+@pytest.mark.parametrize("bad_topology", [
+    [],
+    "not-a-dict",
+    42,
+    3.14,
+    True,
+])
+def test_topology_coupling_malformed_top_level_block_reports_violation(
+    amc, schema_run, bad_topology,
+):
+    """A hand-edited schema where ``topology`` is a truthy non-dict
+    must not crash on ``topology.keys()``. The validator must report
+    a single up-front violation instead of raising
+    ``AttributeError``."""
+    schema = _load_schema(schema_run)
+    schema["topology"] = bad_topology
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "topology block malformed in schema.json" in v
+        for v in violations
+    ), (
+        f"expected up-front violation for non-dict topology block "
+        f"{bad_topology!r}; got: {violations}"
+    )
+
+
+@pytest.mark.parametrize("bad_weight", [
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+])
+def test_topology_coupling_non_finite_weight_reports_violation(
+    amc, schema_run, bad_weight,
+):
+    """Python's ``json`` loader parses ``NaN``/``Infinity``/
+    ``-Infinity`` as floats; ``_validate_topology()`` rejects those
+    values on the live ``Edge``, and the validator's schema-side
+    view must match. A non-finite weight cannot drive a meaningful
+    Pearson check, so surface a dedicated violation and skip the
+    edge."""
+    schema = _load_schema(schema_run)
+    for edge in schema["topology"]["apigateway"]:
+        if edge.get("target") == "cacheservice":
+            edge["weight"] = bad_weight
+            break
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "apigateway->cacheservice" in v
+        and "edge weight in schema.json must be finite" in v
+        for v in violations
+    ), (
+        f"expected non-finite-weight violation for {bad_weight!r}; "
+        f"got: {violations}"
+    )
+
+
+def test_topology_coupling_malformed_edge_list_reports_violation(
+    amc, schema_run,
+):
+    """A schema whose topology source maps to a non-list value (e.g. a
+    dict from a partial serializer) must surface as a single
+    violation rather than crash."""
+    schema = _load_schema(schema_run)
+    schema["topology"] = {"apigateway": {"target": "cacheservice"}}
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    violations = amc._validate_topology_coupling(schema_run, schema)
+    assert any(
+        "apigateway: edge list malformed" in v for v in violations
+    ), (
+        f"expected non-list edge container to surface as a violation; "
+        f"got: {violations}"
+    )
+
+
+def test_compute_anomaly_keep_mask_matches_legacy_behavior(amc):
+    """The vectorized ``_compute_anomaly_keep_mask`` must produce the
+    same row-keep decisions as the original nested-loop implementation
+    on representative inputs: empty windows, isolated windows,
+    overlapping windows, and timestamps falling on the boundary."""
+    import datetime
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    timestamps = [
+        base + datetime.timedelta(seconds=i) for i in range(0, 60, 5)
+    ]
+    # Two overlapping windows merged into one effective range [10s, 25s]
+    # plus one isolated window covering exactly the 40s row.
+    windows = [
+        (base + datetime.timedelta(seconds=10),
+         base + datetime.timedelta(seconds=20)),
+        (base + datetime.timedelta(seconds=15),
+         base + datetime.timedelta(seconds=25)),
+        (base + datetime.timedelta(seconds=40),
+         base + datetime.timedelta(seconds=40)),
+    ]
+    mask = amc._compute_anomaly_keep_mask(timestamps, windows)
+    # Expected: 0,5 keep; 10,15,20,25 drop; 30,35 keep; 40 drop; 45,50,55 keep.
+    expected = [True, True, False, False, False, False,
+                True, True, False, True, True, True]
+    assert list(mask) == expected, (
+        f"keep mask differs from expected nested-loop semantics: "
+        f"got {list(mask)}, want {expected}"
+    )
+
+
+def test_compute_anomaly_keep_mask_empty_inputs(amc):
+    """Empty windows and empty timestamps degenerate cleanly: no rows
+    excluded and an empty mask, respectively."""
+    import datetime
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    ts = [base + datetime.timedelta(seconds=i) for i in range(5)]
+    mask_no_windows = amc._compute_anomaly_keep_mask(ts, [])
+    assert list(mask_no_windows) == [True] * 5
+    mask_no_timestamps = amc._compute_anomaly_keep_mask(
+        [], [(base, base + datetime.timedelta(seconds=1))]
+    )
+    assert list(mask_no_timestamps) == []
+
+
+def test_filter_windows_for_pair_keeps_only_relevant(amc):
+    """``_filter_windows_for_pair`` keeps windows touching either side
+    of the correlation pair, plus any other upstream's captured load
+    columns (so the database check excludes cacheservice load
+    spikes)."""
+    import datetime
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    delta = datetime.timedelta(seconds=60)
+    windows = [
+        (base, base + delta, "apigateway", "requests_per_sec"),
+        (base, base + delta, "database", "queries_per_sec"),
+        (base, base + delta, "cacheservice", "cache_hits"),
+        (base, base + delta, "database", "disk_used_pct"),
+        (base, base + delta, "loadbalancer", "tls_handshake_errors"),
+    ]
+    kept = amc._filter_windows_for_pair(
+        windows,
+        "apigateway", "requests_per_sec",
+        "database", "queries_per_sec",
+    )
+    # Three windows survive: source, target, and the cacheservice
+    # upstream contributor (cache_hits is supplementary to the
+    # cacheservice -> database callable edge).
+    assert len(kept) == 3, (
+        f"expected 3 windows on apigateway->database pair "
+        f"(source + target + cacheservice upstream); got {len(kept)}"
+    )
