@@ -693,10 +693,11 @@ mechanical check rather than a human-reviewer task. The configuration lives in
 `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); the
 `.pre-commit-config.yaml` hook scopes it to `tests/`.
 
-Install and run locally:
+Install and run locally (the `dev` extra installs both `ruff` and
+`pre-commit`):
 
 ```bash
-.venv/bin/pip install pre-commit            # already in the dev extra via ruff
+.venv/bin/pip install -e '.[dev]'           # installs ruff + pre-commit
 .venv/bin/pre-commit install                # one-time per clone
 .venv/bin/pre-commit run --all-files        # ad-hoc full sweep
 .venv/bin/ruff check tests/                 # same check, no pre-commit

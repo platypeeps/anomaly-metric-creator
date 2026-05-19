@@ -7,5 +7,4 @@ repos:
     hooks:
       - id: ruff
         name: ruff F401 (tests/)
-        args: ["--select", "F401"]
         files: ^tests/.*\.py$
