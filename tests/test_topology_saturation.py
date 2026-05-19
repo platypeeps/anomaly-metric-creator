@@ -382,9 +382,13 @@ def _saturating_edges(amc):
 
 
 def test_topology_has_saturating_edges_for_phase4(amc):
-    """Phase 4 must declare SaturationParams on the four front-half edges
-    so saturation feedback actually fires under --topology-mode realistic.
-    Also keeps the llm_analytics phase-5 placeholder in the list."""
+    """Phase 4 declared SaturationParams on the four front-half edges
+    so saturation feedback actually fires under --topology-mode
+    realistic. VER-155 phase 5 then promoted the
+    ``apigateway -> llm_analytics`` placeholder into a real saturating
+    edge as well (covered by
+    ``test_topology_llm_analytics_edge_carries_phase5_gains`` below);
+    this test only pins the original four."""
     saturating = _saturating_edges(amc)
     pairs = {(src, edge.target) for src, edge in saturating}
     assert ("loadbalancer", "apigateway") in pairs
@@ -419,14 +423,21 @@ def test_topology_llm_analytics_edge_carries_phase5_gains(amc):
 
 
 def test_topology_saturation_params_in_planned_ranges(amc):
-    """All non-placeholder saturating edges declared in phase 4 must use
-    gains within the issue's recommended ranges:
+    """Every saturating edge declared on the v1 graph (phase 4 +
+    VER-155 phase 5) must use gains within the issue's recommended
+    ranges:
       steepness ∈ [5, 8], latency_gain ∈ [0.3, 0.8], error_gain ∈ [0.005, 0.02].
+
+    After VER-155 phase 5 the v1 graph no longer has any zero-gain
+    saturating edges, so every `_saturating_edges()` entry should
+    satisfy the range bounds. The zero-gain skip below is kept as a
+    defensive guard for future placeholder edges (and synthetic
+    fixtures that may register zero-gain edges at test time).
     """
     for src, edge in _saturating_edges(amc):
         sat = edge.saturation
         if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
-            continue  # phase-5 placeholder
+            continue  # defensive: skip any future zero-gain placeholder
         assert 5.0 <= sat.steepness <= 8.0, (
             f"{src} -> {edge.target} steepness={sat.steepness} out of "
             f"[5, 8] range"

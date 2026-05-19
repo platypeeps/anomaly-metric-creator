@@ -391,11 +391,14 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
     the default ``--metrics-per-component``; covered separately by
     ``test_realistic_llm_supplemental_latency_lifted``. The expected
     lift on the default-emitted ``avg_llm_latency_ms`` is
-    ``base * latency_gain * mean(logistic)``. With apigateway at
-    utilization ≈ 1.05 at its natural baseline and oscillating through
-    the day, ``mean(logistic)`` lands around 0.4–0.5, so the lift is
-    roughly 850 * 0.55 * 0.4–0.5 ≈ 190–230 ms — comfortably above the
-    5 ms noise floor used as the test threshold.
+    ``base * latency_gain * mean(logistic)``. ``apigateway.requests_per_sec``
+    is a constant baseline of 800 RPS (std 50, no daily multiplier),
+    so its natural utilization against the LLM edge midpoint of 760
+    sits at ≈ 1.05 with ±6% noise. The logistic at utilization 1.05
+    with steepness 6 is ≈ 0.57, and noise plus same-day scenario
+    spikes keep ``mean(logistic)`` in the 0.5–0.6 band, so the
+    expected lift is roughly 850 * 0.55 * 0.5–0.6 ≈ 235–280 ms —
+    comfortably above the 5 ms noise floor used as the test threshold.
     """
     metric = "avg_llm_latency_ms"
     indep_vals, indep_ts = _column_values(
@@ -414,10 +417,11 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
     indep_mean = float(np.mean(indep_x))
     real_mean = float(np.mean(real_x))
     # apigateway sits at utilization ≈ 1.05 at its natural baseline
-    # (base 800 RPS / midpoint 760 RPS) and the daily envelope swings
-    # around that, so ``mean(logistic)`` lands around 0.4–0.5 — the
-    # analytical lift is ``base * latency_gain * mean(logistic)`` ≈
-    # 850 * 0.55 * 0.4–0.5 ≈ 190–230 ms. We accept anything above 5 ms
+    # (base 800 RPS / midpoint 760 RPS) with ±6% noise and no daily
+    # multiplier, so the logistic stays near ≈ 0.57 with std-driven
+    # excursions; the analytical lift is
+    # ``base * latency_gain * mean(logistic)`` ≈
+    # 850 * 0.55 * 0.5–0.6 ≈ 235–280 ms. We accept anything above 5 ms
     # to leave headroom for noise jitter and the same-day anomaly rows
     # that aren't fully scrubbed by the exclusion windows.
     assert real_mean - indep_mean > 5.0, (
@@ -513,7 +517,12 @@ def test_realistic_llm_supplemental_p95_latency_lifted(
     independent_full_metrics_one_day_llm,
 ):
     """``p95_llm_latency_ms`` sits in llm_analytics' supplemental zone
-    (index 8) so it only emits under ``--metrics-per-component 10``.
+    (zero-based index 8, beyond the default
+    ``DEFAULT_METRICS_PER_COMPONENT["llm_analytics"] = 8`` cutoff so
+    it is not emitted by default). It first becomes visible at
+    ``--metrics-per-component 9`` (``specs[:9]`` includes index 8),
+    and the fixture above uses ``10`` to also pull in
+    ``prompt_cache_hit_ratio`` for the full supplemental sweep.
     Saturation feedback must lift its mean above the independent-mode
     baseline."""
     indep_vals, _ = _column_values(
