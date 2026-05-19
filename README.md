@@ -15,6 +15,33 @@ components: `authservice`, `cacheservice`, `apigateway`, `database`, `mqservice`
 `paymentservice`, `identityprovider`, `observabilitypipeline`. Duration,
 sampling interval, drop rate, and output directory are all CLI-configurable.
 
+## Significant changes
+
+Recent significant additions to the generator:
+
+- **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155) —
+  declares a directed service-call graph (`TOPOLOGY`) and wires it into generation.
+  Phase 2 couples downstream RPS baselines from upstream load columns; phase 3
+  extends coupling to all front-half fan-out edges; phase 4 adds logistic-shaped
+  latency multiplier and error-rate offset when an upstream saturates; phase 5
+  closes the graph by coupling `apigateway → llm_analytics` (token-throttle
+  reads as load-driven saturation). See [docs/topology.md](docs/topology.md) and
+  the [Topology graph (v1)](#topology-graph-v1) section.
+- **Schema document + output validator** (`--emit-selection schema` /
+  `--validate-output PATH`, VER-139) — `schema.json` captures run-level
+  parameters and per-metric metadata; `--validate-output` checks required files,
+  row counts, timestamps, cell ranges and dtypes, and derived-metric consistency.
+- **Gauges file** (`--emit-selection gauges`, VER-138) — long-form
+  `gauges.csv` with one `(timestamp, component, metric, value)` row per data
+  point, chronologically merged across components.
+- **Output directory hygiene** (VER-127) — `_pre_clean_output_dir` removes
+  stale artifacts from prior runs (dropped components, deselected emit types)
+  before generation starts.
+- **Scenario registry refactor + RNG instance** (VER-131) — all anomaly
+  scenarios live in the `SCENARIOS` dict; per-run state moves into `RunContext`
+  with an explicit `np.random.RandomState` so seed behaviour is deterministic
+  regardless of import order.
+
 ## Install
 
 Requires Python 3.11+.
@@ -523,94 +550,18 @@ upstream load through downstream baselines.
   of the constant-weight apigateway contribution. No saturation
   declared in v1.
 
-```mermaid
-flowchart TD
-    lb["loadbalancer<br/>(requests_per_sec)"]
-    api["apigateway<br/>(requests_per_sec)"]
-    auth["authservice<br/>(login_attempts)"]
-    cache["cacheservice<br/>(cache_hits, cache_misses)"]
-    db["database<br/>(queries_per_sec)"]
-    llm["llm_analytics<br/>(input_tokens_per_sec)"]
-
-    lb -- "weight=1.0" --> api
-    api -- "0.3" --> auth
-    api -- "0.4" --> cache
-    api -- "0.3" --> db
-    api -- "1.0 (phase 5)" --> llm
-    cache -- "callable:<br/>miss_ratio × db_base" --> db
-```
-
-Edge labels are constant fan-out weights unless otherwise noted; the
-`auth` / `cache` / `database` routing trio shares the `0.3 / 0.4 / 0.3`
-request-share fractions, while the `apigateway → llm_analytics` weight
-is independent (single-incoming-edge renormalization). The
-`cacheservice → database` callable contribution is additive on top of
-the `apigateway → database` constant contribution. Every constant-weight
-edge except `cacheservice → database` also carries `SaturationParams`
-(see the per-edge bullet list above for midpoint / steepness /
-latency-gain / error-gain values).
+See [docs/topology.md](docs/topology.md) for a rendered mermaid diagram
+of the edge set above.
 
 ## Application flow
 
-End-to-end execution of `main(argv=None)` in `anomaly-metric-creator.py`.
-The script has three top-level modes — `--combine-only` (rebuild the
-unified CSV from existing per-component CSVs), `--validate-output PATH`
-(load `PATH/schema.json` and run every validator against the artifacts
-on disk), and the default generation pipeline.
-
-```mermaid
-flowchart TD
-    start(["python anomaly-metric-creator.py …"]) --> parse["parse_args"]
-    parse --> mode{"mode?"}
-
-    mode -- "--combine-only" --> combineonly["combine_logs<br/>(reads existing per-component CSVs)<br/>→ combined_metrics_unified.csv"]
-    combineonly --> finish([exit])
-
-    mode -- "--validate-output PATH" --> validate["validate_output<br/>(load schema.json,<br/>run required/no-unknown/sorted/<br/>row-count/timestamp/cell/derivation checks)"]
-    validate -- "no violations" --> finish
-    validate -- "violations + --validate-warn" --> finish
-    validate -- "violations (default)" --> failexit([exit 1])
-
-    mode -- "default: generate" --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit-selection / --components / --combine)"]
-    preclean --> ctx["RunContext(rng=np.random.RandomState(--seed))"]
-    ctx --> resolve["_resolve_scenarios<br/>--scenarios → --exclude-scenarios<br/>→ --signal-level → --duration-days<br/>→ --components"]
-    resolve --> apply["_apply_scenarios<br/>build component_anomalies +<br/>cascading_anomalies from registry"]
-    apply --> specs["_resolve_effective_specs (--metrics-per-component)<br/>+ _filter_anomalies_for_emitted_metrics"]
-    specs --> cap["_apply_signal_level_and_count<br/>(severity filter + --anomaly-count sampling)"]
-    cap --> ts["_build_timestamp_arrays(total_seconds,<br/>--interval-seconds)"]
-
-    ts --> torder{"--topology-mode?"}
-    torder -- "independent (default)" --> indorder["walk components in<br/>COMPONENTS insertion order<br/>(no coupling — byte-identical<br/>to pre-VER-152 output)"]
-    torder -- "realistic" --> realorder["_topology_generation_order<br/>(Kahn's algorithm, topological order)<br/>+ _compose_topology_coupled_specs<br/>+ _compose_topology_saturation_specs"]
-
-    indorder --> gen["for each component:<br/>generate_component<br/>natural → anomaly overrides →<br/>derivations → capture →<br/>round → drop → write {component}.csv"]
-    realorder --> gen
-
-    gen --> anomcsv["sort filtered_anomalies +<br/>write anomalies.csv<br/>(when 'metrics' in --emit-selection)"]
-    anomcsv --> reports["write_reporting_artifacts<br/>→ metric_report.log, metric_traces.jsonl<br/>(when 'logs'/'traces' in --emit-selection)"]
-    reports --> gauges["write_gauges_csv<br/>→ gauges.csv<br/>(when 'gauges' in --emit-selection)"]
-    gauges --> schema["write_schema_json<br/>→ schema.json<br/>(when 'schema' in --emit-selection)"]
-    schema --> otel["stream_otel_signals +<br/>stream_otel_gauges<br/>(when --otel-enabled)"]
-    otel --> combine["combine_logs<br/>→ combined_metrics_unified.csv<br/>(when --combine)"]
-    combine --> summary["print 'Done -' summary line<br/>(only names artifacts actually written)"]
-    summary --> finish
-```
-
-Notes:
-
-- `--emit-selection` gates the four downstream writers
-  (`anomalies.csv` is part of `metrics`; `metric_report.log` is
-  `logs`; `metric_traces.jsonl` is `traces`; `gauges.csv` is `gauges`;
-  `schema.json` is `schema`). Skipped writers are no-ops on this
-  run, and `_pre_clean_output_dir` removes any matching artifact left
-  over from a prior run.
-- `--validate-output` is mutually exclusive with `--combine` /
-  `--combine-only`; it short-circuits before any generation.
-- Topology coupling and saturation (the right branch of the
-  `--topology-mode` decision) re-shape downstream `MetricSpec`
-  baselines from upstream load columns captured during generation.
-  See [Topology graph (v1)](#topology-graph-v1) for the edge set and
-  saturation parameters.
+End-to-end execution of `main(argv=None)` covers three top-level modes:
+`--combine-only` (rebuild the unified CSV from existing per-component
+CSVs), `--validate-output PATH` (load `PATH/schema.json` and run every
+validator against the artifacts on disk), and the default generation
+pipeline. See [docs/application-flow.md](docs/application-flow.md) for a
+rendered mermaid diagram of the full pipeline and the emit-selection /
+validator gating notes.
 
 ## Failure modes / anomaly catalog
 
