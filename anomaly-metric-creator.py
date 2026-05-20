@@ -4821,8 +4821,14 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
                 "but is not installed. Install it with 'pip install pyyaml' or "
                 "use a .json file instead."
             )
+        # PyYAML's YAMLError is the parent of every parse / scanner /
+        # composer error it raises.
+        parse_exc_types: tuple[type[Exception], ...] = (
+            yaml.YAMLError, UnicodeDecodeError,
+        )
     else:
         import json
+        parse_exc_types = (json.JSONDecodeError, UnicodeDecodeError)
     try:
         with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) if is_yaml else json.load(f)
@@ -4830,7 +4836,11 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
         raise ValueError(
             f"--instance-config {path}: failed to read file: {exc}"
         ) from exc
-    except Exception as exc:  # yaml.YAMLError, json.JSONDecodeError, UnicodeDecodeError, …
+    except parse_exc_types as exc:
+        # Narrowed from ``except Exception`` so KeyboardInterrupt /
+        # SystemExit (they inherit from BaseException, not Exception, but
+        # being explicit avoids accidentally swallowing programming-error
+        # exceptions like AttributeError if the parser were ever swapped).
         raise ValueError(
             f"--instance-config {path}: failed to parse "
             f"{'YAML' if is_yaml else 'JSON'}: {exc}"
