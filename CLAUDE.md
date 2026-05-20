@@ -370,6 +370,18 @@ Anomaly specs are dicts with:
   `sustained`, `sawtooth`, `sine`.
 - `shape_params` (optional) — shape-specific params (`start/end`, `period_s`,
   `amplitude`, `midline`, etc.).
+- `instance_filter` (optional, VER-140 Phase 4) — restricts which instances
+  the override applies to. Accepted forms:
+  - omitted / `None` → applies to every active instance (default; preserves
+    Phase 2 byte-identical output when no filter is set).
+  - iterable of `str` ids (list, tuple, frozenset) → applies only to
+    instances whose `Instance.id` is in the set.
+  - callable `(Instance) -> bool` → per-instance predicate.
+  Scalars (int/float/bool), bare strings (would iterate characters), dicts,
+  and iterables containing non-string elements are rejected at import time by
+  `_validate_scenario_spec`. Zero-match at runtime emits a `WARNING` on stderr
+  and skips the spec (no manifest entry). Non-zero-match adds one manifest
+  entry regardless of how many instances matched.
 
 Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.
