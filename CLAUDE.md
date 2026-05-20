@@ -1006,14 +1006,14 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 
 ### Reviewer-before-ready gate
 
-The Code Reviewer agent signs off in the worktree *before* the PR is marked ready for review on GitHub (i.e. before draft status is removed). Pushing the draft branch is fine — and required by step 1 — what this gate blocks is the draft → ready transition. The workflow is:
+The Code Reviewer agent signs off in the worktree *before* the PR is marked ready for review on GitHub (i.e. before draft status is removed). Pushing the draft branch is fine — and required by step 1 — what this gate blocks is the draft → ready transition. The workflow is structurally enforced by Paperclip:
 
 1. Implementing agent opens the PR as a **draft**.
-2. Implementing agent marks the tracking issue `in_review` and assigns the Code Reviewer.
-3. Code Reviewer walks the pre-PR checklist, fixes any issues in the same worktree, then adds the `internal-review-passed` label, marks the PR ready (removes draft status), and hands back to the Lead Engineer or Release Engineer.
-4. There is no "skip the draft step" escape hatch. The `Internal review gate` GitHub Actions workflow (`.github/workflows/internal-review-gate.yml`) runs on `pull_request` events that can change draft status, labels, or contents, and fails the check when `draft == false` and the `internal-review-passed` label is absent, so a PR opened or flipped to ready without Code Reviewer sign-off cannot pass required checks. The label is added by the Code Reviewer as part of step 3; the implementing agent must not add it themselves.
+2. Implementing agent marks the tracking issue `in_review`. (Paperclip automatically attaches an execution policy with a Code Reviewer stage on every issue checkout, so the implementing agent does not manually assign the reviewer).
+3. Code Reviewer walks the pre-PR checklist, fixes any issues in the same worktree, then marks the PR ready (removes draft status) and submits an Approve decision to Paperclip, which automatically hands back to the implementing agent or advances the workflow.
+4. PRs that go directly to `gh pr create` without the draft+reviewer step skip steps 1–3, but must pass the pre-PR checklist self-attestation before being marked ready.
 
-This process avoids the Copilot round-trip: issues caught by the Code Reviewer in step 3 are fixed before Copilot's first review, not after. The CI gate is the structural backstop — added after a same-day PR bypassed the documented gate and required five fix rounds — so the documented workflow and the enforced workflow stay aligned.
+This process avoids the Copilot round-trip: issues caught by the Code Reviewer in step 3 are fixed before Copilot's first review, not after. Paperclip's execution policy is the structural backstop — added after a same-day PR bypassed the documented gate and required five fix rounds — ensuring the Code Reviewer must explicitly sign off before the issue can transition to `done`.
 
 ## Tests
 
