@@ -348,13 +348,14 @@ def test_dst_artifact_with_multi_instance_rejected(amc, tmp_path):
 
 def test_preflight_cap_multiplied_by_n(amc, tmp_path):
     """A run that passes with N=1 trips the cap when N pushes it over."""
-    # Find interval that puts a single-component run just under the cap at N=1
-    # but over it at N=2. Use a single component to keep math simple.
-    # 1 component, default metrics, 1 day, interval=1s → ~75 default metrics *
-    # 86400 rows = ~6.5M cells — well under cap. Need to stay under cap at N=1
-    # but go over at very small interval. Instead test via mocking:
-    # run with --allow-huge-output N=1 to confirm it completes, then verify
-    # parse_args raises when estimated_cells > cap without the bypass flag.
+    # Both invocations use the default --components all selector. With 13
+    # components each emitting their default metric counts (4–8 per
+    # component), ``total_metrics`` is ~75 metrics summed across the run.
+    # The cap formula is rows_per_component * total_metrics * N.
+    #
+    # First leg: 86400 rows * ~75 metrics * 1 instance = ~6.5M cells —
+    # well under the 200M cap. Pair --allow-huge-output so the assertion
+    # only exercises argument parsing (no generation) and stays fast.
     args_n1 = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
@@ -363,9 +364,11 @@ def test_preflight_cap_multiplied_by_n(amc, tmp_path):
     ])
     assert args_n1.instances_per_component == 1
 
-    # Verify that parse_args with a huge N on a long run raises SystemExit.
-    # 86400 rows * 75 metrics * 20 instances = ~130M cells (under 200M).
-    # Use 7 days: 604800 * 75 * 20 = 907M > 200M.
+    # Second leg: same default --components all, but 7 days and N=20.
+    # 604800 rows * ~75 metrics * 20 instances = ~907M cells > 200M cap,
+    # so parse_args must reject without --allow-huge-output. (At 1 day
+    # the same N=20 would land at ~130M, under the cap — the 7-day knob
+    # is what trips it deterministically.)
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--output-dir", str(tmp_path),

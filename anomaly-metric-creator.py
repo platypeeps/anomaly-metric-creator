@@ -674,21 +674,6 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # string ops produces the same output ~2x faster.
     str_vals = _format_fixed3(kept_vals)
 
-    # Assemble each row as ``ts,v0,v1,...,vk`` via vectorized numpy string adds,
-    # then join with newlines. Doing the column concat in numpy (C) and only the
-    # final newline-join in Python keeps the per-row Python work to one op.
-    rows = np.char.add(kept_ts, ",")
-    rows = np.char.add(rows, str_vals[:, 0])
-    for col in range(1, n_cols):
-        rows = np.char.add(rows, ",")
-        rows = np.char.add(rows, str_vals[:, col])
-
-    # Fall-DST artifact. Duplicate the 02:00–02:59 wall-clock hour on the
-    # configured day so downstream consumers must handle non-monotonic
-    # timestamps (a real-world quirk that breaks naive timeseries pipelines).
-    if dst_inject_day > 0:
-        rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
-
     # Multi-instance fan-out (VER-140 Phase 2). When the active instance list
     # is a single anonymous Instance() (all fields None), emit today's
     # byte-identical format: ``timestamp,m0,m1,...``. When the list carries
@@ -699,10 +684,39 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # Phase 4 (instance_filter) will let anomalies target specific instances.
     # ``_is_anonymous`` was already computed above for the DST defense-in-depth
     # guard via the shared ``_is_anonymous_instance_list`` helper.
+    #
+    # The two branches build different intermediate string arrays — the
+    # anonymous branch concatenates ``ts,v0,...,vk`` into ``rows`` once
+    # for the whole component, while the long-form branch builds the
+    # metric suffix once and prepends per-instance dimension strings
+    # inside the writer loop. Each branch builds only what it consumes.
 
     if emit_metrics:
         with open(file_path, "w", newline="") as f:
             if _is_anonymous:
+                # Assemble each row as ``ts,v0,v1,...,vk`` via vectorized
+                # numpy string adds, then join with newlines. Doing the
+                # column concat in numpy (C) and only the final
+                # newline-join in Python keeps the per-row Python work
+                # to one op.
+                rows = np.char.add(kept_ts, ",")
+                rows = np.char.add(rows, str_vals[:, 0])
+                for col in range(1, n_cols):
+                    rows = np.char.add(rows, ",")
+                    rows = np.char.add(rows, str_vals[:, col])
+
+                # Fall-DST artifact. Duplicate the 02:00–02:59 wall-clock
+                # hour on the configured day so downstream consumers must
+                # handle non-monotonic timestamps (a real-world quirk
+                # that breaks naive timeseries pipelines). The
+                # non-anonymous branch never reaches this — the
+                # defense-in-depth guard above raises ValueError on
+                # ``dst_inject_day > 0`` with a non-anonymous instance
+                # list, so this splice runs only under
+                # ``_is_anonymous=True``.
+                if dst_inject_day > 0:
+                    rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
+
                 # Dimensionless default — byte-identical to pre-Phase-2 output.
                 f.write("timestamp," + ",".join(fieldnames) + "\n")
                 f.write("\n".join(rows.tolist()))
