@@ -418,15 +418,21 @@ def test_validate_component_derivations_raises_on_unregistered_component(
     must raise ``KeyError`` (programmer drift surfaced loudly, not a
     soft violation entry the caller might overlook)."""
     schema = _load_schema(schema_run)
-    # Splice a fake derivation onto apigateway so the component appears
-    # in the validator's iteration but is absent from ``_RECOMPUTERS``.
-    component = "apigateway"
+    # Pick any schema-resident component the catalog does not register a
+    # recomputer for, so the test stays valid as ``_RECOMPUTERS`` evolves.
+    # Sorted for determinism; ``_RECOMPUTERS`` covers ``cacheservice`` today,
+    # so the remaining components all qualify — but the loop guards against
+    # a future where every component gains a derived column.
+    candidates = sorted(
+        c for c in schema["components"] if c not in amc._RECOMPUTERS
+    )
+    assert candidates, (
+        "every schema component already has a recomputer; this test needs "
+        "at least one unregistered component to exercise the raise path"
+    )
+    component = candidates[0]
     metrics = schema["components"][component]["metrics"]
-    first_metric_name = metrics[0]["name"]
-    for entry in metrics:
-        if entry["name"] == first_metric_name:
-            entry["derivation"] = "synthetic_for_test"
-            break
+    metrics[0]["derivation"] = "synthetic_for_test"
     _write_schema(schema_run, schema)
     schema = _load_schema(schema_run)
     with pytest.raises(KeyError):

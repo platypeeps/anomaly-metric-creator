@@ -6778,11 +6778,11 @@ def _validate_component_derivations(
         return []
 
     # VER-179: dispatch tables raise on unknown keys. ``DERIVATIONS`` and
-    # ``_RECOMPUTERS`` are paired single-source registries enforced by the
-    # test suite (see ``test_recomputers_and_derivations_keysets_match``);
-    # a missing recomputer for a component whose schema declares a
-    # derivation is programmer drift, not a runtime data issue, and must
-    # surface loudly instead of being downgraded to a violation entry.
+    # ``_RECOMPUTERS`` are paired single-source registries whose keyset
+    # equality is enforced by the test suite; a missing recomputer for a
+    # component whose schema declares a derivation is programmer drift,
+    # not a runtime data issue, and must surface loudly instead of being
+    # downgraded to a violation entry.
     recompute = _RECOMPUTERS[component]
 
     violations = []
@@ -6832,8 +6832,12 @@ def _recompute_cacheservice(metric: str, row: list[str],
                              name_to_col: dict[str, int]) -> float | None:
     """Recompute ``cacheservice.hit_ratio`` from ``cache_hits`` / ``cache_misses``.
 
-    Returns ``None`` when source cells are missing or unparseable (the cell
-    validator catches those separately).
+    Returns ``None`` when one of the source columns is absent from the
+    schema header (a ``--metrics-per-component`` trim drops the column).
+    Unparseable source cells raise ``ValueError`` from ``float()``; the
+    caller (``_validate_component_derivations``) catches ``ValueError`` /
+    ``ZeroDivisionError`` per row so the cell validator can report those
+    separately.
 
     VER-179: per-metric dispatch within the recomputer raises ``KeyError``
     on any unknown metric. ``DERIVATIONS['cacheservice']`` declares only
