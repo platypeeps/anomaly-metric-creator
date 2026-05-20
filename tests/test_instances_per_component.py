@@ -250,6 +250,29 @@ def test_instances_per_component_over_max_rejected(amc, tmp_path):
     assert "instances-per-component" in result.stderr.lower()
 
 
+def test_instances_per_component_range_error_precedes_gating(amc, tmp_path):
+    """An out-of-range N paired with a gated flag surfaces the range
+    error, not the incompatibility error.
+
+    Without explicit ordering the user would see "incompatible with
+    --combine" for ``--instances-per-component 999 --combine`` and
+    waste time looking for a combine fix when the real problem is the
+    invalid N. The range check is run *before* every N>1 gate in
+    ``parse_args``.
+    """
+    over = str(amc.MAX_INSTANCES_PER_COMPONENT + 1)
+    result = _invoke(
+        ["--instances-per-component", over, "--combine",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "must be in [1," in stderr_low
+    # The combine-incompatibility message must not fire — the range
+    # error takes precedence and exits before the gate is reached.
+    assert "incompatible with --combine" not in stderr_low
+
+
 # ---------------------------------------------------------------------------
 # Dimension-field validation (extended in Phase 2 to cover host/pod/az/region/tenant)
 # ---------------------------------------------------------------------------
@@ -675,7 +698,9 @@ def test_combine_only_rejects_multi_instance_per_component_csv(amc, tmp_path):
         expect_fail=False,
     )
     # Sanity-check: the per-component CSV carries the dimension columns.
-    header = (tmp_path / "apigateway.csv").read_text().splitlines()[0]
+    # Read only the header line — the file holds ~86k rows at 1-day default.
+    with (tmp_path / "apigateway.csv").open() as fh:
+        header = fh.readline().rstrip("\n")
     assert header.startswith("timestamp,id,host,pod,az,region,tenant,")
 
     # Phase 2: --combine-only must refuse rather than silently cross-join
@@ -690,3 +715,32 @@ def test_combine_only_rejects_multi_instance_per_component_csv(amc, tmp_path):
     assert "apigateway.csv" in stderr_low
     assert "ver-148" in stderr_low or "phase 5" in stderr_low
     assert "instances-per-component" in stderr_low
+
+
+def test_combine_logs_accepts_single_instance_csv_with_overlapping_metric_name(
+    amc, tmp_path,
+):
+    """A single-instance CSV whose metric name happens to be ``id`` /
+    ``host`` / ... must combine cleanly. The guard requires the full
+    canonical dimension prefix in column order, not any-overlap on the
+    dim field set — otherwise a hypothetical future metric named one of
+    the six dim columns would false-positive in a single-instance CSV.
+    """
+    # Hand-craft a per-component CSV whose first metric column reuses a
+    # dimension column name. This is the false-positive shape Copilot
+    # flagged: a one-row overlap on the column set, but no canonical
+    # six-column prefix in canonical order.
+    csv_path = tmp_path / "synthetic_component.csv"
+    csv_path.write_text(
+        "timestamp,id,metric_b\n"
+        "2025-01-01 00:00:00,42,3.14\n"
+        "2025-01-01 00:00:01,43,2.71\n"
+    )
+    # combine_logs is the choke point both --combine and --combine-only
+    # share, so calling it directly exercises the guard without spinning
+    # up a subprocess.
+    amc.combine_logs(tmp_path, components=["synthetic_component"])
+    # No SystemExit raised → guard correctly identified this as a
+    # single-instance CSV despite the ``id`` column overlap.
+    combined = tmp_path / "combined_metrics_unified.csv"
+    assert combined.exists()

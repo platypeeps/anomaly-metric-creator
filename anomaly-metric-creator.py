@@ -236,6 +236,29 @@ class Instance:
     tenant: str | None = None
 
 
+# Canonical column order for the multi-instance long-form dimension
+# prefix. ``generate_component()``'s long-form branch writes these
+# columns in this order; ``combine_logs`` matches the same shape when
+# detecting a multi-instance CSV; ``_is_anonymous_instance_list`` keys
+# its predicate off the same field list so all three views stay in
+# lockstep with the ``Instance`` dataclass above.
+_INSTANCE_DIMENSION_COLUMNS = ("id", "host", "pod", "az", "region", "tenant")
+
+
+def _is_anonymous_instance_list(instances) -> bool:
+    """True iff ``instances`` is the single-anonymous-Instance() default.
+
+    Single source of truth for the "emit today's dimensionless format"
+    branch in ``generate_component()`` and the DST-guard helper. Keying
+    off ``_INSTANCE_DIMENSION_COLUMNS`` means adding or removing an
+    ``Instance`` field touches one constant instead of two predicates.
+    """
+    if len(instances) != 1:
+        return False
+    only = instances[0]
+    return all(getattr(only, field) is None for field in _INSTANCE_DIMENSION_COLUMNS)
+
+
 # ------------------------------------------------------------------
 # Topology graph dataclasses (VER-143 phase 1 — structural-only).
 # ------------------------------------------------------------------
@@ -448,16 +471,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # splice would silently drop the duplicated hour. ``parse_args``
     # already rejects this combination at the CLI; this guard catches
     # any direct caller (tests, future consumers) that bypasses it.
-    _is_anonymous_instances = (
-        len(instances) == 1
-        and instances[0].id is None
-        and instances[0].host is None
-        and instances[0].pod is None
-        and instances[0].az is None
-        and instances[0].region is None
-        and instances[0].tenant is None
-    )
-    if not _is_anonymous_instances and dst_inject_day > 0:
+    _is_anonymous = _is_anonymous_instance_list(instances)
+    if not _is_anonymous and dst_inject_day > 0:
         raise ValueError(
             f"generate_component({component_name!r}): dst_inject_day > 0 "
             f"is incompatible with a non-anonymous instance list; the "
@@ -682,15 +697,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # each instance sequentially (all rows for instance 0, then instance 1,
     # …). All instances share the same RNG-drawn natural values in v1;
     # Phase 4 (instance_filter) will let anomalies target specific instances.
-    _is_anonymous = (
-        len(instances) == 1
-        and instances[0].id is None
-        and instances[0].host is None
-        and instances[0].pod is None
-        and instances[0].az is None
-        and instances[0].region is None
-        and instances[0].tenant is None
-    )
+    # ``_is_anonymous`` was already computed above for the DST defense-in-depth
+    # guard via the shared ``_is_anonymous_instance_list`` helper.
 
     if emit_metrics:
         with open(file_path, "w", newline="") as f:
@@ -701,15 +709,17 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 f.write("\n")
             else:
                 # Long form: timestamp,id,host,pod,az,region,tenant,<metrics>
-                dim_header = "timestamp,id,host,pod,az,region,tenant"
+                dim_header = "timestamp," + ",".join(_INSTANCE_DIMENSION_COLUMNS)
                 f.write(dim_header + "," + ",".join(fieldnames) + "\n")
                 for inst in instances:
                     # Build the dimension prefix string once per instance
-                    # and prepend it to each row's metric columns.
+                    # and prepend it to each row's metric columns. Reads
+                    # the dimension fields off ``Instance`` in canonical
+                    # column order so adding/removing a field touches
+                    # only ``_INSTANCE_DIMENSION_COLUMNS``.
                     dim_vals = ",".join(
-                        v if v is not None else ""
-                        for v in (inst.id, inst.host, inst.pod,
-                                  inst.az, inst.region, inst.tenant)
+                        getattr(inst, field) if getattr(inst, field) is not None else ""
+                        for field in _INSTANCE_DIMENSION_COLUMNS
                     )
                     inst_rows = np.char.add(kept_ts, f",{dim_vals},")
                     inst_rows = np.char.add(inst_rows, str_vals[:, 0])
@@ -5152,11 +5162,11 @@ def parse_args(argv=None):
         default=False,
         help=f"Bypass the preflight cell-count cap "
              f"({PREFLIGHT_CELL_CAP:,} metric cells across all "
-             f"components and timestamps). Without this flag, parse_args "
-             f"rejects combinations of --interval-seconds, --duration-days, "
-             f"--metrics-per-component, and --components that would emit "
-             f"more cells than the cap. Pass this flag when the size is "
-             f"intentional.",
+             f"components, timestamps, and instances). Without this flag, "
+             f"parse_args rejects combinations of --interval-seconds, "
+             f"--duration-days, --metrics-per-component, --components, and "
+             f"--instances-per-component that would emit more cells than "
+             f"the cap. Pass this flag when the size is intentional.",
     )
     otel_toggle = p.add_mutually_exclusive_group()
     otel_toggle.add_argument(
@@ -5445,6 +5455,19 @@ def parse_args(argv=None):
             "the heapq.merge over per-component CSVs); pass "
             "--inject-dst-artifact-day 0 or drop the gauge emission flag"
         )
+    # Validate ``--instances-per-component`` range *before* any N>1 gating
+    # so an out-of-range value (e.g. 0 or 999) surfaces the range error
+    # rather than masquerading as an incompatibility error when the user
+    # also passed --combine, --validate-output, or another gated flag.
+    if (
+        args.instances_per_component < 1
+        or args.instances_per_component > MAX_INSTANCES_PER_COMPONENT
+    ):
+        p.error(
+            f"--instances-per-component must be in [1, "
+            f"{MAX_INSTANCES_PER_COMPONENT}] (1 = default dimensionless "
+            f"output; >1 fans out with pod/az/etc. columns)"
+        )
     if args.instances_per_component > 1 and args.inject_dst_artifact_day > 0:
         p.error(
             "--instances-per-component > 1 is incompatible with "
@@ -5582,12 +5605,6 @@ def parse_args(argv=None):
     if args.anomaly_count is not None and args.anomaly_count < 1:
         p.error("--anomaly-count must be >= 1 (omit the flag for unlimited)")
 
-    if args.instances_per_component < 1 or args.instances_per_component > MAX_INSTANCES_PER_COMPONENT:
-        p.error(
-            f"--instances-per-component must be in [1, {MAX_INSTANCES_PER_COMPONENT}] "
-            f"(1 = default dimensionless output; >1 fans out with pod/az/etc. columns)"
-        )
-
     if args.metrics_per_component is not None and (
         args.metrics_per_component < 1
         or args.metrics_per_component > MAX_METRICS_PER_COMPONENT
@@ -5664,19 +5681,6 @@ def parse_args(argv=None):
 # ------------------------------------------------------------------
 _NON_COMPONENT_FILES = {"anomalies.csv", "gauges.csv"}
 
-# Dimension columns prepended by the multi-instance long-form writer
-# (VER-140 Phase 2). Used by ``combine_logs`` to detect a per-component
-# CSV that was generated with ``--instances-per-component > 1`` and
-# refuse to combine it, since the unified writer is not dimension-aware
-# yet (tracked under VER-148 / Phase 5). Without this guard a user could
-# bypass the ``parse_args`` gate by running combine-only against an
-# already-generated multi-instance run, and the wide combine output
-# would cross-join the dimension columns into metric columns named
-# e.g. ``apigateway_id`` / ``apigateway_pod``.
-_INSTANCE_DIMENSION_FIELDNAMES = frozenset({
-    "id", "host", "pod", "az", "region", "tenant",
-})
-
 # Filenames written into --output-dir for each --emit-selection item.
 # Per-component CSVs are derived from args.components, not listed here.
 # Consumed by _pre_clean_output_dir() and by the end-of-run summary line.
@@ -5737,22 +5741,34 @@ def combine_logs_unified(components, input_dir, output_file=None):
             # Dimension-aware combine is Phase 5 (VER-148). If the input
             # CSV carries the long-form dimension columns from a prior
             # ``--instances-per-component > 1`` run, refuse to combine
-            # rather than silently treat ``id`` / ``pod`` / etc. as
-            # metric columns. ``parse_args`` blocks the
+            # rather than silently treat the dim columns as metric
+            # columns. The writer always emits the full six-column prefix
+            # in the canonical order, so we match the exact prefix shape
+            # (``timestamp`` followed by all six dim columns in order)
+            # rather than any-overlap on the column set. The looser
+            # any-overlap form would false-positive on a hypothetical
+            # future metric named ``id`` or ``host`` that lives in a
+            # single-instance CSV. ``parse_args`` blocks the
             # generate-and-combine path; this guard covers the bypass
             # where a user runs ``--combine-only`` against an existing
             # multi-instance directory (where the default
             # ``instances_per_component=1`` lets the parser through).
-            dim_in_header = (
-                set(reader.fieldnames or ()) & _INSTANCE_DIMENSION_FIELDNAMES
+            header_fields = tuple(reader.fieldnames or ())
+            multi_instance_header = (
+                len(header_fields) >= 1 + len(_INSTANCE_DIMENSION_COLUMNS)
+                and header_fields[0] == "timestamp"
+                and header_fields[1:1 + len(_INSTANCE_DIMENSION_COLUMNS)]
+                == _INSTANCE_DIMENSION_COLUMNS
             )
-            if dim_in_header:
+            if multi_instance_header:
                 raise SystemExit(
-                    f"{input_path.name} carries dimension columns "
-                    f"{sorted(dim_in_header)!r}; the combine writer is "
-                    f"not dimension-aware yet (tracked under VER-148 "
-                    f"Phase 5). Regenerate the per-component CSVs with "
-                    f"--instances-per-component 1 before combining."
+                    f"{input_path.name} carries the multi-instance "
+                    f"dimension prefix "
+                    f"{list(_INSTANCE_DIMENSION_COLUMNS)!r}; the combine "
+                    f"writer is not dimension-aware yet (tracked under "
+                    f"VER-148 Phase 5). Regenerate the per-component "
+                    f"CSVs with --instances-per-component 1 before "
+                    f"combining."
                 )
             metric_names = [f for f in reader.fieldnames if f != "timestamp"]
             component_metrics[component] = metric_names
