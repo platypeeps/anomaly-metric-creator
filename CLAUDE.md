@@ -824,11 +824,16 @@ non-monotonic timestamps that the multi-instance row builder is not
 prepared for, and `parse_args` rejects the combination with a clear
 message naming the active flag.
 
-When adding fields to `Instance`, mirror them in three places: (1)
-`_valid_instance_fields` in `_load_instance_config` so the config
-loader accepts the new key, (2) the YAML/JSON example in the
-README CLI table row, and (3) `_validate_instance_list` if the new
-field needs uniqueness or shape checks.
+When adding fields to `Instance`, add the new field name to
+`_INSTANCE_DIMENSION_COLUMNS`. Both the `_load_instance_config`
+validator (`_valid_instance_fields = frozenset(_INSTANCE_DIMENSION_COLUMNS)`)
+and the `Instance(**{f: entry.get(f) for f in _INSTANCE_DIMENSION_COLUMNS})`
+constructor pick the new field up automatically, so config-key
+acceptance and constructor population stay in lockstep without a
+second edit. The remaining lockstep edit sites are: (1) the
+README CLI table row example (cosmetic, lists supported keys for
+users), and (2) `_validate_instance_list` if the new field needs
+uniqueness or shape checks beyond what the dataclass enforces.
 
 ### Scenario registry
 

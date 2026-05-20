@@ -4910,14 +4910,14 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
                     f"field(s) {sorted(unknown, key=repr)}; valid fields: "
                     f"{sorted(_valid_instance_fields)}"
                 )
-            instances.append(Instance(
-                id=entry.get("id"),
-                host=entry.get("host"),
-                pod=entry.get("pod"),
-                az=entry.get("az"),
-                region=entry.get("region"),
-                tenant=entry.get("tenant"),
-            ))
+            # Build the Instance kwargs from the same canonical tuple
+            # used by the validator above, so a future field added to
+            # _INSTANCE_DIMENSION_COLUMNS lands in both places at once
+            # (validator accepts the key + constructor populates the
+            # attribute) and can't be accepted-and-silently-dropped.
+            instances.append(Instance(**{
+                field: entry.get(field) for field in _INSTANCE_DIMENSION_COLUMNS
+            }))
         _validate_instance_list(instances, where=f"--instance-config {path} {component!r}")
         result[component] = instances
 
