@@ -569,15 +569,16 @@ def test_cacheservice_to_database_weight_reads_live_components(amc, monkeypatch)
 
     expected_after = miss_ratio * new_base
     got_after = np.asarray(cs_to_db.weight(miss_ratio), dtype=np.float64)
-    np.testing.assert_allclose(got_after, expected_after, rtol=0, atol=0)
     # Strict regression assertion: a stale module-load capture would
     # return ``expected_before`` here regardless of the monkeypatch.
+    # Assert this first so a regression yields the actionable message.
     assert not np.allclose(got_after, expected_before), (
         "cacheservice -> database callable weight ignored the monkeypatched "
         "COMPONENTS['database'].queries_per_sec.base; the lambda must read "
         "the baseline live from COMPONENTS on every call, not capture it "
         "at module load (VER-182 regression guard)."
     )
+    np.testing.assert_allclose(got_after, expected_after, rtol=0, atol=0)
 
 
 def test_component_metric_base_reads_live_components(amc, monkeypatch):
