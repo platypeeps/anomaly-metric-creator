@@ -4849,7 +4849,7 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
     if not isinstance(raw, dict):
         raise ValueError(
             f"--instance-config {path}: top-level value must be a mapping, "
-            f"got {type(raw).__name__!r}"
+            f"got {type(raw).__name__}"
         )
     # Distinguish "key absent" from "key present but explicitly null" so
     # ``components: null`` in YAML reports the more accurate
@@ -4863,10 +4863,13 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
     if not isinstance(components_raw, dict):
         raise ValueError(
             f"--instance-config {path}: 'components' must be a mapping, "
-            f"got {type(components_raw).__name__!r}"
+            f"got {type(components_raw).__name__}"
         )
 
-    _valid_instance_fields = {"id", "host", "pod", "az", "region", "tenant"}
+    # Derived from the canonical column list so a future Instance field
+    # added to ``_INSTANCE_DIMENSION_COLUMNS`` is immediately accepted by
+    # the config loader without a second edit.
+    _valid_instance_fields = frozenset(_INSTANCE_DIMENSION_COLUMNS)
     result: dict[str, list[Instance]] = {}
     for component, inst_list in components_raw.items():
         if component not in COMPONENTS:
@@ -4877,7 +4880,7 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
         if not isinstance(inst_list, list):
             raise ValueError(
                 f"--instance-config {path}: {component!r} value must be a list, "
-                f"got {type(inst_list).__name__!r}"
+                f"got {type(inst_list).__name__}"
             )
         if not inst_list:
             raise ValueError(
@@ -4894,7 +4897,7 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
             if not isinstance(entry, dict):
                 raise ValueError(
                     f"--instance-config {path}: {component!r}[{i}] must be a dict, "
-                    f"got {type(entry).__name__!r}"
+                    f"got {type(entry).__name__}"
                 )
             # Compare keys against the valid set after coercing to repr so a
             # YAML mapping with non-string keys (e.g. ``{1: 'x'}``) still

@@ -138,9 +138,13 @@ components:
 """)
     out = tmp_path / "out"
     out.mkdir()
-    # Use --drop-rate 0 so row counts are exact multiples.
+    # Use --drop-rate 0 so row counts are exact multiples. Pin
+    # --interval-seconds 1 so the test does not silently break if the
+    # CLI default ever changes; derive the expected row count from
+    # amc.SECONDS_PER_DAY rather than hard-coding 86400.
     _run(amc, out, ["--instance-config", str(cfg),
                     "--components", "authservice,loadbalancer",
+                    "--interval-seconds", "1",
                     "--drop-rate", "0"])
 
     # authservice: should have dimension columns + exactly 2× rows.
@@ -152,7 +156,7 @@ components:
     assert header[0] == "timestamp"
     assert "id" in header
     assert "pod" in header
-    assert row_count == 2 * 86400  # 2 instances × 86400 rows/day, no drops
+    assert row_count == 2 * amc.SECONDS_PER_DAY  # 2 instances × rows-per-day, no drops
 
     # loadbalancer: should remain dimensionless (anonymous Instance)
     with open(out / "loadbalancer.csv") as f:
