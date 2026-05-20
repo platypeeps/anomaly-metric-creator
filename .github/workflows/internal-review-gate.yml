@@ -32,7 +32,7 @@ jobs:
             exit 0
           fi
 
-          has_label=$(printf '%s' "${PR_LABELS}" | jq -r 'any(.name == "internal-review-passed")')
+          has_label=$(printf '%s' "${PR_LABELS}" | jq -r 'any(.[]; .name == "internal-review-passed")')
           if [ "${has_label}" = "true" ]; then
             echo "PR #${PR_NUMBER} is ready for review and carries the 'internal-review-passed' label. Gate passed."
             exit 0
