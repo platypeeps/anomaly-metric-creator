@@ -225,6 +225,89 @@ def test_missing_components_key_raises(amc, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Validation: top-level value must be a mapping (YAML scalar / list / null)
+# ---------------------------------------------------------------------------
+
+def test_top_level_non_mapping_raises_for_scalar(amc, tmp_path):
+    """A YAML scalar at the top level (e.g. ``just_a_string``) is not a mapping."""
+    cfg = _write_yaml(tmp_path, "just_a_string\n")
+    with pytest.raises(ValueError, match="top-level value must be a mapping"):
+        amc._load_instance_config(cfg)
+
+
+def test_top_level_non_mapping_raises_for_list(amc, tmp_path):
+    """A YAML list at the top level (e.g. ``- foo``) is not a mapping."""
+    cfg = _write_yaml(tmp_path, "- foo\n- bar\n")
+    with pytest.raises(ValueError, match="top-level value must be a mapping"):
+        amc._load_instance_config(cfg)
+
+
+def test_top_level_non_mapping_raises_for_empty(amc, tmp_path):
+    """An empty YAML file parses to ``None``, which is not a mapping."""
+    cfg = _write_yaml(tmp_path, "")
+    with pytest.raises(ValueError, match="top-level value must be a mapping"):
+        amc._load_instance_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Validation: 'components' must be a mapping (not list, not scalar)
+# ---------------------------------------------------------------------------
+
+def test_components_value_is_list_raises(amc, tmp_path):
+    """``components: [...]`` is a list, not a mapping; rejected with a clear error."""
+    cfg = _write_yaml(tmp_path, "components:\n  - just-a-list-entry\n")
+    with pytest.raises(ValueError, match=r"'components' must be a mapping"):
+        amc._load_instance_config(cfg)
+
+
+def test_components_value_is_scalar_raises(amc, tmp_path):
+    """``components: some-string`` is a scalar, not a mapping."""
+    cfg = _write_yaml(tmp_path, "components: just-a-string\n")
+    with pytest.raises(ValueError, match=r"'components' must be a mapping"):
+        amc._load_instance_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Validation: per-component value must be a list (not a dict, not a scalar)
+# ---------------------------------------------------------------------------
+
+def test_per_component_value_not_a_list_raises(amc, tmp_path):
+    """``authservice: {id: a1}`` is a mapping instead of a list of mappings."""
+    cfg = _write_yaml(tmp_path, "components:\n  authservice:\n    id: a1\n")
+    with pytest.raises(ValueError, match="value must be a list"):
+        amc._load_instance_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Validation: non-dict instance entry
+# ---------------------------------------------------------------------------
+
+def test_non_dict_instance_entry_raises(amc, tmp_path):
+    """An instance entry like ``- "not-a-dict"`` is a string, not a mapping."""
+    cfg = _write_json(tmp_path, {"components": {"authservice": ["not-a-dict"]}})
+    with pytest.raises(ValueError, match=r"\[0\] must be a dict"):
+        amc._load_instance_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Validation: non-string keys in instance dict (mixed-type sort)
+# ---------------------------------------------------------------------------
+
+def test_non_string_keys_surface_as_unknown_field(amc, tmp_path):
+    """Mixed-type keys (e.g. ``{1: 'x'}``) must surface as a ValueError, not a TypeError.
+
+    Regression test for the ``sorted(unknown)`` path that previously assumed
+    all keys were strings. ``sorted(..., key=repr)`` now keeps the error
+    message stable and the exception type correct.
+    """
+    cfg = _write_json(tmp_path, {
+        "components": {"authservice": [{"id": "a1", "1": "x", "foo": "bar"}]}
+    })
+    with pytest.raises(ValueError, match="unknown field"):
+        amc._load_instance_config(cfg)
+
+
+# ---------------------------------------------------------------------------
 # Validation: duplicate id within a component
 # ---------------------------------------------------------------------------
 

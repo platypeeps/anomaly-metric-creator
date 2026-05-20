@@ -4882,11 +4882,16 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
                     f"--instance-config {path}: {component!r}[{i}] must be a dict, "
                     f"got {type(entry).__name__!r}"
                 )
-            unknown = set(entry) - _valid_instance_fields
+            # Compare keys against the valid set after coercing to repr so a
+            # YAML mapping with non-string keys (e.g. ``{1: 'x'}``) still
+            # surfaces as an unknown-field ValueError rather than a TypeError
+            # from sorting heterogeneous keys.
+            unknown = [k for k in entry if k not in _valid_instance_fields]
             if unknown:
                 raise ValueError(
                     f"--instance-config {path}: {component!r}[{i}] contains unknown "
-                    f"field(s) {sorted(unknown)}; valid fields: {sorted(_valid_instance_fields)}"
+                    f"field(s) {sorted(unknown, key=repr)}; valid fields: "
+                    f"{sorted(_valid_instance_fields)}"
                 )
             instances.append(Instance(
                 id=entry.get("id"),
@@ -5630,7 +5635,7 @@ def parse_args(argv=None):
                 f"--instance-config must be a .yaml, .yml, or .json file; "
                 f"got {args.instance_config.suffix!r}"
             )
-    # Phase 3 (VER-146): --instance-config triggers the same multi-instance
+    # VER-140 Phase 3 (VER-146): --instance-config triggers the same multi-instance
     # code path as --instances-per-component > 1 (dimension columns,
     # N×rows per component, partial-aware downstream emitters). Both flags
     # must be gated identically against incompatible downstream flags so

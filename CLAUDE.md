@@ -773,27 +773,35 @@ exclusive at parse time):
 - `--instances-per-component N` (N in `[1, MAX_INSTANCES_PER_COMPONENT]`,
   `MAX_INSTANCES_PER_COMPONENT = 20`) → every component fans out to
   the same `[Instance(id=f"i{k}", pod=f"pod-{k}") for k in range(N)]`.
-- `--instance-config PATH` (Phase 3, VER-146) → per-component fan-out
-  is loaded from a YAML (`.yaml`/`.yml`) or JSON (`.json`) file via
-  `_load_instance_config(path)`. The file's top-level `components`
-  map keys components to lists of `Instance`-field dicts; components
-  *not* listed fall back to `list(INSTANCES[name])` (anonymous
-  default), so a partial config keeps untouched components on the
-  byte-identical path.
+- `--instance-config PATH` (VER-140 Phase 3, VER-146) → per-component
+  fan-out is loaded from a YAML (`.yaml`/`.yml`) or JSON (`.json`)
+  file via `_load_instance_config(path)`. The file's top-level
+  `components` map keys components to lists of `Instance`-field
+  dicts; components *not* listed fall back to `list(INSTANCES[name])`
+  (anonymous default), so a partial config keeps untouched
+  components on the byte-identical path.
 
-`_load_instance_config(path)` validates loudly at parse time and
-raises `ValueError` (caught in `main()` and re-raised via
-`sys.exit`) for every schema violation: top-level value not a
-mapping, missing `components` key, unknown component name (must be
-in `COMPONENTS`), per-component value not a list, empty per-component
-list, per-component count exceeding `MAX_INSTANCES_PER_COMPONENT`,
-non-dict entry, unknown `Instance` field, and duplicate `Instance.id`
-within a component (the last check is delegated to
-`_validate_instance_list`). The `parse_args` rejects the flag pair
-early — `--instance-config` and `--instances-per-component` share an
-`argparse` mutually-exclusive group — and additionally rejects file
-paths that do not exist or whose suffix is outside
-`{.yaml, .yml, .json}`.
+`_load_instance_config(path)` is called from `main()` (after
+`parse_args` returns) and raises `ValueError` (caught immediately
+and re-raised via `sys.exit`) for every schema violation: top-level
+value not a mapping, missing `components` key, `components` value
+not a mapping, unknown component name (must be in `COMPONENTS`),
+per-component value not a list, empty per-component list,
+per-component count exceeding `MAX_INSTANCES_PER_COMPONENT`,
+non-dict entry, unknown `Instance` field (the comparison handles
+non-string YAML keys via `sorted(..., key=repr)` so the error
+message stays a `ValueError` rather than a sorting `TypeError`),
+and duplicate `Instance.id` within a component (the last check is
+delegated to `_validate_instance_list`). YAML parse errors,
+JSON `JSONDecodeError`, and OS I/O errors are also caught inside
+the loader and re-raised as `ValueError` with the file path
+prefix so users see a clean one-line message. `parse_args` runs
+*before* the loader and is responsible only for the flag-shape
+checks: the `--instance-config` and `--instances-per-component`
+mutually-exclusive `argparse` group, the file existence check,
+and the suffix-must-be-in-`{.yaml, .yml, .json}` check. Schema
+validation (everything else in the list above) happens later, in
+the loader.
 
 PyYAML is an *optional* runtime dependency: the YAML branch imports
 it lazily inside `_load_instance_config` and raises a clear
