@@ -4841,11 +4841,15 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
             f"--instance-config {path}: top-level value must be a mapping, "
             f"got {type(raw).__name__!r}"
         )
-    components_raw = raw.get("components")
-    if components_raw is None:
+    # Distinguish "key absent" from "key present but explicitly null" so
+    # ``components: null`` in YAML reports the more accurate
+    # "must be a mapping" error rather than the misleading "missing key"
+    # error.
+    if "components" not in raw:
         raise ValueError(
             f"--instance-config {path}: missing required top-level key 'components'"
         )
+    components_raw = raw["components"]
     if not isinstance(components_raw, dict):
         raise ValueError(
             f"--instance-config {path}: 'components' must be a mapping, "

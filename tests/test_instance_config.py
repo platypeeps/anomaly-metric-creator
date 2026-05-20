@@ -269,6 +269,18 @@ def test_components_value_is_scalar_raises(amc, tmp_path):
         amc._load_instance_config(cfg)
 
 
+def test_components_value_is_explicit_null_raises(amc, tmp_path):
+    """``components: null`` is a present key with a None value, not a missing key.
+
+    The loader must report the more accurate "must be a mapping" error
+    rather than the misleading "missing required top-level key" error so a
+    user who actually typed `components: null` sees the right diagnostic.
+    """
+    cfg = _write_yaml(tmp_path, "components: null\n")
+    with pytest.raises(ValueError, match=r"'components' must be a mapping"):
+        amc._load_instance_config(cfg)
+
+
 # ---------------------------------------------------------------------------
 # Validation: per-component value must be a list (not a dict, not a scalar)
 # ---------------------------------------------------------------------------
@@ -395,6 +407,22 @@ def test_malformed_json_raises_value_error(amc, tmp_path):
     p.write_text("{this is not json}")
     with pytest.raises(ValueError, match="failed to parse JSON"):
         amc._load_instance_config(p)
+
+
+def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
+    """If PyYAML isn't installed, the YAML branch surfaces an actionable ValueError.
+
+    Simulated by stashing ``sys.modules['yaml'] = None`` before the lazy
+    ``import yaml`` runs inside ``_load_instance_config``. Python interprets
+    a ``None`` entry in ``sys.modules`` as "module is known to be
+    unimportable" and raises ``ImportError`` from the next ``import``
+    statement, exercising the install-hint error path.
+    """
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("components:\n  authservice:\n    - {id: a1}\n")
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    with pytest.raises(ValueError, match="PyYAML is required"):
+        amc._load_instance_config(cfg)
 
 
 # ---------------------------------------------------------------------------
