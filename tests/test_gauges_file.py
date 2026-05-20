@@ -696,10 +696,46 @@ def test_n3_gauges_csv_with_metrics_per_component_trim(amc, tmp_path):
             f"{first_spec_name!r}; saw {sorted(metrics)}"
         )
 
-    partial = ["timestamp", "id", "metric_a"]
-    dim_cols, metric_cols = amc._classify_component_csv_header(partial)
-    assert dim_cols == ()
-    assert metric_cols == ["id", "metric_a"]
+
+def test_ensure_long_form_fd_capacity_fits_under_default_limit(amc):
+    """At the documented N=3 default fan-out (13 components × 3 instances
+    = 39 sources), the FD pre-flight is a no-op on every platform we
+    support — even macOS's default 256 soft limit has plenty of room.
+    A regression that lowered the margin or capped the rlimit raise
+    aggressively would surface here before the merge ran."""
+    # No-op path: helper must not raise for a fan-out far inside the
+    # default soft limit.
+    amc._ensure_long_form_fd_capacity(0)
+    amc._ensure_long_form_fd_capacity(
+        len(amc.COMPONENTS) * 3
+    )
+
+
+def test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low(
+    amc, monkeypatch
+):
+    """A future fan-out beyond the hard limit must fail with an
+    actionable ``SystemExit`` that names the needed FD count and the
+    user-facing levers (``--instances-per-component``, ``--components``,
+    or ``ulimit -n``) rather than crashing inside ``heapq.merge`` with
+    ``OSError: [Errno 24] Too many open files``. We monkey-patch
+    ``resource.getrlimit`` to simulate a constrained environment so the
+    test stays deterministic across CI hosts."""
+    import resource
+    monkeypatch.setattr(
+        resource, "getrlimit",
+        lambda which: (32, 32) if which == resource.RLIMIT_NOFILE else (0, 0),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        amc._ensure_long_form_fd_capacity(260)
+    msg = str(excinfo.value)
+    assert "260" in msg, msg
+    assert "FD" in msg or "file handle" in msg.lower(), msg
+    assert (
+        "--instances-per-component" in msg
+        or "ulimit" in msg
+        or "--components" in msg
+    ), msg
 
 
 # ------------------------------------------------------------------

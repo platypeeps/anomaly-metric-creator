@@ -363,6 +363,19 @@ Dropped CSV rows are absent from the file in both shapes (long form
 encodes "this measurement was emitted" via row presence), the same way
 `stream_otel_gauges` never sees them.
 
+**File-descriptor pre-flight (long-form path only).** The long-form
+merge holds one open file handle per `(component, instance)` source
+for the lifetime of the merge — `heapq.merge` primes every iterator,
+so at max fan-out (13 components × 20 instances = 260 sources) a run
+can exceed the default macOS soft limit (256). Before the merge,
+`_ensure_long_form_fd_capacity(len(sources))` reads `RLIMIT_NOFILE`,
+raises the soft limit to fit (capped by the hard limit), and otherwise
+exits with a message naming the needed count and the user-facing
+levers (`--instances-per-component`, `--components`, `ulimit -n`).
+On Windows the helper no-ops — `open()` surfaces the real error at
+write time. The wide-form / 4-column paths never trip the guard
+because they stream a single handle per component.
+
 Parity with `stream_otel_gauges` has one intentional asymmetry: the file
 writer passes raw cell strings through verbatim (so the byte hash never
 depends on Python's `str(float)` repr), whereas `stream_otel_gauges`

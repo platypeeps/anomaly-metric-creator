@@ -6307,6 +6307,13 @@ def _write_combined_long_form(
             # tie-break order in v1.
             sources.append(((component, instance_dims), _tagged()))
 
+    # Each source holds an open file handle for the lifetime of the
+    # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
+    # 13 components × 20 instances = 260 handles) either bump the
+    # rlimit up to fit or fail with an actionable message before
+    # ``heapq.merge`` tries to prime the heap.
+    _ensure_long_form_fd_capacity(len(sources))
+
     sources.sort(key=lambda item: item[0])
     iters = [src for _key, src in sources]
 
@@ -7077,17 +7084,78 @@ def _iter_component_rows(component: str, csv_path: Path):
             yield ts, component, values
 
 
+# Margin reserved for stdin/stdout/stderr + the output file + room
+# for the OS's accounting; the long-form merge needs at least
+# ``len(sources) + _LONG_FORM_FD_MARGIN`` file descriptors available.
+_LONG_FORM_FD_MARGIN = 16
+
+
+def _ensure_long_form_fd_capacity(n_sources: int) -> None:
+    """Raise the soft FD limit to fit ``n_sources`` concurrent file
+    handles, or ``SystemExit`` with an actionable message if the OS
+    won't let us.
+
+    The long-form ``heapq.merge`` over per-(component, instance)
+    iterators primes every source, so all of them hold an open
+    ``csv.reader`` handle for the lifetime of the merge. At max
+    fan-out (``len(COMPONENTS) * MAX_INSTANCES_PER_COMPONENT`` =
+    13 × 20 = 260) we can exceed the default macOS soft limit
+    (256), causing ``EMFILE`` deep inside the writer.
+
+    The fix is two-tiered: first try to bump the soft limit (up to
+    the hard cap) using ``resource.setrlimit``; if that still isn't
+    enough — or if ``resource`` is unavailable on this platform
+    (Windows) — exit early with a clear error naming the needed
+    headroom and the active multi-instance flag. ``n_sources`` is
+    only the file-handle count from this merge; the margin reserves
+    space for stdio + the output stream + a bit of OS overhead.
+    """
+    needed = n_sources + _LONG_FORM_FD_MARGIN
+    try:
+        import resource  # POSIX-only; absent on Windows.
+    except ImportError:
+        # No portable rlimit on Windows. If we end up needing more
+        # FDs than the platform allows, ``open()`` will surface the
+        # real error; we can't pre-flight it from here, so trust the
+        # OS to enforce the bound at write time.
+        return
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft >= needed:
+        return
+    target = needed if hard == resource.RLIM_INFINITY else min(needed, hard)
+    if target < needed:
+        raise SystemExit(
+            f"long-form output needs {needed} concurrent file handles "
+            f"({n_sources} per-instance sources + {_LONG_FORM_FD_MARGIN} "
+            f"reserve) but the process FD hard limit is {hard}. Lower "
+            f"--instances-per-component, narrow --components, or raise "
+            f"the system FD limit (ulimit -n) before re-running."
+        )
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (ValueError, OSError) as exc:
+        raise SystemExit(
+            f"long-form output needs {needed} concurrent file handles "
+            f"({n_sources} per-instance sources + {_LONG_FORM_FD_MARGIN} "
+            f"reserve) but raising the soft FD limit from {soft} to "
+            f"{target} failed: {exc}. Lower --instances-per-component, "
+            f"narrow --components, or raise the system FD limit "
+            f"(ulimit -n) before re-running."
+        ) from exc
+
+
 def _classify_component_csv_header(
     header: list[str],
 ) -> tuple[tuple[str, ...], list[str]]:
     """Split a per-component CSV header into ``(dim_cols, metric_cols)``.
 
-    A header is dimensioned when columns 1..7 (after ``timestamp``) are
-    exactly ``_INSTANCE_DIMENSION_COLUMNS`` in registry order. Otherwise no dim
+    A header is dimensioned when columns 1..6 after ``timestamp`` are
+    exactly ``_INSTANCE_DIMENSION_COLUMNS`` in registry order — i.e. the
+    six fields ``id, host, pod, az, region, tenant``. Otherwise no dim
     columns are present (``dim_cols`` is empty) and the post-``timestamp``
-    columns are all metrics. Header rows that are missing or malformed are
-    treated as no-dim, all-metric — the caller is responsible for handling
-    an empty header.
+    columns are all metrics. Header rows that are missing or malformed
+    are treated as no-dim, all-metric — the caller is responsible for
+    handling an empty header.
     """
     rest = header[1:] if header else []
     dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
@@ -7341,6 +7409,13 @@ def write_gauges_csv(
             # in another dim still gets a total order. In v1 the ``id``
             # is unique per component, so the trailing fields are inert.
             sources.append(((component, instance_dims), _tagged()))
+
+    # Each source holds an open file handle for the lifetime of the
+    # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
+    # 13 components × 20 instances = 260 handles) either bump the
+    # rlimit up to fit or fail with an actionable message before
+    # ``heapq.merge`` tries to prime the heap.
+    _ensure_long_form_fd_capacity(len(sources))
 
     sources.sort(key=lambda item: item[0])
     iters = [src for _key, src in sources]
