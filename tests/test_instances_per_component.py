@@ -26,7 +26,11 @@ SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
 # ---------------------------------------------------------------------------
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _run(amc, out_dir, *, days, extra_args=None):
@@ -500,7 +504,8 @@ def test_instances_n1_with_dst_allowed(tmp_path):
     _invoke(
         ["--instances-per-component", "1",
          "--inject-dst-artifact-day", "1",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
+         "--output-dir", str(tmp_path), "--duration-days", "1",
+         "--components", "loadbalancer", "--interval-seconds", "60"],
         expect_fail=False,
     )
 

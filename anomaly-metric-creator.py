@@ -711,21 +711,24 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 # Long form: timestamp,id,host,pod,az,region,tenant,<metrics>
                 dim_header = "timestamp," + ",".join(_INSTANCE_DIMENSION_COLUMNS)
                 f.write(dim_header + "," + ",".join(fieldnames) + "\n")
+                # Precompute the metric suffix once — all instances share
+                # the same RNG-drawn values in Phase 2, so only the
+                # dimension prefix differs per instance.
+                metric_suffix = str_vals[:, 0].copy()
+                for col in range(1, n_cols):
+                    metric_suffix = np.char.add(metric_suffix, ",")
+                    metric_suffix = np.char.add(metric_suffix, str_vals[:, col])
                 for inst in instances:
-                    # Build the dimension prefix string once per instance
-                    # and prepend it to each row's metric columns. Reads
-                    # the dimension fields off ``Instance`` in canonical
-                    # column order so adding/removing a field touches
-                    # only ``_INSTANCE_DIMENSION_COLUMNS``.
+                    # Build the dimension prefix string once per instance.
+                    # Reads fields off ``Instance`` in canonical column order
+                    # so adding/removing a field touches only
+                    # ``_INSTANCE_DIMENSION_COLUMNS``.
                     dim_vals = ",".join(
                         getattr(inst, field) if getattr(inst, field) is not None else ""
                         for field in _INSTANCE_DIMENSION_COLUMNS
                     )
                     inst_rows = np.char.add(kept_ts, f",{dim_vals},")
-                    inst_rows = np.char.add(inst_rows, str_vals[:, 0])
-                    for col in range(1, n_cols):
-                        inst_rows = np.char.add(inst_rows, ",")
-                        inst_rows = np.char.add(inst_rows, str_vals[:, col])
+                    inst_rows = np.char.add(inst_rows, metric_suffix)
                     f.write("\n".join(inst_rows.tolist()))
                     f.write("\n")
 
@@ -4625,9 +4628,11 @@ def _validate_derivations_registry() -> None:
 _validate_derivations_registry()
 
 
-_INSTANCE_DIMENSION_FIELDS: tuple[str, ...] = (
-    "host", "pod", "az", "region", "tenant",
-)
+# Derived from _INSTANCE_DIMENSION_COLUMNS so the two cannot drift:
+# _INSTANCE_DIMENSION_COLUMNS leads with "id" (validated separately as a
+# string/None/CSV-safe value); the remaining fields are the dimension
+# attributes that _validate_instance_list iterates over.
+_INSTANCE_DIMENSION_FIELDS: tuple[str, ...] = _INSTANCE_DIMENSION_COLUMNS[1:]
 
 
 def _validate_instance_list(instances, *, where: str) -> None:
