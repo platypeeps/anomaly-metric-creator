@@ -412,14 +412,17 @@ components:
   authservice:
     - {id: a1}
 """)
+    # ``--combine-only`` needs --output-dir to be an existing directory;
+    # ``_parse`` derives --output-dir from its tmp_path argument, so create
+    # that directory ahead of time rather than passing a second
+    # --output-dir in extra_args.
     out = tmp_path / "existing"
     out.mkdir()
     with pytest.raises(SystemExit):
         _parse(amc, [
             "--instance-config", str(cfg),
             "--combine-only",
-            "--output-dir", str(out),
-        ], tmp_path / "out")
+        ], out)
 
 
 # ---------------------------------------------------------------------------
