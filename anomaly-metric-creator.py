@@ -393,6 +393,53 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
     return col
 
 
+# Sentinel returned by ``_resolve_instance_filter`` when an ``instance_filter``
+# matches zero active instances. Distinct from ``None`` (which means "no
+# filter / matches every instance"); the caller emits a single WARNING per
+# skipped spec and drops it from the override pipeline.
+_INSTANCE_FILTER_NO_MATCH = object()
+
+
+def _resolve_instance_filter(spec_filter, instances: list["Instance"]):
+    """Resolve a spec's ``instance_filter`` against the active instance list.
+
+    Returns ``None`` when every active instance matches (no filter declared
+    or filter matches everyone) — the caller takes the shared-values fast
+    path and preserves Phase 2 byte parity.
+
+    Returns ``_INSTANCE_FILTER_NO_MATCH`` when the filter matches zero
+    active instances — the caller emits one WARNING per spec and drops it.
+
+    Returns a ``bool`` ``np.ndarray`` of length ``len(instances)`` for
+    partial matches — the caller applies overrides only to selected
+    per-instance buffers.
+
+    ``spec_filter`` must already have passed the structural validation in
+    ``_validate_scenario_spec`` (``None``, iterable of ``str``, or
+    callable). Membership against ``INSTANCES`` is not checked at import
+    time because ``--instance-config`` (a later phase) will register
+    runtime ids; this function compares against the per-run ``instances``
+    list and warns on no-match instead.
+    """
+    if spec_filter is None:
+        return None
+    if callable(spec_filter):
+        mask = np.array(
+            [bool(spec_filter(inst)) for inst in instances], dtype=bool
+        )
+    else:
+        id_set = frozenset(spec_filter)
+        mask = np.array(
+            [inst.id is not None and inst.id in id_set for inst in instances],
+            dtype=bool,
+        )
+    if not mask.any():
+        return _INSTANCE_FILTER_NO_MATCH
+    if mask.all():
+        return None
+    return mask
+
+
 # ------------------------------------------------------------------
 # Core generator
 # ------------------------------------------------------------------
@@ -486,6 +533,38 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if component_name in ctx.cascading_anomalies:
         all_anomalies.extend(ctx.cascading_anomalies[component_name])
 
+    # VER-140 Phase 4: resolve each spec's ``instance_filter`` against the
+    # active ``instances`` list before expansion. Specs whose filter matches
+    # zero instances are dropped here (one WARNING per skipped spec) so they
+    # never produce manifest entries or value writes. Specs with no filter
+    # or whose filter matches every instance are mapped to ``None`` so the
+    # shared-values fast path stays byte-identical to Phase 2 (locked
+    # built-in hashes do not move). ``resolved_filters`` is keyed by
+    # ``id(spec_dict)`` so the override loop below can look up the per-spec
+    # mask in O(1).
+    resolved_filters: dict[int, "np.ndarray | None"] = {}
+    filter_skips: list[tuple[str, str]] = []
+    kept_anomalies: list[dict] = []
+    for s in all_anomalies:
+        resolved = _resolve_instance_filter(s.get("instance_filter"), instances)
+        if resolved is _INSTANCE_FILTER_NO_MATCH:
+            filter_skips.append((s["metric"], s["description"]))
+            continue
+        resolved_filters[id(s)] = resolved
+        kept_anomalies.append(s)
+    all_anomalies = kept_anomalies
+    if filter_skips:
+        # Sorted by (metric, description) so WARNING order is deterministic
+        # regardless of dict iteration order; mirrors the convention in
+        # ``_resolve_scenarios``.
+        for metric, desc in sorted(filter_skips):
+            print(
+                f"WARNING: {component_name}: skipping anomaly spec "
+                f"metric={metric!r} description={desc!r} — instance_filter "
+                f"matched zero active instances.",
+                file=sys.stderr,
+            )
+
     # Expand every anomaly spec into concrete row overrides. Out-of-range is
     # anything whose full span lies outside ``[0, n_rows)``.
     expanded_overrides: list[tuple[int, dict, float, int]] = []
@@ -560,15 +639,49 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # CSV stay coherent: a dropped row has no CSV entry, so it must have no
     # manifest entry either. Sort for a deterministic order of scale/jitter
     # draws within a run.
+    #
+    # VER-140 Phase 4: per-instance value buffers are materialized lazily
+    # for any instance touched by a partial ``instance_filter``. An
+    # unfiltered override writes to shared ``values`` AND propagates the
+    # same write to every already-materialized per-instance buffer (so a
+    # later unfiltered spec stays visible to instances whose buffer was
+    # forked by an earlier filtered spec). Built-in scenarios omit
+    # ``instance_filter``, so this dict stays empty for the default run
+    # and the shared-values fast path is preserved — locked Phase 2 hashes
+    # do not move. RNG draw order is identical to today's path because
+    # ``_resolve_anomaly_value`` is still called exactly once per
+    # ``(row_idx, span_idx, aspec)`` triple in sorted order, regardless of
+    # filter resolution.
     name_to_col = {s.name: i for i, s in enumerate(specs)}
+    per_instance_values: dict[int, np.ndarray] = {}
     for row_idx, aspec, t_within, span_idx in sorted_overrides:
         if drop_mask[row_idx]:
             continue
         col = name_to_col[aspec["metric"]]
         ts_py = START + datetime.timedelta(seconds=float(row_idx * interval))
-        values[row_idx, col] = _resolve_anomaly_value(
+        override_value = _resolve_anomaly_value(
             aspec, ts_py, col, t_within, span_idx, rng
         )
+        inst_mask = resolved_filters.get(id(aspec))
+        if inst_mask is None:
+            # No filter, or filter matches every instance — shared-values
+            # write (Phase 2 path) plus propagation to any forked buffers
+            # so later unfiltered overrides stay visible to filtered
+            # instances.
+            values[row_idx, col] = override_value
+            for buf in per_instance_values.values():
+                buf[row_idx, col] = override_value
+        else:
+            # Partial filter — only matched instances see the override.
+            for inst_idx in np.flatnonzero(inst_mask):
+                inst_idx = int(inst_idx)
+                buf = per_instance_values.get(inst_idx)
+                if buf is None:
+                    # Snapshot shared values (including any unfiltered
+                    # writes applied so far this loop) before diverging.
+                    buf = values.copy()
+                    per_instance_values[inst_idx] = buf
+                buf[row_idx, col] = override_value
         if span_idx == 0:
             # span_start equals timestamp; span_end equals timestamp for
             # single-row specs and the formatted end-of-span timestamp for
@@ -618,6 +731,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         for col_idx, spec in enumerate(specs):
             if spec.dtype == "int":
                 np.rint(values[:, col_idx], out=values[:, col_idx])
+                for buf in per_instance_values.values():
+                    np.rint(buf[:, col_idx], out=buf[:, col_idx])
 
     # Derived metrics: rebuild self-consistent relationships after natural and
     # anomaly values have settled (and after the integer-cast bundle above
@@ -631,6 +746,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if derivation is not None:
         derive_fn, _ = derivation
         derive_fn(values, name_to_col)
+        # Phase 4: per-instance buffers diverged in source columns, so
+        # rebuild their derived columns independently from the shared run.
+        for buf in per_instance_values.values():
+            derive_fn(buf, name_to_col)
 
     # Topology phase 2/3 (VER-152/VER-153): expose post-natural /
     # post-anomaly / post-derivation load-metric columns to downstream
@@ -664,6 +783,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 topology_capture[component_name] = captured
 
     np.round(values, 3, out=values)
+    for buf in per_instance_values.values():
+        np.round(buf, 3, out=buf)
 
     keep_mask = ~drop_mask
     kept_ts = ts_strings[keep_mask]
@@ -673,23 +794,34 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # but spends ~80% of the run inside ``_vec_string``. Scaling to int + numpy
     # string ops produces the same output ~2x faster.
     str_vals = _format_fixed3(kept_vals)
+    # Phase 4: per-instance string buffers for instances that diverged from
+    # the shared baseline via a partial ``instance_filter``. Other instances
+    # reuse ``str_vals`` directly.
+    per_instance_str_vals: dict[int, np.ndarray] = {
+        inst_idx: _format_fixed3(buf[keep_mask])
+        for inst_idx, buf in per_instance_values.items()
+    }
 
-    # Multi-instance fan-out (VER-140 Phase 2). When the active instance list
+    # Multi-instance fan-out (VER-140 Phase 2/4). When the active instance list
     # is a single anonymous Instance() (all fields None), emit today's
     # byte-identical format: ``timestamp,m0,m1,...``. When the list carries
     # named instances (len > 1, or any non-None dimension field), prepend
     # ``id,host,pod,az,region,tenant`` columns and repeat the row block for
     # each instance sequentially (all rows for instance 0, then instance 1,
-    # …). All instances share the same RNG-drawn natural values in v1;
-    # Phase 4 (instance_filter) will let anomalies target specific instances.
-    # ``_is_anonymous`` was already computed above for the DST defense-in-depth
-    # guard via the shared ``_is_anonymous_instance_list`` helper.
+    # …). ``_is_anonymous`` was already computed above for the DST
+    # defense-in-depth guard via the shared ``_is_anonymous_instance_list``
+    # helper.
+    #
+    # Phase 4 (instance_filter): instances touched by a partial filter use
+    # their own ``per_instance_str_vals`` buffer (post-override,
+    # post-derive); other instances reuse the shared ``str_vals`` so the
+    # all-instances-unfiltered case stays byte-identical to Phase 2.
     #
     # The two branches build different intermediate string arrays — the
     # anonymous branch concatenates ``ts,v0,...,vk`` into ``rows`` once
     # for the whole component, while the long-form branch builds the
-    # metric suffix once and prepends per-instance dimension strings
-    # inside the writer loop. Each branch builds only what it consumes.
+    # metric suffix per instance inside the writer loop so each
+    # instance's diverged-or-shared buffer flows through unchanged.
 
     if emit_metrics:
         with open(file_path, "w", newline="") as f:
@@ -725,14 +857,19 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 # Long form: timestamp,id,host,pod,az,region,tenant,<metrics>
                 dim_header = "timestamp," + ",".join(_INSTANCE_DIMENSION_COLUMNS)
                 f.write(dim_header + "," + ",".join(fieldnames) + "\n")
-                # Precompute the metric suffix once — all instances share
-                # the same RNG-drawn values in Phase 2, so only the
-                # dimension prefix differs per instance.
-                metric_suffix = str_vals[:, 0].copy()
+                # Phase 4: precompute the shared metric suffix once. The
+                # all-instances-unfiltered case (no entries in
+                # ``per_instance_str_vals``) reuses ``shared_suffix`` for
+                # every instance, preserving Phase 2's "precompute once,
+                # reuse per instance" optimization byte-for-byte. Only
+                # instances whose ``inst_idx`` appears in
+                # ``per_instance_str_vals`` build their own suffix from
+                # the diverged buffer.
+                shared_suffix = str_vals[:, 0].copy()
                 for col in range(1, n_cols):
-                    metric_suffix = np.char.add(metric_suffix, ",")
-                    metric_suffix = np.char.add(metric_suffix, str_vals[:, col])
-                for inst in instances:
+                    shared_suffix = np.char.add(shared_suffix, ",")
+                    shared_suffix = np.char.add(shared_suffix, str_vals[:, col])
+                for inst_idx, inst in enumerate(instances):
                     # Build the dimension prefix string once per instance.
                     # Reads fields off ``Instance`` in canonical column order
                     # so adding/removing a field touches only
@@ -742,7 +879,16 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                         for field in _INSTANCE_DIMENSION_COLUMNS
                     )
                     inst_rows = np.char.add(kept_ts, f",{dim_vals},")
-                    inst_rows = np.char.add(inst_rows, metric_suffix)
+                    if inst_idx in per_instance_str_vals:
+                        inst_str_vals = per_instance_str_vals[inst_idx]
+                        inst_suffix = inst_str_vals[:, 0].copy()
+                        for col in range(1, n_cols):
+                            inst_suffix = np.char.add(inst_suffix, ",")
+                            inst_suffix = np.char.add(inst_suffix,
+                                                       inst_str_vals[:, col])
+                        inst_rows = np.char.add(inst_rows, inst_suffix)
+                    else:
+                        inst_rows = np.char.add(inst_rows, shared_suffix)
                     f.write("\n".join(inst_rows.tolist()))
                     f.write("\n")
 
@@ -4401,6 +4547,71 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{location} metric={metric!r} has shape_params "
                 f"{params!r}; expected a dict."
             )
+
+    # ``instance_filter`` (VER-140 Phase 4) — optional on both primary and
+    # cascade specs. Accepted forms:
+    #
+    #   * omitted / ``None``         -> apply to every active instance
+    #                                   (today's Phase 2 behavior; preserves
+    #                                   the locked Phase 2 hashes).
+    #   * iterable of ``str`` ids    -> apply only to instances whose
+    #                                   ``Instance.id`` is in the set.
+    #   * callable ``(Instance) -> bool`` -> per-instance predicate.
+    #
+    # Import-time validation only checks structural shape. ``INSTANCES`` is
+    # static but ``--instance-config`` (a later phase) will register runtime
+    # ids, so membership against the registry can't be validated at import
+    # time. The runtime path (``_resolve_instance_filter`` +
+    # ``generate_component``) emits a ``WARNING`` and skips the spec when
+    # the filter resolves to zero active instances.
+    #
+    # ``bool`` is rejected before the iterable check because ``bool`` is a
+    # subclass of ``int`` but a scalar — the error message should name it
+    # as a scalar, not "iterable of non-string". A bare ``str`` is also
+    # rejected: it's iterable in Python but almost always a bug (would
+    # iterate characters, producing a per-character filter); callers must
+    # pass ``["i0"]`` instead of ``"i0"``.
+    if "instance_filter" in spec:
+        inst_filter = spec["instance_filter"]
+        if inst_filter is None:
+            pass
+        elif callable(inst_filter):
+            pass
+        elif isinstance(inst_filter, (bool, int, float)):
+            raise ValueError(
+                f"{location} metric={metric!r} has instance_filter "
+                f"{inst_filter!r}; expected None, an iterable of instance "
+                f"ids (str), or a callable (Instance) -> bool."
+            )
+        elif isinstance(inst_filter, str):
+            raise ValueError(
+                f"{location} metric={metric!r} has instance_filter "
+                f"{inst_filter!r} (a bare string); expected an iterable of "
+                f"instance ids like [\"i0\"], not a single string (which "
+                f"would iterate characters)."
+            )
+        elif isinstance(inst_filter, dict):
+            raise ValueError(
+                f"{location} metric={metric!r} has instance_filter "
+                f"{inst_filter!r} (a dict); expected None, an iterable of "
+                f"instance ids (str), or a callable (Instance) -> bool."
+            )
+        else:
+            try:
+                items = list(inst_filter)
+            except TypeError:
+                raise ValueError(
+                    f"{location} metric={metric!r} has instance_filter "
+                    f"{inst_filter!r}; expected None, an iterable of "
+                    f"instance ids (str), or a callable (Instance) -> bool."
+                ) from None
+            for item in items:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        f"{location} metric={metric!r} has instance_filter "
+                        f"with non-string entry {item!r} "
+                        f"(type {type(item).__name__}); ids must be strings."
+                    )
 
     # Generator signature rules. The runtime always calls a generator with
     # a fixed positional shape determined by the path:

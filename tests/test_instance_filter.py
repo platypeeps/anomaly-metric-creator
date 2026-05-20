@@ -15,14 +15,8 @@ Verifies:
 """
 
 import csv
-import io
-import sys
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------------------
