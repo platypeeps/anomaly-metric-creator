@@ -719,31 +719,35 @@ def test_scan_instance_block_layout_records_seekable_offsets(amc, tmp_path):
     blocks = amc._scan_instance_block_layout(csv_path, has_dims=True)
     assert [dims[0] for dims, _ in blocks] == ["i0", "i1", "i2"]
 
-    # Manually compute the byte offset of every non-header line and
-    # confirm the scan recorded those exact positions for each block's
-    # first row.
+    # Manually compute the text-mode seek cookie at the start of every
+    # non-header line (i.e. ``tell()`` BEFORE the next ``readline()``)
+    # and confirm the scan recorded those exact cookies for each
+    # block's first row. The handle uses the same ``encoding`` /
+    # ``newline`` settings the implementation does, so the cookie
+    # round-trip is well-defined.
     with open(csv_path, "r", encoding="utf-8", newline="") as fh:
         fh.readline()  # header
-        row0_pos = fh.tell()
+        i0_cookie = fh.tell()
         fh.readline()  # i0 row 0
         fh.readline()  # i0 row 1
-        i1_pos = fh.tell()
+        i1_cookie = fh.tell()
         fh.readline()  # i1 row 0
         fh.readline()  # i1 row 1
-        i2_pos = fh.tell()
+        i2_cookie = fh.tell()
 
-    assert blocks[0] == (("i0", "", "pod-0", "", "", ""), row0_pos)
-    assert blocks[1] == (("i1", "", "pod-1", "", "", ""), i1_pos)
-    assert blocks[2] == (("i2", "", "pod-2", "", "", ""), i2_pos)
+    assert blocks[0] == (("i0", "", "pod-0", "", "", ""), i0_cookie)
+    assert blocks[1] == (("i1", "", "pod-1", "", "", ""), i1_cookie)
+    assert blocks[2] == (("i2", "", "pod-2", "", "", ""), i2_cookie)
 
-    # End-to-end: passing the recorded offset to the iterator must yield
-    # exactly the matching block's rows in order. A future regression
-    # that drifted the offset by even one byte (e.g. forgot
-    # ``newline=""``, or hand-rolled a parser that miscounted ``\r\n``)
-    # would surface here as a parse error or an off-by-one row count.
+    # End-to-end: passing the recorded seek cookie to the iterator
+    # must yield exactly the matching block's rows in order. A future
+    # regression that drifted the cookie by even one position (e.g.
+    # forgot ``newline=""``, or hand-rolled a parser that miscounted
+    # ``\r\n``) would surface here as a parse error or an off-by-one
+    # row count.
     i1_rows = list(
         amc._iter_component_instance_rows(
-            csv_path, i1_pos, has_dims=True, n_metrics=1,
+            csv_path, i1_cookie, has_dims=True, n_metrics=1,
         )
     )
     assert len(i1_rows) == 2
@@ -754,7 +758,7 @@ def test_scan_instance_block_layout_records_seekable_offsets(amc, tmp_path):
 
 def test_scan_instance_block_layout_dimensionless(amc, tmp_path):
     """The has_dims=False path returns a single conceptual block at the
-    byte offset right after the header line. The iterator's
+    seek cookie right after the header line. The iterator's
     has_dims=False branch then yields every data row without comparing
     dim tuples."""
     csv_path = tmp_path / "synth_flat.csv"
@@ -765,18 +769,18 @@ def test_scan_instance_block_layout_dimensionless(amc, tmp_path):
     )
     blocks = amc._scan_instance_block_layout(csv_path, has_dims=False)
     assert len(blocks) == 1
-    dims, offset = blocks[0]
+    dims, cookie = blocks[0]
     # Six empty-string dim slots — the dimensionless sentinel.
     assert dims == tuple("" for _ in amc._INSTANCE_DIMENSION_COLUMNS)
 
     with open(csv_path, "r", encoding="utf-8", newline="") as fh:
         fh.readline()
-        expected_offset = fh.tell()
-    assert offset == expected_offset
+        expected_cookie = fh.tell()
+    assert cookie == expected_cookie
 
     rows = list(
         amc._iter_component_instance_rows(
-            csv_path, offset, has_dims=False, n_metrics=2,
+            csv_path, cookie, has_dims=False, n_metrics=2,
         )
     )
     assert [r[1] for r in rows] == [

@@ -548,7 +548,7 @@ def test_n2_plus_combine_allowed(tmp_path):
     assert (tmp_path / "combined_metrics_unified.csv").exists()
 
 
-def test_n2_plus_combine_only_allowed(tmp_path, amc):
+def test_n2_plus_combine_only_allowed(tmp_path):
     """VER-148 Phase 5: ``--instances-per-component > 1`` + ``--combine-only``
     is now permitted. A staged multi-instance directory is combined
     into a long-form unified CSV."""

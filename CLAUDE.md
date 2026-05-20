@@ -58,15 +58,22 @@ already keeps it out of the cleanup path. `./otel-activity.log` lives outside
 
 `combine_logs(input_dir, components=None)` joins the per-component CSVs in
 `input_dir` into `combined_metrics_unified.csv`. When `components` is provided,
-the unified output is restricted to that list verbatim (caller-controlled order,
-missing per-component CSVs raise `SystemExit`); when omitted, every `*.csv` in
-`input_dir` is autodiscovered (excluding the anomalies manifest, the long-form
-`gauges.csv`, and prior combine outputs — see `_NON_COMPONENT_FILES`). `main()`
-threads `--components` into both call sites (`--combine` and `--combine-only`)
-so the combine output honors the same allowlist as generation,
-`anomalies.csv`, reporting artifacts, and OTEL streaming. The default
-`--components all` keeps autodiscovery active, which preserves the
-synthetic-extra-component path used by the existing test fixture.
+it acts as the allowlist for which CSVs to combine (missing per-component
+CSVs raise `SystemExit`); when omitted, every `*.csv` in `input_dir` is
+autodiscovered (excluding the anomalies manifest, the long-form
+`gauges.csv`, and prior combine outputs — see `_NON_COMPONENT_FILES`).
+`main()` threads `--components` into both call sites (`--combine` and
+`--combine-only`) so the combine output honors the same allowlist as
+generation, `anomalies.csv`, reporting artifacts, and OTEL streaming.
+The default `--components all` keeps autodiscovery active, which
+preserves the synthetic-extra-component path used by the existing test
+fixture. The output ordering contract differs across the two
+dispatched layouts: the wide layout uses the caller-supplied
+`components` order verbatim for the column sequence; the long layout
+ignores it for layout purposes and sorts components alphabetically for
+the equal-timestamp tie-break (the row's `component` cell carries the
+identity, so column order is not the ordering surface). See the
+**Layout (VER-148 phase 5)** subsection below for the dispatch detail.
 
 **Layout (VER-148 phase 5).** `combine_logs_unified(components, input_dir, …)`
 inspects every per-component CSV's header via `_scan_component_csv_headers`

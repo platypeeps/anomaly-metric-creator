@@ -6358,10 +6358,26 @@ def combine_logs(input_dir, components=None):
 
     When ``components`` is ``None``, the combine step autodiscovers every
     ``*.csv`` in ``input_dir`` (excluding the anomalies manifest and prior
-    combine outputs). When ``components`` is provided, it is used verbatim —
-    the caller controls the order and is responsible for restricting to the
-    user-selected allowlist. Any named component whose ``{name}.csv`` is
-    missing from ``input_dir`` raises ``SystemExit``.
+    combine outputs). When ``components`` is provided, it is used as the
+    allowlist for which CSVs to combine. Any named component whose
+    ``{name}.csv`` is missing from ``input_dir`` raises ``SystemExit``.
+
+    Output ordering depends on which layout the underlying
+    ``combine_logs_unified`` dispatches to:
+
+    - **Wide layout** (default, dimensionless inputs) — the caller-
+      supplied ``components`` order is preserved verbatim in the
+      ``component_a_m0, component_a_m1, component_b_m0, …`` column
+      sequence.
+    - **Long layout** (any dimensioned input, VER-148 phase 5) — the
+      caller-supplied ``components`` order is **not** preserved. Rows
+      are merged chronologically and tie-break on
+      ``(component, instance_id, metric)`` with components sorted
+      alphabetically; the caller-supplied order only filters which
+      components participate. The on-disk column shape is fixed
+      (``timestamp, component, id, host, pod, az, region, tenant,
+      metric, value``), so the order argument has no column-layout
+      effect in the long form.
     """
     input_dir = Path(input_dir)
     if components is None:
@@ -7337,9 +7353,17 @@ def _iter_component_instance_rows(
         fh.seek(start_offset)
         reader = csv.reader(fh)
         if has_dims:
+            min_cols = 1 + dim_count
             block_dims: tuple[str, ...] | None = None
             for row in reader:
-                if not row:
+                # Skip blank lines AND short/malformed rows so a row
+                # with fewer than ``min_cols`` columns cannot set
+                # ``block_dims`` to a truncated tuple and prematurely
+                # terminate the block on the next well-formed row.
+                # ``_scan_instance_block_layout`` applies the same guard
+                # so the two helpers cannot disagree on what counts as
+                # an in-block row.
+                if len(row) < min_cols:
                     continue
                 dims = tuple(row[1:1 + dim_count])
                 if block_dims is None:
