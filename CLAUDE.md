@@ -788,6 +788,10 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
 - `cascade_specs` — list of `(target_component, cascade_dict)` pairs; each
   `cascade_dict` has `time_offset`, `metric`, `description`, and `generator`
   (no `shape`/`shape_params` — cascades are single-row steps).
+  Both primary and cascade dicts may additionally carry an optional
+  `instance_filter` (VER-140 Phase 4) — see the
+  [anomaly injection schema](#anomaly-injection-schema) for the accepted
+  forms and runtime semantics.
 
 Every primary and cascade spec is schema-checked at import time by
 `_validate_scenario_spec()` (called from `_validate_scenarios_registry`):
@@ -795,7 +799,8 @@ required keys present, `metric` in the full `COMPONENTS[component]` catalog,
 `generator` callable, `time_offset` a finite non-negative non-bool
 `int`/`float`, `description` a non-empty string, `shape` a string in
 `_VALID_ANOMALY_SHAPES`, `duration_seconds` a finite non-negative non-bool
-numeric, `shape_params` a dict; cascade specs reject
+numeric, `shape_params` a dict, `instance_filter` (when present) either
+`None`, an iterable of `str` ids, or a callable. Cascade specs reject
 `shape`/`duration_seconds`/`shape_params` outright.
 
 Generator dispatch rule: the runtime calls each generator with one of
