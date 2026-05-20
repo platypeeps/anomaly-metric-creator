@@ -6300,7 +6300,12 @@ def _write_combined_long_form(
                         _dims=instance_dims, _cols=metric_cols):
                 for ts_dt, ts_raw, values in _iter:
                     yield (ts_dt, ts_raw, _comp, _dims, _cols, values)
-            sources.append(((component, instance_dims[0]), _tagged()))
+            # Sort key carries the full ``instance_dims`` tuple (see
+            # the ``write_gauges_csv`` long-form path for the same
+            # rationale); ``id`` is the leading field, which yields the
+            # documented ``(timestamp, component, instance_id, metric)``
+            # tie-break order in v1.
+            sources.append(((component, instance_dims), _tagged()))
 
     sources.sort(key=lambda item: item[0])
     iters = [src for _key, src in sources]
@@ -7330,7 +7335,12 @@ def write_gauges_csv(
                         _dims=instance_dims, _cols=metric_cols):
                 for ts_dt, ts_raw, values in _iter:
                     yield (ts_dt, ts_raw, _comp, _dims, _cols, values)
-            sources.append(((component, instance_dims[0]), _tagged()))
+            # Sort key carries the full ``instance_dims`` tuple, not
+            # just the leading ``id`` field, so a hypothetical future
+            # registry where two instances share an ``id`` but differ
+            # in another dim still gets a total order. In v1 the ``id``
+            # is unique per component, so the trailing fields are inert.
+            sources.append(((component, instance_dims), _tagged()))
 
     sources.sort(key=lambda item: item[0])
     iters = [src for _key, src in sources]

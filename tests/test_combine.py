@@ -3,7 +3,9 @@ row preservation, and the synthetic-extra-component case.
 """
 
 import csv
+import hashlib
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -365,14 +367,13 @@ def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
 # explicitly via row presence). N=1 keeps today's wide layout byte-
 # identically, guarded by the existing tests above.
 # ---------------------------------------------------------------------------
-import hashlib
 
 N3_COMBINED_ONE_DAY_HASH = (
     "71164965eb8ad036ff6e0cf1ce52dfadff00406b094f39ebf49c4808c108684c"
 )
 
 
-def _sha256(path) -> str:
+def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 

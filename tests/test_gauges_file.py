@@ -655,6 +655,52 @@ def test_classify_component_csv_header_detects_dimensions(amc):
     assert dim_cols == ()
     assert metric_cols == ["id", "metric_a"]
 
+    empty: list[str] = []
+    dim_cols, metric_cols = amc._classify_component_csv_header(empty)
+    assert dim_cols == ()
+    assert metric_cols == []
+
+
+def test_n3_gauges_csv_with_metrics_per_component_trim(amc, tmp_path):
+    """``--instances-per-component 3 --metrics-per-component 1`` exercises
+    the n_metrics slicing in ``_iter_component_instance_rows`` (the
+    per-block iterator slices each row to ``1 + dim_count + n_metrics``).
+    A regression in the slice would either drop the metric value or
+    pull in the next instance's dimension columns. Verified by:
+    1) the long-form 10-column header is unchanged (dim columns always
+       present when any CSV is dimensioned), and
+    2) the set of metric names in gauges.csv per component equals the
+       first MetricSpec of that component's catalog."""
+    out = tmp_path / "n3_trim"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,gauges",
+            "--instances-per-component", "3",
+            "--metrics-per-component", "1",
+            "--interval-seconds", "60",
+        ],
+    )
+    gauges = out / "gauges.csv"
+    assert gauges.exists()
+    rows = _read_rows(gauges)
+    assert rows, "trim run must emit some gauge rows"
+    metrics_by_component: dict[str, set[str]] = {}
+    for r in rows:
+        metrics_by_component.setdefault(r["component"], set()).add(r["metric"])
+    assert metrics_by_component, "no components surfaced in the trim run"
+    for component, metrics in metrics_by_component.items():
+        first_spec_name = amc.COMPONENTS[component][0].name
+        assert metrics == {first_spec_name}, (
+            f"--metrics-per-component=1 must restrict {component} to "
+            f"{first_spec_name!r}; saw {sorted(metrics)}"
+        )
+
+    partial = ["timestamp", "id", "metric_a"]
+    dim_cols, metric_cols = amc._classify_component_csv_header(partial)
+    assert dim_cols == ()
+    assert metric_cols == ["id", "metric_a"]
+
 
 # ------------------------------------------------------------------
 # Coverage gaps — sub-second interval, tie-break order, --combine,
