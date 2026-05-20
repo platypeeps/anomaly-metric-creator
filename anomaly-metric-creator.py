@@ -650,50 +650,11 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if dst_inject_day > 0:
         rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
 
-    # Multi-instance fan-out (VER-140 Phase 2). When the active instance list
-    # is a single anonymous Instance() (all fields None), emit today's
-    # byte-identical format: ``timestamp,m0,m1,...``. When the list carries
-    # named instances (len > 1, or any non-None dimension field), prepend
-    # ``id,host,pod,az,region,tenant`` columns and repeat the row block for
-    # each instance sequentially (all rows for instance 0, then instance 1,
-    # …). All instances share the same RNG-drawn natural values in v1;
-    # Phase 4 (instance_filter) will let anomalies target specific instances.
-    _is_anonymous = (
-        len(instances) == 1
-        and instances[0].id is None
-        and instances[0].host is None
-        and instances[0].pod is None
-        and instances[0].az is None
-        and instances[0].region is None
-        and instances[0].tenant is None
-    )
-
     if emit_metrics:
         with open(file_path, "w", newline="") as f:
-            if _is_anonymous:
-                # Dimensionless default — byte-identical to pre-Phase-2 output.
-                f.write("timestamp," + ",".join(fieldnames) + "\n")
-                f.write("\n".join(rows.tolist()))
-                f.write("\n")
-            else:
-                # Long form: timestamp,id,host,pod,az,region,tenant,<metrics>
-                dim_header = "timestamp,id,host,pod,az,region,tenant"
-                f.write(dim_header + "," + ",".join(fieldnames) + "\n")
-                for inst in instances:
-                    # Build the dimension prefix string once per instance
-                    # and prepend it to each row's metric columns.
-                    dim_vals = ",".join(
-                        v if v is not None else ""
-                        for v in (inst.id, inst.host, inst.pod,
-                                  inst.az, inst.region, inst.tenant)
-                    )
-                    inst_rows = np.char.add(kept_ts, f",{dim_vals},")
-                    inst_rows = np.char.add(inst_rows, str_vals[:, 0])
-                    for col in range(1, n_cols):
-                        inst_rows = np.char.add(inst_rows, ",")
-                        inst_rows = np.char.add(inst_rows, str_vals[:, col])
-                    f.write("\n".join(inst_rows.tolist()))
-                    f.write("\n")
+            f.write("timestamp," + ",".join(fieldnames) + "\n")
+            f.write("\n".join(rows.tolist()))
+            f.write("\n")
 
 
 def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
@@ -1502,11 +1463,6 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
 # Maximum metrics any component can expose. Caps both the catalog above and
 # the --metrics-per-component CLI flag.
 MAX_METRICS_PER_COMPONENT = 10
-
-# Maximum instances any component can fan out to via --instances-per-component.
-# Combined with PREFLIGHT_CELL_CAP this prevents accidental memory explosions
-# (20 instances * 10 metrics * 86400 rows ~ 17M cells per component).
-MAX_INSTANCES_PER_COMPONENT = 20
 
 # Default emitted metrics per component when ``--metrics-per-component`` is
 # not provided. Matches the historic catalog so default CSVs remain
@@ -4591,16 +4547,11 @@ def _validate_derivations_registry() -> None:
 _validate_derivations_registry()
 
 
-_INSTANCE_DIMENSION_FIELDS: tuple[str, ...] = (
-    "host", "pod", "az", "region", "tenant",
-)
-
-
 def _validate_instance_list(instances, *, where: str) -> None:
     """Per-entry invariants shared by ``_validate_instances_registry`` and
-    ``generate_component`` (VER-140 Phase 1, expanded in Phase 2).
+    ``generate_component`` (VER-140 Phase 1).
 
-    Rejects four classes of drift in ``instances`` (a non-empty iterable
+    Rejects three classes of drift in ``instances`` (a non-empty iterable
     of ``Instance``):
 
     1. Non-``Instance`` entries: would raise a bare ``AttributeError`` on
@@ -4613,13 +4564,6 @@ def _validate_instance_list(instances, *, where: str) -> None:
        (``id=None``) entry. Phase 4's ``instance_filter=["..."]`` looks up
        instances by id, so collisions would silently target multiple rows;
        multiple anonymous entries would be indistinguishable.
-    4. Non-string (and non-``None``) dimension fields
-       (``host``, ``pod``, ``az``, ``region``, ``tenant``): the Phase 2
-       long-form CSV writer joins them with ``","`` directly. A non-string
-       would raise a bare ``TypeError`` in the writer, and a value
-       containing a comma or newline would silently corrupt the emitted
-       CSV. Phase 3 (``--instance-config``) will surface this same
-       constraint to file-loaded instance maps.
 
     ``where`` is the descriptor prefix used in raised error messages
     (e.g. ``"INSTANCES['authservice']"`` from the registry validator or
@@ -4636,37 +4580,12 @@ def _validate_instance_list(instances, *, where: str) -> None:
                 f"(type {type(inst).__name__}); every entry must be an "
                 f"Instance dataclass."
             )
-        if inst.id is not None:
-            if not isinstance(inst.id, str):
-                raise ValueError(
-                    f"{where} entry has Instance.id={inst.id!r} "
-                    f"(type {type(inst.id).__name__}); id must be None or a "
-                    f"string (instance_filter looks up ids by string equality)."
-                )
-            if "," in inst.id or "\n" in inst.id or "\r" in inst.id:
-                raise ValueError(
-                    f"{where} entry has Instance.id={inst.id!r} containing "
-                    f"a comma or newline; ids must not contain CSV-significant "
-                    f"characters (the long-form writer does not quote id cells)."
-                )
-        for field_name in _INSTANCE_DIMENSION_FIELDS:
-            value = getattr(inst, field_name)
-            if value is None:
-                continue
-            if not isinstance(value, str):
-                raise ValueError(
-                    f"{where} entry has Instance.{field_name}={value!r} "
-                    f"(type {type(value).__name__}); dimension fields must "
-                    f"be None or a string (the long-form CSV writer joins "
-                    f"them with ',' directly)."
-                )
-            if "," in value or "\n" in value or "\r" in value:
-                raise ValueError(
-                    f"{where} entry has Instance.{field_name}={value!r} "
-                    f"containing a comma or newline; dimension values "
-                    f"must not contain CSV-significant characters "
-                    f"(the long-form writer does not quote dimension cells)."
-                )
+        if inst.id is not None and not isinstance(inst.id, str):
+            raise ValueError(
+                f"{where} entry has Instance.id={inst.id!r} "
+                f"(type {type(inst.id).__name__}); id must be None or a "
+                f"string (instance_filter looks up ids by string equality)."
+            )
         if inst.id is None:
             anon_count += 1
             continue
@@ -5294,17 +5213,6 @@ def parse_args(argv=None):
                         "quirk, not an anomaly spec — does not appear in anomalies.csv. The "
                         "affected CSVs end up with 3,600/interval extra rows for that day.")
     p.add_argument(
-        "--instances-per-component",
-        type=int,
-        default=1,
-        metavar="N",
-        help=f"Fan each component out to N identical instances (default 1). "
-             f"N=1 emits today's byte-identical output with no dimension columns. "
-             f"N>1 prepends id, host, pod, az, region, tenant columns to every "
-             f"per-component CSV and emits N×rows_per_component rows. "
-             f"Accepted range: [1, {MAX_INSTANCES_PER_COMPONENT}].",
-    )
-    p.add_argument(
         "--topology-mode",
         choices=["independent", "realistic"],
         default="realistic",
@@ -5421,63 +5329,6 @@ def parse_args(argv=None):
             "the heapq.merge over per-component CSVs); pass "
             "--inject-dst-artifact-day 0 or drop the gauge emission flag"
         )
-    if args.instances_per_component > 1 and args.inject_dst_artifact_day > 0:
-        p.error(
-            "--instances-per-component > 1 is incompatible with "
-            "--inject-dst-artifact-day (the multi-instance path rebuilds rows "
-            "from raw timestamps and would silently skip the DST splice); pass "
-            "--inject-dst-artifact-day 0 or --instances-per-component 1"
-        )
-    # The downstream emitters (gauges.csv, combined_metrics_unified.csv,
-    # schema.json + --validate-output, OTEL streaming) are not yet dimension
-    # aware — wiring them up is the work of VER-148 (Phase 5), VER-149
-    # (Phase 6), and VER-151 (Phase 8). Running them against an N>1 run
-    # silently produces wrong output (e.g. the gauges writer emits dim
-    # columns as ``metric=id, value=i0`` rows, violating the
-    # ``timestamp,component,metric,value`` numeric-value schema; the
-    # combine writer cross-joins dim columns with metric columns into the
-    # unified CSV without per-instance semantics; the schema does not
-    # declare the dim columns so ``--validate-output`` rejects the run).
-    # Reject the combinations up-front so the user sees a clear message
-    # instead of a downstream corruption.
-    if args.instances_per_component > 1:
-        phase5_flags = []
-        if args.combine:
-            phase5_flags.append("--combine")
-        if args.combine_only:
-            phase5_flags.append("--combine-only")
-        if "gauges" in selected:
-            phase5_flags.append("--emit-selection 'gauges'")
-        if args.otel_emit_gauges:
-            phase5_flags.append("--otel-emit-gauges")
-        if phase5_flags:
-            p.error(
-                f"--instances-per-component > 1 is incompatible with "
-                f"{' / '.join(phase5_flags)}: the combined CSV and gauge "
-                f"writers are not dimension-aware yet (tracked under VER-148 "
-                f"Phase 5). Drop the flag(s) or pass --instances-per-component 1."
-            )
-        phase8_flags = []
-        if args.validate_output is not None:
-            phase8_flags.append("--validate-output")
-        if "schema" in selected:
-            phase8_flags.append("--emit-selection 'schema'")
-        if phase8_flags:
-            p.error(
-                f"--instances-per-component > 1 is incompatible with "
-                f"{' / '.join(phase8_flags)}: schema.json does not yet declare "
-                f"the dimension columns and --validate-output would reject the "
-                f"run (tracked under VER-151 Phase 8). Drop the flag(s) or "
-                f"pass --instances-per-component 1."
-            )
-        if args.otel_enabled:
-            p.error(
-                "--instances-per-component > 1 is incompatible with "
-                "--otel-enabled: the OTEL streamer does not yet attach "
-                "instance dimensions as OTLP resource attributes (tracked "
-                "under VER-149 Phase 6). Drop --otel-enabled or pass "
-                "--instances-per-component 1."
-            )
     if args.otel_gauge_batch_seconds <= 0:
         p.error("--otel-gauge-batch-seconds must be > 0")
     if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
@@ -5558,12 +5409,6 @@ def parse_args(argv=None):
     if args.anomaly_count is not None and args.anomaly_count < 1:
         p.error("--anomaly-count must be >= 1 (omit the flag for unlimited)")
 
-    if args.instances_per_component < 1 or args.instances_per_component > MAX_INSTANCES_PER_COMPONENT:
-        p.error(
-            f"--instances-per-component must be in [1, {MAX_INSTANCES_PER_COMPONENT}] "
-            f"(1 = default dimensionless output; >1 fans out with pod/az/etc. columns)"
-        )
-
     if args.metrics_per_component is not None and (
         args.metrics_per_component < 1
         or args.metrics_per_component > MAX_METRICS_PER_COMPONENT
@@ -5611,10 +5456,7 @@ def parse_args(argv=None):
                 min(args.metrics_per_component, len(COMPONENTS[c]))
                 for c in args.components
             )
-        # Phase 2 (VER-140): multiply by n_instances — each instance emits a
-        # full rows_per_component × metrics matrix, so the cell count scales
-        # linearly with --instances-per-component.
-        estimated_cells = rows_per_component * total_metrics * args.instances_per_component
+        estimated_cells = rows_per_component * total_metrics
         if estimated_cells > PREFLIGHT_CELL_CAP and not args.allow_huge_output:
             p.error(
                 f"preflight cell-count cap exceeded: "
@@ -5623,12 +5465,11 @@ def parse_args(argv=None):
                 f"x --components ({len(args.components)} selected) "
                 f"x --metrics-per-component "
                 f"{args.metrics_per_component if args.metrics_per_component is not None else 'default'} "
-                f"x --instances-per-component {args.instances_per_component} "
                 f"would emit ~{estimated_cells:,} metric cells "
                 f"(cap: {PREFLIGHT_CELL_CAP:,}). "
                 f"Raise --interval-seconds, lower --duration-days, lower "
-                f"--metrics-per-component, narrow --components, lower "
-                f"--instances-per-component, or pass --allow-huge-output to bypass."
+                f"--metrics-per-component, narrow --components, or pass "
+                f"--allow-huge-output to bypass."
             )
 
     return args
@@ -8065,16 +7906,11 @@ def main(argv=None):
         args.combine,
     )
     ctx = RunContext(rng=np.random.RandomState(args.seed))
-    # Seed the per-run instance map. Phase 1 default: one anonymous Instance()
-    # per component → byte-identical output. Phase 2: --instances-per-component
-    # N > 1 fans every component out to N named instances (id=i0..iN-1,
-    # pod=pod-0..pod-N-1); all other dimension fields remain None in v1.
-    if args.instances_per_component == 1:
-        ctx.instances = {name: list(INSTANCES[name]) for name in COMPONENTS}
-    else:
-        n = args.instances_per_component
-        fan_out = [Instance(id=f"i{k}", pod=f"pod-{k}") for k in range(n)]
-        ctx.instances = {name: list(fan_out) for name in COMPONENTS}
+    # Phase 1: seed the per-run instance map from the module-level
+    # ``INSTANCES`` registry (default = one anonymous ``Instance()`` per
+    # component → byte-identical to today). Phase 2 CLI flags will
+    # overwrite ``ctx.instances`` entries with fan-out lists.
+    ctx.instances = {name: list(INSTANCES[name]) for name in COMPONENTS}
 
     # Build component_anomalies and cascading_anomalies entirely from the
     # SCENARIOS registry. _resolve_scenarios() applies the --scenarios /
