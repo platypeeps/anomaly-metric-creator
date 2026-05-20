@@ -489,3 +489,130 @@ def test_instances_n1_with_dst_allowed(tmp_path):
          "--output-dir", str(tmp_path), "--duration-days", "1"],
         expect_fail=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Out-of-scope downstream emitters are gated for N > 1
+# ---------------------------------------------------------------------------
+#
+# Phase 2 wires the long-form CSV writer in ``generate_component`` but
+# leaves ``combined_metrics_unified.csv`` (Phase 5 / VER-148),
+# ``gauges.csv`` + ``--otel-emit-gauges`` (Phase 5 / VER-148), the
+# ``schema.json`` topology + ``--validate-output`` checks (Phase 8 /
+# VER-151), and the OTEL streamer's resource attributes (Phase 6 /
+# VER-149) un-modified. Running those against an N > 1 run silently
+# produces wrong output (e.g. gauges.csv emits ``metric=id, value=i0``
+# string-valued rows that violate the numeric-value schema). The
+# combinations are rejected at parse time with a clear, phase-attributed
+# error so users get the right message instead of corrupted artifacts.
+
+
+def test_n2_plus_combine_rejected(tmp_path):
+    """``--instances-per-component > 1`` + ``--combine`` rejected (Phase 5)."""
+    result = _invoke(
+        ["--instances-per-component", "2", "--combine",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "instances-per-component" in stderr_low
+    assert "--combine" in result.stderr
+    assert "ver-148" in stderr_low or "phase 5" in stderr_low
+
+
+def test_n2_plus_combine_only_rejected(tmp_path):
+    """``--instances-per-component > 1`` + ``--combine-only`` rejected (Phase 5)."""
+    result = _invoke(
+        ["--instances-per-component", "2", "--combine-only",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "instances-per-component" in stderr_low
+    assert "--combine-only" in result.stderr
+
+
+def test_n2_plus_emit_gauges_rejected(tmp_path):
+    """``--instances-per-component > 1`` + ``--emit-selection gauges`` rejected.
+
+    The current ``write_gauges_csv`` emits ``timestamp,component,metric,value``
+    and would write dimension-column rows as ``metric=id, value=i0`` —
+    violating the numeric-value schema. Phase 5 (VER-148) will rebuild
+    this path long-form.
+    """
+    result = _invoke(
+        ["--instances-per-component", "2",
+         "--emit-selection", "metrics,gauges",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "instances-per-component" in stderr_low
+    assert "gauges" in stderr_low
+
+
+def test_n2_plus_emit_schema_rejected(tmp_path):
+    """``--instances-per-component > 1`` + ``--emit-selection schema`` rejected (Phase 8)."""
+    result = _invoke(
+        ["--instances-per-component", "2",
+         "--emit-selection", "metrics,schema",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "instances-per-component" in stderr_low
+    assert "schema" in stderr_low
+    assert "ver-151" in stderr_low or "phase 8" in stderr_low
+
+
+def test_n2_plus_validate_output_rejected(tmp_path):
+    """``--instances-per-component > 1`` + ``--validate-output`` rejected (Phase 8).
+
+    Without this gate the validator would report header-mismatch and
+    row-count violations against a Phase-2-correct multi-instance CSV,
+    misleading the user about which side is wrong.
+    """
+    # --validate-output requires an existing directory.
+    result = _invoke(
+        ["--instances-per-component", "2",
+         "--validate-output", str(tmp_path),
+         "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "instances-per-component" in stderr_low
+    assert "--validate-output" in result.stderr
+
+
+def test_n2_plus_otel_enabled_rejected(tmp_path):
+    """``--instances-per-component > 1`` + ``--otel-enabled`` rejected (Phase 6)."""
+    result = _invoke(
+        ["--instances-per-component", "2",
+         "--otel-enabled",
+         "--otel-metrics-endpoint", "http://localhost:4318",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "instances-per-component" in stderr_low
+    assert "--otel-enabled" in result.stderr
+    assert "ver-149" in stderr_low or "phase 6" in stderr_low
+
+
+def test_n1_with_combine_gauges_schema_allowed(tmp_path):
+    """The same set of flags is permitted with the default ``N == 1``.
+
+    Counter-test for the gating: a user who wants combine / gauges /
+    schema still gets the historic single-instance behavior at
+    ``--instances-per-component 1`` (the default). This ensures the gate
+    is targeted at the multi-instance case and does not regress the
+    single-instance path the rest of the suite locks via golden hashes.
+    """
+    _invoke(
+        ["--instances-per-component", "1",
+         "--components", "apigateway",
+         "--combine",
+         "--emit-selection", "metrics,gauges,schema",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=False,
+    )

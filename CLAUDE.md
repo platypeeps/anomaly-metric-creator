@@ -161,12 +161,21 @@ specs) will let scenarios target individual instances.
 
 Out-of-scope until later phases: `--instance-config PATH` (Phase 3),
 per-anomaly `instance_filter` (Phase 4), instance dimensions in
-`gauges.csv` / `combined_metrics_unified.csv` (Phase 5), and OTEL
-resource attributes (Phase 6). `--combine`, `--combine-only`,
-`--validate-output`, and the gauge / OTEL paths are *not* aware of
-the dimension columns yet; running them against a `>1` instance run
-will surface the dimension columns through the unified CSV but
-without per-instance semantics.
+`gauges.csv` / `combined_metrics_unified.csv` (Phase 5 / VER-148),
+schema.json topology + `--validate-output` (Phase 8 / VER-151), and
+OTEL resource attributes (Phase 6 / VER-149). Because those
+downstream emitters are not dimension-aware yet, `parse_args`
+rejects `--instances-per-component > 1` paired with `--combine`,
+`--combine-only`, `--emit-selection 'gauges'`, `--emit-selection
+'schema'`, `--validate-output`, `--otel-emit-gauges`, or
+`--otel-enabled` with a phase-attributed error message (so users
+see a clear failure instead of e.g. `gauges.csv` rows writing the
+string `i0` into the numeric `value` column, or `--validate-output`
+flagging dimension columns as schema drift). Each later phase
+replaces the corresponding gate with the real implementation. The
+single-instance default (`N == 1`) keeps every flag combination
+historically permitted, so existing one-instance workflows do not
+need to change.
 
 Locked SHA-256 N=3 golden hashes at 1d and 7d live in
 `tests/test_instances_per_component.py` (`N3_ONE_DAY_HASHES` /

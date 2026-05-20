@@ -5428,6 +5428,56 @@ def parse_args(argv=None):
             "from raw timestamps and would silently skip the DST splice); pass "
             "--inject-dst-artifact-day 0 or --instances-per-component 1"
         )
+    # The downstream emitters (gauges.csv, combined_metrics_unified.csv,
+    # schema.json + --validate-output, OTEL streaming) are not yet dimension
+    # aware — wiring them up is the work of VER-148 (Phase 5), VER-149
+    # (Phase 6), and VER-151 (Phase 8). Running them against an N>1 run
+    # silently produces wrong output (e.g. the gauges writer emits dim
+    # columns as ``metric=id, value=i0`` rows, violating the
+    # ``timestamp,component,metric,value`` numeric-value schema; the
+    # combine writer cross-joins dim columns with metric columns into the
+    # unified CSV without per-instance semantics; the schema does not
+    # declare the dim columns so ``--validate-output`` rejects the run).
+    # Reject the combinations up-front so the user sees a clear message
+    # instead of a downstream corruption.
+    if args.instances_per_component > 1:
+        phase5_flags = []
+        if args.combine:
+            phase5_flags.append("--combine")
+        if args.combine_only:
+            phase5_flags.append("--combine-only")
+        if "gauges" in selected:
+            phase5_flags.append("--emit-selection 'gauges'")
+        if args.otel_emit_gauges:
+            phase5_flags.append("--otel-emit-gauges")
+        if phase5_flags:
+            p.error(
+                f"--instances-per-component > 1 is incompatible with "
+                f"{' / '.join(phase5_flags)}: the combined CSV and gauge "
+                f"writers are not dimension-aware yet (tracked under VER-148 "
+                f"Phase 5). Drop the flag(s) or pass --instances-per-component 1."
+            )
+        phase8_flags = []
+        if args.validate_output is not None:
+            phase8_flags.append("--validate-output")
+        if "schema" in selected:
+            phase8_flags.append("--emit-selection 'schema'")
+        if phase8_flags:
+            p.error(
+                f"--instances-per-component > 1 is incompatible with "
+                f"{' / '.join(phase8_flags)}: schema.json does not yet declare "
+                f"the dimension columns and --validate-output would reject the "
+                f"run (tracked under VER-151 Phase 8). Drop the flag(s) or "
+                f"pass --instances-per-component 1."
+            )
+        if args.otel_enabled:
+            p.error(
+                "--instances-per-component > 1 is incompatible with "
+                "--otel-enabled: the OTEL streamer does not yet attach "
+                "instance dimensions as OTLP resource attributes (tracked "
+                "under VER-149 Phase 6). Drop --otel-enabled or pass "
+                "--instances-per-component 1."
+            )
     if args.otel_gauge_batch_seconds <= 0:
         p.error("--otel-gauge-batch-seconds must be > 0")
     if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
