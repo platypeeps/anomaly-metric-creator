@@ -4784,6 +4784,109 @@ def _validate_instances_registry() -> None:
 _validate_instances_registry()
 
 
+def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
+    """Parse a YAML or JSON --instance-config file into a per-component Instance map.
+
+    File schema::
+
+        components:
+          authservice:
+            - {id: auth-east, region: us-east-1, pod: auth-1}
+            - {id: auth-west, region: us-west-2, pod: auth-2}
+
+    Every listed component must be a key of COMPONENTS. Each instance dict may
+    only contain Instance field names (id, host, pod, az, region, tenant). Missing
+    components fall back to ``[Instance()]`` (the anonymous default). Per-component
+    instance counts are capped at MAX_INSTANCES_PER_COMPONENT. The id-uniqueness
+    and shape rules from _validate_instance_list apply after construction.
+
+    Raises ``SystemExit`` (via a ValueError caught in main) for every schema
+    violation: unknown components, unknown fields, empty component lists, duplicate
+    ids, count exceeding the cap, missing or malformed top-level structure.
+    """
+    suffix = path.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        try:
+            import yaml  # PyYAML; optional dependency
+        except ImportError:
+            raise ValueError(
+                f"--instance-config {path}: PyYAML is required to parse YAML files "
+                "but is not installed. Install it with 'pip install pyyaml' or "
+                "use a .json file instead."
+            )
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    else:  # .json
+        import json
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"--instance-config {path}: top-level value must be a mapping, "
+            f"got {type(raw).__name__!r}"
+        )
+    components_raw = raw.get("components")
+    if components_raw is None:
+        raise ValueError(
+            f"--instance-config {path}: missing required top-level key 'components'"
+        )
+    if not isinstance(components_raw, dict):
+        raise ValueError(
+            f"--instance-config {path}: 'components' must be a mapping, "
+            f"got {type(components_raw).__name__!r}"
+        )
+
+    _valid_instance_fields = {"id", "host", "pod", "az", "region", "tenant"}
+    result: dict[str, list[Instance]] = {}
+    for component, inst_list in components_raw.items():
+        if component not in COMPONENTS:
+            raise ValueError(
+                f"--instance-config {path}: unknown component {component!r}; "
+                f"valid components: {sorted(COMPONENTS.keys())}"
+            )
+        if not isinstance(inst_list, list):
+            raise ValueError(
+                f"--instance-config {path}: {component!r} value must be a list, "
+                f"got {type(inst_list).__name__!r}"
+            )
+        if not inst_list:
+            raise ValueError(
+                f"--instance-config {path}: {component!r} has an empty instance list; "
+                "omit the key to fall back to a single anonymous Instance()"
+            )
+        if len(inst_list) > MAX_INSTANCES_PER_COMPONENT:
+            raise ValueError(
+                f"--instance-config {path}: {component!r} declares {len(inst_list)} "
+                f"instances but MAX_INSTANCES_PER_COMPONENT={MAX_INSTANCES_PER_COMPONENT}"
+            )
+        instances = []
+        for i, entry in enumerate(inst_list):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"--instance-config {path}: {component!r}[{i}] must be a dict, "
+                    f"got {type(entry).__name__!r}"
+                )
+            unknown = set(entry) - _valid_instance_fields
+            if unknown:
+                raise ValueError(
+                    f"--instance-config {path}: {component!r}[{i}] contains unknown "
+                    f"field(s) {sorted(unknown)}; valid fields: {sorted(_valid_instance_fields)}"
+                )
+            instances.append(Instance(
+                id=entry.get("id"),
+                host=entry.get("host"),
+                pod=entry.get("pod"),
+                az=entry.get("az"),
+                region=entry.get("region"),
+                tenant=entry.get("tenant"),
+            ))
+        _validate_instance_list(instances, where=f"--instance-config {path} {component!r}")
+        result[component] = instances
+
+    return result
+
+
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:
     """Return ``{component: specs[:limit]}`` for the active --metrics-per-component.
 
@@ -5346,7 +5449,8 @@ def parse_args(argv=None):
                         "on the given 1-based day of the run. 0 (default) disables. Generator "
                         "quirk, not an anomaly spec — does not appear in anomalies.csv. The "
                         "affected CSVs end up with 3,600/interval extra rows for that day.")
-    p.add_argument(
+    instance_source = p.add_mutually_exclusive_group()
+    instance_source.add_argument(
         "--instances-per-component",
         type=int,
         default=1,
@@ -5355,7 +5459,20 @@ def parse_args(argv=None):
              f"N=1 emits today's byte-identical output with no dimension columns. "
              f"N>1 prepends id, host, pod, az, region, tenant columns to every "
              f"per-component CSV and emits N×rows_per_component rows. "
-             f"Accepted range: [1, {MAX_INSTANCES_PER_COMPONENT}].",
+             f"Accepted range: [1, {MAX_INSTANCES_PER_COMPONENT}]. "
+             f"Mutually exclusive with --instance-config.",
+    )
+    instance_source.add_argument(
+        "--instance-config",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="YAML (.yaml/.yml) or JSON (.json) file declaring a per-component "
+             "instance topology for repeatable non-uniform fan-outs. "
+             "Top-level key 'components' maps component names to lists of "
+             "Instance field dicts (id, host, pod, az, region, tenant). "
+             "Missing components fall back to a single anonymous Instance(). "
+             "Mutually exclusive with --instances-per-component.",
     )
     p.add_argument(
         "--topology-mode",
@@ -5487,12 +5604,35 @@ def parse_args(argv=None):
             f"{MAX_INSTANCES_PER_COMPONENT}] (1 = default dimensionless "
             f"output; >1 fans out with pod/az/etc. columns)"
         )
-    if args.instances_per_component > 1 and args.inject_dst_artifact_day > 0:
+    # Validate ``--instance-config`` file path early (before any multi-instance
+    # gating) so a missing file or wrong suffix surfaces a clean error rather
+    # than as a generic incompatibility.
+    if args.instance_config is not None:
+        if not args.instance_config.exists():
+            p.error(f"--instance-config path does not exist: {args.instance_config}")
+        if args.instance_config.suffix.lower() not in {".yaml", ".yml", ".json"}:
+            p.error(
+                f"--instance-config must be a .yaml, .yml, or .json file; "
+                f"got {args.instance_config.suffix!r}"
+            )
+    # Phase 3 (VER-146): --instance-config triggers the same multi-instance
+    # code path as --instances-per-component > 1 (dimension columns,
+    # N×rows per component, partial-aware downstream emitters). Both flags
+    # must be gated identically against incompatible downstream flags so
+    # the user gets one error message, not two divergent ones.
+    _multi_instance = (
+        args.instances_per_component > 1 or args.instance_config is not None
+    )
+    _multi_instance_flag = (
+        "--instance-config" if args.instance_config is not None
+        else "--instances-per-component > 1"
+    )
+    if _multi_instance and args.inject_dst_artifact_day > 0:
         p.error(
-            "--instances-per-component > 1 is incompatible with "
-            "--inject-dst-artifact-day (the multi-instance path rebuilds rows "
-            "from raw timestamps and would silently skip the DST splice); pass "
-            "--inject-dst-artifact-day 0 or --instances-per-component 1"
+            f"{_multi_instance_flag} is incompatible with --inject-dst-artifact-day "
+            "(the multi-instance path rebuilds rows from raw timestamps and "
+            "would silently skip the DST splice); pass --inject-dst-artifact-day 0 "
+            "or use the default single-instance mode"
         )
     # The downstream emitters (gauges.csv, combined_metrics_unified.csv,
     # schema.json + --validate-output, OTEL streaming) are not yet dimension
@@ -5506,7 +5646,7 @@ def parse_args(argv=None):
     # declare the dim columns so ``--validate-output`` rejects the run).
     # Reject the combinations up-front so the user sees a clear message
     # instead of a downstream corruption.
-    if args.instances_per_component > 1:
+    if _multi_instance:
         phase5_flags = []
         if args.combine:
             phase5_flags.append("--combine")
@@ -5518,10 +5658,10 @@ def parse_args(argv=None):
             phase5_flags.append("--otel-emit-gauges")
         if phase5_flags:
             p.error(
-                f"--instances-per-component > 1 is incompatible with "
+                f"{_multi_instance_flag} is incompatible with "
                 f"{' / '.join(phase5_flags)}: the combined CSV and gauge "
                 f"writers are not dimension-aware yet (tracked under VER-148 "
-                f"Phase 5). Drop the flag(s) or pass --instances-per-component 1."
+                f"Phase 5). Drop the flag(s) or use the default single-instance mode."
             )
         phase8_flags = []
         if args.validate_output is not None:
@@ -5530,19 +5670,19 @@ def parse_args(argv=None):
             phase8_flags.append("--emit-selection 'schema'")
         if phase8_flags:
             p.error(
-                f"--instances-per-component > 1 is incompatible with "
+                f"{_multi_instance_flag} is incompatible with "
                 f"{' / '.join(phase8_flags)}: schema.json does not yet declare "
                 f"the dimension columns and --validate-output would reject the "
                 f"run (tracked under VER-151 Phase 8). Drop the flag(s) or "
-                f"pass --instances-per-component 1."
+                f"use the default single-instance mode."
             )
         if args.otel_enabled:
             p.error(
-                "--instances-per-component > 1 is incompatible with "
+                f"{_multi_instance_flag} is incompatible with "
                 "--otel-enabled: the OTEL streamer does not yet attach "
                 "instance dimensions as OTLP resource attributes (tracked "
-                "under VER-149 Phase 6). Drop --otel-enabled or pass "
-                "--instances-per-component 1."
+                "under VER-149 Phase 6). Drop --otel-enabled or use the "
+                "default single-instance mode."
             )
     if args.otel_gauge_batch_seconds <= 0:
         p.error("--otel-gauge-batch-seconds must be > 0")
@@ -5671,11 +5811,23 @@ def parse_args(argv=None):
                 min(args.metrics_per_component, len(COMPONENTS[c]))
                 for c in args.components
             )
-        # Phase 2 (VER-140): multiply by n_instances — each instance emits a
-        # full rows_per_component × metrics matrix, so the cell count scales
-        # linearly with --instances-per-component.
-        estimated_cells = rows_per_component * total_metrics * args.instances_per_component
+        # Multiply by n_instances per component (Phase 2/3). For
+        # --instances-per-component: uniform N across all components.
+        # For --instance-config: the per-component count is not yet parsed
+        # here (that happens in main()), so use the max declared count
+        # (MAX_INSTANCES_PER_COMPONENT) as a conservative upper bound.
+        # Both flags are mutually exclusive so only one branch fires.
+        if args.instance_config is not None:
+            n_instances_factor = MAX_INSTANCES_PER_COMPONENT  # conservative
+        else:
+            n_instances_factor = args.instances_per_component
+        estimated_cells = rows_per_component * total_metrics * n_instances_factor
         if estimated_cells > PREFLIGHT_CELL_CAP and not args.allow_huge_output:
+            instance_clause = (
+                f"x --instance-config (≤{MAX_INSTANCES_PER_COMPONENT} instances/component) "
+                if args.instance_config is not None
+                else f"x --instances-per-component {args.instances_per_component} "
+            )
             p.error(
                 f"preflight cell-count cap exceeded: "
                 f"--interval-seconds {args.interval_seconds} "
@@ -5683,12 +5835,12 @@ def parse_args(argv=None):
                 f"x --components ({len(args.components)} selected) "
                 f"x --metrics-per-component "
                 f"{args.metrics_per_component if args.metrics_per_component is not None else 'default'} "
-                f"x --instances-per-component {args.instances_per_component} "
+                f"{instance_clause}"
                 f"would emit ~{estimated_cells:,} metric cells "
                 f"(cap: {PREFLIGHT_CELL_CAP:,}). "
                 f"Raise --interval-seconds, lower --duration-days, lower "
-                f"--metrics-per-component, narrow --components, lower "
-                f"--instances-per-component, or pass --allow-huge-output to bypass."
+                f"--metrics-per-component, narrow --components, reduce instances, "
+                f"or pass --allow-huge-output to bypass."
             )
 
     return args
@@ -8161,7 +8313,18 @@ def main(argv=None):
     # per component → byte-identical output. Phase 2: --instances-per-component
     # N > 1 fans every component out to N named instances (id=i0..iN-1,
     # pod=pod-0..pod-N-1); all other dimension fields remain None in v1.
-    if args.instances_per_component == 1:
+    if args.instance_config is not None:
+        # Phase 3: --instance-config populates the per-component map from file;
+        # missing components fall back to [Instance()] (anonymous default).
+        try:
+            config_map = _load_instance_config(args.instance_config)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        ctx.instances = {
+            name: config_map.get(name, list(INSTANCES[name]))
+            for name in COMPONENTS
+        }
+    elif args.instances_per_component == 1:
         ctx.instances = {name: list(INSTANCES[name]) for name in COMPONENTS}
     else:
         n = args.instances_per_component
