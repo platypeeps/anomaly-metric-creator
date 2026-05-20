@@ -85,10 +85,14 @@ and dispatches one of two layouts:
   `timestamp, component, id, host, pod, az, region, tenant, metric,
   value`. Rows are merged chronologically with `heapq.merge` across
   per-(component, instance) iterators sourced from
-  `_iter_component_instance_rows`; the per-instance dim tuples per file
-  come from `_scan_instance_block_dim_tuples`. Tie-break order on equal
-  timestamps is `(component, instance_id, metric)`, matching the long-
-  form `gauges.csv` ordering contract. Empty / dropped cells are skipped
+  `_iter_component_instance_rows`; the per-instance ``(dim_tuple,
+  start_offset)`` pairs per file come from
+  `_scan_instance_block_layout` — a one-pass dim-only scan that records
+  the byte offset of each block's first row so the iterator can
+  ``seek()`` straight there instead of re-reading every preceding
+  block. Tie-break order on equal timestamps is `(component,
+  instance_id, metric)`, matching the long-form `gauges.csv` ordering
+  contract. Empty / dropped cells are skipped
   (long form encodes "this measurement was emitted" via row presence —
   unlike the wide layout, which carries an empty string in the
   corresponding column).
@@ -351,10 +355,12 @@ Layout is decided by header inspection via
   Phase 2). The writer emits
   `timestamp, component, id, host, pod, az, region, tenant, metric,
   value`. Per-(component, instance) iterators come from
-  `_iter_component_instance_rows`; the per-instance dim tuples per file
-  come from `_scan_instance_block_dim_tuples` (a one-pass dim-only scan
-  that detects the contiguous per-instance blocks
-  `generate_component` writes). Tie-break order on equal timestamps is
+  `_iter_component_instance_rows`; the per-instance ``(dim_tuple,
+  start_offset)`` pairs per file come from
+  `_scan_instance_block_layout` — a one-pass dim-only scan that
+  detects the contiguous per-instance blocks `generate_component`
+  writes and records each block's byte-offset start so the iterator
+  can ``seek()`` instead of re-scanning. Tie-break order on equal timestamps is
   `(component, instance_id, metric)` — sources are sorted by
   `(component, instance_id)` before `heapq.merge`, and within each row
   the inner metric loop walks columns in `MetricSpec` order.

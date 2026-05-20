@@ -697,12 +697,99 @@ def test_n3_gauges_csv_with_metrics_per_component_trim(amc, tmp_path):
         )
 
 
+def test_scan_instance_block_layout_records_seekable_offsets(amc, tmp_path):
+    """The scan helper must record byte offsets that ``seek()`` can hand
+    to ``csv.reader`` cleanly — anything else would corrupt the
+    long-form merge, because ``_iter_component_instance_rows``
+    ``seek()``s straight to the recorded offset and then parses with
+    ``csv.reader``. We assert the offsets land on row starts by
+    seeking + reading and comparing to a manual line-by-line walk."""
+    csv_path = tmp_path / "synth_inst.csv"
+    csv_path.write_text(
+        "timestamp,id,host,pod,az,region,tenant,m_a\n"
+        "2026-03-10 00:00:00,i0,,pod-0,,,,1.0\n"
+        "2026-03-10 00:00:01,i0,,pod-0,,,,1.1\n"
+        "2026-03-10 00:00:00,i1,,pod-1,,,,2.0\n"
+        "2026-03-10 00:00:01,i1,,pod-1,,,,2.1\n"
+        "2026-03-10 00:00:00,i2,,pod-2,,,,3.0\n"
+    )
+    blocks = amc._scan_instance_block_layout(csv_path, has_dims=True)
+    assert [dims[0] for dims, _ in blocks] == ["i0", "i1", "i2"]
+
+    # Manually compute the byte offset of every non-header line and
+    # confirm the scan recorded those exact positions for each block's
+    # first row.
+    with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+        fh.readline()  # header
+        row0_pos = fh.tell()
+        fh.readline()  # i0 row 0
+        fh.readline()  # i0 row 1
+        i1_pos = fh.tell()
+        fh.readline()  # i1 row 0
+        fh.readline()  # i1 row 1
+        i2_pos = fh.tell()
+
+    assert blocks[0] == (("i0", "", "pod-0", "", "", ""), row0_pos)
+    assert blocks[1] == (("i1", "", "pod-1", "", "", ""), i1_pos)
+    assert blocks[2] == (("i2", "", "pod-2", "", "", ""), i2_pos)
+
+    # End-to-end: passing the recorded offset to the iterator must yield
+    # exactly the matching block's rows in order. A future regression
+    # that drifted the offset by even one byte (e.g. forgot
+    # ``newline=""``, or hand-rolled a parser that miscounted ``\r\n``)
+    # would surface here as a parse error or an off-by-one row count.
+    i1_rows = list(
+        amc._iter_component_instance_rows(
+            csv_path, i1_pos, has_dims=True, n_metrics=1,
+        )
+    )
+    assert len(i1_rows) == 2
+    assert i1_rows[0][1] == "2026-03-10 00:00:00"
+    assert i1_rows[0][2] == ["2.0"]
+    assert i1_rows[1][2] == ["2.1"]
+
+
+def test_scan_instance_block_layout_dimensionless(amc, tmp_path):
+    """The has_dims=False path returns a single conceptual block at the
+    byte offset right after the header line. The iterator's
+    has_dims=False branch then yields every data row without comparing
+    dim tuples."""
+    csv_path = tmp_path / "synth_flat.csv"
+    csv_path.write_text(
+        "timestamp,m_a,m_b\n"
+        "2026-03-10 00:00:00,1.0,2.0\n"
+        "2026-03-10 00:00:01,1.1,2.1\n"
+    )
+    blocks = amc._scan_instance_block_layout(csv_path, has_dims=False)
+    assert len(blocks) == 1
+    dims, offset = blocks[0]
+    # Six empty-string dim slots — the dimensionless sentinel.
+    assert dims == tuple("" for _ in amc._INSTANCE_DIMENSION_COLUMNS)
+
+    with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+        fh.readline()
+        expected_offset = fh.tell()
+    assert offset == expected_offset
+
+    rows = list(
+        amc._iter_component_instance_rows(
+            csv_path, offset, has_dims=False, n_metrics=2,
+        )
+    )
+    assert [r[1] for r in rows] == [
+        "2026-03-10 00:00:00", "2026-03-10 00:00:01",
+    ]
+    assert [r[2] for r in rows] == [["1.0", "2.0"], ["1.1", "2.1"]]
+
+
 def test_ensure_long_form_fd_capacity_fits_under_default_limit(amc):
     """At the documented N=3 default fan-out (13 components × 3 instances
     = 39 sources), the FD pre-flight is a no-op on every platform we
     support — even macOS's default 256 soft limit has plenty of room.
     A regression that lowered the margin or capped the rlimit raise
-    aggressively would surface here before the merge ran."""
+    aggressively would surface here before the merge ran. On Windows
+    the helper is a no-op regardless (``resource`` is POSIX-only), so
+    the assertion that it doesn't raise still holds."""
     # No-op path: helper must not raise for a fan-out far inside the
     # default soft limit.
     amc._ensure_long_form_fd_capacity(0)
@@ -720,8 +807,12 @@ def test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low(
     or ``ulimit -n``) rather than crashing inside ``heapq.merge`` with
     ``OSError: [Errno 24] Too many open files``. We monkey-patch
     ``resource.getrlimit`` to simulate a constrained environment so the
-    test stays deterministic across CI hosts."""
-    import resource
+    test stays deterministic across CI hosts.
+
+    The implementation explicitly no-ops on Windows when ``resource`` is
+    unavailable, so this test skips there — the constrained-rlimit
+    branch can't be exercised without POSIX ``RLIMIT_NOFILE``."""
+    resource = pytest.importorskip("resource")
     monkeypatch.setattr(
         resource, "getrlimit",
         lambda which: (32, 32) if which == resource.RLIMIT_NOFILE else (0, 0),

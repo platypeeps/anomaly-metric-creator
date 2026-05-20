@@ -6269,30 +6269,49 @@ def _write_combined_long_form(
     Layout mirrors the long-form ``gauges.csv``: ``timestamp, component,
     id, host, pod, az, region, tenant, metric, value``. Per-(component,
     instance) iterators feed ``heapq.merge`` on parsed timestamps;
-    sources are pre-sorted by ``(component, instance_id)`` so equal-
-    timestamp groups emit component-then-instance-then-metric order
-    (the documented Phase 5 tie-break order). The autodiscovery-friendly
-    ``--combine`` flag preserves ``components`` order as input, so the
-    final on-disk component order follows the caller-supplied list (after
-    sorting).
+    sources are pre-sorted by ``(component, instance_dims)`` (alphabetical
+    by component, then by id-leading dim tuple) so equal-timestamp
+    groups emit component-then-instance-then-metric order — the
+    documented Phase 5 ``(timestamp, component, instance_id, metric)``
+    tie-break. The caller-supplied ``components`` order is **not**
+    preserved (the function sorts components alphabetically internally)
+    so the on-disk component order is deterministic regardless of how
+    the caller built the list; this matches the long-form
+    ``gauges.csv`` writer's tie-break contract.
+
+    Missing per-component CSVs raise ``SystemExit`` rather than being
+    silently skipped — the wide-form path's ``combine_logs`` guard
+    raises on the same input, and the long form mirrors that contract
+    so the two paths agree on what "missing input" means even when the
+    caller bypasses ``combine_logs`` to call this writer directly.
     """
-    # Honor the caller-supplied component order on the sort key by
-    # sorting on (component, instance_id). We also drop components whose
-    # CSV doesn't exist (mirrors the existing ``combine_logs`` SystemExit
-    # guard upstream — by the time we get here every requested component
-    # has been verified present).
+    # Mirror the wide-form path's contract: every requested component
+    # must have a per-component CSV on disk. Defends against a direct
+    # caller that bypasses ``combine_logs``'s missing-file check; the
+    # autodiscovery path through ``combine_logs(...)`` already filters
+    # to existing files via ``discover_components``, so this loop is a
+    # no-op there.
+    missing = [
+        f"{name}.csv" for name in components
+        if not layout[name]["exists"]
+    ]
+    if missing:
+        raise SystemExit(
+            f"missing component CSVs for long-form combine: "
+            f"{', '.join(missing)}"
+        )
     sources = []
-    sorted_components = sorted(c for c in components if layout[c]["exists"])
+    sorted_components = sorted(components)
     for component in sorted_components:
         entry = layout[component]
         metric_cols = entry["metric_cols"]
         has_dims = bool(entry["dim_cols"])
-        instance_dim_tuples = _scan_instance_block_dim_tuples(
+        instance_blocks = _scan_instance_block_layout(
             entry["path"], has_dims=has_dims,
         )
-        for instance_dims in instance_dim_tuples:
+        for instance_dims, start_offset in instance_blocks:
             row_iter = _iter_component_instance_rows(
-                entry["path"], instance_dims,
+                entry["path"], start_offset,
                 has_dims=has_dims, n_metrics=len(metric_cols),
             )
 
@@ -7149,17 +7168,28 @@ def _classify_component_csv_header(
 ) -> tuple[tuple[str, ...], list[str]]:
     """Split a per-component CSV header into ``(dim_cols, metric_cols)``.
 
-    A header is dimensioned when columns 1..6 after ``timestamp`` are
-    exactly ``_INSTANCE_DIMENSION_COLUMNS`` in registry order — i.e. the
-    six fields ``id, host, pod, az, region, tenant``. Otherwise no dim
-    columns are present (``dim_cols`` is empty) and the post-``timestamp``
-    columns are all metrics. Header rows that are missing or malformed
-    are treated as no-dim, all-metric — the caller is responsible for
-    handling an empty header.
+    A header is classified as dimensioned only when **all three** hold:
+    column 0 is exactly ``"timestamp"``, the header is long enough to
+    fit the full dimension prefix (``len(header) >= 1 +
+    len(_INSTANCE_DIMENSION_COLUMNS)``), and columns 1..6 after the
+    timestamp are exactly ``_INSTANCE_DIMENSION_COLUMNS`` in registry
+    order — i.e. the six fields ``id, host, pod, az, region, tenant``.
+    Headers that fail any of those checks fall through to the no-dim
+    branch, where every post-``timestamp`` column is treated as a
+    metric. The explicit ``header[0]`` and length checks defend against
+    a malformed / user-staged CSV whose first column happens to be
+    ``id`` (or another dim name) being mis-routed into the dimensioned
+    branch. Empty / missing headers go the same no-dim route.
     """
-    rest = header[1:] if header else []
+    if not header:
+        return (), []
     dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
-    if tuple(rest[:dim_count]) == _INSTANCE_DIMENSION_COLUMNS:
+    rest = header[1:]
+    if (
+        header[0] == "timestamp"
+        and len(header) >= 1 + dim_count
+        and tuple(rest[:dim_count]) == _INSTANCE_DIMENSION_COLUMNS
+    ):
         return _INSTANCE_DIMENSION_COLUMNS, rest[dim_count:]
     return (), rest
 
@@ -7198,77 +7228,103 @@ def _scan_component_csv_headers(
     return any_dimensioned, info
 
 
-def _scan_instance_block_dim_tuples(
+def _scan_instance_block_layout(
     csv_path: Path, *, has_dims: bool,
-) -> list[tuple[str, ...]]:
-    """Return the ordered list of unique instance-dimension tuples present
-    in ``csv_path``, in the order they first appear.
+) -> list[tuple[tuple[str, ...], int]]:
+    """Return the ordered list of ``(dim_tuple, start_offset)`` pairs for
+    every instance block in ``csv_path``, in the order they first appear.
 
-    ``has_dims`` short-circuits the scan: dimensionless CSVs always have a
-    single conceptual block represented by a tuple of empty strings (one
-    per ``_INSTANCE_DIMENSION_COLUMNS`` entry). For dimensioned CSVs, the scan
-    reads only the dimension columns of each row and detects block
-    boundaries where the dim tuple changes (``generate_component`` writes
-    per-instance blocks sequentially, so each unique dim tuple appears in
-    exactly one contiguous block).
+    ``start_offset`` is the byte position of the block's first data row
+    in the file (i.e. ``fh.tell()`` BEFORE the first matching row is
+    read). ``_iter_component_instance_rows`` then ``seek()``s straight
+    to that offset and stops as soon as the dim tuple changes, giving
+    O(rows_total) total work per per-component CSV instead of the
+    O(rows_total × instances) the previous "scan from top each time"
+    iterator did.
+
+    ``has_dims`` short-circuits the scan: dimensionless CSVs always
+    have a single conceptual block represented by a tuple of empty
+    strings (one per ``_INSTANCE_DIMENSION_COLUMNS`` entry); the
+    start_offset is the byte position right after the header line. For
+    dimensioned CSVs the scan reads one line at a time, recording
+    ``tell()`` before each line, and detects block boundaries where the
+    dim tuple changes (``generate_component`` writes per-instance blocks
+    sequentially, so each unique dim tuple appears in exactly one
+    contiguous block). The lightweight scan uses ``readline()`` and
+    ``line.split(',')`` so the recorded ``tell()`` is exactly the byte
+    offset ``seek()`` needs — bypassing ``csv.reader``'s internal buffer
+    which would otherwise corrupt ``tell()``.
     """
-    if not has_dims:
-        return [tuple("" for _ in _INSTANCE_DIMENSION_COLUMNS)]
     dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
-    seen: list[tuple[str, ...]] = []
+    if not has_dims:
+        empty_dims = tuple("" for _ in _INSTANCE_DIMENSION_COLUMNS)
+        with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+            fh.readline()  # header
+            start_offset = fh.tell()
+        return [(empty_dims, start_offset)]
+    blocks: list[tuple[tuple[str, ...], int]] = []
     last: tuple[str, ...] | None = None
     with open(csv_path, "r", encoding="utf-8", newline="") as fh:
-        reader = csv.reader(fh)
-        next(reader, None)  # header
-        for row in reader:
-            if not row:
+        fh.readline()  # header
+        while True:
+            pos = fh.tell()
+            line = fh.readline()
+            if not line:
+                break  # EOF
+            if line in ("\n", "\r\n"):
+                continue  # dropped row
+            # generate_component writes plain comma-separated values
+            # without quoting (see the np.char.add path), so a simple
+            # split is safe and exactly what csv.reader would parse.
+            fields = line.rstrip("\r\n").split(",")
+            if len(fields) < 1 + dim_count:
                 continue
-            dims = tuple(row[1:1 + dim_count])
+            dims = tuple(fields[1:1 + dim_count])
             if dims != last:
-                seen.append(dims)
+                blocks.append((dims, pos))
                 last = dims
-    return seen
+    return blocks
 
 
 def _iter_component_instance_rows(
-    csv_path: Path, target_dims: tuple[str, ...], *,
+    csv_path: Path, start_offset: int, *,
     has_dims: bool, n_metrics: int,
 ):
     """Yield ``(ts_dt, ts_raw, metric_values)`` for the rows belonging to
-    one instance block in ``csv_path``.
+    one instance block in ``csv_path``, starting at byte ``start_offset``.
 
     Opens a fresh file handle so the caller can hold multiple per-instance
     iterators on the same CSV open simultaneously (e.g. for
-    ``heapq.merge``). On dimensioned CSVs the iterator skips rows until
-    the dimension tuple matches ``target_dims``, yields rows for the
-    matching block, and exits as soon as the dim tuple changes again
-    (``generate_component`` writes blocks contiguously, so leaving the
-    block means the block has ended). On dimensionless CSVs the iterator
-    yields every data row and ignores ``target_dims``.
+    ``heapq.merge``). The handle ``seek()``s straight to the block's
+    start offset (cached by ``_scan_instance_block_layout``) — no
+    re-scanning from the top — and a ``csv.reader`` parses from there.
+    On dimensioned CSVs the iterator records the first row's dim tuple
+    as the block's identity and exits as soon as a later row's dim
+    tuple differs (``generate_component`` writes blocks contiguously,
+    so the dim transition is the end-of-block marker). On dimensionless
+    CSVs the iterator yields every data row to EOF; ``start_offset``
+    then points to the first data row.
     """
     dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
     with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+        fh.seek(start_offset)
         reader = csv.reader(fh)
-        next(reader, None)  # header
         if has_dims:
-            in_block = False
+            block_dims: tuple[str, ...] | None = None
             for row in reader:
                 if not row:
                     continue
                 dims = tuple(row[1:1 + dim_count])
-                if dims == target_dims:
-                    in_block = True
-                    ts = row[0]
-                    ts_dt = _parse_csv_timestamp(ts)
-                    metric_values = row[
-                        1 + dim_count: 1 + dim_count + n_metrics
-                    ]
-                    yield (ts_dt, ts, metric_values)
-                elif in_block:
-                    # generate_component writes per-instance blocks
-                    # contiguously, so leaving the block means EOF for
-                    # this instance.
-                    return
+                if block_dims is None:
+                    block_dims = dims
+                elif dims != block_dims:
+                    return  # EOF for this block
+                ts = row[0]
+                ts_dt = _parse_csv_timestamp(ts)
+                metric_values = row[
+                    1 + dim_count: 1 + dim_count + n_metrics
+                ]
+                yield (ts_dt, ts, metric_values)
         else:
             for row in reader:
                 if not row:
@@ -7390,12 +7446,12 @@ def write_gauges_csv(
         entry = layout[component]
         metric_cols = entry["metric_cols"]
         has_dims = bool(entry["dim_cols"])
-        instance_dim_tuples = _scan_instance_block_dim_tuples(
+        instance_blocks = _scan_instance_block_layout(
             entry["path"], has_dims=has_dims,
         )
-        for instance_dims in instance_dim_tuples:
+        for instance_dims, start_offset in instance_blocks:
             row_iter = _iter_component_instance_rows(
-                entry["path"], instance_dims,
+                entry["path"], start_offset,
                 has_dims=has_dims, n_metrics=len(metric_cols),
             )
 
