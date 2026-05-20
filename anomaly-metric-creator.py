@@ -5491,8 +5491,9 @@ def parse_args(argv=None):
              "instance topology for repeatable non-uniform fan-outs. "
              "Top-level key 'components' maps component names to lists of "
              "Instance field dicts (id, host, pod, az, region, tenant). "
-             "Missing components fall back to a single anonymous Instance(). "
-             "Mutually exclusive with --instances-per-component.",
+             "Components not listed in the file fall back to the module-level "
+             "INSTANCES registry (today: a single anonymous Instance() per "
+             "component). Mutually exclusive with --instances-per-component.",
     )
     p.add_argument(
         "--topology-mode",

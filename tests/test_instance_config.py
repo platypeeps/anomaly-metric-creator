@@ -299,10 +299,18 @@ def test_non_string_keys_surface_as_unknown_field(amc, tmp_path):
     Regression test for the ``sorted(unknown)`` path that previously assumed
     all keys were strings. ``sorted(..., key=repr)`` now keeps the error
     message stable and the exception type correct.
+
+    Uses YAML rather than JSON: PyYAML parses unquoted integer keys as
+    ``int``, producing a genuine heterogeneous-key dict
+    (``{'id': 'a1', 1: 'x', 'foo': 'bar'}``). JSON requires string keys,
+    so a JSON-based version of this test would not exercise the path the
+    ``key=repr`` fix is meant to protect.
     """
-    cfg = _write_json(tmp_path, {
-        "components": {"authservice": [{"id": "a1", "1": "x", "foo": "bar"}]}
-    })
+    cfg = _write_yaml(tmp_path, """
+components:
+  authservice:
+    - {id: a1, 1: x, foo: bar}
+""")
     with pytest.raises(ValueError, match="unknown field"):
         amc._load_instance_config(cfg)
 

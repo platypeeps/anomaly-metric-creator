@@ -795,7 +795,13 @@ and duplicate `Instance.id` within a component (the last check is
 delegated to `_validate_instance_list`). YAML parse errors,
 JSON `JSONDecodeError`, and OS I/O errors are also caught inside
 the loader and re-raised as `ValueError` with the file path
-prefix so users see a clean one-line message. `parse_args` runs
+prefix so users see an actionable error rather than a raw
+traceback. PyYAML in particular emits multi-line messages with
+embedded line/column markers (e.g. `"in \"<unicode string>\",
+line 3, column 10"`); the wrapped `ValueError` preserves that
+text verbatim because the line/column information is the most
+useful debugging signal — the prefix tells the user *which*
+file failed, the body tells them *where in the file*. `parse_args` runs
 *before* the loader and is responsible only for the flag-shape
 checks: the `--instance-config` and `--instances-per-component`
 mutually-exclusive `argparse` group, the file existence check,
