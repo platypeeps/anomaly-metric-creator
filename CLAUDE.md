@@ -162,16 +162,19 @@ specs) will let scenarios target individual instances.
 Out-of-scope until later phases: `--instance-config PATH` (Phase 3),
 per-anomaly `instance_filter` (Phase 4), instance dimensions in
 `gauges.csv` / `combined_metrics_unified.csv` (Phase 5 / VER-148),
-schema.json topology + `--validate-output` (Phase 8 / VER-151), and
-OTEL resource attributes (Phase 6 / VER-149). Because those
-downstream emitters are not dimension-aware yet, `parse_args`
+and schema.json topology + `--validate-output` (Phase 8 / VER-151).
+OTEL resource attributes (Phase 6 / VER-149) shipped in this branch:
+`stream_otel_gauges` and `stream_otel_signals` lift every non-empty
+`_INSTANCE_DIMENSION_COLUMNS` cell off each row and surface it as a
+string attribute on every OTLP data point, so `--otel-enabled` and
+`--otel-emit-gauges` are no longer gated against N>1. The remaining
+file-level emitters are still dimension-blind, so `parse_args`
 rejects `--instances-per-component > 1` paired with `--combine`,
 `--combine-only`, `--emit-selection 'gauges'`, `--emit-selection
-'schema'`, `--validate-output`, `--otel-emit-gauges`, or
-`--otel-enabled` with a phase-attributed error message (so users
-see a clear failure instead of e.g. `gauges.csv` rows writing the
-string `i0` into the numeric `value` column, or `--validate-output`
-flagging dimension columns as schema drift). `combine_logs` adds a
+'schema'`, or `--validate-output` with a phase-attributed error
+message (so users see a clear failure instead of e.g. `gauges.csv`
+rows writing the string `i0` into the numeric `value` column, or
+`--validate-output` flagging dimension columns as schema drift). `combine_logs` adds a
 second layer of defense against the two-pass bypass (generate first,
 combine in a separate `--combine-only` invocation that defaults
 back to `instances_per_component=1`): it inspects each
@@ -327,6 +330,55 @@ regenerate it. The end-of-run `Done -` summary additionally prints
 `Gauge rows written: N to gauges.csv` so a CI run records how many
 data points landed in the file. Locked SHA-256 golden hashes at 1d and
 7d live in `tests/test_gauges_file.py`.
+
+### OTEL dimension attributes (VER-149 Phase 6)
+
+`_INSTANCE_DIMENSION_COLUMNS = ("id", "host", "pod", "az", "region", "tenant")`
+(defined alongside the `Instance` dataclass) is the single source of
+truth for the Phase 2 multi-instance CSV column block —
+`generate_component` writes the prefix in this exact order and the
+Phase 2 validator's `_INSTANCE_DIMENSION_FIELDS = _INSTANCE_DIMENSION_COLUMNS[1:]`
+derives the 5-field view (without `id`) used by
+`_validate_instance_list` for None-or-str + CSV-safety checks. Three
+consumers re-use the column constant:
+
+- `_iter_component_rows(component, csv_path)` yields a 4-tuple
+  `(timestamp_str, component, [(metric_name, value), ...], dimensions)`
+  where `dimensions` is a `dict[str, str]` carrying the non-empty
+  cells from the row's dimension prefix. The detector treats the
+  block as present only when columns `[1 : 1 + len(_INSTANCE_DIMENSION_COLUMNS)]`
+  of the header equal the tuple verbatim — a partial / reordered
+  header is treated as "no dimensions" and the offending columns
+  flow into the metric path, where `float(raw)` will naturally skip
+  them. Dimensionless CSVs (the default) yield an empty dict so
+  downstream consumers can treat the field as always present.
+- `stream_otel_gauges` threads the dimensions dict through into each
+  gauge batch entry as `entry["dimensions"]`. Empty cells are already
+  dropped at the reader so the batch entry never carries empty
+  values.
+- `_build_otlp_gauge_payload` and `_build_otlp_gauge_protobuf` emit
+  each non-empty `(key, value)` from `entry.get("dimensions") or {}`
+  as a string attribute alongside the base three (`metric.name`,
+  `component`, `signal.type`). `None` and empty-string values are
+  skipped defensively at the builder layer too (single source of
+  truth: the reader drops them once, the builder drops them again so
+  hand-built test batches behave the same way).
+- `_build_otlp_metric_payload` and `_build_otlp_metric_protobuf` (the
+  anomaly-counter path consumed by `stream_otel_signals`) accept the
+  same `entry.get("dimensions") or {}` shape and emit non-empty
+  values as string attributes alongside the base four (`event.id`,
+  `signal.type`, `metric.name`, `component`). In v1 no anomaly row
+  carries dimensions — `anomalies.csv` is single-instance through
+  Phase 4 — so the extension is structurally inert today but keeps
+  the JSON and protobuf payload shapes aligned with the gauge path.
+  Log and trace builders are out of scope for v1 and remain on the
+  base attribute set.
+
+`tests/test_otel_gauges.py` pins the JSON and protobuf builder shapes
+(per-row attribute emission + empty-cell omission), the
+`_iter_component_rows` 4-tuple contract for both dimensioned and
+dimensionless CSVs, and the end-to-end `--instances-per-component 3`
+→ `pod=pod-N` invariant on the live OTLP stream.
 
 ### Metric specs (value generation)
 

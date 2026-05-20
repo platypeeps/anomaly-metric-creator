@@ -308,7 +308,7 @@ def test_gauges_csv_matches_iter_component_rows(one_day_gauges_run, amc):
         csv_path = out_dir / f"{component}.csv"
         if not csv_path.exists():
             continue
-        for ts, comp, values in amc._iter_component_rows(component, csv_path):
+        for ts, comp, values, _dimensions in amc._iter_component_rows(component, csv_path):
             for metric_name, value in values:
                 expected.add((ts, comp, metric_name, value))
     actual = set()

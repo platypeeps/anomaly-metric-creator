@@ -606,19 +606,43 @@ def test_n2_plus_validate_output_rejected(tmp_path):
     assert "--validate-output" in result.stderr
 
 
-def test_n2_plus_otel_enabled_rejected(tmp_path):
-    """``--instances-per-component > 1`` + ``--otel-enabled`` rejected (Phase 6)."""
-    result = _invoke(
-        ["--instances-per-component", "2",
-         "--otel-enabled",
-         "--otel-metrics-endpoint", "http://localhost:4318",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
-        expect_fail=True,
-    )
-    stderr_low = result.stderr.lower()
-    assert "instances-per-component" in stderr_low
-    assert "--otel-enabled" in result.stderr
-    assert "ver-149" in stderr_low or "phase 6" in stderr_low
+def test_n2_plus_otel_enabled_allowed(amc, tmp_path):
+    """``--instances-per-component > 1`` + ``--otel-enabled`` is allowed
+    after VER-149 Phase 6 wired the OTEL streamer's dimension attributes.
+
+    The parse-time gate that used to reject this combination was lifted
+    when ``stream_otel_signals`` / ``stream_otel_gauges`` began surfacing
+    each ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string attribute on
+    every OTLP data point. Exercises ``parse_args`` directly so the
+    test does not spin up an OTEL HTTP client against the dummy endpoint.
+    """
+    args = amc.parse_args([
+        "--instances-per-component", "2",
+        "--otel-enabled",
+        "--otel-metrics-endpoint", "http://localhost:4318",
+        "--output-dir", str(tmp_path), "--duration-days", "1",
+    ])
+    assert args.instances_per_component == 2
+    assert args.otel_enabled is True
+
+
+def test_n2_plus_otel_emit_gauges_allowed(amc, tmp_path):
+    """``--instances-per-component > 1`` + ``--otel-emit-gauges`` is allowed
+    after VER-149 Phase 6. ``stream_otel_gauges`` reads the dimension
+    columns off the per-component CSV and surfaces each non-empty
+    ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string attribute on every
+    OTLP gauge data point.
+    """
+    args = amc.parse_args([
+        "--instances-per-component", "2",
+        "--otel-enabled",
+        "--otel-emit-gauges",
+        "--otel-metrics-endpoint", "http://localhost:4318",
+        "--output-dir", str(tmp_path), "--duration-days", "1",
+    ])
+    assert args.instances_per_component == 2
+    assert args.otel_enabled is True
+    assert args.otel_emit_gauges is True
 
 
 def test_n1_with_combine_gauges_schema_allowed(tmp_path):
