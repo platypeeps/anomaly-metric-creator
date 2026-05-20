@@ -386,6 +386,60 @@ def test_derivations_flags_inconsistent_hit_ratio(amc, schema_run):
 
 
 # ------------------------------------------------------------------
+# Dispatch tables: raise on unknown keys (VER-179)
+# ------------------------------------------------------------------
+def test_recomputers_and_derivations_keysets_match(amc):
+    """``DERIVATIONS`` and ``_RECOMPUTERS`` are paired single-source
+    registries (one declares the in-process derivation pass, the other
+    declares the on-disk validator's recomputer). Drift between their
+    keysets means a derived column is either silently unvalidated or
+    the validator dispatches to a missing recomputer — both regressions
+    of the VER-179 unknown-key invariant."""
+    assert set(amc.DERIVATIONS.keys()) == set(amc._RECOMPUTERS.keys())
+
+
+def test_recompute_cacheservice_raises_keyerror_on_unknown_metric(amc):
+    """The per-metric dispatch inside ``_recompute_cacheservice`` must
+    raise ``KeyError`` for any metric other than ``hit_ratio``. The
+    pre-VER-179 behavior silently returned ``None`` for unknown metric
+    names, which masked drift between ``DERIVATIONS['cacheservice']``
+    and the recomputer body."""
+    name_to_col = {"cache_hits": 1, "cache_misses": 2, "hit_ratio": 3}
+    row = ["2026-01-01T00:00:00", "10", "5", "66.667"]
+    with pytest.raises(KeyError):
+        amc._recompute_cacheservice("unknown_metric", row, name_to_col)
+
+
+def test_validate_component_derivations_raises_on_unregistered_component(
+    amc, schema_run
+):
+    """When ``schema.json`` declares a derivation for a component the
+    validator has no recomputer for, ``_validate_component_derivations``
+    must raise ``KeyError`` (programmer drift surfaced loudly, not a
+    soft violation entry the caller might overlook)."""
+    schema = _load_schema(schema_run)
+    # Pick any schema-resident component the catalog does not register a
+    # recomputer for, so the test stays valid as ``_RECOMPUTERS`` evolves.
+    # Sorted for determinism; ``_RECOMPUTERS`` covers ``cacheservice`` today,
+    # so the remaining components all qualify — but the loop guards against
+    # a future where every component gains a derived column.
+    candidates = sorted(
+        c for c in schema["components"] if c not in amc._RECOMPUTERS
+    )
+    assert candidates, (
+        "every schema component already has a recomputer; this test needs "
+        "at least one unregistered component to exercise the raise path"
+    )
+    component = candidates[0]
+    metrics = schema["components"][component]["metrics"]
+    metrics[0]["derivation"] = "synthetic_for_test"
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    with pytest.raises(KeyError):
+        amc._validate_component_derivations(schema_run, schema, component)
+
+
+# ------------------------------------------------------------------
 # Orchestrator + CLI mode
 # ------------------------------------------------------------------
 def test_validate_output_returns_violation_list(amc, schema_run):
