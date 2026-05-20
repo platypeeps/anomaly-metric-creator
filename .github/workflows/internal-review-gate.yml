@@ -1,0 +1,43 @@
+name: Internal review gate
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - ready_for_review
+      - converted_to_draft
+      - labeled
+      - unlabeled
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  require-internal-review:
+    name: Require internal-review-passed label when ready
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check draft status and label
+        env:
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if [ "${PR_DRAFT}" = "true" ]; then
+            echo "PR #${PR_NUMBER} is a draft. Gate is satisfied; the Code Reviewer must add the 'internal-review-passed' label before draft is removed."
+            exit 0
+          fi
+
+          has_label=$(printf '%s' "${PR_LABELS}" | jq -r 'any(.name == "internal-review-passed")')
+          if [ "${has_label}" = "true" ]; then
+            echo "PR #${PR_NUMBER} is ready for review and carries the 'internal-review-passed' label. Gate passed."
+            exit 0
+          fi
+
+          echo "::error::PR #${PR_NUMBER} is marked ready for review but is missing the 'internal-review-passed' label."
+          echo "::error::The Code Reviewer agent must sign off in the worktree and add this label before the PR is taken out of draft. See CLAUDE.md, 'Reviewer-before-ready gate'."
+          exit 1
