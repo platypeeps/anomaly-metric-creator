@@ -478,6 +478,66 @@ def test_instance_filter_no_match_does_not_emit_manifest(amc, tmp_path):
     )
 
 
+def test_instance_filter_unfiltered_propagates_to_forked_buffer_other_rows(
+    amc, tmp_path
+):
+    """Cross-row propagation: a filtered spec at t=60 forks pod-0's
+    buffer. A later unfiltered spec at t=110 (different row) must apply
+    to every pod — including pod-0's forked buffer — so pod-0 doesn't
+    stay stuck on its forked baseline at the later row.
+
+    Distinct ``(metric, time_offset)`` pairs are used because the
+    runtime guard rejects two specs at the same key. This is the real
+    reason ``generate_component()``'s unfiltered branch propagates to
+    forked buffers (not "same-cell collisions", which can't happen)."""
+    component = "apigateway"
+    specs = amc.COMPONENTS[component][:amc.DEFAULT_METRICS_PER_COMPONENT[component]]
+    metric = "error_rate"
+
+    anomaly_specs = [
+        {
+            "time_offset": 60,
+            "metric": metric,
+            "description": "Filtered spec at t=60 forks pod-0",
+            "generator": lambda ts, idx: 0.111,
+            "instance_filter": ["i0"],
+        },
+        {
+            "time_offset": 110,  # different row → no duplicate-guard trip
+            "metric": metric,
+            "description": "Unfiltered spec at t=110 must reach forked pod-0 too",
+            "generator": lambda ts, idx: 0.999,
+        },
+    ]
+    _run_generate(
+        amc, component, list(specs),
+        anomaly_specs=anomaly_specs,
+        instances=_three_instances(amc),
+        tmp_path=tmp_path,
+        total_seconds=120, interval=10.0,
+    )
+
+    csv_path = tmp_path / f"{component}.csv"
+    # Row 6 = t=60, row 11 = t=110 (interval=10s).
+    rows_i0 = _read_rows_for_instance(csv_path, "i0")
+    rows_i1 = _read_rows_for_instance(csv_path, "i1")
+    rows_i2 = _read_rows_for_instance(csv_path, "i2")
+    # At t=60 only i0 should see the filtered override.
+    assert rows_i0[6][metric] == "0.111", (
+        f"i0 row 6: filtered override; got {rows_i0[6][metric]!r}"
+    )
+    assert rows_i1[6][metric] != "0.111", "i1 should not see the filtered override"
+    assert rows_i2[6][metric] != "0.111", "i2 should not see the filtered override"
+    # At t=110 every instance — INCLUDING the previously forked i0 — must
+    # see the unfiltered override propagated to its forked buffer.
+    assert rows_i0[11][metric] == "0.999", (
+        f"i0 row 11: unfiltered override must propagate to forked buffer; "
+        f"got {rows_i0[11][metric]!r}"
+    )
+    assert rows_i1[11][metric] == "0.999"
+    assert rows_i2[11][metric] == "0.999"
+
+
 # ---------------------------------------------------------------------------
 # Byte-identity: locked Phase-2 hashes must not move under Phase 4 (no
 # built-in scenario uses instance_filter yet).

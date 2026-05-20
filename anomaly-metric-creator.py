@@ -664,15 +664,23 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         )
         inst_mask = resolved_filters.get(id(aspec))
         if inst_mask is None:
-            # No filter, or filter matches every instance — shared-values
-            # write (Phase 2 path) plus propagation to any forked buffers
-            # so later unfiltered overrides stay visible to filtered
-            # instances.
+            # No filter, or filter matches every instance — write to the
+            # shared ``values`` (Phase 2 fast path) AND propagate the
+            # write to every already-forked per-instance buffer. The
+            # propagation is for *different* rows than the row that
+            # forked the buffer: e.g. a filtered spec at t=60 forks
+            # pod-0's buffer; a later unfiltered spec at t=120 must
+            # apply to pod-0 too, not stay stuck on its forked baseline
+            # from t=60. Same-cell collisions cannot occur — the
+            # duplicate-spec guard above rejects two specs at the same
+            # ``(metric, time_offset)``.
             values[row_idx, col] = override_value
             for buf in per_instance_values.values():
                 buf[row_idx, col] = override_value
         else:
             # Partial filter — only matched instances see the override.
+            # Unmatched instances continue to read ``values`` (or their
+            # own forked buffer if a prior spec already diverged them).
             for inst_idx in np.flatnonzero(inst_mask):
                 inst_idx = int(inst_idx)
                 buf = per_instance_values.get(inst_idx)
