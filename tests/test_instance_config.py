@@ -143,14 +143,16 @@ components:
                     "--components", "authservice,loadbalancer",
                     "--drop-rate", "0"])
 
-    # authservice: should have dimension columns + exactly 2× rows
+    # authservice: should have dimension columns + exactly 2× rows.
+    # Stream the row count rather than reading the whole file (~172,800
+    # lines for 2 instances × 1 day) into memory.
     with open(out / "authservice.csv") as f:
         header = f.readline().rstrip().split(",")
-        rows = f.readlines()
+        row_count = sum(1 for _ in f)
     assert header[0] == "timestamp"
     assert "id" in header
     assert "pod" in header
-    assert len(rows) == 2 * 86400  # 2 instances × 86400 rows/day, no drops
+    assert row_count == 2 * 86400  # 2 instances × 86400 rows/day, no drops
 
     # loadbalancer: should remain dimensionless (anonymous Instance)
     with open(out / "loadbalancer.csv") as f:
