@@ -370,6 +370,18 @@ Anomaly specs are dicts with:
   `sustained`, `sawtooth`, `sine`.
 - `shape_params` (optional) — shape-specific params (`start/end`, `period_s`,
   `amplitude`, `midline`, etc.).
+- `instance_filter` (optional, VER-140 Phase 4) — restricts which instances
+  the override applies to. Accepted forms:
+  - omitted / `None` → applies to every active instance (default; preserves
+    Phase 2 byte-identical output when no filter is set).
+  - iterable of `str` ids (list, tuple, frozenset) → applies only to
+    instances whose `Instance.id` is in the set.
+  - callable `(Instance) -> bool` → per-instance predicate.
+  Scalars (int/float/bool), bare strings (would iterate characters), dicts,
+  and iterables containing non-string elements are rejected at import time by
+  `_validate_scenario_spec`. Zero-match at runtime emits a `WARNING` on stderr
+  and skips the spec (no manifest entry). Non-zero-match adds one manifest
+  entry regardless of how many instances matched.
 
 Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.
@@ -860,6 +872,10 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
 - `cascade_specs` — list of `(target_component, cascade_dict)` pairs; each
   `cascade_dict` has `time_offset`, `metric`, `description`, and `generator`
   (no `shape`/`shape_params` — cascades are single-row steps).
+  Both primary and cascade dicts may additionally carry an optional
+  `instance_filter` (VER-140 Phase 4) — see the
+  [anomaly injection schema](#anomaly-injection-schema) for the accepted
+  forms and runtime semantics.
 
 Every primary and cascade spec is schema-checked at import time by
 `_validate_scenario_spec()` (called from `_validate_scenarios_registry`):
@@ -867,7 +883,8 @@ required keys present, `metric` in the full `COMPONENTS[component]` catalog,
 `generator` callable, `time_offset` a finite non-negative non-bool
 `int`/`float`, `description` a non-empty string, `shape` a string in
 `_VALID_ANOMALY_SHAPES`, `duration_seconds` a finite non-negative non-bool
-numeric, `shape_params` a dict; cascade specs reject
+numeric, `shape_params` a dict, `instance_filter` (when present) either
+`None`, an iterable of `str` ids, or a callable. Cascade specs reject
 `shape`/`duration_seconds`/`shape_params` outright.
 
 Generator dispatch rule: the runtime calls each generator with one of

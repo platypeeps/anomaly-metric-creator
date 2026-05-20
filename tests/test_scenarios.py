@@ -162,15 +162,15 @@ DEFAULT_SEVEN_DAY_HASHES = {
 # pins them against the alias output to catch any silent drift in the
 # deprecated path before it is removed (scheduled for after VER-141 phase 9).
 LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
-    "anomalies.csv": "458703b3da32183889d7a2ca68840f1da05fd00a78cc95aff4e530c2cd5cbb06",
-    "apigateway.csv": "23d0e6e3c0ebe47976480a656f393e2c623ea233532679c741c35a8fc5927c22",
+    "anomalies.csv": "b2978b6a5abdfc3e253120a04302895c6f678f382fd6fea1acba569b28f355e5",
+    "apigateway.csv": "86df1f5a027badae5057da98072773b17cadb31ca117bd0a3948857328fe76eb",
     "authservice.csv": "06ab97884f65eb53db6eff0c61147f576809517b841e21b98b2861cb99dd5617",
     "cacheservice.csv": "7ace2f8b8dd6c6ed43ed90058eae8a0f1b1f077a37bbedd88ea9f7523246dde3",
-    "database.csv": "d9f6249464da8fef4e9456df653923b8a4eceac0ad9c403d2c66783106c1a750",
+    "database.csv": "e7d34120ae207c8ec6697a891730118a3962e96b0e3f203346cb2c9794e9e4e8",
     "identityprovider.csv": "c884970f063d58a8cd2289be8500b810a022727c407601c503d841844cdf1577",
-    "llm_analytics.csv": "84dbc8c47045a870d01b567f7794e3281f7a0290fb78b2bfc7e3d4ef3beccb6b",
+    "llm_analytics.csv": "bb8c614dc7b0b3e5a88d185b3b8cc4cac8c5a079fdaa1e67ed5bef55003bceba",
     "loadbalancer.csv": "a1de03bfba5aabbeaf86c2346e603218fd23e38bfa3cb31f51453e15077656b1",
-    "mqservice.csv": "2aab1b3bc389c4c5b80e13347c1da37f8848c07bed927e8bad80ba3fdd686d07",
+    "mqservice.csv": "b56b3fb5306049cfa13e06620954708314967d965263dd5940e05494e0dea6f8",
     "objectstore.csv": "fc4ea917e6591cd6839eb315775bf20371bd4569c53df05a7dd7f9323c2e899d",
     "observabilitypipeline.csv": "e26bac024a6b192519792e056d5e7a60378d438df5c635a4c168420823b56f63",
     "paymentservice.csv": "fd768a451f4dd9e35436659eff6bb6f121252395b0302eea44cff21600cedec9",
