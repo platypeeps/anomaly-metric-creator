@@ -6777,13 +6777,13 @@ def _validate_component_derivations(
     if not derived_entries:
         return []
 
-    recompute = _RECOMPUTERS.get(component)
-    if recompute is None:
-        return [
-            f"{csv_filename}: schema declares a derivation for component "
-            f"{component!r} but the validator has no recomputer registered "
-            f"(add an entry to _RECOMPUTERS)"
-        ]
+    # VER-179: dispatch tables raise on unknown keys. ``DERIVATIONS`` and
+    # ``_RECOMPUTERS`` are paired single-source registries enforced by the
+    # test suite (see ``test_recomputers_and_derivations_keysets_match``);
+    # a missing recomputer for a component whose schema declares a
+    # derivation is programmer drift, not a runtime data issue, and must
+    # surface loudly instead of being downgraded to a violation entry.
+    recompute = _RECOMPUTERS[component]
 
     violations = []
     name_to_col = {m["name"]: i + 1 for i, m in enumerate(metrics)}
@@ -6804,10 +6804,16 @@ def _validate_component_derivations(
                 col = name_to_col.get(name)
                 if col is None or col >= len(row):
                     continue
+                # VER-179: the per-row except is narrowed to the data-only
+                # exceptions (malformed cells, accidental zero-division
+                # inside a recomputer). ``KeyError`` is intentionally
+                # excluded so a dispatch raise from an unknown metric
+                # (drift between ``DERIVATIONS`` and the recomputer body)
+                # propagates instead of being silently dropped row by row.
                 try:
                     actual = float(row[col])
                     expected = recompute(name, row, name_to_col)
-                except (ValueError, KeyError, ZeroDivisionError):
+                except (ValueError, ZeroDivisionError):
                     continue
                 if expected is None:
                     continue
@@ -6826,11 +6832,20 @@ def _recompute_cacheservice(metric: str, row: list[str],
                              name_to_col: dict[str, int]) -> float | None:
     """Recompute ``cacheservice.hit_ratio`` from ``cache_hits`` / ``cache_misses``.
 
-    Returns None when source cells are missing or unparseable (the cell
+    Returns ``None`` when source cells are missing or unparseable (the cell
     validator catches those separately).
+
+    VER-179: per-metric dispatch within the recomputer raises ``KeyError``
+    on any unknown metric. ``DERIVATIONS['cacheservice']`` declares only
+    ``hit_ratio``; a call with any other metric is programmer drift
+    between the generator-side ``DERIVATIONS`` table and the validator-
+    side recomputer body and must not be silently swallowed.
     """
     if metric != "hit_ratio":
-        return None
+        raise KeyError(
+            f"_recompute_cacheservice: unknown metric {metric!r}; "
+            f"cacheservice declares only 'hit_ratio' as derived"
+        )
     hits_col = name_to_col.get("cache_hits")
     misses_col = name_to_col.get("cache_misses")
     if hits_col is None or misses_col is None:
