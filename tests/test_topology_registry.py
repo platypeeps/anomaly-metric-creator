@@ -527,3 +527,71 @@ def test_validate_topology_rejects_signal_returning_non_ndarray(amc, monkeypatch
     monkeypatch.setattr(amc, "TOPOLOGY", patched)
     with pytest.raises(ValueError, match=r"signal"):
         amc._validate_topology()
+
+
+# ----------------------------------------------------------------------
+# VER-182: the ``cacheservice -> database`` callable weight must read
+# the database ``queries_per_sec`` baseline live from ``COMPONENTS`` on
+# every invocation. PR #47 originally baked the value into a module-load
+# constant (``_DATABASE_QPS_BASE``), which silently produced stale
+# weights under any monkeypatch / plugin override / future spec
+# rescaling. Pin the live-lookup invariant so a future refactor cannot
+# silently regress back to import-time capture.
+# ----------------------------------------------------------------------
+def test_cacheservice_to_database_weight_reads_live_components(amc, monkeypatch):
+    """Doubling ``COMPONENTS['database'].queries_per_sec.base`` must double
+    the callable weight's output for the same miss-ratio input."""
+    cs_to_db = next(
+        e for e in amc.TOPOLOGY["cacheservice"] if e.target == "database"
+    )
+    miss_ratio = np.array([0.0, 0.04, 0.5, 1.0], dtype=np.float64)
+    baseline_qps = amc._component_metric_base("database", "queries_per_sec")
+    assert baseline_qps > 0.0, (
+        "baseline guard: COMPONENTS['database'].queries_per_sec.base must "
+        "be positive for the doubling check to be meaningful"
+    )
+    expected_before = miss_ratio * baseline_qps
+    got_before = np.asarray(cs_to_db.weight(miss_ratio), dtype=np.float64)
+    np.testing.assert_allclose(got_before, expected_before, rtol=0, atol=0)
+
+    # Rebuild the database catalog with queries_per_sec.base doubled,
+    # leaving every other MetricSpec untouched. A module-load capture
+    # would ignore this monkeypatch and keep returning the original
+    # baseline_qps; the live-lookup implementation must pick it up.
+    new_base = baseline_qps * 2.0
+    patched_specs = [
+        dataclasses.replace(spec, base=new_base)
+        if spec.name == "queries_per_sec"
+        else spec
+        for spec in amc.COMPONENTS["database"]
+    ]
+    monkeypatch.setitem(amc.COMPONENTS, "database", patched_specs)
+
+    expected_after = miss_ratio * new_base
+    got_after = np.asarray(cs_to_db.weight(miss_ratio), dtype=np.float64)
+    np.testing.assert_allclose(got_after, expected_after, rtol=0, atol=0)
+    # Strict regression assertion: a stale module-load capture would
+    # return ``expected_before`` here regardless of the monkeypatch.
+    assert not np.allclose(got_after, expected_before), (
+        "cacheservice -> database callable weight ignored the monkeypatched "
+        "COMPONENTS['database'].queries_per_sec.base; the lambda must read "
+        "the baseline live from COMPONENTS on every call, not capture it "
+        "at module load (VER-182 regression guard)."
+    )
+
+
+def test_component_metric_base_reads_live_components(amc, monkeypatch):
+    """``_component_metric_base`` is the live-lookup helper the callable
+    weight relies on; pin the helper itself so the per-edge invariant
+    above cannot be silently broken by a refactor that swaps the helper
+    body for a cached value."""
+    baseline = amc._component_metric_base("database", "queries_per_sec")
+    new_base = baseline + 12345.0
+    patched_specs = [
+        dataclasses.replace(spec, base=new_base)
+        if spec.name == "queries_per_sec"
+        else spec
+        for spec in amc.COMPONENTS["database"]
+    ]
+    monkeypatch.setitem(amc.COMPONENTS, "database", patched_specs)
+    assert amc._component_metric_base("database", "queries_per_sec") == new_base
