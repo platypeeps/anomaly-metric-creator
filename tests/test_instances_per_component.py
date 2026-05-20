@@ -10,12 +10,13 @@ Verifies:
 
 import csv
 import hashlib
-import io
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import run_capture
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
@@ -28,26 +29,27 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _run(amc, out_dir, *, days, seed=42, extra_args=None):
-    args = [
-        "--seed", str(seed),
-        "--duration-days", str(days),
-        "--output-dir", str(out_dir),
-    ]
-    if extra_args:
-        args += list(extra_args)
-    buf = io.StringIO()
-    real = sys.stderr
-    sys.stderr = buf
-    try:
-        amc.main(args)
-    finally:
-        sys.stderr = real
-    return out_dir
+def _run(amc, out_dir, *, days, extra_args=None):
+    """Thin wrapper over conftest.run_capture that throws away the stderr
+    SimpleNamespace so existing call sites can keep returning ``out_dir``.
+
+    Routing through the shared helper keeps the suite's single
+    session-scoped ``amc`` module load (see conftest._load_amc) shared
+    with the rest of the test suite — re-importing via
+    ``spec_from_file_location`` from this file would double the
+    registry-build cost.
+    """
+    captured = run_capture(amc, out_dir, days=days, extra_args=extra_args)
+    return captured.out_dir
 
 
 def _invoke(args, *, expect_fail=False):
-    """Run the script as a subprocess and return (returncode, stderr text)."""
+    """Run the script as a subprocess and return the ``CompletedProcess``.
+
+    ``expect_fail=True`` asserts non-zero exit; the default (``False``)
+    asserts zero exit. The returned object exposes ``returncode``,
+    ``stdout``, and ``stderr`` for assertion in the calling test.
+    """
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH)] + args,
         capture_output=True, text=True,
@@ -62,14 +64,11 @@ def _invoke(args, *, expect_fail=False):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="module")
-def amc():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("amc_instances_test", SCRIPT_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+#
+# The ``amc`` fixture is the session-scoped one from ``tests/conftest.py``;
+# we deliberately do not override it here so the whole suite shares a
+# single ``exec_module`` build of the registry (see
+# ``tests/conftest.py::_load_amc`` for the memoization).
 
 
 @pytest.fixture(scope="module")
@@ -249,6 +248,71 @@ def test_instances_per_component_over_max_rejected(amc, tmp_path):
         expect_fail=True,
     )
     assert "instances-per-component" in result.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# Dimension-field validation (extended in Phase 2 to cover host/pod/az/region/tenant)
+# ---------------------------------------------------------------------------
+
+def test_validate_instance_list_rejects_non_string_dim_field(amc):
+    """A non-string dim field (e.g. an int ``pod``) raises ValueError at
+    validation time rather than TypeError-ing inside the CSV writer."""
+    bad = [amc.Instance(id="i0", pod=42)]
+    with pytest.raises(ValueError, match="dimension fields must be None or a string"):
+        amc._validate_instance_list(bad, where="test")
+
+
+def test_validate_instance_list_rejects_comma_in_dim_field(amc):
+    """A comma in a dim field would corrupt the long-form CSV (no quoting);
+    validation rejects it up-front."""
+    bad = [amc.Instance(id="i0", host="bad,host")]
+    with pytest.raises(ValueError, match="CSV-significant characters"):
+        amc._validate_instance_list(bad, where="test")
+
+
+def test_validate_instance_list_rejects_newline_in_dim_field(amc):
+    """A newline in a dim field would split one CSV row into two; validation
+    rejects it up-front."""
+    bad = [amc.Instance(id="i0", tenant="bad\ntenant")]
+    with pytest.raises(ValueError, match="CSV-significant characters"):
+        amc._validate_instance_list(bad, where="test")
+
+
+def test_validate_instance_list_rejects_comma_in_id(amc):
+    """Same protection applies to ``id``: a comma there would break the
+    long-form ``id`` column."""
+    bad = [amc.Instance(id="bad,id")]
+    with pytest.raises(ValueError, match="CSV-significant characters"):
+        amc._validate_instance_list(bad, where="test")
+
+
+def test_validate_instance_list_accepts_normal_string_dims(amc):
+    """Sanity check: a fully-populated, comma-free instance validates."""
+    good = [amc.Instance(
+        id="i0", host="host-0", pod="pod-0",
+        az="us-east-1a", region="us-east-1", tenant="tenant-a",
+    )]
+    amc._validate_instance_list(good, where="test")  # no raise
+
+
+# ---------------------------------------------------------------------------
+# DST artifact mutual exclusion: N>1 + --inject-dst-artifact-day rejected
+# ---------------------------------------------------------------------------
+
+def test_dst_artifact_with_multi_instance_rejected(amc, tmp_path):
+    """--instances-per-component > 1 + --inject-dst-artifact-day > 0 is
+    rejected at parse time; the multi-instance long-form writer rebuilds
+    rows from the pre-splice timestamp arrays and would silently drop
+    the DST duplicate hour."""
+    result = _invoke(
+        ["--instances-per-component", "2",
+         "--inject-dst-artifact-day", "1",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "instances-per-component" in stderr_low
+    assert "inject-dst-artifact-day" in stderr_low
 
 
 # ---------------------------------------------------------------------------

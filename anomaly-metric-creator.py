@@ -4591,11 +4591,16 @@ def _validate_derivations_registry() -> None:
 _validate_derivations_registry()
 
 
+_INSTANCE_DIMENSION_FIELDS: tuple[str, ...] = (
+    "host", "pod", "az", "region", "tenant",
+)
+
+
 def _validate_instance_list(instances, *, where: str) -> None:
     """Per-entry invariants shared by ``_validate_instances_registry`` and
-    ``generate_component`` (VER-140 Phase 1).
+    ``generate_component`` (VER-140 Phase 1, expanded in Phase 2).
 
-    Rejects three classes of drift in ``instances`` (a non-empty iterable
+    Rejects four classes of drift in ``instances`` (a non-empty iterable
     of ``Instance``):
 
     1. Non-``Instance`` entries: would raise a bare ``AttributeError`` on
@@ -4608,6 +4613,13 @@ def _validate_instance_list(instances, *, where: str) -> None:
        (``id=None``) entry. Phase 4's ``instance_filter=["..."]`` looks up
        instances by id, so collisions would silently target multiple rows;
        multiple anonymous entries would be indistinguishable.
+    4. Non-string (and non-``None``) dimension fields
+       (``host``, ``pod``, ``az``, ``region``, ``tenant``): the Phase 2
+       long-form CSV writer joins them with ``","`` directly. A non-string
+       would raise a bare ``TypeError`` in the writer, and a value
+       containing a comma or newline would silently corrupt the emitted
+       CSV. Phase 3 (``--instance-config``) will surface this same
+       constraint to file-loaded instance maps.
 
     ``where`` is the descriptor prefix used in raised error messages
     (e.g. ``"INSTANCES['authservice']"`` from the registry validator or
@@ -4624,12 +4636,37 @@ def _validate_instance_list(instances, *, where: str) -> None:
                 f"(type {type(inst).__name__}); every entry must be an "
                 f"Instance dataclass."
             )
-        if inst.id is not None and not isinstance(inst.id, str):
-            raise ValueError(
-                f"{where} entry has Instance.id={inst.id!r} "
-                f"(type {type(inst.id).__name__}); id must be None or a "
-                f"string (instance_filter looks up ids by string equality)."
-            )
+        if inst.id is not None:
+            if not isinstance(inst.id, str):
+                raise ValueError(
+                    f"{where} entry has Instance.id={inst.id!r} "
+                    f"(type {type(inst.id).__name__}); id must be None or a "
+                    f"string (instance_filter looks up ids by string equality)."
+                )
+            if "," in inst.id or "\n" in inst.id or "\r" in inst.id:
+                raise ValueError(
+                    f"{where} entry has Instance.id={inst.id!r} containing "
+                    f"a comma or newline; ids must not contain CSV-significant "
+                    f"characters (the long-form writer does not quote id cells)."
+                )
+        for field_name in _INSTANCE_DIMENSION_FIELDS:
+            value = getattr(inst, field_name)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"{where} entry has Instance.{field_name}={value!r} "
+                    f"(type {type(value).__name__}); dimension fields must "
+                    f"be None or a string (the long-form CSV writer joins "
+                    f"them with ',' directly)."
+                )
+            if "," in value or "\n" in value or "\r" in value:
+                raise ValueError(
+                    f"{where} entry has Instance.{field_name}={value!r} "
+                    f"containing a comma or newline; dimension values "
+                    f"must not contain CSV-significant characters "
+                    f"(the long-form writer does not quote dimension cells)."
+                )
         if inst.id is None:
             anon_count += 1
             continue
