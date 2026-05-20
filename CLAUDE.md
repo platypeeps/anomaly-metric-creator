@@ -751,6 +751,71 @@ consumers) cannot smuggle in `NaN`/`inf`/`bool`/negative values.
 Mirror these invariants in `tests/test_topology_registry.py` when
 adding new edges or constraints.
 
+### Multi-instance fan-out (VER-140)
+
+`Instance` is a frozen dataclass holding six optional dimension
+fields (`id`, `host`, `pod`, `az`, `region`, `tenant`). The active
+per-run map lives on `RunContext.instances: dict[str, list[Instance]]`
+and is consumed by `generate_component()`: when the list is a single
+anonymous `Instance()` (all fields `None`), CSV output is byte-
+identical to the pre-Phase-1 baseline (no dimension columns); when
+the list has named instances or `len > 1`, every per-component CSV
+gains a `(id, host, pod, az, region, tenant)` prefix block and the
+row count multiplies by the per-component instance count.
+
+Three flag paths populate `ctx.instances` in `main()` (mutually
+exclusive at parse time):
+
+- `--instance-config` absent and `--instances-per-component 1`
+  (default) → `{name: list(INSTANCES[name]) for name in COMPONENTS}`,
+  where the module-level `INSTANCES[name]` defaults to
+  `[Instance()]`. Today's byte-identical output path.
+- `--instances-per-component N` (N in `[1, MAX_INSTANCES_PER_COMPONENT]`,
+  `MAX_INSTANCES_PER_COMPONENT = 20`) → every component fans out to
+  the same `[Instance(id=f"i{k}", pod=f"pod-{k}") for k in range(N)]`.
+- `--instance-config PATH` (Phase 3, VER-146) → per-component fan-out
+  is loaded from a YAML (`.yaml`/`.yml`) or JSON (`.json`) file via
+  `_load_instance_config(path)`. The file's top-level `components`
+  map keys components to lists of `Instance`-field dicts; components
+  *not* listed fall back to `list(INSTANCES[name])` (anonymous
+  default), so a partial config keeps untouched components on the
+  byte-identical path.
+
+`_load_instance_config(path)` validates loudly at parse time and
+raises `ValueError` (caught in `main()` and re-raised via
+`sys.exit`) for every schema violation: top-level value not a
+mapping, missing `components` key, unknown component name (must be
+in `COMPONENTS`), per-component value not a list, empty per-component
+list, per-component count exceeding `MAX_INSTANCES_PER_COMPONENT`,
+non-dict entry, unknown `Instance` field, and duplicate `Instance.id`
+within a component (the last check is delegated to
+`_validate_instance_list`). The `parse_args` rejects the flag pair
+early — `--instance-config` and `--instances-per-component` share an
+`argparse` mutually-exclusive group — and additionally rejects file
+paths that do not exist or whose suffix is outside
+`{.yaml, .yml, .json}`.
+
+PyYAML is an *optional* runtime dependency: the YAML branch imports
+it lazily inside `_load_instance_config` and raises a clear
+"install with `pip install pyyaml`" error on `ImportError`. JSON
+configs work with the stdlib. The `[yaml]` extra in `pyproject.toml`
+declares the dependency for users who want YAML support; the `dev`
+extra always pulls it in so the test suite can exercise both
+formats.
+
+Both multi-instance paths (`--instances-per-component > 1` and
+`--instance-config`) are mutually exclusive with
+`--inject-dst-artifact-day > 0`: the DST splice produces
+non-monotonic timestamps that the multi-instance row builder is not
+prepared for, and `parse_args` rejects the combination with a clear
+message naming the active flag.
+
+When adding fields to `Instance`, mirror them in three places: (1)
+`_valid_instance_fields` in `_load_instance_config` so the config
+loader accepts the new key, (2) the YAML/JSON example in the
+README CLI table row, and (3) `_validate_instance_list` if the new
+field needs uniqueness or shape checks.
+
 ### Scenario registry
 
 `SCENARIOS: dict[str, Scenario]` holds every anomaly scenario in the catalog. There
