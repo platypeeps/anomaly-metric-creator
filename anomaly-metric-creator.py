@@ -5629,7 +5629,16 @@ def parse_args(argv=None):
     # gating) so a missing file or wrong suffix surfaces a clean error rather
     # than as a generic incompatibility.
     if args.instance_config is not None:
-        if not args.instance_config.exists():
+        # ``is_file()`` rejects missing paths *and* directories /
+        # broken-symlink-style entries in one shot. ``exists()`` would let
+        # a directory through and then ``_load_instance_config`` would
+        # surface it as an OSError mid-run.
+        if not args.instance_config.is_file():
+            if args.instance_config.exists():
+                p.error(
+                    f"--instance-config path is not a regular file: "
+                    f"{args.instance_config}"
+                )
             p.error(f"--instance-config path does not exist: {args.instance_config}")
         if args.instance_config.suffix.lower() not in {".yaml", ".yml", ".json"}:
             p.error(

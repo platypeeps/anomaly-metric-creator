@@ -352,6 +352,18 @@ def test_nonexistent_file_rejected(amc, tmp_path):
                tmp_path / "out")
 
 
+def test_directory_rejected(amc, tmp_path):
+    """A directory whose name ends in .yaml/.yml/.json must be rejected at parse time.
+
+    ``Path.exists()`` returns True for directories; the validator uses
+    ``is_file()`` to ensure only regular files reach ``_load_instance_config``.
+    """
+    d = tmp_path / "config.yaml"
+    d.mkdir()
+    with pytest.raises(SystemExit):
+        _parse(amc, ["--instance-config", str(d)], tmp_path / "out")
+
+
 # ---------------------------------------------------------------------------
 # Validation: unsupported file extension
 # ---------------------------------------------------------------------------
@@ -381,6 +393,33 @@ def test_malformed_json_raises_value_error(amc, tmp_path):
     p.write_text("{this is not json}")
     with pytest.raises(ValueError, match="failed to parse JSON"):
         amc._load_instance_config(p)
+
+
+# ---------------------------------------------------------------------------
+# --combine-only is rejected when --instance-config is set
+# ---------------------------------------------------------------------------
+
+def test_instance_config_combine_only_rejected(amc, tmp_path):
+    """--combine-only + --instance-config is rejected at parse time.
+
+    The combine writer is not dimension-aware yet (tracked under VER-148
+    Phase 5). The shared ``_multi_instance`` gate treats this combination
+    the same way as ``--instances-per-component > 1 + --combine-only``:
+    fail at parse time so the user doesn't get a silent no-op.
+    """
+    cfg = _write_yaml(tmp_path, """
+components:
+  authservice:
+    - {id: a1}
+""")
+    out = tmp_path / "existing"
+    out.mkdir()
+    with pytest.raises(SystemExit):
+        _parse(amc, [
+            "--instance-config", str(cfg),
+            "--combine-only",
+            "--output-dir", str(out),
+        ], tmp_path / "out")
 
 
 # ---------------------------------------------------------------------------
