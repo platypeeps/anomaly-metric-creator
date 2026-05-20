@@ -470,6 +470,193 @@ def test_non_component_files_excludes_gauges_csv_from_combine_discovery(amc):
 
 
 # ------------------------------------------------------------------
+# Phase 5 (VER-148): long-form gauges.csv with dimension columns.
+#
+# When --instances-per-component N > 1, per-component CSVs carry a
+# six-column dimension prefix (id, host, pod, az, region, tenant). The
+# long-form gauges.csv header expands from 4 columns to 10 columns so
+# every (component, instance, metric) data point is reproducible from
+# the row alone. N=1 stays byte-identical to today (locked by the 4-
+# column hashes above) — the dimensioned 10-column shape only applies
+# when the per-component CSVs have dimension columns in their header.
+# ------------------------------------------------------------------
+N3_GAUGES_ONE_DAY_HASH = (
+    "71164965eb8ad036ff6e0cf1ce52dfadff00406b094f39ebf49c4808c108684c"
+)
+
+
+_LONG_FORM_HEADER = [
+    "timestamp", "component", "id", "host", "pod", "az",
+    "region", "tenant", "metric", "value",
+]
+
+
+@pytest.fixture(scope="module")
+def n3_one_day_gauges_run(amc, tmp_path_factory):
+    out = tmp_path_factory.mktemp("ver148_n3_one_day_gauges")
+    return run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,gauges",
+            "--instances-per-component", "3",
+        ],
+    )
+
+
+def test_n3_gauges_csv_has_long_form_header(n3_one_day_gauges_run):
+    path = n3_one_day_gauges_run.out_dir / "gauges.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+    assert header == _LONG_FORM_HEADER, (
+        f"N=3 gauges.csv header must be the 10-column long form; got {header}"
+    )
+
+
+def test_n3_gauges_csv_byte_identical_one_day(n3_one_day_gauges_run):
+    """Lock the N=3 1-day gauges.csv bytes. Captured against the Phase 5
+    landing; future changes to the long-form header, the
+    (timestamp, component, instance_id, metric) tie-break order, the
+    per-(component, instance) iterator construction, or the dropped-cell
+    skip behavior under the dimensioned path must regenerate this hash
+    and document the cause in the PR description."""
+    path = n3_one_day_gauges_run.out_dir / "gauges.csv"
+    actual = _sha256(path)
+    assert actual == N3_GAUGES_ONE_DAY_HASH, (
+        f"N=3 gauges.csv drifted from locked 1-day hash. "
+        f"expected={N3_GAUGES_ONE_DAY_HASH} actual={actual}"
+    )
+
+
+def test_n3_gauges_csv_tie_break_within_timestamp(n3_one_day_gauges_run):
+    """At any single timestamp the long-form rows must walk components in
+    sorted order, then instance ids in sorted order within each component,
+    then metric columns in MetricSpec order (i.e. the per-component CSV's
+    declared column order). A regression in the source-sort key or the
+    per-instance block iterator would trip this assertion before the
+    byte-identity test."""
+    from itertools import groupby
+    rows = _read_rows(n3_one_day_gauges_run.out_dir / "gauges.csv")
+    saw_groups = 0
+    for ts, ts_group in groupby(rows, key=lambda r: r["timestamp"]):
+        ts_group = list(ts_group)
+        # Component-level: first appearance of each component must be sorted.
+        component_order = []
+        for comp, _ in groupby(ts_group, key=lambda r: r["component"]):
+            component_order.append(comp)
+        assert component_order == sorted(component_order), (
+            f"timestamp {ts!r}: components appeared in {component_order}, "
+            f"expected sorted order {sorted(component_order)}"
+        )
+        # Within each component, instance ids must be in sorted order.
+        for comp, comp_group in groupby(ts_group, key=lambda r: r["component"]):
+            instance_order = []
+            for inst_id, _ in groupby(
+                comp_group, key=lambda r: r["id"]
+            ):
+                instance_order.append(inst_id)
+            assert instance_order == sorted(instance_order), (
+                f"timestamp {ts!r} component {comp!r}: instance ids "
+                f"appeared in {instance_order}, expected sorted order "
+                f"{sorted(instance_order)}"
+            )
+        saw_groups += 1
+        if saw_groups >= 60:  # bound runtime — first minute of 1-day run
+            break
+    assert saw_groups > 0, "no rows in N=3 long-form gauges.csv"
+
+
+def test_n3_gauges_csv_dimension_values_match_per_component_csvs(
+    n3_one_day_gauges_run, amc,
+):
+    """Every (component, id, host, pod, az, region, tenant) tuple in
+    gauges.csv must appear as a row in the corresponding per-component
+    CSV's dimensioned block. A regression that swapped the instance
+    block boundary detection (the ``has_dims`` branch in
+    ``_iter_component_instance_rows``) or smuggled in stale dim values
+    from the closure would surface here even before the byte hash."""
+    out_dir = n3_one_day_gauges_run.out_dir
+    rows = _read_rows(out_dir / "gauges.csv")
+    assert rows, "N=3 gauges.csv must contain rows"
+
+    # Tuples observed in gauges.csv.
+    gauge_tuples: set[tuple[str, ...]] = set()
+    for r in rows:
+        gauge_tuples.add(
+            (r["component"], r["id"], r["host"], r["pod"], r["az"],
+             r["region"], r["tenant"])
+        )
+
+    # Tuples observed in the per-component CSVs themselves.
+    expected_tuples: set[tuple[str, ...]] = set()
+    for component in amc.COMPONENTS:
+        path = out_dir / f"{component}.csv"
+        if not path.exists():
+            continue
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                expected_tuples.add(
+                    (component, row["id"], row["host"], row["pod"],
+                     row["az"], row["region"], row["tenant"])
+                )
+    assert len(expected_tuples) > 0, (
+        "per-component CSVs surfaced no dimension tuples — "
+        "test cannot exercise the long-form parity"
+    )
+    assert gauge_tuples == expected_tuples, (
+        f"gauges.csv dimension tuples must match per-component CSVs "
+        f"exactly (missing={len(expected_tuples - gauge_tuples)}, "
+        f"extra={len(gauge_tuples - expected_tuples)})"
+    )
+
+
+def test_n3_gauges_csv_chronological_order(n3_one_day_gauges_run, amc):
+    """Long-form rows are chronologically merged; consecutive rows must be
+    in non-decreasing timestamp order despite the per-component CSVs
+    holding non-monotonic block-then-block-then-block sequences."""
+    path = n3_one_day_gauges_run.out_dir / "gauges.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        prev_dt = None
+        for row in reader:
+            dt = amc._parse_csv_timestamp(row["timestamp"])
+            if prev_dt is not None:
+                assert dt >= prev_dt, (
+                    "N=3 gauges.csv rows must be in non-decreasing "
+                    "timestamp order across instance blocks"
+                )
+            prev_dt = dt
+
+
+def test_classify_component_csv_header_detects_dimensions(amc):
+    """The header inspector must classify both shapes:
+    dimensionless ``timestamp,m0,m1`` → no dim cols, all metrics; and
+    dimensioned ``timestamp,id,host,pod,az,region,tenant,m0,m1`` → six dim
+    cols + the remaining metric tail. An ambiguous header that only
+    partially matches the dim prefix must be treated as no-dim so a
+    user-staged CSV with a column literally named ``id`` cannot smuggle
+    in dimensioned parsing."""
+    flat = ["timestamp", "metric_a", "metric_b"]
+    dim_cols, metric_cols = amc._classify_component_csv_header(flat)
+    assert dim_cols == ()
+    assert metric_cols == ["metric_a", "metric_b"]
+
+    full = [
+        "timestamp", "id", "host", "pod", "az", "region", "tenant",
+        "metric_a", "metric_b",
+    ]
+    dim_cols, metric_cols = amc._classify_component_csv_header(full)
+    assert dim_cols == amc._INSTANCE_DIMENSION_COLUMNS
+    assert metric_cols == ["metric_a", "metric_b"]
+
+    partial = ["timestamp", "id", "metric_a"]
+    dim_cols, metric_cols = amc._classify_component_csv_header(partial)
+    assert dim_cols == ()
+    assert metric_cols == ["id", "metric_a"]
+
+
+# ------------------------------------------------------------------
 # Coverage gaps — sub-second interval, tie-break order, --combine,
 # --drop-rate parity. Recommended additions from the Code Reviewer
 # hand-back on PR #38.

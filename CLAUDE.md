@@ -68,6 +68,36 @@ so the combine output honors the same allowlist as generation,
 `--components all` keeps autodiscovery active, which preserves the
 synthetic-extra-component path used by the existing test fixture.
 
+**Layout (VER-148 phase 5).** `combine_logs_unified(components, input_dir, …)`
+inspects every per-component CSV's header via `_scan_component_csv_headers`
+and dispatches one of two layouts:
+
+- **Wide layout (default, dimensionless input).** Every per-component CSV
+  has the classic `timestamp, m0, m1, …` shape — the `N=1`
+  anonymous-instance case. The combine writer emits
+  `timestamp, component_a_m0, component_a_m1, component_b_m0, …`
+  byte-identically to the pre-VER-148 output. Locked `test_combine.py`
+  row/column assertions still apply.
+- **Long layout (VER-148 phase 5, dimensioned input).** Any per-component
+  CSV carries the multi-instance `id, host, pod, az, region, tenant`
+  prefix (the `--instances-per-component N > 1` shape from Phase 2). The
+  combine writer dispatches into `_write_combined_long_form` and emits
+  `timestamp, component, id, host, pod, az, region, tenant, metric,
+  value`. Rows are merged chronologically with `heapq.merge` across
+  per-(component, instance) iterators sourced from
+  `_iter_component_instance_rows`; the per-instance dim tuples per file
+  come from `_scan_instance_block_dim_tuples`. Tie-break order on equal
+  timestamps is `(component, instance_id, metric)`, matching the long-
+  form `gauges.csv` ordering contract. Empty / dropped cells are skipped
+  (long form encodes "this measurement was emitted" via row presence —
+  unlike the wide layout, which carries an empty string in the
+  corresponding column).
+
+Both layouts share the same `_COMBINE_OUTPUT_FILENAME`
+(`combined_metrics_unified.csv`); the filename does not change with the
+layout. The N=1 default keeps the pre-clean / summary / autodiscovery
+slot unchanged.
+
 ### Output schema document (`schema.json`)
 
 `write_schema_json(output_path, *, components, effective_specs, metadata,
@@ -301,13 +331,37 @@ exclusive with `--combine` and `--combine-only`.
 `write_gauges_csv(component_csv_paths, output_path)` is the file peer of the
 OTEL gauge stream (`stream_otel_gauges`). Both walk the same per-component
 CSVs and merge them chronologically with `heapq.merge` on the parsed
-timestamp; the file writer emits one row per
-`(timestamp, component, metric, value)` tuple into a long-form `gauges.csv`.
-Equal-timestamp ties tie-break on sorted component name (the writer sorts
-`component_csv_paths` internally so the tiebreaker holds regardless of how
-the caller built the dict), then per-component CSV column order
-(`MetricSpec` order). Dropped CSV rows are absent from the file, the same
-way `stream_otel_gauges` never sees them.
+timestamp.
+
+Layout is decided by header inspection via
+`_scan_component_csv_headers`:
+
+- **4-column shape (default, dimensionless input).** Every per-component
+  CSV is the classic `timestamp, m0, m1, …` shape — the `N=1`
+  anonymous-instance case. The writer emits one row per
+  `(timestamp, component, metric, value)` tuple. Equal-timestamp ties
+  tie-break on sorted component name (the writer sorts
+  `component_csv_paths` internally so the tiebreaker holds regardless of
+  how the caller built the dict), then per-component CSV column order
+  (`MetricSpec` order). Byte-identical to the pre-VER-148 output, so
+  existing locked SHA-256 golden hashes at 1d and 7d still apply.
+- **10-column shape (VER-148 phase 5, dimensioned input).** Any per-
+  component CSV carries the multi-instance `id, host, pod, az, region,
+  tenant` prefix (the `--instances-per-component N > 1` shape from
+  Phase 2). The writer emits
+  `timestamp, component, id, host, pod, az, region, tenant, metric,
+  value`. Per-(component, instance) iterators come from
+  `_iter_component_instance_rows`; the per-instance dim tuples per file
+  come from `_scan_instance_block_dim_tuples` (a one-pass dim-only scan
+  that detects the contiguous per-instance blocks
+  `generate_component` writes). Tie-break order on equal timestamps is
+  `(component, instance_id, metric)` — sources are sorted by
+  `(component, instance_id)` before `heapq.merge`, and within each row
+  the inner metric loop walks columns in `MetricSpec` order.
+
+Dropped CSV rows are absent from the file in both shapes (long form
+encodes "this measurement was emitted" via row presence), the same way
+`stream_otel_gauges` never sees them.
 
 Parity with `stream_otel_gauges` has one intentional asymmetry: the file
 writer passes raw cell strings through verbatim (so the byte hash never
@@ -326,7 +380,8 @@ parser enforces alongside `metrics`); `--combine-only` does not
 regenerate it. The end-of-run `Done -` summary additionally prints
 `Gauge rows written: N to gauges.csv` so a CI run records how many
 data points landed in the file. Locked SHA-256 golden hashes at 1d and
-7d live in `tests/test_gauges_file.py`.
+7d for the 4-column shape and at 1d for the 10-column N=3 shape live
+in `tests/test_gauges_file.py`.
 
 ### Metric specs (value generation)
 

@@ -352,3 +352,139 @@ def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
     assert len(timestamps) == len(set(timestamps)), (
         "non-DST combine should produce no duplicate timestamps"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (VER-148): long-form combined_metrics_unified.csv with dimensions.
+#
+# When the per-component CSVs carry the multi-instance dimension prefix
+# (``--instances-per-component N > 1``), the combine step switches from
+# the wide ``timestamp,component_a_m0,component_a_m1,...`` layout to the
+# same 10-column long layout the gauges.csv writer emits. Empty cells
+# from drops are absent (long form encodes "this measurement was emitted"
+# explicitly via row presence). N=1 keeps today's wide layout byte-
+# identically, guarded by the existing tests above.
+# ---------------------------------------------------------------------------
+import hashlib
+
+N3_COMBINED_ONE_DAY_HASH = (
+    "71164965eb8ad036ff6e0cf1ce52dfadff00406b094f39ebf49c4808c108684c"
+)
+
+
+def _sha256(path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.fixture(scope="module")
+def n3_one_day_combine_run(amc, tmp_path_factory):
+    out = tmp_path_factory.mktemp("ver148_n3_one_day_combine")
+    return run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--combine",
+            "--instances-per-component", "3",
+        ],
+    )
+
+
+def test_n3_combined_has_long_form_header(n3_one_day_combine_run):
+    """With ``--instances-per-component 3 --combine`` the unified CSV
+    switches from the wide layout to the long
+    ``timestamp,component,id,host,pod,az,region,tenant,metric,value``
+    layout. The wide layout cannot represent N instances per metric
+    without exploding the column count to N×M, so long form is the only
+    sound choice for dimensioned input."""
+    path = n3_one_day_combine_run.out_dir / "combined_metrics_unified.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+    expected = [
+        "timestamp", "component", "id", "host", "pod", "az",
+        "region", "tenant", "metric", "value",
+    ]
+    assert header == expected, (
+        f"N=3 combined_metrics_unified.csv header must be the long form; "
+        f"got {header}"
+    )
+
+
+def test_n3_combined_byte_identical_one_day(n3_one_day_combine_run):
+    """Lock the N=3 1-day combined_metrics_unified.csv bytes. The long-
+    form combine consumes the same per-(component, instance) iterators
+    and tie-break order as ``write_gauges_csv``, so this hash captures
+    the same coverage on the combine writer side."""
+    path = n3_one_day_combine_run.out_dir / "combined_metrics_unified.csv"
+    actual = _sha256(path)
+    assert actual == N3_COMBINED_ONE_DAY_HASH, (
+        f"N=3 combined drifted from locked 1-day hash. "
+        f"expected={N3_COMBINED_ONE_DAY_HASH} actual={actual}"
+    )
+
+
+def test_n3_combined_dimension_values_match_per_component_csvs(
+    n3_one_day_combine_run, amc,
+):
+    """Every (component, id, host, pod, az, region, tenant) tuple in the
+    combined long-form CSV must appear in the corresponding per-component
+    CSV. Guards against a regression in the per-(component, instance)
+    iterator key construction inside ``_write_combined_long_form``."""
+    out_dir = n3_one_day_combine_run.out_dir
+    path = out_dir / "combined_metrics_unified.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        combined_tuples = {
+            (r["component"], r["id"], r["host"], r["pod"], r["az"],
+             r["region"], r["tenant"])
+            for r in reader
+        }
+    expected: set[tuple[str, ...]] = set()
+    for component in amc.COMPONENTS:
+        comp_path = out_dir / f"{component}.csv"
+        if not comp_path.exists():
+            continue
+        with open(comp_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                expected.add(
+                    (component, row["id"], row["host"], row["pod"],
+                     row["az"], row["region"], row["tenant"])
+                )
+    assert len(expected) > 0
+    assert combined_tuples == expected, (
+        f"combined long-form dimension tuples must match per-component "
+        f"CSVs exactly (missing={len(expected - combined_tuples)}, "
+        f"extra={len(combined_tuples - expected)})"
+    )
+
+
+def test_n3_combined_chronological_order(n3_one_day_combine_run, amc):
+    """Long-form combine rows must be in non-decreasing timestamp order —
+    the same merge contract as gauges.csv."""
+    path = n3_one_day_combine_run.out_dir / "combined_metrics_unified.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        prev_dt = None
+        for row in reader:
+            dt = amc._parse_csv_timestamp(row["timestamp"])
+            if prev_dt is not None:
+                assert dt >= prev_dt, (
+                    "combined_metrics_unified.csv long form must be in "
+                    "non-decreasing timestamp order"
+                )
+            prev_dt = dt
+
+
+def test_n3_combined_no_empty_value_cells(n3_one_day_combine_run):
+    """The long form encodes presence via row existence; dropped cells
+    must not appear as rows with ``value=""``. Guards against a future
+    refactor that forgets the ``if raw == "": continue`` skip in
+    ``_write_combined_long_form``."""
+    path = n3_one_day_combine_run.out_dir / "combined_metrics_unified.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            assert row["value"] != "", (
+                "long-form combine rows must never have an empty value; "
+                "dropped cells should be omitted entirely"
+            )
