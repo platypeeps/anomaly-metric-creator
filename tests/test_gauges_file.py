@@ -698,12 +698,15 @@ def test_n3_gauges_csv_with_metrics_per_component_trim(amc, tmp_path):
 
 
 def test_scan_instance_block_layout_records_seekable_offsets(amc, tmp_path):
-    """The scan helper must record byte offsets that ``seek()`` can hand
-    to ``csv.reader`` cleanly — anything else would corrupt the
-    long-form merge, because ``_iter_component_instance_rows``
-    ``seek()``s straight to the recorded offset and then parses with
-    ``csv.reader``. We assert the offsets land on row starts by
-    seeking + reading and comparing to a manual line-by-line walk."""
+    """The scan helper must record seek cookies (the opaque positions
+    Python's text-mode ``tell()`` returns) that ``seek()`` can hand to
+    ``csv.reader`` cleanly — anything else would corrupt the long-form
+    merge, because ``_iter_component_instance_rows`` ``seek()``s
+    straight to the recorded cookie and then parses with
+    ``csv.reader``. We assert the cookies land on row starts by
+    seeking + reading and comparing to a manual line-by-line walk
+    against a handle opened with the same ``encoding="utf-8"`` /
+    ``newline=""`` settings the implementation uses."""
     csv_path = tmp_path / "synth_inst.csv"
     csv_path.write_text(
         "timestamp,id,host,pod,az,region,tenant,m_a\n"

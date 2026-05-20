@@ -7121,13 +7121,26 @@ def _ensure_long_form_fd_capacity(n_sources: int) -> None:
     13 × 20 = 260) we can exceed the default macOS soft limit
     (256), causing ``EMFILE`` deep inside the writer.
 
-    The fix is two-tiered: first try to bump the soft limit (up to
-    the hard cap) using ``resource.setrlimit``; if that still isn't
-    enough — or if ``resource`` is unavailable on this platform
-    (Windows) — exit early with a clear error naming the needed
-    headroom and the active multi-instance flag. ``n_sources`` is
-    only the file-handle count from this merge; the margin reserves
-    space for stdio + the output stream + a bit of OS overhead.
+    Fix on POSIX (Linux, macOS): try to bump the soft limit (up to
+    the hard cap) using ``resource.setrlimit``; if the hard limit is
+    still too low or ``setrlimit`` rejects the raise, exit early with
+    a clear error naming the needed headroom and the user-facing
+    levers (``--instances-per-component``, ``--components``,
+    ``ulimit -n``).
+
+    Windows is a no-op: ``resource`` is POSIX-only, and there's no
+    portable equivalent of ``RLIMIT_NOFILE`` we can pre-flight. The
+    helper returns silently and lets ``open()`` surface the real
+    error inside ``heapq.merge`` if the OS-level FD cap is reached.
+    In practice the Windows default open-file table is plenty large
+    for ``MAX_INSTANCES_PER_COMPONENT * len(COMPONENTS) = 260`` so
+    this is unlikely to bite; tests
+    (``test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low``)
+    skip on Windows via ``pytest.importorskip("resource")``.
+
+    ``n_sources`` is only the file-handle count from this merge; the
+    ``_LONG_FORM_FD_MARGIN`` reserves space for stdio + the output
+    stream + a bit of OS overhead.
     """
     needed = n_sources + _LONG_FORM_FD_MARGIN
     try:
@@ -7234,26 +7247,35 @@ def _scan_instance_block_layout(
     """Return the ordered list of ``(dim_tuple, start_offset)`` pairs for
     every instance block in ``csv_path``, in the order they first appear.
 
-    ``start_offset`` is the byte position of the block's first data row
-    in the file (i.e. ``fh.tell()`` BEFORE the first matching row is
-    read). ``_iter_component_instance_rows`` then ``seek()``s straight
-    to that offset and stops as soon as the dim tuple changes, giving
-    O(rows_total) total work per per-component CSV instead of the
+    ``start_offset`` is the opaque seek cookie returned by
+    ``fh.tell()`` BEFORE the block's first row is read — *not* a raw
+    byte position. Python's text-mode files return a cookie that
+    encodes both the byte position and the decoder state, and it is
+    only meaningful when handed back to ``seek()`` on a file opened
+    with **matching** ``encoding`` and ``newline`` parameters.
+    ``_iter_component_instance_rows`` reopens ``csv_path`` with the
+    same ``encoding="utf-8"`` / ``newline=""`` settings as the scan
+    here, so the cookie round-trips cleanly. ``seek()``ing straight to
+    the block's start cookie gives O(rows_total) total work per
+    per-component CSV — each row is read at most twice (once by the
+    scan, once by exactly one iterator) — instead of the
     O(rows_total × instances) the previous "scan from top each time"
     iterator did.
 
     ``has_dims`` short-circuits the scan: dimensionless CSVs always
     have a single conceptual block represented by a tuple of empty
     strings (one per ``_INSTANCE_DIMENSION_COLUMNS`` entry); the
-    start_offset is the byte position right after the header line. For
+    ``start_offset`` is the cookie right after the header line. For
     dimensioned CSVs the scan reads one line at a time, recording
-    ``tell()`` before each line, and detects block boundaries where the
-    dim tuple changes (``generate_component`` writes per-instance blocks
-    sequentially, so each unique dim tuple appears in exactly one
-    contiguous block). The lightweight scan uses ``readline()`` and
-    ``line.split(',')`` so the recorded ``tell()`` is exactly the byte
-    offset ``seek()`` needs — bypassing ``csv.reader``'s internal buffer
-    which would otherwise corrupt ``tell()``.
+    ``tell()`` before each line, and detects block boundaries where
+    the dim tuple changes (``generate_component`` writes per-instance
+    blocks sequentially, so each unique dim tuple appears in exactly
+    one contiguous block). The lightweight scan uses ``readline()`` +
+    ``line.split(',')`` so the recorded ``tell()`` cookie isn't
+    corrupted by ``csv.reader``'s internal buffer — the writer side
+    emits unquoted comma-separated values (see the ``np.char.add``
+    path in ``generate_component``), so the simple split is
+    equivalent to a full CSV parse for the dim columns.
     """
     dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
     if not has_dims:
@@ -7290,20 +7312,25 @@ def _iter_component_instance_rows(
     csv_path: Path, start_offset: int, *,
     has_dims: bool, n_metrics: int,
 ):
-    """Yield ``(ts_dt, ts_raw, metric_values)`` for the rows belonging to
-    one instance block in ``csv_path``, starting at byte ``start_offset``.
+    """Yield ``(ts_dt, ts_raw, metric_values)`` for the rows belonging
+    to one instance block in ``csv_path``, starting at the seek cookie
+    ``start_offset``.
 
-    Opens a fresh file handle so the caller can hold multiple per-instance
-    iterators on the same CSV open simultaneously (e.g. for
-    ``heapq.merge``). The handle ``seek()``s straight to the block's
-    start offset (cached by ``_scan_instance_block_layout``) — no
-    re-scanning from the top — and a ``csv.reader`` parses from there.
-    On dimensioned CSVs the iterator records the first row's dim tuple
-    as the block's identity and exits as soon as a later row's dim
-    tuple differs (``generate_component`` writes blocks contiguously,
-    so the dim transition is the end-of-block marker). On dimensionless
-    CSVs the iterator yields every data row to EOF; ``start_offset``
-    then points to the first data row.
+    Opens a fresh file handle so the caller can hold multiple
+    per-instance iterators on the same CSV open simultaneously (e.g.
+    for ``heapq.merge``). The handle ``seek()``s straight to the
+    block's start cookie produced by ``_scan_instance_block_layout`` —
+    no re-scanning from the top — and a ``csv.reader`` parses from
+    there. The cookie is the opaque value returned by Python's
+    text-mode ``tell()``, valid only against a handle opened with the
+    matching ``encoding="utf-8"`` / ``newline=""`` settings (both the
+    scan and this iterator open the file that way, so the round-trip
+    is well-defined). On dimensioned CSVs the iterator records the
+    first row's dim tuple as the block's identity and exits as soon as
+    a later row's dim tuple differs (``generate_component`` writes
+    blocks contiguously, so the dim transition is the end-of-block
+    marker). On dimensionless CSVs the iterator yields every data row
+    to EOF; ``start_offset`` then points to the first data row.
     """
     dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
     with open(csv_path, "r", encoding="utf-8", newline="") as fh:
