@@ -442,6 +442,30 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         instances, where=f"generate_component({component_name!r}) instances"
     )
 
+    # Defense-in-depth: the long-form writer rebuilds rows from
+    # ``kept_ts`` / ``str_vals`` and ignores the post-splice ``rows``
+    # array, so combining a non-anonymous instance list with a DST
+    # splice would silently drop the duplicated hour. ``parse_args``
+    # already rejects this combination at the CLI; this guard catches
+    # any direct caller (tests, future consumers) that bypasses it.
+    _is_anonymous_instances = (
+        len(instances) == 1
+        and instances[0].id is None
+        and instances[0].host is None
+        and instances[0].pod is None
+        and instances[0].az is None
+        and instances[0].region is None
+        and instances[0].tenant is None
+    )
+    if not _is_anonymous_instances and dst_inject_day > 0:
+        raise ValueError(
+            f"generate_component({component_name!r}): dst_inject_day > 0 "
+            f"is incompatible with a non-anonymous instance list; the "
+            f"long-form writer rebuilds rows from pre-splice timestamps "
+            f"and would drop the DST duplicate hour. Pass "
+            f"instances=[Instance()] or dst_inject_day=0."
+        )
+
     # Merge primary anomalies with cascading anomalies
     all_anomalies = list(anomaly_specs)
     if component_name in ctx.cascading_anomalies:
@@ -5640,6 +5664,19 @@ def parse_args(argv=None):
 # ------------------------------------------------------------------
 _NON_COMPONENT_FILES = {"anomalies.csv", "gauges.csv"}
 
+# Dimension columns prepended by the multi-instance long-form writer
+# (VER-140 Phase 2). Used by ``combine_logs`` to detect a per-component
+# CSV that was generated with ``--instances-per-component > 1`` and
+# refuse to combine it, since the unified writer is not dimension-aware
+# yet (tracked under VER-148 / Phase 5). Without this guard a user could
+# bypass the ``parse_args`` gate by running combine-only against an
+# already-generated multi-instance run, and the wide combine output
+# would cross-join the dimension columns into metric columns named
+# e.g. ``apigateway_id`` / ``apigateway_pod``.
+_INSTANCE_DIMENSION_FIELDNAMES = frozenset({
+    "id", "host", "pod", "az", "region", "tenant",
+})
+
 # Filenames written into --output-dir for each --emit-selection item.
 # Per-component CSVs are derived from args.components, not listed here.
 # Consumed by _pre_clean_output_dir() and by the end-of-run summary line.
@@ -5697,6 +5734,26 @@ def combine_logs_unified(components, input_dir, output_file=None):
         seen_in_component = {}
         with open(input_path, "r") as infile:
             reader = csv.DictReader(infile)
+            # Dimension-aware combine is Phase 5 (VER-148). If the input
+            # CSV carries the long-form dimension columns from a prior
+            # ``--instances-per-component > 1`` run, refuse to combine
+            # rather than silently treat ``id`` / ``pod`` / etc. as
+            # metric columns. ``parse_args`` blocks the
+            # generate-and-combine path; this guard covers the bypass
+            # where a user runs ``--combine-only`` against an existing
+            # multi-instance directory (where the default
+            # ``instances_per_component=1`` lets the parser through).
+            dim_in_header = (
+                set(reader.fieldnames or ()) & _INSTANCE_DIMENSION_FIELDNAMES
+            )
+            if dim_in_header:
+                raise SystemExit(
+                    f"{input_path.name} carries dimension columns "
+                    f"{sorted(dim_in_header)!r}; the combine writer is "
+                    f"not dimension-aware yet (tracked under VER-148 "
+                    f"Phase 5). Regenerate the per-component CSVs with "
+                    f"--instances-per-component 1 before combining."
+                )
             metric_names = [f for f in reader.fieldnames if f != "timestamp"]
             component_metrics[component] = metric_names
 

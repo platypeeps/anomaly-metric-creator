@@ -171,11 +171,20 @@ rejects `--instances-per-component > 1` paired with `--combine`,
 `--otel-enabled` with a phase-attributed error message (so users
 see a clear failure instead of e.g. `gauges.csv` rows writing the
 string `i0` into the numeric `value` column, or `--validate-output`
-flagging dimension columns as schema drift). Each later phase
-replaces the corresponding gate with the real implementation. The
-single-instance default (`N == 1`) keeps every flag combination
-historically permitted, so existing one-instance workflows do not
-need to change.
+flagging dimension columns as schema drift). `combine_logs` adds a
+second layer of defense against the two-pass bypass (generate first,
+combine in a separate `--combine-only` invocation that defaults
+back to `instances_per_component=1`): it inspects each
+per-component CSV's header and refuses to combine any file whose
+header contains the dimension columns (`id` / `host` / `pod` /
+`az` / `region` / `tenant`) with the same VER-148 / Phase 5
+message. `generate_component()` mirrors the DST guard inside the
+helper as well — passing a non-anonymous instance list together
+with `dst_inject_day > 0` raises `ValueError` even when the call
+bypasses `parse_args`. Each later phase replaces the corresponding
+gate with the real implementation. The single-instance default
+(`N == 1`) keeps every flag combination historically permitted, so
+existing one-instance workflows do not need to change.
 
 Locked SHA-256 N=3 golden hashes at 1d and 7d live in
 `tests/test_instances_per_component.py` (`N3_ONE_DAY_HASHES` /

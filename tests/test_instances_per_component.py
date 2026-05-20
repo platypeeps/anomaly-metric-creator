@@ -466,19 +466,10 @@ def test_n3_7d_hashes_stable(amc, n3_7d, tmp_path_factory):
 
 
 # ---------------------------------------------------------------------------
-# Mutual exclusion: --instances-per-component > 1 + --inject-dst-artifact-day
+# N=1 + DST: the positive control for the multi-instance DST guard
+# (see test_dst_artifact_with_multi_instance_rejected above for the
+# N>1 rejection case).
 # ---------------------------------------------------------------------------
-
-def test_instances_per_component_dst_mutually_exclusive(tmp_path):
-    """--instances-per-component > 1 is incompatible with --inject-dst-artifact-day > 0."""
-    result = _invoke(
-        ["--instances-per-component", "2",
-         "--inject-dst-artifact-day", "1",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
-        expect_fail=True,
-    )
-    assert "instances-per-component" in result.stderr.lower()
-    assert "inject-dst-artifact-day" in result.stderr.lower()
 
 
 def test_instances_n1_with_dst_allowed(tmp_path):
@@ -616,3 +607,86 @@ def test_n1_with_combine_gauges_schema_allowed(tmp_path):
          "--output-dir", str(tmp_path), "--duration-days", "1"],
         expect_fail=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Defense-in-depth: generate_component() rejects DST + non-anonymous
+# instances even when callers bypass parse_args (e.g. direct programmatic
+# use). The parse_args gate above covers the CLI; this covers the helper.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_component_raises_on_dst_plus_non_anonymous_instances(
+    amc, tmp_path,
+):
+    """Direct callers cannot smuggle DST + multi-instance past the writer."""
+    component = "apigateway"
+    specs = amc.COMPONENTS[component][:1]
+    interval = 1.0
+    total_seconds = 60
+    ts_array, ts_strings = amc._build_timestamp_arrays(total_seconds, interval)
+    ctx = amc.RunContext(rng=amc.np.random.RandomState(42))
+    instances = [
+        amc.Instance(id="i0", pod="pod-0"),
+        amc.Instance(id="i1", pod="pod-1"),
+    ]
+    with pytest.raises(ValueError) as exc:
+        amc.generate_component(
+            component, specs, [],
+            base_dir=tmp_path,
+            total_seconds=total_seconds,
+            drop_rate=0.0,
+            interval=interval,
+            ts_array=ts_array,
+            ts_strings=ts_strings,
+            dst_inject_day=1,
+            ctx=ctx,
+            instances=instances,
+        )
+    msg = str(exc.value).lower()
+    assert "dst_inject_day" in msg
+    assert "instance" in msg
+
+
+# ---------------------------------------------------------------------------
+# --combine-only bypass: a user can generate per-component CSVs with N>1
+# (rejected if combined in the same run by the parse_args gate above), then
+# re-invoke --combine-only against the same directory. ``combine_logs``
+# now inspects the header of each per-component CSV and refuses to combine
+# any CSV that carries dimension columns (id/host/pod/az/region/tenant).
+# ---------------------------------------------------------------------------
+
+
+def test_combine_only_rejects_multi_instance_per_component_csv(amc, tmp_path):
+    """``--combine-only`` against an N>1 directory fails with the VER-148 message.
+
+    Without this guard a user could bypass the ``parse_args`` gate by
+    running generation and combine in two passes: the second pass would
+    default to ``--instances-per-component 1`` and silently treat the
+    dimension columns as metric columns in the unified output.
+    """
+    # Phase 1: generate a multi-instance directory (the gate only fires
+    # when --combine is requested in the *same* invocation; bare N>1 is
+    # fine and is the bypass we're closing here).
+    _invoke(
+        ["--instances-per-component", "2",
+         "--components", "apigateway",
+         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        expect_fail=False,
+    )
+    # Sanity-check: the per-component CSV carries the dimension columns.
+    header = (tmp_path / "apigateway.csv").read_text().splitlines()[0]
+    assert header.startswith("timestamp,id,host,pod,az,region,tenant,")
+
+    # Phase 2: --combine-only must refuse rather than silently cross-join
+    # the dimension columns into the wide unified CSV.
+    result = _invoke(
+        ["--combine-only",
+         "--components", "apigateway",
+         "--output-dir", str(tmp_path)],
+        expect_fail=True,
+    )
+    stderr_low = result.stderr.lower()
+    assert "apigateway.csv" in stderr_low
+    assert "ver-148" in stderr_low or "phase 5" in stderr_low
+    assert "instances-per-component" in stderr_low
