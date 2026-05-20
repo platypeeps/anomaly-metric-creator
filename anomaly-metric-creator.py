@@ -4612,6 +4612,11 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                         f"with non-string entry {item!r} "
                         f"(type {type(item).__name__}); ids must be strings."
                     )
+            # Normalize to frozenset so one-shot iterators (generators,
+            # iter(...)) are materialized and ``_resolve_instance_filter``
+            # can call ``frozenset(spec_filter)`` on a reiterable object.
+            # Also gives O(1) membership checks at runtime.
+            spec["instance_filter"] = frozenset(items)
 
     # Generator signature rules. The runtime always calls a generator with
     # a fixed positional shape determined by the path:

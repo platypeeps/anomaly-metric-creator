@@ -200,6 +200,30 @@ def test_validate_scenario_spec_instance_filter_empty_iterable_accepted(amc):
     ) is None
 
 
+def test_validate_scenario_spec_instance_filter_generator_normalized(amc):
+    """A one-shot generator expression is materialized and written back as a
+    frozenset so ``_resolve_instance_filter`` can iterate it a second time
+    without seeing an exhausted iterator."""
+    spec = _good_primary_spec()
+    # A generator is one-shot: iterating it twice would give empty on the
+    # second pass, producing a spurious no-match warning at runtime.
+    spec["instance_filter"] = (x for x in ["i0", "i1"])
+    amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    # Validator should have normalized to a frozenset.
+    assert isinstance(spec["instance_filter"], frozenset)
+    assert spec["instance_filter"] == {"i0", "i1"}
+
+
+def test_validate_scenario_spec_instance_filter_list_normalized_to_frozenset(amc):
+    """Even a plain list is normalized so ``_resolve_instance_filter`` always
+    receives a frozenset (O(1) membership, reiterable)."""
+    spec = _good_primary_spec()
+    spec["instance_filter"] = ["i0"]
+    amc._validate_scenario_spec("test_slug", "apigateway", spec, is_cascade=False)
+    assert isinstance(spec["instance_filter"], frozenset)
+    assert spec["instance_filter"] == {"i0"}
+
+
 # ---------------------------------------------------------------------------
 # Runtime: instance_filter list selects only matching instances
 # ---------------------------------------------------------------------------
