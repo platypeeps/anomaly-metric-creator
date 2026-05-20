@@ -119,6 +119,80 @@ phase 7 schema-version bump. The `--combine-only` branch does not
 regenerate `schema.json` (it returns before pre-clean), matching the
 `gauges.csv` invariant.
 
+### Multi-instance fan-out (`--instances-per-component`, VER-140)
+
+`COMPONENTS` declares one MetricSpec list per logical component, and
+`INSTANCES` is the parallel module-level registry of `Instance`
+objects that name each emitting *replica* (id, host, pod, az, region,
+tenant). Phase 1 (VER-144) landed the `Instance` dataclass, the
+`INSTANCES = {name: [Instance()] for name in COMPONENTS}` default,
+`_validate_instances_registry` / `_validate_instance_list` import-time
+checks, and the `RunContext.instances` thread that passes the per-run
+per-component list into `generate_component(..., instances=...)`.
+Phase 2 (VER-145) wired the CLI:
+
+- `--instances-per-component N` (default `1`, range `[1,
+  MAX_INSTANCES_PER_COMPONENT=20]`) — when `N > 1`, `main()` replaces
+  `ctx.instances` with `{name: [Instance(id=f"i{k}", pod=f"pod-{k}")
+  for k in range(N)] for name in COMPONENTS}` (host / az / region /
+  tenant remain `None` in v1; Phase 3 will plug them in via
+  `--instance-config PATH`). `N == 1` keeps the module-level
+  anonymous-`Instance()` map and emits today's byte-identical
+  output.
+- `PREFLIGHT_CELL_CAP` now multiplies by `args.instances_per_component`
+  so the same `--allow-huge-output` gate that catches metric-cell
+  blowups catches instance-cell blowups too. The error message lists
+  `--instances-per-component` alongside `--interval-seconds`,
+  `--duration-days`, `--components`, and `--metrics-per-component`
+  as the levers that can lower the estimate.
+
+The long-form emission path inside `generate_component()` keys off
+the *content* of the per-run instance list (not the CLI flag): a
+single anonymous `Instance()` keeps the historic `timestamp,m0,…`
+header and body; any other shape (`len(instances) > 1`, or a single
+instance with any non-`None` dimension field) switches to the
+long-form `timestamp,id,host,pod,az,region,tenant,<metrics…>`
+header and writes one full row block per instance (all rows for
+`instances[0]`, then all rows for `instances[1]`, …) — column
+order is fixed and tested in `tests/test_instances_per_component.py`.
+All instances share the same RNG-drawn natural values and the same
+anomaly overrides in v1; Phase 4 (`instance_filter` on anomaly
+specs) will let scenarios target individual instances.
+
+Out-of-scope until later phases: `--instance-config PATH` (Phase 3),
+per-anomaly `instance_filter` (Phase 4), instance dimensions in
+`gauges.csv` / `combined_metrics_unified.csv` (Phase 5 / VER-148),
+schema.json topology + `--validate-output` (Phase 8 / VER-151), and
+OTEL resource attributes (Phase 6 / VER-149). Because those
+downstream emitters are not dimension-aware yet, `parse_args`
+rejects `--instances-per-component > 1` paired with `--combine`,
+`--combine-only`, `--emit-selection 'gauges'`, `--emit-selection
+'schema'`, `--validate-output`, `--otel-emit-gauges`, or
+`--otel-enabled` with a phase-attributed error message (so users
+see a clear failure instead of e.g. `gauges.csv` rows writing the
+string `i0` into the numeric `value` column, or `--validate-output`
+flagging dimension columns as schema drift). `combine_logs` adds a
+second layer of defense against the two-pass bypass (generate first,
+combine in a separate `--combine-only` invocation that defaults
+back to `instances_per_component=1`): it inspects each
+per-component CSV's header and refuses to combine any file whose
+header contains the dimension columns (`id` / `host` / `pod` /
+`az` / `region` / `tenant`) with the same VER-148 / Phase 5
+message. `generate_component()` mirrors the DST guard inside the
+helper as well — passing a non-anonymous instance list together
+with `dst_inject_day > 0` raises `ValueError` even when the call
+bypasses `parse_args`. Each later phase replaces the corresponding
+gate with the real implementation. The single-instance default
+(`N == 1`) keeps every flag combination historically permitted, so
+existing one-instance workflows do not need to change.
+
+Locked SHA-256 N=3 golden hashes at 1d and 7d live in
+`tests/test_instances_per_component.py` (`N3_ONE_DAY_HASHES` /
+`N3_SEVEN_DAY_HASHES`); `anomalies.csv` matches the default-run hash
+because v1 records one event per `(timestamp, component, metric)`
+regardless of `N` — Phase 4 will reshape that contract when
+`instance_filter` lands.
+
 ### MetricSpec schema metadata (VER-139)
 
 `MetricSpec` carries six optional declarative fields that flow into
