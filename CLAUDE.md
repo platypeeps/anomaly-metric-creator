@@ -965,7 +965,10 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 **Validators and schema checks**
 - For every field a new validator inspects, enumerate non-canonical inputs: `None`, `NaN`, `±inf`, negative, `bool` (a subtype of `int`), empty string, unhashable, wrong container type.
 - Every *branch* of a discriminator is validated: callable **and** constant `Edge.weight`; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables.
-- Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, etc.) raise on unknown keys; never return `None` or fall through silently.
+- Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, etc.) raise on unknown keys; never return `None` or fall through silently. If a caller genuinely needs to tolerate misses, the *caller* opts in via `try/except KeyError` — the table itself stays strict. Concrete antipatterns to grep for before review:
+  - `table.get(key)` on a dispatch table — returns `None` on miss instead of raising. Use `table[key]` so a typo or registry drift fails loudly. The VER-179 fix replaced `_RECOMPUTERS.get(component)` with `_RECOMPUTERS[component]` for exactly this reason.
+  - A dispatcher *function* (e.g. `_recompute_cacheservice`) that returns a sentinel — `None`, an empty string, or a "soft violation" message — for an unrecognized metric or component instead of raising `KeyError`. The caller cannot distinguish "metric is fine" from "I have no recomputer for this metric"; both look like success. VER-179 also fixed this shape by replacing the soft-violation return with `raise KeyError(...)`.
+  - A dispatcher branch that silently falls through to a `return` at the bottom of the function when no `if`/`elif` matched. Add an explicit `raise KeyError(...)` instead.
 
 **Doc / docstring sync**
 - Every changed function with a docstring has its docstring updated in this diff.
@@ -986,6 +989,13 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
 **Test path determinism**
 - Every new code path has a test whose input deterministically exercises that path (no reliance on "the default seed happens to do X").
 - Each new CLI flag is covered in isolation, not only in the most-permissive bundle.
+- If `expected` is derived from a registry (e.g. `{m for m in COMPONENTS[c] if pred(m)}`, `{e.target for e in TOPOLOGY[s]}`, or a comprehension over `SCENARIOS`), assert `len(expected) > 0` (or the moral equivalent — `assert expected`, `assert expected_count > 0`) *before* the membership/equality check. An empty `expected` makes the downstream check trivially pass in several shapes:
+  - `assert expected.issubset(actual)` / `assert expected <= actual` — `∅ ⊆ actual` is always true.
+  - `for m in expected: assert <property>(m)` — zero iterations, asserts nothing.
+  - `assert actual == expected` — passes whenever `actual` also happens to be empty; the test claims "actual matches registry" but really claims "both are empty".
+  - `assert expected & actual == expected` and `assert actual.issuperset(expected)` — collapse to `∅ == ∅` / `actual ⊇ ∅`, both always true.
+  - Three of four vacuous-test bugs on PR #50 had this exact shape: a registry filter (`if metric.dtype == "int"`, `if "ratio" in name`, etc.) excluded every candidate under the default catalog, so `expected` was empty, so the assertion ran on nothing. The non-empty guard catches the filter regression at test time instead of letting the test silently rot.
+  - When the test legitimately needs `expected` to be empty for some inputs (rare), assert that *condition* explicitly and gate the membership check behind it, so a future registry change that makes `expected` accidentally empty under *different* inputs still trips the guard.
 
 **Performance in hot paths**
 - No per-row re-parsing of strings or re-computation of constants that could be hoisted above the loop.
