@@ -4795,17 +4795,24 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
             - {id: auth-west, region: us-west-2, pod: auth-2}
 
     Every listed component must be a key of COMPONENTS. Each instance dict may
-    only contain Instance field names (id, host, pod, az, region, tenant). Missing
-    components fall back to ``[Instance()]`` (the anonymous default). Per-component
-    instance counts are capped at MAX_INSTANCES_PER_COMPONENT. The id-uniqueness
-    and shape rules from _validate_instance_list apply after construction.
+    only contain Instance field names (id, host, pod, az, region, tenant).
+    Per-component instance counts are capped at MAX_INSTANCES_PER_COMPONENT.
+    The id-uniqueness and shape rules from _validate_instance_list apply after
+    construction.
 
-    Raises ``SystemExit`` (via a ValueError caught in main) for every schema
-    violation: unknown components, unknown fields, empty component lists, duplicate
-    ids, count exceeding the cap, missing or malformed top-level structure.
+    Returns a partial map: only components explicitly listed in the file appear
+    as keys. ``main()`` fills the remaining components from the module-level
+    ``INSTANCES`` registry (defaulting to ``[Instance()]``).
+
+    Raises ``ValueError`` (caught in ``main()`` and re-raised via ``sys.exit``)
+    for every schema violation: unknown components, unknown fields, empty
+    component lists, duplicate ids, count exceeding the cap, missing or
+    malformed top-level structure, IO errors on the file, and YAML/JSON parse
+    errors.
     """
     suffix = path.suffix.lower()
-    if suffix in {".yaml", ".yml"}:
+    is_yaml = suffix in {".yaml", ".yml"}
+    if is_yaml:
         try:
             import yaml  # PyYAML; optional dependency
         except ImportError:
@@ -4814,12 +4821,20 @@ def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
                 "but is not installed. Install it with 'pip install pyyaml' or "
                 "use a .json file instead."
             )
-        with open(path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
-    else:  # .json
+    else:
         import json
+    try:
         with open(path, encoding="utf-8") as f:
-            raw = json.load(f)
+            raw = yaml.safe_load(f) if is_yaml else json.load(f)
+    except OSError as exc:
+        raise ValueError(
+            f"--instance-config {path}: failed to read file: {exc}"
+        ) from exc
+    except Exception as exc:  # yaml.YAMLError, json.JSONDecodeError, UnicodeDecodeError, …
+        raise ValueError(
+            f"--instance-config {path}: failed to parse "
+            f"{'YAML' if is_yaml else 'JSON'}: {exc}"
+        ) from exc
 
     if not isinstance(raw, dict):
         raise ValueError(
@@ -8315,13 +8330,18 @@ def main(argv=None):
     # pod=pod-0..pod-N-1); all other dimension fields remain None in v1.
     if args.instance_config is not None:
         # Phase 3: --instance-config populates the per-component map from file;
-        # missing components fall back to [Instance()] (anonymous default).
+        # missing components fall back to the module-level INSTANCES registry
+        # (default [Instance()] per component).
         try:
             config_map = _load_instance_config(args.instance_config)
         except ValueError as exc:
             sys.exit(str(exc))
         ctx.instances = {
-            name: config_map.get(name, list(INSTANCES[name]))
+            name: (
+                config_map[name]
+                if name in config_map
+                else list(INSTANCES[name])
+            )
             for name in COMPONENTS
         }
     elif args.instances_per_component == 1:

@@ -6,6 +6,9 @@ Verifies:
 - Schema validation: unknown component, unknown field, empty list, bad structure.
 - Missing components fall back to anonymous Instance().
 - Default behavior (flag absent) is unchanged.
+
+Uses the session-scoped ``amc`` fixture from ``conftest.py`` so the module
+is loaded once for the whole suite (full script load is non-trivial).
 """
 
 import io
@@ -14,22 +17,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
-
-
-# ---------------------------------------------------------------------------
-# Module fixture
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="module")
-def amc():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("amc_instance_config_test", SCRIPT_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +270,26 @@ def test_unsupported_extension_rejected(amc, tmp_path):
     f.write_text("")
     with pytest.raises(SystemExit):
         _parse(amc, ["--instance-config", str(f)], tmp_path / "out")
+
+
+# ---------------------------------------------------------------------------
+# Validation: malformed file content surfaces a clean ValueError
+# ---------------------------------------------------------------------------
+
+def test_malformed_yaml_raises_value_error(amc, tmp_path):
+    """Bare yaml.YAMLError must be wrapped so main() can sys.exit() cleanly."""
+    p = tmp_path / "bad.yaml"
+    p.write_text("components:\n  authservice:\n    - {id: a1\n")  # unterminated mapping
+    with pytest.raises(ValueError, match="failed to parse YAML"):
+        amc._load_instance_config(p)
+
+
+def test_malformed_json_raises_value_error(amc, tmp_path):
+    """Bare json.JSONDecodeError must be wrapped so main() can sys.exit() cleanly."""
+    p = tmp_path / "bad.json"
+    p.write_text("{this is not json}")
+    with pytest.raises(ValueError, match="failed to parse JSON"):
+        amc._load_instance_config(p)
 
 
 # ---------------------------------------------------------------------------
