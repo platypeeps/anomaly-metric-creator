@@ -9630,16 +9630,15 @@ def _validate_topology_coupling_per_instance(
       aggregate check above; surfacing once is enough).
     """
     components_schema = schema.get("components")
-    if not isinstance(components_schema, list):
+    if not isinstance(components_schema, dict):
         return []
 
     def _find_dimensions(name: str) -> dict | None:
-        for entry in components_schema:
-            if isinstance(entry, dict) and entry.get("name") == name:
-                dims = entry.get("dimensions")
-                if isinstance(dims, dict):
-                    return dims
-                return None
+        entry = components_schema.get(name)
+        if isinstance(entry, dict):
+            dims = entry.get("dimensions")
+            if isinstance(dims, dict):
+                return dims
         return None
 
     source_dims = _find_dimensions(source)
