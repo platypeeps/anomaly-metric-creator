@@ -3060,7 +3060,7 @@ def _per_instance_upstream_view(
     dict by ``upstream_name``. Under mismatched cardinality the
     averaged view is identical for every downstream instance, so
     callers that loop across downstream instances pass a shared dict
-    to avoid repeating the ``np.stack`` / ``np.mean`` work
+    to avoid repeating the incremental sum-then-divide averaging work
     (O(N_down * N_up * n_rows) → O(N_up * n_rows)). Pass ``None`` for
     one-shot callers.
     """
@@ -9219,13 +9219,17 @@ def _read_component_metric_column_per_instance(
             ts_list, val_list = per_instance.setdefault(inst_id, ([], []))
             ts_list.append(ts)
             val_list.append(value)
+    # Per-instance CSV blocks are written in increasing timestamp
+    # order by ``generate_component`` (one block per instance, rows
+    # within each block ordered by elapsed seconds), and the DST
+    # splice that produces non-monotonic timestamps is rejected at
+    # parse time for non-anonymous instances. Reading rows in CSV
+    # order therefore yields a monotonic ``ts_list`` per instance
+    # already — no sort needed. Skipping the O(n log n) work
+    # noticeably speeds up the validator on long runs.
     out: dict[str, tuple[list[datetime.datetime], np.ndarray]] = {}
     for inst_id, (ts_list, val_list) in per_instance.items():
-        paired = sorted(zip(ts_list, val_list))
-        out[inst_id] = (
-            [p[0] for p in paired],
-            np.array([p[1] for p in paired], dtype=np.float64),
-        )
+        out[inst_id] = (ts_list, np.array(val_list, dtype=np.float64))
     return out
 
 
