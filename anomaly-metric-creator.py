@@ -6220,6 +6220,20 @@ def combine_logs_unified(components, input_dir, output_file=None):
             # control reaches this DictReader path every per-component CSV
             # is the classic dimensionless ``timestamp, m0, m1, ...`` shape
             # and ``fieldnames[1:]`` is the metric list verbatim.
+            #
+            # ``csv.DictReader.fieldnames`` is ``None`` for a fully empty
+            # input — the function-level guard ``combine_logs`` rejects a
+            # missing per-component CSV before we get here, but a present-
+            # but-empty file would otherwise crash the list comprehension
+            # below with ``TypeError: 'NoneType' object is not iterable``.
+            # Fail fast with the same shape of message ``combine_logs``
+            # uses for missing files so the operator gets a clean
+            # diagnosis instead of a stack trace.
+            if reader.fieldnames is None:
+                raise SystemExit(
+                    f"{input_path.name} is empty / has no header row; "
+                    f"combine_logs cannot derive its metric columns"
+                )
             metric_names = [f for f in reader.fieldnames if f != "timestamp"]
             component_metrics[component] = metric_names
 

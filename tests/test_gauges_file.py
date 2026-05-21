@@ -13,7 +13,7 @@ Covers:
 """
 import csv
 import hashlib
-import shutil
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -505,12 +505,21 @@ def n3_one_day_gauges_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
     dataset (per-component CSVs generated once in ``conftest.py``).
     Avoids re-running the ~25-second N=3 generation pass per test
     module — the writer is a pure function of the per-component CSV
-    bytes, so the locked golden hash still holds. The copy step
-    isolates this module's ``gauges.csv`` from sibling consumers of
-    the same dataset."""
+    bytes, so the locked golden hash still holds.
+
+    Materializes the per-component CSVs as **hardlinks** into a
+    module-scoped temp directory rather than copying them, so we
+    don't double the ~1.3 GB disk footprint of the shared dataset.
+    The hardlinked entries appear as normal files to every reader
+    in this module — there's no symlink resolution to worry about,
+    and an unlink in this module's temp dir doesn't affect the
+    underlying inode. Hardlinks require the temp dir to be on the
+    same filesystem as the session-scoped dataset; pytest's
+    ``tmp_path_factory`` honors that (both directories sit under
+    the same ``pytest-of-<user>`` root)."""
     out = tmp_path_factory.mktemp("ver148_n3_one_day_gauges")
     for src in n3_one_day_dataset_dir.iterdir():
-        shutil.copy2(src, out / src.name)
+        os.link(src, out / src.name)
     component_csv_paths = {
         c: out / f"{c}.csv" for c in sorted(amc.COMPONENTS.keys())
     }

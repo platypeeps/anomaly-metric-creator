@@ -4,6 +4,7 @@ row preservation, and the synthetic-extra-component case.
 
 import csv
 import hashlib
+import os
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -390,15 +391,23 @@ def n3_one_day_combine_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
     dataset (per-component CSVs generated once in ``conftest.py``).
     Avoids re-running the ~25-second N=3 generation pass per test
     module — ``combine_logs`` is a pure function of the per-component
-    CSV bytes, so the locked golden hash holds byte-identically. The
-    copy step isolates this module's
-    ``combined_metrics_unified.csv`` from sibling consumers of the
-    same dataset; ``components=None`` triggers autodiscovery, which
-    walks the copied ``*.csv`` files in sorted order (the same input
-    the original ``--combine`` invocation produced)."""
+    CSV bytes, so the locked golden hash holds byte-identically.
+
+    Materializes the per-component CSVs as **hardlinks** into a
+    module-scoped temp directory rather than copying them, so we
+    don't double the ~1.3 GB disk footprint of the shared dataset.
+    The hardlinked entries appear as normal files to every reader
+    in this module, and ``combine_logs``'s autodiscovery (the
+    ``components=None`` call below) walks them in sorted order — the
+    same input the original ``--combine`` invocation produced. The
+    new ``combined_metrics_unified.csv`` writes into this module's
+    temp dir; the shared dataset is read-only as far as this fixture
+    is concerned. Hardlinks require the temp dir on the same
+    filesystem as the dataset; pytest's ``tmp_path_factory`` honors
+    that (both sit under the same ``pytest-of-<user>`` root)."""
     out = tmp_path_factory.mktemp("ver148_n3_one_day_combine")
     for src in n3_one_day_dataset_dir.iterdir():
-        shutil.copy2(src, out / src.name)
+        os.link(src, out / src.name)
     amc.combine_logs(out)
     return SimpleNamespace(out_dir=out, stderr="")
 
