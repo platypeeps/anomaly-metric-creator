@@ -759,7 +759,13 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             ]
             for col, spec in enumerate(specs):
                 shared_noise = None
-                if spec.std > 0:
+                if spec.std > 0 and (
+                    coupling_arrays_per_instance[0].get(spec.name) is None
+                ):
+                    # Coupled metrics have a baseline_override that replaces the
+                    # natural draw entirely — drawing noise would advance the RNG
+                    # without producing any output difference. Only draw when at
+                    # least one instance will use the natural baseline path.
                     shared_noise = rng.normal(0.0, spec.std, n_rows)
                 for inst_idx_k in range(n_inst_local):
                     coupling = coupling_arrays_per_instance[inst_idx_k]

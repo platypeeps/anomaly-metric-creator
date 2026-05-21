@@ -54,7 +54,7 @@ SPIKE_VALUE = 1400.0  # ~7σ above the natural ~800 ± 50 baseline
 
 
 @pytest.fixture(scope="module")
-def synthetic_n3_run(amc, tmp_path_factory, monkeypatch_module):
+def synthetic_n3_run(amc, tmp_path_factory):
     """N=3 1-day run with a synthetic primary anomaly on
     ``apigateway.requests_per_sec`` filtered to instance ``i0`` only.
 
@@ -107,17 +107,6 @@ def synthetic_n3_run(amc, tmp_path_factory, monkeypatch_module):
         amc.SCENARIOS.clear()
         amc.SCENARIOS.update(original)
     return run.out_dir
-
-
-# A module-scope monkeypatch fixture so the fixture above can use
-# monkeypatch within a session-scoped context. (Stock pytest only
-# offers function-scope monkeypatch; session fixtures need their own
-# context manager.)
-@pytest.fixture(scope="module")
-def monkeypatch_module():
-    mp = pytest.MonkeyPatch()
-    yield mp
-    mp.undo()
 
 
 def _instance_block_rows(out_dir, component, instance_id, metric):
