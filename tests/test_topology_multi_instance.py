@@ -7,7 +7,7 @@ runs the topology two-pass generation against each downstream instance's
 saturation feedback only on the corresponding downstream pod's rows
 under 1:1 routing (matched cardinalities).
 
-The synthetic ``apigateway_pod0_load_spike`` scenario in this module
+The synthetic ``synthetic_apigateway_pod0_load_spike`` scenario in this module
 elevates ``apigateway.requests_per_sec`` on instance ``i0`` via
 ``instance_filter`` so the failure surfaces as per-pod upstream load
 asymmetry. Under 1:1 routing the per-instance saturation arrays
@@ -21,9 +21,9 @@ Tests also pin:
 - ``--instances-per-component 1`` (default) preserves byte parity
   with the no-flag run, locking the issue's
   "byte-identical to phase 6 baseline" acceptance.
-- ``_compute_topology_arrays_per_instance`` collapses to the
-  shared-arrays fast path under symmetric upstream (no upstream
-  filter), so locked ``N3_ONE_DAY_HASHES`` continue to hold.
+- ``generate_component`` collapses to the shared-arrays fast path
+  under symmetric upstream (no upstream filter), so locked
+  ``N3_ONE_DAY_HASHES`` continue to hold.
 - ``_matched_cardinality`` returns the 1:1 vs uniform-fan-out
   dispatch the per-instance composer reads.
 """
@@ -136,8 +136,8 @@ def _instance_block_rows(out_dir, component, instance_id, metric):
     ``metric`` from the long-form per-component CSV.
 
     Reads the CSV in a single pass: the header line is consumed first
-    to resolve column indices, then each data row is streamed without
-    materialising the whole file.
+    to resolve column indices, then each data row is matched.
+    Materialises the requested instance's rows into memory.
     """
     out: list[tuple[str, float]] = []
     with open(out_dir / f"{component}.csv", newline="") as f:
@@ -174,13 +174,12 @@ def test_matched_cardinality_dispatch(amc):
     assert fn(2, 4) is False
 
 
-def test_n1_byte_identical_to_default_under_per_instance_path(
+def test_instances_per_component_1_byte_identity(
     amc, tmp_path_factory, default_1d
 ):
     """An explicit ``--instances-per-component 1`` run is byte-identical
-    to the no-flag default. The default run takes the anonymous-N=1
-    fast path (today's shared lambda-baked composers); the explicit-N=1
-    run takes the same path because N==1 with anonymous Instance().
+    to the no-flag default. Both take the anonymous-N=1 lambda-baked
+    topology branch (the pre-VER-158 parity path).
     """
     out = tmp_path_factory.mktemp("ver158_n1_explicit_default")
     n1_run = run_capture(

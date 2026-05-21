@@ -369,9 +369,10 @@ Per-instance upstream capture flows through a new
 arg on `generate_component`. Each instance gets its own
 `(metric_name -> column)` capture; under symmetric upstream the
 columns all reference identical data (different ``.copy()`` results
-on the same source row), and
-`_compute_topology_arrays_per_instance` collapses to the shared
-fast path on detection.
+on the same source row), and ``generate_component`` collapses to the
+shared fast path when the calculated per-instance arrays are
+identical (see the ``any_divergent`` flag from
+``_compute_topology_arrays_per_instance``).
 
 Cascade-vs-topology overlap is unchanged from phase 4: per-instance
 anomaly overrides (`instance_filter`) are applied per pod after

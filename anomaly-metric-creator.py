@@ -499,6 +499,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        topology_capture_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = None,
                        coupling_arrays_per_instance: list[dict[str, np.ndarray]] | None = None,
                        saturation_arrays_per_instance: list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]] | None = None,
+                       any_divergent: bool = False,
                        apply_dtype_int_cast: bool = True):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
@@ -729,7 +730,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         # buffers compared to the previous "allocate-N-up-front" shape
         # (~9.7 GB at 7d / 1s / N=20 / 10 metrics).
         divergent_instances: set[int] = set()
-        if n_inst_local > 1:
+        if any_divergent and n_inst_local > 1:
             ref_coupling = coupling_arrays_per_instance[0]
             ref_saturation = saturation_arrays_per_instance[0]
             for inst_idx_k in range(1, n_inst_local):
@@ -3122,10 +3123,11 @@ def _compute_topology_arrays_per_instance(
 ) -> tuple[
     list[dict[str, np.ndarray]],
     list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]],
+    bool,
 ]:
     """Compute per-instance coupling and saturation arrays for ``component_name``.
 
-    Returns ``(coupling_by_instance, saturation_by_instance)``:
+    Returns ``(coupling_by_instance, saturation_by_instance, any_divergent)``:
 
     * ``coupling_by_instance[K][metric_name]`` is the per-row coupled
       baseline array for downstream instance ``K``'s coupled load
@@ -3137,11 +3139,10 @@ def _compute_topology_arrays_per_instance(
       ``K``'s saturation-target metrics (composes with
       ``MetricSpec.multiplier`` / ``MetricSpec.additive`` via the
       ``_natural_column`` kwargs).
-    Divergence detection (symmetric vs. asymmetric upstream) is
-    deferred to the caller (``generate_component``) via
-    ``_arrays_equal_dict`` / ``_sat_tuples_equal_dict``, which runs
-    exactly once against the returned arrays. Doing it here too would
-    duplicate an O(N_instances × n_rows) byte-comparison pass.
+    * ``any_divergent`` is True if at least one instance's coupling
+      or saturation arrays differ from instance 0. Consumed by
+      ``generate_component`` to avoid re-computing the symmetric-vs-
+      asymmetric divergence detection.
 
     Shared ``rng.normal`` noise for callable+constant coupling is
     drawn once and reused across all instances so the
@@ -3179,7 +3180,7 @@ def _compute_topology_arrays_per_instance(
             if edge.target == component_name:
                 incoming.append((upstream, edge))
     if not incoming:
-        return coupling_by_instance, saturation_by_instance
+        return coupling_by_instance, saturation_by_instance, False
 
     # Shared callable+constant noise per coupled metric (drawn here so
     # all per-instance arrays share the same noise floor under
@@ -3348,7 +3349,20 @@ def _compute_topology_arrays_per_instance(
                     None, error_offset
                 )
 
-    return coupling_by_instance, saturation_by_instance
+    any_divergent = False
+    if n_inst > 1:
+        ref_coupling = coupling_by_instance[0]
+        ref_saturation = saturation_by_instance[0]
+        for inst_idx_k in range(1, n_inst):
+            if not _arrays_equal_dict(
+                coupling_by_instance[inst_idx_k], ref_coupling
+            ) or not _sat_tuples_equal_dict(
+                saturation_by_instance[inst_idx_k], ref_saturation
+            ):
+                any_divergent = True
+                break
+
+    return coupling_by_instance, saturation_by_instance, any_divergent
 
 
 def _arrays_equal_dict(
@@ -9809,17 +9823,32 @@ def _validate_topology_coupling_per_instance(
     for src_id, tgt_id in zip(source_ids, target_ids):
         src_ts, src_vals = source_per_inst[src_id]
         tgt_ts, tgt_vals = target_per_inst[tgt_id]
-        source_map = {ts: v for ts, v in zip(src_ts, src_vals)}
         common_ts: list[datetime.datetime] = []
         target_aligned: list[float] = []
         source_aligned: list[float] = []
-        for ts, v in zip(tgt_ts, tgt_vals):
-            src_v = source_map.get(ts)
-            if src_v is None:
-                continue
-            common_ts.append(ts)
-            target_aligned.append(v)
-            source_aligned.append(src_v)
+
+        # Linear-time two-pointer merge join (VER-158 phase 8). Since
+        # both CSV blocks were read into monotonic timestamp lists,
+        # we can align them in O(N+M) without materialising a full
+        # dict per pod pair.
+        i = 0
+        j = 0
+        n_src = len(src_ts)
+        n_tgt = len(tgt_ts)
+        while i < n_src and j < n_tgt:
+            s_t = src_ts[i]
+            t_t = tgt_ts[j]
+            if s_t == t_t:
+                common_ts.append(s_t)
+                source_aligned.append(src_vals[i])
+                target_aligned.append(tgt_vals[j])
+                i += 1
+                j += 1
+            elif s_t < t_t:
+                i += 1
+            else:
+                j += 1
+
         if len(common_ts) < 100:
             continue
         pair_windows = _filter_windows_for_pair(
@@ -10412,10 +10441,12 @@ def main(argv=None):
         specs = effective_specs[name]
         coupling_per_instance = None
         saturation_per_instance = None
+        any_divergent = False
+        instances_for_component = ctx.instances[name]
+        n_inst_local = len(instances_for_component)
+        is_anonymous_local = _is_anonymous_instance_list(instances_for_component)
+
         if args.topology_mode == "realistic":
-            instances_for_component = ctx.instances[name]
-            n_inst_local = len(instances_for_component)
-            is_anonymous_local = _is_anonymous_instance_list(instances_for_component)
             if n_inst_local > 1 or not is_anonymous_local:
                 # VER-158 phase 8 — per-instance dispatch. Skip the
                 # spec-modifying composers; compute per-instance
@@ -10427,6 +10458,7 @@ def main(argv=None):
                 (
                     coupling_per_instance,
                     saturation_per_instance,
+                    any_divergent,
                 ) = _compute_topology_arrays_per_instance(
                     name, specs, upstream_arrays,
                     upstream_arrays_by_instance,
@@ -10459,9 +10491,14 @@ def main(argv=None):
                            ctx=ctx,
                            instances=ctx.instances[name],
                            topology_capture=upstream_arrays,
-                           topology_capture_by_instance=upstream_arrays_by_instance,
+                           topology_capture_by_instance=(
+                               upstream_arrays_by_instance if (
+                                   n_inst_local > 1 or not is_anonymous_local
+                               ) else None
+                           ),
                            coupling_arrays_per_instance=coupling_per_instance,
                            saturation_arrays_per_instance=saturation_per_instance,
+                           any_divergent=any_divergent,
                            apply_dtype_int_cast=(
                                args.topology_mode == "realistic"
                            ))
