@@ -97,8 +97,22 @@ def synthetic_n3_run(amc, tmp_path_factory):
         out = tmp_path_factory.mktemp("ver158_n3_synthetic_pod0_spike")
         run = run_capture(
             amc, out, days=1,
+            # ``drop_rate=0.0`` keeps every row in the CSV so the
+            # positional ``vals[lo_s:hi_s]`` window slicing below
+            # holds the "row index == elapsed seconds" invariant.
+            # With the default ``--drop-rate`` (0.0005), dropped
+            # rows would shift indices away from wall-clock offsets
+            # and the spike/baseline windows would drift.
+            drop_rate=0.0,
             extra_args=[
                 "--instances-per-component", "3",
+                # Pin only the synthetic scenario so unrelated catalog
+                # entries cannot perturb
+                # ``authservice.avg_auth_latency_ms`` inside the
+                # baseline/spike windows. A future catalog addition
+                # without this gate could silently lift the noise floor
+                # and flake the assertion.
+                "--scenarios", "synthetic_apigateway_pod0_load_spike",
                 # Keep the full default topology graph in scope: the
                 # apigateway → authservice 1:1 routing this test
                 # asserts on requires apigateway's own upstream

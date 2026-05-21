@@ -722,23 +722,25 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 f"saturation_arrays_per_instance="
                 f"{len(saturation_arrays_per_instance)}."
             )
-        per_inst_divergent = False
+        # Identify which specific instances diverge from instance 0 so
+        # the divergent path only allocates per-instance buffers for
+        # the instances that actually need them. At N=20 with a single
+        # asymmetric upstream pod, this saves 18 full (n_rows × n_cols)
+        # buffers compared to the previous "allocate-N-up-front" shape
+        # (~9.7 GB at 7d / 1s / N=20 / 10 metrics).
+        divergent_instances: set[int] = set()
         if n_inst_local > 1:
             ref_coupling = coupling_arrays_per_instance[0]
             ref_saturation = saturation_arrays_per_instance[0]
             for inst_idx_k in range(1, n_inst_local):
                 if not _arrays_equal_dict(
                     coupling_arrays_per_instance[inst_idx_k], ref_coupling
-                ):
-                    per_inst_divergent = True
-                    break
-                if not _sat_tuples_equal_dict(
+                ) or not _sat_tuples_equal_dict(
                     saturation_arrays_per_instance[inst_idx_k], ref_saturation
                 ):
-                    per_inst_divergent = True
-                    break
+                    divergent_instances.add(inst_idx_k)
 
-        if not per_inst_divergent:
+        if not divergent_instances:
             # Shared fast path — one draw per metric, reusable across instances.
             coupling = coupling_arrays_per_instance[0]
             saturation = saturation_arrays_per_instance[0]
@@ -751,12 +753,17 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                     baseline_override=baseline_override,
                 )
         else:
-            # Divergent — draw per instance, sharing noise per metric so
-            # the only divergence flows through topology arrays.
-            buffers: list[np.ndarray] = [
-                np.empty((n_rows, n_cols), dtype=np.float64)
-                for _ in range(n_inst_local)
-            ]
+            # Divergent — write instance 0 into ``values`` (already
+            # allocated) and allocate per-instance buffers only for
+            # the instances that diverge. Noise per metric is drawn
+            # once and shared so the only divergence flows through
+            # topology arrays. Non-divergent instances stay on
+            # ``values`` via the missing-key lookup in
+            # ``per_instance_values`` below.
+            divergent_buffers: dict[int, np.ndarray] = {
+                inst_idx_k: np.empty((n_rows, n_cols), dtype=np.float64)
+                for inst_idx_k in divergent_instances
+            }
             for col, spec in enumerate(specs):
                 shared_noise = None
                 if spec.std > 0 and (
@@ -767,23 +774,31 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                     # without producing any output difference. Only draw when at
                     # least one instance will use the natural baseline path.
                     shared_noise = rng.normal(0.0, spec.std, n_rows)
-                for inst_idx_k in range(n_inst_local):
+                # Instance 0 always writes into ``values`` (the shared
+                # buffer).
+                coupling0 = coupling_arrays_per_instance[0]
+                saturation0 = saturation_arrays_per_instance[0]
+                baseline_override0 = coupling0.get(spec.name)
+                lf0, eo0 = saturation0.get(spec.name, (None, None))
+                values[:, col] = _natural_column(
+                    spec, ts_array, elapsed, rng,
+                    noise=shared_noise,
+                    latency_factor=lf0, error_offset=eo0,
+                    baseline_override=baseline_override0,
+                )
+                for inst_idx_k in divergent_instances:
                     coupling = coupling_arrays_per_instance[inst_idx_k]
                     saturation = saturation_arrays_per_instance[inst_idx_k]
                     baseline_override = coupling.get(spec.name)
                     lf, eo = saturation.get(spec.name, (None, None))
-                    buffers[inst_idx_k][:, col] = _natural_column(
+                    divergent_buffers[inst_idx_k][:, col] = _natural_column(
                         spec, ts_array, elapsed, rng,
                         noise=shared_noise,
                         latency_factor=lf, error_offset=eo,
                         baseline_override=baseline_override,
                     )
-            # Instance 0 is the "shared" baseline; instances 1..N-1 are
-            # pre-populated so the existing instance_filter override loop
-            # treats them as eagerly-forked buffers.
-            values = buffers[0]
-            for inst_idx_k in range(1, n_inst_local):
-                pre_populated_per_instance_eager[inst_idx_k] = buffers[inst_idx_k]
+            for inst_idx_k, buf in divergent_buffers.items():
+                pre_populated_per_instance_eager[inst_idx_k] = buf
     else:
         # Today's path: shared lambda-baked specs, single natural draw per column.
         for col, spec in enumerate(specs):
@@ -3082,8 +3097,15 @@ def _per_instance_upstream_view(
         ]
         if not arrays:
             continue
-        # Stack + mean. Each upstream array has shape (n_rows,).
-        averaged[metric] = np.mean(np.stack(arrays, axis=0), axis=0)
+        # Incremental sum-then-divide. Equal-weight mean as ``np.mean``
+        # over the stacked array, but at O(n_rows) extra memory instead
+        # of O(N_up × n_rows) — the ``np.stack`` allocation can become
+        # multi-MB per metric for large ``N_up`` and 7-day runs.
+        acc = arrays[0].astype(np.float64, copy=True)
+        for arr in arrays[1:]:
+            acc += arr
+        acc /= len(arrays)
+        averaged[metric] = acc
     if uniform_fanout_cache is not None:
         uniform_fanout_cache[upstream_name] = averaged
     return averaged
@@ -3334,9 +3356,10 @@ def _arrays_equal_dict(
 ) -> bool:
     """Byte-comparison of two ``dict[str, np.ndarray]`` entries.
 
-    Used by ``_compute_topology_arrays_per_instance`` to detect
-    whether per-instance composition diverged from instance 0.
-    Equality is element-wise via ``np.array_equal`` — covers both
+    Used by ``generate_component`` to detect whether the
+    per-instance topology arrays returned by
+    ``_compute_topology_arrays_per_instance`` diverge from instance
+    0. Equality is element-wise via ``np.array_equal`` — covers both
     identical floats and identical NaN propagation.
     """
     if a.keys() != b.keys():
