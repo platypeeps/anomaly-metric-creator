@@ -255,26 +255,30 @@ def test_instances_per_component_over_max_rejected(amc, tmp_path):
 
 
 def test_instances_per_component_range_error_precedes_gating(amc, tmp_path):
-    """An out-of-range N paired with a gated flag surfaces the range
-    error, not the incompatibility error.
+    """An out-of-range N paired with a still-gated flag surfaces the
+    range error, not the incompatibility error.
 
     Without explicit ordering the user would see "incompatible with
-    --combine" for ``--instances-per-component 999 --combine`` and
-    waste time looking for a combine fix when the real problem is the
-    invalid N. The range check is run *before* every N>1 gate in
-    ``parse_args``.
+    --validate-output" for ``--instances-per-component 999
+    --validate-output ...`` and waste time looking for a Phase 8 fix
+    when the real problem is the invalid N. The range check is run
+    *before* every N>1 gate in ``parse_args``. After VER-148 phase 5
+    lifted the ``--combine`` / ``--combine-only`` / ``--emit-selection
+    gauges`` gates, ``--validate-output`` (Phase 8) is the canonical
+    still-gated flag to exercise this precedence invariant against.
     """
     over = str(amc.MAX_INSTANCES_PER_COMPONENT + 1)
     result = _invoke(
-        ["--instances-per-component", over, "--combine",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
+        ["--instances-per-component", over,
+         "--validate-output", str(tmp_path),
+         "--duration-days", "1"],
         expect_fail=True,
     )
     stderr_low = result.stderr.lower()
     assert "must be in [1," in stderr_low
-    # The combine-incompatibility message must not fire — the range
+    # The Phase 8 incompatibility message must not fire — the range
     # error takes precedence and exits before the gate is reached.
-    assert "incompatible with --combine" not in stderr_low
+    assert "incompatible with --validate-output" not in stderr_low
 
 
 # ---------------------------------------------------------------------------
@@ -517,60 +521,85 @@ def test_instances_n1_with_dst_allowed(tmp_path):
 # Out-of-scope downstream emitters are gated for N > 1
 # ---------------------------------------------------------------------------
 #
-# Phase 2 wires the long-form CSV writer in ``generate_component`` but
-# leaves ``combined_metrics_unified.csv`` (Phase 5 / VER-148),
-# ``gauges.csv`` + ``--otel-emit-gauges`` (Phase 5 / VER-148), the
-# ``schema.json`` topology + ``--validate-output`` checks (Phase 8 /
-# VER-151), and the OTEL streamer's resource attributes (Phase 6 /
-# VER-149) un-modified. Running those against an N > 1 run silently
-# produces wrong output (e.g. gauges.csv emits ``metric=id, value=i0``
-# string-valued rows that violate the numeric-value schema). The
-# combinations are rejected at parse time with a clear, phase-attributed
-# error so users get the right message instead of corrupted artifacts.
+# After VER-148 phase 5 the file-form long-form writers
+# (``combined_metrics_unified.csv`` and ``gauges.csv``) are dimension-
+# aware: ``--instances-per-component > 1`` paired with ``--combine`` /
+# ``--combine-only`` / ``--emit-selection gauges`` is now permitted and
+# dispatches to the long-form layout. The remaining out-of-scope
+# downstream emitters — ``schema.json`` topology + ``--validate-output``
+# (Phase 8 / VER-151), ``--otel-emit-gauges`` and the broader OTEL
+# streamer resource attributes (Phase 6 / VER-149) — stay gated at
+# parse time with a clear, phase-attributed error so users get the right
+# message instead of corrupted artifacts.
 
 
-def test_n2_plus_combine_rejected(tmp_path):
-    """``--instances-per-component > 1`` + ``--combine`` rejected (Phase 5)."""
-    result = _invoke(
-        ["--instances-per-component", "2", "--combine",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
-        expect_fail=True,
-    )
-    stderr_low = result.stderr.lower()
-    assert "instances-per-component" in stderr_low
-    assert "--combine" in result.stderr
-    assert "ver-148" in stderr_low or "phase 5" in stderr_low
-
-
-def test_n2_plus_combine_only_rejected(tmp_path):
-    """``--instances-per-component > 1`` + ``--combine-only`` rejected (Phase 5)."""
-    result = _invoke(
-        ["--instances-per-component", "2", "--combine-only",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
-        expect_fail=True,
-    )
-    stderr_low = result.stderr.lower()
-    assert "instances-per-component" in stderr_low
-    assert "--combine-only" in result.stderr
-
-
-def test_n2_plus_emit_gauges_rejected(tmp_path):
-    """``--instances-per-component > 1`` + ``--emit-selection gauges`` rejected.
-
-    The current ``write_gauges_csv`` emits ``timestamp,component,metric,value``
-    and would write dimension-column rows as ``metric=id, value=i0`` —
-    violating the numeric-value schema. Phase 5 (VER-148) will rebuild
-    this path long-form.
+def test_n2_plus_combine_allowed(tmp_path):
+    """VER-148 Phase 5: ``--instances-per-component > 1`` + ``--combine``
+    is now permitted. The combine writer dispatches to a long-form
+    layout when the per-component CSVs carry the dimension prefix.
     """
-    result = _invoke(
-        ["--instances-per-component", "2",
-         "--emit-selection", "metrics,gauges",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
-        expect_fail=True,
+    _invoke(
+        ["--instances-per-component", "2", "--combine",
+         "--components", "apigateway",
+         "--output-dir", str(tmp_path), "--duration-days", "1",
+         "--interval-seconds", "60"],
+        expect_fail=False,
     )
-    stderr_low = result.stderr.lower()
-    assert "instances-per-component" in stderr_low
-    assert "gauges" in stderr_low
+    assert (tmp_path / "combined_metrics_unified.csv").exists()
+
+
+def test_n2_plus_combine_only_allowed(tmp_path):
+    """VER-148 Phase 5: ``--instances-per-component > 1`` + ``--combine-only``
+    is now permitted. A staged multi-instance directory is combined
+    into a long-form unified CSV."""
+    # Seed a single-component dimensioned directory first.
+    _invoke(
+        ["--instances-per-component", "2",
+         "--components", "apigateway",
+         "--output-dir", str(tmp_path), "--duration-days", "1",
+         "--interval-seconds", "60"],
+        expect_fail=False,
+    )
+    # combine_only over the staged dimensioned per-component CSV must
+    # succeed and write the long-form unified CSV.
+    _invoke(
+        ["--instances-per-component", "2", "--combine-only",
+         "--components", "apigateway",
+         "--output-dir", str(tmp_path), "--duration-days", "1",
+         "--interval-seconds", "60"],
+        expect_fail=False,
+    )
+    unified = tmp_path / "combined_metrics_unified.csv"
+    assert unified.exists()
+    with open(unified) as f:
+        header = f.readline().rstrip("\n").split(",")
+    assert header[:2] == ["timestamp", "component"]
+    assert header[2] == "id"
+
+
+def test_n2_plus_emit_gauges_allowed(tmp_path):
+    """VER-148 Phase 5: ``--instances-per-component > 1`` +
+    ``--emit-selection gauges`` is now permitted. The file-form gauge
+    writer emits the 10-column long form with the dimension prefix
+    instead of the 4-column ``timestamp,component,metric,value`` shape.
+    """
+    _invoke(
+        ["--instances-per-component", "2",
+         "--components", "apigateway",
+         "--emit-selection", "metrics,gauges",
+         "--output-dir", str(tmp_path), "--duration-days", "1",
+         "--interval-seconds", "60"],
+        expect_fail=False,
+    )
+    gauges = tmp_path / "gauges.csv"
+    assert gauges.exists()
+    with open(gauges) as f:
+        header = f.readline().rstrip("\n").split(",")
+    # 10-column long form when N>1.
+    assert header == [
+        "timestamp", "component", "id", "host", "pod", "az",
+        "region", "tenant", "metric", "value",
+    ]
 
 
 def test_n2_plus_emit_schema_rejected(tmp_path):
@@ -712,56 +741,67 @@ def test_generate_component_raises_on_dst_plus_non_anonymous_instances(
 # ---------------------------------------------------------------------------
 
 
-def test_combine_only_rejects_multi_instance_per_component_csv(amc, tmp_path):
-    """``--combine-only`` against an N>1 directory fails with the VER-148 message.
+def test_combine_only_long_form_against_multi_instance_per_component_csv(
+    amc, tmp_path,
+):
+    """VER-148 Phase 5: ``--combine-only`` against an N>1 directory
+    succeeds and writes the long-form unified CSV.
 
-    Without this guard a user could bypass the ``parse_args`` gate by
-    running generation and combine in two passes: the second pass would
-    default to ``--instances-per-component 1`` and silently treat the
-    dimension columns as metric columns in the unified output.
+    Previously the parse-time + combine-time guards refused this
+    combination (Phase 5 was deferred). Now the combine writer
+    dispatches to ``_write_combined_long_form`` when header inspection
+    detects dimension columns, so the two-pass generate-then-combine
+    workflow against a staged multi-instance directory works.
     """
-    # Phase 1: generate a multi-instance directory (the gate only fires
-    # when --combine is requested in the *same* invocation; bare N>1 is
-    # fine and is the bypass we're closing here).
+    # Phase 1: generate a multi-instance directory.
     _invoke(
         ["--instances-per-component", "2",
          "--components", "apigateway",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
+         "--output-dir", str(tmp_path), "--duration-days", "1",
+         "--interval-seconds", "60"],
         expect_fail=False,
     )
-    # Sanity-check: the per-component CSV carries the dimension columns.
-    # Read only the header line — the file holds ~86k rows at 1-day default.
     with (tmp_path / "apigateway.csv").open() as fh:
         header = fh.readline().rstrip("\n")
     assert header.startswith("timestamp,id,host,pod,az,region,tenant,")
 
-    # Phase 2: --combine-only must refuse rather than silently cross-join
-    # the dimension columns into the wide unified CSV.
-    result = _invoke(
+    # Phase 2: --combine-only against the multi-instance dir succeeds
+    # and emits the long-form unified CSV (instead of the historic wide
+    # layout, which couldn't represent dimensions). The default
+    # ``instances_per_component=1`` on the combine-only invocation is
+    # fine — the per-component CSV's own header is the source of truth
+    # for the layout dispatch.
+    _invoke(
         ["--combine-only",
          "--components", "apigateway",
          "--output-dir", str(tmp_path)],
-        expect_fail=True,
+        expect_fail=False,
     )
-    stderr_low = result.stderr.lower()
-    assert "apigateway.csv" in stderr_low
-    assert "ver-148" in stderr_low or "phase 5" in stderr_low
-    assert "instances-per-component" in stderr_low
+    unified = tmp_path / "combined_metrics_unified.csv"
+    assert unified.exists()
+    with unified.open() as fh:
+        unified_header = fh.readline().rstrip("\n").split(",")
+    assert unified_header == [
+        "timestamp", "component", "id", "host", "pod", "az",
+        "region", "tenant", "metric", "value",
+    ]
 
 
 def test_combine_logs_accepts_single_instance_csv_with_overlapping_metric_name(
     amc, tmp_path,
 ):
     """A single-instance CSV whose metric name happens to be ``id`` /
-    ``host`` / ... must combine cleanly. The guard requires the full
-    canonical dimension prefix in column order, not any-overlap on the
-    dim field set — otherwise a hypothetical future metric named one of
-    the six dim columns would false-positive in a single-instance CSV.
+    ``host`` / ... must combine cleanly under the wide layout. The
+    Phase-5 header classifier requires the *full* canonical dimension
+    prefix in column order, not any-overlap on the dim field set —
+    otherwise a hypothetical future metric named one of the six dim
+    columns would false-positive into the long-form branch in a single-
+    instance CSV.
     """
     # Hand-craft a per-component CSV whose first metric column reuses a
     # dimension column name. This is the false-positive shape Copilot
-    # flagged: a one-row overlap on the column set, but no canonical
-    # six-column prefix in canonical order.
+    # originally flagged: a one-row overlap on the column set, but no
+    # canonical six-column prefix in canonical order.
     csv_path = tmp_path / "synthetic_component.csv"
     csv_path.write_text(
         "timestamp,id,metric_b\n"
@@ -769,10 +809,19 @@ def test_combine_logs_accepts_single_instance_csv_with_overlapping_metric_name(
         "2025-01-01 00:00:01,43,2.71\n"
     )
     # combine_logs is the choke point both --combine and --combine-only
-    # share, so calling it directly exercises the guard without spinning
-    # up a subprocess.
+    # share, so calling it directly exercises the dispatcher without
+    # spinning up a subprocess.
     amc.combine_logs(tmp_path, components=["synthetic_component"])
-    # No SystemExit raised → guard correctly identified this as a
-    # single-instance CSV despite the ``id`` column overlap.
     combined = tmp_path / "combined_metrics_unified.csv"
     assert combined.exists()
+    # Classifier must route this through the wide-layout branch (no
+    # canonical six-column prefix in order), so the unified header is
+    # the historic ``timestamp,<component>_<metric>...`` shape rather
+    # than the long-form 10-column header.
+    with combined.open() as fh:
+        unified_header = fh.readline().rstrip("\n").split(",")
+    assert unified_header[0] == "timestamp"
+    assert "synthetic_component_id" in unified_header
+    assert "synthetic_component_metric_b" in unified_header
+    # ``component`` column would mean the long-form path fired.
+    assert "component" not in unified_header

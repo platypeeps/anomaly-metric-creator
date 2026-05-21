@@ -58,15 +58,56 @@ already keeps it out of the cleanup path. `./otel-activity.log` lives outside
 
 `combine_logs(input_dir, components=None)` joins the per-component CSVs in
 `input_dir` into `combined_metrics_unified.csv`. When `components` is provided,
-the unified output is restricted to that list verbatim (caller-controlled order,
-missing per-component CSVs raise `SystemExit`); when omitted, every `*.csv` in
-`input_dir` is autodiscovered (excluding the anomalies manifest, the long-form
-`gauges.csv`, and prior combine outputs — see `_NON_COMPONENT_FILES`). `main()`
-threads `--components` into both call sites (`--combine` and `--combine-only`)
-so the combine output honors the same allowlist as generation,
-`anomalies.csv`, reporting artifacts, and OTEL streaming. The default
-`--components all` keeps autodiscovery active, which preserves the
-synthetic-extra-component path used by the existing test fixture.
+it acts as the allowlist for which CSVs to combine (missing per-component
+CSVs raise `SystemExit`); when omitted, every `*.csv` in `input_dir` is
+autodiscovered (excluding the anomalies manifest, the long-form
+`gauges.csv`, and prior combine outputs — see `_NON_COMPONENT_FILES`).
+`main()` threads `--components` into both call sites (`--combine` and
+`--combine-only`) so the combine output honors the same allowlist as
+generation, `anomalies.csv`, reporting artifacts, and OTEL streaming.
+The default `--components all` keeps autodiscovery active, which
+preserves the synthetic-extra-component path used by the existing test
+fixture. The output ordering contract differs across the two
+dispatched layouts: the wide layout uses the caller-supplied
+`components` order verbatim for the column sequence; the long layout
+ignores it for layout purposes and sorts components alphabetically for
+the equal-timestamp tie-break (the row's `component` cell carries the
+identity, so column order is not the ordering surface). See the
+**Layout (VER-148 phase 5)** subsection below for the dispatch detail.
+
+**Layout (VER-148 phase 5).** `combine_logs_unified(components, input_dir, …)`
+inspects every per-component CSV's header via `_scan_component_csv_headers`
+and dispatches one of two layouts:
+
+- **Wide layout (default, dimensionless input).** Every per-component CSV
+  has the classic `timestamp, m0, m1, …` shape — the `N=1`
+  anonymous-instance case. The combine writer emits
+  `timestamp, component_a_m0, component_a_m1, component_b_m0, …`
+  byte-identically to the pre-VER-148 output. Locked `test_combine.py`
+  row/column assertions still apply.
+- **Long layout (VER-148 phase 5, dimensioned input).** Any per-component
+  CSV carries the multi-instance `id, host, pod, az, region, tenant`
+  prefix (the `--instances-per-component N > 1` shape from Phase 2). The
+  combine writer dispatches into `_write_combined_long_form` and emits
+  `timestamp, component, id, host, pod, az, region, tenant, metric,
+  value`. Rows are merged chronologically with `heapq.merge` across
+  per-(component, instance) iterators sourced from
+  `_iter_component_instance_rows`; the per-instance ``(dim_tuple,
+  start_offset)`` pairs per file come from
+  `_scan_instance_block_layout` — a one-pass dim-only scan that records
+  the byte offset of each block's first row so the iterator can
+  ``seek()`` straight there instead of re-reading every preceding
+  block. Tie-break order on equal timestamps is `(component,
+  instance_id, metric)`, matching the long-form `gauges.csv` ordering
+  contract. Empty / dropped cells are skipped
+  (long form encodes "this measurement was emitted" via row presence —
+  unlike the wide layout, which carries an empty string in the
+  corresponding column).
+
+Both layouts share the same `_COMBINE_OUTPUT_FILENAME`
+(`combined_metrics_unified.csv`); the filename does not change with the
+layout. The N=1 default keeps the pre-clean / summary / autodiscovery
+slot unchanged.
 
 ### Output schema document (`schema.json`)
 
@@ -159,36 +200,29 @@ All instances share the same RNG-drawn natural values and the same
 anomaly overrides in v1; Phase 4 (`instance_filter` on anomaly
 specs) will let scenarios target individual instances.
 
-Out-of-scope until later phases: `--instance-config PATH` (Phase 3),
-per-anomaly `instance_filter` (Phase 4), instance dimensions in
-`gauges.csv` / `combined_metrics_unified.csv` (Phase 5 / VER-148),
-and schema.json topology + `--validate-output` (Phase 8 / VER-151).
-OTLP data point attributes (Phase 6 / VER-149) shipped in this branch:
-`stream_otel_gauges` and `stream_otel_signals` lift every non-empty
+Out-of-scope until Phase 8: schema.json dimension columns +
+`--validate-output` dimension awareness (Phase 8 / VER-151). Already
+shipped: `--instance-config PATH` (Phase 3 / VER-146), per-anomaly
+`instance_filter` (Phase 4 / VER-147), dimension-aware
+`gauges.csv` / `combined_metrics_unified.csv` writers (Phase 5 /
+VER-148), and OTLP data point attributes (Phase 6 / VER-149) — the
+work covered in this branch. After Phase 6, `stream_otel_gauges`
+and `stream_otel_signals` lift every non-empty
 `_INSTANCE_DIMENSION_COLUMNS` cell off each row and surface it as a
-string attribute on every OTLP data point (metric datapoint attributes,
-not OTEL resource attributes), so `--otel-enabled` and
-`--otel-emit-gauges` are no longer gated against N>1. The remaining
-file-level emitters are still dimension-blind, so `parse_args`
-rejects `--instances-per-component > 1` paired with `--combine`,
-`--combine-only`, `--emit-selection 'gauges'`, `--emit-selection
-'schema'`, or `--validate-output` with a phase-attributed error
-message (so users see a clear failure instead of e.g. `gauges.csv`
-rows writing the string `i0` into the numeric `value` column, or
-`--validate-output` flagging dimension columns as schema drift). `combine_logs` adds a
-second layer of defense against the two-pass bypass (generate first,
-combine in a separate `--combine-only` invocation that defaults
-back to `instances_per_component=1`): it inspects each
-per-component CSV's header and refuses to combine any file whose
-header contains the dimension columns (`id` / `host` / `pod` /
-`az` / `region` / `tenant`) with the same VER-148 / Phase 5
-message. `generate_component()` mirrors the DST guard inside the
-helper as well — passing a non-anonymous instance list together
-with `dst_inject_day > 0` raises `ValueError` even when the call
-bypasses `parse_args`. Each later phase replaces the corresponding
-gate with the real implementation. The single-instance default
-(`N == 1`) keeps every flag combination historically permitted, so
-existing one-instance workflows do not need to change.
+string attribute on every OTLP data point (metric datapoint
+attributes, not OTEL resource attributes), so `--otel-enabled` and
+`--otel-emit-gauges` are no longer gated against N>1. The only
+remaining dimension-blind emitter group is Phase 8 — `parse_args`
+rejects `--instances-per-component > 1` paired with `--emit-selection
+'schema'` or `--validate-output` with a VER-151 / Phase 8 error
+message (so users see a clear failure instead of `--validate-output`
+flagging dimension columns as schema drift). `generate_component()`
+mirrors the DST guard inside the helper as well — passing a
+non-anonymous instance list together with `dst_inject_day > 0`
+raises `ValueError` even when the call bypasses `parse_args`. The
+single-instance default (`N == 1`) keeps every flag combination
+historically permitted, so existing one-instance workflows do not
+need to change.
 
 Locked SHA-256 N=3 golden hashes at 1d and 7d live in
 `tests/test_instances_per_component.py` (`N3_ONE_DAY_HASHES` /
@@ -305,13 +339,52 @@ exclusive with `--combine` and `--combine-only`.
 `write_gauges_csv(component_csv_paths, output_path)` is the file peer of the
 OTEL gauge stream (`stream_otel_gauges`). Both walk the same per-component
 CSVs and merge them chronologically with `heapq.merge` on the parsed
-timestamp; the file writer emits one row per
-`(timestamp, component, metric, value)` tuple into a long-form `gauges.csv`.
-Equal-timestamp ties tie-break on sorted component name (the writer sorts
-`component_csv_paths` internally so the tiebreaker holds regardless of how
-the caller built the dict), then per-component CSV column order
-(`MetricSpec` order). Dropped CSV rows are absent from the file, the same
-way `stream_otel_gauges` never sees them.
+timestamp.
+
+Layout is decided by header inspection via
+`_scan_component_csv_headers`:
+
+- **4-column shape (default, dimensionless input).** Every per-component
+  CSV is the classic `timestamp, m0, m1, …` shape — the `N=1`
+  anonymous-instance case. The writer emits one row per
+  `(timestamp, component, metric, value)` tuple. Equal-timestamp ties
+  tie-break on sorted component name (the writer sorts
+  `component_csv_paths` internally so the tiebreaker holds regardless of
+  how the caller built the dict), then per-component CSV column order
+  (`MetricSpec` order). Byte-identical to the pre-VER-148 output, so
+  existing locked SHA-256 golden hashes at 1d and 7d still apply.
+- **10-column shape (VER-148 phase 5, dimensioned input).** Any per-
+  component CSV carries the multi-instance `id, host, pod, az, region,
+  tenant` prefix (the `--instances-per-component N > 1` shape from
+  Phase 2). The writer emits
+  `timestamp, component, id, host, pod, az, region, tenant, metric,
+  value`. Per-(component, instance) iterators come from
+  `_iter_component_instance_rows`; the per-instance ``(dim_tuple,
+  start_offset)`` pairs per file come from
+  `_scan_instance_block_layout` — a one-pass dim-only scan that
+  detects the contiguous per-instance blocks `generate_component`
+  writes and records each block's byte-offset start so the iterator
+  can ``seek()`` instead of re-scanning. Tie-break order on equal timestamps is
+  `(component, instance_id, metric)` — sources are sorted by
+  `(component, instance_id)` before `heapq.merge`, and within each row
+  the inner metric loop walks columns in `MetricSpec` order.
+
+Dropped CSV rows are absent from the file in both shapes (long form
+encodes "this measurement was emitted" via row presence), the same way
+`stream_otel_gauges` never sees them.
+
+**File-descriptor pre-flight (long-form path only).** The long-form
+merge holds one open file handle per `(component, instance)` source
+for the lifetime of the merge — `heapq.merge` primes every iterator,
+so at max fan-out (13 components × 20 instances = 260 sources) a run
+can exceed the default macOS soft limit (256). Before the merge,
+`_ensure_long_form_fd_capacity(len(sources))` reads `RLIMIT_NOFILE`,
+raises the soft limit to fit (capped by the hard limit), and otherwise
+exits with a message naming the needed count and the user-facing
+levers (`--instances-per-component`, `--components`, `ulimit -n`).
+On Windows the helper no-ops — `open()` surfaces the real error at
+write time. The wide-form / 4-column paths never trip the guard
+because they stream a single handle per component.
 
 Parity with `stream_otel_gauges` has one intentional asymmetry: the file
 writer passes raw cell strings through verbatim (so the byte hash never
@@ -330,7 +403,8 @@ parser enforces alongside `metrics`); `--combine-only` does not
 regenerate it. The end-of-run `Done -` summary additionally prints
 `Gauge rows written: N to gauges.csv` so a CI run records how many
 data points landed in the file. Locked SHA-256 golden hashes at 1d and
-7d live in `tests/test_gauges_file.py`.
+7d for the 4-column shape and at 1d for the 10-column N=3 shape live
+in `tests/test_gauges_file.py`.
 
 ### OTEL dimension attributes (VER-149 Phase 6)
 
@@ -423,6 +497,18 @@ Anomaly specs are dicts with:
   `sustained`, `sawtooth`, `sine`.
 - `shape_params` (optional) — shape-specific params (`start/end`, `period_s`,
   `amplitude`, `midline`, etc.).
+- `instance_filter` (optional, VER-140 Phase 4) — restricts which instances
+  the override applies to. Accepted forms:
+  - omitted / `None` → applies to every active instance (default; preserves
+    Phase 2 byte-identical output when no filter is set).
+  - iterable of `str` ids (list, tuple, frozenset) → applies only to
+    instances whose `Instance.id` is in the set.
+  - callable `(Instance) -> bool` → per-instance predicate.
+  Scalars (int/float/bool), bare strings (would iterate characters), dicts,
+  and iterables containing non-string elements are rejected at import time by
+  `_validate_scenario_spec`. Zero-match at runtime emits a `WARNING` on stderr
+  and skips the spec (no manifest entry). Non-zero-match adds one manifest
+  entry regardless of how many instances matched.
 
 Multiple anomalies can fire at the same timestamp across different metrics. The
 anomaly registry is collected into the manifest file.
@@ -804,6 +890,90 @@ consumers) cannot smuggle in `NaN`/`inf`/`bool`/negative values.
 Mirror these invariants in `tests/test_topology_registry.py` when
 adding new edges or constraints.
 
+### Multi-instance fan-out (VER-140)
+
+`Instance` is a frozen dataclass holding six optional dimension
+fields (`id`, `host`, `pod`, `az`, `region`, `tenant`). The active
+per-run map lives on `RunContext.instances: dict[str, list[Instance]]`
+and is consumed by `generate_component()`: when the list is a single
+anonymous `Instance()` (all fields `None`), CSV output is byte-
+identical to the pre-Phase-1 baseline (no dimension columns); when
+the list has named instances or `len > 1`, every per-component CSV
+gains a `(id, host, pod, az, region, tenant)` prefix block and the
+row count multiplies by the per-component instance count.
+
+Three flag paths populate `ctx.instances` in `main()` (mutually
+exclusive at parse time):
+
+- `--instance-config` absent and `--instances-per-component 1`
+  (default) → `{name: list(INSTANCES[name]) for name in COMPONENTS}`,
+  where the module-level `INSTANCES[name]` defaults to
+  `[Instance()]`. Today's byte-identical output path.
+- `--instances-per-component N` (N in `[1, MAX_INSTANCES_PER_COMPONENT]`,
+  `MAX_INSTANCES_PER_COMPONENT = 20`) → every component fans out to
+  the same `[Instance(id=f"i{k}", pod=f"pod-{k}") for k in range(N)]`.
+- `--instance-config PATH` (VER-140 Phase 3, VER-146) → per-component
+  fan-out is loaded from a YAML (`.yaml`/`.yml`) or JSON (`.json`)
+  file via `_load_instance_config(path)`. The file's top-level
+  `components` map keys components to lists of `Instance`-field
+  dicts; components *not* listed fall back to `list(INSTANCES[name])`
+  (anonymous default), so a partial config keeps untouched
+  components on the byte-identical path.
+
+`_load_instance_config(path)` is called from `main()` (after
+`parse_args` returns) and raises `ValueError` (caught immediately
+and re-raised via `sys.exit`) for every schema violation: top-level
+value not a mapping, missing `components` key, `components` value
+not a mapping, unknown component name (must be in `COMPONENTS`),
+per-component value not a list, empty per-component list,
+per-component count exceeding `MAX_INSTANCES_PER_COMPONENT`,
+non-dict entry, unknown `Instance` field (the comparison handles
+non-string YAML keys via `sorted(..., key=repr)` so the error
+message stays a `ValueError` rather than a sorting `TypeError`),
+and duplicate `Instance.id` within a component (the last check is
+delegated to `_validate_instance_list`). YAML parse errors,
+JSON `JSONDecodeError`, and OS I/O errors are also caught inside
+the loader and re-raised as `ValueError` with the file path
+prefix so users see an actionable error rather than a raw
+traceback. PyYAML in particular emits multi-line messages with
+embedded line/column markers (e.g. `"in \"<unicode string>\",
+line 3, column 10"`); the wrapped `ValueError` preserves that
+text verbatim because the line/column information is the most
+useful debugging signal — the prefix tells the user *which*
+file failed, the body tells them *where in the file*. `parse_args` runs
+*before* the loader and is responsible only for the flag-shape
+checks: the `--instance-config` and `--instances-per-component`
+mutually-exclusive `argparse` group, the file existence check,
+and the suffix-must-be-in-`{.yaml, .yml, .json}` check. Schema
+validation (everything else in the list above) happens later, in
+the loader.
+
+PyYAML is an *optional* runtime dependency: the YAML branch imports
+it lazily inside `_load_instance_config` and raises a clear
+"install with `pip install pyyaml`" error on `ImportError`. JSON
+configs work with the stdlib. The `[yaml]` extra in `pyproject.toml`
+declares the dependency for users who want YAML support; the `dev`
+extra always pulls it in so the test suite can exercise both
+formats.
+
+Both multi-instance paths (`--instances-per-component > 1` and
+`--instance-config`) are mutually exclusive with
+`--inject-dst-artifact-day > 0`: the DST splice produces
+non-monotonic timestamps that the multi-instance row builder is not
+prepared for, and `parse_args` rejects the combination with a clear
+message naming the active flag.
+
+When adding fields to `Instance`, add the new field name to
+`_INSTANCE_DIMENSION_COLUMNS`. Both the `_load_instance_config`
+validator (`_valid_instance_fields = frozenset(_INSTANCE_DIMENSION_COLUMNS)`)
+and the `Instance(**{f: entry.get(f) for f in _INSTANCE_DIMENSION_COLUMNS})`
+constructor pick the new field up automatically, so config-key
+acceptance and constructor population stay in lockstep without a
+second edit. The remaining lockstep edit sites are: (1) the
+README CLI table row example (cosmetic, lists supported keys for
+users), and (2) `_validate_instance_list` if the new field needs
+uniqueness or shape checks beyond what the dataclass enforces.
+
 ### Scenario registry
 
 `SCENARIOS: dict[str, Scenario]` holds every anomaly scenario in the catalog. There
@@ -829,6 +999,10 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
 - `cascade_specs` — list of `(target_component, cascade_dict)` pairs; each
   `cascade_dict` has `time_offset`, `metric`, `description`, and `generator`
   (no `shape`/`shape_params` — cascades are single-row steps).
+  Both primary and cascade dicts may additionally carry an optional
+  `instance_filter` (VER-140 Phase 4) — see the
+  [anomaly injection schema](#anomaly-injection-schema) for the accepted
+  forms and runtime semantics.
 
 Every primary and cascade spec is schema-checked at import time by
 `_validate_scenario_spec()` (called from `_validate_scenarios_registry`):
@@ -836,7 +1010,8 @@ required keys present, `metric` in the full `COMPONENTS[component]` catalog,
 `generator` callable, `time_offset` a finite non-negative non-bool
 `int`/`float`, `description` a non-empty string, `shape` a string in
 `_VALID_ANOMALY_SHAPES`, `duration_seconds` a finite non-negative non-bool
-numeric, `shape_params` a dict; cascade specs reject
+numeric, `shape_params` a dict, `instance_filter` (when present) either
+`None`, an iterable of `str` ids, or a callable. Cascade specs reject
 `shape`/`duration_seconds`/`shape_params` outright.
 
 Generator dispatch rule: the runtime calls each generator with one of

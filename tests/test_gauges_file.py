@@ -13,9 +13,11 @@ Covers:
 """
 import csv
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,7 +46,13 @@ GAUGES_SEVEN_DAY_HASH = (
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Chunked SHA-256 so the N=3 long-form gauges output (~1.3 GB at
+    1-day default) doesn't get slurped into memory in one shot."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 # ------------------------------------------------------------------
@@ -467,6 +475,458 @@ def test_emit_artifact_files_registry_has_gauges(amc):
 def test_non_component_files_excludes_gauges_csv_from_combine_discovery(amc):
     # combine_logs autodiscovery must not treat gauges.csv as a component CSV.
     assert "gauges.csv" in amc._NON_COMPONENT_FILES
+
+
+# ------------------------------------------------------------------
+# Phase 5 (VER-148): long-form gauges.csv with dimension columns.
+#
+# When --instances-per-component N > 1, per-component CSVs carry a
+# six-column dimension prefix (id, host, pod, az, region, tenant). The
+# long-form gauges.csv header expands from 4 columns to 10 columns so
+# every (component, instance, metric) data point is reproducible from
+# the row alone. N=1 stays byte-identical to today (locked by the 4-
+# column hashes above) — the dimensioned 10-column shape only applies
+# when the per-component CSVs have dimension columns in their header.
+# ------------------------------------------------------------------
+N3_GAUGES_ONE_DAY_HASH = (
+    "71164965eb8ad036ff6e0cf1ce52dfadff00406b094f39ebf49c4808c108684c"
+)
+
+
+_LONG_FORM_HEADER = [
+    "timestamp", "component", "id", "host", "pod", "az",
+    "region", "tenant", "metric", "value",
+]
+
+
+@pytest.fixture(scope="module")
+def n3_one_day_gauges_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
+    """Run ``write_gauges_csv`` against the shared session-scoped N=3
+    dataset (per-component CSVs generated once in ``conftest.py``).
+    Avoids re-running the ~25-second N=3 generation pass per test
+    module — the writer is a pure function of the per-component CSV
+    bytes, so the locked golden hash still holds.
+
+    Materializes the per-component CSVs as **hardlinks** into a
+    module-scoped temp directory rather than copying them, so we
+    don't double the ~1.3 GB disk footprint of the shared dataset.
+    The hardlinked entries appear as normal files to every reader
+    in this module — there's no symlink resolution to worry about,
+    and an unlink in this module's temp dir doesn't affect the
+    underlying inode. Hardlinks require the temp dir to be on the
+    same filesystem as the session-scoped dataset; pytest's
+    ``tmp_path_factory`` honors that (both directories sit under
+    the same ``pytest-of-<user>`` root)."""
+    out = tmp_path_factory.mktemp("ver148_n3_one_day_gauges")
+    for src in n3_one_day_dataset_dir.iterdir():
+        os.link(src, out / src.name)
+    component_csv_paths = {
+        c: out / f"{c}.csv" for c in sorted(amc.COMPONENTS.keys())
+    }
+    amc.write_gauges_csv(component_csv_paths, out / "gauges.csv")
+    return SimpleNamespace(out_dir=out, stderr="")
+
+
+def test_n3_gauges_csv_has_long_form_header(n3_one_day_gauges_run):
+    path = n3_one_day_gauges_run.out_dir / "gauges.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+    assert header == _LONG_FORM_HEADER, (
+        f"N=3 gauges.csv header must be the 10-column long form; got {header}"
+    )
+
+
+def test_n3_gauges_csv_byte_identical_one_day(n3_one_day_gauges_run):
+    """Lock the N=3 1-day gauges.csv bytes. Captured against the Phase 5
+    landing; future changes to the long-form header, the
+    (timestamp, component, instance_id, metric) tie-break order, the
+    per-(component, instance) iterator construction, or the dropped-cell
+    skip behavior under the dimensioned path must regenerate this hash
+    and document the cause in the PR description."""
+    path = n3_one_day_gauges_run.out_dir / "gauges.csv"
+    actual = _sha256(path)
+    assert actual == N3_GAUGES_ONE_DAY_HASH, (
+        f"N=3 gauges.csv drifted from locked 1-day hash. "
+        f"expected={N3_GAUGES_ONE_DAY_HASH} actual={actual}"
+    )
+
+
+def test_n3_gauges_csv_tie_break_within_timestamp(n3_one_day_gauges_run):
+    """At any single timestamp the long-form rows must walk components in
+    sorted order, then instance ids in sorted order within each component,
+    then metric columns in MetricSpec order (i.e. the per-component CSV's
+    declared column order). A regression in the source-sort key or the
+    per-instance block iterator would trip this assertion before the
+    byte-identity test.
+
+    Streams ``gauges.csv`` via ``csv.DictReader`` and bails out after
+    the first 60 timestamp groups (the first minute of a 1-day run)
+    so the ~19.4M-row N=3 long-form file never sits in memory at once.
+    The keep-only-the-current-group accumulator buffers at most one
+    timestamp's rows (~117 entries at full fan-out) before flushing
+    the per-group order checks."""
+    out_dir = n3_one_day_gauges_run.out_dir
+    saw_groups = 0
+    target_groups = 60
+    current_ts: str | None = None
+    current_group: list[dict[str, str]] = []
+
+    def _check_group(ts: str, rows: list[dict[str, str]]) -> None:
+        from itertools import groupby
+        # Component-level: first appearance of each component must be sorted.
+        component_order = []
+        for comp, _ in groupby(rows, key=lambda r: r["component"]):
+            component_order.append(comp)
+        assert component_order == sorted(component_order), (
+            f"timestamp {ts!r}: components appeared in {component_order}, "
+            f"expected sorted order {sorted(component_order)}"
+        )
+        # Within each component, instance ids must be in sorted order.
+        for comp, comp_group in groupby(rows, key=lambda r: r["component"]):
+            instance_order = []
+            for inst_id, _ in groupby(
+                comp_group, key=lambda r: r["id"]
+            ):
+                instance_order.append(inst_id)
+            assert instance_order == sorted(instance_order), (
+                f"timestamp {ts!r} component {comp!r}: instance ids "
+                f"appeared in {instance_order}, expected sorted order "
+                f"{sorted(instance_order)}"
+            )
+
+    with open(out_dir / "gauges.csv", "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ts = row["timestamp"]
+            if current_ts is None:
+                current_ts = ts
+            if ts != current_ts:
+                _check_group(current_ts, current_group)
+                saw_groups += 1
+                if saw_groups >= target_groups:
+                    current_ts = None  # signal: don't flush below
+                    break
+                current_ts = ts
+                current_group = []
+            current_group.append(row)
+        else:
+            # Loop fell through (EOF before hitting target_groups).
+            if current_ts is not None and current_group:
+                _check_group(current_ts, current_group)
+                saw_groups += 1
+    assert saw_groups > 0, "no rows in N=3 long-form gauges.csv"
+
+
+def test_n3_gauges_csv_dimension_values_match_per_component_csvs(
+    n3_one_day_gauges_run, amc,
+):
+    """Every (component, id, host, pod, az, region, tenant) tuple in
+    gauges.csv must appear as a row in the corresponding per-component
+    CSV's dimensioned block. A regression that swapped the instance
+    block boundary detection (the ``has_dims`` branch in
+    ``_iter_component_instance_rows``) or smuggled in stale dim values
+    from the closure would surface here even before the byte hash.
+
+    Streams gauges.csv via ``csv.DictReader`` (no row-list materialization)
+    so the ~19.4M-row long-form file at N=3 1-second resolution doesn't
+    blow up memory; derives ``expected_tuples`` from
+    ``_scan_instance_block_layout`` (one tuple per block, not per row)
+    instead of re-reading every per-component CSV cell-by-cell."""
+    out_dir = n3_one_day_gauges_run.out_dir
+
+    # Stream gauges.csv into a set of unique tuples (O(unique tuples)
+    # memory, NOT O(rows)). At N=3 we expect 13 components × 3 instances
+    # = 39 tuples max.
+    gauge_tuples: set[tuple[str, ...]] = set()
+    with open(out_dir / "gauges.csv", "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            gauge_tuples.add(
+                (r["component"], r["id"], r["host"], r["pod"], r["az"],
+                 r["region"], r["tenant"])
+            )
+    assert gauge_tuples, "N=3 gauges.csv must contain rows"
+
+    # Tuples declared in the per-component CSVs themselves. Use the
+    # block-layout scanner (one tuple per instance block, not per row)
+    # so this is O(components × instances) rather than O(total rows).
+    expected_tuples: set[tuple[str, ...]] = set()
+    for component in amc.COMPONENTS:
+        path = out_dir / f"{component}.csv"
+        if not path.exists():
+            continue
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            header = next(csv.reader(f), None)
+        dim_cols, _metric_cols = amc._classify_component_csv_header(
+            header or []
+        )
+        has_dims = bool(dim_cols)
+        for instance_dims, _start in amc._scan_instance_block_layout(
+            path, has_dims=has_dims,
+        ):
+            expected_tuples.add((component, *instance_dims))
+    assert len(expected_tuples) > 0, (
+        "per-component CSVs surfaced no dimension tuples — "
+        "test cannot exercise the long-form parity"
+    )
+    assert gauge_tuples == expected_tuples, (
+        f"gauges.csv dimension tuples must match per-component CSVs "
+        f"exactly (missing={len(expected_tuples - gauge_tuples)}, "
+        f"extra={len(gauge_tuples - expected_tuples)})"
+    )
+
+
+def test_n3_gauges_csv_chronological_order(n3_one_day_gauges_run, amc):
+    """Long-form rows are chronologically merged; consecutive rows must be
+    in non-decreasing timestamp order despite the per-component CSVs
+    holding non-monotonic block-then-block-then-block sequences."""
+    path = n3_one_day_gauges_run.out_dir / "gauges.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        prev_dt = None
+        for row in reader:
+            dt = amc._parse_csv_timestamp(row["timestamp"])
+            if prev_dt is not None:
+                assert dt >= prev_dt, (
+                    "N=3 gauges.csv rows must be in non-decreasing "
+                    "timestamp order across instance blocks"
+                )
+            prev_dt = dt
+
+
+def test_classify_component_csv_header_detects_dimensions(amc):
+    """The header inspector must classify both shapes:
+    dimensionless ``timestamp,m0,m1`` → no dim cols, all metrics; and
+    dimensioned ``timestamp,id,host,pod,az,region,tenant,m0,m1`` → six dim
+    cols + the remaining metric tail. An ambiguous header that only
+    partially matches the dim prefix must be treated as no-dim so a
+    user-staged CSV with a column literally named ``id`` cannot smuggle
+    in dimensioned parsing."""
+    flat = ["timestamp", "metric_a", "metric_b"]
+    dim_cols, metric_cols = amc._classify_component_csv_header(flat)
+    assert dim_cols == ()
+    assert metric_cols == ["metric_a", "metric_b"]
+
+    full = [
+        "timestamp", "id", "host", "pod", "az", "region", "tenant",
+        "metric_a", "metric_b",
+    ]
+    dim_cols, metric_cols = amc._classify_component_csv_header(full)
+    assert dim_cols == amc._INSTANCE_DIMENSION_COLUMNS
+    assert metric_cols == ["metric_a", "metric_b"]
+
+    partial = ["timestamp", "id", "metric_a"]
+    dim_cols, metric_cols = amc._classify_component_csv_header(partial)
+    assert dim_cols == ()
+    assert metric_cols == ["id", "metric_a"]
+
+    empty: list[str] = []
+    dim_cols, metric_cols = amc._classify_component_csv_header(empty)
+    assert dim_cols == ()
+    assert metric_cols == []
+
+
+def test_n3_gauges_csv_with_metrics_per_component_trim(amc, tmp_path):
+    """``--instances-per-component 3 --metrics-per-component 1`` exercises
+    the n_metrics slicing in ``_iter_component_instance_rows`` (the
+    per-block iterator slices each row to ``1 + dim_count + n_metrics``).
+    A regression in the slice would either drop the metric value or
+    pull in the next instance's dimension columns. Verified by:
+    1) the long-form 10-column header is unchanged (dim columns always
+       present when any CSV is dimensioned), and
+    2) the set of metric names in gauges.csv per component equals the
+       first MetricSpec of that component's catalog."""
+    out = tmp_path / "n3_trim"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,gauges",
+            "--instances-per-component", "3",
+            "--metrics-per-component", "1",
+            "--interval-seconds", "60",
+        ],
+    )
+    gauges = out / "gauges.csv"
+    assert gauges.exists()
+    rows = _read_rows(gauges)
+    assert rows, "trim run must emit some gauge rows"
+    metrics_by_component: dict[str, set[str]] = {}
+    for r in rows:
+        metrics_by_component.setdefault(r["component"], set()).add(r["metric"])
+    assert metrics_by_component, "no components surfaced in the trim run"
+    for component, metrics in metrics_by_component.items():
+        first_spec_name = amc.COMPONENTS[component][0].name
+        assert metrics == {first_spec_name}, (
+            f"--metrics-per-component=1 must restrict {component} to "
+            f"{first_spec_name!r}; saw {sorted(metrics)}"
+        )
+
+
+def test_scan_instance_block_layout_records_seekable_offsets(amc, tmp_path):
+    """The scan helper must record seek cookies (the opaque positions
+    Python's text-mode ``tell()`` returns) that ``seek()`` can hand to
+    ``csv.reader`` cleanly — anything else would corrupt the long-form
+    merge, because ``_iter_component_instance_rows`` ``seek()``s
+    straight to the recorded cookie and then parses with
+    ``csv.reader``. We assert the cookies land on row starts by
+    seeking + reading and comparing to a manual line-by-line walk
+    against a handle opened with the same ``encoding="utf-8"`` /
+    ``newline=""`` settings the implementation uses."""
+    csv_path = tmp_path / "synth_inst.csv"
+    csv_path.write_text(
+        "timestamp,id,host,pod,az,region,tenant,m_a\n"
+        "2026-03-10 00:00:00,i0,,pod-0,,,,1.0\n"
+        "2026-03-10 00:00:01,i0,,pod-0,,,,1.1\n"
+        "2026-03-10 00:00:00,i1,,pod-1,,,,2.0\n"
+        "2026-03-10 00:00:01,i1,,pod-1,,,,2.1\n"
+        "2026-03-10 00:00:00,i2,,pod-2,,,,3.0\n"
+    )
+    blocks = amc._scan_instance_block_layout(csv_path, has_dims=True)
+    assert [dims[0] for dims, _ in blocks] == ["i0", "i1", "i2"]
+
+    # Manually compute the text-mode seek cookie at the start of every
+    # non-header line (i.e. ``tell()`` BEFORE the next ``readline()``)
+    # and confirm the scan recorded those exact cookies for each
+    # block's first row. The handle uses the same ``encoding`` /
+    # ``newline`` settings the implementation does, so the cookie
+    # round-trip is well-defined.
+    with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+        fh.readline()  # header
+        i0_cookie = fh.tell()
+        fh.readline()  # i0 row 0
+        fh.readline()  # i0 row 1
+        i1_cookie = fh.tell()
+        fh.readline()  # i1 row 0
+        fh.readline()  # i1 row 1
+        i2_cookie = fh.tell()
+
+    assert blocks[0] == (("i0", "", "pod-0", "", "", ""), i0_cookie)
+    assert blocks[1] == (("i1", "", "pod-1", "", "", ""), i1_cookie)
+    assert blocks[2] == (("i2", "", "pod-2", "", "", ""), i2_cookie)
+
+    # End-to-end: passing the recorded seek cookie to the iterator
+    # must yield exactly the matching block's rows in order. A future
+    # regression that drifted the cookie by even one position (e.g.
+    # forgot ``newline=""``, or hand-rolled a parser that miscounted
+    # ``\r\n``) would surface here as a parse error or an off-by-one
+    # row count.
+    i1_rows = list(
+        amc._iter_component_instance_rows(
+            csv_path, i1_cookie, has_dims=True, n_metrics=1,
+        )
+    )
+    assert len(i1_rows) == 2
+    assert i1_rows[0][1] == "2026-03-10 00:00:00"
+    assert i1_rows[0][2] == ["2.0"]
+    assert i1_rows[1][2] == ["2.1"]
+
+
+def test_scan_instance_block_layout_dimensionless(amc, tmp_path):
+    """The has_dims=False path returns a single conceptual block at the
+    seek cookie right after the header line. The iterator's
+    has_dims=False branch then yields every data row without comparing
+    dim tuples."""
+    csv_path = tmp_path / "synth_flat.csv"
+    csv_path.write_text(
+        "timestamp,m_a,m_b\n"
+        "2026-03-10 00:00:00,1.0,2.0\n"
+        "2026-03-10 00:00:01,1.1,2.1\n"
+    )
+    blocks = amc._scan_instance_block_layout(csv_path, has_dims=False)
+    assert len(blocks) == 1
+    dims, cookie = blocks[0]
+    # Six empty-string dim slots — the dimensionless sentinel.
+    assert dims == tuple("" for _ in amc._INSTANCE_DIMENSION_COLUMNS)
+
+    with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+        fh.readline()
+        expected_cookie = fh.tell()
+    assert cookie == expected_cookie
+
+    rows = list(
+        amc._iter_component_instance_rows(
+            csv_path, cookie, has_dims=False, n_metrics=2,
+        )
+    )
+    assert [r[1] for r in rows] == [
+        "2026-03-10 00:00:00", "2026-03-10 00:00:01",
+    ]
+    assert [r[2] for r in rows] == [["1.0", "2.0"], ["1.1", "2.1"]]
+
+
+def test_ensure_long_form_fd_capacity_fits_under_default_limit(amc):
+    """At the documented N=3 default fan-out (13 components × 3 instances
+    = 39 sources), the FD pre-flight is a no-op on every platform that
+    has enough headroom in its FD hard limit — including macOS's
+    default 256 soft limit. A regression that lowered the margin or
+    capped the rlimit raise aggressively would surface here before the
+    merge ran. On Windows the helper is a no-op regardless
+    (``resource`` is POSIX-only), so the assertion that it doesn't
+    raise still holds.
+
+    The test is host-configuration aware: when the process is running
+    under an artificially low FD hard limit (e.g. a container with
+    ``ulimit -n`` below ``len(COMPONENTS) * 3 + _LONG_FORM_FD_MARGIN``)
+    the helper will *correctly* raise ``SystemExit``, and the test
+    skips rather than flagging the right behavior as a regression.
+    The constrained-limit branch is exercised explicitly by
+    ``test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low``
+    via a monkey-patched ``resource.getrlimit``."""
+    n_sources = len(amc.COMPONENTS) * 3
+    try:
+        import resource
+    except ImportError:
+        # Windows: helper is a documented no-op. Both calls below
+        # return immediately without inspecting an rlimit, so the
+        # no-raise assertion holds trivially.
+        amc._ensure_long_form_fd_capacity(0)
+        amc._ensure_long_form_fd_capacity(n_sources)
+        return
+    _soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    needed = n_sources + amc._LONG_FORM_FD_MARGIN
+    if hard != resource.RLIM_INFINITY and hard < needed:
+        pytest.skip(
+            f"FD hard limit ({hard}) is below the {needed} this test "
+            f"requires; the helper correctly raises here, which is "
+            f"the wrong condition for the no-raise assertion. The "
+            f"raise path is covered separately."
+        )
+    # No-op path: helper must not raise for a fan-out that fits inside
+    # the current FD limit.
+    amc._ensure_long_form_fd_capacity(0)
+    amc._ensure_long_form_fd_capacity(n_sources)
+
+
+def test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low(
+    amc, monkeypatch
+):
+    """A future fan-out beyond the hard limit must fail with an
+    actionable ``SystemExit`` that names the needed FD count and the
+    user-facing levers (``--instances-per-component``, ``--components``,
+    or ``ulimit -n``) rather than crashing inside ``heapq.merge`` with
+    ``OSError: [Errno 24] Too many open files``. We monkey-patch
+    ``resource.getrlimit`` to simulate a constrained environment so the
+    test stays deterministic across CI hosts.
+
+    The implementation explicitly no-ops on Windows when ``resource`` is
+    unavailable, so this test skips there — the constrained-rlimit
+    branch can't be exercised without POSIX ``RLIMIT_NOFILE``."""
+    resource = pytest.importorskip("resource")
+    monkeypatch.setattr(
+        resource, "getrlimit",
+        lambda which: (32, 32) if which == resource.RLIMIT_NOFILE else (0, 0),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        amc._ensure_long_form_fd_capacity(260)
+    msg = str(excinfo.value)
+    assert "260" in msg, msg
+    assert "FD" in msg or "file handle" in msg.lower(), msg
+    assert (
+        "--instances-per-component" in msg
+        or "ulimit" in msg
+        or "--components" in msg
+    ), msg
 
 
 # ------------------------------------------------------------------
