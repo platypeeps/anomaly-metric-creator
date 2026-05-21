@@ -1595,27 +1595,23 @@ def test_schema_emit_selection_compatible_with_instances_per_component(
     assert "schema" in args.emit_selection
 
 
-def test_validate_output_still_mutex_with_otel_emit_gauges(
-    amc, tmp_path, capsys,
-):
-    """The OTEL gauge stream still does not attach instance dimensions
-    as OTLP resource attributes (VER-149 Phase 6). The N>1 +
-    ``--otel-emit-gauges`` combination must therefore stay rejected
-    even after VER-151 lifts the schema/validator guards.
-
-    Pair ``--otel-emit-gauges`` with ``--otel-enabled`` and a metrics
-    endpoint so the unrelated "gauges requires enabled" pre-check
-    passes and the parser reaches the Phase 6 gating message we care
-    about here."""
-    with pytest.raises(SystemExit):
-        amc.parse_args([
-            "--output-dir", str(tmp_path / "gen"),
-            "--duration-days", "1",
-            "--instances-per-component", "3",
-            "--otel-enabled",
-            "--otel-metrics-endpoint", "https://example.invalid/v1/metrics",
-            "--otel-emit-gauges",
-        ])
-    err = capsys.readouterr().err
-    assert "otel-emit-gauges" in err
-    assert "Phase 6" in err
+def test_n2_plus_otel_emit_gauges_allowed(amc, tmp_path):
+    """VER-149 Phase 6 wired the OTEL streamer's dimension attributes,
+    so ``--instances-per-component > 1`` + ``--otel-emit-gauges`` is
+    permitted at parse time. ``stream_otel_gauges`` reads the dimension
+    columns off each per-component CSV and emits every non-empty
+    ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string attribute on the
+    OTLP gauge data point. After VER-151 Phase 8 lifts the
+    schema/validator guards there is no remaining multi-instance gate
+    on this combination."""
+    args = amc.parse_args([
+        "--output-dir", str(tmp_path / "gen"),
+        "--duration-days", "1",
+        "--instances-per-component", "3",
+        "--otel-enabled",
+        "--otel-metrics-endpoint", "https://example.invalid/v1/metrics",
+        "--otel-emit-gauges",
+    ])
+    assert args.instances_per_component == 3
+    assert args.otel_enabled is True
+    assert args.otel_emit_gauges is True
