@@ -430,16 +430,16 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# --combine-only is rejected when --instance-config is set
+# --combine-only is allowed when --instance-config is set (post-Phase 5)
 # ---------------------------------------------------------------------------
 
-def test_instance_config_combine_only_rejected(amc, tmp_path):
-    """--combine-only + --instance-config is rejected at parse time.
+def test_instance_config_combine_only_allowed(amc, tmp_path):
+    """--combine-only + --instance-config is permitted at parse time.
 
-    The combine writer is not dimension-aware yet (tracked under VER-148
-    Phase 5). The shared ``_multi_instance`` gate treats this combination
-    the same way as ``--instances-per-component > 1 + --combine-only``:
-    fail at parse time so the user doesn't get a silent no-op.
+    Phase 5 (VER-148) made the combine writer dimension-aware (long-form
+    dispatch when per-component CSVs carry the dimension prefix), so the
+    shared ``_multi_instance`` gate no longer rejects this combination.
+    Mirrors the ``--instances-per-component > 1 + --combine-only`` lift.
     """
     cfg = _write_yaml(tmp_path, """
 components:
@@ -452,11 +452,12 @@ components:
     # --output-dir in extra_args.
     out = tmp_path / "existing"
     out.mkdir()
-    with pytest.raises(SystemExit):
-        _parse(amc, [
-            "--instance-config", str(cfg),
-            "--combine-only",
-        ], out)
+    args = _parse(amc, [
+        "--instance-config", str(cfg),
+        "--combine-only",
+    ], out)
+    assert args.combine_only is True
+    assert args.instance_config == cfg
 
 
 # ---------------------------------------------------------------------------

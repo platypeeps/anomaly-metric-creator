@@ -866,6 +866,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 f.write("\n")
             else:
                 # Long form: timestamp,id,host,pod,az,region,tenant,<metrics>
+                # ``_INSTANCE_DIMENSION_COLUMNS`` is the single source of
+                # truth for the column order; ``_iter_component_rows`` lifts
+                # the same prefix back into the per-row dimensions dict
+                # consumed by the OTEL gauge attributes path (VER-149 Phase 6).
                 dim_header = "timestamp," + ",".join(_INSTANCE_DIMENSION_COLUMNS)
                 f.write(dim_header + "," + ",".join(fieldnames) + "\n")
                 # Phase 4: precompute the shared metric suffix once. The
@@ -5908,36 +5912,25 @@ def parse_args(argv=None):
             "would silently skip the DST splice); pass --inject-dst-artifact-day 0 "
             "or use the default single-instance mode"
         )
-    # The file-form long-form writers (``gauges.csv`` and
-    # ``combined_metrics_unified.csv``) became dimension aware in VER-148
-    # Phase 5: header inspection dispatches to a 10-column layout when
-    # the per-component CSVs carry the ``id, host, pod, az, region,
-    # tenant`` prefix, otherwise the historic 4-column / wide layouts
-    # stay byte-identical. The OTEL streamer (``--otel-emit-gauges`` and
-    # the broader ``--otel-enabled`` path) does not yet attach dimensions
-    # as OTLP resource attributes (VER-149 Phase 6), and the schema doc
-    # plus ``--validate-output`` do not yet declare the dim columns
-    # (VER-151 Phase 8). Running those against a multi-instance run
-    # silently produces wrong output (OTLP data points without instance
-    # attributes, schema-validation failures against a Phase-2/3-correct
-    # CSV), so the combinations below are rejected up-front with a clear,
-    # phase-attributed error instead of a downstream corruption.
+    # Multi-instance dimension-awareness status by emitter:
+    #
+    # - File-form long-form writers (``gauges.csv`` /
+    #   ``combined_metrics_unified.csv``): wired in VER-148 Phase 5.
+    #   Header inspection dispatches to a 10-column layout when the
+    #   per-component CSVs carry the ``id, host, pod, az, region,
+    #   tenant`` prefix; the historic 4-column / wide layouts stay
+    #   byte-identical when the prefix is absent. No gate below.
+    # - OTEL streaming (``--otel-enabled`` / ``--otel-emit-gauges``):
+    #   wired in VER-149 Phase 6. ``stream_otel_gauges`` and
+    #   ``stream_otel_signals`` lift the dimension columns off each
+    #   row and surface them as string attributes on every OTLP data
+    #   point. No gate below.
+    # - Phase 8 schema/validator (``--emit-selection schema`` /
+    #   ``--validate-output``): not yet dimension aware (VER-151).
+    #   The schema does not declare dim columns, so
+    #   ``--validate-output`` would reject every multi-instance run
+    #   as schema drift. Gated below.
     if _multi_instance:
-        # VER-148 Phase 5 lifted the ``--combine`` / ``--combine-only`` /
-        # ``--emit-selection gauges`` guards: the combined CSV and the
-        # file-form gauge writer now both dispatch to a long-form layout
-        # when the per-component CSVs carry the dimension prefix. The
-        # OTEL gauge stream (``--otel-emit-gauges``) is still gated under
-        # VER-149 Phase 6 because the OTEL streamer does not attach
-        # instance dimensions as OTLP resource attributes yet.
-        if args.otel_emit_gauges:
-            p.error(
-                f"{_multi_instance_flag} is incompatible with "
-                "--otel-emit-gauges: the OTEL gauge stream does not yet "
-                "attach instance dimensions as OTLP resource attributes "
-                "(tracked under VER-149 Phase 6). Drop --otel-emit-gauges "
-                "or use the default single-instance mode."
-            )
         phase8_flags = []
         if args.validate_output is not None:
             phase8_flags.append("--validate-output")
@@ -5950,14 +5943,6 @@ def parse_args(argv=None):
                 f"the dimension columns and --validate-output would reject the "
                 f"run (tracked under VER-151 Phase 8). Drop the flag(s) or "
                 f"use the default single-instance mode."
-            )
-        if args.otel_enabled:
-            p.error(
-                f"{_multi_instance_flag} is incompatible with "
-                "--otel-enabled: the OTEL streamer does not yet attach "
-                "instance dimensions as OTLP resource attributes (tracked "
-                "under VER-149 Phase 6). Drop --otel-enabled or use the "
-                "default single-instance mode."
             )
     if args.otel_gauge_batch_seconds <= 0:
         p.error("--otel-gauge-batch-seconds must be > 0")
@@ -6635,7 +6620,14 @@ def _build_otlp_trace_protobuf(entry: dict) -> bytes:
 
 
 def _build_otlp_metric_payload(entry: dict) -> dict:
-    """Build one OTLP/HTTP JSON ``resourceMetrics`` payload from one anomaly event."""
+    """Build one OTLP/HTTP JSON ``resourceMetrics`` payload from one anomaly event.
+
+    VER-149 Phase 6: when the anomaly entry carries a ``dimensions`` dict
+    (currently empty in v1; populated by Phase 4 ``instance_filter``), each
+    non-empty key/value pair is emitted as a string attribute alongside the
+    base four (``event.id``, ``signal.type``, ``metric.name``,
+    ``component``). Empty-string and ``None`` values are skipped.
+    """
     event_id = _anomaly_event_id(entry)
     component = entry["component"]
     metric = entry["metric"]
@@ -6647,6 +6639,13 @@ def _build_otlp_metric_payload(entry: dict) -> dict:
         {"key": "metric.name", "value": {"stringValue": metric}},
         {"key": "component", "value": {"stringValue": component}},
     ]
+    for dim_key, dim_value in (entry.get("dimensions") or {}).items():
+        if dim_value is None or dim_value == "":
+            continue
+        attributes.append({
+            "key": dim_key,
+            "value": {"stringValue": str(dim_value)},
+        })
     ts_nano = _to_unix_nanos(timestamp)
     return {
         "resourceMetrics": [{
@@ -6681,7 +6680,12 @@ def _build_otlp_metric_payload(entry: dict) -> dict:
 
 
 def _build_otlp_metric_protobuf(entry: dict) -> bytes:
-    """Build one OTLP protobuf ExportMetricsServiceRequest payload."""
+    """Build one OTLP protobuf ExportMetricsServiceRequest payload.
+
+    Mirrors the JSON builder's VER-149 Phase 6 behavior on
+    ``entry["dimensions"]``: non-empty values are emitted as string
+    attributes; empty / ``None`` cells are dropped.
+    """
     try:
         from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
         from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
@@ -6701,6 +6705,13 @@ def _build_otlp_metric_protobuf(entry: dict) -> bytes:
         KeyValue(key="metric.name", value=AnyValue(string_value=metric)),
         KeyValue(key="component", value=AnyValue(string_value=component)),
     ]
+    for dim_key, dim_value in (entry.get("dimensions") or {}).items():
+        if dim_value is None or dim_value == "":
+            continue
+        attributes.append(KeyValue(
+            key=dim_key,
+            value=AnyValue(string_value=str(dim_value)),
+        ))
 
     req = ExportMetricsServiceRequest()
     rmetric = req.resource_metrics.add()
@@ -6730,7 +6741,8 @@ def _build_otlp_gauge_payload(batch: list[dict], *, metric_prefix: str = "") -> 
     """Build one OTLP/HTTP JSON ``resourceMetrics`` payload for a batch of per-row gauge values.
 
     Each ``batch`` entry is
-    ``{"timestamp": str, "time_unix_nano": int, "component": str, "metric": str, "value": float}``.
+    ``{"timestamp": str, "time_unix_nano": int, "component": str, "metric": str,
+       "value": float, "dimensions": dict[str, str] (optional)}``.
     ``time_unix_nano`` is precomputed once per CSV row in ``stream_otel_gauges``
     so the builder does not re-parse the timestamp string per data point — the
     default config emits ~7,800 data points per batch, and per-data-point
@@ -6738,6 +6750,10 @@ def _build_otlp_gauge_payload(batch: list[dict], *, metric_prefix: str = "") -> 
     Entries are grouped first by ``component`` (one ``resourceMetrics`` entry
     per component) and then by ``metric`` (one ``metrics[]`` entry per metric
     within the component's scope), with one Gauge data point per row.
+    ``dimensions`` (VER-149 Phase 6) — when non-empty, each key/value pair is
+    emitted as an additional string attribute alongside ``metric.name``,
+    ``component``, and ``signal.type``. Empty-string and ``None`` values are
+    skipped so the OTEL stream never carries empty-string attributes.
     """
     grouped: dict[str, dict[str, list[dict]]] = {}
     for entry in batch:
@@ -6751,14 +6767,22 @@ def _build_otlp_gauge_payload(batch: list[dict], *, metric_prefix: str = "") -> 
         for metric_name, entries in metrics_map.items():
             data_points = []
             for entry in entries:
+                attributes = [
+                    {"key": "metric.name", "value": {"stringValue": metric_name}},
+                    {"key": "component", "value": {"stringValue": component}},
+                    {"key": "signal.type", "value": {"stringValue": "metric_value"}},
+                ]
+                for dim_key, dim_value in (entry.get("dimensions") or {}).items():
+                    if dim_value is None or dim_value == "":
+                        continue
+                    attributes.append({
+                        "key": dim_key,
+                        "value": {"stringValue": str(dim_value)},
+                    })
                 data_points.append({
                     "timeUnixNano": str(entry["time_unix_nano"]),
                     "asDouble": float(entry["value"]),
-                    "attributes": [
-                        {"key": "metric.name", "value": {"stringValue": metric_name}},
-                        {"key": "component", "value": {"stringValue": component}},
-                        {"key": "signal.type", "value": {"stringValue": "metric_value"}},
-                    ],
+                    "attributes": attributes,
                 })
             metrics_list.append({
                 "name": f"{metric_prefix}{metric_name}",
@@ -6787,7 +6811,10 @@ def _build_otlp_gauge_protobuf(batch: list[dict], *, metric_prefix: str = "") ->
 
     Same grouping as ``_build_otlp_gauge_payload``: one ``resource_metrics`` per
     component, one ``metrics`` entry per (component, metric) pair, with one Gauge
-    data point per batch row for that metric.
+    data point per batch row for that metric. Mirrors the JSON builder's
+    VER-149 Phase 6 behavior: any non-empty ``dimensions`` key on a batch
+    entry is emitted as a string attribute alongside ``metric.name``,
+    ``component``, and ``signal.type``.
     """
     try:
         from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
@@ -6826,6 +6853,13 @@ def _build_otlp_gauge_protobuf(batch: list[dict], *, metric_prefix: str = "") ->
                     KeyValue(key="component", value=AnyValue(string_value=component)),
                     KeyValue(key="signal.type", value=AnyValue(string_value="metric_value")),
                 ])
+                for dim_key, dim_value in (entry.get("dimensions") or {}).items():
+                    if dim_value is None or dim_value == "":
+                        continue
+                    dp.attributes.append(KeyValue(
+                        key=dim_key,
+                        value=AnyValue(string_value=str(dim_value)),
+                    ))
     return req.SerializeToString()
 
 
@@ -7141,8 +7175,17 @@ def stream_otel_signals(
 
 
 def _iter_component_rows(component: str, csv_path: Path):
-    """Yield ``(timestamp_str, component, [(metric_name, value)...])`` for each
-    data row in ``csv_path``.
+    """Yield ``(timestamp_str, component, [(metric_name, value)...], dimensions)``
+    for each data row in ``csv_path``.
+
+    ``dimensions`` is a ``dict[str, str]`` carrying any
+    ``_INSTANCE_DIMENSION_COLUMNS`` cells lifted off the row when the CSV
+    was emitted with Phase 2's multi-instance fan-out (header begins
+    ``timestamp,id,host,pod,az,region,tenant,...``). Dimensionless CSVs
+    (today's default, ``--instances-per-component 1``) yield an empty dict,
+    so downstream consumers can treat the field as always present.
+    Empty-string dimension cells are omitted from the dict so the OTEL
+    attribute path never emits empty-string attributes (VER-149 Phase 6).
 
     ``generate_component`` omits dropped rows from the CSV entirely (via the
     ``keep_mask``) rather than writing them as blank lines, so under normal
@@ -7154,20 +7197,41 @@ def _iter_component_rows(component: str, csv_path: Path):
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
-        metric_cols = header[1:]
+        # Detect the Phase 2 dimension column block. The block is the full
+        # ``_INSTANCE_DIMENSION_COLUMNS`` tuple in canonical order starting at
+        # column 1, written verbatim by ``generate_component`` — a partial /
+        # reordered header is treated as "no dimensions" and those columns
+        # flow into the metric path (where ``float(raw)`` will naturally skip
+        # them).
+        dim_col_count = len(_INSTANCE_DIMENSION_COLUMNS)
+        if (header[0:1] == ["timestamp"]
+                and len(header) >= 1 + dim_col_count
+                and tuple(header[1:1 + dim_col_count])
+                == _INSTANCE_DIMENSION_COLUMNS):
+            dim_cols = _INSTANCE_DIMENSION_COLUMNS
+            metric_start = 1 + dim_col_count
+        else:
+            dim_cols = ()
+            metric_start = 1
+        metric_cols = header[metric_start:]
         for row in reader:
             if not row:
                 continue
             ts = row[0]
+            dimensions: dict[str, str] = {}
+            for name, raw in zip(dim_cols, row[1:metric_start]):
+                if raw == "":
+                    continue
+                dimensions[name] = raw
             values = []
-            for name, raw in zip(metric_cols, row[1:]):
+            for name, raw in zip(metric_cols, row[metric_start:]):
                 if raw == "":
                     continue
                 try:
                     values.append((name, float(raw)))
                 except ValueError:
                     continue
-            yield ts, component, values
+            yield ts, component, values, dimensions
 
 
 # Margin reserved for stdin/stdout/stderr + the output file + room
@@ -8816,8 +8880,8 @@ def stream_otel_gauges(
     )
 
     def _keyed_iter(component: str, csv_path: Path):
-        for ts, comp, values in _iter_component_rows(component, csv_path):
-            yield (_parse_csv_timestamp(ts), ts, comp, values)
+        for ts, comp, values, dimensions in _iter_component_rows(component, csv_path):
+            yield (_parse_csv_timestamp(ts), ts, comp, values, dimensions)
 
     iters = [_keyed_iter(c, p) for c, p in component_csv_paths.items() if p.exists()]
 
@@ -8965,7 +9029,9 @@ def stream_otel_gauges(
         return True
 
     try:
-        for dt, ts, comp, values in heapq.merge(*iters, key=lambda item: item[0]):
+        for dt, ts, comp, values, dimensions in heapq.merge(
+            *iters, key=lambda item: item[0]
+        ):
             if not values:
                 continue
             if batch_start_dt is None:
@@ -8989,6 +9055,7 @@ def stream_otel_gauges(
                     "component": comp,
                     "metric": metric_name,
                     "value": value,
+                    "dimensions": dimensions,
                 })
         if not aborted:
             _flush()
