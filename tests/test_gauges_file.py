@@ -558,22 +558,32 @@ def test_n3_gauges_csv_tie_break_within_timestamp(n3_one_day_gauges_run):
     then metric columns in MetricSpec order (i.e. the per-component CSV's
     declared column order). A regression in the source-sort key or the
     per-instance block iterator would trip this assertion before the
-    byte-identity test."""
-    from itertools import groupby
-    rows = _read_rows(n3_one_day_gauges_run.out_dir / "gauges.csv")
+    byte-identity test.
+
+    Streams ``gauges.csv`` via ``csv.DictReader`` and bails out after
+    the first 60 timestamp groups (the first minute of a 1-day run)
+    so the ~19.4M-row N=3 long-form file never sits in memory at once.
+    The keep-only-the-current-group accumulator buffers at most one
+    timestamp's rows (~117 entries at full fan-out) before flushing
+    the per-group order checks."""
+    out_dir = n3_one_day_gauges_run.out_dir
     saw_groups = 0
-    for ts, ts_group in groupby(rows, key=lambda r: r["timestamp"]):
-        ts_group = list(ts_group)
+    target_groups = 60
+    current_ts: str | None = None
+    current_group: list[dict[str, str]] = []
+
+    def _check_group(ts: str, rows: list[dict[str, str]]) -> None:
+        from itertools import groupby
         # Component-level: first appearance of each component must be sorted.
         component_order = []
-        for comp, _ in groupby(ts_group, key=lambda r: r["component"]):
+        for comp, _ in groupby(rows, key=lambda r: r["component"]):
             component_order.append(comp)
         assert component_order == sorted(component_order), (
             f"timestamp {ts!r}: components appeared in {component_order}, "
             f"expected sorted order {sorted(component_order)}"
         )
         # Within each component, instance ids must be in sorted order.
-        for comp, comp_group in groupby(ts_group, key=lambda r: r["component"]):
+        for comp, comp_group in groupby(rows, key=lambda r: r["component"]):
             instance_order = []
             for inst_id, _ in groupby(
                 comp_group, key=lambda r: r["id"]
@@ -584,9 +594,27 @@ def test_n3_gauges_csv_tie_break_within_timestamp(n3_one_day_gauges_run):
                 f"appeared in {instance_order}, expected sorted order "
                 f"{sorted(instance_order)}"
             )
-        saw_groups += 1
-        if saw_groups >= 60:  # bound runtime — first minute of 1-day run
-            break
+
+    with open(out_dir / "gauges.csv", "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ts = row["timestamp"]
+            if current_ts is None:
+                current_ts = ts
+            if ts != current_ts:
+                _check_group(current_ts, current_group)
+                saw_groups += 1
+                if saw_groups >= target_groups:
+                    current_ts = None  # signal: don't flush below
+                    break
+                current_ts = ts
+                current_group = []
+            current_group.append(row)
+        else:
+            # Loop fell through (EOF before hitting target_groups).
+            if current_ts is not None and current_group:
+                _check_group(current_ts, current_group)
+                saw_groups += 1
     assert saw_groups > 0, "no rows in N=3 long-form gauges.csv"
 
 
