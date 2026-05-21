@@ -3094,11 +3094,10 @@ def _compute_topology_arrays_per_instance(
 ) -> tuple[
     list[dict[str, np.ndarray]],
     list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]],
-    bool,
 ]:
     """Compute per-instance coupling and saturation arrays for ``component_name``.
 
-    Returns ``(coupling_by_instance, saturation_by_instance, any_divergence)``:
+    Returns ``(coupling_by_instance, saturation_by_instance)``:
 
     * ``coupling_by_instance[K][metric_name]`` is the per-row coupled
       baseline array for downstream instance ``K``'s coupled load
@@ -3110,11 +3109,11 @@ def _compute_topology_arrays_per_instance(
       ``K``'s saturation-target metrics (composes with
       ``MetricSpec.multiplier`` / ``MetricSpec.additive`` via the
       ``_natural_column`` kwargs).
-    * ``any_divergence`` is ``True`` when at least one instance's
-      arrays differ from instance 0's; ``False`` means every
-      instance has the same view and the caller can take the
-      shared-draw fast path (preserving today's N=3 byte parity for
-      symmetric-upstream scenarios).
+    Divergence detection (symmetric vs. asymmetric upstream) is
+    deferred to the caller (``generate_component``) via
+    ``_arrays_equal_dict`` / ``_sat_tuples_equal_dict``, which runs
+    exactly once against the returned arrays. Doing it here too would
+    duplicate an O(N_instances × n_rows) byte-comparison pass.
 
     Shared ``rng.normal`` noise for callable+constant coupling is
     drawn once and reused across all instances so the
@@ -3152,7 +3151,7 @@ def _compute_topology_arrays_per_instance(
             if edge.target == component_name:
                 incoming.append((upstream, edge))
     if not incoming:
-        return coupling_by_instance, saturation_by_instance, False
+        return coupling_by_instance, saturation_by_instance
 
     # Shared callable+constant noise per coupled metric (drawn here so
     # all per-instance arrays share the same noise floor under
@@ -3321,23 +3320,7 @@ def _compute_topology_arrays_per_instance(
                     None, error_offset
                 )
 
-    # Divergence detection: compare instance 0 vs all others. Identical
-    # if every (metric, array) pair byte-matches instance 0.
-    any_divergence = False
-    if n_inst > 1:
-        ref_coupling = coupling_by_instance[0]
-        ref_saturation = saturation_by_instance[0]
-        for inst_idx in range(1, n_inst):
-            if not _arrays_equal_dict(coupling_by_instance[inst_idx], ref_coupling):
-                any_divergence = True
-                break
-            if not _sat_tuples_equal_dict(
-                saturation_by_instance[inst_idx], ref_saturation
-            ):
-                any_divergence = True
-                break
-
-    return coupling_by_instance, saturation_by_instance, any_divergence
+    return coupling_by_instance, saturation_by_instance
 
 
 def _arrays_equal_dict(
@@ -10411,7 +10394,6 @@ def main(argv=None):
                 (
                     coupling_per_instance,
                     saturation_per_instance,
-                    _divergent,
                 ) = _compute_topology_arrays_per_instance(
                     name, specs, upstream_arrays,
                     upstream_arrays_by_instance,

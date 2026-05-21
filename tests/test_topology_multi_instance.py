@@ -34,7 +34,9 @@ import hashlib
 import numpy as np
 import pytest
 
-from conftest import read_component_rows, run_capture
+import csv
+
+from conftest import run_capture
 
 
 def _sha256_path(path) -> str:
@@ -110,26 +112,21 @@ def synthetic_n3_run(amc, tmp_path_factory):
 
 
 def _instance_block_rows(out_dir, component, instance_id, metric):
-    """Return ``np.ndarray`` of float values for ``component`` /
-    ``instance_id`` / ``metric`` from the long-form per-component CSV.
+    """Return ``(timestamps, values)`` for ``component`` / ``instance_id`` /
+    ``metric`` from the long-form per-component CSV.
 
-    Reads ``component.csv`` directly because ``read_component_rows``
-    collapses on timestamp keys and can't distinguish per-instance
-    rows when the long-form layout repeats timestamps per instance.
+    Reads the CSV in a single pass: the header line is consumed first
+    to resolve column indices, then each data row is streamed without
+    materialising the whole file.
     """
-    rows, header = read_component_rows(out_dir, component)  # only used for header
-    # Re-read raw to walk every instance block.
-    metric_idx = header.index(metric)
-    id_idx = header.index("id")
     out: list[tuple[str, float]] = []
-    with open(out_dir / f"{component}.csv") as f:
-        f.readline()  # skip header
-        for line in f:
-            line = line.rstrip("\n")
-            if not line:
-                continue
-            cells = line.split(",")
-            if cells[id_idx] != instance_id:
+    with open(out_dir / f"{component}.csv", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        metric_idx = header.index(metric)
+        id_idx = header.index("id")
+        for cells in reader:
+            if not cells or cells[id_idx] != instance_id:
                 continue
             out.append((cells[0], float(cells[metric_idx])))
     out.sort(key=lambda kv: kv[0])

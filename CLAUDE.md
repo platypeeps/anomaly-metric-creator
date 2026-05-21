@@ -307,9 +307,10 @@ flag:
       symmetric upstream produces byte-identical coupling arrays
       across pods — and therefore byte-identical CSV output to
       the lambda-baked path.
-    - Returns `(coupling_by_instance, saturation_by_instance,
-      any_divergence)`. The `any_divergence` flag drives the fast
-      path in `generate_component`: under symmetric upstream every
+    - Returns `(coupling_by_instance, saturation_by_instance)`.
+      `generate_component` detects symmetric vs. asymmetric upstream
+      by comparing the returned arrays once via `_arrays_equal_dict`
+      / `_sat_tuples_equal_dict`: under symmetric upstream every
       instance's arrays are equal, so the natural-column draw runs
       *once* per metric and the result is reused across all
       instances (preserves `N3_ONE_DAY_HASHES` /
