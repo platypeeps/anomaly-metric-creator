@@ -1394,9 +1394,21 @@ def test_validate_component_cells_flags_missing_dim_column_when_declared(
         schema_run_n3, schema, component
     )
     assert violations, "missing dim column must produce a header drift violation"
-    assert "header" in violations[0]
-    assert "pod" not in violations[0].split("does not match schema")[0] or (
-        "pod" in violations[0]  # the message lists the expected pod column
+    msg = violations[0]
+    actual_section, _, expected_section = msg.partition("does not match schema")
+    assert expected_section, (
+        f"violation message must follow the 'header ... does not match schema "
+        f"column order ...' format; got {msg!r}"
+    )
+    # ``pod`` was dropped from the on-disk header, but the schema still
+    # declares it. The actual-header section must not list ``pod`` and the
+    # expected-column-order section must.
+    assert "'pod'" not in actual_section, (
+        f"actual header must not include the dropped 'pod' column; got {msg!r}"
+    )
+    assert "'pod'" in expected_section, (
+        f"expected column order must list the schema-declared 'pod' column; "
+        f"got {msg!r}"
     )
 
 

@@ -7745,7 +7745,7 @@ def _edge_to_schema_entry(edge: "Edge") -> dict:
 
 
 def _component_dimensions_schema_entry(
-    instances: list["Instance"],
+    instances: list["Instance"] | None,
 ) -> dict | None:
     """Return the ``schema.json`` ``dimensions`` entry for a component's
     instance list, or ``None`` for the dimensionless default.
@@ -8059,16 +8059,17 @@ def _validate_component_row_count(
             f"+ DST splice {dst_extra}, cardinality={cardinality})"
         )
     # Under-emission lower bound: with drop_rate p and N rows the surviving
-    # count per instance is N*(1-p) with std sqrt(N*p*(1-p)); summed across
-    # ``cardinality`` independent fan-out instances the mean scales by
-    # ``cardinality`` and the variance by ``cardinality`` so the std scales
-    # by sqrt(cardinality). Allow a generous 8-sigma band on top of an
-    # absolute floor so a tiny N doesn't trigger a false positive
-    # (e.g. a 144-row 600s smoke run).
+    # count per instance is N*(1-p) with std sqrt(N*p*(1-p)). ``generate_component``
+    # draws a single ``drop_mask`` and reuses the same ``keep_mask`` for every
+    # instance's row block, so row drops are *perfectly correlated* across
+    # instances — the total surviving-row count is cardinality times the
+    # per-instance count, and the std scales linearly (not by sqrt) on
+    # ``cardinality``. Allow a generous 8-sigma band on top of that so a tiny
+    # N doesn't trigger a false positive (e.g. a 144-row 600s smoke run).
     if drop_rate < 1.0:
         if base_rows > 0:
             per_instance_std = math.sqrt(base_rows * drop_rate * (1.0 - drop_rate))
-            std = per_instance_std * math.sqrt(cardinality)
+            std = per_instance_std * cardinality
             lower = int(base_rows * cardinality * (1.0 - drop_rate) - 8.0 * std)
             if lower < 0:
                 lower = 0
@@ -8425,11 +8426,18 @@ def _read_component_metric_column(
             else:
                 per_ts_sum[ts] += value
                 per_ts_count[ts] += 1
-    # Sort the timestamp axis so the per-instance block layout of the
-    # dim-aware CSV (i0 chronological, then i1 chronological, ...) does
-    # not leave ``order`` non-monotonic and confuse the downstream
-    # forward-sweep mask. Dimensionless CSVs are already chronological,
-    # so the sort is a no-op there.
+    # Sort the timestamp axis so non-monotonic per-row layouts don't
+    # confuse the downstream forward-sweep mask. Two sources of
+    # non-monotonicity: (1) the dim-aware per-component CSV writes
+    # contiguous per-instance blocks (i0 chronological, then i1
+    # chronological, ...), so ``order`` restarts at ts_0 at each block
+    # boundary; (2) the dimensionless ``--inject-dst-artifact-day > 0``
+    # path (mutex with the multi-instance path) duplicates the 02:00–
+    # 02:59 wall-clock hour, so ``order`` repeats that hour's
+    # timestamps mid-CSV. The unconditional sort normalizes both into
+    # a monotonic per-timestamp axis; for a plain default
+    # dimensionless CSV the input is already monotonic so the sort is
+    # a no-op.
     order.sort()
     values = np.array(
         [per_ts_sum[ts] / per_ts_count[ts] for ts in order],
