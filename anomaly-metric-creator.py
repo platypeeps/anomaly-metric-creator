@@ -498,7 +498,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        topology_capture: dict[str, dict[str, np.ndarray]] | None = None,
                        topology_capture_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = None,
                        coupling_arrays_per_instance: list[dict[str, np.ndarray]] | None = None,
-                       saturation_arrays_per_instance: list[dict[str, tuple[np.ndarray, np.ndarray]]] | None = None,
+                       saturation_arrays_per_instance: list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]] | None = None,
                        apply_dtype_int_cast: bool = True):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
@@ -702,6 +702,26 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     pre_populated_per_instance_eager: dict[int, np.ndarray] = {}
     if use_per_instance_topology:
         n_inst_local = len(instances)
+        # Defensive shape check: the per-instance arrays are indexed by
+        # instance position below ([0] for the fast path, range() for
+        # the divergent loop). A mismatched length would surface as a
+        # confusing IndexError mid-loop; raise a clear ValueError up
+        # front so programmatic callers see exactly which list is the
+        # wrong shape. ``main()`` always passes lists built from
+        # ``_compute_topology_arrays_per_instance`` with this length,
+        # so this branch only catches third-party or test misuse.
+        if (
+            len(coupling_arrays_per_instance) != n_inst_local
+            or len(saturation_arrays_per_instance) != n_inst_local
+        ):
+            raise ValueError(
+                f"generate_component({component_name!r}) per-instance "
+                f"topology arrays must match len(instances)={n_inst_local}; "
+                f"got coupling_arrays_per_instance="
+                f"{len(coupling_arrays_per_instance)} and "
+                f"saturation_arrays_per_instance="
+                f"{len(saturation_arrays_per_instance)}."
+            )
         per_inst_divergent = False
         if n_inst_local > 1:
             ref_coupling = coupling_arrays_per_instance[0]
@@ -912,9 +932,53 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             canonical_up, supplementary_up = entry
             load_metrics = (canonical_up, *supplementary_up)
             captured: dict[str, np.ndarray] = {}
+            # When per-instance buffers diverged from the shared
+            # ``values`` (an ``instance_filter`` partial override on a
+            # load metric, or per-instance topology produced divergent
+            # baselines), an instance-0-only capture biases every
+            # downstream consumer of the aggregate ``topology_capture``
+            # view. Mirror the documented "uniform fan-out — mean
+            # across upstream pods" contract by averaging across all
+            # instance buffers (instance 0 is ``values``; the rest
+            # live in ``per_instance_values``). When no buffer
+            # diverged, the average equals ``values`` exactly and
+            # the captured bytes are unchanged.
+            inst_count = len(instances)
+            may_diverge = bool(per_instance_values) and inst_count > 1
             for lm in load_metrics:
                 if lm and lm in name_to_col:
-                    captured[lm] = values[:, name_to_col[lm]].copy()
+                    col_idx = name_to_col[lm]
+                    shared_col = values[:, col_idx]
+                    captured_col: np.ndarray | None = None
+                    if may_diverge:
+                        # ``per_instance_values`` may be populated by a
+                        # filter on a *non-load* metric, in which case
+                        # the load column is byte-identical across all
+                        # instances and the historic ``shared_col.copy()``
+                        # capture stays byte-exact. Only switch to the
+                        # equal-weight mean when at least one
+                        # per-instance buffer actually diverged on
+                        # this load column.
+                        any_diverged = False
+                        for buf in per_instance_values.values():
+                            if not np.array_equal(
+                                buf[:, col_idx], shared_col
+                            ):
+                                any_diverged = True
+                                break
+                        if any_diverged:
+                            full_cols = [
+                                per_instance_values.get(
+                                    inst_idx_k, values
+                                )[:, col_idx]
+                                for inst_idx_k in range(inst_count)
+                            ]
+                            captured_col = np.mean(
+                                np.stack(full_cols, axis=0), axis=0
+                            )
+                    if captured_col is None:
+                        captured_col = shared_col.copy()
+                    captured[lm] = captured_col
             if captured:
                 topology_capture[component_name] = captured
 
@@ -2947,6 +3011,8 @@ def _per_instance_upstream_view(
     upstream_arrays_shared: dict[str, np.ndarray] | None,
     downstream_inst_count: int,
     downstream_inst_idx: int,
+    *,
+    uniform_fanout_cache: dict[str, dict[str, np.ndarray]] | None = None,
 ) -> dict[str, np.ndarray] | None:
     """Return the captured-column dict that downstream instance K should
     consume from ``upstream_name``.
@@ -2962,6 +3028,14 @@ def _per_instance_upstream_view(
     composer skips this edge so a ``--components`` subset that drops
     the upstream degrades gracefully (identical to the N=1 path's
     ``upstream not in upstream_arrays`` guard).
+
+    ``uniform_fanout_cache`` (optional) memoizes the averaged upstream
+    dict by ``upstream_name``. Under mismatched cardinality the
+    averaged view is identical for every downstream instance, so
+    callers that loop across downstream instances pass a shared dict
+    to avoid repeating the ``np.stack`` / ``np.mean`` work
+    (O(N_down * N_up * n_rows) → O(N_up * n_rows)). Pass ``None`` for
+    one-shot callers.
     """
     if upstream_arrays_by_instance is None:
         # No per-instance capture available for the upstream — fall
@@ -2975,13 +3049,16 @@ def _per_instance_upstream_view(
     n_up = len(upstream_arrays_by_instance)
     if _matched_cardinality(n_up, downstream_inst_count):
         return upstream_arrays_by_instance[downstream_inst_idx]
+    if uniform_fanout_cache is not None:
+        cached = uniform_fanout_cache.get(upstream_name)
+        if cached is not None:
+            return cached
     # Uniform fan-out: average across upstream pods. Each downstream
     # pod sees the same averaged view, so per-pod variation under this
     # branch only emerges from local saturation noise / coupling math
-    # rather than from upstream asymmetry. Recompute lazily on the
-    # captured column dict — the upstream instances all share the same
-    # set of metric keys because they came from the same MetricSpec
-    # list in ``generate_component``.
+    # rather than from upstream asymmetry. The upstream instances
+    # share the same metric-key set because they came from the same
+    # MetricSpec list in ``generate_component``.
     averaged: dict[str, np.ndarray] = {}
     metric_keys = set()
     for entry in upstream_arrays_by_instance:
@@ -2995,6 +3072,8 @@ def _per_instance_upstream_view(
             continue
         # Stack + mean. Each upstream array has shape (n_rows,).
         averaged[metric] = np.mean(np.stack(arrays, axis=0), axis=0)
+    if uniform_fanout_cache is not None:
+        uniform_fanout_cache[upstream_name] = averaged
     return averaged
 
 
@@ -3008,7 +3087,7 @@ def _compute_topology_arrays_per_instance(
     n_rows: int,
 ) -> tuple[
     list[dict[str, np.ndarray]],
-    list[dict[str, tuple[np.ndarray, np.ndarray]]],
+    list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]],
     bool,
 ]:
     """Compute per-instance coupling and saturation arrays for ``component_name``.
@@ -3041,9 +3120,9 @@ def _compute_topology_arrays_per_instance(
     """
     n_inst = len(instances)
     coupling_by_instance: list[dict[str, np.ndarray]] = [{} for _ in range(n_inst)]
-    saturation_by_instance: list[dict[str, tuple[np.ndarray, np.ndarray]]] = (
-        [{} for _ in range(n_inst)]
-    )
+    saturation_by_instance: list[
+        dict[str, tuple[np.ndarray | None, np.ndarray | None]]
+    ] = [{} for _ in range(n_inst)]
 
     coupled_entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
     sat_targets = _TOPOLOGY_SATURATION_TARGETS.get(component_name)
@@ -3082,6 +3161,14 @@ def _compute_topology_arrays_per_instance(
                 )
 
     # Compute per-instance arrays.
+    # Cache shared across downstream instances: under mismatched
+    # cardinality, ``_per_instance_upstream_view`` averages every
+    # upstream pod into a single dict that is identical for every
+    # downstream pod. Without the cache the same ``np.stack`` /
+    # ``np.mean`` work runs N_down times per upstream
+    # (O(N_down * N_up * n_rows)); with the cache it runs once
+    # (O(N_up * n_rows)).
+    uniform_fanout_cache: dict[str, dict[str, np.ndarray]] = {}
     for inst_idx in range(n_inst):
         # Build the per-instance upstream view dict keyed by upstream name.
         per_instance_upstream_cols: dict[str, dict[str, np.ndarray]] = {}
@@ -3093,6 +3180,7 @@ def _compute_topology_arrays_per_instance(
                     upstream_arrays_shared.get(upstream),
                     n_inst,
                     inst_idx,
+                    uniform_fanout_cache=uniform_fanout_cache,
                 )
                 or {}
             )
@@ -9588,10 +9676,11 @@ def _validate_topology_coupling(
             # sides' schemas declare ``dimensions`` with matched
             # cardinalities (1:1 routing applies), additionally
             # verify Pearson(source.iK, target.iK) >= threshold for
-            # each matching pair. The aggregate-mean check above
-            # already passed; this catches a regression where the
-            # per-instance composer mis-routes one pod's load to a
-            # sibling, which the mean-aggregate Pearson would miss.
+            # each matching pair. Runs unconditionally — even if the
+            # aggregate-mean check above just recorded a violation,
+            # the per-instance breakdown is still useful (it names
+            # the exact pod pair that diverged from the 1:1 contract,
+            # which the mean-aggregate Pearson alone cannot do).
             violations += _validate_topology_coupling_per_instance(
                 output_dir, schema, source, target,
                 source_canonical, target_canonical,
@@ -9628,6 +9717,16 @@ def _validate_topology_coupling_per_instance(
       instance.
     - Either column is zero-variance or non-finite (flagged by the
       aggregate check above; surfacing once is enough).
+
+    Instance pairing matches the generator's index-based 1:1
+    routing in ``_per_instance_upstream_view``: position ``K`` in
+    the source CSV is paired with position ``K`` in the target CSV.
+    This keeps the validator consistent with the generator across
+    ``--instance-config`` runs where the two components declare
+    instances in different orders, and across
+    ``--instances-per-component`` runs whose ids ("i0".."i19")
+    don't lexically sort in the same order as their generation
+    index.
     """
     components_schema = schema.get("components")
     if not isinstance(components_schema, dict):
@@ -9666,13 +9765,21 @@ def _validate_topology_coupling_per_instance(
     if source_per_inst is None or target_per_inst is None:
         return []
 
-    # Match by sorted instance id so the 1:1 mapping is deterministic
-    # across runs regardless of dict iteration order. ``--instances-
-    # per-component N>1`` produces ids "i0".."i{N-1}"; an
-    # ``--instance-config`` run may use arbitrary strings, but the
-    # sorted pairing is still well-defined.
-    source_ids = sorted(source_per_inst.keys())
-    target_ids = sorted(target_per_inst.keys())
+    # Pair instances by CSV-block insertion order, NOT sorted id.
+    # ``generate_component`` writes one block per instance in
+    # ``instances[k]`` order, and the 1:1 routing in
+    # ``_per_instance_upstream_view`` maps downstream instance ``K``
+    # to upstream instance ``K`` by *list index*. Sorting by id here
+    # would mis-pair when ``--instance-config`` lists the two
+    # components' instances in different declared orders, or when
+    # ``--instances-per-component`` produces ``i0..i9, i10`` whose
+    # lexical sort ("i10" < "i2") drifts from the numeric block
+    # order. ``_read_component_metric_column_per_instance`` walks
+    # rows top-to-bottom and uses ``setdefault``, so dict iteration
+    # order matches the on-disk block order, which matches the
+    # generator's instance list order.
+    source_ids = list(source_per_inst.keys())
+    target_ids = list(target_per_inst.keys())
     if len(source_ids) != len(target_ids):
         return []
 

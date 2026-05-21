@@ -263,12 +263,17 @@ def test_synthetic_pod0_spike_lifts_only_pod0_saturation(
     # Sibling pods must stay close to their natural baseline (the
     # spike on apigateway.pod-0 should NOT propagate to authservice
     # pods 1 or 2 under 1:1 routing). Tolerance: 0.5% of the
-    # baseline magnitude (~0.4 ms at base=80).
-    assert abs(pod1_in - pod1_baseline) < 0.5 * pod1_baseline, (
+    # baseline magnitude (~0.55 ms at base=110, ~0.40 ms at base=80).
+    # The 30-min spike window contains ~1800 samples, so the
+    # natural per-row jitter (std≈5) averages down to ~0.12 ms in
+    # the mean — well below the 0.5% threshold, which leaves ample
+    # signal headroom to catch any cross-pod leakage from the
+    # apigateway.i0 spike.
+    assert abs(pod1_in - pod1_baseline) < 0.005 * pod1_baseline, (
         f"pod-1 latency should remain at baseline (1:1 routing). "
         f"pod1_in={pod1_in:.3f}, baseline={pod1_baseline:.3f}"
     )
-    assert abs(pod2_in - pod2_baseline) < 0.5 * pod2_baseline, (
+    assert abs(pod2_in - pod2_baseline) < 0.005 * pod2_baseline, (
         f"pod-2 latency should remain at baseline. "
         f"pod2_in={pod2_in:.3f}, baseline={pod2_baseline:.3f}"
     )

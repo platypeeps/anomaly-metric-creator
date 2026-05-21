@@ -321,8 +321,10 @@ flag:
       vary across pods.
 
 The math hook is the VER-158 refactor of `_natural_column` which
-now accepts three optional kwargs the lambda-baked path used to
-fold into `MetricSpec.multiplier` / `MetricSpec.additive`:
+now accepts four optional keyword-only kwargs:
+
+Three topology-state kwargs the lambda-baked path used to fold into
+`MetricSpec.multiplier` / `MetricSpec.additive`:
 
 - `latency_factor` — per-row array multiplied between the natural
   multiplier and additive, matching where
@@ -336,6 +338,17 @@ fold into `MetricSpec.multiplier` / `MetricSpec.additive`:
   `_compose_topology_coupled_specs` produced by replacing
   `base=0, std=0, multiplier=None, additive=lambda: coupled` on
   the coupled metric's spec.
+
+Plus one RNG-control kwarg used to share noise across instances
+under the divergent per-instance topology path:
+
+- `noise` — per-row pre-drawn `rng.normal(0, spec.std, n_rows)`
+  array. When provided, `_natural_column` uses it verbatim instead
+  of drawing fresh noise. The divergent per-instance branch in
+  `generate_component` draws noise once per coupled metric and
+  shares it across instances so the only divergence between pod
+  buffers flows through `baseline_override` / `latency_factor` /
+  `error_offset`, not through extra RNG consumption.
 
 `generate_component` consumes these kwargs through two new
 parameters threaded by `main()`:
