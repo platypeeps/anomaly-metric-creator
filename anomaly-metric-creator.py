@@ -7764,9 +7764,15 @@ def _component_dimensions_schema_entry(
     minus the leading ``id`` slot — ``id`` identifies an instance, it is
     not a dimension to slice on) whose value is non-``None`` on at least
     one instance in the list. ``cardinality`` is ``len(instances)``.
-    Both keys are always present together so the validator can detect
-    drift between them (e.g. a ``cardinality`` 0 with axes declared, or
-    axes empty with ``cardinality > 1``).
+    Both keys are always present together so the validator can read them
+    in lockstep. ``axes`` is allowed to be empty with ``cardinality > 1``:
+    that is the shape produced by an instance list whose only non-``None``
+    field is ``id`` (e.g. ``[Instance(id="i0"), Instance(id="i1")]`` —
+    multiple replicas with no slicable dimension yet). The schema still
+    declares the long-form CSV layout under that shape because the
+    per-component CSV carries the full ``id, host, pod, az, region,
+    tenant`` prefix block whenever ``cardinality > 1``, regardless of
+    which dim columns are populated.
     """
     if instances is None or _is_anonymous_instance_list(instances):
         return None
@@ -8953,10 +8959,14 @@ def _validate_long_form_dimensions(
     value`` shape; otherwise the historic 4-column
     ``timestamp, component, metric, value`` (gauges) and wide
     ``timestamp, component_metric, ...`` (combined) layouts stay
-    byte-identical. The validator only enforces the long-form dim header
-    here — when no component declares dimensions the existing
-    ``_validate_no_unknown_files`` / required-files checks already cover
-    the classic shape.
+    byte-identical. This validator only enforces the long-form 10-column
+    header when at least one component declares ``dimensions``. The
+    classic 4-column / wide header is *not* checked here (status quo —
+    no validator inspects those headers in v1; the layout is pinned only
+    by the writers' locked SHA-256 golden hashes in
+    ``tests/test_gauges_file.py`` / ``tests/test_combine.py``). The
+    existing required-files / unknown-files checks only verify file
+    presence, not column layout, so they don't fill that gap.
 
     Only files actually declared in ``schema.files`` are inspected —
     missing-file flagging is already covered by
