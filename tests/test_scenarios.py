@@ -1362,7 +1362,8 @@ def _extra_args_for_slug(amc, slug: str, tmp_path=None) -> list[str]:
     """Return extra_args (beyond seed/days/output-dir) to activate a single slug.
 
     ``tmp_path`` is required when the scenario uses a callable ``instance_filter``
-    so a temporary instance-config YAML can be written with matching dimension fields.
+    so a temporary instance-config JSON file can be written with matching dimension
+    fields. JSON is used (rather than YAML) so the helper has no PyYAML dependency.
     """
     scenario = amc.SCENARIOS[slug]
     extra = ["--scenarios", slug, "--drop-rate", "0", "--interval-seconds", "60"]

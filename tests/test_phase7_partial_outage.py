@@ -2,11 +2,16 @@
 
 Verifies:
 - ``auth_pod_failure`` is registered with the correct metadata and only overrides
-  the ``i0`` instance when run with ``--instances-per-component 3``.
+  the ``i0`` instance when a synthetic spec with ``instance_filter=["i0"]`` is run
+  against three named instances.
 - ``cache_az_isolation`` is registered with the correct metadata and only overrides
   instances whose ``az`` matches ``"us-east-1a"`` when run with an instance-config
   that supplies that dimension.
-- Both scenarios are ``high`` severity and do not affect default (medium) output bytes.
+- Both scenarios declare ``severity == "high"`` so they do not activate under the
+  default medium signal level. The default-output byte-identity assertion lives
+  in ``tests/test_scenarios.py::test_default_*_csvs_byte_identical`` (the locked
+  SHA-256 hashes that would change if either scenario leaked into the default
+  pool); this file does not duplicate those hashes.
 - The callable ``instance_filter`` on ``cache_az_isolation`` returns ``False``
   for instances with ``az=None`` (the ``--instances-per-component`` path).
 """
@@ -143,19 +148,26 @@ def test_cache_az_isolation_high_severity_not_in_default_pool(amc):
 # Runtime behaviour: auth_pod_failure overrides only i0
 # ---------------------------------------------------------------------------
 
-def test_auth_pod_failure_overrides_only_i0_error_rate(amc, tmp_path):
-    """Running auth_pod_failure primary spec (error_rate on authservice) with
-    3 instances must override only i0; i1 and i2 keep the natural baseline."""
+def test_auth_pod_failure_registry_spec_out_of_range_warns(amc, tmp_path, capsys):
+    """The registry ``auth_pod_failure`` primary spec has ``time_offset=12600s``
+    (3h30m). Running it through ``generate_component`` with a 200s window must
+    log the canonical "time_offset outside [0, N)" WARNING and write no override
+    to any instance row. The actual filter behavior (only-i0) is exercised by
+    ``test_auth_pod_failure_synthetic_only_i0_overridden`` below, which uses a
+    synthetic spec whose offset lands inside the test window."""
     component = "authservice"
     specs = amc.COMPONENTS[component][:amc.DEFAULT_METRICS_PER_COMPONENT[component]]
 
-    # Pull the anomaly spec straight from the registry
     scenario = amc.SCENARIOS["auth_pod_failure"]
     anomaly_specs = [
         spec for comp, spec in scenario.primary_specs
         if comp == "authservice" and spec["metric"] == "error_rate"
     ]
     assert len(anomaly_specs) == 1, "Expected exactly one error_rate primary spec"
+    assert anomaly_specs[0]["time_offset"] > 200, (
+        "Test premise: registry offset must exceed the 200s window so the spec "
+        "is out of range."
+    )
 
     instances = _three_instances(amc)
     _run_generate(
@@ -167,12 +179,23 @@ def test_auth_pod_failure_overrides_only_i0_error_rate(amc, tmp_path):
         interval=10.0,
     )
 
+    captured = capsys.readouterr()
+    assert "time_offset outside" in captured.err, (
+        f"Expected out-of-range WARNING; stderr was {captured.err!r}"
+    )
+
     csv_path = tmp_path / "authservice.csv"
-    # time_offset=3*3600+30*60=12600s is beyond 200s total — the row won't fire.
-    # Use a synthetic low offset spec to exercise the filter within our short run:
-    # The test above verifies the registry spec structure; the in-process
-    # generate_component test below uses a synthetic spec with a short offset.
-    assert csv_path.exists(), "authservice.csv must be written"
+    assert csv_path.exists(), "authservice.csv must still be written"
+
+    # No row in any instance block carries the registry override value (0.85);
+    # natural error_rate baseline is ~0.005, three decimal places away.
+    target_value = anomaly_specs[0]["generator"](None, 0)
+    for inst_id in ("i0", "i1", "i2"):
+        for row in _rows_for_instance(csv_path, inst_id):
+            assert float(row["error_rate"]) != pytest.approx(target_value), (
+                f"{inst_id} row {row} unexpectedly carries the override value "
+                f"{target_value}; spec should have been skipped as out-of-range."
+            )
 
 
 def test_auth_pod_failure_synthetic_only_i0_overridden(amc, tmp_path):
@@ -300,10 +323,13 @@ def test_cache_az_isolation_no_az_instances_emits_warning(amc, tmp_path, capsys)
         "WARNING should mention instance_filter"
     )
 
-    # No row should carry the override value 10 (natural cache_hits >> 10)
+    # No row should carry the override value 10 (natural cache_hits >> 10).
+    # CSV cells are formatted with 3 decimals (e.g. "10.000"), so compare as
+    # float — the prior ``!= "10"`` always passed regardless of the override.
     csv_path = tmp_path / "cacheservice.csv"
     rows_i0 = _rows_for_instance(csv_path, "i0")
-    if rows_i0:
-        assert rows_i0[5]["cache_hits"] != "10", (
-            "i0 row 5 must keep natural value; no override should have fired"
-        )
+    assert rows_i0, "expected at least one i0 row in cacheservice.csv"
+    assert float(rows_i0[5]["cache_hits"]) != pytest.approx(10), (
+        f"i0 row 5 must keep natural value; got {rows_i0[5]['cache_hits']!r}, "
+        "no override should have fired"
+    )
