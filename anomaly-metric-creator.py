@@ -6168,21 +6168,33 @@ def combine_logs_unified(components, input_dir, output_file=None):
 
     Layout is chosen by header inspection of the per-component CSVs:
 
-    - If every per-component CSV is dimensionless (the default
-      ``N=1`` anonymous-instance shape), the writer emits the wide
-      ``timestamp,component_a_m0,component_a_m1,...`` layout
+    - If every per-component CSV is dimensionless (the first column is
+      ``timestamp`` followed directly by the metric columns — the
+      default ``N=1`` anonymous-instance shape), the writer emits the
+      wide ``timestamp,component_a_m0,component_a_m1,...`` layout
       byte-identically to the pre-VER-148 output (so existing
       ``test_combine.py`` row/column-shape assertions continue to hold).
-    - If any per-component CSV carries the multi-instance ``id, host,
-      pod, az, region, tenant`` dimension prefix (the
-      ``--instances-per-component N > 1`` shape from Phase 2), the writer
+    - If **any** per-component CSV carries the full ``id, host, pod, az,
+      region, tenant`` dimension prefix after ``timestamp``, the writer
       switches to a long layout: ``timestamp,component,id,host,pod,az,
       region,tenant,metric,value``. Rows are emitted in
-      ``(timestamp, component, instance_id, metric)`` tie-break order via
-      ``heapq.merge`` across per-(component, instance) iterators, matching
-      the long-form ``gauges.csv`` ordering contract. Empty / dropped
-      cells are skipped — long form encodes "this measurement was emitted"
-      explicitly via row presence.
+      ``(timestamp, component, instance_id, metric)`` tie-break order
+      via ``heapq.merge`` across per-(component, instance) iterators,
+      matching the long-form ``gauges.csv`` ordering contract. Empty /
+      dropped cells are skipped — long form encodes "this measurement
+      was emitted" explicitly via row presence.
+
+    The dispatch is purely header-based, so any path that produces
+    dimensioned per-component CSVs routes here — ``--instances-per-
+    component N > 1`` (the Phase-2 fan-out) is the canonical path, but
+    ``--instance-config`` can also produce a dimensioned single-instance
+    CSV and lands the same long-form output.
+
+    Missing per-component CSVs raise ``SystemExit`` in both branches —
+    the wide path checks first via ``_scan_component_csv_headers``'s
+    ``layout[c]["exists"]`` flags so direct callers get a consistent
+    user-facing error instead of an unhandled ``FileNotFoundError``
+    later in the loop.
     """
     input_dir = Path(input_dir)
     if output_file is None:
@@ -6191,6 +6203,22 @@ def combine_logs_unified(components, input_dir, output_file=None):
 
     component_csv_paths = {c: input_dir / f"{c}.csv" for c in components}
     any_dimensioned, layout = _scan_component_csv_headers(component_csv_paths)
+
+    # Mirror ``_write_combined_long_form``'s missing-file guard for the
+    # wide-form path so direct callers of ``combine_logs_unified`` see a
+    # consistent user-facing error regardless of which branch they hit.
+    # ``combine_logs`` already raises on missing files when invoked with
+    # an explicit ``components`` allowlist, so this check is dead on the
+    # main pipeline; it covers a direct caller that bypasses
+    # ``combine_logs`` and lands a missing file in the layout.
+    missing = [
+        f"{name}.csv" for name in components
+        if not layout[name]["exists"]
+    ]
+    if missing:
+        raise SystemExit(
+            f"missing component CSVs for combine: {', '.join(missing)}"
+        )
 
     print("\nCreating UNIFIED format combined file...")
     print(f"Components discovered: {', '.join(components)}")
@@ -7416,14 +7444,19 @@ def write_gauges_csv(
     value)`` tuple (10-column shape, VER-148 phase 5) from the given
     per-component CSVs.
 
-    Layout is decided by header inspection: if any per-component CSV
-    carries the ``id, host, pod, az, region, tenant`` dimension prefix
-    (the multi-instance Phase 2 fan-out shape from
-    ``--instances-per-component N > 1``), the writer emits the 10-column
-    long form. If every CSV is the classic dimensionless shape (the
-    default ``N=1`` anonymous-instance case), the writer emits today's
-    4-column form byte-identically, so existing locked golden hashes are
-    preserved.
+    Layout is decided purely by header inspection: if **any**
+    per-component CSV carries the full ``id, host, pod, az, region,
+    tenant`` dimension prefix after ``timestamp``, the writer emits the
+    10-column long form. If every CSV is the classic dimensionless
+    shape (first column ``timestamp`` followed directly by the metric
+    columns), the writer emits today's 4-column form byte-identically,
+    so the existing locked golden hashes are preserved.
+
+    The dispatch is header-based, not flag-based: the Phase-2
+    ``--instances-per-component N > 1`` fan-out is the canonical path
+    that lands a dimensioned CSV, but ``--instance-config`` can also
+    produce a dimensioned single-instance CSV and routes to the same
+    long-form output.
 
     Rows are emitted in a chronologically merged timeline via
     ``heapq.merge`` keyed on the parsed timestamp — the same ordering
