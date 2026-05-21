@@ -99,8 +99,14 @@ def synthetic_n3_run(amc, tmp_path_factory):
             amc, out, days=1,
             extra_args=[
                 "--instances-per-component", "3",
-                # Narrow components to apigateway + authservice so the
-                # 1:1 routing is well-defined for the assertion.
+                # Keep the full default topology graph in scope: the
+                # apigateway → authservice 1:1 routing this test
+                # asserts on requires apigateway's own upstream
+                # (loadbalancer) and sibling downstreams (cacheservice,
+                # database, llm_analytics) to maintain their normal
+                # coupling shape. Listing the components explicitly
+                # pins the set so a future default-component change
+                # cannot accidentally drop one of them.
                 "--components",
                 "loadbalancer,apigateway,authservice,cacheservice,database,llm_analytics",
             ],

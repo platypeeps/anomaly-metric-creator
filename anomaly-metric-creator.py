@@ -973,15 +973,21 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                                 any_diverged = True
                                 break
                         if any_diverged:
-                            full_cols = [
-                                per_instance_values.get(
-                                    inst_idx_k, values
-                                )[:, col_idx]
-                                for inst_idx_k in range(inst_count)
-                            ]
-                            captured_col = np.mean(
-                                np.stack(full_cols, axis=0), axis=0
+                            # Incremental sum-then-divide avoids the
+                            # ``(N_instances × n_rows)`` temporary
+                            # ``np.stack`` would allocate. Same
+                            # equal-weight mean as ``np.mean`` over the
+                            # stacked array but at O(n_rows) extra
+                            # memory instead of O(N_instances × n_rows).
+                            captured_col = shared_col.astype(
+                                np.float64, copy=True
                             )
+                            for inst_idx_k in range(1, inst_count):
+                                buf = per_instance_values.get(
+                                    inst_idx_k, values
+                                )
+                                captured_col += buf[:, col_idx]
+                            captured_col /= inst_count
                     if captured_col is None:
                         captured_col = shared_col.copy()
                     captured[lm] = captured_col
