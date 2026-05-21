@@ -598,32 +598,46 @@ def test_n3_gauges_csv_dimension_values_match_per_component_csvs(
     CSV's dimensioned block. A regression that swapped the instance
     block boundary detection (the ``has_dims`` branch in
     ``_iter_component_instance_rows``) or smuggled in stale dim values
-    from the closure would surface here even before the byte hash."""
+    from the closure would surface here even before the byte hash.
+
+    Streams gauges.csv via ``csv.DictReader`` (no row-list materialization)
+    so the ~19.4M-row long-form file at N=3 1-second resolution doesn't
+    blow up memory; derives ``expected_tuples`` from
+    ``_scan_instance_block_layout`` (one tuple per block, not per row)
+    instead of re-reading every per-component CSV cell-by-cell."""
     out_dir = n3_one_day_gauges_run.out_dir
-    rows = _read_rows(out_dir / "gauges.csv")
-    assert rows, "N=3 gauges.csv must contain rows"
 
-    # Tuples observed in gauges.csv.
+    # Stream gauges.csv into a set of unique tuples (O(unique tuples)
+    # memory, NOT O(rows)). At N=3 we expect 13 components × 3 instances
+    # = 39 tuples max.
     gauge_tuples: set[tuple[str, ...]] = set()
-    for r in rows:
-        gauge_tuples.add(
-            (r["component"], r["id"], r["host"], r["pod"], r["az"],
-             r["region"], r["tenant"])
-        )
+    with open(out_dir / "gauges.csv", "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            gauge_tuples.add(
+                (r["component"], r["id"], r["host"], r["pod"], r["az"],
+                 r["region"], r["tenant"])
+            )
+    assert gauge_tuples, "N=3 gauges.csv must contain rows"
 
-    # Tuples observed in the per-component CSVs themselves.
+    # Tuples declared in the per-component CSVs themselves. Use the
+    # block-layout scanner (one tuple per instance block, not per row)
+    # so this is O(components × instances) rather than O(total rows).
     expected_tuples: set[tuple[str, ...]] = set()
     for component in amc.COMPONENTS:
         path = out_dir / f"{component}.csv"
         if not path.exists():
             continue
         with open(path, "r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                expected_tuples.add(
-                    (component, row["id"], row["host"], row["pod"],
-                     row["az"], row["region"], row["tenant"])
-                )
+            header = next(csv.reader(f), None)
+        dim_cols, _metric_cols = amc._classify_component_csv_header(
+            header or []
+        )
+        has_dims = bool(dim_cols)
+        for instance_dims, _start in amc._scan_instance_block_layout(
+            path, has_dims=has_dims,
+        ):
+            expected_tuples.add((component, *instance_dims))
     assert len(expected_tuples) > 0, (
         "per-component CSVs surfaced no dimension tuples — "
         "test cannot exercise the long-form parity"
@@ -815,18 +829,45 @@ def test_scan_instance_block_layout_dimensionless(amc, tmp_path):
 
 def test_ensure_long_form_fd_capacity_fits_under_default_limit(amc):
     """At the documented N=3 default fan-out (13 components × 3 instances
-    = 39 sources), the FD pre-flight is a no-op on every platform we
-    support — even macOS's default 256 soft limit has plenty of room.
-    A regression that lowered the margin or capped the rlimit raise
-    aggressively would surface here before the merge ran. On Windows
-    the helper is a no-op regardless (``resource`` is POSIX-only), so
-    the assertion that it doesn't raise still holds."""
-    # No-op path: helper must not raise for a fan-out far inside the
-    # default soft limit.
+    = 39 sources), the FD pre-flight is a no-op on every platform that
+    has enough headroom in its FD hard limit — including macOS's
+    default 256 soft limit. A regression that lowered the margin or
+    capped the rlimit raise aggressively would surface here before the
+    merge ran. On Windows the helper is a no-op regardless
+    (``resource`` is POSIX-only), so the assertion that it doesn't
+    raise still holds.
+
+    The test is host-configuration aware: when the process is running
+    under an artificially low FD hard limit (e.g. a container with
+    ``ulimit -n`` below ``len(COMPONENTS) * 3 + _LONG_FORM_FD_MARGIN``)
+    the helper will *correctly* raise ``SystemExit``, and the test
+    skips rather than flagging the right behavior as a regression.
+    The constrained-limit branch is exercised explicitly by
+    ``test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low``
+    via a monkey-patched ``resource.getrlimit``."""
+    n_sources = len(amc.COMPONENTS) * 3
+    try:
+        import resource
+    except ImportError:
+        # Windows: helper is a documented no-op. Both calls below
+        # return immediately without inspecting an rlimit, so the
+        # no-raise assertion holds trivially.
+        amc._ensure_long_form_fd_capacity(0)
+        amc._ensure_long_form_fd_capacity(n_sources)
+        return
+    _soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    needed = n_sources + amc._LONG_FORM_FD_MARGIN
+    if hard != resource.RLIM_INFINITY and hard < needed:
+        pytest.skip(
+            f"FD hard limit ({hard}) is below the {needed} this test "
+            f"requires; the helper correctly raises here, which is "
+            f"the wrong condition for the no-raise assertion. The "
+            f"raise path is covered separately."
+        )
+    # No-op path: helper must not raise for a fan-out that fits inside
+    # the current FD limit.
     amc._ensure_long_form_fd_capacity(0)
-    amc._ensure_long_form_fd_capacity(
-        len(amc.COMPONENTS) * 3
-    )
+    amc._ensure_long_form_fd_capacity(n_sources)
 
 
 def test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low(
