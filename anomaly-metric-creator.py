@@ -241,7 +241,10 @@ class Instance:
 # columns in this order; ``combine_logs`` matches the same shape when
 # detecting a multi-instance CSV; ``_is_anonymous_instance_list`` keys
 # its predicate off the same field list so all three views stay in
-# lockstep with the ``Instance`` dataclass above.
+# lockstep with the ``Instance`` dataclass above. The Phase-5 long-form
+# writers (``write_gauges_csv`` / ``combine_logs_unified``) read the same
+# constant to detect dimensioned per-component CSVs by header inspection
+# and to project dimension values into the long-form output rows.
 _INSTANCE_DIMENSION_COLUMNS = ("id", "host", "pod", "az", "region", "tenant")
 
 
@@ -5905,34 +5908,35 @@ def parse_args(argv=None):
             "would silently skip the DST splice); pass --inject-dst-artifact-day 0 "
             "or use the default single-instance mode"
         )
-    # The downstream emitters (gauges.csv, combined_metrics_unified.csv,
-    # schema.json + --validate-output, OTEL streaming) are not yet dimension
-    # aware — wiring them up is the work of VER-148 (Phase 5), VER-149
-    # (Phase 6), and VER-151 (Phase 8). Running them against an N>1 run
-    # silently produces wrong output (e.g. the gauges writer emits dim
-    # columns as ``metric=id, value=i0`` rows, violating the
-    # ``timestamp,component,metric,value`` numeric-value schema; the
-    # combine writer cross-joins dim columns with metric columns into the
-    # unified CSV without per-instance semantics; the schema does not
-    # declare the dim columns so ``--validate-output`` rejects the run).
-    # Reject the combinations up-front so the user sees a clear message
-    # instead of a downstream corruption.
+    # The file-form long-form writers (``gauges.csv`` and
+    # ``combined_metrics_unified.csv``) became dimension aware in VER-148
+    # Phase 5: header inspection dispatches to a 10-column layout when
+    # the per-component CSVs carry the ``id, host, pod, az, region,
+    # tenant`` prefix, otherwise the historic 4-column / wide layouts
+    # stay byte-identical. The OTEL streamer (``--otel-emit-gauges`` and
+    # the broader ``--otel-enabled`` path) does not yet attach dimensions
+    # as OTLP resource attributes (VER-149 Phase 6), and the schema doc
+    # plus ``--validate-output`` do not yet declare the dim columns
+    # (VER-151 Phase 8). Running those against a multi-instance run
+    # silently produces wrong output (OTLP data points without instance
+    # attributes, schema-validation failures against a Phase-2/3-correct
+    # CSV), so the combinations below are rejected up-front with a clear,
+    # phase-attributed error instead of a downstream corruption.
     if _multi_instance:
-        phase5_flags = []
-        if args.combine:
-            phase5_flags.append("--combine")
-        if args.combine_only:
-            phase5_flags.append("--combine-only")
-        if "gauges" in selected:
-            phase5_flags.append("--emit-selection 'gauges'")
+        # VER-148 Phase 5 lifted the ``--combine`` / ``--combine-only`` /
+        # ``--emit-selection gauges`` guards: the combined CSV and the
+        # file-form gauge writer now both dispatch to a long-form layout
+        # when the per-component CSVs carry the dimension prefix. The
+        # OTEL gauge stream (``--otel-emit-gauges``) is still gated under
+        # VER-149 Phase 6 because the OTEL streamer does not attach
+        # instance dimensions as OTLP resource attributes yet.
         if args.otel_emit_gauges:
-            phase5_flags.append("--otel-emit-gauges")
-        if phase5_flags:
             p.error(
                 f"{_multi_instance_flag} is incompatible with "
-                f"{' / '.join(phase5_flags)}: the combined CSV and gauge "
-                f"writers are not dimension-aware yet (tracked under VER-148 "
-                f"Phase 5). Drop the flag(s) or use the default single-instance mode."
+                "--otel-emit-gauges: the OTEL gauge stream does not yet "
+                "attach instance dimensions as OTLP resource attributes "
+                "(tracked under VER-149 Phase 6). Drop --otel-emit-gauges "
+                "or use the default single-instance mode."
             )
         phase8_flags = []
         if args.validate_output is not None:
@@ -6161,14 +6165,73 @@ def combine_logs_unified(components, input_dir, output_file=None):
 
     ``output_file`` defaults to ``input_dir/combined_metrics_unified.csv``.
     Returns ``(total_rows, size_mb)``.
+
+    Layout is chosen by header inspection of the per-component CSVs:
+
+    - If every per-component CSV is dimensionless (the first column is
+      ``timestamp`` followed directly by the metric columns — the
+      default ``N=1`` anonymous-instance shape), the writer emits the
+      wide ``timestamp,component_a_m0,component_a_m1,...`` layout
+      byte-identically to the pre-VER-148 output (so existing
+      ``test_combine.py`` row/column-shape assertions continue to hold).
+    - If **any** per-component CSV carries the full ``id, host, pod, az,
+      region, tenant`` dimension prefix after ``timestamp``, the writer
+      switches to a long layout: ``timestamp,component,id,host,pod,az,
+      region,tenant,metric,value``. Rows are emitted in
+      ``(timestamp, component, instance_id, metric)`` tie-break order
+      via ``heapq.merge`` across per-(component, instance) iterators,
+      matching the long-form ``gauges.csv`` ordering contract. Empty /
+      dropped cells are skipped — long form encodes "this measurement
+      was emitted" explicitly via row presence.
+
+    The dispatch is purely header-based, so any path that produces
+    dimensioned per-component CSVs routes here — ``--instances-per-
+    component N > 1`` (the Phase-2 fan-out) is the canonical path, but
+    ``--instance-config`` can also produce a dimensioned single-instance
+    CSV and lands the same long-form output.
+
+    Missing per-component CSVs raise ``SystemExit`` in both branches —
+    the wide path checks first via ``_scan_component_csv_headers``'s
+    ``layout[c]["exists"]`` flags so direct callers get a consistent
+    user-facing error instead of an unhandled ``FileNotFoundError``
+    later in the loop.
     """
     input_dir = Path(input_dir)
     if output_file is None:
         output_file = input_dir / _COMBINE_OUTPUT_FILENAME
     output_file = Path(output_file)
 
+    component_csv_paths = {c: input_dir / f"{c}.csv" for c in components}
+    any_dimensioned, layout = _scan_component_csv_headers(component_csv_paths)
+
+    # Mirror ``_write_combined_long_form``'s missing-file guard for the
+    # wide-form path so direct callers of ``combine_logs_unified`` see a
+    # consistent user-facing error regardless of which branch they hit.
+    # ``combine_logs`` already raises on missing files when invoked with
+    # an explicit ``components`` allowlist, so this check is dead on the
+    # main pipeline; it covers a direct caller that bypasses
+    # ``combine_logs`` and lands a missing file in the layout.
+    missing = [
+        f"{name}.csv" for name in components
+        if not layout[name]["exists"]
+    ]
+    if missing:
+        raise SystemExit(
+            f"missing component CSVs for combine: {', '.join(missing)}"
+        )
+
     print("\nCreating UNIFIED format combined file...")
     print(f"Components discovered: {', '.join(components)}")
+
+    if any_dimensioned:
+        total_rows = _write_combined_long_form(
+            components, layout, output_file,
+        )
+        size_mb = os.path.getsize(output_file) / (1024 * 1024)
+        print(f"\nUnified format file created: {output_file}")
+        print(f"Total rows: {total_rows:,}")
+        print(f"File size: {size_mb:.2f} MB")
+        return total_rows, size_mb
 
     data_by_timestamp = {}
     component_metrics = {}
@@ -6180,37 +6243,33 @@ def combine_logs_unified(components, input_dir, output_file=None):
         seen_in_component = {}
         with open(input_path, "r") as infile:
             reader = csv.DictReader(infile)
-            # Dimension-aware combine is Phase 5 (VER-148). If the input
-            # CSV carries the long-form dimension columns from a prior
-            # ``--instances-per-component > 1`` run, refuse to combine
-            # rather than silently treat the dim columns as metric
-            # columns. The writer always emits the full six-column prefix
-            # in the canonical order, so we match the exact prefix shape
-            # (``timestamp`` followed by all six dim columns in order)
-            # rather than any-overlap on the column set. The looser
-            # any-overlap form would false-positive on a hypothetical
-            # future metric named ``id`` or ``host`` that lives in a
-            # single-instance CSV. ``parse_args`` blocks the
-            # generate-and-combine path; this guard covers the bypass
-            # where a user runs ``--combine-only`` against an existing
-            # multi-instance directory (where the default
-            # ``instances_per_component=1`` lets the parser through).
-            header_fields = tuple(reader.fieldnames or ())
-            multi_instance_header = (
-                len(header_fields) >= 1 + len(_INSTANCE_DIMENSION_COLUMNS)
-                and header_fields[0] == "timestamp"
-                and header_fields[1:1 + len(_INSTANCE_DIMENSION_COLUMNS)]
-                == _INSTANCE_DIMENSION_COLUMNS
-            )
-            if multi_instance_header:
+            # The any-dimensioned dispatch above already routed the long-
+            # form CSVs into ``_write_combined_long_form``, so by the time
+            # control reaches this DictReader path every per-component CSV
+            # is the classic dimensionless ``timestamp, m0, m1, ...`` shape
+            # and ``fieldnames[1:]`` is the metric list verbatim.
+            #
+            # ``csv.DictReader.fieldnames`` is ``None`` for a fully empty
+            # input, ``[]`` for a file whose first line is blank, and may
+            # legitimately omit ``timestamp`` if the user staged a CSV
+            # with a different schema. ``combine_logs`` rejects a missing
+            # file before we get here, but a present-but-malformed header
+            # would otherwise crash either the list comprehension below
+            # (``None``) or the ``row["timestamp"]`` lookup in the loop
+            # (missing key). Validate all three shapes up-front and raise
+            # the same flavor of ``SystemExit`` ``combine_logs`` uses for
+            # missing files so the operator gets a clean diagnosis
+            # instead of a stack trace.
+            if not reader.fieldnames:
                 raise SystemExit(
-                    f"{input_path.name} carries the multi-instance "
-                    f"dimension prefix "
-                    f"{list(_INSTANCE_DIMENSION_COLUMNS)!r}; the combine "
-                    f"writer is not dimension-aware yet (tracked under "
-                    f"VER-148 Phase 5). Regenerate the per-component "
-                    f"CSVs with --instances-per-component 1 before "
-                    f"combining."
+                    f"{input_path.name} is empty / has no header row; "
+                    f"combine_logs cannot derive its metric columns"
+                )
+            if "timestamp" not in reader.fieldnames:
+                raise SystemExit(
+                    f"{input_path.name} header {list(reader.fieldnames)!r} "
+                    f"is missing the 'timestamp' column; combine_logs "
+                    f"cannot key per-component rows without it"
                 )
             metric_names = [f for f in reader.fieldnames if f != "timestamp"]
             component_metrics[component] = metric_names
@@ -6252,15 +6311,124 @@ def combine_logs_unified(components, input_dir, output_file=None):
     return total_rows, size_mb
 
 
+def _write_combined_long_form(
+    components: list[str], layout: dict[str, dict], output_file: Path,
+) -> int:
+    """Write the long-form unified CSV when any per-component CSV carries
+    the multi-instance dimension prefix.
+
+    Layout mirrors the long-form ``gauges.csv``: ``timestamp, component,
+    id, host, pod, az, region, tenant, metric, value``. Per-(component,
+    instance) iterators feed ``heapq.merge`` on parsed timestamps;
+    sources are pre-sorted by ``(component, instance_dims)`` (alphabetical
+    by component, then by id-leading dim tuple) so equal-timestamp
+    groups emit component-then-instance-then-metric order — the
+    documented Phase 5 ``(timestamp, component, instance_id, metric)``
+    tie-break. The caller-supplied ``components`` order is **not**
+    preserved (the function sorts components alphabetically internally)
+    so the on-disk component order is deterministic regardless of how
+    the caller built the list; this matches the long-form
+    ``gauges.csv`` writer's tie-break contract.
+
+    Missing per-component CSVs raise ``SystemExit`` rather than being
+    silently skipped — the wide-form path's ``combine_logs`` guard
+    raises on the same input, and the long form mirrors that contract
+    so the two paths agree on what "missing input" means even when the
+    caller bypasses ``combine_logs`` to call this writer directly.
+    """
+    # Mirror the wide-form path's contract: every requested component
+    # must have a per-component CSV on disk. Defends against a direct
+    # caller that bypasses ``combine_logs``'s missing-file check; the
+    # autodiscovery path through ``combine_logs(...)`` already filters
+    # to existing files via ``discover_components``, so this loop is a
+    # no-op there.
+    missing = [
+        f"{name}.csv" for name in components
+        if not layout[name]["exists"]
+    ]
+    if missing:
+        raise SystemExit(
+            f"missing component CSVs for long-form combine: "
+            f"{', '.join(missing)}"
+        )
+    sources = []
+    sorted_components = sorted(components)
+    for component in sorted_components:
+        entry = layout[component]
+        metric_cols = entry["metric_cols"]
+        has_dims = bool(entry["dim_cols"])
+        instance_blocks = _scan_instance_block_layout(
+            entry["path"], has_dims=has_dims,
+        )
+        for instance_dims, start_offset in instance_blocks:
+            row_iter = _iter_component_instance_rows(
+                entry["path"], start_offset,
+                has_dims=has_dims, n_metrics=len(metric_cols),
+            )
+
+            def _tagged(_iter=row_iter, _comp=component,
+                        _dims=instance_dims, _cols=metric_cols):
+                for ts_dt, ts_raw, values in _iter:
+                    yield (ts_dt, ts_raw, _comp, _dims, _cols, values)
+            # Sort key carries the full ``instance_dims`` tuple (see
+            # the ``write_gauges_csv`` long-form path for the same
+            # rationale); ``id`` is the leading field, which yields the
+            # documented ``(timestamp, component, instance_id, metric)``
+            # tie-break order in v1.
+            sources.append(((component, instance_dims), _tagged()))
+
+    # Each source holds an open file handle for the lifetime of the
+    # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
+    # 13 components × 20 instances = 260 handles) either bump the
+    # rlimit up to fit or fail with an actionable message before
+    # ``heapq.merge`` tries to prime the heap.
+    _ensure_long_form_fd_capacity(len(sources))
+
+    sources.sort(key=lambda item: item[0])
+    iters = [src for _key, src in sources]
+
+    rows_written = 0
+    with open(output_file, "w", encoding="utf-8", newline="") as out_f:
+        writer = csv.writer(out_f, lineterminator="\n")
+        writer.writerow(
+            ("timestamp", "component", *_INSTANCE_DIMENSION_COLUMNS, "metric", "value")
+        )
+        for _dt, ts, comp, dims, metric_cols, values in heapq.merge(
+            *iters, key=lambda item: item[0]
+        ):
+            for name, raw in zip(metric_cols, values):
+                if raw == "":
+                    continue
+                writer.writerow((ts, comp, *dims, name, raw))
+                rows_written += 1
+    return rows_written
+
+
 def combine_logs(input_dir, components=None):
     """Write the unified combined CSV from per-component CSVs in ``input_dir``.
 
     When ``components`` is ``None``, the combine step autodiscovers every
     ``*.csv`` in ``input_dir`` (excluding the anomalies manifest and prior
-    combine outputs). When ``components`` is provided, it is used verbatim —
-    the caller controls the order and is responsible for restricting to the
-    user-selected allowlist. Any named component whose ``{name}.csv`` is
-    missing from ``input_dir`` raises ``SystemExit``.
+    combine outputs). When ``components`` is provided, it is used as the
+    allowlist for which CSVs to combine. Any named component whose
+    ``{name}.csv`` is missing from ``input_dir`` raises ``SystemExit``.
+
+    Output ordering depends on which layout the underlying
+    ``combine_logs_unified`` dispatches to:
+
+    - **Wide layout** (default, dimensionless inputs) — the caller-
+      supplied ``components`` order is preserved verbatim in the
+      ``component_a_m0, component_a_m1, component_b_m0, …`` column
+      sequence.
+    - **Long layout** (any dimensioned input, VER-148 phase 5) — the
+      caller-supplied ``components`` order is **not** preserved. Rows
+      are merged chronologically and tie-break on
+      ``(component, instance_id, metric)`` with components sorted
+      alphabetically; the caller-supplied order only filters which
+      components participate. The on-disk column shape is fixed
+      (``timestamp, component, id, host, pod, az, region, tenant,
+      metric, value``), so the order argument has no column-layout
+      effect in the long form.
     """
     input_dir = Path(input_dir)
     if components is None:
@@ -7002,23 +7170,314 @@ def _iter_component_rows(component: str, csv_path: Path):
             yield ts, component, values
 
 
+# Margin reserved for stdin/stdout/stderr + the output file + room
+# for the OS's accounting; the long-form merge needs at least
+# ``len(sources) + _LONG_FORM_FD_MARGIN`` file descriptors available.
+_LONG_FORM_FD_MARGIN = 16
+
+
+def _ensure_long_form_fd_capacity(n_sources: int) -> None:
+    """Raise the soft FD limit to fit ``n_sources`` concurrent file
+    handles, or ``SystemExit`` with an actionable message if the OS
+    won't let us.
+
+    The long-form ``heapq.merge`` over per-(component, instance)
+    iterators primes every source, so all of them hold an open
+    ``csv.reader`` handle for the lifetime of the merge. At max
+    fan-out (``len(COMPONENTS) * MAX_INSTANCES_PER_COMPONENT`` =
+    13 × 20 = 260) we can exceed the default macOS soft limit
+    (256), causing ``EMFILE`` deep inside the writer.
+
+    Fix on POSIX (Linux, macOS): try to bump the soft limit (up to
+    the hard cap) using ``resource.setrlimit``; if the hard limit is
+    still too low or ``setrlimit`` rejects the raise, exit early with
+    a clear error naming the needed headroom and the user-facing
+    levers (``--instances-per-component``, ``--components``,
+    ``ulimit -n``).
+
+    Windows is a no-op: ``resource`` is POSIX-only, and there's no
+    portable equivalent of ``RLIMIT_NOFILE`` we can pre-flight. The
+    helper returns silently and lets ``open()`` surface the real
+    error inside ``heapq.merge`` if the OS-level FD cap is reached.
+    In practice the Windows default open-file table is plenty large
+    for ``MAX_INSTANCES_PER_COMPONENT * len(COMPONENTS) = 260`` so
+    this is unlikely to bite; tests
+    (``test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low``)
+    skip on Windows via ``pytest.importorskip("resource")``.
+
+    ``n_sources`` is only the file-handle count from this merge; the
+    ``_LONG_FORM_FD_MARGIN`` reserves space for stdio + the output
+    stream + a bit of OS overhead.
+    """
+    needed = n_sources + _LONG_FORM_FD_MARGIN
+    try:
+        import resource  # POSIX-only; absent on Windows.
+    except ImportError:
+        # No portable rlimit on Windows. If we end up needing more
+        # FDs than the platform allows, ``open()`` will surface the
+        # real error; we can't pre-flight it from here, so trust the
+        # OS to enforce the bound at write time.
+        return
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft >= needed:
+        return
+    target = needed if hard == resource.RLIM_INFINITY else min(needed, hard)
+    if target < needed:
+        raise SystemExit(
+            f"long-form output needs {needed} concurrent file handles "
+            f"({n_sources} per-instance sources + {_LONG_FORM_FD_MARGIN} "
+            f"reserve) but the process FD hard limit is {hard}. Lower "
+            f"--instances-per-component, narrow --components, or raise "
+            f"the system FD limit (ulimit -n) before re-running."
+        )
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (ValueError, OSError) as exc:
+        raise SystemExit(
+            f"long-form output needs {needed} concurrent file handles "
+            f"({n_sources} per-instance sources + {_LONG_FORM_FD_MARGIN} "
+            f"reserve) but raising the soft FD limit from {soft} to "
+            f"{target} failed: {exc}. Lower --instances-per-component, "
+            f"narrow --components, or raise the system FD limit "
+            f"(ulimit -n) before re-running."
+        ) from exc
+
+
+def _classify_component_csv_header(
+    header: list[str],
+) -> tuple[tuple[str, ...], list[str]]:
+    """Split a per-component CSV header into ``(dim_cols, metric_cols)``.
+
+    A header is classified as dimensioned only when **all three** hold:
+    column 0 is exactly ``"timestamp"``, the header is long enough to
+    fit the full dimension prefix (``len(header) >= 1 +
+    len(_INSTANCE_DIMENSION_COLUMNS)``), and columns 1..6 after the
+    timestamp are exactly ``_INSTANCE_DIMENSION_COLUMNS`` in registry
+    order — i.e. the six fields ``id, host, pod, az, region, tenant``.
+    Headers that fail any of those checks fall through to the no-dim
+    branch, where every post-``timestamp`` column is treated as a
+    metric. The explicit ``header[0]`` and length checks defend against
+    a malformed / user-staged CSV whose first column happens to be
+    ``id`` (or another dim name) being mis-routed into the dimensioned
+    branch. Empty / missing headers go the same no-dim route.
+    """
+    if not header:
+        return (), []
+    dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
+    rest = header[1:]
+    if (
+        header[0] == "timestamp"
+        and len(header) >= 1 + dim_count
+        and tuple(rest[:dim_count]) == _INSTANCE_DIMENSION_COLUMNS
+    ):
+        return _INSTANCE_DIMENSION_COLUMNS, rest[dim_count:]
+    return (), rest
+
+
+def _scan_component_csv_headers(
+    component_csv_paths: dict[str, Path],
+) -> tuple[bool, dict[str, dict]]:
+    """Inspect every per-component CSV header and return a layout summary.
+
+    Returns ``(any_dimensioned, info)`` where ``info[component]`` is
+    ``{"path": path, "exists": bool, "dim_cols": tuple, "metric_cols":
+    list[str]}``. ``any_dimensioned`` is True when at least one existing
+    CSV has the dimension prefix; this drives the long-form-with-dims vs.
+    classic 4-column branch in ``write_gauges_csv``.
+    """
+    any_dimensioned = False
+    info: dict[str, dict] = {}
+    for component, path in component_csv_paths.items():
+        entry: dict = {
+            "path": path,
+            "exists": path.exists(),
+            "dim_cols": (),
+            "metric_cols": [],
+        }
+        if entry["exists"]:
+            with open(path, "r", encoding="utf-8", newline="") as fh:
+                reader = csv.reader(fh)
+                header = next(reader, None)
+            if header:
+                dim_cols, metric_cols = _classify_component_csv_header(header)
+                entry["dim_cols"] = dim_cols
+                entry["metric_cols"] = metric_cols
+                if dim_cols:
+                    any_dimensioned = True
+        info[component] = entry
+    return any_dimensioned, info
+
+
+def _scan_instance_block_layout(
+    csv_path: Path, *, has_dims: bool,
+) -> list[tuple[tuple[str, ...], int]]:
+    """Return the ordered list of ``(dim_tuple, start_offset)`` pairs for
+    every instance block in ``csv_path``, in the order they first appear.
+
+    ``start_offset`` is the opaque seek cookie returned by
+    ``fh.tell()`` BEFORE the block's first row is read — *not* a raw
+    byte position. Python's text-mode files return a cookie that
+    encodes both the byte position and the decoder state, and it is
+    only meaningful when handed back to ``seek()`` on a file opened
+    with **matching** ``encoding`` and ``newline`` parameters.
+    ``_iter_component_instance_rows`` reopens ``csv_path`` with the
+    same ``encoding="utf-8"`` / ``newline=""`` settings as the scan
+    here, so the cookie round-trips cleanly. ``seek()``ing straight to
+    the block's start cookie gives O(rows_total) total work per
+    per-component CSV — each row is read at most twice (once by the
+    scan, once by exactly one iterator) — instead of the
+    O(rows_total × instances) the previous "scan from top each time"
+    iterator did.
+
+    ``has_dims`` short-circuits the scan: dimensionless CSVs always
+    have a single conceptual block represented by a tuple of empty
+    strings (one per ``_INSTANCE_DIMENSION_COLUMNS`` entry); the
+    ``start_offset`` is the cookie right after the header line. For
+    dimensioned CSVs the scan reads one line at a time, recording
+    ``tell()`` before each line, and detects block boundaries where
+    the dim tuple changes (``generate_component`` writes per-instance
+    blocks sequentially, so each unique dim tuple appears in exactly
+    one contiguous block). The lightweight scan uses ``readline()`` +
+    ``line.split(',')`` so the recorded ``tell()`` cookie isn't
+    corrupted by ``csv.reader``'s internal buffer — the writer side
+    emits unquoted comma-separated values (see the ``np.char.add``
+    path in ``generate_component``), so the simple split is
+    equivalent to a full CSV parse for the dim columns.
+    """
+    dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
+    if not has_dims:
+        empty_dims = tuple("" for _ in _INSTANCE_DIMENSION_COLUMNS)
+        with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+            fh.readline()  # header
+            start_offset = fh.tell()
+        return [(empty_dims, start_offset)]
+    blocks: list[tuple[tuple[str, ...], int]] = []
+    last: tuple[str, ...] | None = None
+    with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+        fh.readline()  # header
+        while True:
+            pos = fh.tell()
+            line = fh.readline()
+            if not line:
+                break  # EOF
+            if line in ("\n", "\r\n"):
+                # Skip blank lines (tolerate hand-edited inputs).
+                # ``generate_component`` omits dropped rows from the
+                # CSV entirely rather than writing them as blanks
+                # (see ``_iter_component_rows``), so blank lines do
+                # not occur on a freshly generated file — this guard
+                # only matters for staged / hand-edited inputs.
+                continue
+            # generate_component writes plain comma-separated values
+            # without quoting (see the np.char.add path), so a simple
+            # split is safe and exactly what csv.reader would parse.
+            fields = line.rstrip("\r\n").split(",")
+            if len(fields) < 1 + dim_count:
+                continue
+            dims = tuple(fields[1:1 + dim_count])
+            if dims != last:
+                blocks.append((dims, pos))
+                last = dims
+    return blocks
+
+
+def _iter_component_instance_rows(
+    csv_path: Path, start_offset: int, *,
+    has_dims: bool, n_metrics: int,
+):
+    """Yield ``(ts_dt, ts_raw, metric_values)`` for the rows belonging
+    to one instance block in ``csv_path``, starting at the seek cookie
+    ``start_offset``.
+
+    Opens a fresh file handle so the caller can hold multiple
+    per-instance iterators on the same CSV open simultaneously (e.g.
+    for ``heapq.merge``). The handle ``seek()``s straight to the
+    block's start cookie produced by ``_scan_instance_block_layout`` —
+    no re-scanning from the top — and a ``csv.reader`` parses from
+    there. The cookie is the opaque value returned by Python's
+    text-mode ``tell()``, valid only against a handle opened with the
+    matching ``encoding="utf-8"`` / ``newline=""`` settings (both the
+    scan and this iterator open the file that way, so the round-trip
+    is well-defined). On dimensioned CSVs the iterator records the
+    first row's dim tuple as the block's identity and exits as soon as
+    a later row's dim tuple differs (``generate_component`` writes
+    blocks contiguously, so the dim transition is the end-of-block
+    marker). On dimensionless CSVs the iterator yields every data row
+    to EOF; ``start_offset`` then points to the first data row.
+    """
+    dim_count = len(_INSTANCE_DIMENSION_COLUMNS)
+    with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+        fh.seek(start_offset)
+        reader = csv.reader(fh)
+        if has_dims:
+            min_cols = 1 + dim_count
+            block_dims: tuple[str, ...] | None = None
+            for row in reader:
+                # Skip blank lines AND short/malformed rows so a row
+                # with fewer than ``min_cols`` columns cannot set
+                # ``block_dims`` to a truncated tuple and prematurely
+                # terminate the block on the next well-formed row.
+                # ``_scan_instance_block_layout`` applies the same guard
+                # so the two helpers cannot disagree on what counts as
+                # an in-block row.
+                if len(row) < min_cols:
+                    continue
+                dims = tuple(row[1:1 + dim_count])
+                if block_dims is None:
+                    block_dims = dims
+                elif dims != block_dims:
+                    return  # EOF for this block
+                ts = row[0]
+                ts_dt = _parse_csv_timestamp(ts)
+                metric_values = row[
+                    1 + dim_count: 1 + dim_count + n_metrics
+                ]
+                yield (ts_dt, ts, metric_values)
+        else:
+            for row in reader:
+                if not row:
+                    continue
+                ts = row[0]
+                ts_dt = _parse_csv_timestamp(ts)
+                metric_values = row[1: 1 + n_metrics]
+                yield (ts_dt, ts, metric_values)
+
+
 def write_gauges_csv(
     component_csv_paths: dict[str, Path],
     output_path: Path,
 ) -> int:
     """Write a long-form ``gauges.csv`` with one row per
-    ``(timestamp, component, metric, value)`` tuple from the given
+    ``(timestamp, component, metric, value)`` tuple (4-column shape) or
+    ``(timestamp, component, id, host, pod, az, region, tenant, metric,
+    value)`` tuple (10-column shape, VER-148 phase 5) from the given
     per-component CSVs.
 
-    Rows are emitted in a chronologically merged timeline via ``heapq.merge``
-    keyed on the parsed timestamp — the same ordering ``stream_otel_gauges``
-    produces over its OTLP data points, so the file artifact can be
-    cross-checked against an OTLP collector recording.
+    Layout is decided purely by header inspection: if **any**
+    per-component CSV carries the full ``id, host, pod, az, region,
+    tenant`` dimension prefix after ``timestamp``, the writer emits the
+    10-column long form. If every CSV is the classic dimensionless
+    shape (first column ``timestamp`` followed directly by the metric
+    columns), the writer emits today's 4-column form byte-identically,
+    so the existing locked golden hashes are preserved.
 
-    Equal-timestamp ties tie-break on sorted component name, then on the
-    per-component CSV's column order (``MetricSpec`` order). The function
-    sorts ``component_csv_paths.keys()`` internally so the tiebreaker holds
-    regardless of how the caller built the mapping.
+    The dispatch is header-based, not flag-based: the Phase-2
+    ``--instances-per-component N > 1`` fan-out is the canonical path
+    that lands a dimensioned CSV, but ``--instance-config`` can also
+    produce a dimensioned single-instance CSV and routes to the same
+    long-form output.
+
+    Rows are emitted in a chronologically merged timeline via
+    ``heapq.merge`` keyed on the parsed timestamp — the same ordering
+    ``stream_otel_gauges`` produces over its OTLP data points, so the file
+    artifact can be cross-checked against an OTLP collector recording.
+    Equal-timestamp ties tie-break on sorted component name, then on
+    instance id (sorted), then on the per-component CSV's column order
+    (``MetricSpec`` order). The function sorts ``component_csv_paths.keys()``
+    internally so the component tiebreaker holds regardless of how the
+    caller built the mapping; the instance tiebreaker follows the
+    generated CSV's per-instance block order (id ``i0`` before ``i1`` etc.
+    in v1).
 
     Values are written through verbatim from the per-component CSV's raw
     cell string — no ``float(raw)`` coercion is attempted, so the on-disk
@@ -7032,50 +7491,117 @@ def write_gauges_csv(
 
     Returns the number of data rows written (header excluded).
     """
+    any_dimensioned, layout = _scan_component_csv_headers(component_csv_paths)
+
     if not component_csv_paths:
         with open(output_path, "w", encoding="utf-8", newline="") as f:
             f.write("timestamp,component,metric,value\n")
         return 0
-
-    def _row_iter(component: str, csv_path: Path):
-        with open(csv_path, "r", encoding="utf-8", newline="") as fh:
-            reader = csv.reader(fh)
-            header = next(reader, None)
-            if header is None:
-                return
-            metric_cols = header[1:]
-            for row in reader:
-                if not row:
-                    continue
-                ts = row[0]
-                ts_dt = _parse_csv_timestamp(ts)
-                yield (ts_dt, ts, component, list(zip(metric_cols, row[1:])))
 
     # Sort the component iterators by component name so equal-timestamp
     # ties tie-break on sorted-component order regardless of how the caller
     # built ``component_csv_paths``. This is what the locked golden hashes
     # encode (callers in this module already pass ``sorted(args.components)``,
     # so the sort is idempotent in the happy path).
-    iters = [
-        _row_iter(c, component_csv_paths[c])
-        for c in sorted(component_csv_paths)
-        if component_csv_paths[c].exists()
+    sorted_components = [
+        c for c in sorted(component_csv_paths)
+        if layout[c]["exists"]
     ]
 
+    if not any_dimensioned:
+        # Classic 4-column path. Preserved byte-identically by keeping the
+        # row iterator and writer shape unchanged from pre-VER-148 code so
+        # the locked SHA-256 hashes in ``tests/test_gauges_file.py`` still
+        # apply to N=1 / dimensionless runs.
+        def _row_iter_4col(component: str):
+            entry = layout[component]
+            metric_cols = entry["metric_cols"]
+            n_metrics = len(metric_cols)
+            with open(entry["path"], "r", encoding="utf-8", newline="") as fh:
+                reader = csv.reader(fh)
+                next(reader, None)  # header (already inspected)
+                for row in reader:
+                    if not row:
+                        continue
+                    ts = row[0]
+                    ts_dt = _parse_csv_timestamp(ts)
+                    values = row[1: 1 + n_metrics]
+                    yield (ts_dt, ts, component,
+                           list(zip(metric_cols, values)))
+
+        iters = [_row_iter_4col(c) for c in sorted_components]
+        rows_written = 0
+        with open(output_path, "w", encoding="utf-8", newline="") as out_f:
+            writer = csv.writer(out_f, lineterminator="\n")
+            writer.writerow(("timestamp", "component", "metric", "value"))
+            for _dt, ts, comp, name_value_pairs in heapq.merge(
+                *iters, key=lambda item: item[0]
+            ):
+                for name, raw in name_value_pairs:
+                    if raw == "":
+                        continue
+                    writer.writerow((ts, comp, name, raw))
+                    rows_written += 1
+        return rows_written
+
+    # Long form with dimensions (VER-148 phase 5). Build one merge iterator
+    # per (component, instance) block. Each block is timestamp-monotonic
+    # because ``generate_component`` writes dimensioned CSVs as sequential
+    # per-instance blocks. We sort sources by (component_name, instance_id)
+    # before passing them to ``heapq.merge`` so equal-timestamp output
+    # groups by component, then by instance id, and within each row the
+    # inner metric loop walks columns in MetricSpec order — matching the
+    # ``(timestamp, component, instance_id, metric)`` tie-break order
+    # promised in the docstring.
+
+    sources = []
+    for component in sorted_components:
+        entry = layout[component]
+        metric_cols = entry["metric_cols"]
+        has_dims = bool(entry["dim_cols"])
+        instance_blocks = _scan_instance_block_layout(
+            entry["path"], has_dims=has_dims,
+        )
+        for instance_dims, start_offset in instance_blocks:
+            row_iter = _iter_component_instance_rows(
+                entry["path"], start_offset,
+                has_dims=has_dims, n_metrics=len(metric_cols),
+            )
+
+            def _tagged(_iter=row_iter, _comp=component,
+                        _dims=instance_dims, _cols=metric_cols):
+                for ts_dt, ts_raw, values in _iter:
+                    yield (ts_dt, ts_raw, _comp, _dims, _cols, values)
+            # Sort key carries the full ``instance_dims`` tuple, not
+            # just the leading ``id`` field, so a hypothetical future
+            # registry where two instances share an ``id`` but differ
+            # in another dim still gets a total order. In v1 the ``id``
+            # is unique per component, so the trailing fields are inert.
+            sources.append(((component, instance_dims), _tagged()))
+
+    # Each source holds an open file handle for the lifetime of the
+    # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
+    # 13 components × 20 instances = 260 handles) either bump the
+    # rlimit up to fit or fail with an actionable message before
+    # ``heapq.merge`` tries to prime the heap.
+    _ensure_long_form_fd_capacity(len(sources))
+
+    sources.sort(key=lambda item: item[0])
+    iters = [src for _key, src in sources]
+
     rows_written = 0
-    # ``newline=""`` lets ``csv.writer`` own line termination. ``\n`` (instead
-    # of ``\r\n``) matches the per-component CSV writes elsewhere in the
-    # script, keeping the locked SHA-256 golden hashes platform-stable.
     with open(output_path, "w", encoding="utf-8", newline="") as out_f:
         writer = csv.writer(out_f, lineterminator="\n")
-        writer.writerow(("timestamp", "component", "metric", "value"))
-        for _dt, ts, comp, name_value_pairs in heapq.merge(
+        writer.writerow(
+            ("timestamp", "component", *_INSTANCE_DIMENSION_COLUMNS, "metric", "value")
+        )
+        for _dt, ts, comp, dims, metric_cols, values in heapq.merge(
             *iters, key=lambda item: item[0]
         ):
-            for name, raw in name_value_pairs:
+            for name, raw in zip(metric_cols, values):
                 if raw == "":
                     continue
-                writer.writerow((ts, comp, name, raw))
+                writer.writerow((ts, comp, *dims, name, raw))
                 rows_written += 1
     return rows_written
 
