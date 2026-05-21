@@ -1363,7 +1363,9 @@ def _extra_args_for_slug(amc, slug: str, tmp_path=None) -> list[str]:
 
     ``tmp_path`` is required when the scenario uses a callable ``instance_filter``
     so a temporary instance-config JSON file can be written with matching dimension
-    fields. JSON is used (rather than YAML) so the helper has no PyYAML dependency.
+    fields.  Passing ``tmp_path=None`` for a callable-filter scenario raises
+    ``ValueError``.  JSON is used (rather than YAML) so the helper has no PyYAML
+    dependency.
     """
     scenario = amc.SCENARIOS[slug]
     extra = ["--scenarios", slug, "--drop-rate", "0", "--interval-seconds", "60"]
@@ -1373,18 +1375,24 @@ def _extra_args_for_slug(amc, slug: str, tmp_path=None) -> list[str]:
         # id-list filters (e.g. frozenset(["i0"])) require named instances;
         # the default anonymous instance (id=None) never matches.
         extra += ["--instances-per-component", "3"]
-    if _scenario_uses_callable_filter(scenario) and tmp_path is not None:
+    if _scenario_uses_callable_filter(scenario):
+        if tmp_path is None:
+            raise ValueError(
+                f"_extra_args_for_slug: slug {slug!r} uses a callable "
+                "instance_filter but tmp_path=None — pass a valid tmp_path "
+                "so the instance-config JSON can be written."
+            )
         # callable filters may inspect dimension fields (e.g. az).  Write a
         # minimal instance-config that supplies the required field value on i0.
         import json as _json
         cfg: dict = {"components": {}}
-        for comp in set(amc.COMPONENTS):
+        for comp in amc.COMPONENTS:
             cfg["components"][comp] = [
                 {"id": "i0", "pod": "pod-0", "az": "us-east-1a"},
                 {"id": "i1", "pod": "pod-1", "az": "us-west-2a"},
             ]
         cfg_path = tmp_path / f"_instance_cfg_{slug}.json"
-        cfg_path.write_text(_json.dumps(cfg))
+        cfg_path.write_text(_json.dumps(cfg, sort_keys=True))
         extra += ["--instance-config", str(cfg_path)]
     return extra
 

@@ -188,7 +188,7 @@ def test_auth_pod_failure_registry_spec_out_of_range_warns(amc, tmp_path, capsys
     assert csv_path.exists(), "authservice.csv must still be written"
 
     # No row in any instance block carries the registry override value (0.85);
-    # natural error_rate baseline is ~0.005, three decimal places away.
+    # natural error_rate baseline is ~0.20 (base=0.2, jitter=0.05), well below 0.85.
     target_value = anomaly_specs[0]["generator"](None, 0)
     for inst_id in ("i0", "i1", "i2"):
         for row in _rows_for_instance(csv_path, inst_id):
