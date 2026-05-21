@@ -303,25 +303,34 @@ flag:
       so the logistic curve / `SaturationParams` ranges stay
       identical to today's shared path.
     - Draws the `_TOPOLOGY_COUPLE_NOISE_STD` coupling noise *once
-      per coupled metric* and shares it across instances, so
-      symmetric upstream produces byte-identical coupling arrays
-      across pods — and therefore byte-identical CSV output to
-      the lambda-baked path.
+      per coupled metric*, lazily on the first active contribution
+      (so a downstream whose upstream column was trimmed by
+      `--metrics-per-component` or whose every callable `signal`
+      returned `None` consumes zero RNG draws here — matching the
+      legacy `_compose_topology_coupled_specs` short-circuit), and
+      caches it across instances so symmetric upstream produces
+      byte-identical coupling arrays across pods (and therefore
+      byte-identical CSV output to the lambda-baked path).
     - Returns `(coupling_by_instance, saturation_by_instance,
       any_divergent)`. The `any_divergent` flag is computed inside
       the helper by comparing every instance's coupling/saturation
       arrays to instance 0 via `_arrays_equal_dict` /
-      `_sat_tuples_equal_dict`, but the symmetric-vs-asymmetric
-      *collapse* itself happens downstream in `generate_component`:
-      when `any_divergent` is False, `generate_component` runs the
-      natural-column draw *once* per metric and reuses the result
-      across all instances (preserves `N3_ONE_DAY_HASHES` /
+      `_sat_tuples_equal_dict`. The flag is informational only:
+      `generate_component` does *not* trust it for the
+      symmetric-vs-asymmetric collapse, because a programmatic
+      caller could pass per-instance arrays alongside a stale
+      `any_divergent` and silently force instance-0 reuse across
+      every pod. Instead, `generate_component` re-derives the
+      divergent-instance set from the passed arrays directly: when
+      every instance matches instance 0, it runs the natural-column
+      draw *once* per metric and reuses the result across all
+      instances (preserves `N3_ONE_DAY_HASHES` /
       `N3_SEVEN_DAY_HASHES` locked in
-      `tests/test_instances_per_component.py`); when True (an
-      `instance_filter` on an upstream load metric makes the
-      arrays diverge), per-instance natural draws run with shared
-      `noise=` kwargs so only the topology contributions vary
-      across pods.
+      `tests/test_instances_per_component.py`); when at least one
+      instance diverges, per-instance natural draws run with shared
+      `noise=` kwargs for the divergent pods only so the symmetric
+      pods stay on the shared buffer and the per-instance buffers
+      cover only the truly-divergent pods.
 
 The math hook is the VER-158 refactor of `_natural_column` which
 now accepts four optional keyword-only kwargs:
@@ -373,8 +382,10 @@ arg on `generate_component`. Each instance gets its own
 columns all reference identical data (different ``.copy()`` results
 on the same source row), and ``generate_component`` collapses to the
 shared fast path when the calculated per-instance arrays are
-identical (see the ``any_divergent`` flag from
-``_compute_topology_arrays_per_instance``).
+identical — the divergence check is run inside ``generate_component``
+against the per-instance arrays it receives, not delegated to the
+helper-returned ``any_divergent`` flag (see the per-instance topology
+subsection above for the rationale).
 
 Cascade-vs-topology overlap is unchanged from phase 4: per-instance
 anomaly overrides (`instance_filter`) are applied per pod after

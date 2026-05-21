@@ -499,7 +499,6 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        topology_capture_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = None,
                        coupling_arrays_per_instance: list[dict[str, np.ndarray]] | None = None,
                        saturation_arrays_per_instance: list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]] | None = None,
-                       any_divergent: bool = False,
                        apply_dtype_int_cast: bool = True):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
@@ -729,8 +728,17 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         # asymmetric upstream pod, this saves 18 full (n_rows × n_cols)
         # buffers compared to the previous "allocate-N-up-front" shape
         # (~9.7 GB at 7d / 1s / N=20 / 10 metrics).
+        #
+        # Divergence is derived from the passed arrays directly rather
+        # than trusting the caller-supplied ``any_divergent`` hint: a
+        # programmatic caller that passes divergent arrays alongside
+        # ``any_divergent=False`` would otherwise cause silent reuse
+        # of instance-0 arrays across every pod. The hint is treated
+        # as a fast-path skip only when it is False *and* a quick
+        # length check on instance 0 reveals no per-instance arrays
+        # to compare; otherwise we always do the comparison.
         divergent_instances: set[int] = set()
-        if any_divergent and n_inst_local > 1:
+        if n_inst_local > 1:
             ref_coupling = coupling_arrays_per_instance[0]
             ref_saturation = saturation_arrays_per_instance[0]
             for inst_idx_k in range(1, n_inst_local):
@@ -3204,22 +3212,20 @@ def _compute_topology_arrays_per_instance(
     if not incoming:
         return coupling_by_instance, saturation_by_instance, False
 
-    # Shared callable+constant noise per coupled metric (drawn here so
-    # all per-instance arrays share the same noise floor under
-    # symmetric upstream → byte-identical to today's shared draw).
-    # Only drawn after ``incoming`` is confirmed non-empty (the filter
-    # above), so a downstream whose upstreams were all dropped from
-    # ``--components`` consumes zero RNG draws here — matching the
-    # ``return specs`` short-circuit in
-    # ``_compose_topology_coupled_specs``.
+    # Shared callable+constant noise per coupled metric — drawn lazily
+    # the *first* time a metric produces an active contribution, then
+    # cached across instances so symmetric upstream stays byte-identical
+    # to today's shared draw. Lazy initialization (instead of an upfront
+    # pre-draw over ``coupled_metric_names``) matches
+    # ``_compose_topology_coupled_specs``'s RNG schedule: that legacy
+    # path draws noise inside the active branch only, so a coupled
+    # metric whose contributions all get skipped (e.g.
+    # ``--metrics-per-component`` trimmed the canonical upstream
+    # column, or every callable ``signal`` returned ``None``) consumes
+    # zero RNG draws there. Pre-drawing here would have advanced
+    # ``rng`` for those skipped metrics, shifting every subsequent
+    # downstream's draws.
     shared_coupling_noise: dict[str, np.ndarray] = {}
-    for metric_name in coupled_metric_names:
-        if metric_name in name_to_idx:
-            original = specs[name_to_idx[metric_name]]
-            if float(original.base) > 0:
-                shared_coupling_noise[metric_name] = rng.normal(
-                    0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows
-                )
 
     # Compute per-instance arrays.
     # Cache shared across downstream instances: under mismatched
@@ -3310,12 +3316,18 @@ def _compute_topology_arrays_per_instance(
                         ups_arr / ups_base * downstream_base * w_norm
                     )
 
+            # Lazy noise draw: only after we know this metric has an
+            # active contribution. ``setdefault`` keeps the noise
+            # shared across instances — instance 0 (first iteration)
+            # draws, later instances reuse the cached array — so
+            # symmetric upstream still produces byte-identical
+            # coupling arrays across pods.
             noise = shared_coupling_noise.get(metric_name)
             if noise is None:
-                # Defensive: fall back to a per-instance draw if the
-                # shared noise wasn't pre-drawn (e.g. this metric's
-                # base was non-positive at the pre-pass).
-                noise = rng.normal(0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)
+                noise = rng.normal(
+                    0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows
+                )
+                shared_coupling_noise[metric_name] = noise
             coupling_by_instance[inst_idx][metric_name] = (
                 constant_contrib + callable_contrib + noise
             )
@@ -10471,7 +10483,6 @@ def main(argv=None):
         specs = effective_specs[name]
         coupling_per_instance = None
         saturation_per_instance = None
-        any_divergent = False
         instances_for_component = ctx.instances[name]
         n_inst_local = len(instances_for_component)
         is_anonymous_local = _is_anonymous_instance_list(instances_for_component)
@@ -10484,11 +10495,14 @@ def main(argv=None):
                 # shares the ``_TOPOLOGY_COUPLE_NOISE_STD`` draw across
                 # instances so symmetric upstream produces byte-identical
                 # output to the shared lambda-baked path used by the
-                # N=1 anonymous branch below.
+                # N=1 anonymous branch below. The returned
+                # ``any_divergent`` flag is discarded: ``generate_component``
+                # derives divergence directly from the passed arrays so
+                # correctness does not depend on caller flag accuracy.
                 (
                     coupling_per_instance,
                     saturation_per_instance,
-                    any_divergent,
+                    _,
                 ) = _compute_topology_arrays_per_instance(
                     name, specs, upstream_arrays,
                     upstream_arrays_by_instance,
@@ -10528,7 +10542,6 @@ def main(argv=None):
                            ),
                            coupling_arrays_per_instance=coupling_per_instance,
                            saturation_arrays_per_instance=saturation_per_instance,
-                           any_divergent=any_divergent,
                            apply_dtype_int_cast=(
                                args.topology_mode == "realistic"
                            ))

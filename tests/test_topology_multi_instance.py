@@ -229,6 +229,17 @@ def test_synthetic_pod0_spike_lifts_only_pod0_saturation(
         out_dir, "authservice", "i2", "avg_auth_latency_ms"
     )
 
+    # Per-pod row count and timestamp alignment: every pod must
+    # emit the same row count and the same timestamp vector at each
+    # row index. ``generate_component`` writes per-instance blocks
+    # from the same shared ``ts_array`` for the dimensioned long-
+    # form CSV, so any divergence here would indicate a regression
+    # in the per-instance writer rather than in saturation routing.
+    assert pod0_ts == pod1_ts == pod2_ts, (
+        "per-pod timestamp vectors must be identical "
+        f"(lens={len(pod0_ts)}, {len(pod1_ts)}, {len(pod2_ts)})"
+    )
+
     # Locate the spike-window indices via the timestamp prefix.
     # START = 2026-03-10 00:00:00; 03:30 → row 12600 at 1s interval.
     n_rows = len(pod0_ts)
