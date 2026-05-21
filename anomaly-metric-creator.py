@@ -772,8 +772,16 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 ):
                     # Coupled metrics have a baseline_override that replaces the
                     # natural draw entirely — drawing noise would advance the RNG
-                    # without producing any output difference. Only draw when at
-                    # least one instance will use the natural baseline path.
+                    # without producing any output difference. Probe instance 0
+                    # only: the per-instance composer assigns a coupling
+                    # baseline_override consistently across instances for a
+                    # given metric (either all instances get an override or
+                    # none do — the existence of an override per metric is
+                    # gated on whether any incoming edge contributed, which
+                    # is decided once per metric in
+                    # ``_compute_topology_arrays_per_instance``), so instance
+                    # 0's presence is a faithful proxy for whether *any*
+                    # instance will use the natural baseline path.
                     shared_noise = rng.normal(0.0, spec.std, n_rows)
                 # Instance 0 always writes into ``values`` (the shared
                 # buffer).
@@ -3174,8 +3182,22 @@ def _compute_topology_arrays_per_instance(
     name_to_idx = {s.name: i for i, s in enumerate(specs)}
 
     # Collect incoming edges once. Each entry is (upstream_name, Edge).
+    # Filter to upstreams that actually have captured load arrays —
+    # mirrors ``_compose_topology_coupled_specs``'s
+    # ``if upstream not in upstream_arrays: continue`` guard so a
+    # ``--components`` subset that drops an upstream (or a
+    # ``--metrics-per-component`` trim that removes the canonical load
+    # column) degrades gracefully *and* keeps the RNG draw schedule
+    # aligned with the legacy path: ``shared_coupling_noise`` below
+    # advances ``rng`` only when at least one upstream is actually
+    # contributing, exactly as the lambda-baked composer does.
     incoming: list[tuple[str, Edge]] = []
     for upstream, edges in TOPOLOGY.items():
+        if (
+            upstream not in upstream_arrays_shared
+            and upstream not in upstream_arrays_by_instance
+        ):
+            continue
         for edge in edges:
             if edge.target == component_name:
                 incoming.append((upstream, edge))
@@ -3185,6 +3207,11 @@ def _compute_topology_arrays_per_instance(
     # Shared callable+constant noise per coupled metric (drawn here so
     # all per-instance arrays share the same noise floor under
     # symmetric upstream → byte-identical to today's shared draw).
+    # Only drawn after ``incoming`` is confirmed non-empty (the filter
+    # above), so a downstream whose upstreams were all dropped from
+    # ``--components`` consumes zero RNG draws here — matching the
+    # ``return specs`` short-circuit in
+    # ``_compose_topology_coupled_specs``.
     shared_coupling_noise: dict[str, np.ndarray] = {}
     for metric_name in coupled_metric_names:
         if metric_name in name_to_idx:
@@ -9236,11 +9263,14 @@ def _read_component_metric_column_per_instance(
     # Per-instance CSV blocks are written in increasing timestamp
     # order by ``generate_component`` (one block per instance, rows
     # within each block ordered by elapsed seconds), and the DST
-    # splice that produces non-monotonic timestamps is rejected at
-    # parse time for non-anonymous instances. Reading rows in CSV
-    # order therefore yields a monotonic ``ts_list`` per instance
-    # already — no sort needed. Skipping the O(n log n) work
-    # noticeably speeds up the validator on long runs.
+    # splice that produces non-monotonic timestamps is rejected up
+    # front for non-anonymous instances — by ``parse_args`` on the
+    # CLI path and by ``generate_component``'s own
+    # ``dst_inject_day > 0`` + non-anonymous-instance guard for
+    # direct programmatic callers. Reading rows in CSV order
+    # therefore yields a monotonic ``ts_list`` per instance already —
+    # no sort needed. Skipping the O(n log n) work noticeably speeds
+    # up the validator on long runs.
     out: dict[str, tuple[list[datetime.datetime], np.ndarray]] = {}
     for inst_id, (ts_list, val_list) in per_instance.items():
         out[inst_id] = (ts_list, np.array(val_list, dtype=np.float64))

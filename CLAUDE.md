@@ -307,19 +307,21 @@ flag:
       symmetric upstream produces byte-identical coupling arrays
       across pods — and therefore byte-identical CSV output to
       the lambda-baked path.
-    - Returns `(coupling_by_instance, saturation_by_instance)`.
-      `generate_component` detects symmetric vs. asymmetric upstream
-      by comparing the returned arrays once via `_arrays_equal_dict`
-      / `_sat_tuples_equal_dict`: under symmetric upstream every
-      instance's arrays are equal, so the natural-column draw runs
-      *once* per metric and the result is reused across all
-      instances (preserves `N3_ONE_DAY_HASHES` /
+    - Returns `(coupling_by_instance, saturation_by_instance,
+      any_divergent)`. The `any_divergent` flag is computed inside
+      the helper by comparing every instance's coupling/saturation
+      arrays to instance 0 via `_arrays_equal_dict` /
+      `_sat_tuples_equal_dict`, but the symmetric-vs-asymmetric
+      *collapse* itself happens downstream in `generate_component`:
+      when `any_divergent` is False, `generate_component` runs the
+      natural-column draw *once* per metric and reuses the result
+      across all instances (preserves `N3_ONE_DAY_HASHES` /
       `N3_SEVEN_DAY_HASHES` locked in
-      `tests/test_instances_per_component.py`). Under asymmetric
-      upstream (an `instance_filter` on an upstream load metric)
-      the arrays diverge → per-instance natural draws run with
-      shared `noise=` kwargs so only the topology contributions
-      vary across pods.
+      `tests/test_instances_per_component.py`); when True (an
+      `instance_filter` on an upstream load metric makes the
+      arrays diverge), per-instance natural draws run with shared
+      `noise=` kwargs so only the topology contributions vary
+      across pods.
 
 The math hook is the VER-158 refactor of `_natural_column` which
 now accepts four optional keyword-only kwargs:
