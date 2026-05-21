@@ -199,8 +199,13 @@ def test_auth_pod_failure_registry_spec_out_of_range_warns(amc, tmp_path, capsys
 
 
 def test_auth_pod_failure_synthetic_only_i0_overridden(amc, tmp_path):
-    """Synthetic auth spec with instance_filter=frozenset(['i0']) — only i0 row
-    at the target index is overridden; i1 and i2 are unchanged."""
+    """Synthetic auth spec with instance_filter=["i0"] — only i0 row
+    at the target index is overridden; i1 and i2 are unchanged.
+
+    Note: ``_validate_scenario_spec`` normalizes the list to a frozenset at
+    import time, but the runtime ``instance_filter`` slot here is exercised
+    directly through ``generate_component`` without that normalization, so the
+    list form is the value the test actually passes."""
     component = "authservice"
     specs = amc.COMPONENTS[component][:amc.DEFAULT_METRICS_PER_COMPONENT[component]]
 

@@ -204,9 +204,10 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 # anomalies land in the manifest. Regenerate against the realistic
 # default when re-baselining.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    # Re-locked by VER-150 (2026-05-20): adding auth_pod_failure and
-    # cache_az_isolation (both high severity, days_required=1) expands the
-    # high-severity pool, shifting the --anomaly-count 100 sampling draw.
+    # Re-locked by VER-140 Phase 7 (tracked as VER-150, 2026-05-20):
+    # adding auth_pod_failure and cache_az_isolation (both high severity,
+    # days_required=1) expands the high-severity pool, shifting the
+    # --anomaly-count 100 sampling draw.
     "anomalies.csv": "090cb62fa7926d635ade8510e4a3c3bd7d483b2481dd6d40849c6ba20ec09eea",
     "apigateway.csv": "193d0ed891a7d40f0c32b434a7c26aceed0af0e404f0550dcb96f61fde4e02cb",
     "authservice.csv": "5524ca908f65e6d364043ae0a5bf5b6664e2543ddb95326cbdad1c1c7f89738d",
