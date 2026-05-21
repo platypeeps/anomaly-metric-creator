@@ -204,20 +204,24 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 # anomalies land in the manifest. Regenerate against the realistic
 # default when re-baselining.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    "anomalies.csv": "c5dac23dd22800a00180e3b3db1a5a93cd1f252a23f3c3f11ffc02405006c987",
-    "apigateway.csv": "b922a67bb003635031c22b95f279f0bd87736846c6f82872390944177969cb36",
-    "authservice.csv": "f7bec62d2e4c55e187b20d6064a166b62dccb8022bdff340a6a280bff44d9f06",
-    "cacheservice.csv": "79bf073239f0dcfddfb4cc0b60b05ad36b923840b00655f2a69e3a5cc350fee8",
-    "database.csv": "b082c02d538d00b87a0b62bac9e823ee523a9bb1a94cf4cefe7f25c3449075b6",
-    "identityprovider.csv": "176a04f1f66fe0cafc515af0d57dad175625c20d7c10721fd4a65541b48b22f0",
-    "llm_analytics.csv": "cbbf667e8ddb475d2e850419c5d548d77ffd76147e8800af9f39c94124eed641",
-    "loadbalancer.csv": "534153413847720ba23bbbf96eeb0f2143e4e183626c847ebf5b0e777718d705",
-    "mqservice.csv": "a3a5e8b01a9b14472fbc72e6b6788489c7494c9be7d8935652a216c0e4205883",
-    "objectstore.csv": "2581e0799ed8906fa3c10a2785c4645a34be11dd1952126c4786ada9ce5ae888",
-    "observabilitypipeline.csv": "c9cf7d9f2a7ab4a8fff351adae2fd94da66da5d1e0e7be78361bfffabcc03947",
-    "paymentservice.csv": "9958a7913fc6a79b72990f261e7cdba4afc0ab76d933ec3c6e1a9b25d1f0ba19",
-    "scheduler.csv": "a85429392998b5bf207e83ca543d2cf90473d69d21fd60fe70a77758667fdb00",
-    "vectorstore.csv": "b2fb7639cde8d2944e39adbeb91ae6d42cce5d7fe0210e8a4d0357e6e2b24ccc",
+    # Re-locked by VER-140 Phase 7 (tracked as VER-150, 2026-05-20):
+    # adding auth_pod_failure and cache_az_isolation (both high severity,
+    # days_required=1) expands the high-severity pool, shifting the
+    # --anomaly-count 100 sampling draw.
+    "anomalies.csv": "090cb62fa7926d635ade8510e4a3c3bd7d483b2481dd6d40849c6ba20ec09eea",
+    "apigateway.csv": "193d0ed891a7d40f0c32b434a7c26aceed0af0e404f0550dcb96f61fde4e02cb",
+    "authservice.csv": "5524ca908f65e6d364043ae0a5bf5b6664e2543ddb95326cbdad1c1c7f89738d",
+    "cacheservice.csv": "c6815565447f8fac7c00d743e550fa5cbc8391ffc216dc1f73726095af11e7b4",
+    "database.csv": "3e3868440e45f025719b8886c124685fbe9bdd23c3125b5ffba3eb3cafb72ae6",
+    "identityprovider.csv": "9b94f63e9193d542e4dc3e10ed60a802ab655e5b54e617b51256b0be5535e235",
+    "llm_analytics.csv": "547a704eb7afa253142249a4056aa10842ce71e4edaff6bda9a3fb00e8b84ca8",
+    "loadbalancer.csv": "3ecc8502d3a206ed90aaa39d9deca0f020f1bed8d664f1f53aed59124ec76b3e",
+    "mqservice.csv": "cf66750270480bd42130cd2a33fcb7d58ee9df2efa32dbfb04f72d84d7e4170f",
+    "objectstore.csv": "0da16866cbb766e962b8918fcd413dc339590615c782a741b67c6a557b6f1ae2",
+    "observabilitypipeline.csv": "2efea14f28ce4d9079083bb36fd3863fa70ddfcf584ee40605f5fa5b89a953d9",
+    "paymentservice.csv": "36eba5c6b5a14ffbe4ddf51f71ac2df609bd21b92af812215215b75304bdfa33",
+    "scheduler.csv": "5af0c2e0ac9d6ceeed0422c88308d41067fca66e40fe88bc2be3de7b7baa0eaf",
+    "vectorstore.csv": "8c7dde14773bfcb775c3389b606151efa9a07b46a4adc08fc311154c8313990d",
 }
 
 
@@ -1339,12 +1343,58 @@ def test_high_seven_day_capped_csvs_byte_identical(
 # Per-slug isolation test: --scenarios <slug> emits only that scenario
 # ------------------------------------------------------------------
 
-def _extra_args_for_slug(amc, slug: str) -> list[str]:
-    """Return extra_args (beyond seed/days/output-dir) to activate a single slug."""
+def _scenario_uses_id_filter(scenario) -> bool:
+    """Return True if any spec declares a frozenset/list instance_filter (id-based)."""
+    return any(
+        "instance_filter" in spec and not callable(spec["instance_filter"])
+        for _, spec in (*scenario.primary_specs, *scenario.cascade_specs)
+    )
+
+
+def _scenario_uses_callable_filter(scenario) -> bool:
+    """Return True if any spec declares a callable instance_filter."""
+    return any(
+        "instance_filter" in spec and callable(spec["instance_filter"])
+        for _, spec in (*scenario.primary_specs, *scenario.cascade_specs)
+    )
+
+
+def _extra_args_for_slug(amc, slug: str, tmp_path=None) -> list[str]:
+    """Return extra_args (beyond seed/days/output-dir) to activate a single slug.
+
+    ``tmp_path`` is required when the scenario uses a callable ``instance_filter``
+    so a temporary instance-config JSON file can be written with matching dimension
+    fields.  Passing ``tmp_path=None`` for a callable-filter scenario raises
+    ``ValueError``.  JSON is used (rather than YAML) so the helper has no PyYAML
+    dependency.
+    """
     scenario = amc.SCENARIOS[slug]
     extra = ["--scenarios", slug, "--drop-rate", "0", "--interval-seconds", "60"]
     if scenario.severity == "high":
         extra += ["--signal-level", "high"]
+    if _scenario_uses_id_filter(scenario):
+        # id-list filters (e.g. frozenset(["i0"])) require named instances;
+        # the default anonymous instance (id=None) never matches.
+        extra += ["--instances-per-component", "3"]
+    if _scenario_uses_callable_filter(scenario):
+        if tmp_path is None:
+            raise ValueError(
+                f"_extra_args_for_slug: slug {slug!r} uses a callable "
+                "instance_filter but tmp_path=None — pass a valid tmp_path "
+                "so the instance-config JSON can be written."
+            )
+        # callable filters may inspect dimension fields (e.g. az).  Write a
+        # minimal instance-config that supplies the required field value on i0.
+        import json as _json
+        cfg: dict = {"components": {}}
+        for comp in amc.COMPONENTS:
+            cfg["components"][comp] = [
+                {"id": "i0", "pod": "pod-0", "az": "us-east-1a"},
+                {"id": "i1", "pod": "pod-1", "az": "us-west-2a"},
+            ]
+        cfg_path = tmp_path / f"_instance_cfg_{slug}.json"
+        cfg_path.write_text(_json.dumps(cfg, sort_keys=True))
+        extra += ["--instance-config", str(cfg_path)]
     return extra
 
 
@@ -1381,7 +1431,7 @@ def test_per_slug_isolation(amc, tmp_path):
         out = tmp_path / f"slug_{slug}"
         out.mkdir()
         days = max(scenario.days_required, 1)
-        extra = _extra_args_for_slug(amc, slug)
+        extra = _extra_args_for_slug(amc, slug, tmp_path=tmp_path)
         run = run_capture(amc, out, days=days, extra_args=extra)
 
         manifest = read_manifest(out)

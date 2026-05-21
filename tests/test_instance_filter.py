@@ -539,17 +539,22 @@ def test_instance_filter_unfiltered_propagates_to_forked_buffer_other_rows(
 
 
 # ---------------------------------------------------------------------------
-# Byte-identity: locked Phase-2 hashes must not move under Phase 4 (no
-# built-in scenario uses instance_filter yet).
+# Byte-identity: locked Phase-2 hashes must not move under Phase 4.
+# VER-140 Phase 7 adds high-severity built-in scenarios that carry
+# instance_filter; those are exempt here because high-severity scenarios
+# never fire in the default (medium signal-level) pool that the locked
+# hashes cover.
 # ---------------------------------------------------------------------------
 
 
 def test_default_built_in_scenarios_omit_instance_filter(amc):
-    """Phase 4 ships without rewriting any built-in scenario, so the locked
-    SHA-256 hashes pinned in test_scenarios / test_instances_per_component
-    remain valid. Guards against accidental inclusion of instance_filter
-    on a built-in spec that would shift those bytes."""
+    """Non-high-severity built-in scenarios must not declare instance_filter
+    so the locked SHA-256 hashes in test_scenarios / test_instances_per_component
+    remain valid.  High-severity scenarios are exempt: they only fire under
+    ``--signal-level high`` and therefore cannot affect the default-run bytes."""
     for slug, scenario in amc.SCENARIOS.items():
+        if scenario.severity == "high":
+            continue  # high-severity scenarios don't fire in the default pool
         for component, spec in scenario.primary_specs:
             assert "instance_filter" not in spec, (
                 f"SCENARIOS[{slug!r}].primary_specs for {component!r} "

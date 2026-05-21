@@ -4405,6 +4405,65 @@ SCENARIOS: dict[str, Scenario] = {
             }),
         ),
     ),
+    # VER-140 Phase 7: partial-outage scenarios exercising instance_filter
+    "auth_pod_failure": Scenario(
+        id="auth_pod_failure",
+        name="Auth Pod-0 Partial Failure",
+        severity="high",
+        days_required=1,
+        category="partial_outage",
+        components_touched=("authservice", "apigateway"),
+        primary_specs=(
+            ("authservice", {
+                "time_offset": 3*3600 + 30*60,
+                "metric": "error_rate",
+                "description": "Pod-0 partial failure — error_rate spikes to ~85% on i0",
+                "generator": lambda ts, idx: 0.85,
+                "instance_filter": ["i0"],
+            }),
+            ("authservice", {
+                "time_offset": 3*3600 + 30*60,
+                "metric": "login_success_rate",
+                "description": "Pod-0 partial failure — login_success_rate collapses to ~30% on i0",
+                "generator": lambda ts, idx: 30.0,
+                "instance_filter": ["i0"],
+            }),
+        ),
+        cascade_specs=(
+            ("apigateway", {
+                "time_offset": 3*3600 + 30*60,
+                "metric": "backend_latency_ms",
+                "description": "Cascading: auth pod-0 failure raises gateway backend latency to ~800 ms",
+                "generator": lambda ts, idx: 800,
+                "instance_filter": ["i0"],
+            }),
+        ),
+    ),
+    "cache_az_isolation": Scenario(
+        id="cache_az_isolation",
+        name="Cache AZ us-east-1a Isolation",
+        severity="high",
+        days_required=1,
+        category="partial_outage",
+        components_touched=("cacheservice",),
+        primary_specs=(
+            ("cacheservice", {
+                "time_offset": 5*3600,
+                "metric": "cache_hits",
+                "description": "AZ us-east-1a isolated — cache_hits collapse to ~500 on affected instances",
+                "generator": lambda ts, idx: 500,
+                "instance_filter": lambda inst: inst.az == "us-east-1a",
+            }),
+            ("cacheservice", {
+                "time_offset": 5*3600,
+                "metric": "cache_misses",
+                "description": "AZ us-east-1a isolated — cache_misses spike to ~3000 on affected instances",
+                "generator": lambda ts, idx: 3000,
+                "instance_filter": lambda inst: inst.az == "us-east-1a",
+            }),
+        ),
+        cascade_specs=(),
+    ),
 }
 
 
