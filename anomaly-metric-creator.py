@@ -6626,7 +6626,8 @@ def _iter_component_rows(component: str, csv_path: Path):
         # flow into the metric path (where ``float(raw)`` will naturally skip
         # them).
         dim_col_count = len(_INSTANCE_DIMENSION_COLUMNS)
-        if (len(header) > 1 + dim_col_count
+        if (header[0:1] == ["timestamp"]
+                and len(header) >= 1 + dim_col_count
                 and tuple(header[1:1 + dim_col_count])
                 == _INSTANCE_DIMENSION_COLUMNS):
             dim_cols = _INSTANCE_DIMENSION_COLUMNS

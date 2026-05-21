@@ -163,10 +163,11 @@ Out-of-scope until later phases: `--instance-config PATH` (Phase 3),
 per-anomaly `instance_filter` (Phase 4), instance dimensions in
 `gauges.csv` / `combined_metrics_unified.csv` (Phase 5 / VER-148),
 and schema.json topology + `--validate-output` (Phase 8 / VER-151).
-OTEL resource attributes (Phase 6 / VER-149) shipped in this branch:
+OTLP data point attributes (Phase 6 / VER-149) shipped in this branch:
 `stream_otel_gauges` and `stream_otel_signals` lift every non-empty
 `_INSTANCE_DIMENSION_COLUMNS` cell off each row and surface it as a
-string attribute on every OTLP data point, so `--otel-enabled` and
+string attribute on every OTLP data point (metric datapoint attributes,
+not OTEL resource attributes), so `--otel-enabled` and
 `--otel-emit-gauges` are no longer gated against N>1. The remaining
 file-level emitters are still dimension-blind, so `parse_args`
 rejects `--instances-per-component > 1` paired with `--combine`,
@@ -346,9 +347,9 @@ consumers re-use the column constant:
   `(timestamp_str, component, [(metric_name, value), ...], dimensions)`
   where `dimensions` is a `dict[str, str]` carrying the non-empty
   cells from the row's dimension prefix. The detector treats the
-  block as present only when columns `[1 : 1 + len(_INSTANCE_DIMENSION_COLUMNS)]`
-  of the header equal the tuple verbatim — a partial / reordered
-  header is treated as "no dimensions" and the offending columns
+  block as present only when `header[0] == "timestamp"` and columns
+  `[1 : 1 + len(_INSTANCE_DIMENSION_COLUMNS)]` of the header equal the
+  tuple verbatim — a partial / reordered header is treated as "no dimensions" and the offending columns
   flow into the metric path, where `float(raw)` will naturally skip
   them. Dimensionless CSVs (the default) yield an empty dict so
   downstream consumers can treat the field as always present.
