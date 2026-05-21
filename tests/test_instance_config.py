@@ -433,30 +433,28 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
 # --combine-only is rejected when --instance-config is set
 # ---------------------------------------------------------------------------
 
-def test_instance_config_combine_only_rejected(amc, tmp_path):
-    """--combine-only + --instance-config is rejected at parse time.
+def test_instance_config_combine_only_accepted(amc, tmp_path):
+    """--combine-only + --instance-config is accepted at parse time since VER-148 Phase 5.
 
-    The combine writer is not dimension-aware yet (tracked under VER-148
-    Phase 5). The shared ``_multi_instance`` gate treats this combination
-    the same way as ``--instances-per-component > 1 + --combine-only``:
-    fail at parse time so the user doesn't get a silent no-op.
+    Phase 5 lifted the mutual-exclusion gate: the combine writer now dispatches
+    to the long-form layout when the per-component CSVs carry the dimension
+    prefix, so ``--combine-only`` paired with ``--instance-config`` is a valid
+    combination. This test is a regression guard — if the gate is accidentally
+    re-added, ``_parse`` would raise ``SystemExit`` and this test would fail.
     """
     cfg = _write_yaml(tmp_path, """
 components:
   authservice:
     - {id: a1}
 """)
-    # ``--combine-only`` needs --output-dir to be an existing directory;
-    # ``_parse`` derives --output-dir from its tmp_path argument, so create
-    # that directory ahead of time rather than passing a second
-    # --output-dir in extra_args.
     out = tmp_path / "existing"
     out.mkdir()
-    with pytest.raises(SystemExit):
-        _parse(amc, [
-            "--instance-config", str(cfg),
-            "--combine-only",
-        ], out)
+    # Must NOT raise; Phase 5 lifted the combine-only + instance-config gate.
+    args = _parse(amc, [
+        "--instance-config", str(cfg),
+        "--combine-only",
+    ], out)
+    assert args.combine_only is True
 
 
 # ---------------------------------------------------------------------------
