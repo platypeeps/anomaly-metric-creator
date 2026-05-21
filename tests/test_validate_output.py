@@ -1313,3 +1313,309 @@ def test_filter_windows_for_pair_keeps_only_relevant(amc):
         f"expected 3 windows on apigateway->database pair "
         f"(source + target + cacheservice upstream); got {len(kept)}"
     )
+
+
+# ------------------------------------------------------------------
+# Dimensions integration (VER-151 phase 8)
+# ------------------------------------------------------------------
+# Two fixtures: a fast 600s-interval N=3 run used by every per-validator
+# unit test (cheap to spin up; each test gets its own copy), and a
+# module-scoped 1-day full N=3 run for the end-to-end CLI assertion.
+@pytest.fixture
+def schema_run_n3(amc, tmp_path):
+    """Fast N=3 run with schema + gauges + combine. Each test gets its
+    own output dir so mutations don't bleed."""
+    out = tmp_path / "run_n3"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema,gauges",
+            "--interval-seconds", "600",
+            "--components", "apigateway,cacheservice",
+            "--instances-per-component", "3",
+            "--combine",
+        ],
+    )
+    return out
+
+
+@pytest.fixture(scope="module")
+def one_day_run_n3(amc, tmp_path_factory):
+    """Full 1-day N=3 run for the end-to-end CLI assertion. Module-
+    scoped to amortize the ~25–30s generation across multiple tests."""
+    out = tmp_path_factory.mktemp("ver151_one_day_validator_n3")
+    return run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--instances-per-component", "3",
+        ],
+    )
+
+
+def test_validate_component_cells_clean_on_n3_run(amc, schema_run_n3):
+    """The N=3 long-form per-component CSV has the
+    ``timestamp, id, host, pod, az, region, tenant, <metrics>`` header.
+    With dimensions declared in the schema, ``_validate_component_cells``
+    must use that header as its expected column order — not the
+    dimensionless one — and therefore find no header drift on a fresh
+    run."""
+    schema = _load_schema(schema_run_n3)
+    for component in schema["metadata"]["components"]:
+        violations = amc._validate_component_cells(
+            schema_run_n3, schema, component
+        )
+        assert violations == [], (
+            f"{component}: fresh N=3 run should validate clean; got {violations}"
+        )
+
+
+def test_validate_component_cells_flags_missing_dim_column_when_declared(
+    amc, schema_run_n3
+):
+    """When the schema declares ``dimensions`` on a component, dropping
+    one of the canonical dim columns from the on-disk CSV must trigger
+    the header-drift short-circuit. Verifies the dim-aware expected-
+    header path is wired into the existing drift check, so a corrupted
+    or older CSV produces a clear violation instead of cell errors."""
+    schema = _load_schema(schema_run_n3)
+    component = "apigateway"
+    csv_path = schema_run_n3 / f"{component}.csv"
+    rows = csv_path.read_text().splitlines()
+    header_cols = rows[0].split(",")
+    # Drop the ``pod`` column from header and every data row.
+    pod_idx = header_cols.index("pod")
+    new_rows = [
+        ",".join(c for i, c in enumerate(row.split(",")) if i != pod_idx)
+        for row in rows
+    ]
+    csv_path.write_text("\n".join(new_rows) + "\n")
+    violations = amc._validate_component_cells(
+        schema_run_n3, schema, component
+    )
+    assert violations, "missing dim column must produce a header drift violation"
+    assert "header" in violations[0]
+    assert "pod" not in violations[0].split("does not match schema")[0] or (
+        "pod" in violations[0]  # the message lists the expected pod column
+    )
+
+
+def test_validate_component_row_count_clean_on_n3_run(amc, schema_run_n3):
+    """Phase 2 fan-out produces N × rows_per_component per component
+    (N copies of each row, one per instance). The row-count validator
+    must multiply the expected band by ``cardinality`` so the fresh
+    N=3 run sits inside the band rather than tripping the over-emission
+    check."""
+    schema = _load_schema(schema_run_n3)
+    for component in schema["metadata"]["components"]:
+        violations = amc._validate_component_row_count(
+            schema_run_n3, schema, component
+        )
+        assert violations == [], (
+            f"{component}: fresh N=3 row count should be inside the "
+            f"cardinality-scaled band; got {violations}"
+        )
+
+
+def test_validate_component_row_count_uses_cardinality(amc, schema_run_n3):
+    """Truncating the CSV to single-instance rows (i.e. dropping the
+    extra fan-out instances) must trip the under-emission band when
+    dimensions declare ``cardinality > 1``. Establishes that the band
+    really does scale on cardinality and is not just a no-op multiplier."""
+    schema = _load_schema(schema_run_n3)
+    component = "apigateway"
+    csv_path = schema_run_n3 / f"{component}.csv"
+    rows = csv_path.read_text().splitlines()
+    # Keep only the first ~1/N of the data rows so total << expected.
+    header = rows[0]
+    body = rows[1:]
+    cardinality = schema["components"][component]["dimensions"]["cardinality"]
+    keep_count = max(1, len(body) // (cardinality * 8))  # well below band
+    csv_path.write_text("\n".join([header] + body[:keep_count]) + "\n")
+    violations = amc._validate_component_row_count(
+        schema_run_n3, schema, component
+    )
+    assert any("below the expected lower bound" in v for v in violations), (
+        f"truncated N=3 CSV must trip the cardinality-scaled lower bound; "
+        f"got {violations}"
+    )
+
+
+def test_validate_long_form_dimensions_clean_on_n3_gauges(amc, schema_run_n3):
+    """``gauges.csv`` produced by a dim-aware run has the 10-column
+    long-form header. With dimensions declared in the schema, the new
+    ``_validate_long_form_dimensions`` check must pass it."""
+    schema = _load_schema(schema_run_n3)
+    violations = amc._validate_long_form_dimensions(schema_run_n3, schema)
+    assert violations == [], (
+        f"fresh N=3 long-form gauges.csv + combined CSV should validate "
+        f"clean; got {violations}"
+    )
+
+
+def test_validate_long_form_dimensions_flags_classic_gauges_under_n3(
+    amc, schema_run_n3
+):
+    """If the on-disk ``gauges.csv`` carries the classic 4-column header
+    even though the schema declares dimensions (e.g. a stale write from a
+    pre-Phase-5 build), the validator must flag the mismatch — silent
+    pass-through would let a downstream consumer treat dim-aware data as
+    classic."""
+    schema = _load_schema(schema_run_n3)
+    gauges_path = schema_run_n3 / "gauges.csv"
+    # Replace the dim-aware header with the classic one. Data rows
+    # already carry the dim columns so the test verifies the validator
+    # catches the header alone, not data drift.
+    rows = gauges_path.read_text().splitlines()
+    rows[0] = "timestamp,component,metric,value"
+    gauges_path.write_text("\n".join(rows) + "\n")
+    violations = amc._validate_long_form_dimensions(schema_run_n3, schema)
+    assert any("gauges.csv" in v and "dim-aware" in v for v in violations), (
+        f"classic gauges header under N=3 schema must surface a "
+        f"dim-aware drift violation; got {violations}"
+    )
+
+
+def test_validate_long_form_dimensions_flags_classic_combined_under_n3(
+    amc, schema_run_n3
+):
+    """Same as gauges but for ``combined_metrics_unified.csv``: the
+    dim-aware writer emits the 10-column long-form header when any
+    per-component CSV is dim-aware, and the validator must match that
+    expectation against the schema."""
+    schema = _load_schema(schema_run_n3)
+    combined = schema_run_n3 / "combined_metrics_unified.csv"
+    rows = combined.read_text().splitlines()
+    rows[0] = "timestamp,component_a_metric"
+    combined.write_text("\n".join(rows) + "\n")
+    violations = amc._validate_long_form_dimensions(schema_run_n3, schema)
+    assert any("combined_metrics_unified.csv" in v and "dim-aware" in v
+               for v in violations), (
+        f"classic combined header under N=3 schema must surface a "
+        f"dim-aware drift violation; got {violations}"
+    )
+
+
+def test_validate_long_form_dimensions_noop_without_dimensions(amc, schema_run):
+    """When no component declares ``dimensions`` (the default N=1 path),
+    the long-form check must short-circuit to no violations regardless
+    of the classic header. Establishes the schema-driven dispatch:
+    today's dimensionless schemas keep today's validator behavior."""
+    schema = _load_schema(schema_run)
+    # Drop any (unexpected) dimensions blocks from the schema mock to
+    # guarantee the short-circuit branch.
+    for payload in schema["components"].values():
+        payload.pop("dimensions", None)
+    _write_schema(schema_run, schema)
+    schema = _load_schema(schema_run)
+    assert amc._validate_long_form_dimensions(schema_run, schema) == []
+
+
+def test_validate_output_cli_clean_on_fresh_n3_run(amc, one_day_run_n3, capsys):
+    """End-to-end: a fresh 1-day ``--instances-per-component 3`` run
+    must validate clean under ``--validate-output``. Acceptance check
+    from the VER-151 ticket: 'Validator passes on a fresh
+    --instances-per-component 3 run.'"""
+    amc.main(["--validate-output", str(one_day_run_n3.out_dir)])
+    cap = capsys.readouterr()
+    assert "OK" in cap.out
+
+
+def test_validate_component_derivations_clean_on_n3_run(amc, schema_run_n3):
+    """``cacheservice.hit_ratio`` is the canonical derived column; the
+    recomputer reads ``cache_hits`` / ``cache_misses`` from the same
+    row via ``name_to_col``. Under N=3 the metric columns are shifted
+    by the 6-column dim prefix — the validator must re-anchor
+    ``name_to_col`` so the recomputed value matches the on-disk one."""
+    schema = _load_schema(schema_run_n3)
+    for component in schema["metadata"]["components"]:
+        violations = amc._validate_component_derivations(
+            schema_run_n3, schema, component
+        )
+        assert violations == [], (
+            f"{component}: fresh N=3 derivations should validate clean; "
+            f"got {violations}"
+        )
+
+
+def test_validate_component_derivations_flags_drift_under_n3(amc, schema_run_n3):
+    """Mutate a hit_ratio cell under dim-aware layout and verify the
+    derivation validator still catches the drift after the column-index
+    re-anchor."""
+    schema = _load_schema(schema_run_n3)
+    component = "cacheservice"
+    csv_path = schema_run_n3 / f"{component}.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    ratio_col = header.index("hit_ratio")
+    parts = rows[1].split(",")
+    parts[ratio_col] = "0.000"
+    rows[1] = ",".join(parts)
+    csv_path.write_text("\n".join(rows) + "\n")
+    violations = amc._validate_component_derivations(
+        schema_run_n3, schema, component
+    )
+    assert any("hit_ratio" in v and "differs from recomputed" in v
+               for v in violations)
+
+
+# ------------------------------------------------------------------
+# parse_args gate lift (VER-151 phase 8)
+# ------------------------------------------------------------------
+def test_validate_output_compatible_with_instances_per_component(
+    amc, tmp_path,
+):
+    """VER-151 phase 8 lifts the ``--instances-per-component > 1`` +
+    ``--validate-output`` gate. The parser must now accept the
+    combination rather than rejecting it with the Phase 8 stub
+    message."""
+    out = tmp_path / "exists"
+    out.mkdir()
+    args = amc.parse_args([
+        "--validate-output", str(out),
+        "--instances-per-component", "3",
+    ])
+    assert args.validate_output == out
+    assert args.instances_per_component == 3
+
+
+def test_schema_emit_selection_compatible_with_instances_per_component(
+    amc, tmp_path,
+):
+    """Companion gate lift: ``--emit-selection 'schema'`` was rejected
+    under N>1 by the same Phase 8 stub. The dim-aware
+    ``write_schema_json`` makes it well-defined now."""
+    args = amc.parse_args([
+        "--output-dir", str(tmp_path),
+        "--duration-days", "1",
+        "--emit-selection", "metrics,schema",
+        "--instances-per-component", "3",
+    ])
+    assert args.instances_per_component == 3
+    assert "schema" in args.emit_selection
+
+
+def test_validate_output_still_mutex_with_otel_emit_gauges(
+    amc, tmp_path, capsys,
+):
+    """The OTEL gauge stream still does not attach instance dimensions
+    as OTLP resource attributes (VER-149 Phase 6). The N>1 +
+    ``--otel-emit-gauges`` combination must therefore stay rejected
+    even after VER-151 lifts the schema/validator guards.
+
+    Pair ``--otel-emit-gauges`` with ``--otel-enabled`` and a metrics
+    endpoint so the unrelated "gauges requires enabled" pre-check
+    passes and the parser reaches the Phase 6 gating message we care
+    about here."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--output-dir", str(tmp_path / "gen"),
+            "--duration-days", "1",
+            "--instances-per-component", "3",
+            "--otel-enabled",
+            "--otel-metrics-endpoint", "https://example.invalid/v1/metrics",
+            "--otel-emit-gauges",
+        ])
+    err = capsys.readouterr().err
+    assert "otel-emit-gauges" in err
+    assert "Phase 6" in err

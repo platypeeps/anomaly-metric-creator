@@ -5913,15 +5913,17 @@ def parse_args(argv=None):
     # Phase 5: header inspection dispatches to a 10-column layout when
     # the per-component CSVs carry the ``id, host, pod, az, region,
     # tenant`` prefix, otherwise the historic 4-column / wide layouts
-    # stay byte-identical. The OTEL streamer (``--otel-emit-gauges`` and
-    # the broader ``--otel-enabled`` path) does not yet attach dimensions
-    # as OTLP resource attributes (VER-149 Phase 6), and the schema doc
-    # plus ``--validate-output`` do not yet declare the dim columns
-    # (VER-151 Phase 8). Running those against a multi-instance run
-    # silently produces wrong output (OTLP data points without instance
-    # attributes, schema-validation failures against a Phase-2/3-correct
-    # CSV), so the combinations below are rejected up-front with a clear,
-    # phase-attributed error instead of a downstream corruption.
+    # stay byte-identical. VER-151 Phase 8 lifted the ``--validate-output``
+    # and ``--emit-selection 'schema'`` guards: ``schema.json`` now
+    # declares a per-component ``dimensions`` block when the run is
+    # dim-aware and the validator's ``_validate_component_cells`` /
+    # ``_validate_component_row_count`` / new
+    # ``_validate_long_form_dimensions`` honor it end-to-end. Only the
+    # OTEL streamer (``--otel-emit-gauges`` and the broader
+    # ``--otel-enabled`` path) still lacks instance dimensions as OTLP
+    # resource attributes (VER-149 Phase 6), so that combination stays
+    # rejected up-front with a clear, phase-attributed error instead of
+    # a downstream corruption.
     if _multi_instance:
         # VER-148 Phase 5 lifted the ``--combine`` / ``--combine-only`` /
         # ``--emit-selection gauges`` guards: the combined CSV and the
@@ -5937,19 +5939,6 @@ def parse_args(argv=None):
                 "attach instance dimensions as OTLP resource attributes "
                 "(tracked under VER-149 Phase 6). Drop --otel-emit-gauges "
                 "or use the default single-instance mode."
-            )
-        phase8_flags = []
-        if args.validate_output is not None:
-            phase8_flags.append("--validate-output")
-        if "schema" in selected:
-            phase8_flags.append("--emit-selection 'schema'")
-        if phase8_flags:
-            p.error(
-                f"{_multi_instance_flag} is incompatible with "
-                f"{' / '.join(phase8_flags)}: schema.json does not yet declare "
-                f"the dimension columns and --validate-output would reject the "
-                f"run (tracked under VER-151 Phase 8). Drop the flag(s) or "
-                f"use the default single-instance mode."
             )
         if args.otel_enabled:
             p.error(
@@ -7690,6 +7679,43 @@ def _edge_to_schema_entry(edge: "Edge") -> dict:
     }
 
 
+def _component_dimensions_schema_entry(
+    instances: list["Instance"],
+) -> dict | None:
+    """Return the ``schema.json`` ``dimensions`` entry for a component's
+    instance list, or ``None`` for the dimensionless default.
+
+    Mirrors the long-form per-component CSV writer's branch predicate
+    (``_is_anonymous_instance_list``): any non-anonymous instance list —
+    whether ``--instances-per-component N>1`` fan-out or
+    ``--instance-config`` with a non-default declaration — produces
+    dim-aware CSV output and therefore declares ``dimensions`` in the
+    schema. The single-anonymous-``Instance()`` default produces
+    dimensionless output and omits the block so the v1 (default)
+    ``schema.json`` stays byte-identical to the pre-VER-151 baseline.
+
+    The ``axes`` list is the sorted subset of
+    ``_INSTANCE_DIMENSION_FIELDS`` (i.e. ``_INSTANCE_DIMENSION_COLUMNS``
+    minus the leading ``id`` slot — ``id`` identifies an instance, it is
+    not a dimension to slice on) whose value is non-``None`` on at least
+    one instance in the list. ``cardinality`` is ``len(instances)``.
+    Both keys are always present together so the validator can detect
+    drift between them (e.g. a ``cardinality`` 0 with axes declared, or
+    axes empty with ``cardinality > 1``).
+    """
+    if instances is None or _is_anonymous_instance_list(instances):
+        return None
+    axes = sorted(
+        {
+            field
+            for inst in instances
+            for field in _INSTANCE_DIMENSION_FIELDS
+            if getattr(inst, field) is not None
+        }
+    )
+    return {"axes": axes, "cardinality": len(instances)}
+
+
 def _serialize_topology(
     components: list[str],
 ) -> dict[str, list[dict]]:
@@ -7729,6 +7755,7 @@ def write_schema_json(
     effective_specs: dict[str, list["MetricSpec"]],
     metadata: dict,
     emitted_files: list[str],
+    instances_by_component: dict[str, list["Instance"]] | None = None,
 ) -> None:
     """Write a declarative ``schema.json`` describing the current run's artifacts.
 
@@ -7743,7 +7770,13 @@ def write_schema_json(
     - ``components`` — per-component metric metadata in MetricSpec column
       order, so the validator can check ``dtype`` / ``min_value`` /
       ``max_value`` / ``semantic_type`` / ``derivation`` cell-by-cell against
-      the per-component CSV.
+      the per-component CSV. Each per-component payload also carries an
+      optional ``dimensions`` block (VER-151 phase 8) declaring the
+      instance topology's axes + cardinality when the per-component CSV
+      is dim-aware (``--instances-per-component N>1`` fan-out or a non-
+      default ``--instance-config`` entry); the block is omitted in the
+      default single-anonymous-``Instance()`` path so the v1 schema bytes
+      stay byte-identical to the pre-VER-151 baseline.
     - ``files`` — sorted list of artifact filenames the run was supposed to
       write, so the validator can flag missing or extra files.
     - ``topology`` (VER-157 phase 7) — the directed coupling graph
@@ -7758,6 +7791,11 @@ def write_schema_json(
       this to run ``_validate_topology_coupling`` under
       ``--topology-mode realistic``.
 
+    ``instances_by_component`` is the live per-run instance map
+    (``RunContext.instances``) restricted to the schema's components.
+    A missing entry, or the single-anonymous-``Instance()`` default,
+    omits the per-component ``dimensions`` block.
+
     The output is byte-deterministic: ``json.dumps`` with ``sort_keys=True``,
     fixed indent, ``ensure_ascii=False``, and a trailing newline. The
     per-component ``metrics`` list intentionally preserves MetricSpec column
@@ -7765,13 +7803,20 @@ def write_schema_json(
     in one pass. The ``topology`` section sorts each source's edge list by
     target name for stable output independent of declaration order.
     """
+    instances_by_component = instances_by_component or {}
     component_payload = {}
     for component in components:
         specs = effective_specs.get(component, [])
-        component_payload[component] = {
+        payload = {
             "csv_filename": f"{component}.csv",
             "metrics": [_metric_spec_to_schema_entry(spec) for spec in specs],
         }
+        dimensions = _component_dimensions_schema_entry(
+            instances_by_component.get(component)
+        )
+        if dimensions is not None:
+            payload["dimensions"] = dimensions
+        component_payload[component] = payload
 
     document = {
         "schema_version": SCHEMA_DOCUMENT_VERSION,
@@ -7908,6 +7953,12 @@ def _validate_component_row_count(
     from the CSV entirely (``generate_component`` filters via ``keep_mask``
     before serialization), so under-emission is expected and not flagged
     unless it exceeds the configured ``drop_rate``'s plausible band.
+
+    VER-151 phase 8: when the per-component schema declares
+    ``dimensions``, each per-row generation is fanned out across
+    ``cardinality`` instances (Phase 2 long-form CSV writer), so both
+    bands are multiplied by ``cardinality`` to keep the expected and
+    actual counts in the same units.
     """
     csv_filename = schema["components"][component]["csv_filename"]
     csv_path = output_dir / csv_filename
@@ -7923,7 +7974,9 @@ def _validate_component_row_count(
     # adding 3,600 / interval extra rows to that day. Use floor division to
     # mirror the generator's row-count derivation.
     dst_extra = int(3600 // interval) if dst_day and dst_day > 0 else 0
-    expected_max = base_rows + dst_extra
+    dimensions = schema["components"][component].get("dimensions")
+    cardinality = dimensions["cardinality"] if dimensions else 1
+    expected_max = (base_rows + dst_extra) * cardinality
 
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
@@ -7938,16 +7991,20 @@ def _validate_component_row_count(
         violations.append(
             f"{csv_filename}: data row count {data} exceeds expected max "
             f"{expected_max} (rows_per_component={base_rows} "
-            f"+ DST splice {dst_extra})"
+            f"+ DST splice {dst_extra}, cardinality={cardinality})"
         )
-    # Under-emission lower bound: with drop_rate p and N rows, the expected
-    # surviving count is N*(1-p) with std sqrt(N*p*(1-p)). Allow a generous
-    # 8-sigma band on top of an absolute floor so a tiny N doesn't trigger
-    # a false positive (e.g. a 144-row 600s smoke run).
+    # Under-emission lower bound: with drop_rate p and N rows the surviving
+    # count per instance is N*(1-p) with std sqrt(N*p*(1-p)); summed across
+    # ``cardinality`` independent fan-out instances the mean scales by
+    # ``cardinality`` and the variance by ``cardinality`` so the std scales
+    # by sqrt(cardinality). Allow a generous 8-sigma band on top of an
+    # absolute floor so a tiny N doesn't trigger a false positive
+    # (e.g. a 144-row 600s smoke run).
     if drop_rate < 1.0:
         if base_rows > 0:
-            std = math.sqrt(base_rows * drop_rate * (1.0 - drop_rate))
-            lower = int(base_rows * (1.0 - drop_rate) - 8.0 * std)
+            per_instance_std = math.sqrt(base_rows * drop_rate * (1.0 - drop_rate))
+            std = per_instance_std * math.sqrt(cardinality)
+            lower = int(base_rows * cardinality * (1.0 - drop_rate) - 8.0 * std)
             if lower < 0:
                 lower = 0
         else:
@@ -7955,8 +8012,8 @@ def _validate_component_row_count(
         if data < lower:
             violations.append(
                 f"{csv_filename}: data row count {data} is below the "
-                f"expected lower bound {lower} for drop_rate={drop_rate} "
-                f"and rows_per_component={base_rows}"
+                f"expected lower bound {lower} for drop_rate={drop_rate}, "
+                f"rows_per_component={base_rows}, cardinality={cardinality}"
             )
     return violations
 
@@ -8024,10 +8081,20 @@ def _validate_component_cells(
 
     Each unique violation is reported once with a line-number example so the
     output stays bounded even when a whole column is wrong.
+
+    VER-151 phase 8: when the per-component schema declares
+    ``dimensions``, the expected header is
+    ``("timestamp", *_INSTANCE_DIMENSION_COLUMNS, *metric_names)`` to
+    match the Phase 2 long-form per-component CSV. The dim cells (id,
+    host, pod, az, region, tenant) are strings, not metric values, so
+    they are skipped by the cell-range checks below; the metric cells
+    start at index ``1 + len(_INSTANCE_DIMENSION_COLUMNS)`` in that
+    branch.
     """
     csv_filename = schema["components"][component]["csv_filename"]
     csv_path = output_dir / csv_filename
     metrics = schema["components"][component]["metrics"]
+    dimensions = schema["components"][component].get("dimensions")
     if not csv_path.exists():
         return []
 
@@ -8039,7 +8106,16 @@ def _validate_component_cells(
         except StopIteration:
             return [f"{csv_filename}: file has no header row"]
 
-        expected_columns = ["timestamp"] + [m["name"] for m in metrics]
+        if dimensions is not None:
+            expected_columns = (
+                ["timestamp"]
+                + list(_INSTANCE_DIMENSION_COLUMNS)
+                + [m["name"] for m in metrics]
+            )
+            metric_col_start = 1 + len(_INSTANCE_DIMENSION_COLUMNS)
+        else:
+            expected_columns = ["timestamp"] + [m["name"] for m in metrics]
+            metric_col_start = 1
         if header != expected_columns:
             violations.append(
                 f"{csv_filename}: header {header} does not match schema "
@@ -8061,7 +8137,7 @@ def _validate_component_cells(
         for i, row in enumerate(reader, start=2):
             if not row:
                 continue
-            for col_idx, metric_meta in enumerate(metrics, start=1):
+            for col_idx, metric_meta in enumerate(metrics, start=metric_col_start):
                 name = metric_meta["name"]
                 if col_idx >= len(row):
                     _record(name, "missing_col",
@@ -8131,7 +8207,17 @@ def _validate_component_derivations(
     recompute = _RECOMPUTERS[component]
 
     violations = []
-    name_to_col = {m["name"]: i + 1 for i, m in enumerate(metrics)}
+    # VER-151 phase 8: dimensioned per-component CSVs prepend the six
+    # dim columns between ``timestamp`` and the metric block, so the
+    # ``name_to_col`` index must offset by that prefix to stay aligned
+    # with the recomputer's ``row[col]`` reads.
+    dimensions = schema["components"][component].get("dimensions")
+    metric_col_start = (
+        1 + len(_INSTANCE_DIMENSION_COLUMNS) if dimensions is not None else 1
+    )
+    name_to_col = {
+        m["name"]: i + metric_col_start for i, m in enumerate(metrics)
+    }
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
         try:
@@ -8230,11 +8316,25 @@ def _read_component_metric_column(
     the CSV does not exist, has no header, or does not declare
     ``metric_name``. Used by ``_validate_topology_coupling`` to align
     source / target canonical load metrics on shared timestamps.
+
+    VER-151 phase 8: when the CSV is the dim-aware long-form layout
+    (multiple rows per timestamp, one per instance), values are
+    collapsed to one ``(timestamp, mean)`` per unique timestamp. This
+    keeps the timestamp axis monotonic (the existing
+    ``_compute_anomaly_keep_mask`` forward-sweep relies on it) and
+    matches the validator's "per-timestamp" coupling contract — the
+    correlation is between the upstream's per-second load and the
+    downstream's per-second load, not between per-instance copies of
+    that load. Aggregation is the mean across instances at the
+    timestamp; under the default fan-out (all instances share the
+    same baseline) the mean equals any single instance's value, so
+    the N=1 byte path is unchanged.
     """
     if not csv_path.exists():
         return None
-    timestamps: list[datetime.datetime] = []
-    values: list[float] = []
+    per_ts_sum: dict[datetime.datetime, float] = {}
+    per_ts_count: dict[datetime.datetime, int] = {}
+    order: list[datetime.datetime] = []
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
         try:
@@ -8253,9 +8353,24 @@ def _read_component_metric_column(
                 value = float(row[col_idx])
             except ValueError:
                 continue
-            timestamps.append(ts)
-            values.append(value)
-    return timestamps, np.array(values, dtype=np.float64)
+            if ts not in per_ts_count:
+                order.append(ts)
+                per_ts_sum[ts] = value
+                per_ts_count[ts] = 1
+            else:
+                per_ts_sum[ts] += value
+                per_ts_count[ts] += 1
+    # Sort the timestamp axis so the per-instance block layout of the
+    # dim-aware CSV (i0 chronological, then i1 chronological, ...) does
+    # not leave ``order`` non-monotonic and confuse the downstream
+    # forward-sweep mask. Dimensionless CSVs are already chronological,
+    # so the sort is a no-op there.
+    order.sort()
+    values = np.array(
+        [per_ts_sum[ts] / per_ts_count[ts] for ts in order],
+        dtype=np.float64,
+    )
+    return order, values
 
 
 def _read_anomaly_exclusion_windows(
@@ -8737,6 +8852,79 @@ def _resolve_edge_correlation_threshold(source: str, target: str) -> float:
     return _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD
 
 
+def _schema_has_any_dimensions(schema: dict) -> bool:
+    """True iff any component in the schema declares a ``dimensions`` block.
+
+    The long-form file writers (``gauges.csv`` and
+    ``combined_metrics_unified.csv``) dispatch to the dim-aware 10-column
+    layout when *any* per-component CSV in the run is dimensioned; this
+    helper mirrors that any-of predicate so the validator's long-form
+    header check stays in lockstep with the writer.
+    """
+    return any(
+        payload.get("dimensions") is not None
+        for payload in schema.get("components", {}).values()
+    )
+
+
+def _validate_long_form_dimensions(
+    output_dir: Path, schema: dict,
+) -> list[str]:
+    """Verify ``gauges.csv`` and ``combined_metrics_unified.csv`` headers
+    match the layout implied by the schema's per-component ``dimensions``
+    blocks.
+
+    VER-148 Phase 5 made both long-form writers dim-aware: a run with any
+    dimensioned per-component CSV dispatches to the 10-column
+    ``timestamp, component, id, host, pod, az, region, tenant, metric,
+    value`` shape; otherwise the historic 4-column
+    ``timestamp, component, metric, value`` (gauges) and wide
+    ``timestamp, component_metric, ...`` (combined) layouts stay
+    byte-identical. The validator only enforces the long-form dim header
+    here — when no component declares dimensions the existing
+    ``_validate_no_unknown_files`` / required-files checks already cover
+    the classic shape.
+
+    Only files actually declared in ``schema.files`` are inspected —
+    missing-file flagging is already covered by
+    ``_validate_required_files_present``, and an undeclared on-disk file
+    is caught by ``_validate_no_unknown_files``.
+    """
+    if not _schema_has_any_dimensions(schema):
+        return []
+    declared_files = set(schema.get("files", []))
+    violations: list[str] = []
+    expected = (
+        "timestamp",
+        "component",
+        *_INSTANCE_DIMENSION_COLUMNS,
+        "metric",
+        "value",
+    )
+    for filename in ("gauges.csv", _COMBINE_OUTPUT_FILENAME):
+        if filename not in declared_files:
+            continue
+        path = output_dir / filename
+        if not path.exists():
+            continue  # covered by _validate_required_files_present
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            try:
+                header = next(reader)
+            except StopIteration:
+                violations.append(
+                    f"{filename}: file has no header row "
+                    "(dim-aware long-form layout expected)"
+                )
+                continue
+        if tuple(header) != expected:
+            violations.append(
+                f"{filename}: header {header} does not match dim-aware "
+                f"long-form layout {list(expected)}"
+            )
+    return violations
+
+
 def validate_output(output_dir: Path) -> list[str]:
     """Run every validation against the artifacts in ``output_dir``.
 
@@ -8761,6 +8949,7 @@ def validate_output(output_dir: Path) -> list[str]:
         violations += _validate_component_derivations(
             output_dir, schema, component
         )
+    violations += _validate_long_form_dimensions(output_dir, schema)
     violations += _validate_topology_coupling(output_dir, schema)
     return violations
 
@@ -9329,6 +9518,15 @@ def main(argv=None):
             effective_specs=effective_specs,
             metadata=schema_metadata,
             emitted_files=emitted_files,
+            # VER-151 phase 8: per-component ``dimensions`` block (axes +
+            # cardinality) when the run is dim-aware (``--instances-per-
+            # component N>1`` or a non-default ``--instance-config``).
+            # Filtered to the active component set so a ``--components``
+            # subset doesn't leak instance topology for components the
+            # run didn't write.
+            instances_by_component={
+                c: ctx.instances[c] for c in schema_components_in_order
+            },
         )
 
     streamed_events = 0

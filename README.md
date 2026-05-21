@@ -175,8 +175,8 @@ python3 anomaly-metric-creator.py \
 | `--signal-level`    | `medium`    | Anomaly intensity level: `low`, `medium` (default), or `high`. Inclusion hierarchy: `low` only fires specs explicitly tagged `severity="low"` (today: a handful of benign Monday-morning baseline shifts) and intentionally has **no cascade fan-out** because benign baseline shifts do not realistically propagate as failures; `medium` adds the standard catalog plus its cascade fan-out (the default behavior); `high` additionally activates the high-pressure cross-component scenarios (regional failover storm, coordinated cache+DB meltdown, LLM provider outage, gateway DDoS saturation, storage layer pressure) and their cascades. |
 | `--anomaly-count`   | _unlimited_ | Optional cap on the total number of injected anomalies (primary specs + cascades) across the whole dataset. Sampling is deterministic for a given `--seed` and uses its own RNG stream so it doesn't perturb the column noise. Applied after `--signal-level` and `--components` filters. Out-of-range specs (e.g. multi-day cascades on a 1-day run) are excluded from the sampling pool. |
 | `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–8 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
-| `--instances-per-component` | `1` | Fan each component out to N identical instances (must be in `[1, 20]`). `N=1` (the default) emits today's byte-identical output with no dimension columns. `N>1` prepends `id,host,pod,az,region,tenant` columns to every per-component CSV header and writes N row blocks per component — one block per instance, in the stable `i0`/`pod-0`, `i1`/`pod-1`, … order. `host`/`az`/`region`/`tenant` are empty in v1 (use `--instance-config` to fill them in via a declarative file). All instances share the same RNG-drawn natural values and the same anomaly overrides in v1; Phase 4 will let scenarios target individual instances via `instance_filter`. `anomalies.csv` records one row per `(timestamp, component, metric)` regardless of N. Because the downstream emitters are not yet dimension-aware, `--instances-per-component > 1` is rejected when combined with `--combine`, `--combine-only`, `--emit-selection 'gauges'`, `--emit-selection 'schema'`, `--validate-output`, `--otel-emit-gauges`, `--otel-enabled`, or `--inject-dst-artifact-day > 0` (each error names the phase that will lift the gate: VER-148 Phase 5 for combined CSV / gauges, VER-149 Phase 6 for OTEL, VER-151 Phase 8 for schema / `--validate-output`). Mutually exclusive with `--instance-config`. Multiplies the preflight cell-count cap inputs linearly with N. |
-| `--instance-config` | _off_ | Path to a YAML (`.yaml`/`.yml`) or JSON (`.json`) file declaring a per-component instance topology for repeatable non-uniform fan-outs (VER-140 Phase 3). The top-level key `components` maps component names to lists of `Instance` field dicts (`id, host, pod, az, region, tenant`). Components not listed in the file fall back to the module-level `INSTANCES` registry (single anonymous `Instance()` per component) so the default per-component CSV shape is preserved. `parse_args` checks the flag-shape invariants (path resolves to a regular file via `Path.is_file()`, suffix in `{.yaml, .yml, .json}`, mutex with `--instances-per-component`); schema validation runs in `main()` via `_load_instance_config`, which raises a `ValueError` (caught and re-raised as `sys.exit`) on malformed YAML/JSON, unknown component, unknown `Instance` field, non-mapping top-level value, non-mapping `components` value, per-component value not a list, empty per-component list, non-dict instance entry, duplicate `id`, and per-component count exceeding `MAX_INSTANCES_PER_COMPONENT=20`. YAML support requires PyYAML — install with `pip install 'anomaly-metric-creator[yaml]'` or `pip install pyyaml`; JSON works without it. Triggers the same multi-instance code path as `--instances-per-component > 1`, so it inherits the same downstream-flag gates (`--combine`, `--combine-only`, `--emit-selection 'gauges'`/`'schema'`, `--validate-output`, `--otel-emit-gauges`, `--otel-enabled`, `--inject-dst-artifact-day > 0`). Preflight cell-count cap uses `MAX_INSTANCES_PER_COMPONENT=20` as a conservative upper bound since the per-component instance count is not known until `main()` parses the config file. |
+| `--instances-per-component` | `1` | Fan each component out to N identical instances (must be in `[1, 20]`). `N=1` (the default) emits today's byte-identical output with no dimension columns. `N>1` prepends `id,host,pod,az,region,tenant` columns to every per-component CSV header and writes N row blocks per component — one block per instance, in the stable `i0`/`pod-0`, `i1`/`pod-1`, … order. `host`/`az`/`region`/`tenant` are empty in v1 (use `--instance-config` to fill them in via a declarative file). All instances share the same RNG-drawn natural values and the same anomaly overrides in v1 unless a scenario spec narrows the targets via `instance_filter` (VER-140 Phase 4). `anomalies.csv` records one row per `(timestamp, component, metric)` regardless of N. After VER-151 Phase 8 the only remaining downstream-flag gate is `--otel-emit-gauges` (and the broader `--otel-enabled` path), which still cannot attach instance dimensions as OTLP resource attributes (tracked under VER-149 Phase 6). `--inject-dst-artifact-day > 0` is also still rejected because the DST splice path is incompatible with the long-form rebuilder. `--combine`, `--combine-only`, `--emit-selection 'gauges'`, `--emit-selection 'schema'`, and `--validate-output` are all dim-aware and accepted under `N>1` (the validator declares per-component `dimensions` blocks in `schema.json` and checks the long-form headers end-to-end). Mutually exclusive with `--instance-config`. Multiplies the preflight cell-count cap inputs linearly with N. |
+| `--instance-config` | _off_ | Path to a YAML (`.yaml`/`.yml`) or JSON (`.json`) file declaring a per-component instance topology for repeatable non-uniform fan-outs (VER-140 Phase 3). The top-level key `components` maps component names to lists of `Instance` field dicts (`id, host, pod, az, region, tenant`). Components not listed in the file fall back to the module-level `INSTANCES` registry (single anonymous `Instance()` per component) so the default per-component CSV shape is preserved. `parse_args` checks the flag-shape invariants (path resolves to a regular file via `Path.is_file()`, suffix in `{.yaml, .yml, .json}`, mutex with `--instances-per-component`); schema validation runs in `main()` via `_load_instance_config`, which raises a `ValueError` (caught and re-raised as `sys.exit`) on malformed YAML/JSON, unknown component, unknown `Instance` field, non-mapping top-level value, non-mapping `components` value, per-component value not a list, empty per-component list, non-dict instance entry, duplicate `id`, and per-component count exceeding `MAX_INSTANCES_PER_COMPONENT=20`. YAML support requires PyYAML — install with `pip install 'anomaly-metric-creator[yaml]'` or `pip install pyyaml`; JSON works without it. Triggers the same multi-instance code path as `--instances-per-component > 1`, so it inherits the same residual downstream-flag gates (`--otel-emit-gauges` / `--otel-enabled` under VER-149 Phase 6, `--inject-dst-artifact-day > 0`). The combine / gauges / schema / `--validate-output` paths are dim-aware after VER-151 Phase 8. Preflight cell-count cap uses `MAX_INSTANCES_PER_COMPONENT=20` as a conservative upper bound since the per-component instance count is not known until `main()` parses the config file. |
 | `--allow-huge-output` | _off_       | Bypass the preflight cell-count cap (200,000,000 metric cells across all components, timestamps, and instances). Without this flag, `parse_args` rejects combinations of `--interval-seconds`, `--duration-days`, `--metrics-per-component`, `--instances-per-component`, `--instance-config` (counted as `MAX_INSTANCES_PER_COMPONENT=20` per component as a conservative upper bound since the per-component count isn't known until the file is parsed in `main()`), and `--components` whose row × metric × component × instances product exceeds the cap, and the error message names the offending flags. Pass `--allow-huge-output` when the size is intentional (the actual run can still be truncated by other flags). |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
@@ -363,7 +363,17 @@ Top-level shape (`schema_version=2`, bumped in VER-157 phase 7):
   Each metric entry carries `name`, `unit`, `semantic_type` (one of
   `counter`, `gauge`, `ratio`, `rate`), `dtype` (`float` or `int`),
   `min_value`, `max_value`, and `derivation` (formula string when the
-  column is computed from siblings, else `null`).
+  column is computed from siblings, else `null`). VER-151 phase 8
+  adds an optional `dimensions` block per component when the run is
+  dim-aware (`--instances-per-component N>1` or a non-default
+  `--instance-config`): `{"axes": ["pod"], "cardinality": 3}`. `axes`
+  is the sorted subset of `host`, `pod`, `az`, `region`, `tenant`
+  populated on at least one instance (the `id` field is excluded
+  because it identifies an instance rather than naming an axis to
+  slice on), and `cardinality` is the per-component instance count.
+  The block is omitted entirely on the default single-anonymous-
+  `Instance()` path so the v1 schema bytes (and the locked SHA-256
+  hashes at 1d and 7d) stay byte-identical to today.
 - `topology` (VER-157 phase 7) — `{source: [{target, weight,
   saturation, correlation_threshold}, ...]}` snapshot of the directed
   coupling graph, restricted to the active component set.
@@ -402,15 +412,31 @@ The validator loads `PATH/schema.json` and runs:
 - `anomalies.csv` rows are non-decreasing by timestamp.
 - Per-component data row counts ≤ `rows_per_component` (plus the DST
   splice when applicable); the under-emission band is 8 σ around the
-  expected drop count so a normal run doesn't false-positive.
+  expected drop count so a normal run doesn't false-positive. When
+  the per-component schema declares `dimensions` (VER-151 phase 8),
+  both the upper bound and the under-emission band are multiplied by
+  `cardinality` so the multi-instance long-form CSV (N copies of
+  each row, one per instance) sits inside the band.
 - Every row's timestamp falls in `[START, START + total_seconds)`.
-- CSV header matches the schema's MetricSpec column order.
+- CSV header matches the schema's MetricSpec column order. When the
+  per-component schema declares `dimensions`, the expected header is
+  the long-form `timestamp, id, host, pod, az, region, tenant,
+  <metrics…>` shape so a missing or reordered dim column surfaces as
+  a header drift violation instead of cascading cell errors.
 - Each cell parses as float, falls in `[min_value, max_value]` when
   declared, is whole-integer (modulo 3-decimal CSV precision) when
   `dtype="int"`, and is non-negative when `semantic_type` is `counter`
-  or `rate`.
+  or `rate`. (The dim cells themselves — string id/host/pod/az/region/
+  tenant values — are skipped by the numeric checks.)
 - Derived columns (today: `cacheservice.hit_ratio`) recompute from
-  their source columns within `0.01` of the stored value.
+  their source columns within `0.01` of the stored value. Under
+  dim-aware schemas the recomputer's column-index lookup is offset by
+  the 6-column dim prefix so the formula still reads the right cell.
+- When any per-component schema declares `dimensions`, `gauges.csv`
+  and `combined_metrics_unified.csv` (when emitted) must carry the
+  10-column long-form header `timestamp, component, id, host, pod,
+  az, region, tenant, metric, value` (VER-151 phase 8). Mirrors the
+  Phase 5 writer's any-of dispatch predicate.
 - Topology coupling (VER-157 phase 7): for every constant-weight edge
   declared in `topology`, the source's canonical load metric and the
   target's canonical load metric must correlate at Pearson ≥ 0.85
