@@ -6,6 +6,7 @@ import csv
 import hashlib
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -374,19 +375,32 @@ N3_COMBINED_ONE_DAY_HASH = (
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Chunked SHA-256 so the N=3 long-form combine output (~1.3 GB at
+    1-day default) doesn't get slurped into memory in one shot."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 @pytest.fixture(scope="module")
-def n3_one_day_combine_run(amc, tmp_path_factory):
+def n3_one_day_combine_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
+    """Run ``combine_logs`` against the shared session-scoped N=3
+    dataset (per-component CSVs generated once in ``conftest.py``).
+    Avoids re-running the ~25-second N=3 generation pass per test
+    module — ``combine_logs`` is a pure function of the per-component
+    CSV bytes, so the locked golden hash holds byte-identically. The
+    copy step isolates this module's
+    ``combined_metrics_unified.csv`` from sibling consumers of the
+    same dataset; ``components=None`` triggers autodiscovery, which
+    walks the copied ``*.csv`` files in sorted order (the same input
+    the original ``--combine`` invocation produced)."""
     out = tmp_path_factory.mktemp("ver148_n3_one_day_combine")
-    return run_capture(
-        amc, out, days=1,
-        extra_args=[
-            "--combine",
-            "--instances-per-component", "3",
-        ],
-    )
+    for src in n3_one_day_dataset_dir.iterdir():
+        shutil.copy2(src, out / src.name)
+    amc.combine_logs(out)
+    return SimpleNamespace(out_dir=out, stderr="")
 
 
 def test_n3_combined_has_long_form_header(n3_one_day_combine_run):

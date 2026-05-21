@@ -7310,7 +7310,13 @@ def _scan_instance_block_layout(
             if not line:
                 break  # EOF
             if line in ("\n", "\r\n"):
-                continue  # dropped row
+                # Skip blank lines (tolerate hand-edited inputs).
+                # ``generate_component`` omits dropped rows from the
+                # CSV entirely rather than writing them as blanks
+                # (see ``_iter_component_rows``), so blank lines do
+                # not occur on a freshly generated file — this guard
+                # only matters for staged / hand-edited inputs.
+                continue
             # generate_component writes plain comma-separated values
             # without quoting (see the np.char.add path), so a simple
             # split is safe and exactly what csv.reader would parse.
