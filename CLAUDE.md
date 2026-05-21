@@ -1309,7 +1309,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to the 11 recurring patterns identified in VER-160. Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Copy those 11 bold headings into the PR description as a checklist (Markdown `- [ ]` lines, one per heading) and either confirm each one or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the headings below rather than redefine them.
+This checklist maps to 13 recurring patterns identified in VER-160 (the original 11) and VER-205 (two more from the May 20 PR review sweep). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Copy those 13 bold headings into the PR description as a checklist (Markdown `- [ ]` lines, one per heading) and either confirm each one or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the headings below rather than redefine them.
 
 **Scope & description**
 - PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
@@ -1363,6 +1363,16 @@ This checklist maps to the 11 recurring patterns identified in VER-160. Work thr
   selection in `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); run
   `.venv/bin/pre-commit run --all-files` or `.venv/bin/ruff check tests/`
   locally if the commit hook is not installed.
+
+**Test resource cost**
+- Fixtures generating full 1-day, 7-day, or `--instances-per-component N > 1` (N=3 and larger) datasets must reuse the session-scoped fixtures already declared in `tests/conftest.py` rather than redefine module-scoped duplicates. A `module`-scoped fixture that runs `main()` end-to-end will re-execute the generator once per test file and multiply suite wall-time and peak RSS by the number of duplicating files (PR #67 had three separate ~1.3 GB N=3 dataset fixtures; PR #63 module-scoped fixtures duplicated session-scoped runs from conftest).
+- Reading multi-hundred-MB CSVs into memory via `Path.read_bytes()` is forbidden in tests. Use chunked streaming for hashing (`with path.open("rb") as f: while chunk := f.read(1 << 20): hasher.update(chunk)`) so peak RSS stays bounded regardless of file size. PR #67's `_sha256` helper read 1.3 GB into RAM in one shot — replace with a streaming loop.
+- A test that needs only a row count must not call `f.readlines()` or `path.read_text().splitlines()` on the full file. Use `sum(1 for _ in f)` (or `with path.open() as f: next(f); count = sum(1 for _ in f)` to skip the header) so the file streams line-by-line. PR #64 read a full N=2 1-day CSV with `readlines()` just to count rows.
+
+**Cross-platform test guards**
+- Any test that uses POSIX-only stdlib APIs must guard the use so pytest collection still succeeds on Windows. Two distinct cases need different guards:
+  - **POSIX-only modules** — whole-module imports that fail on Windows: `resource`, `pwd`, `grp`, `fcntl`, `termios`, `tty`. Guard with `pytest.importorskip("resource")` inside the test function body before any use, or with a module-top `if sys.platform == "win32": pytest.skip("POSIX only", allow_module_level=True)` *before* the `import resource` line. An unconditional top-of-module `import resource` fails pytest collection on Windows even when the production code under test no-ops on Windows — PR #67's `test_ensure_long_form_fd_capacity_*` had this shape and would have broken any future Windows CI lane.
+  - **POSIX-only names on cross-platform modules** — e.g. `select.epoll`, `signal.SIGSTOP`, `signal.SIGKILL`, `os.fork`. `import select` and `import signal` both succeed on Windows, so `pytest.importorskip` is the wrong guard — the missing symbol is the attribute, not the module. Two acceptable forms: (1) `from select import epoll` at module top, gated by `if sys.platform == "win32": pytest.skip("POSIX only", allow_module_level=True)` *before* the `from` line; or (2) `pytest.skipif(not hasattr(select, "epoll"), reason="POSIX only")` on the individual test that uses the attribute.
 
 **Default-behavior changes**
 - If a default parameter value or fallback path changes (e.g. unseeded `RandomState`, required arg replacing optional), the PR description names it and tests cover both old and new caller shapes.
