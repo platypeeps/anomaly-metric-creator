@@ -252,6 +252,135 @@ because v1 records one event per `(timestamp, component, metric)`
 regardless of `N` — Phase 4 will reshape that contract when
 `instance_filter` lands.
 
+### Per-instance topology (VER-158 phase 8)
+
+Under `--topology-mode realistic` with `--instances-per-component
+N > 1` (or any non-default `--instance-config`), the topology
+two-pass generation runs against each downstream instance's
+*matching* upstream view rather than the shared aggregate column.
+The routing dispatch lives in `_matched_cardinality` and reads
+the upstream / downstream cardinalities for each edge:
+
+- **1:1 routing (matched cardinalities).** When
+  `len(upstream_instances) == len(downstream_instances) > 0`,
+  downstream instance `K` consumes upstream instance `K`'s
+  captured load column exclusively for that edge. This is the
+  "matching instance set" branch from the VER-158 issue scope; it
+  delivers the per-pod isolation `tests/test_topology_multi_instance.py`
+  pins (a slow upstream pod produces saturation feedback only on
+  the corresponding downstream pod's rows, sibling pods stay on
+  the natural baseline).
+- **Uniform fan-out (mismatched cardinalities).** When upstream
+  and downstream pod counts differ, downstream instance `K` sees
+  the mean of all upstream pods' captured load — the issue's
+  "edge weight divided by downstream cardinality" formula averaged
+  across `N_up` upstream pods. Every downstream pod sees the same
+  averaged view under this branch, so per-pod variation only
+  emerges from local saturation noise rather than from upstream
+  asymmetry. This is the fallback for mixed-N runs (e.g. an
+  `--instance-config` that maps a different `N` to different
+  components).
+
+Per-instance composition is gated on the *content* of
+`ctx.instances`, not directly on the `--instances-per-component`
+flag:
+
+- When the per-component instance list is the single anonymous
+  `Instance()` (`_is_anonymous_instance_list(instances)` is True),
+  `main()` keeps the pre-VER-158 lambda-baked path:
+  `_compose_topology_coupled_specs` + `_compose_topology_saturation_specs`
+  modify the per-run `MetricSpec` list (today's path). This
+  branch fires for the default `--instances-per-component 1` and
+  is byte-identical to the phase-6 baseline by construction.
+- When the per-component instance list carries any named instance
+  (`len > 1`, or any non-`None` dimension field on a single
+  instance), `main()` dispatches into
+  `_compute_topology_arrays_per_instance` which:
+    - Builds the per-instance upstream view via
+      `_per_instance_upstream_view` (1:1 for matched cardinalities,
+      uniform-fan-out averaging otherwise).
+    - Reuses the existing `_apply_saturation` math per instance
+      so the logistic curve / `SaturationParams` ranges stay
+      identical to today's shared path.
+    - Draws the `_TOPOLOGY_COUPLE_NOISE_STD` coupling noise *once
+      per coupled metric* and shares it across instances, so
+      symmetric upstream produces byte-identical coupling arrays
+      across pods — and therefore byte-identical CSV output to
+      the lambda-baked path.
+    - Returns `(coupling_by_instance, saturation_by_instance,
+      any_divergence)`. The `any_divergence` flag drives the fast
+      path in `generate_component`: under symmetric upstream every
+      instance's arrays are equal, so the natural-column draw runs
+      *once* per metric and the result is reused across all
+      instances (preserves `N3_ONE_DAY_HASHES` /
+      `N3_SEVEN_DAY_HASHES` locked in
+      `tests/test_instances_per_component.py`). Under asymmetric
+      upstream (an `instance_filter` on an upstream load metric)
+      the arrays diverge → per-instance natural draws run with
+      shared `noise=` kwargs so only the topology contributions
+      vary across pods.
+
+The math hook is the VER-158 refactor of `_natural_column` which
+now accepts three optional kwargs the lambda-baked path used to
+fold into `MetricSpec.multiplier` / `MetricSpec.additive`:
+
+- `latency_factor` — per-row array multiplied between the natural
+  multiplier and additive, matching where
+  `_compose_topology_saturation_specs` baked the saturation
+  multiplier.
+- `error_offset` — per-row array added after the natural
+  additive and before `clip_min`, matching where the saturation
+  offset was baked into `MetricSpec.additive`.
+- `baseline_override` — per-row array that REPLACES the natural
+  baseline draw entirely; matches what
+  `_compose_topology_coupled_specs` produced by replacing
+  `base=0, std=0, multiplier=None, additive=lambda: coupled` on
+  the coupled metric's spec.
+
+`generate_component` consumes these kwargs through two new
+parameters threaded by `main()`:
+
+- `coupling_arrays_per_instance: list[dict[str, np.ndarray]] | None`
+  — per-instance baseline overrides for coupled load metrics. The
+  list is indexed by instance position in `ctx.instances[component]`.
+- `saturation_arrays_per_instance: list[dict[str, tuple[lf | None, eo | None]]] | None`
+  — per-instance saturation contributions. Each tuple stores
+  `(latency_factor, error_offset)` for the metric, with `None`
+  on whichever side does not apply (latency-only metrics carry
+  `(latency_factor, None)`; error-only metrics carry
+  `(None, error_offset)`; an overlap target carries both).
+
+Per-instance upstream capture flows through a new
+`topology_capture_by_instance: dict[str, list[dict[str, np.ndarray]]] | None`
+arg on `generate_component`. Each instance gets its own
+`(metric_name -> column)` capture; under symmetric upstream the
+columns all reference identical data (different ``.copy()`` results
+on the same source row), and
+`_compute_topology_arrays_per_instance` collapses to the shared
+fast path on detection.
+
+Cascade-vs-topology overlap is unchanged from phase 4: per-instance
+anomaly overrides (`instance_filter`) are applied per pod after
+the natural-column draw, so a cascade write at row `i` for
+instance `K` still wins at exactly that cell regardless of the
+saturation-driven baseline computed for that pod.
+
+**Validator (VER-157 phase 7 + VER-158).** The validator's
+existing `_validate_topology_coupling` runs an aggregate-mean
+Pearson check per edge (the timestamp axis is collapsed across
+instances by `_read_component_metric_column`). VER-158 adds a
+companion `_validate_topology_coupling_per_instance` invocation
+inside the per-edge loop that fires only when both source and
+target schemas declare a `dimensions` block with matched
+cardinalities. The check verifies
+`Pearson(source.iK, target.iK) >= threshold` for each matched
+pod pair (sorted by instance id) so a regression that
+mis-routes one pod's load to a sibling surfaces as a dedicated
+violation. Skipped silently for dimensionless schemas,
+mismatched cardinalities (uniform fan-out doesn't promise
+per-pod isolation), single-instance runs, or fewer than 100
+aligned rows per pod pair.
+
 ### MetricSpec schema metadata (VER-139)
 
 `MetricSpec` carries six optional declarative fields that flow into
