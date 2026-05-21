@@ -482,3 +482,255 @@ def test_schema_topology_version_is_two(one_day_schema_run, amc):
     doc = _load_schema(one_day_schema_run.out_dir)
     assert doc["schema_version"] == 2
     assert amc.SCHEMA_DOCUMENT_VERSION == 2
+
+
+# ------------------------------------------------------------------
+# Dimensions block (VER-151 phase 8)
+# ------------------------------------------------------------------
+# Locked SHA-256 golden hashes for ``schema.json`` at
+# ``--instances-per-component 3`` and the default --seed / scenario set
+# at --duration-days 1 and 7. Re-locked at VER-151 phase 8 alongside the
+# new per-component ``dimensions`` block. Protects against silent drift
+# in the dim-aware schema output: the axes/cardinality block, the
+# component payload order, and the metadata reflect the multi-instance
+# run exactly. The schema-document version is unchanged at 2 because
+# the ``dimensions`` block is purely additive (omitted entirely for
+# anonymous single-instance runs), which keeps the existing
+# ``SCHEMA_ONE_DAY_HASH`` / ``SCHEMA_SEVEN_DAY_HASH`` constants
+# byte-identical above.
+SCHEMA_N3_ONE_DAY_HASH = (
+    "3ef12a53799f00deb2c76170f9f6acf4292f841cb1110e90fa4151507e612d80"
+)
+SCHEMA_N3_SEVEN_DAY_HASH = (
+    "dfd6dfa3d47ccef8a736dd0c9ae4c875c2da2c4e0274687ea2db4a5d28495f03"
+)
+
+
+@pytest.fixture(scope="module")
+def one_day_schema_run_n3(amc, tmp_path_factory):
+    """Full default 1-day run with ``--instances-per-component 3`` so the
+    schema's dim block fires on every component. Module-scoped to amortize
+    the ~25–30s generation across all N=3 assertions below."""
+    out = tmp_path_factory.mktemp("ver151_one_day_schema_n3")
+    return run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--instances-per-component", "3",
+        ],
+    )
+
+
+@pytest.fixture(scope="module")
+def seven_day_schema_run_n3(amc, tmp_path_factory):
+    out = tmp_path_factory.mktemp("ver151_seven_day_schema_n3")
+    return run_capture(
+        amc, out, days=7,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--instances-per-component", "3",
+        ],
+    )
+
+
+def test_schema_omits_dimensions_block_for_anonymous_default(one_day_schema_run):
+    """The default single-anonymous-``Instance()`` path must NOT add a
+    ``dimensions`` key under any component — that's what keeps the v1
+    schema bytes (and the locked SHA-256 hashes above) byte-identical
+    to the pre-VER-151 baseline."""
+    doc = _load_schema(one_day_schema_run.out_dir)
+    for component, payload in doc["components"].items():
+        assert "dimensions" not in payload, (
+            f"default N=1 anonymous run must not emit a dimensions block; "
+            f"{component} has {payload.get('dimensions')!r}"
+        )
+
+
+def test_schema_n3_emits_dimensions_block_on_every_component(
+    one_day_schema_run_n3, amc
+):
+    """``--instances-per-component 3`` makes every component dim-aware
+    (Phase 2 fan-out sets ``id`` and ``pod`` on each instance), so the
+    schema must declare ``dimensions`` on every component in the run."""
+    doc = _load_schema(one_day_schema_run_n3.out_dir)
+    expected_components = {c for c in amc.COMPONENTS}
+    schema_components = set(doc["components"].keys())
+    assert expected_components <= schema_components, (
+        "the default --components=all run must cover every COMPONENTS key"
+    )
+    for component, payload in doc["components"].items():
+        assert "dimensions" in payload, (
+            f"--instances-per-component 3 must emit a dimensions block "
+            f"on every component; {component} is missing one"
+        )
+        assert payload["dimensions"]["cardinality"] == 3
+        assert payload["dimensions"]["axes"] == ["pod"], (
+            f"Phase 2 fan-out only sets the 'pod' dimension on each "
+            f"Instance; {component} declares axes "
+            f"{payload['dimensions']['axes']!r}"
+        )
+
+
+def test_schema_n3_dimension_axes_excludes_id(one_day_schema_run_n3):
+    """``id`` identifies an instance — it is not a dimension to slice
+    on. The axes list is built from ``_INSTANCE_DIMENSION_FIELDS``
+    (which excludes ``id``) so the schema never declares ``id`` as an
+    axis even though every instance carries one."""
+    doc = _load_schema(one_day_schema_run_n3.out_dir)
+    for component, payload in doc["components"].items():
+        axes = payload["dimensions"]["axes"]
+        assert "id" not in axes, (
+            f"{component}.dimensions.axes must exclude 'id' "
+            f"(got {axes!r})"
+        )
+
+
+def test_schema_n3_byte_identical_one_day(one_day_schema_run_n3):
+    """Locked SHA-256 hash for the default N=3 1-day schema.json so a
+    silent drift in the dim-block emitter (axes ordering, cardinality
+    derivation, payload key set) gets caught at test time."""
+    path = one_day_schema_run_n3.out_dir / "schema.json"
+    actual = _sha256(path)
+    assert actual == SCHEMA_N3_ONE_DAY_HASH, (
+        f"N=3 1-day schema.json drifted from locked hash. "
+        f"expected={SCHEMA_N3_ONE_DAY_HASH} actual={actual}"
+    )
+
+
+def test_schema_n3_byte_identical_seven_day(seven_day_schema_run_n3):
+    """Locked SHA-256 hash for the default N=3 7-day schema.json — same
+    protection as the 1-day case, plus catches drift introduced only at
+    multi-day boundaries (e.g. a metadata field that depends on
+    duration)."""
+    path = seven_day_schema_run_n3.out_dir / "schema.json"
+    actual = _sha256(path)
+    assert actual == SCHEMA_N3_SEVEN_DAY_HASH, (
+        f"N=3 7-day schema.json drifted from locked hash. "
+        f"expected={SCHEMA_N3_SEVEN_DAY_HASH} actual={actual}"
+    )
+
+
+def test_schema_n3_byte_deterministic(amc, tmp_path):
+    """Two N=3 runs with the same seed must produce byte-identical
+    schema.json — proves the dim block emission is order-independent
+    even though the instance fan-out builds the list in registry
+    order."""
+    out_a = tmp_path / "a"
+    out_b = tmp_path / "b"
+    run_capture(amc, out_a, days=1,
+                extra_args=["--emit-selection", "metrics,schema",
+                            "--instances-per-component", "3",
+                            "--interval-seconds", "600"])
+    run_capture(amc, out_b, days=1,
+                extra_args=["--emit-selection", "metrics,schema",
+                            "--instances-per-component", "3",
+                            "--interval-seconds", "600"])
+    assert _sha256(out_a / "schema.json") == _sha256(out_b / "schema.json")
+
+
+def test_schema_dimensions_from_instance_config_multiple_axes(amc, tmp_path):
+    """A non-default ``--instance-config`` declaring multiple varying
+    dim fields (e.g. pod + az) must surface every populated axis in
+    sorted order, with cardinality equal to the per-component list
+    length. Exercises the "any non-None field on any instance" inference
+    used by ``_component_dimensions_schema_entry``."""
+    cfg_path = tmp_path / "instances.json"
+    cfg_path.write_text(
+        json.dumps({
+            "components": {
+                "apigateway": [
+                    {"id": "i0", "pod": "pod-a", "az": "us-east-1"},
+                    {"id": "i1", "pod": "pod-b", "az": "us-west-2"},
+                ],
+            },
+        }),
+        encoding="utf-8",
+    )
+    out = tmp_path / "run"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--instance-config", str(cfg_path),
+            "--components", "apigateway",
+            "--interval-seconds", "600",
+        ],
+    )
+    doc = _load_schema(out)
+    dims = doc["components"]["apigateway"]["dimensions"]
+    assert dims["axes"] == ["az", "pod"], (
+        f"axes must be sorted (alphabetic) and include every populated "
+        f"dim field; got {dims['axes']!r}"
+    )
+    assert dims["cardinality"] == 2
+
+
+def test_schema_n3_omits_dimensions_for_unfanned_components(amc, tmp_path):
+    """A run with ``--instance-config`` covering only one component
+    must omit ``dimensions`` from components left with the anonymous
+    default. Establishes that the schema mirrors the per-component
+    CSV layout (which itself only emits dim columns for the dimensioned
+    components)."""
+    cfg_path = tmp_path / "instances.json"
+    cfg_path.write_text(
+        json.dumps({
+            "components": {
+                "apigateway": [
+                    {"id": "i0", "pod": "pod-0"},
+                    {"id": "i1", "pod": "pod-1"},
+                ],
+            },
+        }),
+        encoding="utf-8",
+    )
+    out = tmp_path / "run"
+    run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--emit-selection", "metrics,schema",
+            "--instance-config", str(cfg_path),
+            "--components", "apigateway,cacheservice",
+            "--interval-seconds", "600",
+        ],
+    )
+    doc = _load_schema(out)
+    assert "dimensions" in doc["components"]["apigateway"]
+    assert doc["components"]["apigateway"]["dimensions"]["cardinality"] == 2
+    assert "dimensions" not in doc["components"]["cacheservice"], (
+        "cacheservice was not declared in --instance-config; it should "
+        "fall back to the anonymous default (no dim columns in CSV, no "
+        "dimensions block in schema)"
+    )
+
+
+def test_component_dimensions_schema_entry_anonymous_returns_none(amc):
+    """``_component_dimensions_schema_entry`` returns ``None`` for the
+    single-anonymous-``Instance()`` default so the schema emitter can
+    just check truthiness to decide whether to attach the block.
+    Mirrors ``_is_anonymous_instance_list``."""
+    assert amc._component_dimensions_schema_entry([amc.Instance()]) is None
+    assert amc._component_dimensions_schema_entry(None) is None
+
+
+def test_component_dimensions_schema_entry_axes_dedup(amc):
+    """When multiple instances populate the same axis (e.g. every
+    instance has a ``pod`` value), ``axes`` lists that field once.
+    Sorted output guards against insertion-order drift across runs."""
+    instances = [
+        amc.Instance(id="i0", pod="pod-0", host="h0"),
+        amc.Instance(id="i1", pod="pod-1", host="h1"),
+    ]
+    entry = amc._component_dimensions_schema_entry(instances)
+    assert entry == {"axes": ["host", "pod"], "cardinality": 2}
+
+
+def test_component_dimensions_schema_entry_partial_axes(amc):
+    """An axis populated on at least one instance but not all is still
+    a dimension — the schema records its presence so the validator can
+    confirm the column exists in the CSV header."""
+    instances = [
+        amc.Instance(id="i0", pod="pod-0", region="us-east"),
+        amc.Instance(id="i1", pod="pod-1"),  # no region
+    ]
+    entry = amc._component_dimensions_schema_entry(instances)
+    assert entry == {"axes": ["pod", "region"], "cardinality": 2}

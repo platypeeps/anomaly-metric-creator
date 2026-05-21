@@ -112,17 +112,22 @@ slot unchanged.
 ### Output schema document (`schema.json`)
 
 `write_schema_json(output_path, *, components, effective_specs, metadata,
-emitted_files)` writes a declarative `schema.json` alongside the rest of
-the artifacts. It is opt-in via `schema` in `--emit-selection` (parallel
-to `metrics`, `logs`, `traces`, `gauges`) and is the single source of
-truth `--validate-output` consumes.
+emitted_files, instances_by_component=None)` writes a declarative
+`schema.json` alongside the rest of the artifacts. It is opt-in via
+`schema` in `--emit-selection` (parallel to `metrics`, `logs`, `traces`,
+`gauges`) and is the single source of truth `--validate-output` consumes.
 
 The document carries five slices of information:
 
 - `schema_version` — integer (`SCHEMA_DOCUMENT_VERSION`, currently `2`
   after the VER-157 phase 7 bump that added the `topology` section).
   `_load_schema_document` rejects unknown versions outright, so v1
-  documents fail-fast under a v2 reader and vice versa.
+  documents fail-fast under a v2 reader and vice versa. VER-151 phase 8
+  keeps the version at 2 because the new per-component `dimensions`
+  block is purely additive — omitted entirely in the default
+  single-anonymous-`Instance()` path so the v1 schema bytes (and the
+  locked SHA-256 hashes) stay byte-identical to the pre-VER-151
+  baseline.
 - `metadata` — run-level parameters (`seed`, `start`, `duration_days`,
   `interval_seconds`, `total_seconds`, `rows_per_component`,
   `drop_rate`, `signal_level`, `scenarios`, `exclude_scenarios`,
@@ -132,7 +137,23 @@ The document carries five slices of information:
   short-circuit the new coupling check under `independent`.
 - `components` — per-component metric metadata in MetricSpec column
   order (each entry carries `name`, `unit`, `semantic_type`, `dtype`,
-  `min_value`, `max_value`, `derivation`).
+  `min_value`, `max_value`, `derivation`). VER-151 phase 8 adds an
+  optional `dimensions` field per component when the per-component
+  CSV is dim-aware (`--instances-per-component N>1` fan-out or a
+  non-default `--instance-config`):
+  `{"axes": ["pod"], "cardinality": 3}`. `axes` is the sorted subset
+  of `_INSTANCE_DIMENSION_FIELDS` (i.e.
+  `_INSTANCE_DIMENSION_COLUMNS` minus the leading `id` slot — `id`
+  identifies an instance, it is not a dimension to slice on) whose
+  value is non-`None` on at least one instance in the list;
+  `cardinality` is `len(instances)`. The block is omitted when
+  `_is_anonymous_instance_list(instances)` returns `True`, matching
+  the long-form-CSV writer's dispatch predicate so the schema view
+  and the on-disk layout cannot drift.
+  `_component_dimensions_schema_entry` is the single helper that
+  decides both the block presence and its contents; pass the live
+  `RunContext.instances` map via the `instances_by_component`
+  kwarg.
 - `files` — sorted list of artifact filenames the run wrote, built via
   `_collect_emitted_filenames` (the same registry that drives
   `_pre_clean_output_dir` and the end-of-run summary, so the three views
@@ -288,7 +309,11 @@ the validator knows about against the artifacts in `PATH`:
   by `timestamp`.
 - `_validate_component_row_count` — data rows ≤ `rows_per_component`
   plus the DST splice extras when applicable; under-emission is checked
-  against an 8-sigma band around the expected drop count.
+  against an 8-sigma band around the expected drop count. VER-151
+  phase 8: when the per-component schema declares `dimensions`, both
+  the upper bound and the under-emission band are multiplied by
+  `cardinality` so the Phase 2 long-form CSV (N copies of each row,
+  one per instance) sits inside the band.
 - `_validate_component_timestamp_coverage` — every row's timestamp is in
   `[START, START + total_seconds)`.
 - `_validate_component_cells` — header column order matches the schema's
@@ -297,13 +322,31 @@ the validator knows about against the artifacts in `PATH`:
   3-decimal CSV precision) when `dtype="int"`, and is ≥ 0 when
   `semantic_type` is `counter` or `rate`. Each unique
   `(metric, kind)` violation reports once per CSV so the output stays
-  bounded.
+  bounded. VER-151 phase 8: when the per-component schema declares
+  `dimensions`, the expected header is
+  `("timestamp", *_INSTANCE_DIMENSION_COLUMNS, *metric_names)` to
+  match the Phase 2 long-form per-component CSV; metric cells start
+  at index `1 + len(_INSTANCE_DIMENSION_COLUMNS)` in that branch, and
+  the dim cells themselves (string-valued id/host/pod/az/region/tenant)
+  are skipped by the numeric range checks.
 - `_validate_component_derivations` — for every metric whose schema entry
   declares a `derivation`, recompute the value from its source columns
   and assert agreement within `_VALIDATE_DERIVATION_TOLERANCE` (0.01).
   Dispatched by `(component, metric)` via the `_RECOMPUTERS` table —
   add a `DERIVATIONS` entry (generator) and a `_RECOMPUTERS` entry
-  (validator) in lockstep.
+  (validator) in lockstep. VER-151 phase 8: the `name_to_col`
+  recomputer-lookup index is offset by
+  `1 + len(_INSTANCE_DIMENSION_COLUMNS)` when the schema declares
+  `dimensions`, so the recomputer reads the right cell from the
+  long-form row instead of a dim string.
+- `_validate_long_form_dimensions` (VER-151 phase 8) — when *any*
+  per-component schema declares `dimensions`, verify both
+  `gauges.csv` and `combined_metrics_unified.csv` (when declared in
+  `schema.files`) carry the 10-column long-form header
+  `timestamp, component, id, host, pod, az, region, tenant, metric,
+  value`. Mirrors the writer's any-of dispatch predicate; when no
+  component has dimensions the check is a no-op so today's
+  dimensionless validator behavior is unchanged.
 - `_validate_topology_coupling` (VER-157 phase 7) — for every edge in
   the schema's `topology` section with a numeric weight, compute the
   Pearson correlation between the source's canonical load metric and
@@ -328,7 +371,15 @@ the validator knows about against the artifacts in `PATH`:
   contribution is composed into `database.queries_per_sec` via the
   callable edge). A zero-variance source or target column is treated
   as a coupling regression (Pearson is undefined; the validator emits
-  a violation naming the side).
+  a violation naming the side). VER-151 phase 8 makes
+  `_read_component_metric_column` collapse per-instance duplicates to
+  one `(timestamp, mean)` per unique timestamp so the dim-aware
+  long-form CSV (multiple rows per timestamp, one per instance, with
+  instances written as sequential per-instance blocks rather than
+  chronologically interleaved) keeps the timestamp axis monotonic for
+  the downstream `_compute_anomaly_keep_mask` forward-sweep. Under
+  the default fan-out (instances share the baseline) the mean equals
+  any single instance's value, so the N=1 path is byte-identical.
 
 CLI semantics: default mode hard-fails (`exit 1` on any violation);
 `--validate-warn` downgrades to a stderr report and `exit 0`. Mutually

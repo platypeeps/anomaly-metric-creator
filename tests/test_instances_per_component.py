@@ -525,12 +525,16 @@ def test_instances_n1_with_dst_allowed(tmp_path):
 # (``combined_metrics_unified.csv`` and ``gauges.csv``) are dimension-
 # aware: ``--instances-per-component > 1`` paired with ``--combine`` /
 # ``--combine-only`` / ``--emit-selection gauges`` is now permitted and
-# dispatches to the long-form layout. The remaining out-of-scope
-# downstream emitters — ``schema.json`` topology + ``--validate-output``
-# (Phase 8 / VER-151), ``--otel-emit-gauges`` and the broader OTEL
-# streamer resource attributes (Phase 6 / VER-149) — stay gated at
-# parse time with a clear, phase-attributed error so users get the right
-# message instead of corrupted artifacts.
+# dispatches to the long-form layout. VER-149 Phase 6 then made the
+# OTEL streamer dimension-aware, so ``--otel-enabled`` /
+# ``--otel-emit-gauges`` are also accepted under multi-instance runs.
+# VER-151 Phase 8 (this branch) closes the loop: ``schema.json``
+# declares a per-component ``dimensions`` block and
+# ``--validate-output`` walks the long-form headers end-to-end, so
+# every downstream-flag combination above is now permitted at parse
+# time. The only remaining multi-instance gate is the DST splice
+# (``--inject-dst-artifact-day > 0``), which is structurally
+# incompatible with the long-form rebuilder.
 
 
 def test_n2_plus_combine_allowed(tmp_path):
@@ -602,37 +606,39 @@ def test_n2_plus_emit_gauges_allowed(tmp_path):
     ]
 
 
-def test_n2_plus_emit_schema_rejected(tmp_path):
-    """``--instances-per-component > 1`` + ``--emit-selection schema`` rejected (Phase 8)."""
-    result = _invoke(
-        ["--instances-per-component", "2",
-         "--emit-selection", "metrics,schema",
-         "--output-dir", str(tmp_path), "--duration-days", "1"],
-        expect_fail=True,
-    )
-    stderr_low = result.stderr.lower()
-    assert "instances-per-component" in stderr_low
-    assert "schema" in stderr_low
-    assert "ver-151" in stderr_low or "phase 8" in stderr_low
-
-
-def test_n2_plus_validate_output_rejected(tmp_path):
-    """``--instances-per-component > 1`` + ``--validate-output`` rejected (Phase 8).
-
-    Without this gate the validator would report header-mismatch and
-    row-count violations against a Phase-2-correct multi-instance CSV,
-    misleading the user about which side is wrong.
+def test_n2_plus_emit_schema_allowed(amc, tmp_path):
+    """``--instances-per-component > 1`` + ``--emit-selection schema`` is allowed
+    after VER-151 Phase 8. ``write_schema_json`` declares a per-component
+    ``dimensions`` block on every dim-aware component, and
+    ``--validate-output`` (when also enabled) honors it via
+    ``_validate_component_cells`` / ``_validate_component_row_count`` /
+    ``_validate_long_form_dimensions``. Exercises ``parse_args`` directly
+    to pin the gate lift, regardless of whether a downstream schema write
+    actually runs.
     """
-    # --validate-output requires an existing directory.
-    result = _invoke(
-        ["--instances-per-component", "2",
-         "--validate-output", str(tmp_path),
-         "--duration-days", "1"],
-        expect_fail=True,
-    )
-    stderr_low = result.stderr.lower()
-    assert "instances-per-component" in stderr_low
-    assert "--validate-output" in result.stderr
+    args = amc.parse_args([
+        "--instances-per-component", "2",
+        "--emit-selection", "metrics,schema",
+        "--output-dir", str(tmp_path), "--duration-days", "1",
+    ])
+    assert args.instances_per_component == 2
+    assert "schema" in args.emit_selection
+
+
+def test_n2_plus_validate_output_allowed(amc, tmp_path):
+    """``--instances-per-component > 1`` + ``--validate-output`` is allowed
+    after VER-151 Phase 8. The validator reads the per-component
+    ``dimensions`` block from ``schema.json`` and walks the long-form
+    headers end-to-end, so the previous parse-time gate is no longer
+    needed.
+    """
+    args = amc.parse_args([
+        "--instances-per-component", "2",
+        "--validate-output", str(tmp_path),
+        "--duration-days", "1",
+    ])
+    assert args.instances_per_component == 2
+    assert args.validate_output == tmp_path
 
 
 def test_n2_plus_otel_enabled_allowed(amc, tmp_path):
