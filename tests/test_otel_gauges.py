@@ -776,3 +776,341 @@ def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_pat
         f"speedup={speedup}). The pre-fix bug would produce "
         f"~{(expected_n_batches - 1) * 60 / speedup:.5f}s — far below the lower bound."
     )
+
+
+# ------------------------------------------------------------------
+# Phase 6 (VER-149): dimension attributes from Phase 2 instance columns
+# ------------------------------------------------------------------
+def _entry_with_dims(amc, ts, comp, metric, value, dimensions):
+    return {
+        "timestamp": ts,
+        "time_unix_nano": amc._to_unix_nanos(ts),
+        "component": comp,
+        "metric": metric,
+        "value": value,
+        "dimensions": dimensions,
+    }
+
+
+def test_build_otlp_gauge_payload_emits_dimension_attributes(amc):
+    """When the batch entry carries a ``dimensions`` dict (Phase 2 instance
+    columns lifted by ``_iter_component_rows``), each non-empty dimension
+    surfaces as an additional string attribute on every data point alongside
+    ``metric.name``, ``component``, and ``signal.type``."""
+    batch = [
+        _entry_with_dims(
+            amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5,
+            {"id": "i0", "pod": "pod-0"},
+        ),
+        _entry_with_dims(
+            amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 13.5,
+            {"id": "i1", "pod": "pod-1"},
+        ),
+    ]
+    payload = amc._build_otlp_gauge_payload(batch)
+    dps = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]["dataPoints"]
+    assert len(dps) == 2
+    pods = {
+        next(a["value"]["stringValue"] for a in dp["attributes"] if a["key"] == "pod")
+        for dp in dps
+    }
+    assert pods == {"pod-0", "pod-1"}
+    # The original three attributes are preserved.
+    attrs_by_key = {a["key"] for a in dps[0]["attributes"]}
+    assert {"metric.name", "component", "signal.type", "id", "pod"} <= attrs_by_key
+
+
+def test_build_otlp_gauge_payload_omits_empty_dimension_cells(amc):
+    """Empty-string or ``None`` dimension cells (e.g. ``host`` left blank in
+    the CSV) must not be emitted as empty-string attributes."""
+    batch = [
+        _entry_with_dims(
+            amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5,
+            {"id": "i0", "pod": "pod-0", "host": "", "az": None},
+        ),
+    ]
+    payload = amc._build_otlp_gauge_payload(batch)
+    dp = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]["dataPoints"][0]
+    attr_keys = {a["key"] for a in dp["attributes"]}
+    assert "host" not in attr_keys, "empty-string dimension must be omitted"
+    assert "az" not in attr_keys, "None dimension must be omitted"
+    assert "id" in attr_keys
+    assert "pod" in attr_keys
+
+
+def test_build_otlp_gauge_payload_without_dimensions_field_is_unchanged(amc):
+    """Entries without a ``dimensions`` field (dimensionless CSVs, the default)
+    produce the same attribute set as before Phase 6."""
+    batch = [
+        _entry(amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5),
+    ]
+    payload = amc._build_otlp_gauge_payload(batch)
+    dp = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]["dataPoints"][0]
+    attrs = {a["key"]: a["value"]["stringValue"] for a in dp["attributes"]}
+    assert attrs == {
+        "metric.name": "cpu_util_pct",
+        "component": "authservice",
+        "signal.type": "metric_value",
+    }
+
+
+def test_build_otlp_gauge_protobuf_emits_dimension_attributes(amc):
+    """Protobuf builder mirrors the JSON builder on dimension emission."""
+    from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+        ExportMetricsServiceRequest,
+    )
+    batch = [
+        _entry_with_dims(
+            amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5,
+            {"id": "i0", "pod": "pod-0", "tenant": "acme"},
+        ),
+    ]
+    raw = amc._build_otlp_gauge_protobuf(batch)
+    req = ExportMetricsServiceRequest.FromString(raw)
+    dp = req.resource_metrics[0].scope_metrics[0].metrics[0].gauge.data_points[0]
+    attrs = {a.key: a.value.string_value for a in dp.attributes}
+    assert attrs["pod"] == "pod-0"
+    assert attrs["id"] == "i0"
+    assert attrs["tenant"] == "acme"
+    # The base three attributes are preserved.
+    assert attrs["metric.name"] == "cpu_util_pct"
+    assert attrs["component"] == "authservice"
+    assert attrs["signal.type"] == "metric_value"
+
+
+def test_build_otlp_gauge_protobuf_omits_empty_dimensions(amc):
+    """Protobuf path also drops empty-string and None dimension cells."""
+    from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+        ExportMetricsServiceRequest,
+    )
+    batch = [
+        _entry_with_dims(
+            amc, "2026-03-10 00:00:00", "authservice", "cpu_util_pct", 12.5,
+            {"id": "i0", "host": "", "region": None},
+        ),
+    ]
+    raw = amc._build_otlp_gauge_protobuf(batch)
+    req = ExportMetricsServiceRequest.FromString(raw)
+    dp = req.resource_metrics[0].scope_metrics[0].metrics[0].gauge.data_points[0]
+    attr_keys = {a.key for a in dp.attributes}
+    assert "host" not in attr_keys
+    assert "region" not in attr_keys
+    assert "id" in attr_keys
+
+
+def test_iter_component_rows_lifts_dimension_columns(amc, tmp_path):
+    """The CSV reader exposes Phase 2 dimension columns alongside metric
+    values. Non-empty cells appear in the per-row dimensions dict; empty
+    cells are omitted so downstream attribute emission can skip them
+    cleanly."""
+    csv_path = tmp_path / "authservice.csv"
+    csv_path.write_text(
+        "timestamp,id,host,pod,az,region,tenant,cpu_util_pct,error_rate\n"
+        "2026-03-10 00:00:00,i0,,pod-0,,,,12.5,0.01\n"
+        "2026-03-10 00:00:01,i1,,pod-1,,,,13.0,0.02\n",
+        encoding="utf-8",
+    )
+    rows = list(amc._iter_component_rows("authservice", csv_path))
+    assert len(rows) == 2
+    # Every yielded row carries (ts, component, values, dimensions).
+    for row in rows:
+        assert len(row) == 4, (
+            "Phase 6: _iter_component_rows must yield a 4-tuple "
+            "(ts, component, values, dimensions)"
+        )
+    ts0, comp0, values0, dims0 = rows[0]
+    assert ts0 == "2026-03-10 00:00:00"
+    assert comp0 == "authservice"
+    assert dict(values0) == {"cpu_util_pct": 12.5, "error_rate": 0.01}
+    assert dims0 == {"id": "i0", "pod": "pod-0"}, (
+        f"empty cells (host/az/region/tenant) must be omitted, got {dims0!r}"
+    )
+    _, _, _, dims1 = rows[1]
+    assert dims1 == {"id": "i1", "pod": "pod-1"}
+
+
+def test_iter_component_rows_dimensionless_csv_returns_empty_dims(amc, tmp_path):
+    """Today's dimensionless CSVs (no Phase 2 columns) yield an empty
+    dimensions dict so the builder treats them like pre-Phase-6 entries."""
+    csv_path = tmp_path / "authservice.csv"
+    csv_path.write_text(
+        "timestamp,cpu_util_pct,error_rate\n"
+        "2026-03-10 00:00:00,12.5,0.01\n",
+        encoding="utf-8",
+    )
+    rows = list(amc._iter_component_rows("authservice", csv_path))
+    assert len(rows) == 1
+    ts, comp, values, dims = rows[0]
+    assert ts == "2026-03-10 00:00:00"
+    assert comp == "authservice"
+    assert dict(values) == {"cpu_util_pct": 12.5, "error_rate": 0.01}
+    assert dims == {}
+
+
+def test_stream_otel_gauges_emits_pod_attribute_with_instances(tmp_path):
+    """End-to-end: with ``--instances-per-component 3`` every gauge data
+    point carries a ``pod=pod-N`` attribute matching the CSV row's
+    dimension column. ``id`` is also present; the other dimension
+    fields stay empty in v1 and must be omitted."""
+    server, thread, base = _start_mock()
+    try:
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "3600",
+            "--drop-rate", "0",
+            "--components", "authservice",
+            "--instances-per-component", "3",
+            "--otel-enabled",
+            "--otel-emit-gauges",
+            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-gauge-batch-seconds", "86400",
+            "--output-dir", str(tmp_path / "dims"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        _stop_mock(server, thread)
+
+    # Every gauge data point has a pod attribute. Collect the set.
+    pods_seen = set()
+    other_dim_keys = set()
+    for path, ctype, body in server.received:
+        try:
+            payload = json.loads(body)
+        except Exception:
+            continue
+        for rm in payload.get("resourceMetrics", []):
+            for sm in rm.get("scopeMetrics", []):
+                for m in sm.get("metrics", []):
+                    if "gauge" not in m:
+                        continue
+                    for dp in m["gauge"]["dataPoints"]:
+                        attrs = {a["key"]: a["value"]["stringValue"]
+                                 for a in dp["attributes"]}
+                        assert "pod" in attrs, (
+                            f"gauge data point missing pod attribute; "
+                            f"attrs={attrs!r}"
+                        )
+                        pods_seen.add(attrs["pod"])
+                        # id is also a Phase 2 dimension, must be present.
+                        assert "id" in attrs
+                        # Track any unexpected dimension keys.
+                        for k in ("host", "az", "region", "tenant"):
+                            if k in attrs:
+                                other_dim_keys.add(k)
+    assert pods_seen == {"pod-0", "pod-1", "pod-2"}, (
+        f"expected pod-0..pod-2 as attribute values, got {pods_seen!r}"
+    )
+    assert not other_dim_keys, (
+        f"v1 only populates id/pod; got unexpected dimension keys "
+        f"emitted as empty strings: {other_dim_keys!r}"
+    )
+
+
+def test_stream_otel_gauges_dimensionless_csv_byte_identical_to_pre_phase6(tmp_path):
+    """With ``--instances-per-component 1`` (the default) and no dimension
+    columns on disk, gauge payloads carry exactly the pre-Phase-6 attribute
+    set: ``metric.name``, ``component``, ``signal.type``. No empty-string
+    dimension attributes leak in."""
+    server, thread, base = _start_mock()
+    try:
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "3600",
+            "--drop-rate", "0",
+            "--components", "authservice",
+            "--otel-enabled",
+            "--otel-emit-gauges",
+            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-gauge-batch-seconds", "86400",
+            "--output-dir", str(tmp_path / "no_dims"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        _stop_mock(server, thread)
+
+    saw_data_point = False
+    for path, ctype, body in server.received:
+        try:
+            payload = json.loads(body)
+        except Exception:
+            continue
+        for rm in payload.get("resourceMetrics", []):
+            for sm in rm.get("scopeMetrics", []):
+                for m in sm.get("metrics", []):
+                    if "gauge" not in m:
+                        continue
+                    for dp in m["gauge"]["dataPoints"]:
+                        saw_data_point = True
+                        attrs = {a["key"] for a in dp["attributes"]}
+                        assert attrs == {"metric.name", "component", "signal.type"}, (
+                            f"dimensionless gauge data point had unexpected "
+                            f"attributes: {attrs!r}"
+                        )
+    assert saw_data_point, "expected at least one gauge data point"
+
+
+def test_build_otlp_metric_payload_emits_dimension_attributes(amc):
+    """Phase 6 also extends the per-signal anomaly metric path. When an
+    anomaly row carries a ``dimensions`` dict (Phase 4 territory), each
+    non-empty entry surfaces as a string attribute on the anomaly.count
+    data point. Anomaly rows without dimensions emit today's exact
+    attribute set (v1 anomalies.csv has no instance columns)."""
+    entry_with = {
+        "timestamp": "2026-03-10 00:00:00",
+        "component": "authservice",
+        "metric": "cpu_util_pct",
+        "description": "test anomaly",
+        "value": 99.0,
+        "dimensions": {"pod": "pod-1"},
+    }
+    payload = amc._build_otlp_metric_payload(entry_with)
+    dp = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
+    attrs = {a["key"]: a["value"]["stringValue"] for a in dp["attributes"]}
+    assert attrs.get("pod") == "pod-1"
+    # Original four attributes preserved.
+    assert "event.id" in attrs
+    assert attrs["signal.type"] == "metric_anomaly"
+    assert attrs["metric.name"] == "cpu_util_pct"
+    assert attrs["component"] == "authservice"
+
+
+def test_build_otlp_metric_payload_without_dimensions_is_unchanged(amc):
+    """An anomaly entry without a ``dimensions`` field (today's v1 anomalies)
+    emits exactly the pre-Phase-6 attribute set."""
+    entry = {
+        "timestamp": "2026-03-10 00:00:00",
+        "component": "authservice",
+        "metric": "cpu_util_pct",
+        "description": "test anomaly",
+        "value": 99.0,
+    }
+    payload = amc._build_otlp_metric_payload(entry)
+    dp = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
+    attr_keys = {a["key"] for a in dp["attributes"]}
+    assert attr_keys == {"event.id", "signal.type", "metric.name", "component"}
+
+
+def test_build_otlp_metric_protobuf_emits_dimension_attributes(amc):
+    """Protobuf metric builder mirrors the JSON metric builder on dimensions."""
+    from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+        ExportMetricsServiceRequest,
+    )
+    entry = {
+        "timestamp": "2026-03-10 00:00:00",
+        "component": "authservice",
+        "metric": "cpu_util_pct",
+        "description": "test anomaly",
+        "value": 99.0,
+        "dimensions": {"pod": "pod-2", "id": "i2", "host": ""},
+    }
+    raw = amc._build_otlp_metric_protobuf(entry)
+    req = ExportMetricsServiceRequest.FromString(raw)
+    dp = req.resource_metrics[0].scope_metrics[0].metrics[0].sum.data_points[0]
+    attrs = {a.key: a.value.string_value for a in dp.attributes}
+    assert attrs.get("pod") == "pod-2"
+    assert attrs.get("id") == "i2"
+    assert "host" not in attrs, "empty dimension must be omitted"

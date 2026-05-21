@@ -430,17 +430,16 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# --combine-only is rejected when --instance-config is set
+# --combine-only is allowed when --instance-config is set (post-Phase 5)
 # ---------------------------------------------------------------------------
 
-def test_instance_config_combine_only_accepted(amc, tmp_path):
-    """--combine-only + --instance-config is accepted at parse time since VER-148 Phase 5.
+def test_instance_config_combine_only_allowed(amc, tmp_path):
+    """--combine-only + --instance-config is permitted at parse time.
 
-    Phase 5 lifted the mutual-exclusion gate: the combine writer now dispatches
-    to the long-form layout when the per-component CSVs carry the dimension
-    prefix, so ``--combine-only`` paired with ``--instance-config`` is a valid
-    combination. This test is a regression guard — if the gate is accidentally
-    re-added, ``_parse`` would raise ``SystemExit`` and this test would fail.
+    Phase 5 (VER-148) made the combine writer dimension-aware (long-form
+    dispatch when per-component CSVs carry the dimension prefix), so the
+    shared ``_multi_instance`` gate no longer rejects this combination.
+    Mirrors the ``--instances-per-component > 1 + --combine-only`` lift.
     """
     cfg = _write_yaml(tmp_path, """
 components:
@@ -449,12 +448,12 @@ components:
 """)
     out = tmp_path / "existing"
     out.mkdir()
-    # Must NOT raise; Phase 5 lifted the combine-only + instance-config gate.
     args = _parse(amc, [
         "--instance-config", str(cfg),
         "--combine-only",
     ], out)
     assert args.combine_only is True
+    assert args.instance_config == cfg
 
 
 # ---------------------------------------------------------------------------
