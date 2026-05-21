@@ -5498,22 +5498,25 @@ def parse_args(argv=None):
             "from raw timestamps and would silently skip the DST splice); pass "
             "--inject-dst-artifact-day 0 or --instances-per-component 1"
         )
-    # The downstream emitters (gauges.csv, combined_metrics_unified.csv,
-    # schema.json + --validate-output) are not yet dimension aware — wiring
-    # them up is the work of VER-148 (Phase 5) and VER-151 (Phase 8).
-    # Running them against an N>1 run silently produces wrong output (e.g.
-    # the gauges writer emits dim columns as ``metric=id, value=i0`` rows,
-    # violating the ``timestamp,component,metric,value`` numeric-value
-    # schema; the combine writer cross-joins dim columns with metric
-    # columns into the unified CSV without per-instance semantics; the
-    # schema does not declare the dim columns so ``--validate-output``
-    # rejects the run). Reject the combinations up-front so the user sees
-    # a clear message instead of a downstream corruption.
-    # VER-149 (Phase 6) lifted the OTEL streaming gate: ``stream_otel_gauges``
-    # and ``stream_otel_signals`` now read the dimension columns off the
-    # per-component CSV and surface each non-empty cell as a string attribute
-    # on every OTLP data point, so ``--otel-enabled`` and ``--otel-emit-gauges``
-    # are no longer gated against N>1.
+    # N>1 dimension-awareness status by emitter:
+    #
+    # - OTEL streaming (``--otel-enabled`` / ``--otel-emit-gauges``):
+    #   wired in VER-149 Phase 6. ``stream_otel_gauges`` and
+    #   ``stream_otel_signals`` read the dimension columns off the
+    #   per-component CSV and surface each non-empty cell as a string
+    #   attribute on every OTLP data point. No gate below.
+    # - Phase 5 file emitters (``--combine`` / ``--combine-only`` /
+    #   ``--emit-selection gauges``): not yet dimension aware
+    #   (VER-148). Running them against an N>1 run silently corrupts
+    #   output — the gauges writer would emit dim columns as
+    #   ``metric=id, value=i0`` rows, violating the numeric-value
+    #   schema; the combine writer would cross-join dim columns with
+    #   metric columns without per-instance semantics. Gated below.
+    # - Phase 8 schema/validator (``--emit-selection schema`` /
+    #   ``--validate-output``): not yet dimension aware (VER-151).
+    #   The schema does not declare dim columns, so
+    #   ``--validate-output`` would reject every N>1 run as drift.
+    #   Gated below.
     if args.instances_per_component > 1:
         phase5_flags = []
         if args.combine:
