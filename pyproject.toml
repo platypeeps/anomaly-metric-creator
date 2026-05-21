@@ -10,11 +10,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional runtime extra: enables YAML --instance-config files
+# (.yaml/.yml). JSON --instance-config works without this extra.
+yaml = [
+  "pyyaml>=6.0",
+]
 dev = [
   "pytest>=8.0",
   "numpy>=1.26",
   "opentelemetry-proto>=1.25.0",
   "protobuf>=5.27.0",
+  "pyyaml>=6.0",
   "ruff==0.15.13",
   "pre-commit>=3.7.0",
 ]

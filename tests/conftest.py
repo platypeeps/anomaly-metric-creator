@@ -147,6 +147,35 @@ def one_day_full_metrics_independent_run(amc, tmp_path_factory):
     )
 
 
+@pytest.fixture(scope="session")
+def n3_one_day_dataset_dir(amc, tmp_path_factory):
+    """1-day ``--instances-per-component 3`` per-component CSVs +
+    ``anomalies.csv``, generated once and shared across the VER-148
+    long-form writer tests (``tests/test_gauges_file.py`` and
+    ``tests/test_combine.py``).
+
+    The generation pass costs ~25-30 seconds and produces ~1.3 GB of
+    output, so running it once per consuming test module would
+    double both the wall time and the disk pressure. The Phase 5
+    writer tests instead invoke ``write_gauges_csv`` and
+    ``combine_logs`` directly against the shared dataset (the
+    writers are pure functions of the per-component CSV bytes), so
+    the locked SHA-256 golden hashes hold byte-identically with no
+    second generation pass.
+
+    ``--emit-selection metrics`` keeps the dataset narrow:
+    per-component CSVs + ``anomalies.csv`` only, no logs / traces
+    artifacts that the writer tests don't consume."""
+    out = tmp_path_factory.mktemp("ver148_n3_one_day_dataset")
+    return run_capture(
+        amc, out, days=1,
+        extra_args=[
+            "--instances-per-component", "3",
+            "--emit-selection", "metrics",
+        ],
+    ).out_dir
+
+
 # total metric count in COMPONENTS (all catalogs are at the MAX_METRICS_PER_COMPONENT cap)
 COMPONENT_FIELDS = {
     "authservice": 10,
