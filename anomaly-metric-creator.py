@@ -6250,17 +6250,26 @@ def combine_logs_unified(components, input_dir, output_file=None):
             # and ``fieldnames[1:]`` is the metric list verbatim.
             #
             # ``csv.DictReader.fieldnames`` is ``None`` for a fully empty
-            # input — the function-level guard ``combine_logs`` rejects a
-            # missing per-component CSV before we get here, but a present-
-            # but-empty file would otherwise crash the list comprehension
-            # below with ``TypeError: 'NoneType' object is not iterable``.
-            # Fail fast with the same shape of message ``combine_logs``
-            # uses for missing files so the operator gets a clean
-            # diagnosis instead of a stack trace.
-            if reader.fieldnames is None:
+            # input, ``[]`` for a file whose first line is blank, and may
+            # legitimately omit ``timestamp`` if the user staged a CSV
+            # with a different schema. ``combine_logs`` rejects a missing
+            # file before we get here, but a present-but-malformed header
+            # would otherwise crash either the list comprehension below
+            # (``None``) or the ``row["timestamp"]`` lookup in the loop
+            # (missing key). Validate all three shapes up-front and raise
+            # the same flavor of ``SystemExit`` ``combine_logs`` uses for
+            # missing files so the operator gets a clean diagnosis
+            # instead of a stack trace.
+            if not reader.fieldnames:
                 raise SystemExit(
                     f"{input_path.name} is empty / has no header row; "
                     f"combine_logs cannot derive its metric columns"
+                )
+            if "timestamp" not in reader.fieldnames:
+                raise SystemExit(
+                    f"{input_path.name} header {list(reader.fieldnames)!r} "
+                    f"is missing the 'timestamp' column; combine_logs "
+                    f"cannot key per-component rows without it"
                 )
             metric_names = [f for f in reader.fieldnames if f != "timestamp"]
             component_metrics[component] = metric_names
