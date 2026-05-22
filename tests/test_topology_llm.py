@@ -171,17 +171,23 @@ def _exclude_anomaly_rows(ts_list, *arrays):
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def realistic_one_day_llm(amc, tmp_path_factory):
+    # interval_seconds=None keeps 86 400 rows/day so the byte-identity and
+    # Pearson correlation checks have enough data.
     out = tmp_path_factory.mktemp("phase5_realistic")
     return run_capture(
-        amc, out, days=1, extra_args=["--topology-mode", "realistic"]
+        amc, out, days=1, interval_seconds=None,
+        extra_args=["--topology-mode", "realistic"],
     )
 
 
 @pytest.fixture(scope="module")
 def independent_one_day_llm(amc, tmp_path_factory):
+    # interval_seconds=None matches realistic_one_day_llm's row density for
+    # valid realistic-vs-independent contrast assertions.
     out = tmp_path_factory.mktemp("phase5_independent")
     return run_capture(
-        amc, out, days=1, extra_args=["--topology-mode", "independent"]
+        amc, out, days=1, interval_seconds=None,
+        extra_args=["--topology-mode", "independent"],
     )
 
 
@@ -507,7 +513,7 @@ def realistic_full_metrics_one_day_llm(amc, tmp_path_factory):
     saturation composition is observable on it."""
     out = tmp_path_factory.mktemp("phase5_realistic_full")
     return run_capture(
-        amc, out, days=1,
+        amc, out, days=1, interval_seconds=None,
         extra_args=[
             "--topology-mode", "realistic",
             "--metrics-per-component", "10",
@@ -519,7 +525,7 @@ def realistic_full_metrics_one_day_llm(amc, tmp_path_factory):
 def independent_full_metrics_one_day_llm(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("phase5_independent_full")
     return run_capture(
-        amc, out, days=1,
+        amc, out, days=1, interval_seconds=None,
         extra_args=[
             "--topology-mode", "independent",
             "--metrics-per-component", "10",

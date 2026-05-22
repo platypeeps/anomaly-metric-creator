@@ -28,7 +28,49 @@ def _load_amc():
     return _AMC_MODULE_CACHE
 
 
-def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None, extra_args=None):
+_CHEAP_INTERVAL_SECONDS_DEFAULT = 60.0
+
+
+def run_capture(
+    amc,
+    out_dir,
+    *,
+    days,
+    seed=42,
+    drop_rate=None,
+    extra_args=None,
+    interval_seconds=_CHEAP_INTERVAL_SECONDS_DEFAULT,
+):
+    """Run ``main()`` end-to-end into ``out_dir`` with the cheap-default
+    interval (VER-196).
+
+    ``interval_seconds`` defaults to ``60.0`` so tests that don't
+    explicitly care about per-second resolution take the 60x cheaper
+    path automatically. Two opt-outs exist for full-resolution runs:
+
+    - ``interval_seconds=None`` skips the ``--interval-seconds`` flag
+      entirely, so the script's own default (1s) applies. This is the
+      path session-scoped fixtures use to preserve the locked SHA-256
+      hashes that pin "default script output" byte-identity
+      (``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` /
+      ``N3_ONE_DAY_HASHES`` etc.).
+    - ``interval_seconds=1.0`` (or any explicit float) passes that
+      value via ``--interval-seconds``. Tests that need 1s rows for
+      sub-second timestamp checks or 86400-row sweeps should pair the
+      explicit value with ``@pytest.mark.full_resolution`` so the
+      intent is auditable.
+
+    ``--interval-seconds`` in ``extra_args`` raises ``ValueError`` so
+    the flag has a single source of truth and the ``full_resolution``
+    audit can recognize opt-out sites by inspecting kwargs alone.
+    """
+    extra_args_list = list(extra_args or [])
+    if "--interval-seconds" in extra_args_list:
+        raise ValueError(
+            "run_capture: --interval-seconds must be passed via the "
+            "interval_seconds keyword argument, not extra_args. "
+            "Use interval_seconds=None for the script's 1s default."
+        )
     args = [
         "--seed", str(seed),
         "--duration-days", str(days),
@@ -36,8 +78,9 @@ def run_capture(amc, out_dir, *, days, seed=42, drop_rate=None, extra_args=None)
     ]
     if drop_rate is not None:
         args += ["--drop-rate", str(drop_rate)]
-    if extra_args:
-        args += list(extra_args)
+    if interval_seconds is not None:
+        args += ["--interval-seconds", str(interval_seconds)]
+    args += extra_args_list
     stderr_buf = io.StringIO()
     real_stderr = sys.stderr
     sys.stderr = stderr_buf
@@ -85,20 +128,25 @@ def amc():
 
 @pytest.fixture(scope="session")
 def one_day_run_a(amc, tmp_path_factory):
+    # interval_seconds=None preserves the script's 1s default so the
+    # locked DEFAULT_ONE_DAY_HASHES in tests/test_scenarios.py keep matching.
     out = tmp_path_factory.mktemp("one_day_a")
-    return run_capture(amc, out, days=1)
+    return run_capture(amc, out, days=1, interval_seconds=None)
 
 
 @pytest.fixture(scope="session")
 def one_day_run_b(amc, tmp_path_factory):
+    # interval_seconds=None: paired byte-identity check with one_day_run_a.
     out = tmp_path_factory.mktemp("one_day_b")
-    return run_capture(amc, out, days=1)
+    return run_capture(amc, out, days=1, interval_seconds=None)
 
 
 @pytest.fixture(scope="session")
 def seven_day_run(amc, tmp_path_factory):
+    # interval_seconds=None preserves the script's 1s default so the
+    # locked DEFAULT_SEVEN_DAY_HASHES in tests/test_scenarios.py keep matching.
     out = tmp_path_factory.mktemp("seven_day")
-    return run_capture(amc, out, days=7)
+    return run_capture(amc, out, days=7, interval_seconds=None)
 
 
 @pytest.fixture(scope="session")
@@ -107,10 +155,14 @@ def one_day_full_metrics_run(amc, tmp_path_factory):
     can exercise every supplemental metric column. Shares ``run_capture`` so default
     and full-metric runs go through one execution path. ``--combine`` coverage for
     the new flag lives in ``tests/test_combine.py`` and uses its own subprocess
-    fixtures rather than this in-process run."""
+    fixtures rather than this in-process run. ``interval_seconds=None`` keeps
+    the script's 1s default so the full-catalog value-range assertions still
+    sample the full 86400-row sweep."""
     out = tmp_path_factory.mktemp("one_day_full_metrics")
     return run_capture(
-        amc, out, days=1, extra_args=["--metrics-per-component", "10"]
+        amc, out, days=1,
+        extra_args=["--metrics-per-component", "10"],
+        interval_seconds=None,
     )
 
 
@@ -124,10 +176,14 @@ def one_day_independent_run(amc, tmp_path_factory):
     of the independent baseline model, which is the building block of both
     modes; realistic-mode behaviour is exercised by the topology-specific
     tests (coupling correlation, saturation lift). Schedule this fixture's
-    retirement together with the alias removal after VER-141 phase 9."""
+    retirement together with the alias removal after VER-141 phase 9.
+    ``interval_seconds=None`` keeps the 1s default so the natural-band check
+    sees the historic 86400-row natural sample."""
     out = tmp_path_factory.mktemp("one_day_independent")
     return run_capture(
-        amc, out, days=1, extra_args=["--topology-mode", "independent"]
+        amc, out, days=1,
+        extra_args=["--topology-mode", "independent"],
+        interval_seconds=None,
     )
 
 
@@ -137,13 +193,15 @@ def one_day_full_metrics_independent_run(amc, tmp_path_factory):
     so ``test_value_range_sanity_full_catalog`` exercises every supplemental
     metric column without being thrown off by topology coupling / saturation.
     See the comment on ``one_day_independent_run`` for the rationale around
-    pinning to the deprecation alias."""
+    pinning to the deprecation alias. ``interval_seconds=None`` keeps the
+    script's 1s default for the value-range sanity sweep."""
     out = tmp_path_factory.mktemp("one_day_full_metrics_independent")
     return run_capture(
         amc,
         out,
         days=1,
         extra_args=["--metrics-per-component", "10", "--topology-mode", "independent"],
+        interval_seconds=None,
     )
 
 
@@ -165,7 +223,10 @@ def n3_one_day_dataset_dir(amc, tmp_path_factory):
 
     ``--emit-selection metrics`` keeps the dataset narrow:
     per-component CSVs + ``anomalies.csv`` only, no logs / traces
-    artifacts that the writer tests don't consume."""
+    artifacts that the writer tests don't consume.
+    ``interval_seconds=None`` preserves the script's 1s default so the
+    locked ``N3_ONE_DAY_HASHES`` in
+    ``tests/test_instances_per_component.py`` keep matching."""
     out = tmp_path_factory.mktemp("ver148_n3_one_day_dataset")
     return run_capture(
         amc, out, days=1,
@@ -173,6 +234,7 @@ def n3_one_day_dataset_dir(amc, tmp_path_factory):
             "--instances-per-component", "3",
             "--emit-selection", "metrics",
         ],
+        interval_seconds=None,
     ).out_dir
 
 

@@ -54,17 +54,23 @@ def _sha256(path: Path) -> str:
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def one_day_schema_run(amc, tmp_path_factory):
+    # interval_seconds=None preserves the script's 1s default so the locked
+    # SCHEMA_ONE_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver139_one_day_schema")
     return run_capture(
-        amc, out, days=1, extra_args=["--emit-selection", "metrics,schema"]
+        amc, out, days=1, interval_seconds=None,
+        extra_args=["--emit-selection", "metrics,schema"],
     )
 
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run(amc, tmp_path_factory):
+    # interval_seconds=None preserves the script's 1s default so the locked
+    # SCHEMA_SEVEN_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver139_seven_day_schema")
     return run_capture(
-        amc, out, days=7, extra_args=["--emit-selection", "metrics,schema"]
+        amc, out, days=7, interval_seconds=None,
+        extra_args=["--emit-selection", "metrics,schema"],
     )
 
 
@@ -136,13 +142,11 @@ def test_schema_json_pre_clean_removes_stale(amc, tmp_path):
     """A run with ``schema`` selected followed by a run without it must
     delete the prior ``schema.json`` (mirrors gauges.csv pre-clean behavior)."""
     out = tmp_path / "pre_clean"
-    run_capture(amc, out, days=1,
-                extra_args=["--emit-selection", "metrics,schema",
-                            "--interval-seconds", "600"])
+    run_capture(amc, out, days=1, interval_seconds=600,
+                extra_args=["--emit-selection", "metrics,schema"])
     assert (out / "schema.json").exists()
-    run_capture(amc, out, days=1,
-                extra_args=["--emit-selection", "metrics",
-                            "--interval-seconds", "600"])
+    run_capture(amc, out, days=1, interval_seconds=600,
+                extra_args=["--emit-selection", "metrics"])
     assert not (out / "schema.json").exists(), (
         "_pre_clean_output_dir must remove schema.json when 'schema' is "
         "dropped from --emit-selection"
@@ -277,10 +281,10 @@ def test_schema_respects_components(amc, tmp_path):
     out = tmp_path / "narrowed"
     run_capture(
         amc, out, days=1,
+        interval_seconds=600,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", keep,
-            "--interval-seconds", "600",
         ],
     )
     doc = _load_schema(out)
@@ -295,10 +299,10 @@ def test_schema_respects_metrics_per_component(amc, tmp_path):
     out = tmp_path / "trim"
     run_capture(
         amc, out, days=1,
+        interval_seconds=600,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--metrics-per-component", "1",
-            "--interval-seconds", "600",
         ],
     )
     doc = _load_schema(out)
@@ -317,27 +321,21 @@ def test_schema_combine_only_does_not_regenerate(amc, tmp_path):
     (which would also rewrite it). Mirrors the gauges-file invariant."""
     out = tmp_path / "combine_only"
     # First run: generate schema.json.
-    run_capture(amc, out, days=1, extra_args=[
-        "--emit-selection", "metrics,schema",
-        "--interval-seconds", "600",
-    ])
+    run_capture(amc, out, days=1, interval_seconds=600,
+                extra_args=["--emit-selection", "metrics,schema"])
     schema_path = out / "schema.json"
     original_bytes = schema_path.read_bytes()
     # Now mutate the on-disk schema; --combine-only must leave it alone.
     schema_path.write_bytes(b'{"sentinel": "untouched"}\n')
     # Combine-only run.
-    run_capture(amc, out, days=1, extra_args=[
-        "--combine-only",
-        "--interval-seconds", "600",
-    ])
+    run_capture(amc, out, days=1, interval_seconds=600,
+                extra_args=["--combine-only"])
     assert schema_path.read_bytes() == b'{"sentinel": "untouched"}\n', (
         "--combine-only must not rewrite or pre-clean schema.json"
     )
     # And the original schema bytes are recoverable by re-running normally.
-    run_capture(amc, out, days=1, extra_args=[
-        "--emit-selection", "metrics,schema",
-        "--interval-seconds", "600",
-    ])
+    run_capture(amc, out, days=1, interval_seconds=600,
+                extra_args=["--emit-selection", "metrics,schema"])
     assert schema_path.read_bytes() == original_bytes
 
 
@@ -348,10 +346,9 @@ def test_schema_records_dst_inject_day(amc, tmp_path):
     """When ``--inject-dst-artifact-day N`` is set, the schema must record
     it so the validator can adjust its row-count expectation."""
     out = tmp_path / "dst"
-    run_capture(amc, out, days=2,
+    run_capture(amc, out, days=2, interval_seconds=600,
                 extra_args=["--emit-selection", "metrics,schema",
-                            "--inject-dst-artifact-day", "1",
-                            "--interval-seconds", "600"])
+                            "--inject-dst-artifact-day", "1"])
     doc = _load_schema(out)
     assert doc["metadata"]["inject_dst_artifact_day"] == 1
 
@@ -372,10 +369,10 @@ def test_schema_records_topology_mode_independent(amc, tmp_path):
     out = tmp_path / "topology_independent"
     run_capture(
         amc, out, days=1,
+        interval_seconds=600,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--topology-mode", "independent",
-            "--interval-seconds", "600",
         ],
     )
     doc = _load_schema(out)
@@ -457,10 +454,10 @@ def test_schema_topology_omits_filtered_components(amc, tmp_path):
     out = tmp_path / "narrowed_topology"
     run_capture(
         amc, out, days=1,
+        interval_seconds=600,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "loadbalancer,apigateway",
-            "--interval-seconds", "600",
         ],
     )
     doc = _load_schema(out)
@@ -511,9 +508,11 @@ def one_day_schema_run_n3(amc, tmp_path_factory):
     """Full default 1-day run with ``--instances-per-component 3`` so the
     schema's dim block fires on every component. Module-scoped to amortize
     the ~25–30s generation across all N=3 assertions below."""
+    # interval_seconds=None preserves the script's 1s default so the locked
+    # SCHEMA_N3_ONE_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver151_one_day_schema_n3")
     return run_capture(
-        amc, out, days=1,
+        amc, out, days=1, interval_seconds=None,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instances-per-component", "3",
@@ -523,9 +522,11 @@ def one_day_schema_run_n3(amc, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run_n3(amc, tmp_path_factory):
+    # interval_seconds=None preserves the script's 1s default so the locked
+    # SCHEMA_N3_SEVEN_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver151_seven_day_schema_n3")
     return run_capture(
-        amc, out, days=7,
+        amc, out, days=7, interval_seconds=None,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instances-per-component", "3",
@@ -617,14 +618,12 @@ def test_schema_n3_byte_deterministic(amc, tmp_path):
     order."""
     out_a = tmp_path / "a"
     out_b = tmp_path / "b"
-    run_capture(amc, out_a, days=1,
+    run_capture(amc, out_a, days=1, interval_seconds=600,
                 extra_args=["--emit-selection", "metrics,schema",
-                            "--instances-per-component", "3",
-                            "--interval-seconds", "600"])
-    run_capture(amc, out_b, days=1,
+                            "--instances-per-component", "3"])
+    run_capture(amc, out_b, days=1, interval_seconds=600,
                 extra_args=["--emit-selection", "metrics,schema",
-                            "--instances-per-component", "3",
-                            "--interval-seconds", "600"])
+                            "--instances-per-component", "3"])
     assert _sha256(out_a / "schema.json") == _sha256(out_b / "schema.json")
 
 
@@ -649,11 +648,11 @@ def test_schema_dimensions_from_instance_config_multiple_axes(amc, tmp_path):
     out = tmp_path / "run"
     run_capture(
         amc, out, days=1,
+        interval_seconds=600,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instance-config", str(cfg_path),
             "--components", "apigateway",
-            "--interval-seconds", "600",
         ],
     )
     doc = _load_schema(out)
@@ -686,11 +685,11 @@ def test_schema_n3_omits_dimensions_for_unfanned_components(amc, tmp_path):
     out = tmp_path / "run"
     run_capture(
         amc, out, days=1,
+        interval_seconds=600,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instance-config", str(cfg_path),
             "--components", "apigateway,cacheservice",
-            "--interval-seconds", "600",
         ],
     )
     doc = _load_schema(out)

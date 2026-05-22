@@ -120,6 +120,7 @@ def test_topology_mode_realistic_matches_default_byte_for_byte(
 ):
     explicit = run_capture(
         amc, tmp_path / "explicit_realistic", days=1,
+        interval_seconds=None,  # match one_day_run_a's 1s default for byte identity
         extra_args=["--topology-mode", "realistic"],
     )
     for filename in ("apigateway.csv", "loadbalancer.csv", "anomalies.csv"):
@@ -141,6 +142,7 @@ def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
 ):
     explicit = run_capture(
         amc, tmp_path / "explicit_independent", days=1,
+        interval_seconds=None,  # locked hashes pinned at 1s resolution
         extra_args=["--topology-mode", "independent"],
     )
     for filename, expected_hash in sorted(LEGACY_INDEPENDENT_ONE_DAY_HASHES.items()):
@@ -167,6 +169,7 @@ def test_topology_mode_realistic_apigateway_tracks_loadbalancer(amc, tmp_path):
     # the api_cpu_saturation retry-storm window (19:00-19:08) below.
     result = run_capture(
         amc, tmp_path / "realistic", days=1,
+        interval_seconds=None,  # Pearson >= 0.95 requires 86 400 rows at 1s
         extra_args=["--topology-mode", "realistic"],
     )
     lb_vals, lb_ts = _column_values(result.out_dir, "loadbalancer", "requests_per_sec")

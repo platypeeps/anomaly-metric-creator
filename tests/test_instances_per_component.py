@@ -33,9 +33,12 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _run(amc, out_dir, *, days, extra_args=None):
+def _run(amc, out_dir, *, days, extra_args=None, interval_seconds=None):
     """Thin wrapper over conftest.run_capture that throws away the stderr
     SimpleNamespace so existing call sites can keep returning ``out_dir``.
+
+    ``interval_seconds=None`` (default) preserves the script's 1s default so
+    the locked N3_ONE_DAY_HASHES / N3_SEVEN_DAY_HASHES remain valid.
 
     Routing through the shared helper keeps the suite's single
     session-scoped ``amc`` module load (see conftest._load_amc) shared
@@ -43,7 +46,8 @@ def _run(amc, out_dir, *, days, extra_args=None):
     ``spec_from_file_location`` from this file would double the
     registry-build cost.
     """
-    captured = run_capture(amc, out_dir, days=days, extra_args=extra_args)
+    captured = run_capture(amc, out_dir, days=days, extra_args=extra_args,
+                           interval_seconds=interval_seconds)
     return captured.out_dir
 
 
