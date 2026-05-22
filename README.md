@@ -714,13 +714,13 @@ radius to additional components.
 
 ## Tests
 
-Dev dependencies (`pytest`, `numpy`, `ruff`, `pre-commit`) ship under the
-`dev` extra.
+Dev dependencies (`pytest`, `pytest-xdist`, `numpy`, `ruff`, `pre-commit`)
+ship under the `dev` extra.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest
+.venv/bin/pytest        # runs across 4 workers by default (see below)
 ```
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
@@ -729,6 +729,33 @@ coverage for `--scenarios` / `--exclude-scenarios` lives in
 `tests/test_scenarios.py` (selector intersection, WARNING content, `--anomaly-count`
 interaction); the canonical slug catalog is the [scenario catalog](#scenario-catalog)
 table in this file.
+
+### Parallel execution
+
+`pyproject.toml` sets `addopts = "-ra --dist loadfile -n 4"` and declares
+`required_plugins = ["pytest-xdist"]`, so the default invocation runs across
+4 worker processes, distributes tests by file, and fails fast with a clear
+message if `pytest-xdist` is missing. This drops the broader validation sweep
+from ~15–22 minutes serial to ~5 minutes parallel. Override on the command
+line if your host needs a different worker count:
+
+```bash
+.venv/bin/pytest -n 0   # in-process; required for `pdb` / true serial
+                        # also the right choice on low-RAM (< 8 GB) CI runners
+.venv/bin/pytest -n 8   # bigger boxes (~16 GB RAM headroom recommended)
+```
+
+`-n 1` is not a true serial run — xdist still spawns one worker subprocess,
+which breaks interactive debuggers like `pdb`. Use `-n 0` instead when you
+need in-process execution.
+
+Session-scoped fixtures in `tests/conftest.py` are lazily instantiated **per
+worker** the first time a worker touches a test that requests them. Peak
+fixture RAM therefore scales with how many distinct workers hit each fixture
+— `--dist loadfile` keeps each file's tests on a single worker, which
+collapses fan-out to at most one instantiation per file. The
+`n3_one_day_dataset_dir` fixture alone is ~1.3 GB; 4 workers caps peak
+fixture memory near ~5 GB even under worst-case fan-out.
 
 ### Test-hygiene lint
 

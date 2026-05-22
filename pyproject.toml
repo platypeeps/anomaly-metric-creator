@@ -17,6 +17,7 @@ yaml = [
 ]
 dev = [
   "pytest>=8.0",
+  "pytest-xdist>=3.5",
   "numpy>=1.26",
   "opentelemetry-proto>=1.25.0",
   "protobuf>=5.27.0",
@@ -27,7 +28,24 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# `-n 4 --dist loadfile` parallelizes the suite across 4 worker processes
+# and keeps every test from a given file on a single worker. The N=3
+# fixture (`n3_one_day_dataset_dir`) alone is ~1.3 GB and is lazily
+# instantiated per worker the first time a worker touches a test that
+# requests it; with `--dist load` (xdist's default per-test
+# distribution) a single file's tests can scatter across every worker,
+# so every worker pays the instantiation cost. `--dist loadfile`
+# collapses that to at most one instantiation per file regardless of
+# worker fan-out, bounding peak fixture RAM near ~5 GB on a 4-worker
+# run. Override on the command line for narrow or wide hosts:
+#   .venv/bin/pytest -n 0   # in-process; required for pdb / true serial
+#   .venv/bin/pytest -n 8   # bigger boxes
+# `required_plugins` makes the failure mode explicit: without
+# `pytest-xdist` installed, the `addopts` `-n` flag would otherwise
+# fail with a cryptic "unrecognized arguments" error.
+# See VER-218 for the heartbeat-budget motivation.
+required_plugins = ["pytest-xdist"]
+addopts = "-ra --dist loadfile -n 4"
 
 [tool.ruff]
 target-version = "py311"
