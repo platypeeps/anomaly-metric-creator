@@ -311,26 +311,23 @@ flag:
       caches it across instances so symmetric upstream produces
       byte-identical coupling arrays across pods (and therefore
       byte-identical CSV output to the lambda-baked path).
-    - Returns `(coupling_by_instance, saturation_by_instance,
-      any_divergent)`. The `any_divergent` flag is computed inside
-      the helper by comparing every instance's coupling/saturation
-      arrays to instance 0 via `_arrays_equal_dict` /
-      `_sat_tuples_equal_dict`. The flag is informational only:
-      `generate_component` does *not* trust it for the
-      symmetric-vs-asymmetric collapse, because a programmatic
-      caller could pass per-instance arrays alongside a stale
-      `any_divergent` and silently force instance-0 reuse across
-      every pod. Instead, `generate_component` re-derives the
-      divergent-instance set from the passed arrays directly: when
-      every instance matches instance 0, it runs the natural-column
-      draw *once* per metric and reuses the result across all
-      instances (preserves `N3_ONE_DAY_HASHES` /
-      `N3_SEVEN_DAY_HASHES` locked in
-      `tests/test_instances_per_component.py`); when at least one
-      instance diverges, per-instance natural draws run with shared
-      `noise=` kwargs for the divergent pods only so the symmetric
-      pods stay on the shared buffer and the per-instance buffers
-      cover only the truly-divergent pods.
+    - Returns `(coupling_by_instance, saturation_by_instance)`.
+      Divergence detection is intentionally not returned:
+      `generate_component` re-derives the divergent-instance set
+      directly from the passed arrays via `_arrays_equal_dict` /
+      `_sat_tuples_equal_dict` so correctness cannot depend on a
+      stale caller-supplied hint (a programmatic caller that
+      passed divergent arrays alongside a `False` hint would
+      otherwise silently force instance-0 reuse across every
+      pod). When every instance matches instance 0,
+      `generate_component` runs the natural-column draw *once*
+      per metric and reuses the result across all instances
+      (preserves `N3_ONE_DAY_HASHES` / `N3_SEVEN_DAY_HASHES`
+      locked in `tests/test_instances_per_component.py`); when at
+      least one instance diverges, per-instance natural draws run
+      with shared `noise=` kwargs for the divergent pods only so
+      the symmetric pods stay on the shared buffer and the
+      per-instance buffers cover only the truly-divergent pods.
 
 The math hook is the VER-158 refactor of `_natural_column` which
 now accepts four optional keyword-only kwargs:
@@ -383,9 +380,14 @@ columns all reference identical data (different ``.copy()`` results
 on the same source row), and ``generate_component`` collapses to the
 shared fast path when the calculated per-instance arrays are
 identical — the divergence check is run inside ``generate_component``
-against the per-instance arrays it receives, not delegated to the
-helper-returned ``any_divergent`` flag (see the per-instance topology
-subsection above for the rationale).
+against the per-instance arrays it receives directly. When an
+`instance_filter` forks a per-instance buffer for pod 0 (e.g.
+``instance_filter=["i0"]``), the aggregate ``topology_capture`` mean
+reads ``per_instance_values.get(0, values)[:, col_idx]`` as the
+initial accumulator so pod 0's forked buffer is included in the
+average; using ``values[:, col_idx]`` directly would silently
+exclude pod 0 because that is the shared baseline, not the forked
+buffer.
 
 Cascade-vs-topology overlap is unchanged from phase 4: per-instance
 anomaly overrides (`instance_filter`) are applied per pod after

@@ -1011,7 +1011,19 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                             # equal-weight mean as ``np.mean`` over the
                             # stacked array but at O(n_rows) extra
                             # memory instead of O(N_instances × n_rows).
-                            captured_col = shared_col.astype(
+                            #
+                            # Use ``per_instance_values.get(k, values)``
+                            # for *every* k including 0 so an
+                            # ``instance_filter`` that targets pod 0
+                            # (forking only ``per_instance_values[0]``
+                            # while other pods stay on the shared
+                            # ``values`` baseline) still contributes
+                            # pod-0's forked buffer to the aggregate.
+                            # ``shared_col`` is ``values[:, col_idx]``
+                            # and would silently skip pod 0's diverged
+                            # buffer if used as the initial accumulator.
+                            buf0 = per_instance_values.get(0, values)
+                            captured_col = buf0[:, col_idx].astype(
                                 np.float64, copy=True
                             )
                             for inst_idx_k in range(1, inst_count):
@@ -3139,11 +3151,10 @@ def _compute_topology_arrays_per_instance(
 ) -> tuple[
     list[dict[str, np.ndarray]],
     list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]],
-    bool,
 ]:
     """Compute per-instance coupling and saturation arrays for ``component_name``.
 
-    Returns ``(coupling_by_instance, saturation_by_instance, any_divergent)``:
+    Returns ``(coupling_by_instance, saturation_by_instance)``:
 
     * ``coupling_by_instance[K][metric_name]`` is the per-row coupled
       baseline array for downstream instance ``K``'s coupled load
@@ -3155,10 +3166,13 @@ def _compute_topology_arrays_per_instance(
       ``K``'s saturation-target metrics (composes with
       ``MetricSpec.multiplier`` / ``MetricSpec.additive`` via the
       ``_natural_column`` kwargs).
-    * ``any_divergent`` is True if at least one instance's coupling
-      or saturation arrays differ from instance 0. Consumed by
-      ``generate_component`` to avoid re-computing the symmetric-vs-
-      asymmetric divergence detection.
+
+    Divergence detection (which instances diverge from instance 0)
+    is intentionally not returned. ``generate_component`` re-derives
+    it directly from the passed arrays via ``_arrays_equal_dict`` /
+    ``_sat_tuples_equal_dict`` so correctness does not depend on a
+    caller-supplied hint that could drift from the actual array
+    contents.
 
     Shared ``rng.normal`` noise for callable+constant coupling is
     drawn once and reused across all instances so the
@@ -3210,7 +3224,7 @@ def _compute_topology_arrays_per_instance(
             if edge.target == component_name:
                 incoming.append((upstream, edge))
     if not incoming:
-        return coupling_by_instance, saturation_by_instance, False
+        return coupling_by_instance, saturation_by_instance
 
     # Shared callable+constant noise per coupled metric — drawn lazily
     # the *first* time a metric produces an active contribution, then
@@ -3388,20 +3402,7 @@ def _compute_topology_arrays_per_instance(
                     None, error_offset
                 )
 
-    any_divergent = False
-    if n_inst > 1:
-        ref_coupling = coupling_by_instance[0]
-        ref_saturation = saturation_by_instance[0]
-        for inst_idx_k in range(1, n_inst):
-            if not _arrays_equal_dict(
-                coupling_by_instance[inst_idx_k], ref_coupling
-            ) or not _sat_tuples_equal_dict(
-                saturation_by_instance[inst_idx_k], ref_saturation
-            ):
-                any_divergent = True
-                break
-
-    return coupling_by_instance, saturation_by_instance, any_divergent
+    return coupling_by_instance, saturation_by_instance
 
 
 def _arrays_equal_dict(
@@ -10495,14 +10496,12 @@ def main(argv=None):
                 # shares the ``_TOPOLOGY_COUPLE_NOISE_STD`` draw across
                 # instances so symmetric upstream produces byte-identical
                 # output to the shared lambda-baked path used by the
-                # N=1 anonymous branch below. The returned
-                # ``any_divergent`` flag is discarded: ``generate_component``
-                # derives divergence directly from the passed arrays so
-                # correctness does not depend on caller flag accuracy.
+                # N=1 anonymous branch below. ``generate_component``
+                # re-derives divergence from the returned arrays directly
+                # so the helper does not need to return a hint.
                 (
                     coupling_per_instance,
                     saturation_per_instance,
-                    _,
                 ) = _compute_topology_arrays_per_instance(
                     name, specs, upstream_arrays,
                     upstream_arrays_by_instance,
