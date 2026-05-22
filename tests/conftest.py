@@ -60,16 +60,24 @@ def run_capture(
       explicit value with ``@pytest.mark.full_resolution`` so the
       intent is auditable.
 
-    ``--interval-seconds`` in ``extra_args`` raises ``ValueError`` so
+    ``--interval-seconds`` in ``extra_args`` raises ``ValueError`` —
+    in either the standalone ``--interval-seconds VALUE`` form or the
+    ``--interval-seconds=VALUE`` form ``argparse`` also accepts — so
     the flag has a single source of truth and the ``full_resolution``
     audit can recognize opt-out sites by inspecting kwargs alone.
     """
     extra_args_list = list(extra_args or [])
-    if "--interval-seconds" in extra_args_list:
+    if any(
+        arg == "--interval-seconds" or arg.startswith("--interval-seconds=")
+        for arg in extra_args_list
+    ):
         raise ValueError(
             "run_capture: --interval-seconds must be passed via the "
-            "interval_seconds keyword argument, not extra_args. "
-            "Use interval_seconds=None for the script's 1s default."
+            "interval_seconds keyword argument, not extra_args "
+            "(neither the standalone '--interval-seconds VALUE' form "
+            "nor the '--interval-seconds=VALUE' form is allowed in "
+            "extra_args). Use interval_seconds=None for the script's "
+            "1s default."
         )
     args = [
         "--seed", str(seed),

@@ -65,12 +65,28 @@ def test_interval_seconds_in_extra_args_raises(amc, tmp_path):
     """``--interval-seconds`` must travel via the kwarg, not extra_args,
     so the helper has a single source of truth and the
     ``@pytest.mark.full_resolution`` audit lint can recognize the opt-out
-    site. Smuggling the flag through extra_args raises ``ValueError``."""
+    site. Smuggling the flag through extra_args (in either the standalone
+    ``--interval-seconds VALUE`` form or the ``--interval-seconds=VALUE``
+    form) raises ``ValueError``."""
     with pytest.raises(ValueError, match="interval_seconds"):
         run_capture(
             amc, tmp_path,
             days=1,
             extra_args=["--interval-seconds", "5"],
+        )
+
+
+def test_interval_seconds_equals_form_in_extra_args_raises(amc, tmp_path):
+    """The ``--interval-seconds=VALUE`` form (which ``argparse`` accepts
+    as equivalent to ``--interval-seconds VALUE``) must also be rejected;
+    otherwise a caller could bypass the single-source-of-truth guard by
+    smuggling the flag through ``extra_args`` as a single attached
+    token."""
+    with pytest.raises(ValueError, match="interval_seconds"):
+        run_capture(
+            amc, tmp_path,
+            days=1,
+            extra_args=["--interval-seconds=5"],
         )
 
 
