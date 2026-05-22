@@ -90,10 +90,15 @@ def n1_explicit_1d(amc, tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def n3_1d(amc, tmp_path_factory):
-    out = tmp_path_factory.mktemp("inst_n3_1d")
-    _run(amc, out, days=1, extra_args=["--instances-per-component", "3"])
-    return out
+def n3_1d(n3_one_day_dataset_dir):
+    """N=3 1-day dataset for this module's per-component CSV / anomalies
+    checks. Delegates to the session-scoped ``n3_one_day_dataset_dir``
+    fixture in ``conftest.py`` (VER-208) so the ~25-second / ~1.3 GB
+    generation pass runs once for the whole suite instead of once per
+    test file. Every consumer in this module only reads per-component
+    CSVs or ``anomalies.csv``; the shared fixture's
+    ``--emit-selection metrics`` is exactly that set."""
+    return n3_one_day_dataset_dir
 
 
 @pytest.fixture(scope="module")
@@ -478,9 +483,23 @@ def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
     Complements the locked-hash test: catches non-determinism that would
     surface as a re-run hash mismatch even if the locked hashes happen to
     match the first run by accident.
+
+    The baseline ``n3_1d`` is the session-scoped
+    ``n3_one_day_dataset_dir`` (VER-208), which uses
+    ``--emit-selection metrics``. The second run mirrors that selection
+    so the two outputs are comparable on the artifacts the per-component
+    CSV hashes cover, and the second run avoids re-emitting the
+    ~1.3 GB of logs/traces artifacts neither side compares against.
+    Per-component CSV bytes are independent of ``--emit-selection``
+    (the metric columns are written under any selection that includes
+    ``metrics``), so this trims disk without changing the test's
+    invariant.
     """
     out2 = tmp_path_factory.mktemp("inst_n3_1d_v2")
-    _run(amc, out2, days=1, extra_args=["--instances-per-component", "3"])
+    _run(amc, out2, days=1, extra_args=[
+        "--instances-per-component", "3",
+        "--emit-selection", "metrics",
+    ])
     for name in amc.COMPONENTS:
         fname = f"{name}.csv"
         assert _sha256(n3_1d / fname) == _sha256(out2 / fname), (
