@@ -699,6 +699,20 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         coupling_arrays_per_instance is not None
         and saturation_arrays_per_instance is not None
     )
+    # Reject the half-passed shape up front so programmatic callers
+    # see a clear error rather than a silent fall-back to the legacy
+    # shared-arrays path that would emit wrong per-instance values.
+    if (
+        (coupling_arrays_per_instance is None)
+        != (saturation_arrays_per_instance is None)
+    ):
+        raise ValueError(
+            f"generate_component({component_name!r}) requires both "
+            "coupling_arrays_per_instance and saturation_arrays_per_instance "
+            "or neither; got "
+            f"coupling={'present' if coupling_arrays_per_instance is not None else 'None'} "
+            f"saturation={'present' if saturation_arrays_per_instance is not None else 'None'}."
+        )
     pre_populated_per_instance_eager: dict[int, np.ndarray] = {}
     if use_per_instance_topology:
         n_inst_local = len(instances)

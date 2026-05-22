@@ -29,12 +29,11 @@ Tests also pin:
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 
 import numpy as np
 import pytest
-
-import csv
 
 from conftest import run_capture
 
@@ -153,6 +152,46 @@ def _instance_block_rows(out_dir, component, instance_id, metric):
     ts = [kv[0] for kv in out]
     vals = np.array([kv[1] for kv in out], dtype=np.float64)
     return ts, vals
+
+
+def test_generate_component_rejects_half_passed_per_instance_arrays(amc, tmp_path):
+    """``generate_component`` must reject the half-passed shape
+    (exactly one of ``coupling_arrays_per_instance`` /
+    ``saturation_arrays_per_instance`` non-None) so programmatic
+    callers see a clear ``ValueError`` rather than silently falling
+    back to the legacy shared-arrays path.
+    """
+    specs = amc.COMPONENTS["loadbalancer"][: amc.DEFAULT_METRICS_PER_COMPONENT["loadbalancer"]]
+    instances = [amc.Instance()]
+    rng = np.random.RandomState(0)
+    ctx = amc.RunContext(rng=rng)
+    common = dict(
+        component_name="loadbalancer",
+        specs=specs,
+        anomaly_specs=[],
+        base_dir=tmp_path,
+        total_seconds=60,
+        drop_rate=0.0,
+        interval=1.0,
+        ts_array=np.arange(60, dtype=np.float64),
+        ts_strings=np.array([f"t{i}" for i in range(60)]),
+        emit_metrics=True,
+        dst_inject_day=0,
+        ctx=ctx,
+        instances=instances,
+    )
+    with pytest.raises(ValueError, match="coupling=present saturation=None"):
+        amc.generate_component(
+            **common,
+            coupling_arrays_per_instance=[{}],
+            saturation_arrays_per_instance=None,
+        )
+    with pytest.raises(ValueError, match="coupling=None saturation=present"):
+        amc.generate_component(
+            **common,
+            coupling_arrays_per_instance=None,
+            saturation_arrays_per_instance=[{}],
+        )
 
 
 def test_matched_cardinality_dispatch(amc):
