@@ -1203,16 +1203,24 @@ def _format_csv_row_block(kept_ts: np.ndarray, metric_suffix: np.ndarray,
     """Concatenate ``timestamp + dim_prefix + ',' + metric_suffix`` per row.
 
     ``dim_prefix`` is the empty string for the dimensionless / single-anonymous-
-    instance CSV layout and ``",id,host,pod,az,region,tenant"`` (with a
-    leading comma) for one long-form instance block. The shared shape lets
+    instance CSV layout, or one instance's comma-prefixed dimension
+    *values* (e.g. ``",i0,,pod-0,,,"`` — leading comma, then the six
+    ``_INSTANCE_DIMENSION_COLUMNS`` values with empty cells for unset
+    fields) for one long-form instance block. The shared shape lets
     the same DST splice apply regardless of which branch produced the
     block — the bug VER-191 fixes is the long-form writer's prior
     failure to call ``_splice_dst_artifact`` after rebuilding rows from
-    raw timestamps. ``parse_args`` still rejects
-    ``--inject-dst-artifact-day > 0`` paired with a multi-instance run by
-    design, so today this helper applies the splice only in the
-    ``_is_anonymous=True`` path; the long-form code path remains
-    correct under any future caller that relaxes the guard.
+    raw timestamps. The helper itself does not gate which combinations
+    are reachable: ``_splice_dst_artifact`` runs unconditionally when
+    ``dst_inject_day > 0`` regardless of ``dim_prefix``. ``parse_args``
+    and the matching ``generate_component`` defense-in-depth check
+    still reject ``--inject-dst-artifact-day > 0`` paired with a
+    multi-instance run by design (per-instance non-monotonic timestamps
+    break downstream ``heapq.merge`` in ``gauges.csv`` /
+    ``combined_metrics_unified.csv``), so today every production caller
+    that reaches the long-form branch has ``dst_inject_day == 0``; the
+    helper would handle the long-form splice correctly under any
+    future caller that relaxes the guard.
     """
     rows = np.char.add(kept_ts, f"{dim_prefix},")
     rows = np.char.add(rows, metric_suffix)

@@ -460,13 +460,14 @@ def test_format_csv_row_block_applies_dst_splice_in_long_form(amc):
     ``dim_prefix``.
 
     This is the VER-191 regression guard: before the refactor the
-    long-form CSV writer ignored ``dst_inject_day`` entirely
-    (anomaly-metric-creator.py:1145–1186 took ``kept_ts`` / ``str_vals``
-    and never called ``_splice_dst_artifact``). By routing both branches
-    through ``_format_csv_row_block`` the long-form path inherits the
-    splice for free — a future caller that relaxes the
-    ``parse_args`` mutual-exclusion guard will not silently drop the
-    duplicate hour.
+    long-form branch of ``generate_component``'s ``emit_metrics``
+    writer (the PR #63 multi-instance path) took ``kept_ts`` /
+    ``str_vals`` directly and never called ``_splice_dst_artifact``,
+    so any caller that reached it with ``dst_inject_day > 0`` would
+    silently drop the duplicated hour. After VER-191 both branches
+    route through ``_format_csv_row_block`` and inherit the splice
+    for free — a future caller that relaxes the ``parse_args``
+    mutual-exclusion guard will not regress that bug.
     """
     # Cover 03:59:58 → 04:00:01 with one row every second so the
     # 02:00–02:59 splice window is small enough to assert exactly.
