@@ -172,6 +172,22 @@ def test_noqa_marker_exempts_line(tmp_path: Path):
     assert result.returncode == 0, result.stderr
 
 
+def test_noqa_marker_in_string_literal_does_not_exempt(tmp_path: Path):
+    """The exemption must be a real comment token, not a substring match.
+    A file where the marker text appears only inside a string literal on
+    the same line as the call must still be flagged. Copilot PR #74
+    round-4 — the prior raw-substring check let any `# noqa: amc-load`
+    text anywhere on the physical line silence the lint."""
+    bad = tmp_path / "test_string_noqa.py"
+    bad.write_text(
+        "import importlib.util\n"
+        "spec = importlib.util.spec_from_file_location('amc', '# noqa: amc-load')\n"
+    )
+    result = _run(bad)
+    assert result.returncode == 1, result.stderr
+    assert "spec_from_file_location" in result.stderr
+
+
 def test_multiple_files_partial_violation(tmp_path: Path):
     clean = tmp_path / "test_clean.py"
     clean.write_text("x = 1\n")

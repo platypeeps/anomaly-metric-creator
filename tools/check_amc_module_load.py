@@ -41,9 +41,12 @@ are not call nodes.
 Exemptions:
 
 - Files named `conftest.py` are skipped wholesale.
-- A trailing ``# noqa: amc-load`` on the call's start line opts that
-  specific line out of the check. Use sparingly for cases that
-  legitimately need a fresh module copy:
+- A trailing ``# noqa: amc-load`` comment on the call's start line
+  opts that specific line out of the check. The marker is detected via
+  the ``tokenize`` stream — only real ``tokenize.COMMENT`` tokens
+  count, so the same marker text appearing inside a string literal or
+  any non-comment context does not silence the lint. Use sparingly
+  for cases that legitimately need a fresh module copy:
   * tests that monkeypatch module-level callables and must isolate state
     (see `tests/test_correctness.py`);
   * collection-time parametrize loaders that fire before pytest
@@ -53,11 +56,44 @@ Exemptions:
 from __future__ import annotations
 
 import ast
+import io
 import sys
+import tokenize
 from pathlib import Path
 
 _FN = "spec_from_file_location"
 _NOQA_MARKER = "# noqa: amc-load"
+
+
+def _collect_noqa_lines(src: str) -> set[int]:
+    """Return line numbers that carry a real ``# noqa: amc-load`` comment.
+
+    The exemption must live in an actual ``tokenize.COMMENT`` token so a
+    raw substring match inside a string literal (or anywhere else on
+    the line) does not silently bypass the lint. Copilot PR #74 round-4
+    flagged the prior raw-line ``in`` check as accidentally / trivially
+    bypassable — e.g.
+    ``spec_from_file_location('amc', '# noqa: amc-load')`` would have
+    been silenced because the marker text appeared verbatim on the
+    physical line even though no real comment was present.
+
+    Tokenization is also robust to multi-line calls: the comment must
+    sit on whichever line the call's start (``node.lineno``) points at
+    — typically the last physical line of a multi-line call, since
+    that's where the trailing comment is conventionally written. A
+    ``TokenizeError`` (e.g. on syntactically invalid input that still
+    parsed via ``ast.parse``'s recovery — rare but possible) collapses
+    to "no exemptions": the caller will then emit the original
+    violation, which is the conservative behavior.
+    """
+    exempt: set[int] = set()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type == tokenize.COMMENT and _NOQA_MARKER in tok.string:
+                exempt.add(tok.start[0])
+    except tokenize.TokenizeError:
+        pass
+    return exempt
 
 
 def _collect_local_aliases(tree: ast.AST) -> set[str]:
@@ -135,7 +171,7 @@ def _check_file(path: Path) -> list[str]:
         tree = ast.parse(src, filename=str(path))
     except SyntaxError as exc:
         return [f"{path}:{exc.lineno}: syntax error: {exc.msg}"]
-    lines = src.splitlines()
+    noqa_lines = _collect_noqa_lines(src)
     local_names = _collect_local_aliases(tree)
     violations: list[str] = []
     for node in ast.walk(tree):
@@ -166,9 +202,7 @@ def _check_file(path: Path) -> list[str]:
         if name != _FN:
             continue
         lineno = node.lineno
-        idx = lineno - 1
-        line = lines[idx] if 0 <= idx < len(lines) else ""
-        if _NOQA_MARKER in line:
+        if lineno in noqa_lines:
             continue
         violations.append(
             f"{path}:{lineno}: `spec_from_file_location(...)` call outside "
