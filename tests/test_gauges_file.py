@@ -702,7 +702,11 @@ def test_classify_component_csv_header_detects_dimensions(amc):
     cols + the remaining metric tail. An ambiguous header that only
     partially matches the dim prefix must be treated as no-dim so a
     user-staged CSV with a column literally named ``id`` cannot smuggle
-    in dimensioned parsing."""
+    in dimensioned parsing. A header whose columns 1..6 do match the full
+    dim block but whose column 0 is NOT ``timestamp`` must also be
+    treated as no-dim — the leading-timestamp guard is what stops a
+    hand-edited ``id,id,host,pod,az,region,tenant,m0`` from being
+    silently routed to the 10-column long-form path (VER-209)."""
     flat = ["timestamp", "metric_a", "metric_b"]
     dim_cols, metric_cols = amc._classify_component_csv_header(flat)
     assert dim_cols == ()
@@ -720,6 +724,22 @@ def test_classify_component_csv_header_detects_dimensions(amc):
     dim_cols, metric_cols = amc._classify_component_csv_header(partial)
     assert dim_cols == ()
     assert metric_cols == ["id", "metric_a"]
+
+    # VER-209: header[0] != "timestamp" but columns 1..6 are the full dim
+    # block. The classifier's leading-timestamp guard rejects this case
+    # outright; columns flow into the metric path verbatim (the OTEL gauge
+    # reader will then ``float(raw)``-coerce them and skip the unparseable
+    # ``id`` / ``host`` / ``pod`` / … strings).
+    no_leading_timestamp = [
+        "id", "id", "host", "pod", "az", "region", "tenant", "metric_a",
+    ]
+    dim_cols, metric_cols = amc._classify_component_csv_header(
+        no_leading_timestamp,
+    )
+    assert dim_cols == ()
+    assert metric_cols == [
+        "id", "host", "pod", "az", "region", "tenant", "metric_a",
+    ]
 
     empty: list[str] = []
     dim_cols, metric_cols = amc._classify_component_csv_header(empty)
