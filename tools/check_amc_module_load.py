@@ -9,11 +9,22 @@ duplicate exec_module pays the full registry-validation cost again and
 was the recurring DRY violation flagged in VER-190 (PR #63, PR #64) and
 tracked in VER-197.
 
-The check walks each file's AST and flags any *call* whose target is the
-identifier `spec_from_file_location` (matches both
-`importlib.util.spec_from_file_location(...)` and aliased forms like
-`_u.spec_from_file_location(...)`). String literals, docstrings, and
-comments are not flagged because they are not call nodes.
+The check walks each file's AST and flags any *call* whose target is
+the identifier `spec_from_file_location`. Patterns caught:
+
+- ``importlib.util.spec_from_file_location(...)`` — attribute call.
+- ``import importlib.util as _u; _u.spec_from_file_location(...)`` —
+  aliased-module attribute call.
+- ``from importlib.util import spec_from_file_location;
+  spec_from_file_location(...)`` — bare-name call.
+- ``from importlib.util import spec_from_file_location as sfl;
+  sfl(...)`` — bare-name call to the import alias. The walker first
+  collects every ``ImportFrom`` node that aliases
+  ``spec_from_file_location`` and treats each alias as equivalent to
+  the canonical name for the rest of the file.
+
+String literals, docstrings, and comments are not flagged because they
+are not call nodes.
 
 Exemptions:
 
@@ -37,6 +48,26 @@ _FN = "spec_from_file_location"
 _NOQA_MARKER = "# noqa: amc-load"
 
 
+def _collect_local_aliases(tree: ast.AST) -> set[str]:
+    """Return the set of local names bound to
+    ``importlib.util.spec_from_file_location`` via ``from`` imports.
+    Always includes ``spec_from_file_location`` itself so a direct
+    ``from importlib.util import spec_from_file_location`` import is
+    covered. Module is not constrained to ``importlib.util``: any
+    ``from X import spec_from_file_location [as Y]`` is treated as an
+    import of the canonical name, since the public stdlib API only
+    exposes that symbol via ``importlib.util`` and there is no
+    legitimate reason a test file would rebind it.
+    """
+    aliases: set[str] = {_FN}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == _FN:
+                    aliases.add(alias.asname or alias.name)
+    return aliases
+
+
 def _check_file(path: Path) -> list[str]:
     src = path.read_text(encoding="utf-8")
     try:
@@ -44,6 +75,7 @@ def _check_file(path: Path) -> list[str]:
     except SyntaxError as exc:
         return [f"{path}:{exc.lineno}: syntax error: {exc.msg}"]
     lines = src.splitlines()
+    local_names = _collect_local_aliases(tree)
     violations: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -51,9 +83,15 @@ def _check_file(path: Path) -> list[str]:
         func = node.func
         name: str | None = None
         if isinstance(func, ast.Attribute):
-            name = func.attr
+            # Attribute calls always read the canonical attribute name
+            # off the source module (e.g. ``importlib.util.<canonical>``),
+            # never an alias bound by the importer — so the local-name
+            # set is irrelevant here.
+            if func.attr == _FN:
+                name = _FN
         elif isinstance(func, ast.Name):
-            name = func.id
+            if func.id in local_names:
+                name = _FN
         if name != _FN:
             continue
         lineno = node.lineno

@@ -58,6 +58,34 @@ def test_flags_attribute_call(tmp_path: Path):
     assert "spec_from_file_location" in result.stderr
 
 
+def test_flags_from_import_alias(tmp_path: Path):
+    """`from importlib.util import spec_from_file_location as sfl`
+    binds the function to a local name `sfl`. The lint must follow the
+    rename and flag calls to `sfl(...)`. Copilot PR #74 round-1."""
+    bad = tmp_path / "test_alias.py"
+    bad.write_text(
+        "from importlib.util import spec_from_file_location as sfl\n"
+        "spec = sfl('amc', '/dev/null')\n"
+    )
+    result = _run(bad)
+    assert result.returncode == 1, result.stderr
+    assert str(bad) in result.stderr
+
+
+def test_flags_from_import_direct(tmp_path: Path):
+    """`from importlib.util import spec_from_file_location` followed by
+    a bare-name call. Already caught by the ast.Name branch, but
+    pinned as a regression to ensure the alias-tracking patch does not
+    regress the simple-name case."""
+    bad = tmp_path / "test_direct.py"
+    bad.write_text(
+        "from importlib.util import spec_from_file_location\n"
+        "spec = spec_from_file_location('amc', '/dev/null')\n"
+    )
+    result = _run(bad)
+    assert result.returncode == 1, result.stderr
+
+
 def test_conftest_is_ignored(tmp_path: Path):
     good = tmp_path / "conftest.py"
     good.write_text(
@@ -113,10 +141,16 @@ def test_real_test_tree_is_clean():
     """Running the lint against the actual `tests/` tree must pass after
     the existing legitimate uses are annotated. This guards against a
     future test file re-introducing the duplicate load pattern without a
-    noqa marker."""
+    noqa marker.
+
+    Globs every `*.py` under `tests/` (matching the pre-commit hook's
+    `^tests/.*\\.py$` pattern) so the suite also covers `conftest.py`
+    and any future non-`test_*.py` helpers (the script's
+    `conftest.py` exemption handles conftest correctly). Copilot
+    PR #74 round-1."""
     tests_dir = REPO_ROOT / "tests"
-    files = sorted(tests_dir.glob("test_*.py"))
-    assert files, "no test files found under tests/"
+    files = sorted(tests_dir.rglob("*.py"))
+    assert files, "no .py files found under tests/"
     result = _run(*files)
     assert result.returncode == 0, (
         f"lint failed against current tests/:\nstderr:\n{result.stderr}"
