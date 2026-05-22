@@ -1523,6 +1523,19 @@ This checklist maps to 13 recurring patterns identified in VER-160 (the original
   selection in `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); run
   `.venv/bin/pre-commit run --all-files` or `.venv/bin/ruff check tests/`
   locally if the commit hook is not installed.
+- New test files reuse the session-scoped `amc` fixture from
+  `tests/conftest.py` and do not re-import `anomaly-metric-creator.py`
+  via `importlib.util.spec_from_file_location(...)`. The
+  `amc-no-direct-spec-load` pre-commit hook
+  (`tools/check_amc_module_load.py`) catches this structurally — PR #63
+  and PR #64 each shipped a module-scoped `amc` fixture that re-built
+  the registry, and Copilot was the only thing flagging it. When a
+  test genuinely needs a fresh module instance (e.g.
+  `test_correctness.py` monkey-patches `_apply_scenarios`, or
+  `test_scenarios.py` loads `_VALID_ANOMALY_SHAPES` at parametrize
+  collection time), route through `conftest._load_amc()` (memoized) or
+  annotate the `spec_from_file_location` call line with
+  `# noqa: amc-load`. See VER-197.
 
 **Test resource cost**
 - Fixtures generating full 1-day, 7-day, or `--instances-per-component N > 1` (N=3 and larger) datasets must reuse the session-scoped fixtures already declared in `tests/conftest.py` rather than redefine module-scoped duplicates. A `module`-scoped fixture that runs `main()` end-to-end will re-execute the generator once per test file and multiply suite wall-time and peak RSS by the number of duplicating files (PR #67 had three separate ~1.3 GB N=3 dataset fixtures; PR #63 module-scoped fixtures duplicated session-scoped runs from conftest).
