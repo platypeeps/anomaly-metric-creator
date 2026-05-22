@@ -249,7 +249,8 @@ def test_synthetic_pod0_spike_lifts_only_pod0_saturation(
     downstream pod's rows under 1:1 routing.
 
     Statistical check: compute the mean of the failure window
-    (``[SPIKE_TIME_OFFSET, SPIKE_TIME_OFFSET + SPIKE_DURATION_S]``)
+    (``[SPIKE_TIME_OFFSET, SPIKE_TIME_OFFSET + SPIKE_DURATION_S)`` —
+    half-open to match the end-exclusive Python slicing below)
     per pod and compare against the natural-window baseline. Pod-0's
     in-window mean must be well above the noise floor; pods 1 / 2
     must stay close to their natural baseline.
@@ -279,7 +280,9 @@ def test_synthetic_pod0_spike_lifts_only_pod0_saturation(
         f"(lens={len(pod0_ts)}, {len(pod1_ts)}, {len(pod2_ts)})"
     )
 
-    # Locate the spike-window indices via the timestamp prefix.
+    # Locate the spike-window indices by fixed second offsets — the
+    # fixture pins ``drop_rate=0.0`` so the long-form CSV emits one row
+    # per second per instance and row index equals elapsed seconds.
     # START = 2026-03-10 00:00:00; 03:30 → row 12600 at 1s interval.
     n_rows = len(pod0_ts)
     spike_start = SPIKE_TIME_OFFSET
