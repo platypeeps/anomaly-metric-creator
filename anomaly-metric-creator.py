@@ -729,7 +729,6 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         # buffers compared to the previous "allocate-N-up-front" shape
         # (~9.7 GB at 7d / 1s / N=20 / 10 metrics).
         #
-        # Divergence is derived from the passed arrays directly rather
         # Divergence is always re-derived from the passed arrays so
         # correctness does not depend on any caller-supplied hint.
         divergent_instances: set[int] = set()
