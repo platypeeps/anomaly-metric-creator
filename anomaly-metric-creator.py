@@ -562,20 +562,27 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         instances, where=f"generate_component({component_name!r}) instances"
     )
 
-    # Defense-in-depth: the long-form writer rebuilds rows from
-    # ``kept_ts`` / ``str_vals`` and ignores the post-splice ``rows``
-    # array, so combining a non-anonymous instance list with a DST
-    # splice would silently drop the duplicated hour. ``parse_args``
-    # already rejects this combination at the CLI; this guard catches
-    # any direct caller (tests, future consumers) that bypasses it.
+    # Defense-in-depth: ``parse_args`` rejects ``--inject-dst-artifact-day``
+    # paired with multi-instance at the CLI; this guard mirrors the
+    # rejection for direct callers (tests, future consumers) that bypass
+    # the CLI. The pre-VER-191 rationale was correctness — the long-form
+    # writer rebuilt rows from pre-splice timestamps and silently dropped
+    # the duplicated hour. After VER-191 the long-form path routes
+    # through ``_format_csv_row_block``, which applies the splice
+    # per-instance, so the guard now stands on design grounds: the
+    # multi-instance long-form CSV emits per-instance row blocks, and
+    # per-block splicing surfaces non-monotonic timestamps inside each
+    # block that ``heapq.merge`` (``gauges.csv`` /
+    # ``combined_metrics_unified.csv``) cannot resolve.
     _is_anonymous = _is_anonymous_instance_list(instances)
     if not _is_anonymous and dst_inject_day > 0:
         raise ValueError(
             f"generate_component({component_name!r}): dst_inject_day > 0 "
-            f"is incompatible with a non-anonymous instance list; the "
-            f"long-form writer rebuilds rows from pre-splice timestamps "
-            f"and would drop the DST duplicate hour. Pass "
-            f"instances=[Instance()] or dst_inject_day=0."
+            f"is incompatible with a non-anonymous instance list by design — "
+            f"per-instance DST splicing would surface non-monotonic "
+            f"timestamps inside each row block that downstream long-form "
+            f"merges (gauges.csv / combined_metrics_unified.csv) cannot "
+            f"resolve. Pass instances=[Instance()] or dst_inject_day=0."
         )
 
     # Merge primary anomalies with cascading anomalies
@@ -1106,40 +1113,29 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # post-derive); other instances reuse the shared ``str_vals`` so the
     # all-instances-unfiltered case stays byte-identical to Phase 2.
     #
-    # The two branches build different intermediate string arrays — the
-    # anonymous branch concatenates ``ts,v0,...,vk`` into ``rows`` once
-    # for the whole component, while the long-form branch builds the
-    # metric suffix per instance inside the writer loop so each
-    # instance's diverged-or-shared buffer flows through unchanged.
+    # VER-191: both branches now flow through the shared ``_format_metric_suffix``
+    # / ``_format_csv_row_block`` helpers. The dimensionless branch is the
+    # degenerate ``dim_prefix=""`` case of the long-form path, so the DST
+    # splice — applied inside ``_format_csv_row_block`` — fires regardless
+    # of the writer branch. Before the refactor the long-form path
+    # rebuilt rows from pre-splice timestamps and silently dropped the
+    # duplicate hour (the PR #63 long-form DST drop).
 
     if emit_metrics:
         with open(file_path, "w", newline="") as f:
+            # Precompute the shared metric suffix once per component. Every
+            # instance not in ``per_instance_str_vals`` reuses this array,
+            # preserving Phase 2's "precompute once, reuse per instance"
+            # optimization. The anonymous branch is a single-instance
+            # degenerate case so reuse is a no-op there.
+            shared_metric_suffix = _format_metric_suffix(str_vals)
             if _is_anonymous:
-                # Assemble each row as ``ts,v0,v1,...,vk`` via vectorized
-                # numpy string adds, then join with newlines. Doing the
-                # column concat in numpy (C) and only the final
-                # newline-join in Python keeps the per-row Python work
-                # to one op.
-                rows = np.char.add(kept_ts, ",")
-                rows = np.char.add(rows, str_vals[:, 0])
-                for col in range(1, n_cols):
-                    rows = np.char.add(rows, ",")
-                    rows = np.char.add(rows, str_vals[:, col])
-
-                # Fall-DST artifact. Duplicate the 02:00–02:59 wall-clock
-                # hour on the configured day so downstream consumers must
-                # handle non-monotonic timestamps (a real-world quirk
-                # that breaks naive timeseries pipelines). The
-                # non-anonymous branch never reaches this — the
-                # defense-in-depth guard above raises ValueError on
-                # ``dst_inject_day > 0`` with a non-anonymous instance
-                # list, so this splice runs only under
-                # ``_is_anonymous=True``.
-                if dst_inject_day > 0:
-                    rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
-
                 # Dimensionless default — byte-identical to pre-Phase-2 output.
                 f.write("timestamp," + ",".join(fieldnames) + "\n")
+                rows = _format_csv_row_block(
+                    kept_ts, shared_metric_suffix,
+                    dim_prefix="", dst_inject_day=dst_inject_day,
+                )
                 f.write("\n".join(rows.tolist()))
                 f.write("\n")
             else:
@@ -1150,40 +1146,91 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 # consumed by the OTEL gauge attributes path (VER-149 Phase 6).
                 dim_header = "timestamp," + ",".join(_INSTANCE_DIMENSION_COLUMNS)
                 f.write(dim_header + "," + ",".join(fieldnames) + "\n")
-                # Phase 4: precompute the shared metric suffix once. The
-                # all-instances-unfiltered case (no entries in
-                # ``per_instance_str_vals``) reuses ``shared_suffix`` for
-                # every instance, preserving Phase 2's "precompute once,
-                # reuse per instance" optimization byte-for-byte. Only
-                # instances whose ``inst_idx`` appears in
-                # ``per_instance_str_vals`` build their own suffix from
-                # the diverged buffer.
-                shared_suffix = str_vals[:, 0].copy()
-                for col in range(1, n_cols):
-                    shared_suffix = np.char.add(shared_suffix, ",")
-                    shared_suffix = np.char.add(shared_suffix, str_vals[:, col])
+                # Materialize per-instance suffixes for forked buffers only;
+                # other instances reuse ``shared_metric_suffix`` so the
+                # all-instances-unfiltered case stays byte-identical to
+                # Phase 2.
+                per_instance_metric_suffixes: dict[int, np.ndarray] = {
+                    inst_idx: _format_metric_suffix(buf)
+                    for inst_idx, buf in per_instance_str_vals.items()
+                }
                 for inst_idx, inst in enumerate(instances):
                     # Build the dimension prefix string once per instance.
                     # Reads fields off ``Instance`` in canonical column order
                     # so adding/removing a field touches only
-                    # ``_INSTANCE_DIMENSION_COLUMNS``.
+                    # ``_INSTANCE_DIMENSION_COLUMNS``. The leading comma
+                    # lets ``_format_csv_row_block`` concatenate as
+                    # ``ts + dim_prefix + "," + metric_suffix`` regardless
+                    # of branch.
                     dim_vals = ",".join(
                         getattr(inst, field) if getattr(inst, field) is not None else ""
                         for field in _INSTANCE_DIMENSION_COLUMNS
                     )
-                    inst_rows = np.char.add(kept_ts, f",{dim_vals},")
-                    if inst_idx in per_instance_str_vals:
-                        inst_str_vals = per_instance_str_vals[inst_idx]
-                        inst_suffix = inst_str_vals[:, 0].copy()
-                        for col in range(1, n_cols):
-                            inst_suffix = np.char.add(inst_suffix, ",")
-                            inst_suffix = np.char.add(inst_suffix,
-                                                       inst_str_vals[:, col])
-                        inst_rows = np.char.add(inst_rows, inst_suffix)
-                    else:
-                        inst_rows = np.char.add(inst_rows, shared_suffix)
+                    inst_suffix = per_instance_metric_suffixes.get(
+                        inst_idx, shared_metric_suffix
+                    )
+                    inst_rows = _format_csv_row_block(
+                        kept_ts, inst_suffix,
+                        dim_prefix=f",{dim_vals}",
+                        dst_inject_day=dst_inject_day,
+                    )
                     f.write("\n".join(inst_rows.tolist()))
                     f.write("\n")
+
+
+def _format_metric_suffix(str_vals: np.ndarray) -> np.ndarray:
+    """Return ``,``-joined metric values as a 1-D string array.
+
+    ``str_vals`` is the post-format ``(n_rows, n_cols)`` array produced by
+    ``_format_fixed3``; the returned array carries one ``v0,v1,...,vk``
+    string per row, with no leading comma. Callers prepend the
+    ``timestamp,<optional_dims>,`` head via ``_format_csv_row_block``.
+
+    Aliasing safety: when ``n_cols >= 2`` the first ``np.char.add`` call
+    returns a fresh array, so we can start from a view of column 0 and
+    rely on the loop to allocate. When ``n_cols == 1`` the loop never
+    runs, so we must explicitly copy column 0 to avoid the caller's
+    downstream ``np.char.add`` mutating the source array.
+    """
+    n_cols = str_vals.shape[1]
+    if n_cols == 1:
+        return str_vals[:, 0].copy()
+    suffix = str_vals[:, 0]
+    for col in range(1, n_cols):
+        suffix = np.char.add(suffix, ",")
+        suffix = np.char.add(suffix, str_vals[:, col])
+    return suffix
+
+
+def _format_csv_row_block(kept_ts: np.ndarray, metric_suffix: np.ndarray,
+                          *, dim_prefix: str, dst_inject_day: int) -> np.ndarray:
+    """Concatenate ``timestamp + dim_prefix + ',' + metric_suffix`` per row.
+
+    ``dim_prefix`` is the empty string for the dimensionless / single-anonymous-
+    instance CSV layout, or one instance's comma-prefixed dimension
+    *values* (e.g. ``",i0,,pod-0,,,"`` — leading comma, then the six
+    ``_INSTANCE_DIMENSION_COLUMNS`` values with empty cells for unset
+    fields) for one long-form instance block. The shared shape lets
+    the same DST splice apply regardless of which branch produced the
+    block — the bug VER-191 fixes is the long-form writer's prior
+    failure to call ``_splice_dst_artifact`` after rebuilding rows from
+    raw timestamps. The helper itself does not gate which combinations
+    are reachable: ``_splice_dst_artifact`` runs unconditionally when
+    ``dst_inject_day > 0`` regardless of ``dim_prefix``. ``parse_args``
+    and the matching ``generate_component`` defense-in-depth check
+    still reject ``--inject-dst-artifact-day > 0`` paired with a
+    multi-instance run by design (per-instance non-monotonic timestamps
+    break downstream ``heapq.merge`` in ``gauges.csv`` /
+    ``combined_metrics_unified.csv``), so today every production caller
+    that reaches the long-form branch has ``dst_inject_day == 0``; the
+    helper would handle the long-form splice correctly under any
+    future caller that relaxes the guard.
+    """
+    rows = np.char.add(kept_ts, f"{dim_prefix},")
+    rows = np.char.add(rows, metric_suffix)
+    if dst_inject_day > 0:
+        rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
+    return rows
 
 
 def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
@@ -6685,9 +6732,11 @@ def parse_args(argv=None):
     if _multi_instance and args.inject_dst_artifact_day > 0:
         p.error(
             f"{_multi_instance_flag} is incompatible with --inject-dst-artifact-day "
-            "(the multi-instance path rebuilds rows from raw timestamps and "
-            "would silently skip the DST splice); pass --inject-dst-artifact-day 0 "
-            "or use the default single-instance mode"
+            "by design (per-instance DST splicing produces non-monotonic "
+            "timestamps inside each long-form row block, which downstream "
+            "long-form merges in gauges.csv / combined_metrics_unified.csv "
+            "cannot resolve); pass --inject-dst-artifact-day 0 or use the "
+            "default single-instance mode"
         )
     # Multi-instance dimension-awareness status by emitter (post-Phase-8):
     #
