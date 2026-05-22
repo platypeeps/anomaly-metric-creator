@@ -354,18 +354,16 @@ def _load_vocab_shapes_for_parametrize():
     """Load _VALID_ANOMALY_SHAPES at pytest collection time so the test
     below is parametrized over the LIVE vocab rather than a hard-coded
     list. Adding a shape to _VALID_ANOMALY_SHAPES automatically extends
-    test coverage."""
-    import importlib.util as _u
-    import os as _os
-    script = _os.environ.get(
-        "SCRIPT_PATH",
-        _os.path.join(_os.path.dirname(__file__), "..",
-                      "anomaly-metric-creator.py"),
-    )
-    spec = _u.spec_from_file_location("amc_for_parametrize", script)
-    m = _u.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return sorted(m._VALID_ANOMALY_SHAPES)
+    test coverage.
+
+    Routes through ``conftest._load_amc()`` (the memoized canonical
+    loader) so collection-time parametrize and the session-scoped
+    ``amc`` fixture share a single ``exec_module`` of the registry. The
+    VER-197 lint (``tools/check_amc_module_load.py``) forbids
+    out-of-conftest ``spec_from_file_location(...)`` calls precisely so
+    this kind of loader cannot drift into a duplicate exec."""
+    from conftest import _load_amc
+    return sorted(_load_amc()._VALID_ANOMALY_SHAPES)
 
 
 def test_validate_scenario_spec_valid_anomaly_shapes_constant(amc):

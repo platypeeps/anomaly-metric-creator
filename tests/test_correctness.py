@@ -485,8 +485,15 @@ def test_no_legacy_va_generators(amc):
 
 
 def test_duplicate_anomaly_specs_raise(tmp_path):
-    """Two specs with the same (metric, time_offset) must fail loudly."""
-    spec = importlib.util.spec_from_file_location("amc_dup", SCRIPT_PATH)
+    """Two specs with the same (metric, time_offset) must fail loudly.
+
+    The session-scoped ``amc`` fixture is intentionally not used here:
+    this test monkey-patches ``_apply_scenarios`` on the module, and
+    sharing the session module would leak the patch into every other
+    test that runs after it. The fresh module copy is the isolation
+    boundary, so the VER-197 lint exempts the load. See
+    ``tools/check_amc_module_load.py`` for the lint."""
+    spec = importlib.util.spec_from_file_location("amc_dup", SCRIPT_PATH)  # noqa: amc-load
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     # Inject a duplicate by patching _apply_scenarios to append an extra spec
@@ -506,8 +513,12 @@ def test_duplicate_anomaly_specs_raise(tmp_path):
 
 def test_unknown_primary_anomaly_metric_raises(tmp_path):
     """A typo in a primary spec metric must fail loudly, not be silently dropped
-    by the metrics-per-component filter."""
-    spec = importlib.util.spec_from_file_location("amc_unknown_primary", SCRIPT_PATH)
+    by the metrics-per-component filter.
+
+    A fresh module copy isolates the ``_apply_scenarios`` monkey-patch
+    from the session-scoped ``amc`` fixture. The VER-197 lint exempts
+    the load (``tools/check_amc_module_load.py``)."""
+    spec = importlib.util.spec_from_file_location("amc_unknown_primary", SCRIPT_PATH)  # noqa: amc-load
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     # Inject a typo primary via _apply_scenarios patch
@@ -530,8 +541,10 @@ def test_unknown_cascade_metric_raises(tmp_path):
     distinction this would be silently swallowed by the filter.
 
     The test patches _apply_scenarios to inject the typo cascade after the
-    registry walk, mirroring how register_cascade was tested pre-VER-104."""
-    spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)
+    registry walk, mirroring how register_cascade was tested pre-VER-104.
+    A fresh module copy keeps the monkey-patch from leaking into the
+    session-scoped ``amc`` fixture; the VER-197 lint exempts the load."""
+    spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)  # noqa: amc-load
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     original_apply = m._apply_scenarios

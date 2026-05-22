@@ -1,5 +1,5 @@
 # See README.md "Test-hygiene lint" and CLAUDE.md "Pre-PR checklist >
-# Test hygiene" for the rule this hook enforces. Install with
+# Test hygiene" for the rules these hooks enforce. Install with
 # `pre-commit install` after `pip install -e ".[dev]"`.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -12,3 +12,21 @@ repos:
       - id: ruff
         name: ruff F401 (tests/)
         files: ^tests/.*\.py$
+  - repo: local
+    hooks:
+      # Forbid duplicate `spec_from_file_location(...)` loads of
+      # `anomaly-metric-creator.py` in tests/. The canonical loader
+      # lives in `tests/conftest.py:_load_amc()` (memoized) and is
+      # consumed via the session-scoped `amc` fixture. PR #63 and
+      # PR #64 each shipped a fresh `spec_from_file_location` call in
+      # a new test file; the lint catches that pattern structurally
+      # instead of relying on Copilot to notice on every new test.
+      # Exempt a line with a trailing `# noqa: amc-load` when a fresh
+      # module instance is genuinely required (monkey-patch isolation,
+      # collection-time parametrize loaders). See VER-197.
+      - id: amc-no-direct-spec-load
+        name: forbid duplicate amc loads outside conftest.py
+        entry: tools/check_amc_module_load.py
+        language: python
+        files: ^tests/.*\.py$
+        pass_filenames: true

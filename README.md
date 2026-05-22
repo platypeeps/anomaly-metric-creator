@@ -759,11 +759,25 @@ fixture memory near ~5 GB even under worst-case fan-out.
 
 ### Test-hygiene lint
 
-`ruff` is wired up to enforce **F401** (unused imports) on `tests/` so the rule
-called out in [CLAUDE.md](CLAUDE.md) ("Pre-PR checklist > Test hygiene") is a
-mechanical check rather than a human-reviewer task. The configuration lives in
-`pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); the
-`.pre-commit-config.yaml` hook scopes it to `tests/`.
+Two `tests/`-scoped checks run on every `git commit` via
+`.pre-commit-config.yaml`:
+
+- **`ruff` F401 (unused imports).** Enforces the rule called out in
+  [CLAUDE.md](CLAUDE.md) ("Pre-PR checklist > Test hygiene") as a
+  mechanical check rather than a human-reviewer task. The configuration
+  lives in `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); the
+  hook scopes it to `tests/`.
+- **`amc-no-direct-spec-load` (`tools/check_amc_module_load.py`).** AST
+  walk over each test file that flags any
+  `spec_from_file_location(...)` call expression — the duplicate-load
+  pattern that shipped in PR #63 and PR #64 (a new test re-imports
+  `anomaly-metric-creator.py` instead of consuming the session-scoped
+  `amc` fixture from `tests/conftest.py:_load_amc`, doubling the
+  registry-build cost). `conftest.py` is exempted wholesale; an
+  individual call line opts out with a trailing `# noqa: amc-load`
+  comment for the rare case that genuinely needs a fresh module
+  instance (e.g. monkey-patching `_apply_scenarios` in
+  `tests/test_correctness.py`). See VER-197.
 
 Install and run locally (the `dev` extra installs both `ruff` and
 `pre-commit`):
@@ -775,7 +789,11 @@ Install and run locally (the `dev` extra installs both `ruff` and
 .venv/bin/ruff check tests/                 # same check, no pre-commit
 ```
 
-The hook runs automatically on `git commit` for any staged Python file under
-`tests/` (the `files: ^tests/.*\.py$` pattern matches subdirectories too).
-Adding or moving an unused import to `tests/` makes the commit fail with an
-`F401` diagnostic; `ruff check --fix tests/` removes it.
+Both hooks run automatically on `git commit` for any staged Python file
+under `tests/` (the `files: ^tests/.*\.py$` pattern matches
+subdirectories too). Adding or moving an unused import to `tests/`
+makes the commit fail with an `F401` diagnostic; `ruff check --fix
+tests/` removes it. Adding a `spec_from_file_location(...)` call in
+a new test file fails the commit with a pointer to the canonical
+loader; switch to the `amc` fixture or annotate the line with
+`# noqa: amc-load`.
