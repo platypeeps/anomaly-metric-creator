@@ -414,15 +414,42 @@ def test_format_metric_suffix_single_column_returns_copy(amc):
 
     The caller mutates the returned array via further ``np.char.add``;
     if the helper returned a view of ``str_vals[:, 0]`` the writer
-    would corrupt the source. The assertion checks both byte content
-    and identity to defend against an accidental view return.
+    would corrupt the source. ``np.shares_memory`` is the robust check
+    here — ``suffix is not str_vals[:, 0]`` would always be true
+    because ``str_vals[:, 0]`` returns a fresh view object on each
+    access regardless of whether the data buffer is shared.
     """
     str_vals = np.array([["1.000"], ["2.000"]], dtype="U5")
     suffix = amc._format_metric_suffix(str_vals)
     assert suffix.tolist() == ["1.000", "2.000"]
-    # Must not alias the input column; the writer concatenates onto it.
-    assert suffix.base is not str_vals
-    assert suffix is not str_vals[:, 0]
+    # Real aliasing check: the returned array's buffer must not overlap
+    # the source array's buffer.
+    assert not np.shares_memory(suffix, str_vals), (
+        "single-column _format_metric_suffix returned an alias of "
+        "str_vals[:, 0]; downstream np.char.add would mutate the source."
+    )
+
+
+def test_format_metric_suffix_multi_column_does_not_alias(amc):
+    """Multi-column inputs must also produce a non-aliasing buffer.
+
+    The multi-column path relies on the first ``np.char.add`` call to
+    allocate a fresh array (so the helper can skip the explicit
+    ``.copy()`` for the optimization win). This test pins that
+    guarantee independent of the implementation choice: regardless of
+    whether the helper copies eagerly or relies on the add-loop to
+    allocate, the returned suffix must not share memory with
+    ``str_vals``.
+    """
+    str_vals = np.array(
+        [["1.000", "2.000"], ["3.000", "4.000"]], dtype="U5",
+    )
+    suffix = amc._format_metric_suffix(str_vals)
+    assert suffix.tolist() == ["1.000,2.000", "3.000,4.000"]
+    assert not np.shares_memory(suffix, str_vals), (
+        "multi-column _format_metric_suffix returned an alias of "
+        "str_vals; downstream np.char.add would mutate the source."
+    )
 
 
 def test_format_csv_row_block_dimensionless_layout(amc):
@@ -469,9 +496,11 @@ def test_format_csv_row_block_applies_dst_splice_in_long_form(amc):
     for free — a future caller that relaxes the ``parse_args``
     mutual-exclusion guard will not regress that bug.
     """
-    # Cover 03:59:58 → 04:00:01 with one row every second so the
-    # 02:00–02:59 splice window is small enough to assert exactly.
-    # Use day 1's 02:00–02:59 wall-clock range.
+    # Walk a narrow window of one-second timestamps that straddles the
+    # 02:00–02:59 splice range (from 01:59:58 through 03:00:00) so we
+    # can assert the exact duplicated indices without generating an
+    # 86,400-row component CSV. The splice covers day 1's
+    # 02:00–02:59 wall-clock range.
     day_str = amc.START.strftime("%Y-%m-%d")
     seconds = [
         f"{day_str} 01:59:58",

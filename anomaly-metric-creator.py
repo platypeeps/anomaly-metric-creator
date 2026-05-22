@@ -1186,12 +1186,16 @@ def _format_metric_suffix(str_vals: np.ndarray) -> np.ndarray:
     string per row, with no leading comma. Callers prepend the
     ``timestamp,<optional_dims>,`` head via ``_format_csv_row_block``.
 
-    Single-column components: the first column is copied (not aliased) so
-    the caller's subsequent ``np.char.add`` operations cannot mutate the
-    source array.
+    Aliasing safety: when ``n_cols >= 2`` the first ``np.char.add`` call
+    returns a fresh array, so we can start from a view of column 0 and
+    rely on the loop to allocate. When ``n_cols == 1`` the loop never
+    runs, so we must explicitly copy column 0 to avoid the caller's
+    downstream ``np.char.add`` mutating the source array.
     """
     n_cols = str_vals.shape[1]
-    suffix = str_vals[:, 0].copy()
+    if n_cols == 1:
+        return str_vals[:, 0].copy()
+    suffix = str_vals[:, 0]
     for col in range(1, n_cols):
         suffix = np.char.add(suffix, ",")
         suffix = np.char.add(suffix, str_vals[:, col])
