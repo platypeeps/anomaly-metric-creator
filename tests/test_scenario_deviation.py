@@ -33,6 +33,7 @@ when later phases re-tune saturation parameters or add new edges.
 import contextlib
 import csv
 import io
+import json
 import shutil
 from pathlib import Path
 
@@ -41,7 +42,8 @@ import pytest
 
 
 def _run_scenario(amc, out_dir: Path, *, scenario: str, days: int,
-                  signal_level: str, exclude: bool) -> None:
+                  signal_level: str, exclude: bool,
+                  extra_args: list[str] | None = None) -> None:
     """Drive ``amc.main`` for one scenario run into ``out_dir``.
 
     Uses ``contextlib.redirect_stderr`` to scope the stderr capture to the
@@ -63,6 +65,8 @@ def _run_scenario(amc, out_dir: Path, *, scenario: str, days: int,
         "--scenarios", scenario,
         "--signal-level", signal_level,
     ]
+    if extra_args:
+        argv += list(extra_args)
     if exclude:
         argv += ["--exclude-scenarios", scenario]
     stderr_buf = io.StringIO()
@@ -107,6 +111,81 @@ def _signal_level_for(scenario) -> str:
     return sev if sev in ("medium", "high") else "low"
 
 
+def _scenario_uses_id_filter(scenario) -> bool:
+    """Return True if any spec declares an id-based instance_filter."""
+    return any(
+        "instance_filter" in spec and not callable(spec["instance_filter"])
+        for _, spec in (*scenario.primary_specs, *scenario.cascade_specs)
+    )
+
+
+def _scenario_uses_callable_filter(scenario) -> bool:
+    """Return True if any spec declares a callable instance_filter."""
+    return any(
+        "instance_filter" in spec and callable(spec["instance_filter"])
+        for _, spec in (*scenario.primary_specs, *scenario.cascade_specs)
+    )
+
+
+def _extra_args_for_scenario(amc, scenario, slug: str, base_tmp: Path) -> list[str]:
+    """Return CLI args needed for instance-filtered scenarios to manifest.
+
+    The default single anonymous ``Instance()`` deliberately does not match
+    id-based filters like ``["i0"]`` or dimension predicates like
+    ``inst.az == "us-east-1a"``.  Those scenarios need a non-anonymous
+    topology in both the active and baseline runs, otherwise the generator
+    correctly warns and skips the filtered specs before they can reach
+    ``anomalies.csv``.
+    """
+    uses_callable_filter = _scenario_uses_callable_filter(scenario)
+    if uses_callable_filter:
+        cfg: dict = {"components": {}}
+        for component in amc.COMPONENTS:
+            cfg["components"][component] = [
+                {"id": "i0", "pod": "pod-0", "az": "us-east-1a"},
+                {"id": "i1", "pod": "pod-1", "az": "us-west-2a"},
+            ]
+        cfg_path = base_tmp / f"_instance_cfg_{slug}.json"
+        cfg_path.write_text(json.dumps(cfg, sort_keys=True), encoding="utf-8")
+        return ["--instance-config", str(cfg_path)]
+
+    if _scenario_uses_id_filter(scenario):
+        return ["--instances-per-component", "3"]
+
+    return []
+
+
+def _timestamp_index_map(timestamps: list[str]) -> dict[str, list[int]]:
+    """Map each timestamp to all matching row indexes.
+
+    Multi-instance component CSVs repeat the same timestamp once per instance
+    block.  Keeping every index lets the deviation check compare every matching
+    instance window instead of accidentally selecting only the last instance.
+    """
+    out: dict[str, list[int]] = {}
+    for i, ts in enumerate(timestamps):
+        out.setdefault(ts, []).append(i)
+    return out
+
+
+def _max_span_deviation(
+    vals_a, vals_b, starts_a, ends_a, starts_b, ends_b
+) -> float | None:
+    """Return max absolute active-vs-baseline deviation over matching spans."""
+    max_dev: float | None = None
+    for i_a_start, i_a_end, i_b_start, i_b_end in zip(
+        starts_a, ends_a, starts_b, ends_b
+    ):
+        a_window = vals_a[i_a_start:i_a_end + 1]
+        b_window = vals_b[i_b_start:i_b_end + 1]
+        m = min(len(a_window), len(b_window))
+        if m == 0:
+            continue
+        dev = float(np.max(np.abs(a_window[:m] - b_window[:m])))
+        max_dev = dev if max_dev is None else max(max_dev, dev)
+    return max_dev
+
+
 @pytest.fixture(scope="session")
 def scenario_deviation_results(amc, tmp_path_factory):
     """Run every scenario twice (active + exclude-as-baseline) and return a
@@ -126,12 +205,15 @@ def scenario_deviation_results(amc, tmp_path_factory):
     for slug, scenario in amc.SCENARIOS.items():
         days = scenario.days_required
         signal_level = _signal_level_for(scenario)
+        extra_args = _extra_args_for_scenario(amc, scenario, slug, base_tmp)
         active_dir = base_tmp / f"{slug}_active"
         baseline_dir = base_tmp / f"{slug}_baseline"
         _run_scenario(amc, active_dir, scenario=slug, days=days,
-                      signal_level=signal_level, exclude=False)
+                      signal_level=signal_level, exclude=False,
+                      extra_args=extra_args)
         _run_scenario(amc, baseline_dir, scenario=slug, days=days,
-                      signal_level=signal_level, exclude=True)
+                      signal_level=signal_level, exclude=True,
+                      extra_args=extra_args)
 
         with open(active_dir / "anomalies.csv", newline="", encoding="utf-8") as fh:
             rows = list(csv.DictReader(fh))
@@ -156,8 +238,8 @@ def scenario_deviation_results(amc, tmp_path_factory):
                                          None, None, None)
                 else:
                     base_std = float(np.std(vals_b))
-                    ts_to_idx_a = {t: i for i, t in enumerate(ts_a)}
-                    ts_to_idx_b = {t: i for i, t in enumerate(ts_b)}
+                    ts_to_idx_a = _timestamp_index_map(ts_a)
+                    ts_to_idx_b = _timestamp_index_map(ts_b)
                     column_cache[key] = (ts_a, vals_a, ts_b, vals_b,
                                          base_std, ts_to_idx_a, ts_to_idx_b)
             (ts_a, vals_a, ts_b, vals_b,
@@ -175,11 +257,11 @@ def scenario_deviation_results(amc, tmp_path_factory):
 
             span_start = r["span_start"] or r["timestamp"]
             span_end = r["span_end"] or r["timestamp"]
-            i_a_start = ts_to_idx_a.get(span_start)
-            i_a_end = ts_to_idx_a.get(span_end)
-            i_b_start = ts_to_idx_b.get(span_start)
-            i_b_end = ts_to_idx_b.get(span_end)
-            if None in (i_a_start, i_a_end, i_b_start, i_b_end):
+            i_a_starts = ts_to_idx_a.get(span_start)
+            i_a_ends = ts_to_idx_a.get(span_end)
+            i_b_starts = ts_to_idx_b.get(span_start)
+            i_b_ends = ts_to_idx_b.get(span_end)
+            if None in (i_a_starts, i_a_ends, i_b_starts, i_b_ends):
                 per_scenario.append({
                     "component": comp, "metric": metric,
                     "ts": r["timestamp"], "span": (span_start, span_end),
@@ -189,10 +271,18 @@ def scenario_deviation_results(amc, tmp_path_factory):
                 })
                 continue
 
-            a_window = vals_a[i_a_start:i_a_end + 1]
-            b_window = vals_b[i_b_start:i_b_end + 1]
-            m = min(len(a_window), len(b_window))
-            dev = float(np.max(np.abs(a_window[:m] - b_window[:m])))
+            dev = _max_span_deviation(
+                vals_a, vals_b, i_a_starts, i_a_ends, i_b_starts, i_b_ends
+            )
+            if dev is None:
+                per_scenario.append({
+                    "component": comp, "metric": metric,
+                    "ts": r["timestamp"], "span": (span_start, span_end),
+                    "is_cascade": r["is_cascade"], "max_dev": None,
+                    "base_std": base_std, "ratio": None,
+                    "note": "anomaly row dropped from CSV",
+                })
+                continue
             # When the baseline column is perfectly constant
             # (base_std == 0), a non-zero deviation is "infinite
             # signal" and passes the >1σ gate; but a zero deviation

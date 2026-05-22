@@ -382,15 +382,59 @@ class Scenario:
 
 
 def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
-                    rng: "np.random.RandomState") -> np.ndarray:
-    """Vectorized natural-value column. Multiplier/additive must accept arrays."""
-    col = np.full(elapsed.shape, spec.base, dtype=np.float64)
-    if spec.std > 0:
-        col += rng.normal(0.0, spec.std, elapsed.shape[0])
-    if spec.multiplier is not None:
-        col *= spec.multiplier(ts_array, elapsed)
-    if spec.additive is not None:
+                    rng: "np.random.RandomState",
+                    *,
+                    noise: np.ndarray | None = None,
+                    latency_factor: np.ndarray | None = None,
+                    error_offset: np.ndarray | None = None,
+                    baseline_override: np.ndarray | None = None) -> np.ndarray:
+    """Vectorized natural-value column. Multiplier/additive must accept arrays.
+
+    The optional kwargs decouple two pieces of state that were previously
+    baked into ``MetricSpec.multiplier`` / ``MetricSpec.additive`` lambdas
+    by ``_compose_topology_*_specs``. They are byte-identical to the
+    pre-VER-158 lambda-baked path when called with ``latency_factor`` and
+    ``error_offset`` equal to what the lambdas would have computed, and
+    they unlock the VER-158 per-instance saturation path where each
+    instance's curve depends on its own upstream view:
+
+    * ``noise`` — pre-drawn ``rng.normal(0, spec.std, n_rows)`` array.
+      When provided, the function uses it instead of drawing fresh
+      noise so multiple call sites (e.g. one per instance) can share
+      the same noise floor without advancing the RNG more than once.
+      Pass ``None`` to keep the historic single-call draw.
+    * ``latency_factor`` — per-row multiplicative array applied
+      *between* the natural multiplier and the natural additive,
+      matching where ``_compose_topology_saturation_specs`` baked the
+      saturation latency multiplier into ``MetricSpec.multiplier``.
+    * ``error_offset`` — per-row additive array applied *after* the
+      natural additive and *before* ``clip_min``, matching where the
+      saturation error offset was baked into ``MetricSpec.additive``.
+    * ``baseline_override`` — per-row array that REPLACES the natural
+      baseline (used by per-instance coupling where the downstream
+      load metric is fully baked from upstream views). Composes with
+      ``latency_factor`` / ``error_offset`` after the replacement.
+      Mirrors what ``_compose_topology_coupled_specs`` produces by
+      replacing ``base=0, std=0, multiplier=None,
+      additive=lambda: coupled`` on the spec — the override is the
+      ``coupled`` array exactly.
+    """
+    if baseline_override is not None:
+        col = np.array(baseline_override, dtype=np.float64, copy=True)
+    else:
+        col = np.full(elapsed.shape, spec.base, dtype=np.float64)
+        if spec.std > 0:
+            if noise is None:
+                noise = rng.normal(0.0, spec.std, elapsed.shape[0])
+            col += noise
+        if spec.multiplier is not None:
+            col *= spec.multiplier(ts_array, elapsed)
+    if latency_factor is not None:
+        col *= latency_factor
+    if baseline_override is None and spec.additive is not None:
         col += spec.additive(ts_array, elapsed)
+    if error_offset is not None:
+        col += error_offset
     if spec.clip_min is not None:
         np.maximum(col, spec.clip_min, out=col)
     return col
@@ -452,6 +496,9 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        dst_inject_day=0, ctx: "RunContext",
                        instances: list["Instance"] | None = None,
                        topology_capture: dict[str, dict[str, np.ndarray]] | None = None,
+                       topology_capture_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = None,
+                       coupling_arrays_per_instance: list[dict[str, np.ndarray]] | None = None,
+                       saturation_arrays_per_instance: list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]] | None = None,
                        apply_dtype_int_cast: bool = True):
     """
     specs: list of MetricSpec (one per CSV column, in column order)
@@ -635,8 +682,152 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # Natural values: one column array per metric, computed in a single numpy op.
     n_cols = len(specs)
     values = np.empty((n_rows, n_cols), dtype=np.float64)
-    for col, spec in enumerate(specs):
-        values[:, col] = _natural_column(spec, ts_array, elapsed, rng)
+
+    # VER-158 phase 8: per-instance topology dispatch. When the caller
+    # passes per-instance coupling / saturation arrays (under
+    # ``--topology-mode realistic`` with N>1 or a non-default
+    # instance config), each instance K consumes its own arrays via
+    # ``_natural_column``'s ``baseline_override`` / ``latency_factor``
+    # / ``error_offset`` kwargs. Under symmetric upstream (no
+    # ``instance_filter`` on an upstream load metric) the arrays are
+    # byte-identical across instances → fast-path single draw shared
+    # across all instances preserves today's locked N=3 hashes.
+    # Under asymmetric upstream the arrays diverge → per-instance
+    # natural-column draws (with shared noise via the ``noise=``
+    # kwarg so the noise floor matches the symmetric case).
+    use_per_instance_topology = (
+        coupling_arrays_per_instance is not None
+        and saturation_arrays_per_instance is not None
+    )
+    # Reject the half-passed shape up front so programmatic callers
+    # see a clear error rather than a silent fall-back to the legacy
+    # shared-arrays path that would emit wrong per-instance values.
+    if (
+        (coupling_arrays_per_instance is None)
+        != (saturation_arrays_per_instance is None)
+    ):
+        raise ValueError(
+            f"generate_component({component_name!r}) requires both "
+            "coupling_arrays_per_instance and saturation_arrays_per_instance "
+            "or neither; got "
+            f"coupling={'present' if coupling_arrays_per_instance is not None else 'None'} "
+            f"saturation={'present' if saturation_arrays_per_instance is not None else 'None'}."
+        )
+    pre_populated_per_instance_eager: dict[int, np.ndarray] = {}
+    if use_per_instance_topology:
+        n_inst_local = len(instances)
+        # Defensive shape check: the per-instance arrays are indexed by
+        # instance position below ([0] for the fast path, range() for
+        # the divergent loop). A mismatched length would surface as a
+        # confusing IndexError mid-loop; raise a clear ValueError up
+        # front so programmatic callers see exactly which list is the
+        # wrong shape. ``main()`` always passes lists built from
+        # ``_compute_topology_arrays_per_instance`` with this length,
+        # so this branch only catches third-party or test misuse.
+        if (
+            len(coupling_arrays_per_instance) != n_inst_local
+            or len(saturation_arrays_per_instance) != n_inst_local
+        ):
+            raise ValueError(
+                f"generate_component({component_name!r}) per-instance "
+                f"topology arrays must match len(instances)={n_inst_local}; "
+                f"got coupling_arrays_per_instance="
+                f"{len(coupling_arrays_per_instance)} and "
+                f"saturation_arrays_per_instance="
+                f"{len(saturation_arrays_per_instance)}."
+            )
+        # Identify which specific instances diverge from instance 0 so
+        # the divergent path only allocates per-instance buffers for
+        # the instances that actually need them. At N=20 with a single
+        # asymmetric upstream pod, this saves 18 full (n_rows × n_cols)
+        # buffers compared to the previous "allocate-N-up-front" shape
+        # (~9.7 GB at 7d / 1s / N=20 / 10 metrics).
+        #
+        # Divergence is always re-derived from the passed arrays so
+        # correctness does not depend on any caller-supplied hint.
+        divergent_instances: set[int] = set()
+        if n_inst_local > 1:
+            ref_coupling = coupling_arrays_per_instance[0]
+            ref_saturation = saturation_arrays_per_instance[0]
+            for inst_idx_k in range(1, n_inst_local):
+                if not _arrays_equal_dict(
+                    coupling_arrays_per_instance[inst_idx_k], ref_coupling
+                ) or not _sat_tuples_equal_dict(
+                    saturation_arrays_per_instance[inst_idx_k], ref_saturation
+                ):
+                    divergent_instances.add(inst_idx_k)
+
+        if not divergent_instances:
+            # Shared fast path — one draw per metric, reusable across instances.
+            coupling = coupling_arrays_per_instance[0]
+            saturation = saturation_arrays_per_instance[0]
+            for col, spec in enumerate(specs):
+                baseline_override = coupling.get(spec.name)
+                lf, eo = saturation.get(spec.name, (None, None))
+                values[:, col] = _natural_column(
+                    spec, ts_array, elapsed, rng,
+                    latency_factor=lf, error_offset=eo,
+                    baseline_override=baseline_override,
+                )
+        else:
+            # Divergent — write instance 0 into ``values`` (already
+            # allocated) and allocate per-instance buffers only for
+            # the instances that diverge. Noise per metric is drawn
+            # once and shared so the only divergence flows through
+            # topology arrays. Non-divergent instances stay on
+            # ``values`` via the missing-key lookup in
+            # ``per_instance_values`` below.
+            divergent_buffers: dict[int, np.ndarray] = {
+                inst_idx_k: np.empty((n_rows, n_cols), dtype=np.float64)
+                for inst_idx_k in divergent_instances
+            }
+            for col, spec in enumerate(specs):
+                shared_noise = None
+                if spec.std > 0 and (
+                    coupling_arrays_per_instance[0].get(spec.name) is None
+                ):
+                    # Coupled metrics have a baseline_override that replaces the
+                    # natural draw entirely — drawing noise would advance the RNG
+                    # without producing any output difference. Probe instance 0
+                    # only: the per-instance composer assigns a coupling
+                    # baseline_override consistently across instances for a
+                    # given metric (either all instances get an override or
+                    # none do — the existence of an override per metric is
+                    # gated on whether any incoming edge contributed, which
+                    # is decided once per metric in
+                    # ``_compute_topology_arrays_per_instance``), so instance
+                    # 0's presence is a faithful proxy for whether *any*
+                    # instance will use the natural baseline path.
+                    shared_noise = rng.normal(0.0, spec.std, n_rows)
+                # Instance 0 always writes into ``values`` (the shared
+                # buffer).
+                coupling0 = coupling_arrays_per_instance[0]
+                saturation0 = saturation_arrays_per_instance[0]
+                baseline_override0 = coupling0.get(spec.name)
+                lf0, eo0 = saturation0.get(spec.name, (None, None))
+                values[:, col] = _natural_column(
+                    spec, ts_array, elapsed, rng,
+                    noise=shared_noise,
+                    latency_factor=lf0, error_offset=eo0,
+                    baseline_override=baseline_override0,
+                )
+                for inst_idx_k in divergent_instances:
+                    coupling = coupling_arrays_per_instance[inst_idx_k]
+                    saturation = saturation_arrays_per_instance[inst_idx_k]
+                    baseline_override = coupling.get(spec.name)
+                    lf, eo = saturation.get(spec.name, (None, None))
+                    divergent_buffers[inst_idx_k][:, col] = _natural_column(
+                        spec, ts_array, elapsed, rng,
+                        noise=shared_noise,
+                        latency_factor=lf, error_offset=eo,
+                        baseline_override=baseline_override,
+                    )
+            for inst_idx_k, buf in divergent_buffers.items():
+                pre_populated_per_instance_eager[inst_idx_k] = buf
+    else:
+        # Today's path: shared lambda-baked specs, single natural draw per column.
+        for col, spec in enumerate(specs):
+            values[:, col] = _natural_column(spec, ts_array, elapsed, rng)
 
     # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
     # CSV stay coherent: a dropped row has no CSV entry, so it must have no
@@ -656,7 +847,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # ``(row_idx, span_idx, aspec)`` triple in sorted order, regardless of
     # filter resolution.
     name_to_col = {s.name: i for i, s in enumerate(specs)}
-    per_instance_values: dict[int, np.ndarray] = {}
+    per_instance_values: dict[int, np.ndarray] = dict(pre_populated_per_instance_eager)
     for row_idx, aspec, t_within, span_idx in sorted_overrides:
         if drop_mask[row_idx]:
             continue
@@ -787,11 +978,98 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             canonical_up, supplementary_up = entry
             load_metrics = (canonical_up, *supplementary_up)
             captured: dict[str, np.ndarray] = {}
+            # When per-instance buffers diverged from the shared
+            # ``values`` (an ``instance_filter`` partial override on a
+            # load metric, or per-instance topology produced divergent
+            # baselines), an instance-0-only capture biases every
+            # downstream consumer of the aggregate ``topology_capture``
+            # view. Mirror the documented "uniform fan-out — mean
+            # across upstream pods" contract by averaging across all
+            # instance buffers (instance 0 is ``values``; the rest
+            # live in ``per_instance_values``). When no buffer
+            # diverged, the average equals ``values`` exactly and
+            # the captured bytes are unchanged.
+            inst_count = len(instances)
+            may_diverge = bool(per_instance_values) and inst_count > 1
             for lm in load_metrics:
                 if lm and lm in name_to_col:
-                    captured[lm] = values[:, name_to_col[lm]].copy()
+                    col_idx = name_to_col[lm]
+                    shared_col = values[:, col_idx]
+                    captured_col: np.ndarray | None = None
+                    if may_diverge:
+                        # ``per_instance_values`` may be populated by a
+                        # filter on a *non-load* metric, in which case
+                        # the load column is byte-identical across all
+                        # instances and the historic ``shared_col.copy()``
+                        # capture stays byte-exact. Only switch to the
+                        # equal-weight mean when at least one
+                        # per-instance buffer actually diverged on
+                        # this load column.
+                        any_diverged = False
+                        for buf in per_instance_values.values():
+                            if not np.array_equal(
+                                buf[:, col_idx], shared_col
+                            ):
+                                any_diverged = True
+                                break
+                        if any_diverged:
+                            # Incremental sum-then-divide avoids the
+                            # ``(N_instances × n_rows)`` temporary
+                            # ``np.stack`` would allocate. Same
+                            # equal-weight mean as ``np.mean`` over the
+                            # stacked array but at O(n_rows) extra
+                            # memory instead of O(N_instances × n_rows).
+                            #
+                            # Use ``per_instance_values.get(k, values)``
+                            # for *every* k including 0 so an
+                            # ``instance_filter`` that targets pod 0
+                            # (forking only ``per_instance_values[0]``
+                            # while other pods stay on the shared
+                            # ``values`` baseline) still contributes
+                            # pod-0's forked buffer to the aggregate.
+                            # ``shared_col`` is ``values[:, col_idx]``
+                            # and would silently skip pod 0's diverged
+                            # buffer if used as the initial accumulator.
+                            buf0 = per_instance_values.get(0, values)
+                            captured_col = buf0[:, col_idx].astype(
+                                np.float64, copy=True
+                            )
+                            for inst_idx_k in range(1, inst_count):
+                                buf = per_instance_values.get(
+                                    inst_idx_k, values
+                                )
+                                captured_col += buf[:, col_idx]
+                            captured_col /= inst_count
+                    if captured_col is None:
+                        captured_col = shared_col.copy()
+                    captured[lm] = captured_col
             if captured:
                 topology_capture[component_name] = captured
+
+    # VER-158 phase 8: per-instance load-metric capture for downstream
+    # consumers. Mirrors ``topology_capture`` above but produces one
+    # entry per instance. Under symmetric upstream (no
+    # ``instance_filter`` on load metrics) every entry references a
+    # copy of the same underlying column, so downstream composers
+    # collapse back to the shared-arrays fast path and N=3 byte
+    # parity holds.
+    if topology_capture_by_instance is not None:
+        entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
+        if entry is not None:
+            canonical_up, supplementary_up = entry
+            load_metrics = (canonical_up, *supplementary_up)
+            per_inst_caps: list[dict[str, np.ndarray]] = []
+            for inst_idx_k in range(len(instances)):
+                buf = per_instance_values.get(inst_idx_k, values)
+                inst_captured: dict[str, np.ndarray] = {}
+                for lm in load_metrics:
+                    if lm and lm in name_to_col:
+                        inst_captured[lm] = buf[:, name_to_col[lm]].copy()
+                per_inst_caps.append(inst_captured)
+            # Only record when at least one entry has captures; aligns
+            # with the shared ``topology_capture`` guard above.
+            if any(per_inst_caps):
+                topology_capture_by_instance[component_name] = per_inst_caps
 
     np.round(values, 3, out=values)
     for buf in per_instance_values.values():
@@ -2739,6 +3017,446 @@ def _compose_topology_saturation_specs(
         new_specs[idx] = dataclasses.replace(original, additive=new_add)
 
     return new_specs
+
+
+# ------------------------------------------------------------------
+# Per-instance topology (VER-158 phase 8).
+# ------------------------------------------------------------------
+# When ``--instances-per-component N > 1`` (or any non-default
+# ``--instance-config``), the topology two-pass generation runs against
+# each downstream instance's *matching* upstream view rather than the
+# shared aggregate. The matching rule depends on the per-edge upstream
+# vs. downstream cardinality:
+#
+# * **1:1 routing (matched cardinalities, ``len(upstream_instances) ==
+#   len(downstream_instances)``).** Downstream instance ``K`` sees
+#   upstream instance ``K`` exclusively for that edge. This is the
+#   "matching instance set" branch from the VER-158 issue scope; it
+#   delivers the per-pod isolation the test verifies (a slow upstream
+#   pod only saturates the corresponding downstream pod).
+# * **Uniform fan-out (mismatched cardinalities).** Downstream instance
+#   ``K`` sees the mean of all upstream instances' load — equivalent to
+#   the issue's "edge weight divided by downstream cardinality" formula
+#   averaged over ``N_up`` upstream pods. This is the fallback when the
+#   1:1 mapping is undefined and matches the existing N=1-vs-N=1
+#   aggregate behavior at the limit.
+#
+# Under symmetric upstream (no ``instance_filter`` on an upstream load
+# metric, the default for every shipped scenario), every per-instance
+# upstream view equals the shared aggregate view, so the per-instance
+# saturation / coupling arrays collapse to the shared arrays and the
+# CSV bytes are byte-identical to the pre-VER-158 default-N=3 run. The
+# locked ``N3_ONE_DAY_HASHES`` and ``N3_SEVEN_DAY_HASHES`` in
+# ``tests/test_instances_per_component.py`` continue to hold without
+# re-baselining.
+
+def _matched_cardinality(upstream_inst_count: int, downstream_inst_count: int) -> bool:
+    """Return True when 1:1 routing applies between source and target.
+
+    Routes via ``upstream_instances[K] -> downstream_instances[K]``
+    when both sides have the same number of instances. Otherwise the
+    composer falls back to uniform fan-out (averaging across upstream
+    pods) — see the module-level comment above.
+
+    Only ``N == N`` matched lengths are 1:1; the helper treats any
+    other shape (including ``N_up == 1`` against ``N_down > 1`` or vice
+    versa) as the uniform-fan-out fallback so per-instance views are
+    well-defined for any combination.
+    """
+    return (
+        upstream_inst_count == downstream_inst_count
+        and upstream_inst_count > 0
+    )
+
+
+def _per_instance_upstream_view(
+    upstream_name: str,
+    upstream_arrays_by_instance: list[dict[str, np.ndarray]] | None,
+    upstream_arrays_shared: dict[str, np.ndarray] | None,
+    downstream_inst_count: int,
+    downstream_inst_idx: int,
+    *,
+    uniform_fanout_cache: dict[str, dict[str, np.ndarray]] | None = None,
+) -> dict[str, np.ndarray] | None:
+    """Return the captured-column dict that downstream instance K should
+    consume from ``upstream_name``.
+
+    Dispatches between the matched-cardinality 1:1 branch and the
+    uniform fan-out branch, both producing a ``dict[metric_name,
+    np.ndarray]`` shaped identically to ``upstream_arrays_shared`` so
+    the existing ``_compose_topology_coupled_specs`` /
+    ``_compose_topology_saturation_specs`` math can be re-used per
+    instance.
+
+    Returns ``None`` when no upstream capture is available — the
+    composer skips this edge so a ``--components`` subset that drops
+    the upstream degrades gracefully (identical to the N=1 path's
+    ``upstream not in upstream_arrays`` guard).
+
+    ``uniform_fanout_cache`` (optional) memoizes the averaged upstream
+    dict by ``upstream_name``. Under mismatched cardinality the
+    averaged view is identical for every downstream instance, so
+    callers that loop across downstream instances pass a shared dict
+    to avoid repeating the incremental sum-then-divide averaging work
+    (O(N_down * N_up * n_rows) → O(N_up * n_rows)). Pass ``None`` for
+    one-shot callers.
+    """
+    if upstream_arrays_by_instance is None:
+        # No per-instance capture available for the upstream — fall
+        # back to the shared aggregate view, equivalent to today's
+        # N=1 path. This branch fires for N=1 upstream components in
+        # mixed-N scenarios (the only mixed-N entry path is
+        # ``--instance-config`` with a partial ``components`` map).
+        return upstream_arrays_shared
+    if not upstream_arrays_by_instance:
+        return None
+    n_up = len(upstream_arrays_by_instance)
+    if _matched_cardinality(n_up, downstream_inst_count):
+        return upstream_arrays_by_instance[downstream_inst_idx]
+    if uniform_fanout_cache is not None:
+        cached = uniform_fanout_cache.get(upstream_name)
+        if cached is not None:
+            return cached
+    # Uniform fan-out: average across upstream pods. Each downstream
+    # pod sees the same averaged view, so per-pod variation under this
+    # branch only emerges from local saturation noise / coupling math
+    # rather than from upstream asymmetry. The upstream instances
+    # share the same metric-key set because they came from the same
+    # MetricSpec list in ``generate_component``.
+    averaged: dict[str, np.ndarray] = {}
+    metric_keys = set()
+    for entry in upstream_arrays_by_instance:
+        metric_keys.update(entry.keys())
+    for metric in metric_keys:
+        arrays = [
+            entry[metric] for entry in upstream_arrays_by_instance
+            if metric in entry
+        ]
+        if not arrays:
+            continue
+        # Incremental sum-then-divide. Equal-weight mean as ``np.mean``
+        # over the stacked array, but at O(n_rows) extra memory instead
+        # of O(N_up × n_rows) — the ``np.stack`` allocation can become
+        # multi-MB per metric for large ``N_up`` and 7-day runs.
+        acc = arrays[0].astype(np.float64, copy=True)
+        for arr in arrays[1:]:
+            acc += arr
+        acc /= len(arrays)
+        averaged[metric] = acc
+    if uniform_fanout_cache is not None:
+        uniform_fanout_cache[upstream_name] = averaged
+    return averaged
+
+
+def _compute_topology_arrays_per_instance(
+    component_name: str,
+    specs: list[MetricSpec],
+    upstream_arrays_shared: dict[str, dict[str, np.ndarray]],
+    upstream_arrays_by_instance: dict[str, list[dict[str, np.ndarray]]],
+    instances: list["Instance"],
+    rng: "np.random.RandomState",
+    n_rows: int,
+) -> tuple[
+    list[dict[str, np.ndarray]],
+    list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]],
+]:
+    """Compute per-instance coupling and saturation arrays for ``component_name``.
+
+    Returns ``(coupling_by_instance, saturation_by_instance)``:
+
+    * ``coupling_by_instance[K][metric_name]`` is the per-row coupled
+      baseline array for downstream instance ``K``'s coupled load
+      metrics (replaces the natural baseline in ``_natural_column``
+      via ``baseline_override``). Absent metrics fall back to the
+      natural draw.
+    * ``saturation_by_instance[K][metric_name]`` is the
+      ``(latency_factor, error_offset)`` tuple applied to instance
+      ``K``'s saturation-target metrics (composes with
+      ``MetricSpec.multiplier`` / ``MetricSpec.additive`` via the
+      ``_natural_column`` kwargs).
+
+    Divergence detection (which instances diverge from instance 0)
+    is intentionally not returned. ``generate_component`` re-derives
+    it directly from the passed arrays via ``_arrays_equal_dict`` /
+    ``_sat_tuples_equal_dict`` so correctness does not depend on a
+    caller-supplied hint that could drift from the actual array
+    contents.
+
+    Shared ``rng.normal`` noise for callable+constant coupling is
+    drawn once and reused across all instances so the
+    ``_TOPOLOGY_COUPLE_NOISE_STD`` floor sits at the same magnitude
+    today's shared draw produces under symmetric upstream — that
+    keeps per-instance arrays under symmetric upstream byte-identical
+    to the shared array a single ``_compose_topology_coupled_specs``
+    call would produce.
+    """
+    n_inst = len(instances)
+    coupling_by_instance: list[dict[str, np.ndarray]] = [{} for _ in range(n_inst)]
+    saturation_by_instance: list[
+        dict[str, tuple[np.ndarray | None, np.ndarray | None]]
+    ] = [{} for _ in range(n_inst)]
+
+    coupled_entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
+    sat_targets = _TOPOLOGY_SATURATION_TARGETS.get(component_name)
+
+    # Determine which downstream metrics need either coupling or
+    # saturation arrays.
+    coupled_metric_names: tuple[str, ...] = ()
+    if coupled_entry is not None:
+        coupled_metric_names = (coupled_entry[0], *coupled_entry[1])
+    latency_metrics: tuple[str, ...] = ()
+    error_metrics: tuple[str, ...] = ()
+    if sat_targets is not None:
+        latency_metrics, error_metrics = sat_targets
+
+    name_to_idx = {s.name: i for i, s in enumerate(specs)}
+
+    # Collect incoming edges once. Each entry is (upstream_name, Edge).
+    # Filter to upstreams that actually have captured load arrays —
+    # mirrors ``_compose_topology_coupled_specs``'s
+    # ``if upstream not in upstream_arrays: continue`` guard so a
+    # ``--components`` subset that drops an upstream (or a
+    # ``--metrics-per-component`` trim that removes the canonical load
+    # column) degrades gracefully *and* keeps the RNG draw schedule
+    # aligned with the legacy path: ``shared_coupling_noise`` below
+    # advances ``rng`` only when at least one upstream is actually
+    # contributing, exactly as the lambda-baked composer does.
+    incoming: list[tuple[str, Edge]] = []
+    for upstream, edges in TOPOLOGY.items():
+        if (
+            upstream not in upstream_arrays_shared
+            and upstream not in upstream_arrays_by_instance
+        ):
+            continue
+        for edge in edges:
+            if edge.target == component_name:
+                incoming.append((upstream, edge))
+    if not incoming:
+        return coupling_by_instance, saturation_by_instance
+
+    # Shared callable+constant noise per coupled metric — drawn lazily
+    # the *first* time a metric produces an active contribution, then
+    # cached across instances so symmetric upstream stays byte-identical
+    # to today's shared draw. Lazy initialization (instead of an upfront
+    # pre-draw over ``coupled_metric_names``) matches
+    # ``_compose_topology_coupled_specs``'s RNG schedule: that legacy
+    # path draws noise inside the active branch only, so a coupled
+    # metric whose contributions all get skipped (e.g.
+    # ``--metrics-per-component`` trimmed the canonical upstream
+    # column, or every callable ``signal`` returned ``None``) consumes
+    # zero RNG draws there. Pre-drawing here would have advanced
+    # ``rng`` for those skipped metrics, shifting every subsequent
+    # downstream's draws.
+    shared_coupling_noise: dict[str, np.ndarray] = {}
+
+    # Compute per-instance arrays.
+    # Cache shared across downstream instances: under mismatched
+    # cardinality, ``_per_instance_upstream_view`` averages every
+    # upstream pod into a single dict that is identical for every
+    # downstream pod. Without the cache the same ``np.stack`` /
+    # ``np.mean`` work runs N_down times per upstream
+    # (O(N_down * N_up * n_rows)); with the cache it runs once
+    # (O(N_up * n_rows)).
+    uniform_fanout_cache: dict[str, dict[str, np.ndarray]] = {}
+    for inst_idx in range(n_inst):
+        # Build the per-instance upstream view dict keyed by upstream name.
+        per_instance_upstream_cols: dict[str, dict[str, np.ndarray]] = {}
+        for upstream, _edge in incoming:
+            per_instance_upstream_cols[upstream] = (
+                _per_instance_upstream_view(
+                    upstream,
+                    upstream_arrays_by_instance.get(upstream),
+                    upstream_arrays_shared.get(upstream),
+                    n_inst,
+                    inst_idx,
+                    uniform_fanout_cache=uniform_fanout_cache,
+                )
+                or {}
+            )
+
+        # ------------------------------------------------------------
+        # Coupling arrays (one per coupled metric on this component).
+        # ------------------------------------------------------------
+        for metric_name in coupled_metric_names:
+            if metric_name not in name_to_idx:
+                continue
+            original = specs[name_to_idx[metric_name]]
+            downstream_base = float(original.base)
+            if downstream_base <= 0:
+                continue
+
+            # First: active constant-weight edges for normalization.
+            active_constant: list[tuple[np.ndarray, float, float]] = []
+            for upstream, edge in incoming:
+                if callable(edge.weight):
+                    continue
+                if isinstance(edge.weight, bool) or not isinstance(
+                    edge.weight, (int, float)
+                ):
+                    continue
+                w = float(edge.weight)
+                if w == 0.0:
+                    continue
+                ups_cols = per_instance_upstream_cols.get(upstream, {})
+                ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
+                if ups_entry is None:
+                    continue
+                ups_canonical, _ = ups_entry
+                if ups_canonical and ups_canonical in ups_cols:
+                    ups_base = _component_metric_base(upstream, ups_canonical)
+                    if ups_base > 0:
+                        active_constant.append(
+                            (ups_cols[ups_canonical], ups_base, w)
+                        )
+
+            # Second: callable-weight edges.
+            callable_active = False
+            callable_contrib = np.zeros(n_rows, dtype=np.float64)
+            for upstream, edge in incoming:
+                if not callable(edge.weight):
+                    continue
+                if edge.signal is None:
+                    continue
+                ups_cols = per_instance_upstream_cols.get(upstream, {})
+                signal = edge.signal(ups_cols)
+                if signal is None:
+                    continue
+                callable_contrib = callable_contrib + np.asarray(
+                    edge.weight(signal), dtype=np.float64
+                )
+                callable_active = True
+
+            if not active_constant and not callable_active:
+                continue
+
+            constant_contrib = np.zeros(n_rows, dtype=np.float64)
+            if active_constant:
+                sum_w = sum(w for _, _, w in active_constant)
+                for ups_arr, ups_base, w in active_constant:
+                    w_norm = w / sum_w
+                    constant_contrib = constant_contrib + (
+                        ups_arr / ups_base * downstream_base * w_norm
+                    )
+
+            # Lazy noise draw: only after we know this metric has an
+            # active contribution. ``setdefault`` keeps the noise
+            # shared across instances — instance 0 (first iteration)
+            # draws, later instances reuse the cached array — so
+            # symmetric upstream still produces byte-identical
+            # coupling arrays across pods.
+            noise = shared_coupling_noise.get(metric_name)
+            if noise is None:
+                noise = rng.normal(
+                    0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows
+                )
+                shared_coupling_noise[metric_name] = noise
+            coupling_by_instance[inst_idx][metric_name] = (
+                constant_contrib + callable_contrib + noise
+            )
+
+        # ------------------------------------------------------------
+        # Saturation arrays.
+        # ------------------------------------------------------------
+        if sat_targets is None:
+            continue
+        latency_factor = np.ones(n_rows, dtype=np.float64)
+        error_offset = np.zeros(n_rows, dtype=np.float64)
+        any_active = False
+        for upstream, edge in incoming:
+            if edge.saturation is None:
+                continue
+            sat = edge.saturation
+            if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
+                continue
+            ups_cols = per_instance_upstream_cols.get(upstream, {})
+            ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
+            if ups_entry is None:
+                continue
+            ups_canonical, ups_supplementary = ups_entry
+            driver = None
+            for lm in (ups_canonical, *ups_supplementary):
+                if lm in ups_cols:
+                    driver = ups_cols[lm]
+                    break
+            if driver is None or driver.shape[0] != n_rows:
+                continue
+            lat_mult, err_off = _apply_saturation(driver, sat)
+            latency_factor *= lat_mult
+            error_offset += err_off
+            any_active = True
+        if not any_active:
+            continue
+        # Latency targets receive ONLY the multiplicative
+        # ``latency_factor`` (mirrors today's
+        # ``_compose_topology_saturation_specs`` wrapping
+        # ``MetricSpec.multiplier``); error targets receive ONLY the
+        # additive ``error_offset`` (mirrors wrapping
+        # ``MetricSpec.additive``). A metric appearing in both lists
+        # — rare; only triggered by future overlapping targets — gets
+        # both effects applied.
+        for metric_name in latency_metrics:
+            saturation_by_instance[inst_idx][metric_name] = (
+                latency_factor, None
+            )
+        for metric_name in error_metrics:
+            existing = saturation_by_instance[inst_idx].get(metric_name)
+            if existing is not None:
+                lf_old, _ = existing
+                saturation_by_instance[inst_idx][metric_name] = (
+                    lf_old, error_offset
+                )
+            else:
+                saturation_by_instance[inst_idx][metric_name] = (
+                    None, error_offset
+                )
+
+    return coupling_by_instance, saturation_by_instance
+
+
+def _arrays_equal_dict(
+    a: dict[str, np.ndarray], b: dict[str, np.ndarray],
+) -> bool:
+    """Byte-comparison of two ``dict[str, np.ndarray]`` entries.
+
+    Used by ``generate_component`` to detect whether the
+    per-instance topology arrays returned by
+    ``_compute_topology_arrays_per_instance`` diverge from instance
+    0. Equality is element-wise via ``np.array_equal`` — covers both
+    identical floats and identical NaN propagation.
+    """
+    if a.keys() != b.keys():
+        return False
+    for key, arr in a.items():
+        if not np.array_equal(arr, b[key]):
+            return False
+    return True
+
+
+def _sat_tuples_equal_dict(
+    a: dict[str, tuple["np.ndarray | None", "np.ndarray | None"]],
+    b: dict[str, tuple["np.ndarray | None", "np.ndarray | None"]],
+) -> bool:
+    """Byte-comparison of two saturation-tuple dicts.
+
+    Mirrors ``_arrays_equal_dict`` but unpacks the
+    ``(latency_factor, error_offset)`` pair from each entry. Either
+    side of the tuple may be ``None`` — saturation populates only
+    one side per metric depending on whether the metric is a
+    latency target or an error target.
+    """
+    if a.keys() != b.keys():
+        return False
+    for key, (lf_a, eo_a) in a.items():
+        lf_b, eo_b = b[key]
+        if (lf_a is None) != (lf_b is None):
+            return False
+        if lf_a is not None and not np.array_equal(lf_a, lf_b):
+            return False
+        if (eo_a is None) != (eo_b is None):
+            return False
+        if eo_a is not None and not np.array_equal(eo_a, eo_b):
+            return False
+    return True
 
 
 # ------------------------------------------------------------------
@@ -8511,6 +9229,75 @@ def _read_component_metric_column(
     return order, values
 
 
+def _read_component_metric_column_per_instance(
+    csv_path: Path, metric_name: str,
+) -> dict[str, tuple[list[datetime.datetime], np.ndarray]] | None:
+    """Return per-instance ``(timestamps, values)`` for ``metric_name``
+    from a dim-aware long-form per-component CSV.
+
+    Returns ``None`` when the CSV does not exist, has no header, is
+    dimensionless (no ``id`` column), or does not declare
+    ``metric_name``. The result maps instance id → ``(timestamps,
+    values)`` so the VER-158 per-instance correlation check can align
+    each instance's load column across components without re-walking
+    the CSV per pair.
+
+    Counterpart to ``_read_component_metric_column`` which aggregates
+    via mean across instances; this helper keeps each instance's
+    rows distinct so per-instance coupling can be Pearson-checked
+    against its matching upstream instance.
+    """
+    if not csv_path.exists():
+        return None
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return None
+        try:
+            col_idx = header.index(metric_name)
+        except ValueError:
+            return None
+        try:
+            id_idx = header.index("id")
+        except ValueError:
+            # Dimensionless layout — the aggregate reader is the right
+            # one. Distinguish from "no header" so the caller can
+            # branch on the absence specifically.
+            return None
+        per_instance: dict[
+            str, tuple[list[datetime.datetime], list[float]]
+        ] = {}
+        for row in reader:
+            if not row or col_idx >= len(row) or id_idx >= len(row):
+                continue
+            inst_id = row[id_idx]
+            try:
+                ts = _parse_csv_timestamp(row[0])
+                value = float(row[col_idx])
+            except ValueError:
+                continue
+            ts_list, val_list = per_instance.setdefault(inst_id, ([], []))
+            ts_list.append(ts)
+            val_list.append(value)
+    # Per-instance CSV blocks are written in increasing timestamp
+    # order by ``generate_component`` (one block per instance, rows
+    # within each block ordered by elapsed seconds), and the DST
+    # splice that produces non-monotonic timestamps is rejected up
+    # front for non-anonymous instances — by ``parse_args`` on the
+    # CLI path and by ``generate_component``'s own
+    # ``dst_inject_day > 0`` + non-anonymous-instance guard for
+    # direct programmatic callers. Reading rows in CSV order
+    # therefore yields a monotonic ``ts_list`` per instance already —
+    # no sort needed. Skipping the O(n log n) work noticeably speeds
+    # up the validator on long runs.
+    out: dict[str, tuple[list[datetime.datetime], np.ndarray]] = {}
+    for inst_id, (ts_list, val_list) in per_instance.items():
+        out[inst_id] = (ts_list, np.array(val_list, dtype=np.float64))
+    return out
+
+
 def _read_anomaly_exclusion_windows(
     anomalies_path: Path,
 ) -> list[tuple[datetime.datetime, datetime.datetime, str, str]]:
@@ -8971,6 +9758,180 @@ def _validate_topology_coupling(
                     f"{target}.{target_canonical})={corr:.4f} "
                     f"below threshold {threshold:.4f}"
                 )
+
+            # VER-158 phase 8: per-instance correlation. When both
+            # sides' schemas declare ``dimensions`` with matched
+            # cardinalities (1:1 routing applies), additionally
+            # verify Pearson(source.iK, target.iK) >= threshold for
+            # each matching pair. Runs unconditionally — even if the
+            # aggregate-mean check above just recorded a violation,
+            # the per-instance breakdown is still useful (it names
+            # the exact pod pair that diverged from the 1:1 contract,
+            # which the mean-aggregate Pearson alone cannot do).
+            violations += _validate_topology_coupling_per_instance(
+                output_dir, schema, source, target,
+                source_canonical, target_canonical,
+                threshold, anomaly_windows,
+            )
+    return violations
+
+
+def _validate_topology_coupling_per_instance(
+    output_dir: Path, schema: dict,
+    source: str, target: str,
+    source_canonical: str, target_canonical: str,
+    threshold: float,
+    anomaly_windows: list[tuple[datetime.datetime, datetime.datetime, str, str]],
+) -> list[str]:
+    """Per-instance edge correlation check (VER-158 phase 8).
+
+    Only fires when both ``source`` and ``target`` schemas declare a
+    ``dimensions`` block with matched cardinalities. Under
+    matched-cardinality 1:1 routing, downstream instance ``K``'s
+    canonical load metric is driven by upstream instance ``K``'s
+    canonical load metric exclusively; the Pearson correlation
+    between the two should clear the same per-edge threshold the
+    aggregate-mean check above uses.
+
+    Returns one violation per failing pod pair so the report names
+    the exact instance that diverged from the contract. Skips
+    silently when:
+
+    - Either side is dimensionless (no per-instance CSV layout).
+    - Cardinalities mismatch (uniform fan-out fallback — per-pod
+      isolation is not the contract there).
+    - Either side has fewer than 100 aligned rows for the matching
+      instance.
+    - Either column is zero-variance or non-finite (flagged by the
+      aggregate check above; surfacing once is enough).
+
+    Instance pairing matches the generator's index-based 1:1
+    routing in ``_per_instance_upstream_view``: position ``K`` in
+    the source CSV is paired with position ``K`` in the target CSV.
+    This keeps the validator consistent with the generator across
+    ``--instance-config`` runs where the two components declare
+    instances in different orders, and across
+    ``--instances-per-component`` runs whose ids ("i0".."i19")
+    don't lexically sort in the same order as their generation
+    index.
+    """
+    components_schema = schema.get("components")
+    if not isinstance(components_schema, dict):
+        return []
+
+    def _find_dimensions(name: str) -> dict | None:
+        entry = components_schema.get(name)
+        if isinstance(entry, dict):
+            dims = entry.get("dimensions")
+            if isinstance(dims, dict):
+                return dims
+        return None
+
+    source_dims = _find_dimensions(source)
+    target_dims = _find_dimensions(target)
+    if source_dims is None or target_dims is None:
+        return []
+    src_card = source_dims.get("cardinality")
+    tgt_card = target_dims.get("cardinality")
+    if (
+        not isinstance(src_card, int)
+        or not isinstance(tgt_card, int)
+        or src_card != tgt_card
+        or src_card <= 1
+    ):
+        # Mismatched cardinalities or single-instance — uniform
+        # fan-out applies, per-pod isolation is not the contract.
+        return []
+
+    source_per_inst = _read_component_metric_column_per_instance(
+        output_dir / f"{source}.csv", source_canonical
+    )
+    target_per_inst = _read_component_metric_column_per_instance(
+        output_dir / f"{target}.csv", target_canonical
+    )
+    if source_per_inst is None or target_per_inst is None:
+        return []
+
+    # Pair instances by CSV-block insertion order, NOT sorted id.
+    # ``generate_component`` writes one block per instance in
+    # ``instances[k]`` order, and the 1:1 routing in
+    # ``_per_instance_upstream_view`` maps downstream instance ``K``
+    # to upstream instance ``K`` by *list index*. Sorting by id here
+    # would mis-pair when ``--instance-config`` lists the two
+    # components' instances in different declared orders, or when
+    # ``--instances-per-component`` produces ``i0..i9, i10`` whose
+    # lexical sort ("i10" < "i2") drifts from the numeric block
+    # order. ``_read_component_metric_column_per_instance`` walks
+    # rows top-to-bottom and uses ``setdefault``, so dict iteration
+    # order matches the on-disk block order, which matches the
+    # generator's instance list order.
+    source_ids = list(source_per_inst.keys())
+    target_ids = list(target_per_inst.keys())
+    if len(source_ids) != len(target_ids):
+        return []
+
+    violations: list[str] = []
+    for src_id, tgt_id in zip(source_ids, target_ids):
+        src_ts, src_vals = source_per_inst[src_id]
+        tgt_ts, tgt_vals = target_per_inst[tgt_id]
+        common_ts: list[datetime.datetime] = []
+        target_aligned: list[float] = []
+        source_aligned: list[float] = []
+
+        # Linear-time two-pointer merge join (VER-158 phase 8). Since
+        # both CSV blocks were read into monotonic timestamp lists,
+        # we can align them in O(N+M) without materialising a full
+        # dict per pod pair.
+        i = 0
+        j = 0
+        n_src = len(src_ts)
+        n_tgt = len(tgt_ts)
+        while i < n_src and j < n_tgt:
+            s_t = src_ts[i]
+            t_t = tgt_ts[j]
+            if s_t == t_t:
+                common_ts.append(s_t)
+                source_aligned.append(src_vals[i])
+                target_aligned.append(tgt_vals[j])
+                i += 1
+                j += 1
+            elif s_t < t_t:
+                i += 1
+            else:
+                j += 1
+
+        if len(common_ts) < 100:
+            continue
+        pair_windows = _filter_windows_for_pair(
+            anomaly_windows,
+            source, source_canonical,
+            target, target_canonical,
+        )
+        source_arr = np.array(source_aligned, dtype=np.float64)
+        target_arr = np.array(target_aligned, dtype=np.float64)
+        if pair_windows:
+            keep_mask = _compute_anomaly_keep_mask(common_ts, pair_windows)
+            source_kept = source_arr[keep_mask]
+            target_kept = target_arr[keep_mask]
+        else:
+            source_kept = source_arr
+            target_kept = target_arr
+        if len(source_kept) < 100:
+            continue
+        if not (np.isfinite(source_kept).all() and np.isfinite(target_kept).all()):
+            # Aggregate check already flagged non-finite values; skip
+            # silently to avoid duplicate noise.
+            continue
+        if np.std(source_kept) == 0.0 or np.std(target_kept) == 0.0:
+            continue
+        corr = float(np.corrcoef(source_kept, target_kept)[0, 1])
+        if corr < threshold:
+            violations.append(
+                f"topology coupling {source}.{src_id}->{target}.{tgt_id}: "
+                f"Pearson({source_canonical}, {target_canonical})="
+                f"{corr:.4f} below threshold {threshold:.4f} "
+                f"(per-instance, matched cardinality)"
+            )
     return violations
 
 
@@ -9514,24 +10475,61 @@ def main(argv=None):
             if name in effective_specs
         ]
         upstream_arrays: dict[str, dict[str, np.ndarray]] | None = {}
+        # VER-158 phase 8: parallel per-instance capture. Populated by
+        # ``generate_component`` whenever ``--instances-per-component
+        # N>1`` (or a non-default ``--instance-config``) makes the
+        # component dim-aware. Consumed by
+        # ``_compute_topology_arrays_per_instance`` so each downstream
+        # instance gets a "matching instance set" view of its upstream
+        # (see CLAUDE.md § Per-instance topology).
+        upstream_arrays_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = {}
     else:
         generation_order = [name for name in effective_specs if name in args.components]
         upstream_arrays = None
+        upstream_arrays_by_instance = None
 
     for name in generation_order:
         specs = effective_specs[name]
+        coupling_per_instance = None
+        saturation_per_instance = None
+        instances_for_component = ctx.instances[name]
+        n_inst_local = len(instances_for_component)
+        is_anonymous_local = _is_anonymous_instance_list(instances_for_component)
+
         if args.topology_mode == "realistic":
-            specs = _compose_topology_coupled_specs(
-                name, specs, upstream_arrays, ctx.rng, n_rows
-            )
-            # Phase 4 (VER-154): saturation feedback. Layers logistic-shaped
-            # latency multipliers and error offsets on top of the coupled
-            # baseline so downstream latency/error metrics respond to
-            # upstream load. Composes on top of any existing multiplier /
-            # additive (e.g. ``_daily_sine``) so seasonal patterns survive.
-            specs = _compose_topology_saturation_specs(
-                name, specs, upstream_arrays, n_rows
-            )
+            if n_inst_local > 1 or not is_anonymous_local:
+                # VER-158 phase 8 — per-instance dispatch. Skip the
+                # spec-modifying composers; compute per-instance
+                # arrays directly. ``_compute_topology_arrays_per_instance``
+                # shares the ``_TOPOLOGY_COUPLE_NOISE_STD`` draw across
+                # instances so symmetric upstream produces byte-identical
+                # output to the shared lambda-baked path used by the
+                # N=1 anonymous branch below. ``generate_component``
+                # re-derives divergence from the returned arrays directly
+                # so the helper does not need to return a hint.
+                (
+                    coupling_per_instance,
+                    saturation_per_instance,
+                ) = _compute_topology_arrays_per_instance(
+                    name, specs, upstream_arrays,
+                    upstream_arrays_by_instance,
+                    instances_for_component, ctx.rng, n_rows,
+                )
+            else:
+                # N=1 anonymous — today's shared lambda-baked path.
+                # Pre-VER-158 byte parity contract: default
+                # ``--instances-per-component 1`` keeps this branch.
+                specs = _compose_topology_coupled_specs(
+                    name, specs, upstream_arrays, ctx.rng, n_rows
+                )
+                # Phase 4 (VER-154): saturation feedback. Layers logistic-shaped
+                # latency multipliers and error offsets on top of the coupled
+                # baseline so downstream latency/error metrics respond to
+                # upstream load. Composes on top of any existing multiplier /
+                # additive (e.g. ``_daily_sine``) so seasonal patterns survive.
+                specs = _compose_topology_saturation_specs(
+                    name, specs, upstream_arrays, n_rows
+                )
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
@@ -9544,6 +10542,13 @@ def main(argv=None):
                            ctx=ctx,
                            instances=ctx.instances[name],
                            topology_capture=upstream_arrays,
+                           topology_capture_by_instance=(
+                               upstream_arrays_by_instance if (
+                                   n_inst_local > 1 or not is_anonymous_local
+                               ) else None
+                           ),
+                           coupling_arrays_per_instance=coupling_per_instance,
+                           saturation_arrays_per_instance=saturation_per_instance,
                            apply_dtype_int_cast=(
                                args.topology_mode == "realistic"
                            ))
