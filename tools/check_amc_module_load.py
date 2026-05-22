@@ -5,9 +5,13 @@
 loading `anomaly-metric-creator.py` as an importable module. Other test
 files MUST consume the session-scoped `amc` fixture rather than re-issue
 `importlib.util.spec_from_file_location(...).exec_module(...)`. The
-duplicate exec_module pays the full registry-validation cost again and
-was the recurring DRY violation flagged in VER-190 (PR #63, PR #64) and
-tracked in VER-197.
+duplicate exec_module pays the full registry-validation cost again.
+
+This lint is the closing deliverable of **VER-197**, which is itself a
+low-priority follow-up split out of the **VER-190** engineering
+efficiency review (the review that originally flagged the duplication
+on PR #63 and PR #64). Follow VER-197 for the tracking thread; VER-190
+holds the historical context.
 
 The check walks each file's AST and flags any *call* whose target is
 the identifier `spec_from_file_location`. Patterns caught:
@@ -83,10 +87,19 @@ def _check_file(path: Path) -> list[str]:
         func = node.func
         name: str | None = None
         if isinstance(func, ast.Attribute):
-            # Attribute calls always read the canonical attribute name
-            # off the source module (e.g. ``importlib.util.<canonical>``),
-            # never an alias bound by the importer — so the local-name
-            # set is irrelevant here.
+            # Match any ``.spec_from_file_location(...)`` attribute
+            # access. Practically this is `importlib.util.<canonical>`
+            # (with or without an `import ... as` alias on the module
+            # part), since `spec_from_file_location` is only exposed
+            # by `importlib.util` and a `something_else.spec_from_file_location(...)`
+            # call would have no meaning at runtime — we still flag it
+            # because (a) it's still the same name that names the
+            # banned function in import code, and (b) widening the
+            # match to any attribute call costs nothing and removes a
+            # cheap evasion vector. The alias-tracking set is
+            # `ast.Name`-only on purpose: attribute calls read the
+            # attribute name verbatim off the receiver, so an
+            # importer-bound alias never appears as an `.attr`.
             if func.attr == _FN:
                 name = _FN
         elif isinstance(func, ast.Name):
