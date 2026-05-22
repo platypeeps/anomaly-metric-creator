@@ -404,7 +404,8 @@ inside the per-edge loop that fires only when both source and
 target schemas declare a `dimensions` block with matched
 cardinalities. The check verifies
 `Pearson(source.iK, target.iK) >= threshold` for each matched
-pod pair (sorted by instance id) so a regression that
+pod pair (by CSV block / insertion order, matching the
+generator's index-based 1:1 routing) so a regression that
 mis-routes one pod's load to a sibling surfaces as a dedicated
 violation. Skipped silently for dimensionless schemas,
 mismatched cardinalities (uniform fan-out doesn't promise

@@ -730,13 +730,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         # (~9.7 GB at 7d / 1s / N=20 / 10 metrics).
         #
         # Divergence is derived from the passed arrays directly rather
-        # than trusting the caller-supplied ``any_divergent`` hint: a
-        # programmatic caller that passes divergent arrays alongside
-        # ``any_divergent=False`` would otherwise cause silent reuse
-        # of instance-0 arrays across every pod. The hint is treated
-        # as a fast-path skip only when it is False *and* a quick
-        # length check on instance 0 reveals no per-instance arrays
-        # to compare; otherwise we always do the comparison.
+        # Divergence is always re-derived from the passed arrays so
+        # correctness does not depend on any caller-supplied hint.
         divergent_instances: set[int] = set()
         if n_inst_local > 1:
             ref_coupling = coupling_arrays_per_instance[0]
