@@ -1169,10 +1169,19 @@ formats.
 
 Both multi-instance paths (`--instances-per-component > 1` and
 `--instance-config`) are mutually exclusive with
-`--inject-dst-artifact-day > 0`: the DST splice produces
-non-monotonic timestamps that the multi-instance row builder is not
-prepared for, and `parse_args` rejects the combination with a clear
-message naming the active flag.
+`--inject-dst-artifact-day > 0`: `parse_args` rejects the combination
+with a clear message naming the active flag, and
+`generate_component()` carries a matching defense-in-depth
+`ValueError` for direct callers that bypass the CLI. After VER-191
+the long-form CSV writer routes through the shared
+`_format_csv_row_block` helper, which applies `_splice_dst_artifact`
+regardless of the writer branch — the parse-time guard now stands
+on design grounds (the multi-instance long-form CSV produces
+per-instance row blocks; running `_splice_dst_artifact` per block
+would surface non-monotonic timestamps inside each block, which
+`heapq.merge` in `gauges.csv` / `combined_metrics_unified.csv`
+cannot resolve), not on the pre-VER-191 correctness gap where the
+long-form path silently dropped the duplicated hour entirely.
 
 When adding fields to `Instance`, add the new field name to
 `_INSTANCE_DIMENSION_COLUMNS`. Both the `_load_instance_config`

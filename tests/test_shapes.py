@@ -390,3 +390,139 @@ def test_dst_artifact_day_out_of_range_rejected(amc, tmp_path):
             "--inject-dst-artifact-day", "5",
             "--output-dir", str(tmp_path),
         ])
+
+
+# ---------------------------------------------------------------------------
+# VER-191: shared CSV row builder eliminates the PR #63 long-form DST drop.
+# These unit-level tests pin the contract of the new helpers regardless of
+# which writer branch (dimensionless or long-form) consumes them.
+# ---------------------------------------------------------------------------
+
+def test_format_metric_suffix_joins_columns_with_commas(amc):
+    """``_format_metric_suffix`` produces ``v0,v1,...,vk`` byte-for-byte."""
+    str_vals = np.array(
+        [["1.000", "2.500", "3.250"],
+         ["4.750", "5.125", "6.000"]],
+        dtype="U6",
+    )
+    suffix = amc._format_metric_suffix(str_vals)
+    assert suffix.tolist() == ["1.000,2.500,3.250", "4.750,5.125,6.000"]
+
+
+def test_format_metric_suffix_single_column_returns_copy(amc):
+    """Single-metric components must still produce a usable suffix array.
+
+    The caller mutates the returned array via further ``np.char.add``;
+    if the helper returned a view of ``str_vals[:, 0]`` the writer
+    would corrupt the source. The assertion checks both byte content
+    and identity to defend against an accidental view return.
+    """
+    str_vals = np.array([["1.000"], ["2.000"]], dtype="U5")
+    suffix = amc._format_metric_suffix(str_vals)
+    assert suffix.tolist() == ["1.000", "2.000"]
+    # Must not alias the input column; the writer concatenates onto it.
+    assert suffix.base is not str_vals
+    assert suffix is not str_vals[:, 0]
+
+
+def test_format_csv_row_block_dimensionless_layout(amc):
+    """Empty ``dim_prefix`` produces ``ts,v0,...,vk`` byte-for-byte."""
+    kept_ts = np.array(
+        ["2026-03-10 00:00:00", "2026-03-10 00:00:01"], dtype="U19",
+    )
+    suffix = np.array(["1.000,2.000", "3.000,4.000"], dtype="U11")
+    rows = amc._format_csv_row_block(
+        kept_ts, suffix, dim_prefix="", dst_inject_day=0,
+    )
+    assert rows.tolist() == [
+        "2026-03-10 00:00:00,1.000,2.000",
+        "2026-03-10 00:00:01,3.000,4.000",
+    ]
+
+
+def test_format_csv_row_block_long_form_layout(amc):
+    """Non-empty ``dim_prefix`` inserts dimensions between ts and metrics."""
+    kept_ts = np.array(
+        ["2026-03-10 00:00:00", "2026-03-10 00:00:01"], dtype="U19",
+    )
+    suffix = np.array(["1.000,2.000", "3.000,4.000"], dtype="U11")
+    rows = amc._format_csv_row_block(
+        kept_ts, suffix, dim_prefix=",i0,,pod-0,,,", dst_inject_day=0,
+    )
+    assert rows.tolist() == [
+        "2026-03-10 00:00:00,i0,,pod-0,,,,1.000,2.000",
+        "2026-03-10 00:00:01,i0,,pod-0,,,,3.000,4.000",
+    ]
+
+
+def test_format_csv_row_block_applies_dst_splice_in_long_form(amc):
+    """The shared helper must apply ``_splice_dst_artifact`` regardless of
+    ``dim_prefix``.
+
+    This is the VER-191 regression guard: before the refactor the
+    long-form CSV writer ignored ``dst_inject_day`` entirely
+    (anomaly-metric-creator.py:1145–1186 took ``kept_ts`` / ``str_vals``
+    and never called ``_splice_dst_artifact``). By routing both branches
+    through ``_format_csv_row_block`` the long-form path inherits the
+    splice for free — a future caller that relaxes the
+    ``parse_args`` mutual-exclusion guard will not silently drop the
+    duplicate hour.
+    """
+    # Cover 03:59:58 → 04:00:01 with one row every second so the
+    # 02:00–02:59 splice window is small enough to assert exactly.
+    # Use day 1's 02:00–02:59 wall-clock range.
+    day_str = amc.START.strftime("%Y-%m-%d")
+    seconds = [
+        f"{day_str} 01:59:58",
+        f"{day_str} 01:59:59",
+        f"{day_str} 02:00:00",
+        f"{day_str} 02:00:01",
+        f"{day_str} 02:59:58",
+        f"{day_str} 02:59:59",
+        f"{day_str} 03:00:00",
+    ]
+    kept_ts = np.array(seconds, dtype="U19")
+    n_rows = len(seconds)
+    # Mark each row with its index so we can locate the duplicated
+    # window unambiguously in the output.
+    suffix = np.char.add(
+        np.full(n_rows, "v", dtype="U1"),
+        np.array([str(i) for i in range(n_rows)], dtype="U2"),
+    )
+    rows = amc._format_csv_row_block(
+        kept_ts, suffix,
+        dim_prefix=",i0,,pod-0,,,",
+        dst_inject_day=1,
+    )
+    # The 02:00–02:59 inclusive window covers rows 2..5 (indices into
+    # ``seconds`` above). _splice_dst_artifact inserts a duplicate of
+    # rows[first:last+1] after rows[last], so the spliced array has
+    # ``n_rows + 4`` entries and rows[6:10] match rows[2:6] verbatim.
+    assert len(rows) == n_rows + 4, (
+        f"expected {n_rows + 4} rows after DST splice, got {len(rows)}"
+    )
+    pre = rows[2:6].tolist()
+    dup = rows[6:10].tolist()
+    assert pre == dup, (
+        f"DST splice did not duplicate the 02:xx window in the long-form "
+        f"row block: pre={pre!r} dup={dup!r}"
+    )
+    # Each row in the duplicated window keeps the long-form dim prefix.
+    for row in dup:
+        assert row.startswith(f"{day_str} 02:"), row
+        assert ",i0,,pod-0,,,," in row, row
+
+
+def test_format_csv_row_block_dst_off_returns_input_length(amc):
+    """``dst_inject_day=0`` (the default) must not re-shape the rows."""
+    kept_ts = np.array(
+        ["2026-03-10 00:00:00", "2026-03-10 00:00:01"], dtype="U19",
+    )
+    suffix = np.array(["1.000", "2.000"], dtype="U5")
+    rows = amc._format_csv_row_block(
+        kept_ts, suffix, dim_prefix="", dst_inject_day=0,
+    )
+    assert rows.tolist() == [
+        "2026-03-10 00:00:00,1.000",
+        "2026-03-10 00:00:01,2.000",
+    ]

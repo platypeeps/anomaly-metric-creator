@@ -552,8 +552,12 @@ def test_instances_n1_with_dst_allowed(tmp_path):
 # ``--validate-output`` walks the long-form headers end-to-end, so
 # every downstream-flag combination above is now permitted at parse
 # time. The only remaining multi-instance gate is the DST splice
-# (``--inject-dst-artifact-day > 0``), which is structurally
-# incompatible with the long-form rebuilder.
+# (``--inject-dst-artifact-day > 0``). After VER-191 the long-form
+# row builder routes through ``_format_csv_row_block`` and would
+# apply the splice per-instance correctly, but the parse-time guard
+# stays in place because per-instance non-monotonic timestamps inside
+# each long-form row block cannot be merged downstream
+# (``gauges.csv`` / ``combined_metrics_unified.csv``).
 
 
 def test_n2_plus_combine_allowed(tmp_path):
