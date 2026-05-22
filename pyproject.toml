@@ -22,6 +22,9 @@ dev = [
   "opentelemetry-proto>=1.25.0",
   "protobuf>=5.27.0",
   "pyyaml>=6.0",
+  # Pinned exactly: must match `rev: vX.Y.Z` in `.pre-commit-config.yaml`
+  # so a local `ruff check` and the `ruff-pre-commit` hook resolve the
+  # same binary. Bump both lines together. See VER-198.
   "ruff==0.15.13",
   "pre-commit>=3.7.0",
 ]

@@ -3,6 +3,10 @@
 # `pre-commit install` after `pip install -e ".[dev]"`.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
+    # `rev` must match the `ruff==X.Y.Z` pin in
+    # `[project.optional-dependencies].dev` in `pyproject.toml` so a
+    # local `ruff check` and this hook resolve the same binary. Bump
+    # both lines together. See VER-198.
     rev: v0.15.13
     hooks:
       - id: ruff
