@@ -172,6 +172,42 @@ def test_noqa_marker_exempts_line(tmp_path: Path):
     assert result.returncode == 0, result.stderr
 
 
+def test_noqa_marker_on_closing_line_exempts_multiline_call(tmp_path: Path):
+    """For a multi-line call the trailing `# noqa: amc-load` comment
+    is conventionally written on the closing line — that is
+    ``node.end_lineno`` in `ast`, not ``node.lineno`` (which is the
+    opening-paren line). The exemption must accept the marker on
+    either line so common multi-line formatting works. Copilot PR #74
+    round-5."""
+    ok = tmp_path / "test_multiline_noqa.py"
+    ok.write_text(
+        "import importlib.util\n"
+        "spec = importlib.util.spec_from_file_location(\n"
+        "    'amc',\n"
+        "    '/dev/null',\n"
+        ")  # noqa: amc-load\n"
+    )
+    result = _run(ok)
+    assert result.returncode == 0, result.stderr
+
+
+def test_noqa_marker_on_opening_line_exempts_multiline_call(tmp_path: Path):
+    """Multi-line call with the marker on the opening line (less
+    conventional but still legal Python). The exemption must accept
+    this shape too — it's the original single-line behavior extended
+    to start-line on a multi-line call. Copilot PR #74 round-5."""
+    ok = tmp_path / "test_multiline_noqa_open.py"
+    ok.write_text(
+        "import importlib.util\n"
+        "spec = importlib.util.spec_from_file_location(  # noqa: amc-load\n"
+        "    'amc',\n"
+        "    '/dev/null',\n"
+        ")\n"
+    )
+    result = _run(ok)
+    assert result.returncode == 0, result.stderr
+
+
 def test_noqa_marker_in_string_literal_does_not_exempt(tmp_path: Path):
     """The exemption must be a real comment token, not a substring match.
     A file where the marker text appears only inside a string literal on

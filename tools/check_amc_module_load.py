@@ -41,12 +41,15 @@ are not call nodes.
 Exemptions:
 
 - Files named `conftest.py` are skipped wholesale.
-- A trailing ``# noqa: amc-load`` comment on the call's start line
-  opts that specific line out of the check. The marker is detected via
-  the ``tokenize`` stream — only real ``tokenize.COMMENT`` tokens
-  count, so the same marker text appearing inside a string literal or
-  any non-comment context does not silence the lint. Use sparingly
-  for cases that legitimately need a fresh module copy:
+- A trailing ``# noqa: amc-load`` comment on the call's opening line
+  *or* closing line opts that specific call out of the check. The
+  marker is detected via the ``tokenize`` stream — only real
+  ``tokenize.COMMENT`` tokens count, so the same marker text appearing
+  inside a string literal or any non-comment context does not silence
+  the lint. Either ``node.lineno`` or ``node.end_lineno`` accepts the
+  marker; multi-line calls can place the trailing comment on whichever
+  line the caller's formatter prefers. Use sparingly for cases that
+  legitimately need a fresh module copy:
   * tests that monkeypatch module-level callables and must isolate state
     (see `tests/test_correctness.py`);
   * collection-time parametrize loaders that fire before pytest
@@ -77,14 +80,17 @@ def _collect_noqa_lines(src: str) -> set[int]:
     been silenced because the marker text appeared verbatim on the
     physical line even though no real comment was present.
 
-    Tokenization is also robust to multi-line calls: the comment must
-    sit on whichever line the call's start (``node.lineno``) points at
-    — typically the last physical line of a multi-line call, since
-    that's where the trailing comment is conventionally written. A
-    ``TokenizeError`` (e.g. on syntactically invalid input that still
-    parsed via ``ast.parse``'s recovery — rare but possible) collapses
-    to "no exemptions": the caller will then emit the original
-    violation, which is the conservative behavior.
+    Multi-line calls are accepted with the trailing comment on either
+    the opening line (``node.lineno``) or the closing line
+    (``node.end_lineno``); the call site picks the convention that
+    fits its formatter. ``_check_file`` is the consumer that decides
+    which AST node lines to compare against — this helper only
+    returns the *set* of lines that carry a real comment with the
+    marker. A ``TokenizeError`` (e.g. on syntactically invalid input
+    that still parsed via ``ast.parse``'s recovery — rare but
+    possible) collapses to "no exemptions": the caller will then
+    emit the original violation, which is the conservative
+    behavior.
     """
     exempt: set[int] = set()
     try:
@@ -202,7 +208,17 @@ def _check_file(path: Path) -> list[str]:
         if name != _FN:
             continue
         lineno = node.lineno
-        if lineno in noqa_lines:
+        # Multi-line calls: accept the noqa marker on the opening line
+        # OR the closing line (`node.end_lineno`), since the trailing
+        # comment convention varies — some formatters place it on the
+        # closing paren's line, others on the opening line. Both are
+        # legal Python and both should suppress the lint. Copilot
+        # PR #74 round-5. `end_lineno` is available since Python 3.8;
+        # the repo's `requires-python` is 3.11+, so the attribute is
+        # always present, but fall back to `lineno` defensively in
+        # case a future ast walker returns a node without it.
+        end_lineno = getattr(node, "end_lineno", None) or lineno
+        if lineno in noqa_lines or end_lineno in noqa_lines:
             continue
         violations.append(
             f"{path}:{lineno}: `spec_from_file_location(...)` call outside "
