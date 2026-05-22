@@ -26,6 +26,14 @@ the identifier `spec_from_file_location`. Patterns caught:
   collects every ``ImportFrom`` node that aliases
   ``spec_from_file_location`` and treats each alias as equivalent to
   the canonical name for the rest of the file.
+- ``sfl = importlib.util.spec_from_file_location; sfl(...)`` —
+  bare-name call to an assignment alias. The walker also walks every
+  ``Assign`` / ``AnnAssign`` node whose value is either an
+  ``Attribute`` whose ``.attr`` is ``spec_from_file_location`` or a
+  ``Name`` whose ``.id`` is an already-collected local alias, and
+  iterates to a fixpoint so chained assignments
+  (``sfl = importlib.util.spec_from_file_location; sfl2 = sfl;
+  sfl2(...)``) cannot evade the lint.
 
 String literals, docstrings, and comments are not flagged because they
 are not call nodes.
@@ -54,14 +62,28 @@ _NOQA_MARKER = "# noqa: amc-load"
 
 def _collect_local_aliases(tree: ast.AST) -> set[str]:
     """Return the set of local names bound to
-    ``importlib.util.spec_from_file_location`` via ``from`` imports.
+    ``importlib.util.spec_from_file_location``.
+
     Always includes ``spec_from_file_location`` itself so a direct
     ``from importlib.util import spec_from_file_location`` import is
-    covered. Module is not constrained to ``importlib.util``: any
-    ``from X import spec_from_file_location [as Y]`` is treated as an
-    import of the canonical name, since the public stdlib API only
-    exposes that symbol via ``importlib.util`` and there is no
-    legitimate reason a test file would rebind it.
+    covered. Two additional binding shapes are tracked:
+
+    - ``from X import spec_from_file_location [as Y]`` — the import
+      alias ``Y`` (or the canonical name) is added. Module is not
+      constrained to ``importlib.util``: any ``from`` import of the
+      canonical name is treated as equivalent, since the public stdlib
+      API only exposes that symbol via ``importlib.util`` and there is
+      no legitimate reason a test file would rebind it.
+    - ``Y = importlib.util.spec_from_file_location`` /
+      ``Y = <existing_alias>`` — assignment aliases (including
+      annotated assignments). Collection iterates to a fixpoint so
+      chains like ``a = ...spec_from_file_location; b = a; b(...)``
+      cannot evade the lint by hopping through intermediate locals.
+      Tuple / list unpacking targets are also handled so
+      ``sfl, _ = importlib.util.spec_from_file_location, None`` does
+      not slip past — only the simple ``Name`` targets within the
+      unpacking are eligible (an ``Attribute`` or ``Subscript`` target
+      is ignored because the lint tracks local-name calls).
     """
     aliases: set[str] = {_FN}
     for node in ast.walk(tree):
@@ -69,7 +91,42 @@ def _collect_local_aliases(tree: ast.AST) -> set[str]:
             for alias in node.names:
                 if alias.name == _FN:
                     aliases.add(alias.asname or alias.name)
+    while True:
+        before = len(aliases)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                value: ast.expr | None = node.value
+                targets: list[ast.expr] = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                if node.value is None:
+                    continue
+                value = node.value
+                targets = [node.target]
+            else:
+                continue
+            if not _value_resolves_to_fn(value, aliases):
+                continue
+            for target in targets:
+                _collect_target_names(target, aliases)
+        if len(aliases) == before:
+            break
     return aliases
+
+
+def _value_resolves_to_fn(value: ast.AST, aliases: set[str]) -> bool:
+    if isinstance(value, ast.Attribute) and value.attr == _FN:
+        return True
+    if isinstance(value, ast.Name) and value.id in aliases:
+        return True
+    return False
+
+
+def _collect_target_names(target: ast.AST, aliases: set[str]) -> None:
+    if isinstance(target, ast.Name):
+        aliases.add(target.id)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for elt in target.elts:
+            _collect_target_names(elt, aliases)
 
 
 def _check_file(path: Path) -> list[str]:
@@ -97,9 +154,10 @@ def _check_file(path: Path) -> list[str]:
             # banned function in import code, and (b) widening the
             # match to any attribute call costs nothing and removes a
             # cheap evasion vector. The alias-tracking set is
-            # `ast.Name`-only on purpose: attribute calls read the
-            # attribute name verbatim off the receiver, so an
-            # importer-bound alias never appears as an `.attr`.
+            # consulted only on the `ast.Name` branch below: attribute
+            # calls read the attribute name verbatim off the receiver,
+            # so an importer-bound or assignment-bound alias never
+            # appears as an `.attr`.
             if func.attr == _FN:
                 name = _FN
         elif isinstance(func, ast.Name):

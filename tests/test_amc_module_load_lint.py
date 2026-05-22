@@ -72,6 +72,55 @@ def test_flags_from_import_alias(tmp_path: Path):
     assert str(bad) in result.stderr
 
 
+def test_flags_assignment_alias_from_attribute(tmp_path: Path):
+    """``sfl = importlib.util.spec_from_file_location; sfl(...)`` is the
+    "assignment-alias bypass" Copilot flagged on PR #74 round-3. The
+    lint must extend its alias-tracking past ``ImportFrom`` to also
+    cover ``Assign`` targets whose value is an attribute access ending
+    in ``.spec_from_file_location``."""
+    bad = tmp_path / "test_assign_alias.py"
+    bad.write_text(
+        "import importlib.util\n"
+        "sfl = importlib.util.spec_from_file_location\n"
+        "spec = sfl('amc', '/dev/null')\n"
+    )
+    result = _run(bad)
+    assert result.returncode == 1, result.stderr
+    assert str(bad) in result.stderr
+
+
+def test_flags_ann_assignment_alias_from_attribute(tmp_path: Path):
+    """Annotated assignment variant of the same bypass:
+    ``sfl: Callable = importlib.util.spec_from_file_location``."""
+    bad = tmp_path / "test_ann_assign_alias.py"
+    bad.write_text(
+        "import importlib.util\n"
+        "from typing import Callable\n"
+        "sfl: Callable = importlib.util.spec_from_file_location\n"
+        "spec = sfl('amc', '/dev/null')\n"
+    )
+    result = _run(bad)
+    assert result.returncode == 1, result.stderr
+    assert str(bad) in result.stderr
+
+
+def test_flags_chained_assignment_alias(tmp_path: Path):
+    """Hopping through a second local name must not evade the lint.
+    The collector iterates to a fixpoint so chains like
+    ``a = importlib.util.spec_from_file_location; b = a; b(...)`` are
+    caught — same evasion family as the direct-assignment bypass."""
+    bad = tmp_path / "test_chained_alias.py"
+    bad.write_text(
+        "import importlib.util\n"
+        "a = importlib.util.spec_from_file_location\n"
+        "b = a\n"
+        "spec = b('amc', '/dev/null')\n"
+    )
+    result = _run(bad)
+    assert result.returncode == 1, result.stderr
+    assert str(bad) in result.stderr
+
+
 def test_flags_from_import_direct(tmp_path: Path):
     """`from importlib.util import spec_from_file_location` followed by
     a bare-name call. Already caught by the ast.Name branch, but
