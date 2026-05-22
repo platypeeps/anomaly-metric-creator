@@ -86,11 +86,19 @@ def _collect_noqa_lines(src: str) -> set[int]:
     fits its formatter. ``_check_file`` is the consumer that decides
     which AST node lines to compare against — this helper only
     returns the *set* of lines that carry a real comment with the
-    marker. A ``TokenizeError`` (e.g. on syntactically invalid input
-    that still parsed via ``ast.parse``'s recovery — rare but
-    possible) collapses to "no exemptions": the caller will then
-    emit the original violation, which is the conservative
-    behavior.
+    marker.
+
+    The ``try/except tokenize.TokenizeError`` is a defensive fallback,
+    not a recovery path: ``_check_file`` parses with ``ast.parse``
+    first and returns early on ``SyntaxError`` (which ``ast.parse``
+    raises on any malformed input), so by the time we reach
+    ``tokenize.generate_tokens`` the source is known to be a
+    well-formed Python module. The handler is there only to keep the
+    lint from crashing on rare tokenization edge cases that the AST
+    layer does not surface — e.g. an inconsistent indentation pattern
+    that ``compile()`` would still accept — by collapsing to "no
+    exemptions" and letting the caller emit the original violation,
+    which is the conservative behavior. Copilot PR #74 round-6/7.
     """
     exempt: set[int] = set()
     try:
