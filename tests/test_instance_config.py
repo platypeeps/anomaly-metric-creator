@@ -171,7 +171,7 @@ components:
 
 def test_mutually_exclusive_with_instances_per_component(amc, tmp_path):
     """--instance-config and --instances-per-component are mutually exclusive."""
-    cfg = _write_yaml(tmp_path, "components:\n authservice:\n    - {id: a1}\n")
+    cfg = _write_yaml(tmp_path, "components:\n  authservice:\n    - {id: a1}\n")
     with pytest.raises(SystemExit):
         _parse(amc, [
             "--instance-config", str(cfg),
@@ -225,7 +225,7 @@ components:
 # ---------------------------------------------------------------------------
 
 def test_missing_components_key_raises(amc, tmp_path):
-    cfg = _write_yaml(tmp_path, "instances:\n authservice:\n    - {id: a1}\n")
+    cfg = _write_yaml(tmp_path, "instances:\n  authservice:\n    - {id: a1}\n")
     with pytest.raises(ValueError, match="missing required top-level key"):
         amc._load_instance_config(cfg)
 
@@ -400,7 +400,7 @@ def test_unsupported_extension_rejected(amc, tmp_path):
 def test_malformed_yaml_raises_value_error(amc, tmp_path):
     """Bare yaml.YAMLError must be wrapped so main() can sys.exit() cleanly."""
     p = tmp_path / "bad.yaml"
-    p.write_text("components:\n authservice:\n    - {id: a1\n")  # unterminated mapping
+    p.write_text("components:\n  authservice:\n    - {id: a1\n")  # unterminated mapping
     with pytest.raises(ValueError, match="failed to parse YAML"):
         amc._load_instance_config(p)
 
@@ -507,7 +507,7 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
     statement, exercising the install-hint error path.
     """
     cfg = tmp_path / "cfg.yaml"
-    cfg.write_text("components:\n authservice:\n    - {id: a1}\n")
+    cfg.write_text("components:\n  authservice:\n    - {id: a1}\n")
     monkeypatch.setitem(sys.modules, "yaml", None)
     with pytest.raises(ValueError, match="PyYAML is required"):
         amc._load_instance_config(cfg)

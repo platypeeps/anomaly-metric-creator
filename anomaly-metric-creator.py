@@ -3516,7 +3516,7 @@ def _sat_tuples_equal_dict(
 #
 # Every primary spec and cascade lives here. main() builds component_anomalies
 # and cascading_anomalies entirely from this registry via _apply_scenarios().
-# Walk order is dict-insertion order (Python 3.7). Within each scenario,
+# Walk order is dict-insertion order (Python 3.7+). Within each scenario,
 # primary_specs and cascade_specs are appended in declaration order.
 # Byte-for-byte default output is preserved because generate_component()
 # applies Python's stable sort with key (row_idx, metric) to expanded
