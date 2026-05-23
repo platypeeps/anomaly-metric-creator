@@ -251,7 +251,7 @@ def main(argv: list[str]) -> int:
             "\nThe canonical AMC module load lives in `tests/conftest.py` "
             "(`_load_amc` / `amc` fixture). Re-importing via "
             "`spec_from_file_location` duplicates the registry-build cost "
-            "and was the DRY violation tracked.",
+            "and is the DRY violation this lint guards against.",
             file=sys.stderr,
         )
         return 1

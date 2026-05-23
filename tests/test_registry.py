@@ -373,7 +373,7 @@ def test_expected_scenario_slugs_present(amc):
         "network_partition_az_split",
         # Multi-day cascading
         "cache_leak_restart", "jwks_rotation_chaos", "db_disk_exhaustion",
-        # Partial-outage (Phase 7, tracked)
+        # Partial-outage scenarios (Phase 7)
         "auth_pod_failure", "cache_az_isolation",
     }
     actual = set(amc.SCENARIOS.keys())

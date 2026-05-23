@@ -886,11 +886,12 @@ def test_sub_second_interval_timestamps_have_fractional_resolution(amc, tmp_path
 
 # ------------------------------------------------------------------
 # --scenarios all is exactly equivalent to no flag (default).
-# Pre- byte hashes are locked separately in test_scenarios.py
-# (DEFAULT_ONE_DAY_HASHES / DEFAULT_SEVEN_DAY_HASHES); this test adds
-# the complementary parity check: passing --scenarios all explicitly
-# produces the same per-component CSV + manifest bytes as omitting
-# the flag, for both 1-day and 7-day runs at the documented seed 42.
+# Per-component CSV byte hashes are locked separately in
+# test_scenarios.py (DEFAULT_ONE_DAY_HASHES / DEFAULT_SEVEN_DAY_HASHES);
+# this test adds the complementary parity check: passing --scenarios all
+# explicitly produces the same per-component CSV + manifest bytes as
+# omitting the flag, for both 1-day and 7-day runs at the documented
+# seed 42.
 # ------------------------------------------------------------------
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -904,10 +905,10 @@ def _all_artifact_filenames():
 def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
     """``--scenarios all`` must produce the same per-component CSV and
     ``anomalies.csv`` bytes as the default (no flag). This is the
-    default-equivalence regression for any drift between the
-    two paths would indicate a divergence in scenario resolution that
-    the existing byte-hash lock in ``test_scenarios.py`` cannot detect
-    on its own (the lock only covers no-flag).
+    default-equivalence regression: any drift between the two paths
+    would indicate a divergence in scenario resolution that the existing
+    byte-hash lock in ``test_scenarios.py`` cannot detect on its own
+    (the lock only covers no-flag).
     """
     out_default = tmp_path / f"default_{days}d"
     out_explicit = tmp_path / f"explicit_all_{days}d"

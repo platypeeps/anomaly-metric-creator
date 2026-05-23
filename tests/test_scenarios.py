@@ -266,10 +266,10 @@ def test_scenario_severity_in_vocabulary(amc, slug):
 @pytest.mark.parametrize("slug", sorted(THREE_MULTI_DAY_SCENARIOS))
 def test_scenario_days_required_vocabulary(amc, slug):
     """``days_required`` is the minimum --duration-days at which any of the
-    scenario's specs becomes in range. relaxed the validator from
-    ``{1, 7}`` to any positive int so each scenario can gate at the day
-    index of its earliest offset; the equality check (days_required must
-    equal that earliest in-range day) lives in
+    scenario's specs becomes in range. The validator accepts any positive
+    int (relaxed from the original ``{1, 7}``) so each scenario can gate
+    at the day index of its earliest offset; the equality check
+    (``days_required`` must equal that earliest in-range day) lives in
     ``test_registry.test_scenarios_days_required_valid``.
     """
     days_required = amc.SCENARIOS[slug].days_required
@@ -293,7 +293,7 @@ def test_three_multi_day_scenarios_require_multi_day_runs(amc):
     Day 1, so they must declare ``days_required >= 2`` and a default 1-day run
     must drop them with a stderr warning (the acceptance criterion).
 
-    narrowed each scenario's ``days_required`` to its actual minimum
+    Each scenario's ``days_required`` was narrowed to its actual minimum
     in-range day (e.g. ``cache_leak_restart`` and ``db_disk_exhaustion`` start
     on Day 2, ``jwks_rotation_chaos`` starts on Day 3) so shorter multi-day
     runs emit the in-range portion the legacy path used to emit. The test

@@ -10564,7 +10564,7 @@ def main(argv=None):
                 )
             else:
                 # N=1 anonymous — today's shared lambda-baked path.
-                # Pre- byte parity contract: default
+                # Byte-parity contract: the default
                 # ``--instances-per-component 1`` keeps this branch.
                 specs = _compose_topology_coupled_specs(
                     name, specs, upstream_arrays, ctx.rng, n_rows
