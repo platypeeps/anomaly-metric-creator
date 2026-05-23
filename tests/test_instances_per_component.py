@@ -393,7 +393,7 @@ def test_preflight_cap_multiplied_by_n(amc, tmp_path):
 # ---------------------------------------------------------------------------
 # Locked N=3 golden hashes (1-day and 7-day) at --seed 42.
 #
-# Captured on the Phase 2 landing ( / phase 2). These pin the
+# Captured on the Phase 2 landing. These pin the
 # per-component CSV bytes under --instances-per-component 3 so any future
 # change to the long-form dimension prefix, the per-instance row ordering, or
 # the RNG-sharing-across-instances contract trips the regression here.

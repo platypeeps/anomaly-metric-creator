@@ -532,8 +532,8 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 #  - ``below_min``   — value below declared ``min_value``
 #  - ``negative_kind`` — value negative despite counter/rate semantic_type
 #
-# phase 6 cleared every fractional-int violation flagged by
-# by adding the integer-cast bundle in ``generate_component``.
+# Phase 6 cleared every fractional-int violation flagged by the
+# integer-cast bundle in ``generate_component``.
 # Both default runs are now violation-free, with one exception:
 #
 # The 7-day run still surfaces a single ``above_max`` violation on
@@ -610,8 +610,8 @@ def test_validator_default_only_known_violation_kinds(
 ):
     """File presence, timestamp coverage, manifest sort, derivation, and
     row-count checks must be clean against the default outputs — those are
-    the categories promises to gate on. Cell-bound violations are
-    bounded by the expected set in the test above."""
+    the categories the validator promises to gate on. Cell-bound violations
+    are bounded by the expected set in the test above."""
     run = request.getfixturevalue(fixture_name)
     violations = amc.validate_output(run.out_dir)
     for line in violations:

@@ -99,7 +99,7 @@ SCENARIO_CASCADES_BY_SLUG = {
 # Locking these protects every component output from accidental
 # RNG-order, spec-order, or topology-coupling drift.
 #
-# (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# 2026-05-19: re-locked anomalies.csv + apigateway.csv +
 # database.csv + llm_analytics.csv + mqservice.csv + authservice.csv
 # after re-tuning eleven error_rate generator values to clear the new
 # realistic-mode saturation floor. This includes the eight re-tunes
@@ -107,18 +107,17 @@ SCENARIO_CASCADES_BY_SLUG = {
 # in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate
 # in mq_jam) identified by the deviation regression test.
 #
-
-# (2026-05-19) re-baselined every entry here as the phase-6
-# flag-day landing: ``--topology-mode realistic`` is now the default
-# and ``dtype="int"`` columns are rounded via ``np.rint`` before
-# derivations. The pre-flag-day independent baseline (the lineage
-# locked by historical commits) lives in
-# ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is pinned by
+# 2026-05-19 (phase-6 flag day): re-baselined every entry here when
+# ``--topology-mode realistic`` became the default and ``dtype="int"``
+# columns started being rounded via ``np.rint`` before derivations. The
+# pre-flag-day independent baseline (the lineage locked by historical
+# commits) lives in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is
+# pinned by
 # ``test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``;
 # the legacy table is the byte-for-byte parity reference for the
-# deprecation alias and is scheduled for removal after phase 9.
-# When updating these hashes again, regenerate against the realistic
-# default rather than the legacy alias.
+# deprecation alias and is scheduled for removal after phase 9. When
+# updating these hashes again, regenerate against the realistic default
+# rather than the legacy alias.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
     "anomalies.csv": "b2978b6a5abdfc3e253120a04302895c6f678f382fd6fea1acba569b28f355e5",
@@ -180,7 +179,9 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 
 # SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
 # at seed 42 under the current defaults (``--topology-mode realistic``,
-# (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# integer-cast bundle on).
+#
+# 2026-05-19: re-locked anomalies.csv + apigateway.csv +
 # database.csv + llm_analytics.csv + mqservice.csv + authservice.csv
 # after re-tuning eleven error_rate generator values to clear the new
 # realistic-mode saturation floor. This includes the eight re-tunes
@@ -188,13 +189,12 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 # in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate
 # in mq_jam) identified by the deviation regression test.
 #
-
-# integer-cast bundle on). (2026-05-19) re-baselined this block
-# alongside ``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` as
-# part of the phase-6 flag-day landing; the lineage of this golden set
-# (the post-change registry-only spec ordering, commit f6bd453, that
-# stabilizes the ``--anomaly-count`` sampling pool) is unchanged, only
-# the resulting bytes shifted under realistic-mode coupling.
+# 2026-05-19 (phase-6 flag day): re-baselined this block alongside
+# ``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES``; the lineage
+# of this golden set (the registry-only spec ordering introduced in
+# commit f6bd453 that stabilizes the ``--anomaly-count`` sampling pool)
+# is unchanged, only the resulting bytes shifted under realistic-mode
+# coupling.
 # Locking these protects the deterministic ``--anomaly-count`` sampling
 # pool from drift in the positional order of registry specs:
 # ``_apply_signal_level_and_count()`` seeds a ``SeedSequence`` with
@@ -204,7 +204,7 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 # anomalies land in the manifest. Regenerate against the realistic
 # default when re-baselining.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    # Re-locked by Phase 7 (tracked as, 2026-05-20):
+    # Re-locked by Phase 7 (2026-05-20):
     # adding auth_pod_failure and cache_az_isolation (both high severity,
     # days_required=1) expands the high-severity pool, shifting the
     # --anomaly-count 100 sampling draw.
