@@ -413,6 +413,90 @@ def test_malformed_json_raises_value_error(amc, tmp_path):
         amc._load_instance_config(p)
 
 
+def test_os_error_raises_value_error(amc, tmp_path):
+    """OSError on open() must be wrapped so main() can sys.exit() cleanly (VER-192).
+
+    Exercises the loader's defensive ``except OSError`` directly (bypasses
+    ``parse_args``); ``test_directory_rejected`` above covers the
+    ``parse_args is_file()`` gate that would normally reject a directory
+    before the loader runs. Both layers are kept independently tested
+    because the loader is a public-ish helper callable on its own.
+
+    Triggered by passing a path whose .yaml suffix points at a directory;
+    the inner ``open()`` raises ``IsADirectoryError`` on POSIX or
+    ``PermissionError`` on Windows — both are ``OSError`` subclasses, so
+    the assertions lock the wrapper text rather than the platform-
+    specific exc.args.
+
+    Pins the full wrapper contract with a single ``startswith`` against
+    the literal prefix the production code builds
+    (``f"--instance-config {path}: failed to read file"``) plus an
+    ``__cause__`` chain check (the ``from exc`` idiom; a regression that
+    drops it would lose the underlying error type from tracebacks).
+    """
+    p = tmp_path / "subdir.yaml"
+    p.mkdir()
+    with pytest.raises(ValueError) as exc_info:
+        amc._load_instance_config(p)
+    msg = str(exc_info.value)
+    expected_prefix = f"--instance-config {p}: failed to read file"
+    assert msg.startswith(expected_prefix), (
+        f"expected prefix {expected_prefix!r}, got {msg!r}"
+    )
+    assert isinstance(exc_info.value.__cause__, OSError)
+
+
+def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
+    """UnicodeDecodeError from the YAML branch must be wrapped (VER-192).
+
+    A .yaml file with non-UTF-8 bytes lets the ``encoding="utf-8"`` codec
+    raise ``UnicodeDecodeError`` while PyYAML reads the stream; PyYAML does
+    not wrap codec errors, so the raw ``UnicodeDecodeError`` reaches the
+    loader's ``except parse_exc_types`` block (where it sits alongside
+    ``yaml.YAMLError`` in the YAML tuple).
+
+    Pins the full wrapper contract: ``startswith`` against the literal
+    ``f"--instance-config {path}: failed to parse YAML"`` prefix plus an
+    ``__cause__`` chain check. The ``__cause__`` check is the most
+    discriminating: it would fail if a future refactor stopped raising
+    ``from exc`` or wrapped the codec error in a ``yaml.YAMLError``
+    before re-raising.
+    """
+    p = tmp_path / "bad-encoding.yaml"
+    p.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
+    with pytest.raises(ValueError) as exc_info:
+        amc._load_instance_config(p)
+    msg = str(exc_info.value)
+    expected_prefix = f"--instance-config {p}: failed to parse YAML"
+    assert msg.startswith(expected_prefix), (
+        f"expected prefix {expected_prefix!r}, got {msg!r}"
+    )
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+
+
+def test_json_unicode_decode_error_raises_value_error(amc, tmp_path):
+    """UnicodeDecodeError from the JSON branch must be wrapped (VER-192).
+
+    Symmetric companion to the YAML variant: the JSON branch's
+    ``parse_exc_types`` tuple is ``(json.JSONDecodeError, UnicodeDecodeError)``
+    so a future refactor that drops ``UnicodeDecodeError`` from the JSON
+    tuple would surface a raw decode error from ``main()`` instead of the
+    clean ``ValueError`` envelope. ``startswith`` against the literal
+    ``f"--instance-config {path}: failed to parse JSON"`` prefix plus an
+    ``__cause__`` chain check locks the wrap.
+    """
+    p = tmp_path / "bad-encoding.json"
+    p.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
+    with pytest.raises(ValueError) as exc_info:
+        amc._load_instance_config(p)
+    msg = str(exc_info.value)
+    expected_prefix = f"--instance-config {p}: failed to parse JSON"
+    assert msg.startswith(expected_prefix), (
+        f"expected prefix {expected_prefix!r}, got {msg!r}"
+    )
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+
+
 def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
     """If PyYAML isn't installed, the YAML branch surfaces an actionable ValueError.
 
