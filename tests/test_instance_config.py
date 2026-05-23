@@ -425,13 +425,22 @@ def test_os_error_raises_value_error(amc, tmp_path):
     Triggered by passing a path whose .yaml suffix points at a directory;
     the inner ``open()`` raises ``IsADirectoryError`` on POSIX or
     ``PermissionError`` on Windows — both are ``OSError`` subclasses, so
-    the match string locks the wrapper text rather than the platform-
+    the assertions lock the wrapper text rather than the platform-
     specific exc.args.
+
+    Pins the full wrapper contract: wrapper-text prefix, file-path
+    prefix (so users see *which* config failed), and ``__cause__`` chain
+    (the ``from exc`` idiom; a regression that drops it would lose the
+    underlying error type from tracebacks).
     """
     p = tmp_path / "subdir.yaml"
     p.mkdir()
-    with pytest.raises(ValueError, match="failed to read file"):
+    with pytest.raises(ValueError) as exc_info:
         amc._load_instance_config(p)
+    msg = str(exc_info.value)
+    assert "failed to read file" in msg
+    assert str(p) in msg
+    assert isinstance(exc_info.value.__cause__, OSError)
 
 
 def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
@@ -442,11 +451,21 @@ def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
     not wrap codec errors, so the raw ``UnicodeDecodeError`` reaches the
     loader's ``except parse_exc_types`` block (where it sits alongside
     ``yaml.YAMLError`` in the YAML tuple).
+
+    Pins the full wrapper contract: wrapper-text prefix, file-path
+    prefix, and ``__cause__`` chain. The ``__cause__`` check is the most
+    discriminating: it would fail if a future refactor stopped raising
+    ``from exc`` or wrapped the codec error in a ``yaml.YAMLError``
+    before re-raising.
     """
     p = tmp_path / "bad-encoding.yaml"
     p.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
-    with pytest.raises(ValueError, match="failed to parse YAML"):
+    with pytest.raises(ValueError) as exc_info:
         amc._load_instance_config(p)
+    msg = str(exc_info.value)
+    assert "failed to parse YAML" in msg
+    assert str(p) in msg
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
 
 
 def test_json_unicode_decode_error_raises_value_error(amc, tmp_path):
@@ -456,12 +475,17 @@ def test_json_unicode_decode_error_raises_value_error(amc, tmp_path):
     ``parse_exc_types`` tuple is ``(json.JSONDecodeError, UnicodeDecodeError)``
     so a future refactor that drops ``UnicodeDecodeError`` from the JSON
     tuple would surface a raw decode error from ``main()`` instead of the
-    clean ``ValueError`` envelope. This test locks the JSON-side wrap.
+    clean ``ValueError`` envelope. This test locks the JSON-side wrap
+    plus the file-path prefix and ``__cause__`` chain.
     """
     p = tmp_path / "bad-encoding.json"
     p.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
-    with pytest.raises(ValueError, match="failed to parse JSON"):
+    with pytest.raises(ValueError) as exc_info:
         amc._load_instance_config(p)
+    msg = str(exc_info.value)
+    assert "failed to parse JSON" in msg
+    assert str(p) in msg
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
 
 
 def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
