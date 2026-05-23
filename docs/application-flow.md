@@ -29,7 +29,7 @@ flowchart TD
 
     ts --> torder{"--topology-mode?"}
     torder -- "realistic (default)" --> realorder["_topology_generation_order<br/>(Kahn's algorithm, topological order)<br/>+ _compose_topology_coupled_specs<br/>+ _compose_topology_saturation_specs"]
-    torder -- "independent (deprecation alias)" --> indorder["walk components in<br/>COMPONENTS insertion order<br/>(no coupling, no int-cast —<br/>byte-identical to pre-existing / pre-flag-day output;<br/>emits DeprecationWarning)"]
+    torder -- "independent (deprecation alias)" --> indorder["walk components in<br/>COMPONENTS insertion order<br/>(no coupling, no int-cast —<br/>byte-identical to pre-flag-day output;<br/>emits DeprecationWarning)"]
 
     indorder --> gen["for each component: generate_component<br/>natural → anomaly overrides →<br/>dtype='int' rounded via np.rint (realistic mode only) →<br/>derivations → capture →<br/>round → drop → write {component}.csv"]
     realorder --> gen

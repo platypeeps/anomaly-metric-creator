@@ -270,10 +270,9 @@ def test_value_range_sanity(amc, one_day_independent_run):
     intentionally drives downstream load-metric and latency baselines
     outside that natural band via topology coupling and saturation
     feedback. We therefore pin this band check to ``--topology-mode
-    independent`` (the deprecation alias whose retirement is tracked
-    with the alias itself, post-change phase 9); realistic-mode
-    behaviour is validated by the dedicated coupling/saturation tests
-    in ``tests/test_topology_*``."""
+    independent`` (the deprecation alias whose retirement is scheduled
+    after phase 9); realistic-mode behaviour is validated by the
+    dedicated coupling/saturation tests in ``tests/test_topology_*``."""
     _assert_value_band_sanity(
         amc,
         one_day_independent_run,
@@ -546,7 +545,7 @@ def test_unknown_cascade_metric_raises(tmp_path):
     distinction this would be silently swallowed by the filter.
 
     The test patches _apply_scenarios to inject the typo cascade after the
-    registry walk, mirroring how register_cascade was tested pre-existing.
+    registry walk, mirroring how register_cascade was tested previously.
     A fresh module copy keeps the monkey-patch from leaking into the
     session-scoped ``amc`` fixture; the lint exempts the load."""
     spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)  # noqa: amc-load
