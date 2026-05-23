@@ -1,7 +1,7 @@
 """Acceptance tests for `tools/check_amc_module_load.py`.
 
-The lint catches the DRY violation pattern from PR #63 and PR #64 where
-new test files re-imported `anomaly-metric-creator.py` via
+The lint catches the DRY violation pattern where new test files
+re-import `anomaly-metric-creator.py` via
 ``importlib.util.spec_from_file_location(...).exec_module(...)`` instead
 of using the session-scoped `amc` fixture in `tests/conftest.py`. The
 canonical loader (`_load_amc()`) is memoized; duplicate exec_module
@@ -10,7 +10,7 @@ calls pay the full registry-validation cost again.
 The script flags `spec_from_file_location(...)` *function calls* (not
 string literals or comments) in any file passed on the command line
 unless the file is `conftest.py` or the offending line carries the
-`# noqa: amc-load` marker. See VER-197.
+`# noqa: amc-load` marker.
 """
 
 import subprocess

@@ -31,7 +31,7 @@ def test_to_unix_nanos_accepts_millisecond_format(amc):
 
 @pytest.mark.parametrize("ms_offset", [1, 2, 3, 7, 17, 23, 100, 333, 500, 999])
 def test_to_unix_nanos_exact_for_millisecond_inputs(amc, ms_offset):
-    """VER-111 review round 2: every millisecond-precision input must round-
+    """ review round 2: every millisecond-precision input must round-
     trip to an integer nanosecond count with zero floating-point drift.
     Previously _to_unix_nanos went through datetime.timestamp() * 1e9,
     which can accrue tens-to-hundreds of ns of error for some ms offsets.

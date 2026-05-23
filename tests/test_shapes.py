@@ -393,7 +393,7 @@ def test_dst_artifact_day_out_of_range_rejected(amc, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# VER-191: shared CSV row builder eliminates the PR #63 long-form DST drop.
+# shared CSV row builder eliminates the PR #63 long-form DST drop.
 # These unit-level tests pin the contract of the new helpers regardless of
 # which writer branch (dimensionless or long-form) consumes them.
 # ---------------------------------------------------------------------------
@@ -486,12 +486,12 @@ def test_format_csv_row_block_applies_dst_splice_in_long_form(amc):
     """The shared helper must apply ``_splice_dst_artifact`` regardless of
     ``dim_prefix``.
 
-    This is the VER-191 regression guard: before the refactor the
+    This is the regression guard: before the refactor the
     long-form branch of ``generate_component``'s ``emit_metrics``
     writer (the PR #63 multi-instance path) took ``kept_ts`` /
     ``str_vals`` directly and never called ``_splice_dst_artifact``,
     so any caller that reached it with ``dst_inject_day > 0`` would
-    silently drop the duplicated hour. After VER-191 both branches
+    silently drop the duplicated hour. After both branches
     route through ``_format_csv_row_block`` and inherit the splice
     for free — a future caller that relaxes the ``parse_args``
     mutual-exclusion guard will not regress that bug.

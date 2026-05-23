@@ -19,10 +19,10 @@ sampling interval, drop rate, and output directory are all CLI-configurable.
 
 Recent significant additions to the generator:
 
-- **Flag-day default flip + integer-cast bundle** (VER-156, phase 6 of VER-141) —
+- **Flag-day default flip + integer-cast bundle** (phase 6) —
   `--topology-mode realistic` is now the default; `--topology-mode independent`
   is retained as a deprecation alias that emits a stderr `DeprecationWarning`
-  and is scheduled for removal after VER-141 phase 9. Under the new default,
+  and is scheduled for removal after phase 9. Under the new default,
   every `MetricSpec` column declared `dtype="int"` is cast via `np.rint` in
   `generate_component()` before derivations run, clearing all
   fractional-integer `--validate-output` violations on the default 1-day
@@ -33,8 +33,8 @@ Recent significant additions to the generator:
   `tests/` were re-baselined under realistic mode in this PR; the
   pre-flag-day baseline is still reproducible via the deprecation alias
   and is pinned by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
-- **Topology graph v1** (`--topology-mode realistic`, VER-143 through VER-155;
-  default since VER-156) — declares a directed service-call graph (`TOPOLOGY`)
+- **Topology graph v1** (`--topology-mode realistic`, the default) —
+  declares a directed service-call graph (`TOPOLOGY`)
   and wires it into generation. Phase 2 couples downstream RPS baselines from
   upstream load columns; phase 3 extends coupling to all front-half fan-out
   edges; phase 4 adds logistic-shaped latency multiplier and error-rate
@@ -43,16 +43,16 @@ Recent significant additions to the generator:
   saturation). See [docs/topology.md](docs/topology.md) and the
   [Topology graph (v1)](#topology-graph-v1) section.
 - **Schema document + output validator** (`--emit-selection schema` /
-  `--validate-output PATH`, VER-139) — `schema.json` captures run-level
+  `--validate-output PATH`) — `schema.json` captures run-level
   parameters and per-metric metadata; `--validate-output` checks required files,
   row counts, timestamps, cell ranges and dtypes, and derived-metric consistency.
-- **Gauges file** (`--emit-selection gauges`, VER-138) — long-form
+- **Gauges file** (`--emit-selection gauges`) — long-form
   `gauges.csv` with one `(timestamp, component, metric, value)` row per data
   point, chronologically merged across components.
-- **Output directory hygiene** (VER-127) — `_pre_clean_output_dir` removes
+- **Output directory hygiene** — `_pre_clean_output_dir` removes
   stale artifacts from prior runs (dropped components, deselected emit types)
   before generation starts.
-- **Scenario registry refactor + RNG instance** (VER-131) — all anomaly
+- **Scenario registry refactor + RNG instance** — all anomaly
   scenarios live in the `SCENARIOS` dict; per-run state moves into `RunContext`
   with an explicit `np.random.RandomState` so seed behaviour is deterministic
   regardless of import order.
@@ -175,15 +175,15 @@ python3 anomaly-metric-creator.py \
 | `--signal-level`    | `medium`    | Anomaly intensity level: `low`, `medium` (default), or `high`. Inclusion hierarchy: `low` only fires specs explicitly tagged `severity="low"` (today: a handful of benign Monday-morning baseline shifts) and intentionally has **no cascade fan-out** because benign baseline shifts do not realistically propagate as failures; `medium` adds the standard catalog plus its cascade fan-out (the default behavior); `high` additionally activates the high-pressure cross-component scenarios (regional failover storm, coordinated cache+DB meltdown, LLM provider outage, gateway DDoS saturation, storage layer pressure) and their cascades. |
 | `--anomaly-count`   | _unlimited_ | Optional cap on the total number of injected anomalies (primary specs + cascades) across the whole dataset. Sampling is deterministic for a given `--seed` and uses its own RNG stream so it doesn't perturb the column noise. Applied after `--signal-level` and `--components` filters. Out-of-range specs (e.g. multi-day cascades on a 1-day run) are excluded from the sampling pool. |
 | `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–8 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
-| `--instances-per-component` | `1` | Fan each component out to N identical instances (must be in `[1, 20]`). `N=1` (the default) emits today's byte-identical output with no dimension columns. `N>1` prepends `id,host,pod,az,region,tenant` columns to every per-component CSV header and writes N row blocks per component — one block per instance, in the stable `i0`/`pod-0`, `i1`/`pod-1`, … order. `host`/`az`/`region`/`tenant` are empty in v1 (use `--instance-config` to fill them in via a declarative file). All instances share the same RNG-drawn natural values and the same anomaly overrides in v1 unless a scenario spec narrows the targets via `instance_filter` (VER-140 Phase 4). `anomalies.csv` records one row per `(timestamp, component, metric)` regardless of N. The long-form file writers (`combined_metrics_unified.csv`, `gauges.csv`) became dimension-aware in VER-148 Phase 5; the OTEL streaming path (`--otel-enabled`, `--otel-emit-gauges`) became dimension-aware in VER-149 Phase 6; and the schema/validator (`--emit-selection 'schema'`, `--validate-output`) became dimension-aware in VER-151 Phase 8 (per-component `dimensions` blocks in `schema.json` plus long-form header checks). The only remaining gate is `--inject-dst-artifact-day > 0`, which is rejected because the DST splice produces non-monotonic timestamps the multi-instance row builder is not prepared for. Mutually exclusive with `--instance-config`. Multiplies the preflight cell-count cap inputs linearly with N. |
-| `--instance-config` | _off_ | Path to a YAML (`.yaml`/`.yml`) or JSON (`.json`) file declaring a per-component instance topology for repeatable non-uniform fan-outs (VER-140 Phase 3). The top-level key `components` maps component names to lists of `Instance` field dicts (`id, host, pod, az, region, tenant`). Components not listed in the file fall back to the module-level `INSTANCES` registry (single anonymous `Instance()` per component) so the default per-component CSV shape is preserved. `parse_args` checks the flag-shape invariants (path resolves to a regular file via `Path.is_file()`, suffix in `{.yaml, .yml, .json}`, mutex with `--instances-per-component`); schema validation runs in `main()` via `_load_instance_config`, which raises a `ValueError` (caught and re-raised as `sys.exit`) on malformed YAML/JSON, unknown component, unknown `Instance` field, non-mapping top-level value, non-mapping `components` value, per-component value not a list, empty per-component list, non-dict instance entry, duplicate `id`, and per-component count exceeding `MAX_INSTANCES_PER_COMPONENT=20`. YAML support requires PyYAML — install with `pip install 'anomaly-metric-creator[yaml]'` or `pip install pyyaml`; JSON works without it. Triggers the same multi-instance code path as `--instances-per-component > 1`, so it inherits the same downstream-flag state: the long-form file writers (Phase 5 / VER-148), OTEL streaming (Phase 6 / VER-149), and schema/validator (Phase 8 / VER-151) are all dimension-aware, so dimensioned `--instance-config` runs work with `--combine`, `--combine-only`, `--emit-selection 'gauges'`/`'schema'`, `--validate-output`, and the OTEL flags without further configuration; only `--inject-dst-artifact-day > 0` remains rejected. Preflight cell-count cap uses `MAX_INSTANCES_PER_COMPONENT=20` as a conservative upper bound since the per-component instance count is not known until `main()` parses the config file. |
+| `--instances-per-component` | `1` | Fan each component out to N identical instances (must be in `[1, 20]`). `N=1` (the default) emits today's byte-identical output with no dimension columns. `N>1` prepends `id,host,pod,az,region,tenant` columns to every per-component CSV header and writes N row blocks per component — one block per instance, in the stable `i0`/`pod-0`, `i1`/`pod-1`, … order. `host`/`az`/`region`/`tenant` are empty in v1 (use `--instance-config` to fill them in via a declarative file). All instances share the same RNG-drawn natural values and the same anomaly overrides in v1 unless a scenario spec narrows the targets via `instance_filter` (Phase 4). `anomalies.csv` records one row per `(timestamp, component, metric)` regardless of N. The long-form file writers (`combined_metrics_unified.csv`, `gauges.csv`) became dimension-aware in Phase 5; the OTEL streaming path (`--otel-enabled`, `--otel-emit-gauges`) became dimension-aware in Phase 6; and the schema/validator (`--emit-selection 'schema'`, `--validate-output`) became dimension-aware in Phase 8 (per-component `dimensions` blocks in `schema.json` plus long-form header checks). The only remaining gate is `--inject-dst-artifact-day > 0`, which is rejected because the DST splice produces non-monotonic timestamps the multi-instance row builder is not prepared for. Mutually exclusive with `--instance-config`. Multiplies the preflight cell-count cap inputs linearly with N. |
+| `--instance-config` | _off_ | Path to a YAML (`.yaml`/`.yml`) or JSON (`.json`) file declaring a per-component instance topology for repeatable non-uniform fan-outs (Phase 3). The top-level key `components` maps component names to lists of `Instance` field dicts (`id, host, pod, az, region, tenant`). Components not listed in the file fall back to the module-level `INSTANCES` registry (single anonymous `Instance()` per component) so the default per-component CSV shape is preserved. `parse_args` checks the flag-shape invariants (path resolves to a regular file via `Path.is_file()`, suffix in `{.yaml, .yml, .json}`, mutex with `--instances-per-component`); schema validation runs in `main()` via `_load_instance_config`, which raises a `ValueError` (caught and re-raised as `sys.exit`) on malformed YAML/JSON, unknown component, unknown `Instance` field, non-mapping top-level value, non-mapping `components` value, per-component value not a list, empty per-component list, non-dict instance entry, duplicate `id`, and per-component count exceeding `MAX_INSTANCES_PER_COMPONENT=20`. YAML support requires PyYAML — install with `pip install 'anomaly-metric-creator[yaml]'` or `pip install pyyaml`; JSON works without it. Triggers the same multi-instance code path as `--instances-per-component > 1`, so it inherits the same downstream-flag state: the long-form file writers (Phase 5), OTEL streaming (Phase 6), and schema/validator (Phase 8) are all dimension-aware, so dimensioned `--instance-config` runs work with `--combine`, `--combine-only`, `--emit-selection 'gauges'`/`'schema'`, `--validate-output`, and the OTEL flags without further configuration; only `--inject-dst-artifact-day > 0` remains rejected. Preflight cell-count cap uses `MAX_INSTANCES_PER_COMPONENT=20` as a conservative upper bound since the per-component instance count is not known until `main()` parses the config file. |
 | `--allow-huge-output` | _off_       | Bypass the preflight cell-count cap (200,000,000 metric cells across all components, timestamps, and instances). Without this flag, `parse_args` rejects combinations of `--interval-seconds`, `--duration-days`, `--metrics-per-component`, `--instances-per-component`, `--instance-config` (counted as `MAX_INSTANCES_PER_COMPONENT=20` per component as a conservative upper bound since the per-component count isn't known until the file is parsed in `main()`), and `--components` whose row × metric × component × instances product exceeds the cap, and the error message names the offending flags. Pass `--allow-huge-output` when the size is intentional (the actual run can still be truncated by other flags). |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--validate-output` | _off_       | Standalone validator mode (mutually exclusive with `--combine` / `--combine-only`). Loads `PATH/schema.json` and checks the artifacts in `PATH` against it (file presence, row counts, timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds, `counter`/`rate` non-negativity, derived-column consistency, and `anomalies.csv` sort order). Hard-fails on first violation (`exit 1`) unless `--validate-warn` is also passed. See [Output validation (`--validate-output`)](#output-validation---validate-output). |
-| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. After VER-156 the default 1-day output is violation-free; 7-day output still surfaces one `context_overflow_rate` overshoot (scenario-catalog re-tune deferred to VER-141 phase 9), so `--validate-warn` is the right mode when piping 7-day output through CI until phase 9 lands. |
+| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. After the default 1-day output is violation-free; 7-day output still surfaces one `context_overflow_rate` overshoot (scenario-catalog re-tune deferred to phase 9), so `--validate-warn` is the right mode when piping 7-day output through CI until phase 9 lands. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
-| `--topology-mode`   | `realistic`  | Topology-aware baseline coupling (VER-152/VER-153/VER-154; default since VER-156 phase 6 flag day). `realistic` (default) walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 (VER-154) added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. `independent` is a deprecation alias retained only for regenerating the pre-flag-day byte-for-byte baseline; it emits a stderr `DeprecationWarning` on use and is scheduled for removal after VER-141 phase 9. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
+| `--topology-mode`   | `realistic`  | Topology-aware baseline coupling (default since phase 6 flag day). `realistic` (default) walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. `independent` is a deprecation alias retained only for regenerating the pre-flag-day byte-for-byte baseline; it emits a stderr `DeprecationWarning` on use and is scheduled for removal after phase 9. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
 | `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
 | `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
 | `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
@@ -342,7 +342,7 @@ check the run after the fact.
 python3 anomaly-metric-creator.py --emit-selection metrics,schema
 ```
 
-Top-level shape (`schema_version=2`, bumped in VER-157 phase 7):
+Top-level shape (`schema_version=2`, bumped in phase 7):
 
 - `schema_version` — integer schema-document version (bumped on any
   breaking shape change; the validator rejects unknown versions).
@@ -363,7 +363,7 @@ Top-level shape (`schema_version=2`, bumped in VER-157 phase 7):
   Each metric entry carries `name`, `unit`, `semantic_type` (one of
   `counter`, `gauge`, `ratio`, `rate`), `dtype` (`float` or `int`),
   `min_value`, `max_value`, and `derivation` (formula string when the
-  column is computed from siblings, else `null`). VER-151 phase 8
+  column is computed from siblings, else `null`). Phase 8
   adds an optional `dimensions` block per component when the run is
   dim-aware (`--instances-per-component N>1` or a non-default
   `--instance-config`): `{"axes": ["pod"], "cardinality": 3}`. `axes`
@@ -374,7 +374,7 @@ Top-level shape (`schema_version=2`, bumped in VER-157 phase 7):
   The block is omitted entirely on the default single-anonymous-
   `Instance()` path so the v1 schema bytes (and the locked SHA-256
   hashes at 1d and 7d) stay byte-identical to today.
-- `topology` (VER-157 phase 7) — `{source: [{target, weight,
+- `topology` (phase 7) — `{source: [{target, weight,
   saturation, correlation_threshold}, ...]}` snapshot of the directed
   coupling graph, restricted to the active component set.
   Constant-weight edges serialize their numeric weight verbatim;
@@ -413,7 +413,7 @@ The validator loads `PATH/schema.json` and runs:
 - Per-component data row counts ≤ `rows_per_component` (plus the DST
   splice when applicable); the under-emission band is 8 σ around the
   expected drop count so a normal run doesn't false-positive. When
-  the per-component schema declares `dimensions` (VER-151 phase 8),
+  the per-component schema declares `dimensions` (phase 8),
   both the upper bound and the under-emission band are multiplied by
   `cardinality` so the multi-instance long-form CSV (N copies of
   each row, one per instance) sits inside the band.
@@ -435,9 +435,9 @@ The validator loads `PATH/schema.json` and runs:
 - When any per-component schema declares `dimensions`, `gauges.csv`
   and `combined_metrics_unified.csv` (when emitted) must carry the
   10-column long-form header `timestamp, component, id, host, pod,
-  az, region, tenant, metric, value` (VER-151 phase 8). Mirrors the
+  az, region, tenant, metric, value` (phase 8). Mirrors the
   Phase 5 writer's any-of dispatch predicate.
-- Topology coupling (VER-157 phase 7): for every constant-weight edge
+- Topology coupling (phase 7): for every constant-weight edge
   declared in `topology`, the source's canonical load metric and the
   target's canonical load metric must correlate at Pearson ≥ 0.85
   (per-edge override via `Edge.correlation_threshold`). Skipped under
@@ -447,13 +447,13 @@ The validator loads `PATH/schema.json` and runs:
   `span_end`, padded by 30s) are excluded from the row pool so
   scenario overrides don't dominate the realized correlation.
 
-After VER-156 phase 6 (flag day) the default 1-day output is
+After phase 6 (flag day) the default 1-day output is
 violation-free. The 7-day output still surfaces a single known
 violation — the LLM context-overflow scenario drives
 `llm_analytics.context_overflow_rate` to 8.5 at day 5 + 2h to
 simulate context-window saturation, which exceeds the metric's
 declared `max_value=1`. Reconciling that scenario amplitude with the
-ratio bound is a scenario-catalog re-tune deferred to VER-141 phase
+ratio bound is a scenario-catalog re-tune deferred to phase
 9. Pass `--validate-warn` to keep CI green on 7-day runs until then.
 
 ### Output files
@@ -572,7 +572,7 @@ reporting artifact for that run.
 
 The `TOPOLOGY` constant declares the directed service-call graph alongside
 `COMPONENTS`. It is consulted by `--topology-mode realistic` (the default
-since VER-156 phase 6 flag day; `independent` is now a deprecation alias —
+since phase 6 flag day; `independent` is now a deprecation alias —
 see the [CLI flags](#cli-flags) table) to thread upstream load through
 downstream baselines.
 
@@ -602,7 +602,7 @@ downstream baselines.
   Phase 4 saturation: midpoint `760`, steepness `6`, latency gain
   `0.6`, error gain `0.015` — drives database `read_latency_ms`,
   `write_latency_ms`, and `error_rate`.
-- `apigateway → llm_analytics` (`1.0`, VER-155 phase 5) — couples
+- `apigateway → llm_analytics` (`1.0`, phase 5) — couples
   `llm_analytics.input_tokens_per_sec` to
   `apigateway.requests_per_sec` (the renormalization makes any
   positive single-edge weight equivalent), and adds saturation
@@ -777,7 +777,7 @@ Two `tests/`-scoped checks run on every `git commit` via
   individual call line opts out with a trailing `# noqa: amc-load`
   comment for the rare case that genuinely needs a fresh module
   instance (e.g. monkey-patching `_apply_scenarios` in
-  `tests/test_correctness.py`). See VER-197.
+  `tests/test_correctness.py`).
 
 Install and run locally (the `dev` extra installs both `ruff` and
 `pre-commit`):

@@ -42,7 +42,7 @@ def run_capture(
     interval_seconds=_CHEAP_INTERVAL_SECONDS_DEFAULT,
 ):
     """Run ``main()`` end-to-end into ``out_dir`` with the cheap-default
-    interval (VER-196).
+    interval.
 
     ``interval_seconds`` defaults to ``60.0`` so tests that don't
     explicitly care about per-second resolution take the 60x cheaper
@@ -184,7 +184,7 @@ def one_day_independent_run(amc, tmp_path_factory):
     of the independent baseline model, which is the building block of both
     modes; realistic-mode behaviour is exercised by the topology-specific
     tests (coupling correlation, saturation lift). Schedule this fixture's
-    retirement together with the alias removal after VER-141 phase 9.
+    retirement together with the alias removal after phase 9.
     ``interval_seconds=None`` keeps the 1s default so the natural-band check
     sees the historic 86400-row natural sample."""
     out = tmp_path_factory.mktemp("one_day_independent")
@@ -216,8 +216,7 @@ def one_day_full_metrics_independent_run(amc, tmp_path_factory):
 @pytest.fixture(scope="session")
 def n3_one_day_dataset_dir(amc, tmp_path_factory):
     """1-day ``--instances-per-component 3`` per-component CSVs +
-    ``anomalies.csv``, generated once and shared across the VER-148
-    long-form writer tests (``tests/test_gauges_file.py`` and
+    ``anomalies.csv``, generated once and shared across the long-form writer tests (``tests/test_gauges_file.py`` and
     ``tests/test_combine.py``).
 
     The generation pass costs ~25-30 seconds and produces ~1.3 GB of

@@ -1,4 +1,4 @@
-"""Tests for --instance-config PATH (VER-140 Phase 3).
+"""Tests for --instance-config PATH (Phase 3).
 
 Verifies:
 - YAML and JSON config files produce the correct RunContext.instances shape.
@@ -171,7 +171,7 @@ components:
 
 def test_mutually_exclusive_with_instances_per_component(amc, tmp_path):
     """--instance-config and --instances-per-component are mutually exclusive."""
-    cfg = _write_yaml(tmp_path, "components:\n  authservice:\n    - {id: a1}\n")
+    cfg = _write_yaml(tmp_path, "components:\n authservice:\n    - {id: a1}\n")
     with pytest.raises(SystemExit):
         _parse(amc, [
             "--instance-config", str(cfg),
@@ -225,7 +225,7 @@ components:
 # ---------------------------------------------------------------------------
 
 def test_missing_components_key_raises(amc, tmp_path):
-    cfg = _write_yaml(tmp_path, "instances:\n  authservice:\n    - {id: a1}\n")
+    cfg = _write_yaml(tmp_path, "instances:\n authservice:\n    - {id: a1}\n")
     with pytest.raises(ValueError, match="missing required top-level key"):
         amc._load_instance_config(cfg)
 
@@ -291,7 +291,7 @@ def test_components_value_is_explicit_null_raises(amc, tmp_path):
 
 def test_per_component_value_not_a_list_raises(amc, tmp_path):
     """``authservice: {id: a1}`` is a mapping instead of a list of mappings."""
-    cfg = _write_yaml(tmp_path, "components:\n  authservice:\n    id: a1\n")
+    cfg = _write_yaml(tmp_path, "components:\n authservice:\n id: a1\n")
     with pytest.raises(ValueError, match="value must be a list"):
         amc._load_instance_config(cfg)
 
@@ -400,7 +400,7 @@ def test_unsupported_extension_rejected(amc, tmp_path):
 def test_malformed_yaml_raises_value_error(amc, tmp_path):
     """Bare yaml.YAMLError must be wrapped so main() can sys.exit() cleanly."""
     p = tmp_path / "bad.yaml"
-    p.write_text("components:\n  authservice:\n    - {id: a1\n")  # unterminated mapping
+    p.write_text("components:\n authservice:\n    - {id: a1\n")  # unterminated mapping
     with pytest.raises(ValueError, match="failed to parse YAML"):
         amc._load_instance_config(p)
 
@@ -414,7 +414,7 @@ def test_malformed_json_raises_value_error(amc, tmp_path):
 
 
 def test_os_error_raises_value_error(amc, tmp_path):
-    """OSError on open() must be wrapped so main() can sys.exit() cleanly (VER-192).
+    """OSError on open() must be wrapped so main() can sys.exit() cleanly.
 
     Exercises the loader's defensive ``except OSError`` directly (bypasses
     ``parse_args``); ``test_directory_rejected`` above covers the
@@ -447,7 +447,7 @@ def test_os_error_raises_value_error(amc, tmp_path):
 
 
 def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
-    """UnicodeDecodeError from the YAML branch must be wrapped (VER-192).
+    """UnicodeDecodeError from the YAML branch must be wrapped.
 
     A .yaml file with non-UTF-8 bytes lets the ``encoding="utf-8"`` codec
     raise ``UnicodeDecodeError`` while PyYAML reads the stream; PyYAML does
@@ -475,7 +475,7 @@ def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
 
 
 def test_json_unicode_decode_error_raises_value_error(amc, tmp_path):
-    """UnicodeDecodeError from the JSON branch must be wrapped (VER-192).
+    """UnicodeDecodeError from the JSON branch must be wrapped.
 
     Symmetric companion to the YAML variant: the JSON branch's
     ``parse_exc_types`` tuple is ``(json.JSONDecodeError, UnicodeDecodeError)``
@@ -507,7 +507,7 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
     statement, exercising the install-hint error path.
     """
     cfg = tmp_path / "cfg.yaml"
-    cfg.write_text("components:\n  authservice:\n    - {id: a1}\n")
+    cfg.write_text("components:\n authservice:\n    - {id: a1}\n")
     monkeypatch.setitem(sys.modules, "yaml", None)
     with pytest.raises(ValueError, match="PyYAML is required"):
         amc._load_instance_config(cfg)
@@ -520,7 +520,7 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
 def test_instance_config_combine_only_allowed(amc, tmp_path):
     """--combine-only + --instance-config is permitted at parse time.
 
-    Phase 5 (VER-148) made the combine writer dimension-aware (long-form
+    Phase 5 made the combine writer dimension-aware (long-form
     dispatch when per-component CSVs carry the dimension prefix), so the
     shared ``_multi_instance`` gate no longer rejects this combination.
     Mirrors the ``--instances-per-component > 1 + --combine-only`` lift.

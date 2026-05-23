@@ -111,7 +111,7 @@ def test_manifest_csv_cross_check(amc, tmp_path, seed):
     """
     out = tmp_path / f"seed_{seed}"
     out.mkdir()
-    # VER-196: pin 1s resolution because this test indexes per-second rows
+    # pin 1s resolution because this test indexes per-second rows
     # (round(time_offset / 1.0)) to verify manifest entries map back to
     # populated CSV cells. 60s rows would round multiple specs to the same
     # row and lose the per-second precision the assertion relies on.
@@ -266,12 +266,12 @@ def test_value_range_sanity(amc, one_day_independent_run):
 
     The natural band is derived from each MetricSpec's ``base``/``std``/
     ``multiplier`` — it characterizes the independent Gaussian baseline.
-    After VER-156 phase 6 the default mode is ``realistic``, which
+    After phase 6 the default mode is ``realistic``, which
     intentionally drives downstream load-metric and latency baselines
     outside that natural band via topology coupling and saturation
     feedback. We therefore pin this band check to ``--topology-mode
     independent`` (the deprecation alias whose retirement is tracked
-    with the alias itself, post-VER-141 phase 9); realistic-mode
+    with the alias itself, post-change phase 9); realistic-mode
     behaviour is validated by the dedicated coupling/saturation tests
     in ``tests/test_topology_*``."""
     _assert_value_band_sanity(
@@ -496,7 +496,7 @@ def test_duplicate_anomaly_specs_raise(tmp_path):
     this test monkey-patches ``_apply_scenarios`` on the module, and
     sharing the session module would leak the patch into every other
     test that runs after it. The fresh module copy is the isolation
-    boundary, so the VER-197 lint exempts the load. See
+    boundary, so the lint exempts the load. See
     ``tools/check_amc_module_load.py`` for the lint."""
     spec = importlib.util.spec_from_file_location("amc_dup", SCRIPT_PATH)  # noqa: amc-load
     m = importlib.util.module_from_spec(spec)
@@ -521,7 +521,7 @@ def test_unknown_primary_anomaly_metric_raises(tmp_path):
     by the metrics-per-component filter.
 
     A fresh module copy isolates the ``_apply_scenarios`` monkey-patch
-    from the session-scoped ``amc`` fixture. The VER-197 lint exempts
+    from the session-scoped ``amc`` fixture. The lint exempts
     the load (``tools/check_amc_module_load.py``)."""
     spec = importlib.util.spec_from_file_location("amc_unknown_primary", SCRIPT_PATH)  # noqa: amc-load
     m = importlib.util.module_from_spec(spec)
@@ -546,9 +546,9 @@ def test_unknown_cascade_metric_raises(tmp_path):
     distinction this would be silently swallowed by the filter.
 
     The test patches _apply_scenarios to inject the typo cascade after the
-    registry walk, mirroring how register_cascade was tested pre-VER-104.
+    registry walk, mirroring how register_cascade was tested pre-existing.
     A fresh module copy keeps the monkey-patch from leaking into the
-    session-scoped ``amc`` fixture; the VER-197 lint exempts the load."""
+    session-scoped ``amc`` fixture; the lint exempts the load."""
     spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)  # noqa: amc-load
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
@@ -804,7 +804,7 @@ def test_interval_seconds_default_is_one(amc):
 
 
 # ------------------------------------------------------------------
-# VER-111: sub-second --interval-seconds must keep per-row timestamp
+# sub-second --interval-seconds must keep per-row timestamp
 # strings unique and combine_logs_unified must preserve every row.
 # Pre-fix, _build_timestamp_arrays formatted every row at second
 # precision, so adjacent rows at interval=0.5 collided on the same
@@ -886,8 +886,8 @@ def test_sub_second_interval_timestamps_have_fractional_resolution(amc, tmp_path
 
 
 # ------------------------------------------------------------------
-# VER-105: --scenarios all is exactly equivalent to no flag (default).
-# Pre-VER-102 byte hashes are locked separately in test_scenarios.py
+# --scenarios all is exactly equivalent to no flag (default).
+# Pre- byte hashes are locked separately in test_scenarios.py
 # (DEFAULT_ONE_DAY_HASHES / DEFAULT_SEVEN_DAY_HASHES); this test adds
 # the complementary parity check: passing --scenarios all explicitly
 # produces the same per-component CSV + manifest bytes as omitting
@@ -905,7 +905,7 @@ def _all_artifact_filenames():
 def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
     """``--scenarios all`` must produce the same per-component CSV and
     ``anomalies.csv`` bytes as the default (no flag). This is the
-    default-equivalence regression for VER-102: any drift between the
+    default-equivalence regression for any drift between the
     two paths would indicate a divergence in scenario resolution that
     the existing byte-hash lock in ``test_scenarios.py`` cannot detect
     on its own (the lock only covers no-flag).
@@ -929,7 +929,7 @@ def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
 
 
 def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
-    """VER-124: toggling --otel-emit-gauges on must not perturb any CSV byte.
+    """toggling --otel-emit-gauges on must not perturb any CSV byte.
 
     The gauge stream reads CSVs after they're written; flipping the flag adds
     network I/O but no value computation. Two runs against the same seed —
@@ -994,7 +994,7 @@ def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
 
 
 # ------------------------------------------------------------------
-# Enriched anomalies.csv schema (VER-132): chronological sort,
+# Enriched anomalies.csv schema: chronological sort,
 # 12-column schema, cascade->primary linkage via parent_event_id.
 # ------------------------------------------------------------------
 _ENRICHED_MANIFEST_COLUMNS = [
@@ -1018,7 +1018,7 @@ def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
     """
     out_dir = tmp_path / f"ver132_{days}d"
     extra = ["--signal-level", "high"] if days == 7 else None
-    # VER-196: pin 1s resolution because the test cross-references each
+    # pin 1s resolution because the test cross-references each
     # manifest span_end against per-second timestamps in the component CSV
     # and matches scenario time_offsets (often at minute boundaries that
     # collide on the same 60s row).
@@ -1147,7 +1147,7 @@ def test_span_end_walks_back_when_nominal_end_row_is_dropped(amc, tmp_path):
     (caught by the strict walk-back invariant below).
     """
     out_dir = tmp_path / "walk_back_high_drop"
-    # VER-196: interval_seconds=None pins the 1s default because this test
+    # interval_seconds=None pins the 1s default because this test
     # asserts n_rows == 86400 and matches each manifest row's span_end back
     # to per-second timestamps in the component CSV.
     run_capture(

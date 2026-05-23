@@ -368,12 +368,12 @@ def test_expected_scenario_slugs_present(amc):
         # High-pressure
         "regional_failover_storm", "cache_db_meltdown", "llm_provider_outage",
         "gateway_ddos", "storage_layer_pressure",
-        # High-pressure: sharp-start/end incidents (VER-119)
+        # High-pressure: sharp-start/end incidents
         "deploy_bad_canary_rollback", "dns_provider_outage",
         "network_partition_az_split",
         # Multi-day cascading
         "cache_leak_restart", "jwks_rotation_chaos", "db_disk_exhaustion",
-        # Partial-outage (VER-140 Phase 7, tracked by VER-150)
+        # Partial-outage (Phase 7, tracked)
         "auth_pod_failure", "cache_az_isolation",
     }
     actual = set(amc.SCENARIOS.keys())

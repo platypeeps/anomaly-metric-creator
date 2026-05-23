@@ -1,4 +1,4 @@
-"""VER-155 phase 5: LLM topology coupling (token-throttle → llm_analytics).
+"""phase 5: LLM topology coupling (token-throttle → llm_analytics).
 
 Phase 5 closes the v1 topology graph by promoting the
 ``apigateway -> llm_analytics`` placeholder edge declared in phase 1
@@ -39,12 +39,12 @@ Acceptance gates exercised here:
 * Realistic-mode latency / error lift: latency and error means under
   realistic mode exceed independent-mode means by a measurable margin.
 * Caps: latency stays non-negative, error rate stays <= 1.0.
-* Default (now ``--topology-mode realistic`` since VER-156 phase 6)
+* Default (now ``--topology-mode realistic`` since phase 6)
   ``llm_analytics.csv`` bytes match an explicit ``--topology-mode
   realistic`` run (the in-file ``test_realistic_mode_llm_analytics_
   byte_identical_to_default`` asserts this). The deprecated
   ``--topology-mode independent`` alias still reproduces the
-  pre-VER-155 / pre-VER-156 baseline byte-for-byte but is pinned in
+  pre-existing / pre-existing baseline byte-for-byte but is pinned in
   ``tests/test_topology_loadbalancer_gateway.py`` against
   ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 """
@@ -317,7 +317,7 @@ def test_llm_analytics_in_saturation_targets_registry(amc):
 
 # ------------------------------------------------------------------
 # Default (realistic) mode: byte-identical to explicit --topology-mode
-# realistic. After the VER-156 phase 6 flag day the no-flag default and
+# realistic. After the phase 6 flag day the no-flag default and
 # the realistic alias must produce the same llm_analytics CSV bytes.
 # ------------------------------------------------------------------
 def test_realistic_mode_llm_analytics_byte_identical_to_default(
@@ -325,14 +325,14 @@ def test_realistic_mode_llm_analytics_byte_identical_to_default(
 ):
     """Explicit ``--topology-mode realistic`` produces the same
     ``llm_analytics.csv`` bytes as the no-flag default 1-day run
-    captured by the session-scoped fixture (post-VER-156 phase 6)."""
+    captured by the session-scoped fixture (post-change phase 6)."""
     default_hash = _sha256_path(one_day_run_a.out_dir / "llm_analytics.csv")
     explicit_hash = _sha256_path(
         realistic_one_day_llm.out_dir / "llm_analytics.csv"
     )
     assert default_hash == explicit_hash, (
         "llm_analytics.csv drifted between the default 1-day run and "
-        "an explicit --topology-mode realistic run; after the VER-156 "
+        "an explicit --topology-mode realistic run; after the "
         "phase 6 flag day the no-flag default and the realistic alias "
         "must stay byte-identical"
     )
@@ -369,7 +369,7 @@ def test_realistic_llm_token_throughput_tracks_apigateway(
         f"realistic-mode Pearson(apigateway.requests_per_sec, "
         f"llm_analytics.input_tokens_per_sec)={corr:.4f}; "
         f"expected >= 0.85 — the LLM token throughput must track "
-        f"upstream gating per the VER-155 acceptance criterion"
+        f"upstream gating per the acceptance criterion"
     )
 
 

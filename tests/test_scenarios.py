@@ -1,4 +1,4 @@
-"""SCENARIOS registry coverage (VER-103 phase 1 + VER-104 phase 2 full migration).
+"""SCENARIOS registry coverage (phase 1 + phase 2 full migration).
 
 All anomaly and cascade specs live in the SCENARIOS registry; the legacy
 ``anoms_*`` lists and ``register_default_cascades()`` /
@@ -14,13 +14,13 @@ These tests cover:
   unknown-slug hard error.
 * Default-output byte-for-byte regression — locked SHA-256 hashes for
   every per-component CSV and ``anomalies.csv`` from a default 1-day
-  run at seed 42 and a 7-day run at seed 42. After VER-156 phase 6
+  run at seed 42 and a 7-day run at seed 42. After phase 6
   the default is ``--topology-mode realistic`` with the integer-cast
   bundle on, so the constants below
   (``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` /
   ``HIGH_SEVEN_DAY_CAPPED_HASHES``) capture realistic-mode bytes;
   the high-signal + ``--anomaly-count`` capped 7-day hashes were
-  captured against the post-VER-104 sampling-pool ordering, which
+  captured against the post-change sampling-pool ordering, which
   this PR did not change. The pre-flag-day independent baseline is
   preserved verbatim in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` and is
   pinned by
@@ -99,24 +99,24 @@ SCENARIO_CASCADES_BY_SLUG = {
 # Locking these protects every component output from accidental
 # RNG-order, spec-order, or topology-coupling drift.
 #
-# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# (2026-05-19) re-locked anomalies.csv + apigateway.csv +
 # database.csv + llm_analytics.csv + mqservice.csv + authservice.csv
 # after re-tuning eleven error_rate generator values to clear the new
 # realistic-mode saturation floor. This includes the eight re-tunes
-# from the initial VER-159 PR plus three additional ones (database.error_rate
+# from the initial PR plus three additional ones (database.error_rate
 # in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate
 # in mq_jam) identified by the deviation regression test.
 #
 
-# VER-156 (2026-05-19) re-baselined every entry here as the phase-6
+# (2026-05-19) re-baselined every entry here as the phase-6
 # flag-day landing: ``--topology-mode realistic`` is now the default
 # and ``dtype="int"`` columns are rounded via ``np.rint`` before
 # derivations. The pre-flag-day independent baseline (the lineage
-# locked by VER-132 / VER-104 historical commits) lives in
+# locked by historical commits) lives in
 # ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is pinned by
 # ``test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``;
 # the legacy table is the byte-for-byte parity reference for the
-# deprecation alias and is scheduled for removal after VER-141 phase 9.
+# deprecation alias and is scheduled for removal after phase 9.
 # When updating these hashes again, regenerate against the realistic
 # default rather than the legacy alias.
 # ------------------------------------------------------------------
@@ -156,11 +156,11 @@ DEFAULT_SEVEN_DAY_HASHES = {
 
 # Pre-flag-day baseline hashes captured under the original
 # ``--topology-mode independent`` mode (no topology coupling, no
-# integer-cast bundle). VER-156 phase 6 retained ``--topology-mode
+# integer-cast bundle). Phase 6 retained ``--topology-mode
 # independent`` as a deprecation alias whose CSV bytes must remain
 # byte-for-byte identical to this baseline, so test_topology_loadbalancer_gateway
 # pins them against the alias output to catch any silent drift in the
-# deprecated path before it is removed (scheduled for after VER-141 phase 9).
+# deprecated path before it is removed (scheduled for after phase 9).
 LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
     "anomalies.csv": "b2978b6a5abdfc3e253120a04302895c6f678f382fd6fea1acba569b28f355e5",
     "apigateway.csv": "86df1f5a027badae5057da98072773b17cadb31ca117bd0a3948857328fe76eb",
@@ -180,19 +180,19 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 
 # SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
 # at seed 42 under the current defaults (``--topology-mode realistic``,
-# VER-159 (2026-05-19) re-locked anomalies.csv + apigateway.csv +
+# (2026-05-19) re-locked anomalies.csv + apigateway.csv +
 # database.csv + llm_analytics.csv + mqservice.csv + authservice.csv
 # after re-tuning eleven error_rate generator values to clear the new
 # realistic-mode saturation floor. This includes the eight re-tunes
-# from the initial VER-159 PR plus three additional ones (database.error_rate
+# from the initial PR plus three additional ones (database.error_rate
 # in db_stall, apigateway.error_rate in lb_flapping, mqservice.error_rate
 # in mq_jam) identified by the deviation regression test.
 #
 
-# integer-cast bundle on). VER-156 (2026-05-19) re-baselined this block
+# integer-cast bundle on). (2026-05-19) re-baselined this block
 # alongside ``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` as
 # part of the phase-6 flag-day landing; the lineage of this golden set
-# (the post-VER-104 registry-only spec ordering, commit f6bd453, that
+# (the post-change registry-only spec ordering, commit f6bd453, that
 # stabilizes the ``--anomaly-count`` sampling pool) is unchanged, only
 # the resulting bytes shifted under realistic-mode coupling.
 # Locking these protects the deterministic ``--anomaly-count`` sampling
@@ -204,7 +204,7 @@ LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
 # anomalies land in the manifest. Regenerate against the realistic
 # default when re-baselining.
 HIGH_SEVEN_DAY_CAPPED_HASHES = {
-    # Re-locked by VER-140 Phase 7 (tracked as VER-150, 2026-05-20):
+    # Re-locked by Phase 7 (tracked as, 2026-05-20):
     # adding auth_pod_failure and cache_az_isolation (both high severity,
     # days_required=1) expands the high-severity pool, shifting the
     # --anomaly-count 100 sampling draw.
@@ -266,7 +266,7 @@ def test_scenario_severity_in_vocabulary(amc, slug):
 @pytest.mark.parametrize("slug", sorted(THREE_MULTI_DAY_SCENARIOS))
 def test_scenario_days_required_vocabulary(amc, slug):
     """``days_required`` is the minimum --duration-days at which any of the
-    scenario's specs becomes in range. VER-104 relaxed the validator from
+    scenario's specs becomes in range. relaxed the validator from
     ``{1, 7}`` to any positive int so each scenario can gate at the day
     index of its earliest offset; the equality check (days_required must
     equal that earliest in-range day) lives in
@@ -291,9 +291,9 @@ def test_scenario_components_touched_exist(amc, slug):
 def test_three_multi_day_scenarios_require_multi_day_runs(amc):
     """The 3 migrated multi-day cascading scenarios all have specs that span past
     Day 1, so they must declare ``days_required >= 2`` and a default 1-day run
-    must drop them with a stderr warning (the VER-103 acceptance criterion).
+    must drop them with a stderr warning (the acceptance criterion).
 
-    VER-104 narrowed each scenario's ``days_required`` to its actual minimum
+    narrowed each scenario's ``days_required`` to its actual minimum
     in-range day (e.g. ``cache_leak_restart`` and ``db_disk_exhaustion`` start
     on Day 2, ``jwks_rotation_chaos`` starts on Day 3) so shorter multi-day
     runs emit the in-range portion the legacy path used to emit. The test
@@ -307,7 +307,7 @@ def test_three_multi_day_scenarios_require_multi_day_runs(amc):
 
 
 # ------------------------------------------------------------------
-# Spec-schema validator (_validate_scenario_spec, VER-130)
+# Spec-schema validator (_validate_scenario_spec)
 # ------------------------------------------------------------------
 def _good_primary_spec():
     """Well-formed primary spec used as a baseline by validator tests."""
@@ -359,7 +359,7 @@ def _load_vocab_shapes_for_parametrize():
     Routes through ``conftest._load_amc()`` (the memoized canonical
     loader) so collection-time parametrize and the session-scoped
     ``amc`` fixture share a single ``exec_module`` of the registry. The
-    VER-197 lint (``tools/check_amc_module_load.py``) forbids
+    lint (``tools/check_amc_module_load.py``) forbids
     out-of-conftest ``spec_from_file_location(...)`` calls precisely so
     this kind of loader cannot drift into a duplicate exec."""
     from conftest import _load_amc
@@ -1450,9 +1450,9 @@ def test_per_slug_isolation(amc, tmp_path):
 
 
 # ==================================================================
-# VER-105: Composition matrix + validation + WARNING hardening
+# Composition matrix + validation + WARNING hardening
 # ==================================================================
-# Composition order locked by VER-102 plan:
+# Composition order plan:
 #   allowlist (--scenarios) → exclude (--exclude-scenarios)
 #   → severity (--signal-level) → duration (--duration-days)
 #   → components (--components)

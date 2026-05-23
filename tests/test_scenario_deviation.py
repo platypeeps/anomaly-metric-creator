@@ -1,5 +1,5 @@
-"""VER-159 acceptance: every scenario row must produce a visibly anomalous
-metric value under ``--topology-mode realistic`` (the post-VER-156 default).
+""" acceptance: every scenario row must produce a visibly anomalous
+metric value under ``--topology-mode realistic`` (the post-change default).
 
 The test compares two runs per scenario:
 
@@ -18,12 +18,12 @@ propagate effects outside the targeted cell), the deviation at an anomaly
 row remains a direct measurement of the spec's primary effect, and the
 column-wide std of the baseline remains a fair noise floor.
 
-Acceptance per VER-159: ``max|active[span] - baseline[span]| > std(
+Acceptance per ``max|active[span] - baseline[span]| > std(
 baseline_column)`` for every (component, metric, span) recorded in the
 active run's ``anomalies.csv``.
 
-This test was added in VER-159 after the realistic-mode saturation
-feedback (VER-154/VER-155) raised the std of ``apigateway.error_rate``
+This test was added after the realistic-mode saturation
+feedback raised the std of ``apigateway.error_rate``
 from ~0.018 to ~0.040 and ``authservice.error_rate`` from ~0.018 to
 ~0.050, which sank eight hand-tuned cascade generators below the noise
 floor. The test prevents the same class of silent no-op from reappearing
@@ -323,7 +323,7 @@ def test_scenario_every_recorded_anomaly_fires_above_baseline_sigma(
     ``anomalies.csv`` must deviate from the baseline column by more than
     one column-wide standard deviation under realistic mode.
 
-    This is the VER-159 acceptance gate: it catches the class of silent
+    This is the acceptance gate: it catches the class of silent
     no-op where a hand-tuned cascade generator returns a value that the
     realistic-mode saturation floor has lifted the baseline above. The
     error message names every offending row with its deviation, std, and

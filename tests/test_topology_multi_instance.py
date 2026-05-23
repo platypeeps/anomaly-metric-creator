@@ -1,4 +1,4 @@
-"""VER-158 phase 8: per-instance topology integration.
+"""phase 8: per-instance topology integration.
 
 Verifies that ``--topology-mode realistic`` under
 ``--instances-per-component N > 1`` (or a non-default ``--instance-config``)
@@ -218,7 +218,7 @@ def test_instances_per_component_1_byte_identity(
 ):
     """An explicit ``--instances-per-component 1`` run is byte-identical
     to the no-flag default. Both take the anonymous-N=1 lambda-baked
-    topology branch (the pre-VER-158 parity path).
+    topology branch (the pre-existing parity path).
     """
     out = tmp_path_factory.mktemp("ver158_n1_explicit_default")
     n1_run = run_capture(
@@ -244,7 +244,7 @@ def test_synthetic_pod0_spike_lifts_only_pod0_saturation(
     ``authservice.avg_auth_latency_ms`` for pod-0, but NOT on
     sibling pods 1 and 2.
 
-    Matches the VER-158 issue acceptance: a slow upstream pod
+    Matches the issue acceptance: a slow upstream pod
     produces saturation feedback only on the corresponding
     downstream pod's rows under 1:1 routing.
 

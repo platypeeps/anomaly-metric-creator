@@ -30,11 +30,11 @@ def test_parse_args_custom(amc):
     ("--drop-rate", "1.1"),
     ("--interval-seconds", "0"),
     ("--interval-seconds", "-5"),
-    # VER-111: sub-millisecond intervals would collide on the rendered
+    # sub-millisecond intervals would collide on the rendered
     # millisecond-precision timestamp string and silently drop rows.
     ("--interval-seconds", "0.0005"),
     ("--interval-seconds", "0.0009"),
-    # VER-111 review round 2: non-finite floats slip past <= 0 and < 0.001
+    # review round 2: non-finite floats slip past <= 0 and < 0.001
     # checks; NaN crashes int conversion later, inf emits zero rows silently.
     ("--interval-seconds", "nan"),
     ("--interval-seconds", "inf"),
@@ -46,10 +46,10 @@ def test_parse_args_invalid_values(amc, flag, value):
 
 
 def test_parse_args_interval_seconds_accepts_millisecond_floor(amc):
-    """VER-111: --interval-seconds 0.001 (1ms) is the documented floor and
+    """--interval-seconds 0.001 (1ms) is the documented floor and
     must parse cleanly; anything below collapses to identical timestamps.
 
-    The VER-136 preflight cell-count cap rejects 0.001s intervals at
+    The preflight cell-count cap rejects 0.001s intervals at
     default --duration-days / --components, so we opt out with
     --allow-huge-output to keep exercising the millisecond floor itself."""
     args = amc.parse_args([
@@ -354,7 +354,7 @@ def test_parse_args_exclude_scenarios_invalid_name_fails(amc):
 
 
 # ------------------------------------------------------------------
-# --otel-emit-gauges / --otel-gauge-* (VER-124)
+# --otel-emit-gauges / --otel-gauge-*
 # ------------------------------------------------------------------
 def test_otel_emit_gauges_defaults_false(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
@@ -489,7 +489,7 @@ def test_otel_emit_gauges_allows_dst_artifact_zero(amc, monkeypatch):
 
 
 # ------------------------------------------------------------------
-# _env_bool helper (VER-124)
+# _env_bool helper
 # ------------------------------------------------------------------
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", "Yes", "on", "  ON  "])
 def test_env_bool_truthy_values_return_true(amc, monkeypatch, value):
@@ -526,7 +526,7 @@ def test_env_bool_empty_or_whitespace_honors_default(amc, monkeypatch, value):
 
 
 # ----------------------------------------------------------------------
-# VER-136: preflight cell-count cap.
+# preflight cell-count cap.
 #
 # The cap (``PREFLIGHT_CELL_CAP``) trips on the product of
 # (duration_days * SECONDS_PER_DAY / interval_seconds) row count and the

@@ -1,4 +1,4 @@
-"""Tests for the long-form ``gauges.csv`` file artifact (VER-138).
+"""Tests for the long-form ``gauges.csv`` file artifact.
 
 Covers:
 - ``--emit-selection`` accepts the new ``gauges`` token and rejects bad combos.
@@ -27,7 +27,7 @@ from conftest import SCRIPT_PATH, run_capture
 # Locked SHA-256 golden hashes for ``gauges.csv`` at the default --seed (42)
 # and the default scenario / signal-level / metrics-per-component knobs at
 # --duration-days 1 and 7. Both hashes were captured against the merged
-# main commit a571426 + this VER-138 patch and protect against silent drift
+# main commit a571426 + this patch and protect against silent drift
 # in:
 # - the per-component CSV bytes (already locked by DEFAULT_*_DAY_HASHES),
 # - the chronological merge tiebreaker (sorted-component order on ties),
@@ -56,7 +56,7 @@ def _sha256(path: Path) -> str:
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def one_day_gauges_run(amc, tmp_path_factory):
-    # VER-196: interval_seconds=None preserves the script's 1s default so
+    # interval_seconds=None preserves the script's 1s default so
     # GAUGES_ONE_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver138_one_day_gauges")
     return run_capture(
@@ -68,7 +68,7 @@ def one_day_gauges_run(amc, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def seven_day_gauges_run(amc, tmp_path_factory):
-    # VER-196: interval_seconds=None preserves the script's 1s default so
+    # interval_seconds=None preserves the script's 1s default so
     # GAUGES_SEVEN_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver138_seven_day_gauges")
     return run_capture(
@@ -469,7 +469,7 @@ def test_non_component_files_excludes_gauges_csv_from_combine_discovery(amc):
 
 
 # ------------------------------------------------------------------
-# Phase 5 (VER-148): long-form gauges.csv with dimension columns.
+# Phase 5: long-form gauges.csv with dimension columns.
 #
 # When --instances-per-component N > 1, per-component CSVs carry a
 # six-column dimension prefix (id, host, pod, az, region, tenant). The
@@ -697,7 +697,7 @@ def test_classify_component_csv_header_detects_dimensions(amc):
     dim block but whose column 0 is NOT ``timestamp`` must also be
     treated as no-dim — the leading-timestamp guard is what stops a
     hand-edited ``id,id,host,pod,az,region,tenant,m0`` from being
-    silently routed to the 10-column long-form path (VER-209)."""
+    silently routed to the 10-column long-form path."""
     flat = ["timestamp", "metric_a", "metric_b"]
     dim_cols, metric_cols = amc._classify_component_csv_header(flat)
     assert dim_cols == ()
@@ -716,7 +716,7 @@ def test_classify_component_csv_header_detects_dimensions(amc):
     assert dim_cols == ()
     assert metric_cols == ["id", "metric_a"]
 
-    # VER-209: header[0] != "timestamp" but columns 1..6 are the full dim
+    # header[0] != "timestamp" but columns 1..6 are the full dim
     # block. The classifier's leading-timestamp guard rejects this case
     # outright; columns flow into the metric path verbatim (the OTEL gauge
     # reader will then ``float(raw)``-coerce them and skip the unparseable
@@ -941,8 +941,7 @@ def test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low(
 
 # ------------------------------------------------------------------
 # Coverage gaps — sub-second interval, tie-break order, --combine,
-# --drop-rate parity. Recommended additions from the Code Reviewer
-# hand-back on PR #38.
+# --drop-rate parity.
 # ------------------------------------------------------------------
 def test_gauges_csv_sub_second_interval(amc, tmp_path):
     """Millisecond timestamps (``--interval-seconds`` < 1.0) flow through the

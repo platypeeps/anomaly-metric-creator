@@ -1,4 +1,4 @@
-"""Phase 1 of VER-140 — Instance dataclass, INSTANCES registry, and the
+"""Phase 1 of — Instance dataclass, INSTANCES registry, and the
 generate_component() ``instances`` kwarg.
 
 This phase is intentionally a foundational refactor with no CSV change and no

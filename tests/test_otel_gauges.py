@@ -1,4 +1,4 @@
-"""End-to-end and unit tests for the VER-124 OTLP gauge stream.
+"""End-to-end and unit tests for the OTLP gauge stream.
 
 Each test that exercises the streaming pipeline starts an ephemeral mock OTLP
 endpoint on 127.0.0.1, points the CLI at it, and asserts on what the mock
@@ -192,7 +192,7 @@ def test_build_otlp_gauge_payload_empty_batch(amc):
 
 
 def test_build_otlp_gauge_builders_use_precomputed_nanos(amc):
-    """VER-125: builders must read ``time_unix_nano`` from the entry directly
+    """builders must read ``time_unix_nano`` from the entry directly
     and NOT re-parse ``timestamp``. Feed deliberately mismatched values and
     confirm the precomputed field wins for both JSON and protobuf paths.
     """
@@ -714,7 +714,7 @@ def test_stream_otel_gauges_max_events_caps_attempts_not_successes(amc, tmp_path
 
 
 def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_path):
-    """Regression for the VER-124 pacing bug: between consecutive batches the
+    """Regression for the pacing bug: between consecutive batches the
     streamer must sleep ``batch_seconds / speedup`` of wall-clock — not
     ``interval_seconds / speedup``. We seed CSVs covering N*batch_seconds of
     timeline, call ``stream_otel_gauges`` directly in-process against a mock
@@ -779,7 +779,7 @@ def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_pat
 
 
 # ------------------------------------------------------------------
-# Phase 6 (VER-149): dimension attributes from Phase 2 instance columns
+# Phase 6: dimension attributes from Phase 2 instance columns
 # ------------------------------------------------------------------
 def _entry_with_dims(amc, ts, comp, metric, value, dimensions):
     return {

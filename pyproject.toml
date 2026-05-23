@@ -24,7 +24,7 @@ dev = [
   "pyyaml>=6.0",
   # Pinned exactly: must match `rev: vX.Y.Z` in `.pre-commit-config.yaml`
   # so a local `ruff check` and the `ruff-pre-commit` hook resolve the
-  # same binary. Bump both lines together. See VER-198.
+  # same binary. Bump both lines together.
   "ruff==0.15.13",
   "pre-commit>=3.7.0",
 ]
@@ -46,7 +46,6 @@ testpaths = ["tests"]
 # `required_plugins` makes the failure mode explicit: without
 # `pytest-xdist` installed, the `addopts` `-n` flag would otherwise
 # fail with a cryptic "unrecognized arguments" error.
-# See VER-218 for the heartbeat-budget motivation.
 required_plugins = ["pytest-xdist"]
 addopts = "-ra --dist loadfile -n 4"
 # Registered markers. These declarations exist so pytest's --strict-markers
@@ -55,7 +54,7 @@ addopts = "-ra --dist loadfile -n 4"
 # registrations at runtime. See CLAUDE.md "Test resource cost" for the
 # cheap-default convention these markers attach to.
 markers = [
-  "full_resolution: declares the test depends on the script's 1s --interval-seconds default and pairs with interval_seconds=None (or =1.0) at the run_capture call site. VER-196.",
+  "full_resolution: declares the test depends on the script's 1s --interval-seconds default and pairs with interval_seconds=None (or =1.0) at the run_capture call site..",
 ]
 
 [tool.ruff]

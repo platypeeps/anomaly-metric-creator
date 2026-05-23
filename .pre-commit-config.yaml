@@ -6,7 +6,7 @@ repos:
     # `rev` must match the `ruff==X.Y.Z` pin in
     # `[project.optional-dependencies].dev` in `pyproject.toml` so a
     # local `ruff check` and this hook resolve the same binary. Bump
-    # both lines together. See VER-198.
+    # both lines together.
     rev: v0.15.13
     hooks:
       - id: ruff
@@ -23,7 +23,7 @@ repos:
       # instead of relying on Copilot to notice on every new test.
       # Exempt a line with a trailing `# noqa: amc-load` when a fresh
       # module instance is genuinely required (monkey-patch isolation,
-      # collection-time parametrize loaders). See VER-197.
+      # collection-time parametrize loaders).
       - id: amc-no-direct-spec-load
         name: forbid duplicate amc loads outside conftest.py
         # Explicit `python` interpreter so the hook does not rely on the

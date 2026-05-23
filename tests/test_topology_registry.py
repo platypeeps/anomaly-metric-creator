@@ -1,4 +1,4 @@
-"""Phase 1 (VER-143) topology scaffolding tests.
+"""Phase 1 topology scaffolding tests.
 
 These tests cover the structural-only ``TOPOLOGY`` constant, ``Edge`` /
 ``SaturationParams`` dataclasses, and ``_validate_topology`` import-time
@@ -278,7 +278,7 @@ def test_validate_topology_accepts_int_constant_weight(amc, monkeypatch):
 
 
 # ----------------------------------------------------------------------
-# VER-157 phase 7: ``Edge.correlation_threshold`` field invariants
+# phase 7: ``Edge.correlation_threshold`` field invariants
 # enforced at import-time by ``_validate_topology`` so the validator-
 # side override cannot smuggle in NaN/inf/bool/out-of-range thresholds.
 # ----------------------------------------------------------------------
@@ -336,7 +336,7 @@ def test_resolve_edge_correlation_threshold_falls_back_for_unknown_edge(amc):
 
 
 # ----------------------------------------------------------------------
-# VER-154 phase 4: ``Edge.saturation`` field invariants enforced at
+# phase 4: ``Edge.saturation`` field invariants enforced at
 # import-time by ``_validate_topology`` (mirroring the constant-weight
 # checks above so ``_apply_saturation`` cannot silently consume bad
 # values).
@@ -530,7 +530,7 @@ def test_validate_topology_rejects_signal_returning_non_ndarray(amc, monkeypatch
 
 
 # ----------------------------------------------------------------------
-# VER-182: the ``cacheservice -> database`` callable weight must read
+# the ``cacheservice -> database`` callable weight must read
 # the database ``queries_per_sec`` baseline live from ``COMPONENTS`` on
 # every invocation. PR #47 originally baked the value into a module-load
 # constant (``_DATABASE_QPS_BASE``), which silently produced stale
@@ -576,7 +576,7 @@ def test_cacheservice_to_database_weight_reads_live_components(amc, monkeypatch)
         "cacheservice -> database callable weight ignored the monkeypatched "
         "COMPONENTS['database'].queries_per_sec.base; the lambda must read "
         "the baseline live from COMPONENTS on every call, not capture it "
-        "at module load (VER-182 regression guard)."
+        "at module load ( regression guard)."
     )
     np.testing.assert_allclose(got_after, expected_after, rtol=0, atol=0)
 
