@@ -35,9 +35,9 @@ def schema_run(amc, tmp_path):
         amc, out, days=1,
         extra_args=[
             "--emit-selection", "metrics,schema",
-            "--interval-seconds", "600",
             "--components", "apigateway,cacheservice",
         ],
+        interval_seconds=600,
     )
     return out
 
@@ -229,9 +229,8 @@ def test_row_count_dst_splice_extra_allowed(amc, tmp_path):
     rows on day 1; the validator's row-count check must allow them rather
     than flag them as over-emission."""
     out = tmp_path / "dst"
-    run_capture(amc, out, days=2, extra_args=[
+    run_capture(amc, out, days=2, interval_seconds=600, extra_args=[
         "--emit-selection", "metrics,schema",
-        "--interval-seconds", "600",
         "--inject-dst-artifact-day", "1",
         "--components", "apigateway",
     ])
@@ -451,9 +450,8 @@ def test_validate_output_cli_exits_nonzero_on_violation(amc, tmp_path, capsys):
     """End-to-end: a run with an injected bad cell must exit 1 under
     ``--validate-output`` in default (hard-fail) mode."""
     out = tmp_path / "bad"
-    run_capture(amc, out, days=1, extra_args=[
+    run_capture(amc, out, days=1, interval_seconds=600, extra_args=[
         "--emit-selection", "metrics,schema",
-        "--interval-seconds", "600",
         "--components", "apigateway",
     ])
     # Inject a bogus cpu_util_pct cell to force a violation.
@@ -478,9 +476,8 @@ def test_validate_output_cli_warn_mode_exits_zero(amc, tmp_path, capsys):
     exits 0 (so CI can run the validator informationally without breaking
     the build during the topology-aware re-baseline window)."""
     out = tmp_path / "warn"
-    run_capture(amc, out, days=1, extra_args=[
+    run_capture(amc, out, days=1, interval_seconds=600, extra_args=[
         "--emit-selection", "metrics,schema",
-        "--interval-seconds", "600",
         "--components", "apigateway",
     ])
     csv_path = out / "apigateway.csv"
@@ -505,9 +502,8 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
     violations — apigateway is the cleanest at 600s interval after we
     massage active_connections to an exact int."""
     out = tmp_path / "clean"
-    run_capture(amc, out, days=1, extra_args=[
+    run_capture(amc, out, days=1, interval_seconds=600, extra_args=[
         "--emit-selection", "metrics,schema",
-        "--interval-seconds", "600",
         "--components", "vectorstore",
     ])
     # vectorstore has no dtype="int" violations at the top-5 default
@@ -656,7 +652,6 @@ def test_topology_coupling_skipped_under_independent_mode(amc, tmp_path):
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--topology-mode", "independent",
-            "--interval-seconds", "60",
         ],
     )
     schema = _load_schema(out)
@@ -679,7 +674,6 @@ def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "loadbalancer,apigateway",
-            "--interval-seconds", "60",
         ],
     )
     csv_path = out / "apigateway.csv"
@@ -722,7 +716,6 @@ def test_topology_coupling_flags_random_downstream(amc, tmp_path):
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "apigateway,database",
-            "--interval-seconds", "60",
         ],
     )
     csv_path = out / "database.csv"
@@ -768,7 +761,6 @@ def test_topology_coupling_flags_non_finite_values(
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "apigateway,database",
-            "--interval-seconds", "60",
         ],
     )
     target_file = "database.csv" if side == "target" else "apigateway.csv"
@@ -820,7 +812,6 @@ def test_topology_coupling_skips_callable_weight_edges(amc, tmp_path):
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "apigateway,cacheservice,database",
-            "--interval-seconds", "60",
         ],
     )
     # Read schema and confirm the callable edge is declared.
@@ -873,7 +864,6 @@ def test_topology_coupling_per_edge_threshold_override(amc, tmp_path,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "loadbalancer,apigateway",
-            "--interval-seconds", "60",
         ],
     )
     # Build a TOPOLOGY clone with a 0.999 threshold on the
@@ -919,7 +909,6 @@ def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--components", "loadbalancer,apigateway",
-            "--interval-seconds", "60",
         ],
     )
     csv_path = out / "apigateway.csv"
@@ -1328,9 +1317,9 @@ def schema_run_n3(amc, tmp_path):
     out = tmp_path / "run_n3"
     run_capture(
         amc, out, days=1,
+        interval_seconds=600,
         extra_args=[
             "--emit-selection", "metrics,schema,gauges",
-            "--interval-seconds", "600",
             "--components", "apigateway,cacheservice",
             "--instances-per-component", "3",
             "--combine",

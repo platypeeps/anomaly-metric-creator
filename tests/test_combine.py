@@ -298,8 +298,8 @@ def test_combine_with_dst_artifact_preserves_all_rows(amc, tmp_path):
         extra_args=[
             "--combine",
             "--inject-dst-artifact-day", "1",
-            "--interval-seconds", "600",
         ],
+        interval_seconds=600,
     )
 
     unified = out_dir / "combined_metrics_unified.csv"

@@ -102,6 +102,7 @@ CROSS_CHECK_SEEDS = [1, 7, 42, 99]
 
 
 @pytest.mark.parametrize("seed", CROSS_CHECK_SEEDS)
+@pytest.mark.full_resolution
 def test_manifest_csv_cross_check(amc, tmp_path, seed):
     """Multi-seed: every (component, metric, timestamp) in anomalies.csv maps to
     a non-empty CSV cell. A naive implementation silently desyncs whenever an
@@ -110,7 +111,11 @@ def test_manifest_csv_cross_check(amc, tmp_path, seed):
     """
     out = tmp_path / f"seed_{seed}"
     out.mkdir()
-    run = run_capture(amc, out, days=1, seed=seed)
+    # VER-196: pin 1s resolution because this test indexes per-second rows
+    # (round(time_offset / 1.0)) to verify manifest entries map back to
+    # populated CSV cells. 60s rows would round multiple specs to the same
+    # row and lose the per-second precision the assertion relies on.
+    run = run_capture(amc, out, days=1, seed=seed, interval_seconds=None)
 
     manifest = read_manifest(run.out_dir)
     assert manifest, f"seed={seed}: expected at least one manifest entry"
@@ -817,10 +822,8 @@ def test_sub_second_interval_unique_timestamps_and_lossless_combine(amc, tmp_pat
         out,
         days=1,
         drop_rate=0.0,
-        extra_args=[
-            "--interval-seconds", "0.5",
-            "--combine",
-        ],
+        extra_args=["--combine"],
+        interval_seconds=0.5,
     )
 
     skip_names = {"anomalies.csv", "combined_metrics_unified.csv"}
@@ -863,9 +866,7 @@ def test_sub_second_interval_timestamps_have_fractional_resolution(amc, tmp_path
         out,
         days=1,
         drop_rate=0.0,
-        extra_args=[
-            "--interval-seconds", "0.5",
-        ],
+        interval_seconds=0.5,
     )
     # Pick any component CSV and inspect the first two timestamp strings.
     component_csvs = [
@@ -945,7 +946,7 @@ def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
     out_on.mkdir()
 
     # Off-path run: no streaming at all, no mock server needed.
-    run_capture(amc, out_off, days=1, extra_args=["--interval-seconds", "600"])
+    run_capture(amc, out_off, days=1, interval_seconds=600)
 
     # On-path run: stream to a mock collector that always returns 200.
     received = []
@@ -966,8 +967,7 @@ def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
     thread.start()
     try:
         base = f"http://127.0.0.1:{server.server_port}"
-        run_capture(amc, out_on, days=1, extra_args=[
-            "--interval-seconds", "600",
+        run_capture(amc, out_on, days=1, interval_seconds=600, extra_args=[
             "--otel-enabled",
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
@@ -1006,6 +1006,7 @@ _ENRICHED_MANIFEST_COLUMNS = [
 
 
 @pytest.mark.parametrize("days", [1, 7])
+@pytest.mark.full_resolution
 def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
     """anomalies.csv must (a) carry the enriched 12-column schema, (b) be
     sorted by (span_start, component, metric), and (c) every cascade row
@@ -1017,7 +1018,11 @@ def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
     """
     out_dir = tmp_path / f"ver132_{days}d"
     extra = ["--signal-level", "high"] if days == 7 else None
-    run_capture(amc, out_dir, days=days, extra_args=extra)
+    # VER-196: pin 1s resolution because the test cross-references each
+    # manifest span_end against per-second timestamps in the component CSV
+    # and matches scenario time_offsets (often at minute boundaries that
+    # collide on the same 60s row).
+    run_capture(amc, out_dir, days=days, extra_args=extra, interval_seconds=None)
 
     rows = read_manifest(out_dir)
     assert rows, f"manifest empty for {days}-day run"
@@ -1126,6 +1131,7 @@ def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
         )
 
 
+@pytest.mark.full_resolution
 def test_span_end_walks_back_when_nominal_end_row_is_dropped(amc, tmp_path):
     """Deterministic regression test for the ``span_end`` walk-back fix.
 
@@ -1141,9 +1147,13 @@ def test_span_end_walks_back_when_nominal_end_row_is_dropped(amc, tmp_path):
     (caught by the strict walk-back invariant below).
     """
     out_dir = tmp_path / "walk_back_high_drop"
+    # VER-196: interval_seconds=None pins the 1s default because this test
+    # asserts n_rows == 86400 and matches each manifest row's span_end back
+    # to per-second timestamps in the component CSV.
     run_capture(
         amc, out_dir, days=1, drop_rate=0.7,
         extra_args=["--signal-level", "high"],
+        interval_seconds=None,
     )
 
     rows = read_manifest(out_dir)

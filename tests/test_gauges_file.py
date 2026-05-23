@@ -24,10 +24,6 @@ import pytest
 from conftest import SCRIPT_PATH, run_capture
 
 
-# Short-run helper so most tests stay under a couple of seconds.
-SHORT_RUN_ARGS = ("--interval-seconds", "60")
-
-
 # Locked SHA-256 golden hashes for ``gauges.csv`` at the default --seed (42)
 # and the default scenario / signal-level / metrics-per-component knobs at
 # --duration-days 1 and 7. Both hashes were captured against the merged
@@ -60,17 +56,25 @@ def _sha256(path: Path) -> str:
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def one_day_gauges_run(amc, tmp_path_factory):
+    # VER-196: interval_seconds=None preserves the script's 1s default so
+    # GAUGES_ONE_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver138_one_day_gauges")
     return run_capture(
-        amc, out, days=1, extra_args=["--emit-selection", "metrics,gauges"]
+        amc, out, days=1,
+        extra_args=["--emit-selection", "metrics,gauges"],
+        interval_seconds=None,
     )
 
 
 @pytest.fixture(scope="module")
 def seven_day_gauges_run(amc, tmp_path_factory):
+    # VER-196: interval_seconds=None preserves the script's 1s default so
+    # GAUGES_SEVEN_DAY_HASH keeps matching.
     out = tmp_path_factory.mktemp("ver138_seven_day_gauges")
     return run_capture(
-        amc, out, days=7, extra_args=["--emit-selection", "metrics,gauges"]
+        amc, out, days=7,
+        extra_args=["--emit-selection", "metrics,gauges"],
+        interval_seconds=None,
     )
 
 
@@ -232,7 +236,6 @@ def test_gauges_csv_respects_components(amc, tmp_path):
         extra_args=[
             "--emit-selection", "metrics,gauges",
             "--components", keep,
-            "--interval-seconds", "60",
         ],
     )
     rows = _read_rows(out / "gauges.csv")
@@ -251,7 +254,6 @@ def test_gauges_csv_respects_metrics_per_component(amc, tmp_path):
         amc, out_full, days=1,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            "--interval-seconds", "60",
         ],
     )
     run_capture(
@@ -259,7 +261,6 @@ def test_gauges_csv_respects_metrics_per_component(amc, tmp_path):
         extra_args=[
             "--emit-selection", "metrics,gauges",
             "--metrics-per-component", "1",
-            "--interval-seconds", "60",
         ],
     )
     rows_full = _read_rows(out_full / "gauges.csv")
@@ -341,7 +342,6 @@ def test_pre_clean_removes_stale_gauges_csv(amc, tmp_path):
         amc, tmp_path, days=1,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            "--interval-seconds", "60",
         ],
     )
     assert (tmp_path / "gauges.csv").exists()
@@ -350,7 +350,6 @@ def test_pre_clean_removes_stale_gauges_csv(amc, tmp_path):
         amc, tmp_path, days=1,
         extra_args=[
             "--emit-selection", "metrics",
-            "--interval-seconds", "60",
         ],
     )
     assert not (tmp_path / "gauges.csv").exists(), (
@@ -364,7 +363,6 @@ def test_pre_clean_removes_stale_gauges_csv_on_logs_only_rerun(amc, tmp_path):
         amc, tmp_path, days=1,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            "--interval-seconds", "60",
         ],
     )
     assert (tmp_path / "gauges.csv").exists()
@@ -372,7 +370,6 @@ def test_pre_clean_removes_stale_gauges_csv_on_logs_only_rerun(amc, tmp_path):
         amc, tmp_path, days=1,
         extra_args=[
             "--emit-selection", "logs,traces",
-            "--interval-seconds", "60",
         ],
     )
     assert not (tmp_path / "gauges.csv").exists()
@@ -385,7 +382,6 @@ def test_combine_only_does_not_regenerate_gauges_csv(amc, tmp_path):
         amc, tmp_path, days=1,
         extra_args=[
             "--emit-selection", "metrics",
-            "--interval-seconds", "60",
         ],
     )
     assert not (tmp_path / "gauges.csv").exists()
@@ -416,7 +412,6 @@ def test_combine_only_preserves_existing_gauges_csv(amc, tmp_path):
         amc, tmp_path, days=1,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            "--interval-seconds", "60",
         ],
     )
     gauges_path = tmp_path / "gauges.csv"
@@ -440,7 +435,6 @@ def test_done_summary_names_gauges_csv(amc, tmp_path, capsys):
         amc, tmp_path, days=1,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            "--interval-seconds", "60",
         ],
     )
     captured = capsys.readouterr()
@@ -452,10 +446,7 @@ def test_done_summary_names_gauges_csv(amc, tmp_path, capsys):
 
 
 def test_done_summary_omits_gauges_csv_by_default(amc, tmp_path, capsys):
-    run_capture(
-        amc, tmp_path, days=1,
-        extra_args=["--interval-seconds", "60"],
-    )
+    run_capture(amc, tmp_path, days=1)
     captured = capsys.readouterr()
     done_lines = [
         line for line in captured.out.splitlines() if line.startswith("Done -")
@@ -764,7 +755,6 @@ def test_n3_gauges_csv_with_metrics_per_component_trim(amc, tmp_path):
             "--emit-selection", "metrics,gauges",
             "--instances-per-component", "3",
             "--metrics-per-component", "1",
-            "--interval-seconds", "60",
         ],
     )
     gauges = out / "gauges.csv"
@@ -960,17 +950,17 @@ def test_gauges_csv_sub_second_interval(amc, tmp_path):
     chronological ordering invariant holds when the per-component CSVs
     contain millisecond-precision timestamps."""
     out = tmp_path / "sub_second"
+    # 0.5s cadence renders millisecond-suffixed timestamps and exercises
+    # ``_parse_csv_timestamp``'s "." branch. Restrict to one component /
+    # one metric to keep the row count modest.
     run_capture(
         amc, out, days=1,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            # 0.5s cadence renders millisecond-suffixed timestamps and
-            # exercises ``_parse_csv_timestamp``'s "." branch. Restrict to
-            # one component / one metric to keep the row count modest.
-            "--interval-seconds", "0.5",
             "--components", list(amc.COMPONENTS)[0],
             "--metrics-per-component", "1",
         ],
+        interval_seconds=0.5,
     )
     path = out / "gauges.csv"
     assert path.exists()
@@ -1004,7 +994,6 @@ def test_gauges_csv_tie_break_follows_sorted_component_order(amc, tmp_path):
         amc, out, days=1,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            "--interval-seconds", "60",
         ],
     )
     rows = _read_rows(out / "gauges.csv")
@@ -1036,7 +1025,6 @@ def test_gauges_csv_drop_rate_skips_dropped_rows(amc, tmp_path):
         drop_rate=0.5,
         extra_args=[
             "--emit-selection", "metrics,gauges",
-            "--interval-seconds", "60",
             "--components", component,
             "--metrics-per-component", "1",
         ],
@@ -1085,7 +1073,6 @@ def test_gauges_csv_works_with_combine_flag(amc, tmp_path):
         extra_args=[
             "--emit-selection", "metrics,gauges",
             "--combine",
-            "--interval-seconds", "60",
         ],
     )
     gauges_path = out / "gauges.csv"

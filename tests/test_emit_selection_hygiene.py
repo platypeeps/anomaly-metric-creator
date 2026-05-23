@@ -3,14 +3,10 @@ the same --output-dir with a different --emit-selection or --components."""
 from conftest import run_capture
 
 
-# Short-run helper so each test stays under a couple of seconds.
-SHORT_RUN_ARGS = ("--interval-seconds", "60")
-
-
 def _run(amc, out_dir, *, extra_args):
     """run_capture wrapper that always uses days=1 and forces a short run."""
     return run_capture(
-        amc, out_dir, days=1, extra_args=list(SHORT_RUN_ARGS) + list(extra_args)
+        amc, out_dir, days=1, extra_args=list(extra_args)
     )
 
 

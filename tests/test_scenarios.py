@@ -1309,9 +1309,11 @@ def test_default_seven_day_csvs_byte_identical(seven_day_run, filename, expected
 # stay stable.
 @pytest.fixture(scope="session")
 def high_seven_day_capped_run(amc, tmp_path_factory):
+    # interval_seconds=None preserves the script's 1s default so the locked
+    # HIGH_SEVEN_DAY_CAPPED_HASHES keep matching.
     out = tmp_path_factory.mktemp("high_seven_day_capped")
     return run_capture(
-        amc, out, days=7,
+        amc, out, days=7, interval_seconds=None,
         extra_args=["--signal-level", "high", "--anomaly-count", "100"],
     )
 
@@ -1367,7 +1369,7 @@ def _extra_args_for_slug(amc, slug: str, tmp_path=None) -> list[str]:
     dependency.
     """
     scenario = amc.SCENARIOS[slug]
-    extra = ["--scenarios", slug, "--drop-rate", "0", "--interval-seconds", "60"]
+    extra = ["--scenarios", slug, "--drop-rate", "0"]
     if scenario.severity == "high":
         extra += ["--signal-level", "high"]
     if _scenario_uses_id_filter(scenario):
@@ -1796,7 +1798,6 @@ def test_anomaly_count_with_scenarios_restricts_sampling_pool(amc, tmp_path):
         "--scenarios", slug,
         "--anomaly-count", "5",
         "--drop-rate", "0",
-        "--interval-seconds", "60",
     ]
     run_capture(amc, out, days=7, extra_args=extra)
     manifest = read_manifest(out)
@@ -1827,7 +1828,6 @@ def test_anomaly_count_with_scenarios_is_deterministic_for_seed(amc, tmp_path):
         "--scenarios", slug,
         "--anomaly-count", "5",
         "--drop-rate", "0",
-        "--interval-seconds", "60",
     ]
     run_capture(amc, out_a, days=7, extra_args=extra)
     run_capture(amc, out_b, days=7, extra_args=extra)
