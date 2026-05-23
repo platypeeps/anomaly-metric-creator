@@ -413,6 +413,31 @@ def test_malformed_json_raises_value_error(amc, tmp_path):
         amc._load_instance_config(p)
 
 
+def test_os_error_raises_value_error(amc, tmp_path):
+    """OSError on open() must be wrapped so main() can sys.exit() cleanly (VER-192).
+
+    Triggered by passing a path whose .yaml suffix points at a directory; the
+    inner ``open()`` raises ``IsADirectoryError`` (an ``OSError`` subclass).
+    """
+    p = tmp_path / "subdir.yaml"
+    p.mkdir()
+    with pytest.raises(ValueError, match="failed to read file"):
+        amc._load_instance_config(p)
+
+
+def test_unicode_decode_error_raises_value_error(amc, tmp_path):
+    """UnicodeDecodeError on parse must be wrapped (VER-192).
+
+    A .yaml file with non-UTF-8 bytes surfaces ``UnicodeDecodeError`` from
+    PyYAML's reader, which is captured in ``parse_exc_types`` alongside
+    ``yaml.YAMLError``.
+    """
+    p = tmp_path / "bad-encoding.yaml"
+    p.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
+    with pytest.raises(ValueError, match="failed to parse YAML"):
+        amc._load_instance_config(p)
+
+
 def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
     """If PyYAML isn't installed, the YAML branch surfaces an actionable ValueError.
 
