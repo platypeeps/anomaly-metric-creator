@@ -6,7 +6,7 @@ plus end-to-end integration coverage of the CLI mode against the default
 1-day and 7-day outputs.
 
 Known residual violations (phase 6 flag day): the
-fractional-counter set previously flagged here was's
+fractional-counter set previously flagged here was cleared by the
 integer-cast bundle, so the 1-day default integration test now asserts
 an empty violation set. The 7-day default still surfaces one
 ``above_max`` violation on ``llm_analytics.context_overflow_rate`` —

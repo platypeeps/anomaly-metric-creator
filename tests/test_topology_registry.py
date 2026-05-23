@@ -576,7 +576,7 @@ def test_cacheservice_to_database_weight_reads_live_components(amc, monkeypatch)
         "cacheservice -> database callable weight ignored the monkeypatched "
         "COMPONENTS['database'].queries_per_sec.base; the lambda must read "
         "the baseline live from COMPONENTS on every call, not capture it "
-        "at module load ( regression guard)."
+        "at module load (regression guard)."
     )
     np.testing.assert_allclose(got_after, expected_after, rtol=0, atol=0)
 

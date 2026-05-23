@@ -1,7 +1,8 @@
-""" tests: shared ``run_capture`` helper defaults to
-``--interval-seconds 60`` so new tests automatically take the cheap path,
-with explicit ``interval_seconds=None`` (or ``=1.0``) for full-resolution
-runs and a ``@pytest.mark.full_resolution`` marker for declaring intent."""
+"""Tests for the shared ``run_capture`` helper: it defaults to
+``--interval-seconds 60`` so new tests automatically take the cheap
+path, with explicit ``interval_seconds=None`` (or ``=1.0``) for
+full-resolution runs and a ``@pytest.mark.full_resolution`` marker
+for declaring intent."""
 from __future__ import annotations
 
 import json

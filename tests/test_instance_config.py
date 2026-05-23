@@ -291,7 +291,7 @@ def test_components_value_is_explicit_null_raises(amc, tmp_path):
 
 def test_per_component_value_not_a_list_raises(amc, tmp_path):
     """``authservice: {id: a1}`` is a mapping instead of a list of mappings."""
-    cfg = _write_yaml(tmp_path, "components:\n authservice:\n id: a1\n")
+    cfg = _write_yaml(tmp_path, "components:\n  authservice:\n    id: a1\n")
     with pytest.raises(ValueError, match="value must be a list"):
         amc._load_instance_config(cfg)
 

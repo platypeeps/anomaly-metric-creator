@@ -1177,7 +1177,7 @@ on design grounds (the multi-instance long-form CSV produces
 per-instance row blocks; running `_splice_dst_artifact` per block
 would surface non-monotonic timestamps inside each block, which
 `heapq.merge` in `gauges.csv` / `combined_metrics_unified.csv`
-cannot resolve), not on the pre-existing correctness gap where the
+cannot resolve), not on the earlier correctness gap where the
 long-form path silently dropped the duplicated hour entirely.
 
 When adding fields to `Instance`, add the new field name to
@@ -1475,7 +1475,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to 13 recurring patterns identified (the original 11) and (two more from the May 20 PR review sweep). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Copy those 13 bold headings into the PR description as a checklist (Markdown `- [ ]` lines, one per heading) and either confirm each one or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the headings below rather than redefine them.
+This checklist maps to 13 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, plus two more added later). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Copy those 13 bold headings into the PR description as a checklist (Markdown `- [ ]` lines, one per heading) and either confirm each one or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the headings below rather than redefine them.
 
 **Scope & description**
 - PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
@@ -1486,7 +1486,7 @@ This checklist maps to 13 recurring patterns identified (the original 11) and (t
 - Every *branch* of a discriminator is validated: callable **and** constant `Edge.weight`; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables.
 - Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, etc.) raise on unknown keys; never return `None` or fall through silently. If a caller genuinely needs to tolerate misses, the *caller* opts in via `try/except KeyError` — the table itself stays strict. Concrete antipatterns to grep for before review:
   - `table.get(key)` on a dispatch table — returns `None` on miss instead of raising. Use `table[key]` so a typo or registry drift fails loudly. The fix replaced `_RECOMPUTERS.get(component)` with `_RECOMPUTERS[component]` for exactly this reason.
-  - A dispatcher *function* (e.g. `_recompute_cacheservice`) that returns a sentinel — `None`, an empty string, or a "soft violation" message — for an unrecognized metric or component instead of raising `KeyError`. The caller cannot distinguish "metric is fine" from "I have no recomputer for this metric"; both look like success. also fixed this shape by replacing the soft-violation return with `raise KeyError(...)`.
+  - A dispatcher *function* (e.g. `_recompute_cacheservice`) that returns a sentinel — `None`, an empty string, or a "soft violation" message — for an unrecognized metric or component instead of raising `KeyError`. The caller cannot distinguish "metric is fine" from "I have no recomputer for this metric"; both look like success. Replace the soft-violation return with `raise KeyError(...)`.
   - A dispatcher branch that silently falls through to a `return` at the bottom of the function when no `if`/`elif` matched. Add an explicit `raise KeyError(...)` instead.
 
 **Doc / docstring sync**

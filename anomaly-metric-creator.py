@@ -564,15 +564,15 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # Defense-in-depth: ``parse_args`` rejects ``--inject-dst-artifact-day``
     # paired with multi-instance at the CLI; this guard mirrors the
     # rejection for direct callers (tests, future consumers) that bypass
-    # the CLI. The pre-existing rationale was correctness — the long-form
+    # the CLI. The original rationale was correctness — the long-form
     # writer rebuilt rows from pre-splice timestamps and silently dropped
-    # the duplicated hour. After the long-form path routes
-    # through ``_format_csv_row_block``, which applies the splice
-    # per-instance, so the guard now stands on design grounds: the
-    # multi-instance long-form CSV emits per-instance row blocks, and
-    # per-block splicing surfaces non-monotonic timestamps inside each
-    # block that ``heapq.merge`` (``gauges.csv`` /
-    # ``combined_metrics_unified.csv``) cannot resolve.
+    # the duplicated hour. The long-form path now routes through
+    # ``_format_csv_row_block``, which applies the splice per-instance,
+    # so the guard now stands on design grounds: the multi-instance
+    # long-form CSV emits per-instance row blocks, and per-block splicing
+    # surfaces non-monotonic timestamps inside each block that
+    # ``heapq.merge`` (``gauges.csv`` / ``combined_metrics_unified.csv``)
+    # cannot resolve.
     _is_anonymous = _is_anonymous_instance_list(instances)
     if not _is_anonymous and dst_inject_day > 0:
         raise ValueError(
@@ -1211,9 +1211,8 @@ def _format_csv_row_block(kept_ts: np.ndarray, metric_suffix: np.ndarray,
     ``_INSTANCE_DIMENSION_COLUMNS`` values with empty cells for unset
     fields) for one long-form instance block. The shared shape lets
     the same DST splice apply regardless of which branch produced the
-    block — the bug fixes is the long-form writer's prior
-    failure to call ``_splice_dst_artifact`` after rebuilding rows from
-    raw timestamps. The helper itself does not gate which combinations
+    block — fixing a prior failure of the long-form writer to call
+    ``_splice_dst_artifact`` after rebuilding rows from raw timestamps. The helper itself does not gate which combinations
     are reachable: ``_splice_dst_artifact`` runs unconditionally when
     ``dst_inject_day > 0`` regardless of ``dim_prefix``. ``parse_args``
     and the matching ``generate_component`` defense-in-depth check
