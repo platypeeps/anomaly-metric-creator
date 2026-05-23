@@ -416,8 +416,17 @@ def test_malformed_json_raises_value_error(amc, tmp_path):
 def test_os_error_raises_value_error(amc, tmp_path):
     """OSError on open() must be wrapped so main() can sys.exit() cleanly (VER-192).
 
-    Triggered by passing a path whose .yaml suffix points at a directory; the
-    inner ``open()`` raises ``IsADirectoryError`` (an ``OSError`` subclass).
+    Exercises the loader's defensive ``except OSError`` directly (bypasses
+    ``parse_args``); ``test_directory_rejected`` above covers the
+    ``parse_args is_file()`` gate that would normally reject a directory
+    before the loader runs. Both layers are kept independently tested
+    because the loader is a public-ish helper callable on its own.
+
+    Triggered by passing a path whose .yaml suffix points at a directory;
+    the inner ``open()`` raises ``IsADirectoryError`` on POSIX or
+    ``PermissionError`` on Windows — both are ``OSError`` subclasses, so
+    the match string locks the wrapper text rather than the platform-
+    specific exc.args.
     """
     p = tmp_path / "subdir.yaml"
     p.mkdir()
@@ -425,16 +434,33 @@ def test_os_error_raises_value_error(amc, tmp_path):
         amc._load_instance_config(p)
 
 
-def test_unicode_decode_error_raises_value_error(amc, tmp_path):
-    """UnicodeDecodeError on parse must be wrapped (VER-192).
+def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
+    """UnicodeDecodeError from the YAML branch must be wrapped (VER-192).
 
-    A .yaml file with non-UTF-8 bytes surfaces ``UnicodeDecodeError`` from
-    PyYAML's reader, which is captured in ``parse_exc_types`` alongside
-    ``yaml.YAMLError``.
+    A .yaml file with non-UTF-8 bytes lets the ``encoding="utf-8"`` codec
+    raise ``UnicodeDecodeError`` while PyYAML reads the stream; PyYAML does
+    not wrap codec errors, so the raw ``UnicodeDecodeError`` reaches the
+    loader's ``except parse_exc_types`` block (where it sits alongside
+    ``yaml.YAMLError`` in the YAML tuple).
     """
     p = tmp_path / "bad-encoding.yaml"
     p.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
     with pytest.raises(ValueError, match="failed to parse YAML"):
+        amc._load_instance_config(p)
+
+
+def test_json_unicode_decode_error_raises_value_error(amc, tmp_path):
+    """UnicodeDecodeError from the JSON branch must be wrapped (VER-192).
+
+    Symmetric companion to the YAML variant: the JSON branch's
+    ``parse_exc_types`` tuple is ``(json.JSONDecodeError, UnicodeDecodeError)``
+    so a future refactor that drops ``UnicodeDecodeError`` from the JSON
+    tuple would surface a raw decode error from ``main()`` instead of the
+    clean ``ValueError`` envelope. This test locks the JSON-side wrap.
+    """
+    p = tmp_path / "bad-encoding.json"
+    p.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
+    with pytest.raises(ValueError, match="failed to parse JSON"):
         amc._load_instance_config(p)
 
 
