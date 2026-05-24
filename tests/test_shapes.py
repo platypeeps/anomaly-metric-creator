@@ -491,9 +491,9 @@ def test_format_csv_row_block_applies_dst_splice_in_long_form(amc):
     writer (the PR #63 multi-instance path) took ``kept_ts`` /
     ``str_vals`` directly and never called ``_splice_dst_artifact``,
     so any caller that reached it with ``dst_inject_day > 0`` would
-    silently drop the duplicated hour. After both branches
-    route through ``_format_csv_row_block`` and inherit the splice
-    for free — a future caller that relaxes the ``parse_args``
+    silently drop the duplicated hour. After the refactor, both
+    branches route through ``_format_csv_row_block`` and inherit the
+    splice for free — a future caller that relaxes the ``parse_args``
     mutual-exclusion guard will not regress that bug.
     """
     # Walk a narrow window of one-second timestamps that straddles the
