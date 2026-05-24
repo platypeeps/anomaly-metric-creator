@@ -20,8 +20,8 @@ These tests cover:
   (``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` /
   ``HIGH_SEVEN_DAY_CAPPED_HASHES``) capture realistic-mode bytes;
   the high-signal + ``--anomaly-count`` capped 7-day hashes were
-  captured against the post-change sampling-pool ordering, which
-  this PR did not change. The pre-flag-day independent baseline is
+  captured against the current registry-only sampling-pool ordering,
+  which this PR did not change. The pre-flag-day independent baseline is
   preserved verbatim in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` and is
   pinned by
   ``tests/test_topology_loadbalancer_gateway.py::test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``.

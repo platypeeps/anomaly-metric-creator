@@ -929,7 +929,7 @@ def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
 
 
 def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
-    """toggling --otel-emit-gauges on must not perturb any CSV byte.
+    """Toggling --otel-emit-gauges on must not perturb any CSV byte.
 
     The gauge stream reads CSVs after they're written; flipping the flag adds
     network I/O but no value computation. Two runs against the same seed —

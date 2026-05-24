@@ -631,10 +631,10 @@ def test_validator_default_only_known_violation_kinds(
 def test_topology_coupling_clean_on_fresh_realistic_run(
     amc, one_day_schema_run,
 ):
-    """Default 1-day run in realistic mode (the post-change default)
-    must produce no topology coupling violations — every constant-weight
-    edge's Pearson correlation between source and target canonical load
-    metrics meets or exceeds its threshold (0.85 default)."""
+    """Default 1-day run in realistic mode (the default since the phase 6
+    flag day) must produce no topology coupling violations — every
+    constant-weight edge's Pearson correlation between source and target
+    canonical load metrics meets or exceeds its threshold (0.85 default)."""
     schema = _load_schema(one_day_schema_run.out_dir)
     assert schema["metadata"]["topology_mode"] == "realistic"
     assert amc._validate_topology_coupling(

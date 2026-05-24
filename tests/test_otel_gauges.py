@@ -192,7 +192,7 @@ def test_build_otlp_gauge_payload_empty_batch(amc):
 
 
 def test_build_otlp_gauge_builders_use_precomputed_nanos(amc):
-    """builders must read ``time_unix_nano`` from the entry directly
+    """Builders must read ``time_unix_nano`` from the entry directly
     and NOT re-parse ``timestamp``. Feed deliberately mismatched values and
     confirm the precomputed field wins for both JSON and protobuf paths.
     """
