@@ -1,4 +1,4 @@
-"""phase 3: Topology fan-out edges.
+"""Phase 3: Topology fan-out edges.
 
 Extends the loadbalancer -> apigateway coupling with the rest of
 the front-half graph:

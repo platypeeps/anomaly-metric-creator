@@ -1,4 +1,4 @@
-"""phase 4: Saturation feedback (utilization -> latency multiplier + error offset).
+"""Phase 4: Saturation feedback (utilization -> latency multiplier + error offset).
 
 Builds on phase 2/3 topology coupling (`tests/test_topology_loadbalancer_gateway.py`,
 `tests/test_topology_fanout.py`). The phase-4 layer composes a sigmoid-shaped
@@ -404,7 +404,7 @@ def test_topology_has_saturating_edges_for_phase4(amc):
 
 
 def test_topology_llm_analytics_edge_carries_phase5_gains(amc):
-    """phase 5 promoted the apigateway -> llm_analytics
+    """Phase 5 promoted the apigateway -> llm_analytics
     placeholder into a real saturating edge. The exact phase-5 gain
     values (``latency_gain=0.55``, ``error_gain=0.015``) are
     documented in CLAUDE.md / README.md, and their planned-range

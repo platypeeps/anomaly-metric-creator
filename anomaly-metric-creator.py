@@ -173,11 +173,12 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 # for counters, ``stream_otel_gauges`` Gauge data points for gauges).
 _VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
 
-# Vocabulary for ``MetricSpec.dtype``. The generator only ever writes finite
-# floats today; ``int`` here means "values are expected to be whole numbers"
-# (the validator surfaces fractional values as schema violations). A future
-# pass will backfill the catalog and the generator together so int-typed
-# metrics round through ``np.rint`` before being written.
+# Vocabulary for ``MetricSpec.dtype``. ``int`` here means "values are
+# expected to be whole numbers"; under ``--topology-mode realistic``
+# (the default since the phase 6 flag day) ``generate_component`` rounds
+# int-typed columns via ``np.rint`` before derivations run, so the CSV
+# cell is a whole-integer string. The validator surfaces any remaining
+# fractional values as schema violations.
 _VALID_DTYPES = frozenset({"float", "int"})
 
 
@@ -506,8 +507,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     instances: optional list of ``Instance`` carrying the per-component
         dimension topology (Phase 1). ``None`` resolves to a single
         anonymous ``Instance()`` so today's output stays byte-identical;
-        Phase 2 will start emitting dimension columns when ``len > 1`` or
-        any instance has non-None dimension fields.
+        dimension columns are emitted when ``len > 1`` or any instance
+        has non-None dimension fields (the Phase 2 long-form CSV layout).
     apply_dtype_int_cast: if True (default), round columns with ``dtype="int"``
         to whole numbers via ``np.rint`` before derivations. Pass False
         to preserve pre-flag-day float parity in the deprecated
@@ -8850,7 +8851,7 @@ def _validate_component_row_count(
     before serialization), so under-emission is expected and not flagged
     unless it exceeds the configured ``drop_rate``'s plausible band.
 
-    phase 8: when the per-component schema declares
+    Phase 8: when the per-component schema declares
     ``dimensions``, each per-row generation is fanned out across
     ``cardinality`` instances (Phase 2 long-form CSV writer), so both
     bands are multiplied by ``cardinality`` to keep the expected and
@@ -8979,7 +8980,7 @@ def _validate_component_cells(
     Each unique violation is reported once with a line-number example so the
     output stays bounded even when a whole column is wrong.
 
-    phase 8: when the per-component schema declares
+    Phase 8: when the per-component schema declares
     ``dimensions``, the expected header is
     ``("timestamp", *_INSTANCE_DIMENSION_COLUMNS, *metric_names)`` to
     match the Phase 2 long-form per-component CSV. The dim cells (id,
@@ -9214,7 +9215,7 @@ def _read_component_metric_column(
     ``metric_name``. Used by ``_validate_topology_coupling`` to align
     source / target canonical load metrics on shared timestamps.
 
-    phase 8: when the CSV is the dim-aware long-form layout
+    Phase 8: when the CSV is the dim-aware long-form layout
     (multiple rows per timestamp, one per instance), values are
     collapsed to one ``(timestamp, mean)`` per unique timestamp. This
     keeps the timestamp axis monotonic (the existing

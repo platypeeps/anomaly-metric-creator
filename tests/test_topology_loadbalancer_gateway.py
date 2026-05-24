@@ -1,4 +1,4 @@
-"""Phase 2 / phase 6 flag day: --topology-mode coupling.
+"""Phase 2 / Phase 6 flag day: --topology-mode coupling.
 
 These tests cover:
 

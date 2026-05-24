@@ -473,7 +473,7 @@ def test_schema_topology_omits_filtered_components(amc, tmp_path):
 
 
 def test_schema_topology_version_is_two(one_day_schema_run, amc):
-    """phase 7 bumps the schema-document version from 1 to 2 so
+    """Phase 7 bumps the schema-document version from 1 to 2 so
     older readers can refuse to validate a v2 doc and v2 readers reject
     stale v1 docs."""
     doc = _load_schema(one_day_schema_run.out_dir)

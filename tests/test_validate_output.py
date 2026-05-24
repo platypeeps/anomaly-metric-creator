@@ -302,7 +302,8 @@ def test_cell_bounds_flags_below_min(amc, schema_run):
 
 def test_cell_bounds_flags_fractional_int(amc, schema_run):
     """``active_connections`` is dtype='int'; a 0.5 value triggers the
-    fractional check (and is the canonical out-of-scope violation per the ticket)."""
+    fractional check (the canonical out-of-scope violation for this
+    column under realistic mode)."""
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
@@ -1513,9 +1514,7 @@ def test_validate_long_form_dimensions_noop_without_dimensions(amc, schema_run):
 
 def test_validate_output_cli_clean_on_fresh_n3_run(amc, one_day_run_n3, capsys):
     """End-to-end: a fresh 1-day ``--instances-per-component 3`` run
-    must validate clean under ``--validate-output``. Acceptance check
-    from the ticket: 'Validator passes on a fresh
-    --instances-per-component 3 run.'"""
+    must validate clean under ``--validate-output``."""
     amc.main(["--validate-output", str(one_day_run_n3.out_dir)])
     cap = capsys.readouterr()
     assert "OK" in cap.out
@@ -1565,7 +1564,7 @@ def test_validate_component_derivations_flags_drift_under_n3(amc, schema_run_n3)
 def test_validate_output_compatible_with_instances_per_component(
     amc, tmp_path,
 ):
-    """phase 8 lifts the ``--instances-per-component > 1`` +
+    """Phase 8 lifts the ``--instances-per-component > 1`` +
     ``--validate-output`` gate. The parser must now accept the
     combination rather than rejecting it with the Phase 8 stub
     message."""

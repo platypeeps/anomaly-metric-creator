@@ -804,7 +804,7 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
   steepness=6, latency_gain=0.6, error_gain=0.015`).
 - `apigateway → llm_analytics` (constant weight `1.0`, saturation
   `midpoint=760, steepness=6, latency_gain=0.55, error_gain=0.015`).
-  phase 5: under realistic mode, couples
+  Phase 5: under realistic mode, couples
   `llm_analytics.input_tokens_per_sec` to apigateway RPS, and lifts
   `avg_llm_latency_ms` / `p95_llm_latency_ms` / `llm_api_error_rate`
   as apigateway saturates the token budget.

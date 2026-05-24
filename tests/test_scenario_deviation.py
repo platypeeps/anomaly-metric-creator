@@ -19,9 +19,9 @@ propagate effects outside the targeted cell), the deviation at an anomaly
 row remains a direct measurement of the spec's primary effect, and the
 column-wide std of the baseline remains a fair noise floor.
 
-Acceptance per ``max|active[span] - baseline[span]| > std(
-baseline_column)`` for every (component, metric, span) recorded in the
-active run's ``anomalies.csv``.
+Acceptance per ``max|active[span] - baseline[span]| > std(baseline_column)``
+for every (component, metric, span) recorded in the active run's
+``anomalies.csv``.
 
 This test was added after the realistic-mode saturation
 feedback raised the std of ``apigateway.error_rate``

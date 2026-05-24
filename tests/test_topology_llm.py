@@ -1,4 +1,4 @@
-"""phase 5: LLM topology coupling (token-throttle → llm_analytics).
+"""Phase 5: LLM topology coupling (token-throttle → llm_analytics).
 
 Phase 5 closes the v1 topology graph by promoting the
 ``apigateway -> llm_analytics`` placeholder edge declared in phase 1

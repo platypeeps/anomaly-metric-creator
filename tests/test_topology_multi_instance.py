@@ -1,4 +1,4 @@
-"""phase 8: per-instance topology integration.
+"""Phase 8: per-instance topology integration.
 
 Verifies that ``--topology-mode realistic`` under
 ``--instances-per-component N > 1`` (or a non-default ``--instance-config``)
