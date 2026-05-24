@@ -73,9 +73,9 @@ dispatched layouts: the wide layout uses the caller-supplied
 ignores it for layout purposes and sorts components alphabetically for
 the equal-timestamp tie-break (the row's `component` cell carries the
 identity, so column order is not the ordering surface). See the
-**Layout (VER-148 phase 5)** subsection below for the dispatch detail.
+**Layout (phase 5)** subsection below for the dispatch detail.
 
-**Layout (VER-148 phase 5).** `combine_logs_unified(components, input_dir, …)`
+**Layout (phase 5).** `combine_logs_unified(components, input_dir, …)`
 inspects every per-component CSV's header via `_scan_component_csv_headers`
 and dispatches one of two layouts:
 
@@ -83,9 +83,9 @@ and dispatches one of two layouts:
   has the classic `timestamp, m0, m1, …` shape — the `N=1`
   anonymous-instance case. The combine writer emits
   `timestamp, component_a_m0, component_a_m1, component_b_m0, …`
-  byte-identically to the pre-VER-148 output. Locked `test_combine.py`
+  byte-identically to the pre-existing output. Locked `test_combine.py`
   row/column assertions still apply.
-- **Long layout (VER-148 phase 5, dimensioned input).** Any per-component
+- **Long layout (phase 5, dimensioned input).** Any per-component
   CSV carries the multi-instance `id, host, pod, az, region, tenant`
   prefix (the `--instances-per-component N > 1` shape from Phase 2). The
   combine writer dispatches into `_write_combined_long_form` and emits
@@ -120,13 +120,13 @@ emitted_files, instances_by_component=None)` writes a declarative
 The document carries five slices of information:
 
 - `schema_version` — integer (`SCHEMA_DOCUMENT_VERSION`, currently `2`
-  after the VER-157 phase 7 bump that added the `topology` section).
+  after the phase 7 bump that added the `topology` section).
   `_load_schema_document` rejects unknown versions outright, so v1
-  documents fail-fast under a v2 reader and vice versa. VER-151 phase 8
+  documents fail-fast under a v2 reader and vice versa. Phase 8
   keeps the version at 2 because the new per-component `dimensions`
   block is purely additive — omitted entirely in the default
   single-anonymous-`Instance()` path so the v1 schema bytes (and the
-  locked SHA-256 hashes) stay byte-identical to the pre-VER-151
+  locked SHA-256 hashes) stay byte-identical to the pre-existing
   baseline.
 - `metadata` — run-level parameters (`seed`, `start`, `duration_days`,
   `interval_seconds`, `total_seconds`, `rows_per_component`,
@@ -137,7 +137,7 @@ The document carries five slices of information:
   short-circuit the new coupling check under `independent`.
 - `components` — per-component metric metadata in MetricSpec column
   order (each entry carries `name`, `unit`, `semantic_type`, `dtype`,
-  `min_value`, `max_value`, `derivation`). VER-151 phase 8 adds an
+  `min_value`, `max_value`, `derivation`). Phase 8 adds an
   optional `dimensions` field per component when the per-component
   CSV is dim-aware (`--instances-per-component N>1` fan-out or a
   non-default `--instance-config`):
@@ -158,7 +158,7 @@ The document carries five slices of information:
   `_collect_emitted_filenames` (the same registry that drives
   `_pre_clean_output_dir` and the end-of-run summary, so the three views
   cannot drift).
-- `topology` (VER-157 phase 7) — the directed coupling graph snapshot,
+- `topology` (phase 7) — the directed coupling graph snapshot,
   built from the live `TOPOLOGY` constant via `_serialize_topology` and
   restricted to the active component set. Shape:
   `{source: [{target, weight, saturation, correlation_threshold}, ...]}`
@@ -176,22 +176,21 @@ The document carries five slices of information:
 
 The output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
 with trailing newline). Locked SHA-256 golden hashes at 1d and 7d live
-in `tests/test_schema_file.py` and were re-locked at the VER-157
-phase 7 schema-version bump. The `--combine-only` branch does not
+in `tests/test_schema_file.py` and were re-locked at the phase 7 schema-version bump. The `--combine-only` branch does not
 regenerate `schema.json` (it returns before pre-clean), matching the
 `gauges.csv` invariant.
 
-### Multi-instance fan-out (`--instances-per-component`, VER-140)
+### Multi-instance fan-out (`--instances-per-component`)
 
 `COMPONENTS` declares one MetricSpec list per logical component, and
 `INSTANCES` is the parallel module-level registry of `Instance`
 objects that name each emitting *replica* (id, host, pod, az, region,
-tenant). Phase 1 (VER-144) landed the `Instance` dataclass, the
+tenant). Phase 1 landed the `Instance` dataclass, the
 `INSTANCES = {name: [Instance()] for name in COMPONENTS}` default,
 `_validate_instances_registry` / `_validate_instance_list` import-time
 checks, and the `RunContext.instances` thread that passes the per-run
 per-component list into `generate_component(..., instances=...)`.
-Phase 2 (VER-145) wired the CLI:
+Phase 2 wired the CLI:
 
 - `--instances-per-component N` (default `1`, range `[1,
   MAX_INSTANCES_PER_COMPONENT=20]`) — when `N > 1`, `main()` replaces
@@ -222,11 +221,10 @@ anomaly overrides in v1; Phase 4 (`instance_filter` on anomaly
 specs) will let scenarios target individual instances.
 
 Out-of-scope until Phase 8: schema.json dimension columns +
-`--validate-output` dimension awareness (Phase 8 / VER-151). Already
-shipped: `--instance-config PATH` (Phase 3 / VER-146), per-anomaly
-`instance_filter` (Phase 4 / VER-147), dimension-aware
-`gauges.csv` / `combined_metrics_unified.csv` writers (Phase 5 /
-VER-148), and OTLP data point attributes (Phase 6 / VER-149) — the
+`--validate-output` dimension awareness (Phase 8). Already
+shipped: `--instance-config PATH` (Phase 3), per-anomaly
+`instance_filter` (Phase 4), dimension-aware
+`gauges.csv` / `combined_metrics_unified.csv` writers (Phase 5), and OTLP data point attributes (Phase 6) — the
 work covered in this branch. After Phase 6, `stream_otel_gauges`
 and `stream_otel_signals` lift every non-empty
 `_INSTANCE_DIMENSION_COLUMNS` cell off each row and surface it as a
@@ -235,7 +233,7 @@ attributes, not OTEL resource attributes), so `--otel-enabled` and
 `--otel-emit-gauges` are no longer gated against N>1. The only
 remaining dimension-blind emitter group is Phase 8 — `parse_args`
 rejects `--instances-per-component > 1` paired with `--emit-selection
-'schema'` or `--validate-output` with a VER-151 / Phase 8 error
+'schema'` or `--validate-output` with a Phase 8 error
 message (so users see a clear failure instead of `--validate-output`
 flagging dimension columns as schema drift). `generate_component()`
 mirrors the DST guard inside the helper as well — passing a
@@ -252,7 +250,7 @@ because v1 records one event per `(timestamp, component, metric)`
 regardless of `N` — Phase 4 will reshape that contract when
 `instance_filter` lands.
 
-### Per-instance topology (VER-158 phase 8)
+### Per-instance topology (phase 8)
 
 Under `--topology-mode realistic` with `--instances-per-component
 N > 1` (or any non-default `--instance-config`), the topology
@@ -265,7 +263,7 @@ the upstream / downstream cardinalities for each edge:
   `len(upstream_instances) == len(downstream_instances) > 0`,
   downstream instance `K` consumes upstream instance `K`'s
   captured load column exclusively for that edge. This is the
-  "matching instance set" branch from the VER-158 issue scope; it
+  "matching instance set" branch from the issue scope; it
   delivers the per-pod isolation `tests/test_topology_multi_instance.py`
   pins (a slow upstream pod produces saturation feedback only on
   the corresponding downstream pod's rows, sibling pods stay on
@@ -287,7 +285,7 @@ flag:
 
 - When the per-component instance list is the single anonymous
   `Instance()` (`_is_anonymous_instance_list(instances)` is True),
-  `main()` keeps the pre-VER-158 lambda-baked path:
+  `main()` keeps the pre-existing lambda-baked path:
   `_compose_topology_coupled_specs` + `_compose_topology_saturation_specs`
   modify the per-run `MetricSpec` list (today's path). This
   branch fires for the default `--instances-per-component 1` and
@@ -329,7 +327,7 @@ flag:
       the symmetric pods stay on the shared buffer and the
       per-instance buffers cover only the truly-divergent pods.
 
-The math hook is the VER-158 refactor of `_natural_column` which
+The math hook is the refactor of `_natural_column` which
 now accepts four optional keyword-only kwargs:
 
 Three topology-state kwargs the lambda-baked path used to fold into
@@ -395,11 +393,12 @@ the natural-column draw, so a cascade write at row `i` for
 instance `K` still wins at exactly that cell regardless of the
 saturation-driven baseline computed for that pod.
 
-**Validator (VER-157 phase 7 + VER-158).** The validator's
+**Validator (phase 7).** The validator's
 existing `_validate_topology_coupling` runs an aggregate-mean
 Pearson check per edge (the timestamp axis is collapsed across
-instances by `_read_component_metric_column`). VER-158 adds a
-companion `_validate_topology_coupling_per_instance` invocation
+instances by `_read_component_metric_column`). The per-instance
+extension adds a companion `_validate_topology_coupling_per_instance`
+invocation
 inside the per-edge loop that fires only when both source and
 target schemas declare a `dimensions` block with matched
 cardinalities. The check verifies
@@ -412,7 +411,7 @@ mismatched cardinalities (uniform fan-out doesn't promise
 per-pod isolation), single-instance runs, or fewer than 100
 aligned rows per pod pair.
 
-### MetricSpec schema metadata (VER-139)
+### MetricSpec schema metadata
 
 `MetricSpec` carries six optional declarative fields that flow into
 `schema.json` and `--validate-output`: `unit`, `semantic_type`,
@@ -420,7 +419,7 @@ aligned rows per pod pair.
 Five of the six are metadata-only and do not affect generation —
 they exist only so the validator can range-check, dtype-check, and
 recompute derived columns. `dtype` is the exception: under the
-default `--topology-mode realistic` (VER-156 phase 6 flag day) every
+default `--topology-mode realistic` (phase 6 flag day) every
 column declared `dtype="int"` is rounded via `np.rint` in
 `generate_component()` before derivations run and before the
 `topology_capture` snapshot, so the recorded value is whole-integer
@@ -448,9 +447,9 @@ After phase 6 the only known validator violation on default output is
 the LLM context-overflow scenario driving `context_overflow_rate`
 above its declared `max_value=1` (8.5 at day 5 + 2h, exercising the
 context-window saturation pattern). That overshoot is a
-scenario-catalog issue tracked for VER-141 phase 9 re-tune — it is
+scenario-catalog issue tracked for phase 9 re-tune — it is
 *not* the integer-cast bundle's scope and is intentionally left in
-place by VER-156. Under `--topology-mode independent` the validator
+place. Under `--topology-mode independent` the validator
 additionally surfaces every previously-flagged fractional-int
 violation (the alias intentionally skips the cast to keep its
 pre-flag-day byte parity).
@@ -469,8 +468,7 @@ the validator knows about against the artifacts in `PATH`:
   by `timestamp`.
 - `_validate_component_row_count` — data rows ≤ `rows_per_component`
   plus the DST splice extras when applicable; under-emission is checked
-  against an 8-sigma band around the expected drop count. VER-151
-  phase 8: when the per-component schema declares `dimensions`, both
+  against an 8-sigma band around the expected drop count. Phase 8: when the per-component schema declares `dimensions`, both
   the upper bound and the under-emission band are multiplied by
   `cardinality` so the Phase 2 long-form CSV (N copies of each row,
   one per instance) sits inside the band.
@@ -482,7 +480,7 @@ the validator knows about against the artifacts in `PATH`:
   3-decimal CSV precision) when `dtype="int"`, and is ≥ 0 when
   `semantic_type` is `counter` or `rate`. Each unique
   `(metric, kind)` violation reports once per CSV so the output stays
-  bounded. VER-151 phase 8: when the per-component schema declares
+  bounded. Phase 8: when the per-component schema declares
   `dimensions`, the expected header is
   `("timestamp", *_INSTANCE_DIMENSION_COLUMNS, *metric_names)` to
   match the Phase 2 long-form per-component CSV; metric cells start
@@ -494,12 +492,12 @@ the validator knows about against the artifacts in `PATH`:
   and assert agreement within `_VALIDATE_DERIVATION_TOLERANCE` (0.01).
   Dispatched by `(component, metric)` via the `_RECOMPUTERS` table —
   add a `DERIVATIONS` entry (generator) and a `_RECOMPUTERS` entry
-  (validator) in lockstep. VER-151 phase 8: the `name_to_col`
+  (validator) in lockstep. Phase 8: the `name_to_col`
   recomputer-lookup index is offset by
   `1 + len(_INSTANCE_DIMENSION_COLUMNS)` when the schema declares
   `dimensions`, so the recomputer reads the right cell from the
   long-form row instead of a dim string.
-- `_validate_long_form_dimensions` (VER-151 phase 8) — when *any*
+- `_validate_long_form_dimensions` (phase 8) — when *any*
   per-component schema declares `dimensions`, verify both
   `gauges.csv` and `combined_metrics_unified.csv` (when declared in
   `schema.files`) carry the 10-column long-form header
@@ -507,7 +505,7 @@ the validator knows about against the artifacts in `PATH`:
   value`. Mirrors the writer's any-of dispatch predicate; when no
   component has dimensions the check is a no-op so today's
   dimensionless validator behavior is unchanged.
-- `_validate_topology_coupling` (VER-157 phase 7) — for every edge in
+- `_validate_topology_coupling` (phase 7) — for every edge in
   the schema's `topology` section with a numeric weight, compute the
   Pearson correlation between the source's canonical load metric and
   the target's canonical load metric (from `_TOPOLOGY_LOAD_METRICS`)
@@ -531,7 +529,7 @@ the validator knows about against the artifacts in `PATH`:
   contribution is composed into `database.queries_per_sec` via the
   callable edge). A zero-variance source or target column is treated
   as a coupling regression (Pearson is undefined; the validator emits
-  a violation naming the side). VER-151 phase 8 makes
+  a violation naming the side). Phase 8 makes
   `_read_component_metric_column` collapse per-instance duplicates to
   one `(timestamp, mean)` per unique timestamp so the dim-aware
   long-form CSV (multiple rows per timestamp, one per instance, with
@@ -562,9 +560,9 @@ Layout is decided by header inspection via
   tie-break on sorted component name (the writer sorts
   `component_csv_paths` internally so the tiebreaker holds regardless of
   how the caller built the dict), then per-component CSV column order
-  (`MetricSpec` order). Byte-identical to the pre-VER-148 output, so
+  (`MetricSpec` order). Byte-identical to the pre-existing output, so
   existing locked SHA-256 golden hashes at 1d and 7d still apply.
-- **10-column shape (VER-148 phase 5, dimensioned input).** Any per-
+- **10-column shape (phase 5, dimensioned input).** Any per-
   component CSV carries the multi-instance `id, host, pod, az, region,
   tenant` prefix (the `--instances-per-component N > 1` shape from
   Phase 2). The writer emits
@@ -617,7 +615,7 @@ data points landed in the file. Locked SHA-256 golden hashes at 1d and
 7d for the 4-column shape and at 1d for the 10-column N=3 shape live
 in `tests/test_gauges_file.py`.
 
-### OTEL dimension attributes (VER-149 Phase 6)
+### OTEL dimension attributes (Phase 6)
 
 `_INSTANCE_DIMENSION_COLUMNS = ("id", "host", "pod", "az", "region", "tenant")`
 (defined alongside the `Instance` dataclass) is the single source of
@@ -708,7 +706,7 @@ Anomaly specs are dicts with:
   `sustained`, `sawtooth`, `sine`.
 - `shape_params` (optional) — shape-specific params (`start/end`, `period_s`,
   `amplitude`, `midline`, etc.).
-- `instance_filter` (optional, VER-140 Phase 4) — restricts which instances
+- `instance_filter` (optional, Phase 4) — restricts which instances
   the override applies to. Accepted forms:
   - omitted / `None` → applies to every active instance (default; preserves
     Phase 2 byte-identical output when no filter is set).
@@ -730,7 +728,7 @@ each scenario's `cascade_specs` and appends them directly into the per-run
 time_offset, metric, description, generator, *, cascade_registry=…)` helper
 exists for tests that need to build a cascade registry without composing a full
 `Scenario`; callers must pass `cascade_registry=` explicitly (the module-level
-registry was removed in VER-131). Cascades simulate blast radius (auth →
+registry was removed). Cascades simulate blast radius (auth →
 gateway, cache → DB, DB → API/auth, MQ → API/DB, LLM → DB/cache/API). Cascades
 are single-row step writes only — express ramps/sustained spans as primary
 specs in `primary_specs`, not in `cascade_specs`.
@@ -738,18 +736,18 @@ specs in `primary_specs`, not in `cascade_specs`.
 ### Topology graph
 
 `TOPOLOGY: dict[str, list[Edge]]` declares the directed service-call graph
-alongside `COMPONENTS`. Phase 1 (VER-143) landed the constant and its
-import-time validator; phase 2 (VER-152) added the
+alongside `COMPONENTS`. Phase 1 landed the constant and its
+import-time validator; phase 2 added the
 `--topology-mode realistic` consumer (see "Generation order" below)
 that re-shapes downstream RPS baselines from upstream RPS columns. The
 consumer was opt-in through phase 5 and flipped to the default in
-phase 6 (VER-156); `--topology-mode independent` survives only as a
+Phase 6; `--topology-mode independent` survives only as a
 deprecation alias for pre-flag-day byte parity.
-Phase 3 (VER-153) extended coupling to every front-half fan-out edge.
-Phase 4 (VER-154) reads `Edge.saturation` and adds a logistic-shaped
+Phase 3 extended coupling to every front-half fan-out edge.
+Phase 4 reads `Edge.saturation` and adds a logistic-shaped
 latency multiplier and error offset onto each downstream's
 latency-family and error-family `MetricSpec` (see "Saturation
-feedback" below). Phase 5 (VER-155) closes the v1 graph by promoting
+feedback" below). Phase 5 closes the v1 graph by promoting
 the `apigateway → llm_analytics` placeholder to a real coupling +
 saturation edge so the LLM token-throttle reads as load-driven
 saturation; see "LLM token-throttle" below for the decision to keep
@@ -772,7 +770,7 @@ Two dataclasses model the edges:
   `weight`. Returning `None` from `signal` means "skip this edge" so a
   `--metrics-per-component` trim of a required input column degrades
   gracefully. `correlation_threshold` is a validator-only override
-  (VER-157 phase 7) for the minimum Pearson correlation
+  (phase 7) for the minimum Pearson correlation
   `_validate_topology_coupling` requires between the source's
   canonical load metric and the target's canonical load metric; `None`
   (the default) falls back to
@@ -790,7 +788,7 @@ Two dataclasses model the edges:
   — frozen. Parameters of a logistic response curve consumed by
   `_apply_saturation()`. Zero gains declare the saturation
   point structurally without contributing to the target's metrics;
-  after VER-155 phase 5 the v1 graph no longer has any zero-gain
+  after phase 5 the v1 graph no longer has any zero-gain
   saturating edges, so the "structurally inert" branch only triggers
   for synthetic test edges.
 
@@ -806,7 +804,7 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
   steepness=6, latency_gain=0.6, error_gain=0.015`).
 - `apigateway → llm_analytics` (constant weight `1.0`, saturation
   `midpoint=760, steepness=6, latency_gain=0.55, error_gain=0.015`).
-  VER-155 phase 5: under realistic mode, couples
+  Phase 5: under realistic mode, couples
   `llm_analytics.input_tokens_per_sec` to apigateway RPS, and lifts
   `avg_llm_latency_ms` / `p95_llm_latency_ms` / `llm_api_error_rate`
   as apigateway saturates the token budget.
@@ -817,7 +815,7 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
 `args.components` in one of two orders depending on
 `--topology-mode`:
 
-- `realistic` (default since VER-156 phase 6) — topological order via
+- `realistic` (default since phase 6) — topological order via
   `_topology_generation_order(args.components)`. Kahn's algorithm
   walks reverse-adjacency of `TOPOLOGY` restricted to
   `args.components`; ties break on `COMPONENTS` insertion order so
@@ -825,7 +823,7 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
   `generate_component()` stashes its post-natural / post-anomaly /
   post-derivation load-metric columns (pre-round; full float
   precision for `dtype="float"` columns, post-`np.rint` whole
-  integers for `dtype="int"` columns after the VER-156 phase 6
+  integers for `dtype="int"` columns after the phase 6
   integer-cast bundle so the captured signal matches what the CSV
   emits) into a shared `upstream_arrays: dict[str, dict[str,
   np.ndarray]]` keyed by `(component_name, metric_name)`. The set
@@ -865,19 +863,19 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
   MetricSpec's declarative metadata (unit, semantic_type, min/max,
   dtype, derivation, clip_min) survives via `dataclasses.replace`;
   only `base`, `std`, `multiplier`, and `additive` change.
-- `independent` (deprecation alias since VER-156 phase 6) — iteration
+- `independent` (deprecation alias since phase 6) — iteration
   order of `effective_specs`, which is `COMPONENTS` insertion order.
   No coupling, no upstream capture. Pre-flag-day baseline path kept
-  only so the pre-VER-152 byte-for-byte output can be regenerated for
+  only so the pre-existing byte-for-byte output can be regenerated for
   diffing; emits a stderr `DeprecationWarning` on use and is scheduled
-  for removal after VER-141 phase 9.
+  for removal after phase 9.
 
 The realistic and independent modes share the same `RunContext.rng`,
 but because the generation order differs every component's RNG draws
 shift. Realistic-mode CSV bytes therefore do **not** match
 independent-mode CSV bytes for any component — even uncoupled roots
 like `loadbalancer`. All locked SHA-256 hashes in `tests/` were
-re-baselined under realistic mode in VER-156 (phase 6 flag day);
+re-baselined under realistic mode (phase 6 flag day);
 tests pinning behavior under either mode now either use locked
 hashes against realistic output or statistical assertions (means,
 correlations, in-window values) that hold across both modes.
@@ -897,23 +895,22 @@ anomaly propagation, so the two are intentionally allowed to overlap.
 Cascades remain the path for "metric X drops at exactly row Y"
 behaviors; topology is the path for "load on source raises the
 downstream baseline" (phase 2/3) and "load on source elevates
-downstream latency + error rate" (phase 4 saturation). Phase 3
-(VER-153) expanded coupling to all front-half fan-out edges, so
+downstream latency + error rate" (phase 4 saturation). Phase 3 expanded coupling to all front-half fan-out edges, so
 `authservice.login_attempts`, `cacheservice.cache_hits/cache_misses`,
 and `database.queries_per_sec` are all coupled under realistic mode.
-Phase 4 (VER-154) extends realistic mode to latency and error
+Phase 4 extends realistic mode to latency and error
 columns: cascade overrides (`error_rate`, latency, `cpu_util_pct`)
 now share the same column space as the saturation offset, but the
 cascade override path *replaces* the cell at the targeted row (post
 saturation, since the override is applied after the natural-column
 build), so the cascade value still wins at exactly that row.
 
-**Phase 9 (VER-159) catalog re-tune.** The saturation lift from phase 4/5 raised the column-wide std of `apigateway.error_rate` (from ~0.018 to ~0.040) and `authservice.error_rate` (from ~0.018 to ~0.050), pushing eleven hand-tuned cascade and primary generator values close to or below the new noise floor. Those eleven specs (8 from the initial audit + 3 surfaced by the regression test) were re-tuned in VER-159 to clear the floor by >3σ under realistic mode: `api_cpu_saturation` (primary 0.25), `db_stall` (primary 0.35, cascade 0.30), `lb_flapping` (cascade 0.30), `mq_jam` (primary 0.25), `vectorstore_pressure` (cascade 0.15), `payment_5xx` (cascade 0.28), `regional_failover_storm` (cascade 0.40), `llm_provider_outage` (cascade 0.35), `storage_layer_pressure` (cascade 0.30), and `network_partition_az_split` (cascade 0.40). `tests/test_scenario_deviation.py` is the regression guard: it walks every `SCENARIOS` entry under realistic mode, compares the active CSV against an `--exclude-scenarios <slug>` baseline run that fires zero anomalies, and asserts every recorded `anomalies.csv` row deviates by >1σ. A future saturation re-tune or new edge that quietly lifts a
+**Phase 9 catalog re-tune.** The saturation lift from phase 4/5 raised the column-wide std of `apigateway.error_rate` (from ~0.018 to ~0.040) and `authservice.error_rate` (from ~0.018 to ~0.050), pushing eleven hand-tuned cascade and primary generator values close to or below the new noise floor. Those eleven specs (8 from the initial audit + 3 surfaced by the regression test) were re-tuned to clear the floor by >3σ under realistic mode: `api_cpu_saturation` (primary 0.25), `db_stall` (primary 0.35, cascade 0.30), `lb_flapping` (cascade 0.30), `mq_jam` (primary 0.25), `vectorstore_pressure` (cascade 0.15), `payment_5xx` (cascade 0.28), `regional_failover_storm` (cascade 0.40), `llm_provider_outage` (cascade 0.35), `storage_layer_pressure` (cascade 0.30), and `network_partition_az_split` (cascade 0.40). `tests/test_scenario_deviation.py` is the regression guard: it walks every `SCENARIOS` entry under realistic mode, compares the active CSV against an `--exclude-scenarios <slug>` baseline run that fires zero anomalies, and asserts every recorded `anomalies.csv` row deviates by >1σ. A future saturation re-tune or new edge that quietly lifts a
 column's std past a generator's headroom will fail this test on the
 specific row that no-ops.
 
-No `SCENARIOS` cascades were structurally removed in VER-159 —
-they are kept in place per the VER-134 decision even where the
+No `SCENARIOS` cascades were structurally removed —
+they are kept in place per the decision even where the
 saturation feedback would now produce a similar downstream effect.
 The cascade override is a single-row step write applied *after*
 saturation, so it still pins the targeted cell to a specific value
@@ -958,7 +955,7 @@ downstream's metrics receive the saturation effect:
   `error_rate`.
 - `llm_analytics` → latency `avg_llm_latency_ms`, `p95_llm_latency_ms`;
   error `llm_api_error_rate` (the LLM-specific error column the
-  catalog exposes, not the generic `error_rate`). Phase 5 (VER-155).
+  catalog exposes, not the generic `error_rate`). Phase 5.
 
 `_compose_topology_saturation_specs(component, specs, upstream_arrays,
 n_rows)` runs immediately after `_compose_topology_coupled_specs` in
@@ -1000,7 +997,7 @@ the realized CSV columns.
 
 The deprecated `--topology-mode independent` alias never invokes
 `_compose_topology_saturation_specs`, so its output stays byte-for-byte
-identical to the pre-VER-154 baseline (pinned alongside the broader
+identical to the pre-existing baseline (pinned alongside the broader
 pre-flag-day baseline via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
 `tests/test_scenarios.py` and `tests/test_topology_loadbalancer_gateway.py`).
 The no-flag default and explicit `--topology-mode realistic` now produce
@@ -1009,7 +1006,7 @@ identical latency CSV bytes; that invariant is pinned by
 
 ### LLM token-throttle (`--topology-mode realistic`, phase 5)
 
-Phase 5 (VER-155) closes the v1 topology graph by promoting the
+Phase 5 closes the v1 topology graph by promoting the
 phase-1 `apigateway → llm_analytics` placeholder into a real
 coupling + saturation edge. The edge sits inside the same
 phase-3 / phase-4 machinery as the front-half fan-out — no new
@@ -1073,7 +1070,7 @@ catalog exposes — not the generic `error_rate`, which
 - LLM scenarios still fire under realistic mode (no anomaly cell
   overrides are masked by the coupling); and
 - `llm_analytics.csv` byte-identity between the no-flag default and an
-  explicit `--topology-mode realistic` run (after VER-156 phase 6 the
+  explicit `--topology-mode realistic` run (after phase 6 the
   default is realistic; the deprecation alias's pre-flag-day parity
   lives in `tests/test_topology_loadbalancer_gateway.py`).
 
@@ -1101,7 +1098,7 @@ consumers) cannot smuggle in `NaN`/`inf`/`bool`/negative values.
 Mirror these invariants in `tests/test_topology_registry.py` when
 adding new edges or constraints.
 
-### Multi-instance fan-out (VER-140)
+### Multi-instance fan-out
 
 `Instance` is a frozen dataclass holding six optional dimension
 fields (`id`, `host`, `pod`, `az`, `region`, `tenant`). The active
@@ -1123,7 +1120,7 @@ exclusive at parse time):
 - `--instances-per-component N` (N in `[1, MAX_INSTANCES_PER_COMPONENT]`,
   `MAX_INSTANCES_PER_COMPONENT = 20`) → every component fans out to
   the same `[Instance(id=f"i{k}", pod=f"pod-{k}") for k in range(N)]`.
-- `--instance-config PATH` (VER-140 Phase 3, VER-146) → per-component
+- `--instance-config PATH` (Phase 3) → per-component
   fan-out is loaded from a YAML (`.yaml`/`.yml`) or JSON (`.json`)
   file via `_load_instance_config(path)`. The file's top-level
   `components` map keys components to lists of `Instance`-field
@@ -1172,7 +1169,7 @@ Both multi-instance paths (`--instances-per-component > 1` and
 `--inject-dst-artifact-day > 0`: `parse_args` rejects the combination
 with a clear message naming the active flag, and
 `generate_component()` carries a matching defense-in-depth
-`ValueError` for direct callers that bypass the CLI. After VER-191
+`ValueError` for direct callers that bypass the CLI. After
 the long-form CSV writer routes through the shared
 `_format_csv_row_block` helper, which applies `_splice_dst_artifact`
 regardless of the writer branch — the parse-time guard now stands
@@ -1180,7 +1177,7 @@ on design grounds (the multi-instance long-form CSV produces
 per-instance row blocks; running `_splice_dst_artifact` per block
 would surface non-monotonic timestamps inside each block, which
 `heapq.merge` in `gauges.csv` / `combined_metrics_unified.csv`
-cannot resolve), not on the pre-VER-191 correctness gap where the
+cannot resolve), not on the earlier correctness gap where the
 long-form path silently dropped the duplicated hour entirely.
 
 When adding fields to `Instance`, add the new field name to
@@ -1220,7 +1217,7 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
   `cascade_dict` has `time_offset`, `metric`, `description`, and `generator`
   (no `shape`/`shape_params` — cascades are single-row steps).
   Both primary and cascade dicts may additionally carry an optional
-  `instance_filter` (VER-140 Phase 4) — see the
+  `instance_filter` (Phase 4) — see the
   [anomaly injection schema](#anomaly-injection-schema) for the accepted
   forms and runtime semantics.
 
@@ -1478,7 +1475,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to 13 recurring patterns identified in VER-160 (the original 11) and VER-205 (two more from the May 20 PR review sweep). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Copy those 13 bold headings into the PR description as a checklist (Markdown `- [ ]` lines, one per heading) and either confirm each one or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the headings below rather than redefine them.
+This checklist maps to 13 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, plus two more added later). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Copy those 13 bold headings into the PR description as a checklist (Markdown `- [ ]` lines, one per heading) and either confirm each one or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; if a `.github/PULL_REQUEST_TEMPLATE.md` is added later to prefill the same items on every new PR, it should mirror the headings below rather than redefine them.
 
 **Scope & description**
 - PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
@@ -1488,8 +1485,8 @@ This checklist maps to 13 recurring patterns identified in VER-160 (the original
 - For every field a new validator inspects, enumerate non-canonical inputs: `None`, `NaN`, `±inf`, negative, `bool` (a subtype of `int`), empty string, unhashable, wrong container type.
 - Every *branch* of a discriminator is validated: callable **and** constant `Edge.weight`; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables.
 - Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, etc.) raise on unknown keys; never return `None` or fall through silently. If a caller genuinely needs to tolerate misses, the *caller* opts in via `try/except KeyError` — the table itself stays strict. Concrete antipatterns to grep for before review:
-  - `table.get(key)` on a dispatch table — returns `None` on miss instead of raising. Use `table[key]` so a typo or registry drift fails loudly. The VER-179 fix replaced `_RECOMPUTERS.get(component)` with `_RECOMPUTERS[component]` for exactly this reason.
-  - A dispatcher *function* (e.g. `_recompute_cacheservice`) that returns a sentinel — `None`, an empty string, or a "soft violation" message — for an unrecognized metric or component instead of raising `KeyError`. The caller cannot distinguish "metric is fine" from "I have no recomputer for this metric"; both look like success. VER-179 also fixed this shape by replacing the soft-violation return with `raise KeyError(...)`.
+  - `table.get(key)` on a dispatch table — returns `None` on miss instead of raising. Use `table[key]` so a typo or registry drift fails loudly. The fix replaced `_RECOMPUTERS.get(component)` with `_RECOMPUTERS[component]` for exactly this reason.
+  - A dispatcher *function* (e.g. `_recompute_cacheservice`) that returns a sentinel — `None`, an empty string, or a "soft violation" message — for an unrecognized metric or component instead of raising `KeyError`. The caller cannot distinguish "metric is fine" from "I have no recomputer for this metric"; both look like success. Replace the soft-violation return with `raise KeyError(...)`.
   - A dispatcher branch that silently falls through to a `return` at the bottom of the function when no `if`/`elif` matched. Add an explicit `raise KeyError(...)` instead.
 
 **Doc / docstring sync**
@@ -1544,7 +1541,7 @@ This checklist maps to 13 recurring patterns identified in VER-160 (the original
   `test_scenarios.py` loads `_VALID_ANOMALY_SHAPES` at parametrize
   collection time), route through `conftest._load_amc()` (memoized) or
   annotate the `spec_from_file_location` call line with
-  `# noqa: amc-load`. See VER-197.
+  `# noqa: amc-load`.
 
 **Test resource cost**
 - Fixtures generating full 1-day, 7-day, or `--instances-per-component N > 1` (N=3 and larger) datasets must reuse the session-scoped fixtures already declared in `tests/conftest.py` rather than redefine module-scoped duplicates. A `module`-scoped fixture that runs `main()` end-to-end will re-execute the generator once per test file and multiply suite wall-time and peak RSS by the number of duplicating files (PR #67 had three separate ~1.3 GB N=3 dataset fixtures; PR #63 module-scoped fixtures duplicated session-scoped runs from conftest).
@@ -1561,14 +1558,10 @@ This checklist maps to 13 recurring patterns identified in VER-160 (the original
 
 ### Reviewer-before-ready gate
 
-The Code Reviewer agent signs off in the worktree *before* the PR is marked ready for review on GitHub (i.e. before draft status is removed). Pushing the draft branch is fine — and required by step 1 — what this gate blocks is the draft → ready transition. The workflow is structurally enforced by Paperclip:
-
-1. Implementing agent opens the PR as a **draft**.
-2. Implementing agent marks the tracking issue `in_review`. (Paperclip automatically attaches an execution policy with a Code Reviewer stage on every issue checkout, so the implementing agent does not manually assign the reviewer).
-3. Code Reviewer walks the pre-PR checklist, fixes any issues in the same worktree, then marks the PR ready (removes draft status) and submits an Approve decision to Paperclip, which automatically hands back to the implementing agent or advances the workflow.
-4. PRs that go directly to `gh pr create` without the draft+reviewer step skip steps 1–3, but must pass the pre-PR checklist self-attestation before being marked ready.
-
-This process avoids the Copilot round-trip: issues caught by the Code Reviewer in step 3 are fixed before Copilot's first review, not after. Paperclip's execution policy is the structural backstop — added after a same-day PR bypassed the documented gate and required five fix rounds — ensuring the Code Reviewer must explicitly sign off before the issue can transition to `done`.
+PRs open as **draft** and walk the pre-PR checklist above before draft
+status is removed. The pre-PR checklist is the structural backstop —
+caught-in-draft issues are fixed before Copilot's first review, not
+after.
 
 ## Tests
 
@@ -1577,7 +1570,7 @@ runs full 1-day and 7-day generations end-to-end via `main()` and exercises the
 vectorized `generate_component()` path. Run with `.venv/bin/pytest` after installing
 the `dev` extra (see [README.md](README.md#tests)).
 
-### Parallel execution (`pytest-xdist`, VER-218)
+### Parallel execution (`pytest-xdist`)
 
 `pyproject.toml` pins `addopts = "-ra --dist loadfile -n 4"` and declares
 `required_plugins = ["pytest-xdist"]`, so every `.venv/bin/pytest`
@@ -1586,9 +1579,8 @@ file (whole files stay on one worker), and fails fast with a clear message
 if `pytest-xdist` is missing from the active environment. The full broader
 sweep (`test_correctness.py`, `test_validate_output.py`, `test_schema_file.py`,
 `test_combine.py`, `test_gauges_file.py`, `test_scenario_deviation.py`) drops
-from ~15–22 min serial to ~5 min parallel, which keeps it inside the Claude
-Code harness's 10-minute default `Bash` per-command cap so heartbeats no
-longer auto-background the run.
+from ~15–22 min serial to ~5 min parallel, which keeps it inside a 10-minute
+per-command CI budget so the run does not get auto-backgrounded.
 
 Session-scoped fixtures in `tests/conftest.py` (`one_day_run_a`,
 `one_day_run_b`, `seven_day_run`, `n3_one_day_dataset_dir`, …) are
@@ -1669,7 +1661,7 @@ test files:
   regression: explicit `--scenarios all` must produce identical per-component
   CSV and `anomalies.csv` bytes as omitting the flag, at 1 and 7 days.
 
-Selector composition order (locked by the VER-102 plan):
+Selector composition order (locked by the plan):
 `--scenarios` → `--exclude-scenarios` → `--signal-level` → `--duration-days`
 → `--components`. Severity and duration drops are loud (WARNING); the
 component filter drop is silent because the user already restricted the

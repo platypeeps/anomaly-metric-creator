@@ -1,4 +1,4 @@
-"""Tests for VER-140 Phase 7 partial-outage scenarios.
+"""Tests for Phase 7 partial-outage scenarios.
 
 Verifies:
 - ``auth_pod_failure`` is registered with the correct metadata and only overrides

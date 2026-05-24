@@ -1,4 +1,4 @@
-"""Tests for --instance-config PATH (VER-140 Phase 3).
+"""Tests for --instance-config PATH (Phase 3).
 
 Verifies:
 - YAML and JSON config files produce the correct RunContext.instances shape.
@@ -414,7 +414,7 @@ def test_malformed_json_raises_value_error(amc, tmp_path):
 
 
 def test_os_error_raises_value_error(amc, tmp_path):
-    """OSError on open() must be wrapped so main() can sys.exit() cleanly (VER-192).
+    """OSError on open() must be wrapped so main() can sys.exit() cleanly.
 
     Exercises the loader's defensive ``except OSError`` directly (bypasses
     ``parse_args``); ``test_directory_rejected`` above covers the
@@ -447,7 +447,7 @@ def test_os_error_raises_value_error(amc, tmp_path):
 
 
 def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
-    """UnicodeDecodeError from the YAML branch must be wrapped (VER-192).
+    """UnicodeDecodeError from the YAML branch must be wrapped.
 
     A .yaml file with non-UTF-8 bytes lets the ``encoding="utf-8"`` codec
     raise ``UnicodeDecodeError`` while PyYAML reads the stream; PyYAML does
@@ -475,7 +475,7 @@ def test_yaml_unicode_decode_error_raises_value_error(amc, tmp_path):
 
 
 def test_json_unicode_decode_error_raises_value_error(amc, tmp_path):
-    """UnicodeDecodeError from the JSON branch must be wrapped (VER-192).
+    """UnicodeDecodeError from the JSON branch must be wrapped.
 
     Symmetric companion to the YAML variant: the JSON branch's
     ``parse_exc_types`` tuple is ``(json.JSONDecodeError, UnicodeDecodeError)``
@@ -520,7 +520,7 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
 def test_instance_config_combine_only_allowed(amc, tmp_path):
     """--combine-only + --instance-config is permitted at parse time.
 
-    Phase 5 (VER-148) made the combine writer dimension-aware (long-form
+    Phase 5 made the combine writer dimension-aware (long-form
     dispatch when per-component CSVs carry the dimension prefix), so the
     shared ``_multi_instance`` gate no longer rejects this combination.
     Mirrors the ``--instances-per-component > 1 + --combine-only`` lift.

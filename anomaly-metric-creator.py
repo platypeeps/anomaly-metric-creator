@@ -173,10 +173,12 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 # for counters, ``stream_otel_gauges`` Gauge data points for gauges).
 _VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
 
-# Vocabulary for ``MetricSpec.dtype``. The generator only ever writes finite
-# floats today; ``int`` here means "values are expected to be whole numbers"
-# (the validator surfaces fractional values as schema violations). VER-134
-# will eventually backfill the catalog and the generator together.
+# Vocabulary for ``MetricSpec.dtype``. ``int`` here means "values are
+# expected to be whole numbers"; under ``--topology-mode realistic``
+# (the default since the phase 6 flag day) ``generate_component`` rounds
+# int-typed columns via ``np.rint`` before derivations run, so the CSV
+# cell is a whole-integer string. The validator surfaces any remaining
+# fractional values as schema violations.
 _VALID_DTYPES = frozenset({"float", "int"})
 
 
@@ -201,7 +203,7 @@ class MetricSpec:
     multiplier: Callable[[datetime.datetime, int], float] | None = None
     additive: Callable[[datetime.datetime, int], float] | None = None
     clip_min: float | None = None
-    # --- VER-139 schema metadata ------------------------------------
+    # --- schema metadata ------------------------------------
     unit: str | None = None
     semantic_type: str | None = None
     min_value: float | None = None
@@ -211,7 +213,7 @@ class MetricSpec:
 
 
 # ------------------------------------------------------------------
-# Instance dimensions (VER-140 Phase 1)
+# Instance dimensions (Phase 1)
 # ------------------------------------------------------------------
 @dataclass(frozen=True)
 class Instance:
@@ -263,13 +265,13 @@ def _is_anonymous_instance_list(instances) -> bool:
 
 
 # ------------------------------------------------------------------
-# Topology graph dataclasses (VER-143 phase 1 — structural-only).
+# Topology graph dataclasses (phase 1 — structural-only).
 # ------------------------------------------------------------------
 # The ``TOPOLOGY`` constant below declares directed service-to-service edges
-# alongside ``COMPONENTS``. The dataclasses landed first (VER-143 phase 1)
+# alongside ``COMPONENTS``. The dataclasses landed first (phase 1)
 # so the structural shape stays stable across the two-pass coupling
-# generator (VER-152 phase 2 / VER-153 phase 3) and the saturation
-# feedback layer (VER-154 phase 4 / VER-155 phase 5).
+# generator (phase 2, phase 3) and the saturation
+# feedback layer (phase 4, phase 5).
 @dataclass(frozen=True)
 class SaturationParams:
     """Sigmoid-style saturation parameters attached to a topology edge.
@@ -317,8 +319,7 @@ class Edge:
     component once the source's load metric crosses the configured
     midpoint.
 
-    ``correlation_threshold`` is the minimum Pearson correlation the VER-157
-    phase-7 ``_validate_topology_coupling`` check requires between this
+    ``correlation_threshold`` is the minimum Pearson correlation the phase-7 ``_validate_topology_coupling`` check requires between this
     edge's source canonical load metric and its target canonical load
     metric under ``--topology-mode realistic``. ``None`` (the default)
     means "use the registry-level default
@@ -336,7 +337,7 @@ class Edge:
 
 
 # ------------------------------------------------------------------
-# Named scenario registry (VER-102 / VER-104 — full migration complete).
+# Named scenario registry (full migration complete).
 #
 # Each Scenario bundles a slug-named set of primary anomaly specs and
 # cascade specs that can be selected together via --scenarios. Every
@@ -393,9 +394,9 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
     The optional kwargs decouple two pieces of state that were previously
     baked into ``MetricSpec.multiplier`` / ``MetricSpec.additive`` lambdas
     by ``_compose_topology_*_specs``. They are byte-identical to the
-    pre-VER-158 lambda-baked path when called with ``latency_factor`` and
+    pre-existing lambda-baked path when called with ``latency_factor`` and
     ``error_offset`` equal to what the lambdas would have computed, and
-    they unlock the VER-158 per-instance saturation path where each
+    they unlock the per-instance saturation path where each
     instance's curve depends on its own upstream view:
 
     * ``noise`` — pre-drawn ``rng.normal(0, spec.std, n_rows)`` array.
@@ -504,10 +505,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     specs: list of MetricSpec (one per CSV column, in column order)
     anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
     instances: optional list of ``Instance`` carrying the per-component
-        dimension topology (VER-140 Phase 1). ``None`` resolves to a single
+        dimension topology (Phase 1). ``None`` resolves to a single
         anonymous ``Instance()`` so today's output stays byte-identical;
-        Phase 2 will start emitting dimension columns when ``len > 1`` or
-        any instance has non-None dimension fields.
+        dimension columns are emitted when ``len > 1`` or any instance
+        has non-None dimension fields (the Phase 2 long-form CSV layout).
     apply_dtype_int_cast: if True (default), round columns with ``dtype="int"``
         to whole numbers via ``np.rint`` before derivations. Pass False
         to preserve pre-flag-day float parity in the deprecated
@@ -565,15 +566,15 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # Defense-in-depth: ``parse_args`` rejects ``--inject-dst-artifact-day``
     # paired with multi-instance at the CLI; this guard mirrors the
     # rejection for direct callers (tests, future consumers) that bypass
-    # the CLI. The pre-VER-191 rationale was correctness — the long-form
+    # the CLI. The original rationale was correctness — the long-form
     # writer rebuilt rows from pre-splice timestamps and silently dropped
-    # the duplicated hour. After VER-191 the long-form path routes
-    # through ``_format_csv_row_block``, which applies the splice
-    # per-instance, so the guard now stands on design grounds: the
-    # multi-instance long-form CSV emits per-instance row blocks, and
-    # per-block splicing surfaces non-monotonic timestamps inside each
-    # block that ``heapq.merge`` (``gauges.csv`` /
-    # ``combined_metrics_unified.csv``) cannot resolve.
+    # the duplicated hour. The long-form path now routes through
+    # ``_format_csv_row_block``, which applies the splice per-instance,
+    # so the guard now stands on design grounds: the multi-instance
+    # long-form CSV emits per-instance row blocks, and per-block splicing
+    # surfaces non-monotonic timestamps inside each block that
+    # ``heapq.merge`` (``gauges.csv`` / ``combined_metrics_unified.csv``)
+    # cannot resolve.
     _is_anonymous = _is_anonymous_instance_list(instances)
     if not _is_anonymous and dst_inject_day > 0:
         raise ValueError(
@@ -590,7 +591,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if component_name in ctx.cascading_anomalies:
         all_anomalies.extend(ctx.cascading_anomalies[component_name])
 
-    # VER-140 Phase 4: resolve each spec's ``instance_filter`` against the
+    # Phase 4: resolve each spec's ``instance_filter`` against the
     # active ``instances`` list before expansion. Specs whose filter matches
     # zero instances are dropped here (one WARNING per skipped spec) so they
     # never produce manifest entries or value writes. Specs with no filter
@@ -690,7 +691,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     n_cols = len(specs)
     values = np.empty((n_rows, n_cols), dtype=np.float64)
 
-    # VER-158 phase 8: per-instance topology dispatch. When the caller
+    # phase 8: per-instance topology dispatch. When the caller
     # passes per-instance coupling / saturation arrays (under
     # ``--topology-mode realistic`` with N>1 or a non-default
     # instance config), each instance K consumes its own arrays via
@@ -841,7 +842,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # manifest entry either. Sort for a deterministic order of scale/jitter
     # draws within a run.
     #
-    # VER-140 Phase 4: per-instance value buffers are materialized lazily
+    # Phase 4: per-instance value buffers are materialized lazily
     # for any instance touched by a partial ``instance_filter``. An
     # unfiltered override writes to shared ``values`` AND propagates the
     # same write to every already-materialized per-instance buffer (so a
@@ -921,9 +922,9 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 "shape": aspec.get("shape", "step"),
             })
 
-    # Phase 6 (VER-156) integer-cast bundle. Every MetricSpec declared with
+    # Phase 6 integer-cast bundle. Every MetricSpec declared with
     # ``dtype="int"`` must render as a whole-integer CSV cell so the
-    # VER-139 validator's ``_validate_component_cells`` ``dtype="int"``
+    # validator's ``_validate_component_cells`` ``dtype="int"``
     # check passes. The cast runs *before* derivations so derived columns
     # (e.g. ``cacheservice.hit_ratio``) are recomputed from the rounded
     # integer source cells and stay self-consistent with what the CSV
@@ -960,7 +961,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         for buf in per_instance_values.values():
             derive_fn(buf, name_to_col)
 
-    # Topology phase 2/3 (VER-152/VER-153): expose post-natural /
+    # Topology phase 2/3: expose post-natural /
     # post-anomaly / post-derivation load-metric columns to downstream
     # components via the ``topology_capture`` dict. Phase 3 extends the
     # capture from a single ``requests_per_sec`` column to all metrics
@@ -970,7 +971,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # can read the full upstream state. Capturing pre-round (before the
     # ``np.round(values, 3, ...)`` below) keeps the signal at full
     # 3+-decimal float precision *for ``dtype="float"`` columns*. After
-    # the VER-156 phase 6 integer-cast bundle, ``dtype="int"`` upstream
+    # the phase 6 integer-cast bundle, ``dtype="int"`` upstream
     # load metrics (notably ``cache_hits`` / ``cache_misses`` driving the
     # cacheservice -> database miss-ratio signal) are captured at their
     # post-cast whole-integer values, which matches what the CSV emits
@@ -1053,7 +1054,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             if captured:
                 topology_capture[component_name] = captured
 
-    # VER-158 phase 8: per-instance load-metric capture for downstream
+    # phase 8: per-instance load-metric capture for downstream
     # consumers. Mirrors ``topology_capture`` above but produces one
     # entry per instance. Under symmetric upstream (no
     # ``instance_filter`` on load metrics) every entry references a
@@ -1098,7 +1099,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         for inst_idx, buf in per_instance_values.items()
     }
 
-    # Multi-instance fan-out (VER-140 Phase 2/4). When the active instance list
+    # Multi-instance fan-out (Phase 2/4). When the active instance list
     # is a single anonymous Instance() (all fields None), emit today's
     # byte-identical format: ``timestamp,m0,m1,...``. When the list carries
     # named instances (len > 1, or any non-None dimension field), prepend
@@ -1113,7 +1114,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # post-derive); other instances reuse the shared ``str_vals`` so the
     # all-instances-unfiltered case stays byte-identical to Phase 2.
     #
-    # VER-191: both branches now flow through the shared ``_format_metric_suffix``
+    # both branches now flow through the shared ``_format_metric_suffix``
     # / ``_format_csv_row_block`` helpers. The dimensionless branch is the
     # degenerate ``dim_prefix=""`` case of the long-form path, so the DST
     # splice — applied inside ``_format_csv_row_block`` — fires regardless
@@ -1143,7 +1144,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 # ``_INSTANCE_DIMENSION_COLUMNS`` is the single source of
                 # truth for the column order; ``_iter_component_rows`` lifts
                 # the same prefix back into the per-row dimensions dict
-                # consumed by the OTEL gauge attributes path (VER-149 Phase 6).
+                # consumed by the OTEL gauge attributes path (Phase 6).
                 dim_header = "timestamp," + ",".join(_INSTANCE_DIMENSION_COLUMNS)
                 f.write(dim_header + "," + ",".join(fieldnames) + "\n")
                 # Materialize per-instance suffixes for forked buffers only;
@@ -1212,9 +1213,8 @@ def _format_csv_row_block(kept_ts: np.ndarray, metric_suffix: np.ndarray,
     ``_INSTANCE_DIMENSION_COLUMNS`` values with empty cells for unset
     fields) for one long-form instance block. The shared shape lets
     the same DST splice apply regardless of which branch produced the
-    block — the bug VER-191 fixes is the long-form writer's prior
-    failure to call ``_splice_dst_artifact`` after rebuilding rows from
-    raw timestamps. The helper itself does not gate which combinations
+    block — fixing a prior failure of the long-form writer to call
+    ``_splice_dst_artifact`` after rebuilding rows from raw timestamps. The helper itself does not gate which combinations
     are reachable: ``_splice_dst_artifact`` runs unconditionally when
     ``dst_inject_day > 0`` regardless of ``dim_prefix``. ``parse_args``
     and the matching ``generate_component`` defense-in-depth check
@@ -2096,7 +2096,7 @@ for _name, _default in DEFAULT_METRICS_PER_COMPONENT.items():
 del _components_keys, _defaults_keys, _overflowed, _name, _default
 
 
-# Per-component instance topology registry (VER-140 Phase 1). Default = one
+# Per-component instance topology registry (Phase 1). Default = one
 # anonymous ``Instance()`` per component, which keeps the emitted CSVs
 # byte-identical to today: ``Instance()`` carries no dimension labels, so
 # Phase 2's CSV writer treats the run as "no dimension columns" and falls
@@ -2109,7 +2109,7 @@ INSTANCES: dict[str, list["Instance"]] = {
 
 
 def _validate_metric_spec_schema_metadata() -> None:
-    """Import-time invariants for the VER-139 schema metadata fields on ``MetricSpec``.
+    """Import-time invariants for the schema metadata fields on ``MetricSpec``.
 
     Rejects nonsense vocabulary (unknown ``semantic_type`` / ``dtype``) and
     obvious shape errors (``min_value`` > ``max_value``, non-finite bounds)
@@ -2162,22 +2162,22 @@ _validate_metric_spec_schema_metadata()
 
 
 # ------------------------------------------------------------------
-# Topology graph (VER-143 phase 1 — structural-only).
+# Topology graph (phase 1 — structural-only).
 # ------------------------------------------------------------------
 # Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
 # instances downstream of ``source``; both source keys and ``Edge.target``
 # values are component names from ``COMPONENTS``. Under the default
-# ``--topology-mode realistic`` (VER-156 phase 6 flag day) the graph
+# ``--topology-mode realistic`` (phase 6 flag day) the graph
 # is consumed by ``_compose_topology_coupled_specs`` (phase 2/3:
 # rewrites downstream load-metric baselines from upstream RPS/token
 # columns) and ``_compose_topology_saturation_specs`` (phase 4/5:
 # lifts downstream latency/error specs via the logistic saturation
 # curve). Under the deprecated ``--topology-mode independent`` alias
 # the graph is not read, so byte-for-byte CSV output stays identical
-# to the pre-VER-152 baseline; the alias is scheduled for removal
-# after VER-141 phase 9.
+# to the pre-existing baseline; the alias is scheduled for removal
+# after phase 9.
 #
-# v1 graph (per VER-141 design):
+# v1 graph (per design):
 #   loadbalancer -> apigateway                   (constant weight 1.0)
 #   apigateway   -> authservice (0.3),           (request fan-out shares;
 #                   cacheservice (0.4),           the weights here sum to 1
@@ -2186,7 +2186,7 @@ _validate_metric_spec_schema_metadata()
 #                                                 as routing fractions)
 #   cacheservice -> database                     (weight = callable on
 #                                                 cache_miss / total rate)
-#   apigateway   -> llm_analytics                (VER-155 phase 5 token-
+#   apigateway   -> llm_analytics                (phase 5 token-
 #                                                 throttle: positive
 #                                                 weight couples
 #                                                 input_tokens_per_sec to
@@ -2220,7 +2220,7 @@ def _component_metric_base(component: str, metric: str) -> float:
     return 0.0
 
 
-# Phase 3 (VER-153): per-component "load metrics" the topology coupling
+# Phase 3: per-component "load metrics" the topology coupling
 # operates on. Each entry maps a component to a
 # ``(canonical, supplementary)`` tuple where:
 #
@@ -2248,7 +2248,7 @@ _TOPOLOGY_LOAD_METRICS: dict[str, tuple[str, tuple[str, ...]]] = {
     "authservice": ("login_attempts", ()),
     "cacheservice": ("cache_hits", ("cache_misses",)),
     "database": ("queries_per_sec", ()),
-    # VER-155 phase 5: llm_analytics couples its token throughput to
+    # phase 5: llm_analytics couples its token throughput to
     # apigateway under realistic mode. ``input_tokens_per_sec`` is the
     # canonical "load" metric here because the token budget governs
     # tokens/second (not requests/second) — pinning the load metric to
@@ -2287,7 +2287,7 @@ def _cache_miss_ratio_signal(
 
 TOPOLOGY: dict[str, list[Edge]] = {
     "loadbalancer": [
-        # VER-154 phase 4: saturation feedback. ``midpoint`` is the
+        # phase 4: saturation feedback. ``midpoint`` is the
         # upstream's load value at which the logistic curve sits at 0.5
         # (~80% of the natural peak of ~1080 rps for loadbalancer). The
         # gains shape latency and error responses as the gateway nears
@@ -2303,7 +2303,7 @@ TOPOLOGY: dict[str, list[Edge]] = {
         ),
     ],
     "apigateway": [
-        # VER-154 phase 4: saturation feedback on the three fan-out
+        # phase 4: saturation feedback on the three fan-out
         # downstreams. ``midpoint`` is ~80% of the apigateway natural
         # peak (~950 rps). ``latency_gain`` scales with each downstream's
         # sensitivity to upstream load: database is most sensitive
@@ -2331,7 +2331,7 @@ TOPOLOGY: dict[str, list[Edge]] = {
                 latency_gain=0.6, error_gain=0.015,
             ),
         ),
-        # VER-155 phase 5: LLM token-throttle. Apigateway serves as the
+        # phase 5: LLM token-throttle. Apigateway serves as the
         # token-budget metering authority for LLM-bound traffic, so this
         # edge couples ``llm_analytics.input_tokens_per_sec`` to
         # ``apigateway.requests_per_sec`` (the renormalization in
@@ -2488,7 +2488,7 @@ def _validate_topology() -> None:
                     context=f"TOPOLOGY[{source!r}] -> {edge.target!r}",
                 )
             if edge.correlation_threshold is not None:
-                # VER-157 phase 7: validator-only per-edge override of the
+                # phase 7: validator-only per-edge override of the
                 # default Pearson coupling threshold. ``bool`` is an ``int``
                 # subtype so reject it explicitly before the numeric check.
                 if (isinstance(edge.correlation_threshold, bool)
@@ -2622,7 +2622,7 @@ def _validate_topology() -> None:
                         f"weight."
                     )
 
-    # Cycle detection (VER-153 phase 3): the two-pass realistic-mode
+    # Cycle detection (phase 3): the two-pass realistic-mode
     # generator walks TOPOLOGY in Kahn order and expects a DAG. Reject
     # any cycle (including self-loops) at import time so a cyclic edit
     # fails fast instead of silently falling back to COMPONENTS order.
@@ -2649,7 +2649,7 @@ def _validate_topology() -> None:
 _validate_topology()
 
 
-# Phase 2/3 (VER-152/VER-153): standard deviation of the additive noise
+# Phase 2/3: standard deviation of the additive noise
 # injected on top of the coupled upstream signal in
 # ``--topology-mode realistic``. Kept small (5.0) relative to the typical
 # coupling signal std (~15–1600 depending on component) so the Pearson
@@ -2709,7 +2709,7 @@ def _compose_topology_coupled_specs(
     """Return a possibly-modified spec list with the downstream's load
     metric(s) coupled to upstream component(s) via the TOPOLOGY graph.
 
-    Phase 3 (VER-153) extends VER-152's coupling to every constant-weight
+    Phase 3 extends the coupling to every constant-weight
     edge in the v1 graph plus the ``cacheservice -> database`` callable
     edge:
 
@@ -2873,7 +2873,7 @@ def _compose_topology_coupled_specs(
     return new_specs
 
 
-# Phase 4 (VER-154): Maximum utilization clamp before the logistic. Keeps
+# Phase 4: Maximum utilization clamp before the logistic. Keeps
 # ``np.exp`` numerically stable for arbitrary load magnitudes; the logistic
 # is already > 0.99 at utilization = 2 with the smallest planned steepness
 # (5), so a cap at 5x has no practical effect on the shape.
@@ -2925,9 +2925,9 @@ def _apply_saturation(
 # ``error_offset`` added to their ``MetricSpec.additive``. Components
 # absent from this map are saturation-inert even when they have
 # incoming saturating edges, so additional downstream targets can be
-# added here without touching the front-half wiring. VER-154 phase 4
+# added here without touching the front-half wiring. Phase 4
 # wired the four front-half targets (apigateway and its three fan-out
-# downstreams); VER-155 phase 5 added ``llm_analytics`` for the
+# downstreams); phase 5 added ``llm_analytics`` for the
 # token-throttle response.
 _TOPOLOGY_SATURATION_TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "apigateway": (
@@ -2946,7 +2946,7 @@ _TOPOLOGY_SATURATION_TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]]
         ("read_latency_ms", "write_latency_ms"),
         ("error_rate",),
     ),
-    # VER-155 phase 5: under apigateway saturation (the LLM token
+    # phase 5: under apigateway saturation (the LLM token
     # budget), the llm_analytics latency family lifts via the logistic
     # multiplier and the LLM-specific error rate lifts via the additive
     # offset. The catalog exposes ``llm_api_error_rate`` (not the
@@ -2991,7 +2991,7 @@ def _compose_topology_saturation_specs(
       ``--components`` subset that removes the upstream);
     * every incoming saturating edge declares zero ``latency_gain`` and
       zero ``error_gain`` (no v1 edges sit in this state after
-      VER-155 phase 5 promoted the LLM placeholder).
+      phase 5 promoted the LLM placeholder).
     """
     targets = _TOPOLOGY_SATURATION_TARGETS.get(component_name)
     if targets is None:
@@ -3067,7 +3067,7 @@ def _compose_topology_saturation_specs(
 
 
 # ------------------------------------------------------------------
-# Per-instance topology (VER-158 phase 8).
+# Per-instance topology (phase 8).
 # ------------------------------------------------------------------
 # When ``--instances-per-component N > 1`` (or any non-default
 # ``--instance-config``), the topology two-pass generation runs against
@@ -3078,7 +3078,7 @@ def _compose_topology_saturation_specs(
 # * **1:1 routing (matched cardinalities, ``len(upstream_instances) ==
 #   len(downstream_instances)``).** Downstream instance ``K`` sees
 #   upstream instance ``K`` exclusively for that edge. This is the
-#   "matching instance set" branch from the VER-158 issue scope; it
+#   "matching instance set" branch from the issue scope; it
 #   delivers the per-pod isolation the test verifies (a slow upstream
 #   pod only saturates the corresponding downstream pod).
 # * **Uniform fan-out (mismatched cardinalities).** Downstream instance
@@ -3092,7 +3092,7 @@ def _compose_topology_saturation_specs(
 # metric, the default for every shipped scenario), every per-instance
 # upstream view equals the shared aggregate view, so the per-instance
 # saturation / coupling arrays collapse to the shared arrays and the
-# CSV bytes are byte-identical to the pre-VER-158 default-N=3 run. The
+# CSV bytes are byte-identical to the pre-existing default-N=3 run. The
 # locked ``N3_ONE_DAY_HASHES`` and ``N3_SEVEN_DAY_HASHES`` in
 # ``tests/test_instances_per_component.py`` continue to hold without
 # re-baselining.
@@ -3507,14 +3507,14 @@ def _sat_tuples_equal_dict(
 
 
 # ------------------------------------------------------------------
-# Anomaly specifications — migrated to SCENARIOS registry (VER-104).
+# Anomaly specifications — migrated to SCENARIOS registry.
 # All anomaly and cascade specs now live in the SCENARIOS dict below.
 # ------------------------------------------------------------------
 # (legacy anoms_* lists and COMPONENT_PRIMARY_ANOMALIES removed)
 
 
 # ------------------------------------------------------------------
-# Named scenario registry (VER-102 / VER-104 — full migration complete).
+# Named scenario registry (full migration complete).
 #
 # Every primary spec and cascade lives here. main() builds component_anomalies
 # and cascading_anomalies entirely from this registry via _apply_scenarios().
@@ -5170,7 +5170,7 @@ SCENARIOS: dict[str, Scenario] = {
             }),
         ),
     ),
-    # VER-140 Phase 7: partial-outage scenarios exercising instance_filter
+    # Phase 7: partial-outage scenarios exercising instance_filter
     "auth_pod_failure": Scenario(
         id="auth_pod_failure",
         name="Auth Pod-0 Partial Failure",
@@ -5387,7 +5387,7 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
                 f"{params!r}; expected a dict."
             )
 
-    # ``instance_filter`` (VER-140 Phase 4) — optional on both primary and
+    # ``instance_filter`` (Phase 4) — optional on both primary and
     # cascade specs. Accepted forms:
     #
     #   * omitted / ``None``         -> apply to every active instance
@@ -5706,7 +5706,7 @@ _INSTANCE_DIMENSION_FIELDS: tuple[str, ...] = _INSTANCE_DIMENSION_COLUMNS[1:]
 
 def _validate_instance_list(instances, *, where: str) -> None:
     """Per-entry invariants shared by ``_validate_instances_registry`` and
-    ``generate_component`` (VER-140 Phase 1, expanded in Phase 2).
+    ``generate_component`` (Phase 1, expanded in Phase 2).
 
     Rejects four classes of drift in ``instances`` (a non-empty iterable
     of ``Instance``):
@@ -5794,7 +5794,7 @@ def _validate_instance_list(instances, *, where: str) -> None:
 
 
 def _validate_instances_registry() -> None:
-    """Import-time invariants for ``INSTANCES`` (VER-140 Phase 1).
+    """Import-time invariants for ``INSTANCES`` (Phase 1).
 
     Rejects five classes of drift:
 
@@ -6571,29 +6571,29 @@ def parse_args(argv=None):
         "--topology-mode",
         choices=["independent", "realistic"],
         default="realistic",
-        help="Phase 6 (VER-156) flag-day: 'realistic' is now the default. "
+        help="Phase 6 flag-day: 'realistic' is now the default. "
              "Routes downstream baseline generation through the TOPOLOGY "
              "graph (upstream RPS * edge.weight + small noise; phase 4 "
              "saturation feedback layers logistic latency/error responses "
              "on top). 'independent' is a deprecation alias retained for "
              "byte-for-byte parity with the pre-flag-day baseline; it "
              "emits a stderr DeprecationWarning on use and is scheduled "
-             "for removal after VER-141 phase 9.",
+             "for removal after phase 9.",
     )
     args = p.parse_args(argv)
 
-    # Phase 6 (VER-156): --topology-mode independent is a deprecation alias.
+    # Phase 6: --topology-mode independent is a deprecation alias.
     # The default flipped to "realistic" in this PR; "independent" stays
     # callable only so the pre-flag-day byte-for-byte baseline can be
     # regenerated for diffing. The alias is scheduled for removal after
-    # VER-141 phase 9. Emit one stderr DeprecationWarning per invocation so
+    # phase 9. Emit one stderr DeprecationWarning per invocation so
     # users see it; tests can match the prefix.
     if args.topology_mode == "independent":
         print(
             "DeprecationWarning: --topology-mode independent is deprecated. "
-            "The default flipped to 'realistic' (VER-156); 'independent' is "
+            "The default flipped to 'realistic'; 'independent' is "
             "retained only for byte-for-byte parity with the pre-flag-day "
-            "baseline and will be removed after VER-141 phase 9. Drop the "
+            "baseline and will be removed after phase 9. Drop the "
             "flag or pass --topology-mode realistic.",
             file=sys.stderr,
         )
@@ -6612,7 +6612,7 @@ def parse_args(argv=None):
         p.error("--interval-seconds must be > 0")
     # Sub-second intervals emit millisecond-precision timestamps. Anything
     # finer than 1ms would collide on the rendered string and silently drop
-    # rows in the combine step (the original VER-111 failure mode).
+    # rows in the combine step (the original failure mode).
     if args.interval_seconds < 0.001:
         p.error("--interval-seconds must be >= 0.001 (ms-precision floor)")
     if args.combine and args.combine_only:
@@ -6717,7 +6717,7 @@ def parse_args(argv=None):
                 f"--instance-config must be a .yaml, .yml, or .json file; "
                 f"got {args.instance_config.suffix!r}"
             )
-    # VER-140 Phase 3 (VER-146): --instance-config triggers the same multi-instance
+    # Phase 3: --instance-config triggers the same multi-instance
     # code path as --instances-per-component > 1 (dimension columns,
     # N×rows per component, partial-aware downstream emitters). Both flags
     # must be gated identically against incompatible downstream flags so
@@ -6741,18 +6741,18 @@ def parse_args(argv=None):
     # Multi-instance dimension-awareness status by emitter (post-Phase-8):
     #
     # - File-form long-form writers (``gauges.csv`` /
-    #   ``combined_metrics_unified.csv``): wired in VER-148 Phase 5.
+    #   ``combined_metrics_unified.csv``): wired in Phase 5.
     #   Header inspection dispatches to a 10-column layout when the
     #   per-component CSVs carry the ``id, host, pod, az, region,
     #   tenant`` prefix; the historic 4-column / wide layouts stay
     #   byte-identical when the prefix is absent.
     # - OTEL streaming (``--otel-enabled`` / ``--otel-emit-gauges``):
-    #   wired in VER-149 Phase 6. ``stream_otel_gauges`` and
+    #   wired in Phase 6. ``stream_otel_gauges`` and
     #   ``stream_otel_signals`` lift the dimension columns off each
     #   row and surface them as string attributes on every OTLP data
     #   point.
     # - Schema/validator (``--emit-selection schema`` /
-    #   ``--validate-output``): wired in VER-151 Phase 8.
+    #   ``--validate-output``): wired in Phase 8.
     #   ``schema.json`` declares a per-component ``dimensions`` block
     #   when the run is dim-aware and the validator's
     #   ``_validate_component_cells`` / ``_validate_component_row_count``
@@ -6973,7 +6973,7 @@ def combine_logs_unified(components, input_dir, output_file=None):
       ``timestamp`` followed directly by the metric columns — the
       default ``N=1`` anonymous-instance shape), the writer emits the
       wide ``timestamp,component_a_m0,component_a_m1,...`` layout
-      byte-identically to the pre-VER-148 output (so existing
+      byte-identically to the pre-existing output (so existing
       ``test_combine.py`` row/column-shape assertions continue to hold).
     - If **any** per-component CSV carries the full ``id, host, pod, az,
       region, tenant`` dimension prefix after ``timestamp``, the writer
@@ -7221,7 +7221,7 @@ def combine_logs(input_dir, components=None):
       supplied ``components`` order is preserved verbatim in the
       ``component_a_m0, component_a_m1, component_b_m0, …`` column
       sequence.
-    - **Long layout** (any dimensioned input, VER-148 phase 5) — the
+    - **Long layout** (any dimensioned input, phase 5) — the
       caller-supplied ``components`` order is **not** preserved. Rows
       are merged chronologically and tie-break on
       ``(component, instance_id, metric)`` with components sorted
@@ -7438,7 +7438,7 @@ def _build_otlp_trace_protobuf(entry: dict) -> bytes:
 def _build_otlp_metric_payload(entry: dict) -> dict:
     """Build one OTLP/HTTP JSON ``resourceMetrics`` payload from one anomaly event.
 
-    VER-149 Phase 6: when the anomaly entry carries a ``dimensions`` dict
+    Phase 6: when the anomaly entry carries a ``dimensions`` dict
     (currently empty in v1; populated by Phase 4 ``instance_filter``), each
     non-empty key/value pair is emitted as a string attribute alongside the
     base four (``event.id``, ``signal.type``, ``metric.name``,
@@ -7498,7 +7498,7 @@ def _build_otlp_metric_payload(entry: dict) -> dict:
 def _build_otlp_metric_protobuf(entry: dict) -> bytes:
     """Build one OTLP protobuf ExportMetricsServiceRequest payload.
 
-    Mirrors the JSON builder's VER-149 Phase 6 behavior on
+    Mirrors the JSON builder's Phase 6 behavior on
     ``entry["dimensions"]``: non-empty values are emitted as string
     attributes; empty / ``None`` cells are dropped.
     """
@@ -7566,7 +7566,7 @@ def _build_otlp_gauge_payload(batch: list[dict], *, metric_prefix: str = "") -> 
     Entries are grouped first by ``component`` (one ``resourceMetrics`` entry
     per component) and then by ``metric`` (one ``metrics[]`` entry per metric
     within the component's scope), with one Gauge data point per row.
-    ``dimensions`` (VER-149 Phase 6) — when non-empty, each key/value pair is
+    ``dimensions`` (Phase 6) — when non-empty, each key/value pair is
     emitted as an additional string attribute alongside ``metric.name``,
     ``component``, and ``signal.type``. Empty-string and ``None`` values are
     skipped so the OTEL stream never carries empty-string attributes.
@@ -7628,7 +7628,7 @@ def _build_otlp_gauge_protobuf(batch: list[dict], *, metric_prefix: str = "") ->
     Same grouping as ``_build_otlp_gauge_payload``: one ``resource_metrics`` per
     component, one ``metrics`` entry per (component, metric) pair, with one Gauge
     data point per batch row for that metric. Mirrors the JSON builder's
-    VER-149 Phase 6 behavior: any non-empty ``dimensions`` key on a batch
+    Phase 6 behavior: any non-empty ``dimensions`` key on a batch
     entry is emitted as a string attribute alongside ``metric.name``,
     ``component``, and ``signal.type``.
     """
@@ -8001,7 +8001,7 @@ def _iter_component_rows(component: str, csv_path: Path):
     (today's default, ``--instances-per-component 1``) yield an empty dict,
     so downstream consumers can treat the field as always present.
     Empty-string dimension cells are omitted from the dict so the OTEL
-    attribute path never emits empty-string attributes (VER-149 Phase 6).
+    attribute path never emits empty-string attributes (Phase 6).
 
     ``generate_component`` omits dropped rows from the CSV entirely (via the
     ``keep_mask``) rather than writing them as blank lines, so under normal
@@ -8330,7 +8330,7 @@ def write_gauges_csv(
     """Write a long-form ``gauges.csv`` with one row per
     ``(timestamp, component, metric, value)`` tuple (4-column shape) or
     ``(timestamp, component, id, host, pod, az, region, tenant, metric,
-    value)`` tuple (10-column shape, VER-148 phase 5) from the given
+    value)`` tuple (10-column shape, phase 5) from the given
     per-component CSVs.
 
     Layout is decided purely by header inspection: if **any**
@@ -8390,7 +8390,7 @@ def write_gauges_csv(
 
     if not any_dimensioned:
         # Classic 4-column path. Preserved byte-identically by keeping the
-        # row iterator and writer shape unchanged from pre-VER-148 code so
+        # row iterator and writer shape unchanged from pre-existing code so
         # the locked SHA-256 hashes in ``tests/test_gauges_file.py`` still
         # apply to N=1 / dimensionless runs.
         def _row_iter_4col(component: str):
@@ -8424,7 +8424,7 @@ def write_gauges_csv(
                     rows_written += 1
         return rows_written
 
-    # Long form with dimensions (VER-148 phase 5). Build one merge iterator
+    # Long form with dimensions (phase 5). Build one merge iterator
     # per (component, instance) block. Each block is timestamp-monotonic
     # because ``generate_component`` writes dimensioned CSVs as sequential
     # per-instance blocks. We sort sources by (component_name, instance_id)
@@ -8490,7 +8490,7 @@ def write_gauges_csv(
 # shape so consumers (including the validator) can fail fast against a stale
 # document. The validator rejects unknown versions outright.
 #
-# Version 2 (VER-157 phase 7): adds a top-level ``topology`` section
+# Version 2 (phase 7): adds a top-level ``topology`` section
 # carrying the directed coupling graph (source -> edge[]) so
 # ``--validate-output`` can run the realistic-mode Pearson coupling
 # check against the snapshot of edges the run was supposed to honor.
@@ -8583,7 +8583,7 @@ def _component_dimensions_schema_entry(
     dim-aware CSV output and therefore declares ``dimensions`` in the
     schema. The single-anonymous-``Instance()`` default produces
     dimensionless output and omits the block so the v1 (default)
-    ``schema.json`` stays byte-identical to the pre-VER-151 baseline.
+    ``schema.json`` stays byte-identical to the pre-existing baseline.
 
     The ``axes`` list is the sorted subset of
     ``_INSTANCE_DIMENSION_FIELDS`` (i.e. ``_INSTANCE_DIMENSION_COLUMNS``
@@ -8668,15 +8668,15 @@ def write_schema_json(
       order, so the validator can check ``dtype`` / ``min_value`` /
       ``max_value`` / ``semantic_type`` / ``derivation`` cell-by-cell against
       the per-component CSV. Each per-component payload also carries an
-      optional ``dimensions`` block (VER-151 phase 8) declaring the
+      optional ``dimensions`` block (phase 8) declaring the
       instance topology's axes + cardinality when the per-component CSV
       is dim-aware (``--instances-per-component N>1`` fan-out or a non-
       default ``--instance-config`` entry); the block is omitted in the
       default single-anonymous-``Instance()`` path so the v1 schema bytes
-      stay byte-identical to the pre-VER-151 baseline.
+      stay byte-identical to the pre-existing baseline.
     - ``files`` — sorted list of artifact filenames the run was supposed to
       write, so the validator can flag missing or extra files.
-    - ``topology`` (VER-157 phase 7) — the directed coupling graph
+    - ``topology`` (phase 7) — the directed coupling graph
       restricted to the active component set: ``{source:
       [{target, weight, saturation, correlation_threshold}, ...]}``.
       Callable weights serialize as the literal string ``"callable"``;
@@ -8851,7 +8851,7 @@ def _validate_component_row_count(
     before serialization), so under-emission is expected and not flagged
     unless it exceeds the configured ``drop_rate``'s plausible band.
 
-    VER-151 phase 8: when the per-component schema declares
+    Phase 8: when the per-component schema declares
     ``dimensions``, each per-row generation is fanned out across
     ``cardinality`` instances (Phase 2 long-form CSV writer), so both
     bands are multiplied by ``cardinality`` to keep the expected and
@@ -8980,7 +8980,7 @@ def _validate_component_cells(
     Each unique violation is reported once with a line-number example so the
     output stays bounded even when a whole column is wrong.
 
-    VER-151 phase 8: when the per-component schema declares
+    Phase 8: when the per-component schema declares
     ``dimensions``, the expected header is
     ``("timestamp", *_INSTANCE_DIMENSION_COLUMNS, *metric_names)`` to
     match the Phase 2 long-form per-component CSV. The dim cells (id,
@@ -9096,7 +9096,7 @@ def _validate_component_derivations(
     if not derived_entries:
         return []
 
-    # VER-179: dispatch tables raise on unknown keys. ``DERIVATIONS`` and
+    # dispatch tables raise on unknown keys. ``DERIVATIONS`` and
     # ``_RECOMPUTERS`` are paired single-source registries whose keyset
     # equality is enforced by the test suite; a missing recomputer for a
     # component whose schema declares a derivation is programmer drift,
@@ -9105,7 +9105,7 @@ def _validate_component_derivations(
     recompute = _RECOMPUTERS[component]
 
     violations = []
-    # VER-151 phase 8: dimensioned per-component CSVs prepend the six
+    # phase 8: dimensioned per-component CSVs prepend the six
     # dim columns between ``timestamp`` and the metric block, so the
     # ``name_to_col`` index must offset by that prefix to stay aligned
     # with the recomputer's ``row[col]`` reads.
@@ -9133,7 +9133,7 @@ def _validate_component_derivations(
                 col = name_to_col.get(name)
                 if col is None or col >= len(row):
                     continue
-                # VER-179: the per-row except is narrowed to the data-only
+                # the per-row except is narrowed to the data-only
                 # exceptions (malformed cells, accidental zero-division
                 # inside a recomputer). ``KeyError`` is intentionally
                 # excluded so a dispatch raise from an unknown metric
@@ -9168,7 +9168,7 @@ def _recompute_cacheservice(metric: str, row: list[str],
     ``ZeroDivisionError`` per row so the cell validator can report those
     separately.
 
-    VER-179: per-metric dispatch within the recomputer raises ``KeyError``
+    per-metric dispatch within the recomputer raises ``KeyError``
     on any unknown metric. ``DERIVATIONS['cacheservice']`` declares only
     ``hit_ratio``; a call with any other metric is programmer drift
     between the generator-side ``DERIVATIONS`` table and the validator-
@@ -9215,7 +9215,7 @@ def _read_component_metric_column(
     ``metric_name``. Used by ``_validate_topology_coupling`` to align
     source / target canonical load metrics on shared timestamps.
 
-    VER-151 phase 8: when the CSV is the dim-aware long-form layout
+    Phase 8: when the CSV is the dim-aware long-form layout
     (multiple rows per timestamp, one per instance), values are
     collapsed to one ``(timestamp, mean)`` per unique timestamp. This
     keeps the timestamp axis monotonic (the existing
@@ -9287,7 +9287,7 @@ def _read_component_metric_column_per_instance(
     Returns ``None`` when the CSV does not exist, has no header, is
     dimensionless (no ``id`` column), or does not declare
     ``metric_name``. The result maps instance id → ``(timestamps,
-    values)`` so the VER-158 per-instance correlation check can align
+    values)`` so the per-instance correlation check can align
     each instance's load column across components without re-walking
     the CSV per pair.
 
@@ -9525,7 +9525,7 @@ def _validate_topology_coupling(
       decoupled baselines by construction, so there is no coupling to
       check).
     - The schema document has no ``topology`` section (older schema docs
-      written before VER-157 phase 7; the loader rejects unknown
+      written before phase 7; the loader rejects unknown
       ``schema_version`` values outright, but defensive code paths can
       still land here).
     - Either side's CSV is missing or fails to declare its canonical
@@ -9808,7 +9808,7 @@ def _validate_topology_coupling(
                     f"below threshold {threshold:.4f}"
                 )
 
-            # VER-158 phase 8: per-instance correlation. When both
+            # phase 8: per-instance correlation. When both
             # sides' schemas declare ``dimensions`` with matched
             # cardinalities (1:1 routing applies), additionally
             # verify Pearson(source.iK, target.iK) >= threshold for
@@ -9832,7 +9832,7 @@ def _validate_topology_coupling_per_instance(
     threshold: float,
     anomaly_windows: list[tuple[datetime.datetime, datetime.datetime, str, str]],
 ) -> list[str]:
-    """Per-instance edge correlation check (VER-158 phase 8).
+    """Per-instance edge correlation check (phase 8).
 
     Only fires when both ``source`` and ``target`` schemas declare a
     ``dimensions`` block with matched cardinalities. Under
@@ -9927,7 +9927,7 @@ def _validate_topology_coupling_per_instance(
         target_aligned: list[float] = []
         source_aligned: list[float] = []
 
-        # Linear-time two-pointer merge join (VER-158 phase 8). Since
+        # Linear-time two-pointer merge join (phase 8). Since
         # both CSV blocks were read into monotonic timestamp lists,
         # we can align them in O(N+M) without materialising a full
         # dict per pod pair.
@@ -10022,7 +10022,7 @@ def _validate_long_form_dimensions(
     match the layout implied by the schema's per-component ``dimensions``
     blocks.
 
-    VER-148 Phase 5 made both long-form writers dim-aware: a run with any
+    Phase 5 made both long-form writers dim-aware: a run with any
     dimensioned per-component CSV dispatches to the 10-column
     ``timestamp, component, id, host, pod, az, region, tenant, metric,
     value`` shape; otherwise the historic 4-column
@@ -10505,7 +10505,7 @@ def main(argv=None):
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
 
-    # Topology phase 2 (VER-152) / phase 6 flag day (VER-156): under
+    # Topology phase 2 / phase 6 flag day: under
     # the default ``--topology-mode realistic`` we walk
     # ``args.components`` in topological order (roots first) and stash
     # each generated component's load-metric columns so downstream
@@ -10515,7 +10515,7 @@ def main(argv=None):
     # ``--topology-mode independent`` alias the order falls back to
     # ``effective_specs`` iteration order (which is ``COMPONENTS``
     # insertion order) and no capture/coupling runs — byte-identical to
-    # the pre-VER-152 generation path and pinned by
+    # the pre-existing generation path and pinned by
     # ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``.
     if args.topology_mode == "realistic":
         active = set(args.components)
@@ -10524,7 +10524,7 @@ def main(argv=None):
             if name in effective_specs
         ]
         upstream_arrays: dict[str, dict[str, np.ndarray]] | None = {}
-        # VER-158 phase 8: parallel per-instance capture. Populated by
+        # phase 8: parallel per-instance capture. Populated by
         # ``generate_component`` whenever ``--instances-per-component
         # N>1`` (or a non-default ``--instance-config``) makes the
         # component dim-aware. Consumed by
@@ -10547,7 +10547,7 @@ def main(argv=None):
 
         if args.topology_mode == "realistic":
             if n_inst_local > 1 or not is_anonymous_local:
-                # VER-158 phase 8 — per-instance dispatch. Skip the
+                # phase 8 — per-instance dispatch. Skip the
                 # spec-modifying composers; compute per-instance
                 # arrays directly. ``_compute_topology_arrays_per_instance``
                 # shares the ``_TOPOLOGY_COUPLE_NOISE_STD`` draw across
@@ -10566,12 +10566,12 @@ def main(argv=None):
                 )
             else:
                 # N=1 anonymous — today's shared lambda-baked path.
-                # Pre-VER-158 byte parity contract: default
+                # Byte-parity contract: the default
                 # ``--instances-per-component 1`` keeps this branch.
                 specs = _compose_topology_coupled_specs(
                     name, specs, upstream_arrays, ctx.rng, n_rows
                 )
-                # Phase 4 (VER-154): saturation feedback. Layers logistic-shaped
+                # Phase 4: saturation feedback. Layers logistic-shaped
                 # latency multipliers and error offsets on top of the coupled
                 # baseline so downstream latency/error metrics respond to
                 # upstream load. Composes on top of any existing multiplier /
@@ -10704,7 +10704,7 @@ def main(argv=None):
             "inject_dst_artifact_day": args.inject_dst_artifact_day,
             "emit_selection": sorted(args.emit_selection),
             "combine": args.combine,
-            # VER-157 phase 7: ``--topology-mode`` selects whether the
+            # phase 7: ``--topology-mode`` selects whether the
             # phase-3 coupling and phase-4 saturation layers fire; the
             # validator's Pearson coupling check only runs under
             # ``realistic`` because ``independent`` mode produces
@@ -10717,7 +10717,7 @@ def main(argv=None):
             effective_specs=effective_specs,
             metadata=schema_metadata,
             emitted_files=emitted_files,
-            # VER-151 phase 8: per-component ``dimensions`` block (axes +
+            # phase 8: per-component ``dimensions`` block (axes +
             # cardinality) when the run is dim-aware (``--instances-per-
             # component N>1`` or a non-default ``--instance-config``).
             # Filtered to the active component set so a ``--components``

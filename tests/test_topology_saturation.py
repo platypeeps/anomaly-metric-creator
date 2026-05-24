@@ -1,4 +1,4 @@
-"""VER-154 phase 4: Saturation feedback (utilization -> latency multiplier + error offset).
+"""Phase 4: Saturation feedback (utilization -> latency multiplier + error offset).
 
 Builds on phase 2/3 topology coupling (`tests/test_topology_loadbalancer_gateway.py`,
 `tests/test_topology_fanout.py`). The phase-4 layer composes a sigmoid-shaped
@@ -12,9 +12,9 @@ saturation curve on top of incoming edges that carry `SaturationParams`:
   by composing on top of any pre-existing multiplier/additive.
 - The deprecated `--topology-mode independent` alias never invokes the
   saturation path, so per-component CSVs stay byte-identical to the
-  pre-VER-154 baseline (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES`
+  pre-existing baseline (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES`
   in `tests/test_topology_loadbalancer_gateway.py`). The default
-  flipped to `--topology-mode realistic` in VER-156 phase 6, so the
+  flipped to `--topology-mode realistic` in phase 6, so the
   saturation path is now on by default.
 
 These tests cover:
@@ -24,14 +24,14 @@ These tests cover:
   present natural multiplier/additive on the downstream MetricSpec.
 * Default-vs-explicit realistic-mode byte-identity: the no-flag run
   and explicit `--topology-mode realistic` produce the same latency
-  CSVs (locks the VER-156 default flip).
+  CSVs (locks the default flip).
 * Realistic-mode positive correlation between upstream load and downstream
   latency and error rate.
 * Cap tests: error_rate column stays <= 1.0 under realistic mode; latency
   multiplier is always positive (no negative latency).
 * TOPOLOGY structure: every saturating edge in v1 has `SaturationParams` with
   values inside the planned ranges. The apigateway -> llm_analytics edge has
-  also been promoted to a real saturating edge by VER-155 phase 5 (see
+  also been promoted to a real saturating edge by phase 5 (see
   `tests/test_topology_llm.py` for the full LLM coupling acceptance tests).
 """
 from __future__ import annotations
@@ -331,7 +331,7 @@ def test_compose_saturation_specs_composes_with_existing_multiplier(amc):
 def test_compose_saturation_specs_zero_gain_edges_skipped(amc):
     """Edges with zero ``latency_gain`` AND zero ``error_gain`` must
     not modify the downstream specs even though they are saturating
-    edges by structure. After VER-155 phase 5 the v1 graph no longer
+    edges by structure. After phase 5 the v1 graph no longer
     declares any zero-gain saturating edges, so this test stubs a
     synthetic edge to exercise the skip branch."""
     n_rows = 50
@@ -390,7 +390,7 @@ def _saturating_edges(amc):
 def test_topology_has_saturating_edges_for_phase4(amc):
     """Phase 4 declared SaturationParams on the four front-half edges
     so saturation feedback actually fires under --topology-mode
-    realistic. VER-155 phase 5 then promoted the
+    realistic. Phase 5 then promoted the
     ``apigateway -> llm_analytics`` placeholder into a real saturating
     edge as well (covered by
     ``test_topology_llm_analytics_edge_carries_phase5_gains`` below);
@@ -404,7 +404,7 @@ def test_topology_has_saturating_edges_for_phase4(amc):
 
 
 def test_topology_llm_analytics_edge_carries_phase5_gains(amc):
-    """VER-155 phase 5 promoted the apigateway -> llm_analytics
+    """Phase 5 promoted the apigateway -> llm_analytics
     placeholder into a real saturating edge. The exact phase-5 gain
     values (``latency_gain=0.55``, ``error_gain=0.015``) are
     documented in CLAUDE.md / README.md, and their planned-range
@@ -429,12 +429,11 @@ def test_topology_llm_analytics_edge_carries_phase5_gains(amc):
 
 
 def test_topology_saturation_params_in_planned_ranges(amc):
-    """Every saturating edge declared on the v1 graph (phase 4 +
-    VER-155 phase 5) must use gains within the issue's recommended
-    ranges:
+    """Every saturating edge declared on the v1 graph (phases 4 and 5)
+    must use gains within the issue's recommended ranges:
       steepness ∈ [5, 8], latency_gain ∈ [0.3, 0.8], error_gain ∈ [0.005, 0.02].
 
-    After VER-155 phase 5 the v1 graph no longer has any zero-gain
+    After phase 5 the v1 graph no longer has any zero-gain
     saturating edges, so every `_saturating_edges()` entry should
     satisfy the range bounds. The zero-gain skip below is kept as a
     defensive guard for future placeholder edges (and synthetic
@@ -460,7 +459,7 @@ def test_topology_saturation_params_in_planned_ranges(amc):
 
 
 # ------------------------------------------------------------------
-# Default mode byte-identical: after VER-156 phase 6 the no-flag default
+# Default mode byte-identical: after phase 6 the no-flag default
 # is realistic mode, so explicit ``--topology-mode realistic`` must
 # match the default per-component CSVs byte-for-byte under the
 # saturation phase. The legacy ``--topology-mode independent`` parity

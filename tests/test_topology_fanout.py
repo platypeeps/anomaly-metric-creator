@@ -1,6 +1,6 @@
-"""VER-153 phase 3: Topology fan-out edges.
+"""Phase 3: Topology fan-out edges.
 
-Extends VER-152's loadbalancer -> apigateway coupling with the rest of
+Extends the loadbalancer -> apigateway coupling with the rest of
 the front-half graph:
 
 * ``apigateway -> authservice`` (constant weight 0.3, couples authservice
@@ -15,12 +15,12 @@ the front-half graph:
 
 These tests cover:
 
-* Default (``--topology-mode realistic`` since VER-156 phase 6
+* Default (``--topology-mode realistic`` since phase 6
   flag day) byte-identical with an explicit ``--topology-mode
   realistic`` run, so the no-flag default and the explicit alias stay
   in lockstep on every coupled downstream CSV. The deprecated
   ``--topology-mode independent`` alias's byte-for-byte parity with
-  the pre-VER-153 baseline is pinned in
+  the pre-existing baseline is pinned in
   ``tests/test_topology_loadbalancer_gateway.py`` against
   ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 * Realistic-mode correlations between downstream load metrics and
@@ -102,7 +102,7 @@ def _aligned_columns(out_dir, *pairs):
 # ------------------------------------------------------------------
 # Default realistic-mode byte equivalence: explicit --topology-mode
 # realistic must match the no-flag default byte-for-byte after the
-# VER-156 phase 6 flag day. Pre-flag-day this was checked the other way
+# phase 6 flag day. Pre-flag-day this was checked the other way
 # round (independent matched default); under realistic-mode default the
 # parity check moves to the realistic alias and the legacy-baseline
 # check lives in ``test_topology_loadbalancer_gateway``.
@@ -112,7 +112,7 @@ def test_topology_fanout_realistic_matches_default_byte_for_byte(
 ):
     """Explicit ``--topology-mode realistic`` matches the session
     ``one_day_run_a`` byte-for-byte across every coupled downstream
-    CSV. Locks VER-156 phase 6 to the invariant that realistic mode
+    CSV. Locks phase 6 to the invariant that realistic mode
     is the default path and explicitly passing the flag is a no-op."""
     explicit = run_capture(
         amc, tmp_path / "explicit_realistic", days=1,

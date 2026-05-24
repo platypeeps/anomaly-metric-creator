@@ -1,4 +1,4 @@
-"""Tests for ``instance_filter`` on anomaly specs (VER-140 Phase 4).
+"""Tests for ``instance_filter`` on anomaly specs (Phase 4).
 
 Verifies:
 - Spec with ``instance_filter=["i0"]`` overrides only the ``i0`` (pod-0)
@@ -540,7 +540,7 @@ def test_instance_filter_unfiltered_propagates_to_forked_buffer_other_rows(
 
 # ---------------------------------------------------------------------------
 # Byte-identity: locked Phase-2 hashes must not move under Phase 4.
-# VER-140 Phase 7 adds high-severity built-in scenarios that carry
+# Phase 7 adds high-severity built-in scenarios that carry
 # instance_filter; those are exempt here because high-severity scenarios
 # never fire in the default (medium signal-level) pool that the locked
 # hashes cover.

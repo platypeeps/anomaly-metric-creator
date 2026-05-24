@@ -1465,7 +1465,7 @@ def test_metrics_per_component_filters_anomalies_targeting_dropped_metrics(tmp_p
 
 
 # ==================================================================
-# VER-105: CLI surface coverage for --scenarios / --exclude-scenarios
+# CLI surface coverage for --scenarios / --exclude-scenarios
 # (subprocess-level — complements parse_args-only tests in test_args.py
 # and the in-process composition tests in test_scenarios.py).
 # ==================================================================

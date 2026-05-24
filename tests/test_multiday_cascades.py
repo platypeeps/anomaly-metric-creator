@@ -1,4 +1,4 @@
-"""End-to-end coverage for the three VER-98 multi-day cascading scenarios.
+"""End-to-end coverage for the three multi-day cascading scenarios.
 
 Each scenario activates at its own ``days_required`` — see
 ``amc.SCENARIOS[<slug>].days_required`` for the current values. The full

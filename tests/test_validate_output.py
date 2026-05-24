@@ -1,17 +1,17 @@
-"""Tests for the ``--validate-output PATH`` standalone validator (VER-139).
+"""Tests for the ``--validate-output PATH`` standalone validator.
 
 Each validator function is covered by a focused unit test (mutate the
 schema or a target CSV, run the function, assert the expected violation),
 plus end-to-end integration coverage of the CLI mode against the default
 1-day and 7-day outputs.
 
-Known residual violations after VER-156 (phase 6 flag day): the
-fractional-counter set previously flagged here was cleared by VER-156's
+Known residual violations (phase 6 flag day): the
+fractional-counter set previously flagged here was cleared by the
 integer-cast bundle, so the 1-day default integration test now asserts
 an empty violation set. The 7-day default still surfaces one
 ``above_max`` violation on ``llm_analytics.context_overflow_rate`` —
 that scenario-amplitude reconciliation is explicitly deferred to
-VER-141 phase 9. Extra violations are regressions; fewer are progress
+Phase 9. Extra violations are regressions; fewer are progress
 and require updating the constants below.
 """
 import json
@@ -302,8 +302,8 @@ def test_cell_bounds_flags_below_min(amc, schema_run):
 
 def test_cell_bounds_flags_fractional_int(amc, schema_run):
     """``active_connections`` is dtype='int'; a 0.5 value triggers the
-    fractional check (and is the canonical out-of-scope violation per the
-    VER-139 ticket)."""
+    fractional check (the canonical out-of-scope violation for this
+    column under realistic mode)."""
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
@@ -385,7 +385,7 @@ def test_derivations_flags_inconsistent_hit_ratio(amc, schema_run):
 
 
 # ------------------------------------------------------------------
-# Dispatch tables: raise on unknown keys (VER-179)
+# Dispatch tables: raise on unknown keys
 # ------------------------------------------------------------------
 def test_recomputers_and_derivations_keysets_match(amc):
     """``DERIVATIONS`` and ``_RECOMPUTERS`` are paired single-source
@@ -393,14 +393,14 @@ def test_recomputers_and_derivations_keysets_match(amc):
     declares the on-disk validator's recomputer). Drift between their
     keysets means a derived column is either silently unvalidated or
     the validator dispatches to a missing recomputer — both regressions
-    of the VER-179 unknown-key invariant."""
+    of the unknown-key invariant."""
     assert set(amc.DERIVATIONS.keys()) == set(amc._RECOMPUTERS.keys())
 
 
 def test_recompute_cacheservice_raises_keyerror_on_unknown_metric(amc):
     """The per-metric dispatch inside ``_recompute_cacheservice`` must
     raise ``KeyError`` for any metric other than ``hit_ratio``. The
-    pre-VER-179 behavior silently returned ``None`` for unknown metric
+    pre-existing behavior silently returned ``None`` for unknown metric
     names, which masked drift between ``DERIVATIONS['cacheservice']``
     and the recomputer body."""
     name_to_col = {"cache_hits": 1, "cache_misses": 2, "hit_ratio": 3}
@@ -523,7 +523,7 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 # ------------------------------------------------------------------
 # Integration against the default 1-day and 7-day outputs
 # ------------------------------------------------------------------
-# Known residual violations after VER-156 (phase 6 flag-day). The
+# Known residual violations (phase 6 flag-day). The
 # validator MUST find exactly this set on the default 1-day and 7-day
 # runs; extras are regressions, missing ones are progress that requires
 # updating this list. Each entry is ``(component_csv, metric, kind)``.
@@ -533,8 +533,8 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 #  - ``below_min``   — value below declared ``min_value``
 #  - ``negative_kind`` — value negative despite counter/rate semantic_type
 #
-# VER-156 phase 6 cleared every fractional-int violation flagged by
-# VER-139 by adding the integer-cast bundle in ``generate_component``.
+# Phase 6 cleared every fractional-int violation flagged by the
+# integer-cast bundle in ``generate_component``.
 # Both default runs are now violation-free, with one exception:
 #
 # The 7-day run still surfaces a single ``above_max`` violation on
@@ -543,7 +543,7 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 # at day 5 + 2h to simulate context-window saturation, which exceeds
 # the metric's declared ``max_value=1``. Reconciling the scenario
 # amplitude with the ratio bound is a scenario-catalog re-tune
-# explicitly deferred to VER-141 phase 9.
+# explicitly deferred to phase 9.
 _EXPECTED_VIOLATIONS_ONE_DAY: set[tuple[str, str, str]] = set()
 
 _EXPECTED_VIOLATIONS_SEVEN_DAY = {
@@ -611,8 +611,8 @@ def test_validator_default_only_known_violation_kinds(
 ):
     """File presence, timestamp coverage, manifest sort, derivation, and
     row-count checks must be clean against the default outputs — those are
-    the categories VER-139 promises to gate on. Cell-bound violations are
-    bounded by the expected set in the test above."""
+    the categories the validator promises to gate on. Cell-bound violations
+    are bounded by the expected set in the test above."""
     run = request.getfixturevalue(fixture_name)
     violations = amc.validate_output(run.out_dir)
     for line in violations:
@@ -626,15 +626,15 @@ def test_validator_default_only_known_violation_kinds(
 
 
 # ------------------------------------------------------------------
-# Topology coupling correlation (VER-157 phase 7)
+# Topology coupling correlation (phase 7)
 # ------------------------------------------------------------------
 def test_topology_coupling_clean_on_fresh_realistic_run(
     amc, one_day_schema_run,
 ):
-    """Default 1-day run in realistic mode (the post-VER-156 default)
-    must produce no topology coupling violations — every constant-weight
-    edge's Pearson correlation between source and target canonical load
-    metrics meets or exceeds its threshold (0.85 default)."""
+    """Default 1-day run in realistic mode (the default since the phase 6
+    flag day) must produce no topology coupling violations — every
+    constant-weight edge's Pearson correlation between source and target
+    canonical load metrics meets or exceeds its threshold (0.85 default)."""
     schema = _load_schema(one_day_schema_run.out_dir)
     assert schema["metadata"]["topology_mode"] == "realistic"
     assert amc._validate_topology_coupling(
@@ -930,7 +930,7 @@ def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
 
 
 def test_topology_coupling_rejects_old_schema_version(amc, tmp_path):
-    """v1 schema documents written before VER-157 phase 7 must be
+    """v1 schema documents written before phase 7 must be
     rejected by ``_load_schema_document``; the version bump is part of
     the contract that v2 readers do not silently skip the coupling
     check on a stale v1 doc."""
@@ -941,7 +941,7 @@ def test_topology_coupling_rejects_old_schema_version(amc, tmp_path):
 
 
 # ------------------------------------------------------------------
-# Window helpers (VER-157 phase 7 unit coverage)
+# Window helpers (phase 7 unit coverage)
 # ------------------------------------------------------------------
 def test_anomaly_exclusion_windows_use_span_columns(
     amc, schema_run,
@@ -1305,7 +1305,7 @@ def test_filter_windows_for_pair_keeps_only_relevant(amc):
 
 
 # ------------------------------------------------------------------
-# Dimensions integration (VER-151 phase 8)
+# Dimensions integration (phase 8)
 # ------------------------------------------------------------------
 # Two fixtures: a fast 600s-interval N=3 run used by every per-validator
 # unit test (cheap to spin up; each test gets its own copy), and a
@@ -1514,9 +1514,7 @@ def test_validate_long_form_dimensions_noop_without_dimensions(amc, schema_run):
 
 def test_validate_output_cli_clean_on_fresh_n3_run(amc, one_day_run_n3, capsys):
     """End-to-end: a fresh 1-day ``--instances-per-component 3`` run
-    must validate clean under ``--validate-output``. Acceptance check
-    from the VER-151 ticket: 'Validator passes on a fresh
-    --instances-per-component 3 run.'"""
+    must validate clean under ``--validate-output``."""
     amc.main(["--validate-output", str(one_day_run_n3.out_dir)])
     cap = capsys.readouterr()
     assert "OK" in cap.out
@@ -1561,12 +1559,12 @@ def test_validate_component_derivations_flags_drift_under_n3(amc, schema_run_n3)
 
 
 # ------------------------------------------------------------------
-# parse_args gate lift (VER-151 phase 8)
+# parse_args gate lift (phase 8)
 # ------------------------------------------------------------------
 def test_validate_output_compatible_with_instances_per_component(
     amc, tmp_path,
 ):
-    """VER-151 phase 8 lifts the ``--instances-per-component > 1`` +
+    """Phase 8 lifts the ``--instances-per-component > 1`` +
     ``--validate-output`` gate. The parser must now accept the
     combination rather than rejecting it with the Phase 8 stub
     message."""
@@ -1597,12 +1595,12 @@ def test_schema_emit_selection_compatible_with_instances_per_component(
 
 
 def test_n2_plus_otel_emit_gauges_allowed(amc, tmp_path):
-    """VER-149 Phase 6 wired the OTEL streamer's dimension attributes,
+    """Phase 6 wired the OTEL streamer's dimension attributes,
     so ``--instances-per-component > 1`` + ``--otel-emit-gauges`` is
     permitted at parse time. ``stream_otel_gauges`` reads the dimension
     columns off each per-component CSV and emits every non-empty
     ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string attribute on the
-    OTLP gauge data point. After VER-151 Phase 8 lifts the
+    OTLP gauge data point. After Phase 8 lifts the
     schema/validator guards there is no remaining multi-instance gate
     on this combination."""
     args = amc.parse_args([

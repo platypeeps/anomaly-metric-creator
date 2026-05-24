@@ -1,5 +1,5 @@
-"""Phase 1 of VER-140 — Instance dataclass, INSTANCES registry, and the
-generate_component() ``instances`` kwarg.
+"""Phase 1 multi-instance fan-out — Instance dataclass, INSTANCES
+registry, and the generate_component() ``instances`` kwarg.
 
 This phase is intentionally a foundational refactor with no CSV change and no
 behavior change. The locked SHA-256 golden hash tests in test_correctness.py,

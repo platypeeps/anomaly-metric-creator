@@ -359,7 +359,7 @@ def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Phase 5 (VER-148): long-form combined_metrics_unified.csv with dimensions.
+# Phase 5: long-form combined_metrics_unified.csv with dimensions.
 #
 # When the per-component CSVs carry the multi-instance dimension prefix
 # (``--instances-per-component N > 1``), the combine step switches from

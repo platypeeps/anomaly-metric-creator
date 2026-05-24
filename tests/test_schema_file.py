@@ -1,4 +1,4 @@
-"""Tests for the declarative ``schema.json`` artifact (VER-139).
+"""Tests for the declarative ``schema.json`` artifact.
 
 Covers:
 - ``--emit-selection`` accepts the new ``schema`` token, rejects bad combos.
@@ -28,7 +28,7 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 
 # Locked SHA-256 golden hashes for ``schema.json`` at the default --seed (42)
 # and the default scenario / signal-level / metrics-per-component knobs at
-# --duration-days 1 and 7. Re-locked for VER-157 phase 7 (schema document
+# --duration-days 1 and 7. Re-locked for phase 7 (schema document
 # version bumped from 1 to 2, topology section added, metadata gained
 # ``topology_mode``). Protects against silent drift in:
 # - the MetricSpec schema metadata (unit/semantic_type/min/max/dtype/derivation),
@@ -354,7 +354,7 @@ def test_schema_records_dst_inject_day(amc, tmp_path):
 
 
 # ------------------------------------------------------------------
-# Topology section (VER-157 phase 7)
+# Topology section (phase 7)
 # ------------------------------------------------------------------
 def test_schema_records_topology_mode_in_metadata(one_day_schema_run):
     """``metadata.topology_mode`` echoes ``--topology-mode`` so the
@@ -391,7 +391,7 @@ def test_schema_has_topology_block(one_day_schema_run):
     would let through."""
     doc = _load_schema(one_day_schema_run.out_dir)
     assert "topology" in doc, (
-        "VER-157 phase 7 adds a top-level 'topology' section to schema.json"
+        "phase 7 adds a top-level 'topology' section to schema.json"
     )
     topology = doc["topology"]
     assert isinstance(topology, dict)
@@ -473,7 +473,7 @@ def test_schema_topology_omits_filtered_components(amc, tmp_path):
 
 
 def test_schema_topology_version_is_two(one_day_schema_run, amc):
-    """VER-157 phase 7 bumps the schema-document version from 1 to 2 so
+    """Phase 7 bumps the schema-document version from 1 to 2 so
     older readers can refuse to validate a v2 doc and v2 readers reject
     stale v1 docs."""
     doc = _load_schema(one_day_schema_run.out_dir)
@@ -482,11 +482,11 @@ def test_schema_topology_version_is_two(one_day_schema_run, amc):
 
 
 # ------------------------------------------------------------------
-# Dimensions block (VER-151 phase 8)
+# Dimensions block (phase 8)
 # ------------------------------------------------------------------
 # Locked SHA-256 golden hashes for ``schema.json`` at
 # ``--instances-per-component 3`` and the default --seed / scenario set
-# at --duration-days 1 and 7. Re-locked at VER-151 phase 8 alongside the
+# at --duration-days 1 and 7. Re-locked at phase 8 alongside the
 # new per-component ``dimensions`` block. Protects against silent drift
 # in the dim-aware schema output: the axes/cardinality block, the
 # component payload order, and the metadata reflect the multi-instance
@@ -538,7 +538,7 @@ def test_schema_omits_dimensions_block_for_anonymous_default(one_day_schema_run)
     """The default single-anonymous-``Instance()`` path must NOT add a
     ``dimensions`` key under any component — that's what keeps the v1
     schema bytes (and the locked SHA-256 hashes above) byte-identical
-    to the pre-VER-151 baseline."""
+    to the pre-existing baseline."""
     doc = _load_schema(one_day_schema_run.out_dir)
     for component, payload in doc["components"].items():
         assert "dimensions" not in payload, (

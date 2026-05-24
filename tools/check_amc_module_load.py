@@ -7,11 +7,9 @@ files MUST consume the session-scoped `amc` fixture rather than re-issue
 `importlib.util.spec_from_file_location(...).exec_module(...)`. The
 duplicate exec_module pays the full registry-validation cost again.
 
-This lint is the closing deliverable of **VER-197**, which is itself a
-low-priority follow-up split out of the **VER-190** engineering
-efficiency review (the review that originally flagged the duplication
-on PR #63 and PR #64). Follow VER-197 for the tracking thread; VER-190
-holds the historical context.
+This lint catches the duplication pattern an earlier engineering
+review surfaced on PR #63 and PR #64, where new test files re-imported
+``anomaly-metric-creator.py`` instead of consuming the shared fixture.
 
 The check walks each file's AST and flags any *call* whose target is
 the identifier `spec_from_file_location`. Patterns caught:
@@ -253,7 +251,7 @@ def main(argv: list[str]) -> int:
             "\nThe canonical AMC module load lives in `tests/conftest.py` "
             "(`_load_amc` / `amc` fixture). Re-importing via "
             "`spec_from_file_location` duplicates the registry-build cost "
-            "and was the DRY violation tracked in VER-197.",
+            "and is the DRY violation this lint guards against.",
             file=sys.stderr,
         )
         return 1

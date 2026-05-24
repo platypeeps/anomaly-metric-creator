@@ -1,4 +1,4 @@
-"""Tests for --instances-per-component (VER-140 Phase 2).
+"""Tests for --instances-per-component (Phase 2).
 
 Verifies:
 - N=1 (default) produces byte-identical output to omitting the flag.
@@ -97,7 +97,7 @@ def n1_explicit_1d(amc, tmp_path_factory):
 def n3_1d(n3_one_day_dataset_dir):
     """N=3 1-day dataset for this module's per-component CSV / anomalies
     checks. Delegates to the session-scoped ``n3_one_day_dataset_dir``
-    fixture in ``conftest.py`` (VER-208) so the ~25-second / ~1.3 GB
+    fixture in ``conftest.py`` so the ~25-second / ~1.3 GB
     generation pass runs once for the whole suite instead of once per
     test file. Every consumer in this module only reads per-component
     CSVs or ``anomalies.csv``; the shared fixture's
@@ -271,7 +271,7 @@ def test_instances_per_component_range_error_precedes_gating(amc, tmp_path):
     --validate-output" for ``--instances-per-component 999
     --validate-output ...`` and waste time looking for a Phase 8 fix
     when the real problem is the invalid N. The range check is run
-    *before* every N>1 gate in ``parse_args``. After VER-148 phase 5
+    *before* every N>1 gate in ``parse_args``. After phase 5
     lifted the ``--combine`` / ``--combine-only`` / ``--emit-selection
     gauges`` gates, ``--validate-output`` (Phase 8) is the canonical
     still-gated flag to exercise this precedence invariant against.
@@ -393,7 +393,7 @@ def test_preflight_cap_multiplied_by_n(amc, tmp_path):
 # ---------------------------------------------------------------------------
 # Locked N=3 golden hashes (1-day and 7-day) at --seed 42.
 #
-# Captured on the Phase 2 landing (VER-145 / VER-140 phase 2). These pin the
+# Captured on the Phase 2 landing. These pin the
 # per-component CSV bytes under --instances-per-component 3 so any future
 # change to the long-form dimension prefix, the per-instance row ordering, or
 # the RNG-sharing-across-instances contract trips the regression here.
@@ -489,7 +489,7 @@ def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
     match the first run by accident.
 
     The baseline ``n3_1d`` is the session-scoped
-    ``n3_one_day_dataset_dir`` (VER-208), which uses
+    ``n3_one_day_dataset_dir``, which uses
     ``--emit-selection metrics``. The second run mirrors that selection
     so the two outputs are comparable on the artifacts the per-component
     CSV hashes cover, and the second run avoids re-emitting the
@@ -544,19 +544,19 @@ def test_instances_n1_with_dst_allowed(tmp_path):
 # Out-of-scope downstream emitters are gated for N > 1
 # ---------------------------------------------------------------------------
 #
-# After VER-148 phase 5 the file-form long-form writers
+# After phase 5 the file-form long-form writers
 # (``combined_metrics_unified.csv`` and ``gauges.csv``) are dimension-
 # aware: ``--instances-per-component > 1`` paired with ``--combine`` /
 # ``--combine-only`` / ``--emit-selection gauges`` is now permitted and
-# dispatches to the long-form layout. VER-149 Phase 6 then made the
+# dispatches to the long-form layout. Phase 6 then made the
 # OTEL streamer dimension-aware, so ``--otel-enabled`` /
 # ``--otel-emit-gauges`` are also accepted under multi-instance runs.
-# VER-151 Phase 8 (this branch) closes the loop: ``schema.json``
+# Phase 8 (this branch) closes the loop: ``schema.json``
 # declares a per-component ``dimensions`` block and
 # ``--validate-output`` walks the long-form headers end-to-end, so
 # every downstream-flag combination above is now permitted at parse
 # time. The only remaining multi-instance gate is the DST splice
-# (``--inject-dst-artifact-day > 0``). After VER-191 the long-form
+# (``--inject-dst-artifact-day > 0``). After the long-form
 # row builder routes through ``_format_csv_row_block`` and would
 # apply the splice per-instance correctly, but the parse-time guard
 # stays in place because per-instance non-monotonic timestamps inside
@@ -565,7 +565,7 @@ def test_instances_n1_with_dst_allowed(tmp_path):
 
 
 def test_n2_plus_combine_allowed(tmp_path):
-    """VER-148 Phase 5: ``--instances-per-component > 1`` + ``--combine``
+    """Phase 5: ``--instances-per-component > 1`` + ``--combine``
     is now permitted. The combine writer dispatches to a long-form
     layout when the per-component CSVs carry the dimension prefix.
     """
@@ -580,7 +580,7 @@ def test_n2_plus_combine_allowed(tmp_path):
 
 
 def test_n2_plus_combine_only_allowed(tmp_path):
-    """VER-148 Phase 5: ``--instances-per-component > 1`` + ``--combine-only``
+    """Phase 5: ``--instances-per-component > 1`` + ``--combine-only``
     is now permitted. A staged multi-instance directory is combined
     into a long-form unified CSV."""
     # Seed a single-component dimensioned directory first.
@@ -609,7 +609,7 @@ def test_n2_plus_combine_only_allowed(tmp_path):
 
 
 def test_n2_plus_emit_gauges_allowed(tmp_path):
-    """VER-148 Phase 5: ``--instances-per-component > 1`` +
+    """Phase 5: ``--instances-per-component > 1`` +
     ``--emit-selection gauges`` is now permitted. The file-form gauge
     writer emits the 10-column long form with the dimension prefix
     instead of the 4-column ``timestamp,component,metric,value`` shape.
@@ -635,7 +635,7 @@ def test_n2_plus_emit_gauges_allowed(tmp_path):
 
 def test_n2_plus_emit_schema_allowed(amc, tmp_path):
     """``--instances-per-component > 1`` + ``--emit-selection schema`` is allowed
-    after VER-151 Phase 8. ``write_schema_json`` declares a per-component
+    after Phase 8. ``write_schema_json`` declares a per-component
     ``dimensions`` block on every dim-aware component, and
     ``--validate-output`` (when also enabled) honors it via
     ``_validate_component_cells`` / ``_validate_component_row_count`` /
@@ -654,7 +654,7 @@ def test_n2_plus_emit_schema_allowed(amc, tmp_path):
 
 def test_n2_plus_validate_output_allowed(amc, tmp_path):
     """``--instances-per-component > 1`` + ``--validate-output`` is allowed
-    after VER-151 Phase 8. The validator reads the per-component
+    after Phase 8. The validator reads the per-component
     ``dimensions`` block from ``schema.json`` and walks the long-form
     headers end-to-end, so the previous parse-time gate is no longer
     needed.
@@ -670,7 +670,7 @@ def test_n2_plus_validate_output_allowed(amc, tmp_path):
 
 def test_n2_plus_otel_enabled_allowed(amc, tmp_path):
     """``--instances-per-component > 1`` + ``--otel-enabled`` is allowed
-    after VER-149 Phase 6 wired the OTEL streamer's dimension attributes.
+    after Phase 6 wired the OTEL streamer's dimension attributes.
 
     The parse-time gate that used to reject this combination was lifted
     when ``stream_otel_signals`` / ``stream_otel_gauges`` began surfacing
@@ -690,7 +690,7 @@ def test_n2_plus_otel_enabled_allowed(amc, tmp_path):
 
 def test_n2_plus_otel_emit_gauges_allowed(amc, tmp_path):
     """``--instances-per-component > 1`` + ``--otel-emit-gauges`` is allowed
-    after VER-149 Phase 6. ``stream_otel_gauges`` reads the dimension
+    after Phase 6. ``stream_otel_gauges`` reads the dimension
     columns off the per-component CSV and surfaces each non-empty
     ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string attribute on every
     OTLP gauge data point.
@@ -777,7 +777,7 @@ def test_generate_component_raises_on_dst_plus_non_anonymous_instances(
 def test_combine_only_long_form_against_multi_instance_per_component_csv(
     amc, tmp_path,
 ):
-    """VER-148 Phase 5: ``--combine-only`` against an N>1 directory
+    """Phase 5: ``--combine-only`` against an N>1 directory
     succeeds and writes the long-form unified CSV.
 
     Previously the parse-time + combine-time guards refused this

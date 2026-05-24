@@ -1,9 +1,9 @@
-"""VER-152 phase 2 / VER-156 phase 6 flag day: --topology-mode coupling.
+"""Phase 2 / Phase 6 flag day: --topology-mode coupling.
 
 These tests cover:
 
 * The ``--topology-mode`` CLI flag (default ``realistic`` after the
-  VER-156 phase 6 flag day; ``independent`` retained as a deprecation
+  phase 6 flag day; ``independent`` retained as a deprecation
   alias that emits a stderr ``DeprecationWarning``).
 * Byte-identical default output: explicit ``--topology-mode realistic``
   must produce the same per-component CSVs as the no-flag default.
@@ -81,7 +81,7 @@ def test_topology_mode_rejects_invalid_value(amc, bad_value):
 def test_topology_mode_independent_emits_deprecation_warning(amc, capsys):
     """``--topology-mode independent`` must print a stderr DeprecationWarning
     so callers see they are on a deprecated path scheduled for removal
-    after VER-141 phase 9. The warning fires inside ``parse_args`` so the
+    after phase 9. The warning fires inside ``parse_args`` so the
     capsys hook below catches it without a full generation run."""
     amc.parse_args([
         "--topology-mode", "independent",
@@ -135,7 +135,7 @@ def test_topology_mode_realistic_matches_default_byte_for_byte(
 # ------------------------------------------------------------------
 # Legacy regression: ``--topology-mode independent`` must reproduce the
 # pre-flag-day baseline byte-for-byte. This guards the deprecated alias
-# from silent drift before it is removed after VER-141 phase 9.
+# from silent drift before it is removed after phase 9.
 # ------------------------------------------------------------------
 def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
     amc, tmp_path
@@ -151,7 +151,7 @@ def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
             f"{filename} drifted from the pre-flag-day independent baseline "
             f"under --topology-mode independent. expected={expected_hash} "
             f"actual={actual}. The deprecated alias must remain byte-for-byte "
-            f"identical to its pre-VER-156 output until VER-141 phase 9 "
+            f"identical to its pre-existing output until phase 9 "
             f"removes it."
         )
 
