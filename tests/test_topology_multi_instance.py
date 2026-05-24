@@ -244,7 +244,7 @@ def test_synthetic_pod0_spike_lifts_only_pod0_saturation(
     ``authservice.avg_auth_latency_ms`` for pod-0, but NOT on
     sibling pods 1 and 2.
 
-    Matches the issue acceptance: a slow upstream pod
+    Matches the acceptance criterion: a slow upstream pod
     produces saturation feedback only on the corresponding
     downstream pod's rows under 1:1 routing.
 
