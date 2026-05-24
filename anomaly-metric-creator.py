@@ -175,8 +175,9 @@ _VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
 
 # Vocabulary for ``MetricSpec.dtype``. The generator only ever writes finite
 # floats today; ``int`` here means "values are expected to be whole numbers"
-# (the validator surfaces fractional values as schema violations).
-# will eventually backfill the catalog and the generator together.
+# (the validator surfaces fractional values as schema violations). A future
+# pass will backfill the catalog and the generator together so int-typed
+# metrics round through ``np.rint`` before being written.
 _VALID_DTYPES = frozenset({"float", "int"})
 
 
