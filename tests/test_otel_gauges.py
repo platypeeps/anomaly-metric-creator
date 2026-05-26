@@ -316,6 +316,38 @@ def test_stream_otel_gauges_off_by_default_no_gauge_requests(tmp_path):
     assert any(r[0] == "/v1/metrics" for r in server.received)
 
 
+def test_stream_otel_gauges_only_skips_anomaly_counter_requests(tmp_path):
+    """--otel-gauges-only sends gauge batches without the anomaly counter stream."""
+    server, thread, base = _start_mock()
+    try:
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "3600",
+            "--drop-rate", "0",
+            "--components", "authservice",
+            "--otel-enabled",
+            "--otel-gauges-only",
+            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "2",
+            "--otel-gauge-batch-seconds", "43200",
+            "--output-dir", str(tmp_path / "gauges_only"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        _stop_mock(server, thread)
+
+    gauge_requests = _decode_gauge_requests(server.received)
+    assert gauge_requests, "expected gauge requests in --otel-gauges-only mode"
+    assert len(gauge_requests) == len(server.received), (
+        "expected every OTEL metrics POST to be a gauge payload; "
+        f"saw {len(gauge_requests)} gauge request(s) out of "
+        f"{len(server.received)} total request(s)"
+    )
+    assert "OTEL signal stream skipped (--otel-gauges-only)" in result.stdout
+
+
 def test_stream_otel_gauges_batches_by_seconds(tmp_path):
     """At --interval-seconds=600 the run produces 144 rows per CSV; with
     --otel-gauge-batch-seconds=21600 (6h) each batch covers 36 rows and we
@@ -711,6 +743,78 @@ def test_stream_otel_gauges_max_events_caps_attempts_not_successes(amc, tmp_path
         f"expected zero successful sends against a 500 endpoint, "
         f"got {requests_sent}"
     )
+
+
+def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
+    amc, tmp_path, capsys
+):
+    """Gauge HTTP failures log response headers and payloads, including CF-Ray."""
+    csv_path = tmp_path / "database.csv"
+    log_target = tmp_path / "gauge_http_error.log"
+    csv_path.write_text(
+        "timestamp,write_latency_ms\n"
+        "2026-03-10 00:00:00,12.3\n",
+        encoding="utf-8",
+    )
+
+    class _BrokenCollector(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(403)
+            self.send_header("CF-Ray", "gauge-ray-456")
+            self.send_header("X-Debug-Header", "gauge-visible")
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _BrokenCollector)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        requests_sent = amc.stream_otel_gauges(
+            {"database": csv_path},
+            endpoint=f"http://127.0.0.1:{server.server_port}/v1/metrics",
+            batch_seconds=60,
+            metric_prefix="",
+            speedup=1000000.0,
+            timeout_seconds=2.0,
+            max_events=1,
+            max_retries=0,
+            auth_headers=None,
+            protocol="json",
+            activity_log_path=log_target,
+            verbose=False,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    captured = capsys.readouterr()
+    assert requests_sent == 0
+    assert "CF-Ray: gauge-ray-456" not in captured.err
+    assert "X-Debug-Header: gauge-visible" not in captured.err
+    assert '"resourceMetrics"' not in captured.err
+
+    import shlex
+    fail_lines = [
+        shlex.split(line) for line in log_target.read_text().splitlines()
+        if " FAIL " in line
+    ]
+    assert fail_lines, "expected FAIL activity record"
+    kv = {
+        token.split("=", 1)[0]: token.split("=", 1)[1]
+        for token in fail_lines[0][2:]
+        if "=" in token
+    }
+    assert kv["cf_ray"] == "gauge-ray-456"
+    assert ["CF-Ray", "gauge-ray-456"] in json.loads(kv["response_headers"])
+    assert ["X-Debug-Header", "gauge-visible"] in json.loads(kv["response_headers"])
+    assert '"resourceMetrics"' in kv["request_body"]
+    assert '"write_latency_ms"' in kv["request_body"]
+    assert '"gauge"' in kv["request_body"]
 
 
 def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_path):

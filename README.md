@@ -157,6 +157,14 @@ python3 anomaly-metric-creator.py \
   --otel-metrics-endpoint http://localhost:4318/v1/metrics \
   --otel-gauge-batch-seconds 60 \
   --otel-gauge-metric-prefix amc.
+
+# Stream only per-row Gauge data points, skipping anomaly-counter/log/trace
+# OTEL signals:
+python3 anomaly-metric-creator.py \
+  --otel-enabled \
+  --otel-gauges-only \
+  --otel-metrics-endpoint http://localhost:4318/v1/metrics \
+  --otel-stream-protocol json
 ```
 
 ### CLI flags
@@ -190,6 +198,7 @@ python3 anomaly-metric-creator.py \
 | `--otel-metrics-endpoint` | `MEZMO_OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics when `--otel-enabled`. When `--otel-emit-gauges` is also passed, the same endpoint additionally receives a Gauge stream of per-row metric values (see [Gauge metric streaming](#gauge-metric-streaming-otel-emit-gauges)). |
 | `--otel-metrics-auth-token` | `MEZMO_OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. Applies to both the counter and gauge streams. |
 | `--otel-emit-gauges` / `--otel-no-emit-gauges` | _off_ (env: `MEZMO_OTEL_EMIT_GAUGES`) | Opt-in second OTLP stream that posts per-row metric values from the per-component CSVs as Gauge data points to `--otel-metrics-endpoint`. Off by default; the CLI flag wins over the env var. Truthy env values: `1`, `true`, `yes`, `on` (case-insensitive). Requires `--otel-enabled`, `--otel-metrics-endpoint`, and `metrics` in `--emit-selection`. |
+| `--otel-gauges-only` | _off_ | Stream only the per-row Gauge data points to `--otel-metrics-endpoint`, skipping the anomaly log/metric/trace signal stream. Implies `--otel-emit-gauges`; requires `--otel-enabled`, `--otel-metrics-endpoint`, and `metrics` in `--emit-selection`. Useful for receivers that only accept OTLP Gauge payloads. |
 | `--otel-gauge-batch-seconds` | `60` | When `--otel-emit-gauges` is on, this many seconds of timeline coverage are coalesced into one OTLP request. Larger batches = fewer requests but bigger bodies; tune to your collector's body limit. Must be `> 0`. |
 | `--otel-gauge-metric-prefix` | _empty_ | Optional namespace prefix prepended to the OTLP metric name for each gauge data point (e.g. `amc.` produces `amc.cpu_util_pct`). |
 | `--otel-traces-endpoint` | `MEZMO_OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events when `--otel-enabled`. |
@@ -199,8 +208,8 @@ python3 anomaly-metric-creator.py \
 | `--otel-stream-max-events` | _all_ | Optional cap on streamed anomaly events for smoke-testing a receiver. |
 | `--otel-stream-auth-scheme` | `MEZMO_OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth tokens. |
 | `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
-| `--otel-activity-log` | `./otel-activity.log` | File that records every OTEL streaming activity (`START`, `SEND`, `OK`, `RETRY`, `FAIL`, `END`) when `--otel-enabled` is set. Only created when streaming actually runs. |
-| `--otel-verbose` / `--no-otel-verbose` | _off_ | When enabled, the activity log captures the raw OTLP payload (`body`), the request `content_type` and other request headers (auth values masked as `<scheme> ***`), the HTTP response `status` on success, and the exception `error_type` (plus HTTP `status` for `HTTPError`) on retry/failure. Useful for offline debugging of receiver behavior. |
+| `--otel-activity-log` | `./otel-activity.log` | File that records every OTEL streaming activity (`START`, `SEND`, `OK`, `RETRY`, `FAIL`, `END`) when `--otel-enabled` is set. HTTP `RETRY` / `FAIL` records include receiver `response_headers`, `cf_ray` when present, and the original JSON `request_body` for JSON requests. Only created when streaming actually runs. |
+| `--otel-verbose` / `--no-otel-verbose` | _off_ | When enabled, the activity log also captures the raw OTLP payload (`body`) on `SEND`, the request `content_type` and other request headers (auth values masked as `<scheme> ***`), the HTTP response `status` on success, and the exception `error_type` (plus HTTP `status` for `HTTPError`) on retry/failure. Useful for offline debugging of receiver behavior. |
 
 ### Gauge metric streaming (`--otel-emit-gauges`)
 
@@ -209,7 +218,9 @@ injected anomaly. Set `--otel-emit-gauges` (or `MEZMO_OTEL_EMIT_GAUGES=1`) to
 additionally stream **every per-row metric value** from the per-component CSVs
 to `--otel-metrics-endpoint` as OTLP `Gauge` data points. The two streams run
 sequentially: anomaly counters first, then gauges, both against the same
-endpoint (and the same auth token / activity log).
+endpoint (and the same auth token / activity log). Set `--otel-gauges-only`
+when the receiver should get only the Gauge payloads; that mode implies gauge
+emission and skips the anomaly log/metric/trace stream entirely.
 
 Payload shape:
 
