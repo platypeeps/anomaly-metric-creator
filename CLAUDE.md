@@ -229,8 +229,9 @@ work covered in this branch. After Phase 6, `stream_otel_gauges`
 and `stream_otel_signals` lift every non-empty
 `_INSTANCE_DIMENSION_COLUMNS` cell off each row and surface it as a
 string attribute on every OTLP data point (metric datapoint
-attributes, not OTEL resource attributes), so `--otel-enabled` and
-`--otel-emit-gauges` are no longer gated against N>1. The only
+attributes, not OTEL resource attributes), so `--otel-enabled`,
+`--otel-emit-gauges`, and the gauge-only streaming mode
+(`--otel-gauges-only`) are no longer gated against N>1. The only
 remaining dimension-blind emitter group is Phase 8 — `parse_args`
 rejects `--instances-per-component > 1` paired with `--emit-selection
 'schema'` or `--validate-output` with a Phase 8 error
@@ -605,7 +606,11 @@ same data points — the difference only matters for hand-edited CSVs.
 Both gauge paths are mutually exclusive with `--inject-dst-artifact-day > 0`
 (the DST splice produces non-monotonic CSV timestamps that break
 `heapq.merge`); the parser rejects the combination for both
-`--otel-emit-gauges` and `--emit-selection gauges` up front.
+`--otel-emit-gauges` / `--otel-gauges-only` and
+`--emit-selection gauges` up front. `--otel-gauges-only` is a CLI mode
+that implies the OTEL gauge stream but skips `stream_otel_signals()`,
+so receivers that only accept Gauge payloads do not see the anomaly
+counter/log/trace stream first.
 
 `gauges.csv` is opt-in via `gauges` in `--emit-selection` (which the
 parser enforces alongside `metrics`); `--combine-only` does not

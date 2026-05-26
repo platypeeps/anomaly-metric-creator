@@ -38,6 +38,7 @@ def test_help_lists_every_flag():
                  "--otel-metrics-endpoint", "--otel-metrics-auth-token",
                  "--otel-traces-endpoint", "--otel-traces-auth-token",
                  "--otel-stream-auth-scheme",
+                 "--otel-gauges-only",
                  "--otel-verbose", "--no-otel-verbose"):
         assert flag in out, f"--help missing flag {flag}"
         # Argparse renders the help text on the line following the flag; require
@@ -924,6 +925,69 @@ def test_otel_activity_log_records_failure(tmp_path):
     contents = log_target.read_text()
     assert "RETRY" in contents
     assert "FAIL" in contents
+
+
+def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, capsys):
+    """HTTP receiver failures log response headers and payloads, including CF-Ray."""
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(403)
+            self.send_header("CF-Ray", "test-ray-123")
+            self.send_header("X-Debug-Header", "visible")
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    log_target = tmp_path / "http_error.log"
+    thread.start()
+    try:
+        sent = amc.stream_otel_signals(
+            {"metrics": f"http://127.0.0.1:{server.server_port}/v1/metrics"},
+            [{
+                "timestamp": "2026-03-10 00:00:00",
+                "component": "database",
+                "metric": "write_latency_ms",
+                "description": "Synthetic failure for header logging",
+            }],
+            speedup=1000000.0,
+            timeout_seconds=2.0,
+            max_events=1,
+            max_retries=0,
+            auth_headers=None,
+            protocol="json",
+            activity_log_path=log_target,
+            verbose=False,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    captured = capsys.readouterr()
+    assert sent == 0
+    assert "CF-Ray: test-ray-123" not in captured.err
+    assert "X-Debug-Header: visible" not in captured.err
+    assert '"resourceMetrics"' not in captured.err
+
+    import shlex
+    fail_lines = [
+        shlex.split(line) for line in log_target.read_text().splitlines()
+        if " FAIL " in line
+    ]
+    assert fail_lines, "expected FAIL activity record"
+    kv = {
+        token.split("=", 1)[0]: token.split("=", 1)[1]
+        for token in fail_lines[0][2:]
+        if "=" in token
+    }
+    assert kv["cf_ray"] == "test-ray-123"
+    assert ["CF-Ray", "test-ray-123"] in json.loads(kv["response_headers"])
+    assert ["X-Debug-Header", "visible"] in json.loads(kv["response_headers"])
+    assert '"resourceMetrics"' in kv["request_body"]
+    assert '"write_latency_ms"' in kv["request_body"]
 
 
 def test_otel_activity_log_not_created_when_streaming_disabled(tmp_path):

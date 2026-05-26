@@ -6415,7 +6415,18 @@ def parse_args(argv=None):
         help="Explicitly disable the gauge stream (the default). Overrides "
              "--otel-emit-gauges and the MEZMO_OTEL_EMIT_GAUGES env var.",
     )
+    gauge_toggle.add_argument(
+        "--otel-gauges-only",
+        dest="otel_gauges_only",
+        action="store_true",
+        help="Stream only per-row metric values as OTLP Gauge data points to "
+             "--otel-metrics-endpoint, skipping the anomaly log/metric/trace "
+             "signal stream. Implies --otel-emit-gauges and requires "
+             "--otel-enabled, --otel-metrics-endpoint, and 'metrics' in "
+             "--emit-selection.",
+    )
     p.set_defaults(otel_emit_gauges=_env_bool("MEZMO_OTEL_EMIT_GAUGES", False))
+    p.set_defaults(otel_gauges_only=False)
     p.add_argument(
         "--otel-gauge-batch-seconds",
         type=int,
@@ -6653,14 +6664,17 @@ def parse_args(argv=None):
         p.error("--otel-enabled requires at least one of --otel-logs-endpoint, "
                 "--otel-metrics-endpoint, or --otel-traces-endpoint to be set "
                 "(via flag or env var).")
+    if args.otel_gauges_only:
+        args.otel_emit_gauges = True
     if args.otel_emit_gauges:
+        gauge_flag = "--otel-gauges-only" if args.otel_gauges_only else "--otel-emit-gauges"
         if not args.otel_enabled:
-            p.error("--otel-emit-gauges requires --otel-enabled")
+            p.error(f"{gauge_flag} requires --otel-enabled")
         if not args.otel_metrics_endpoint:
-            p.error("--otel-emit-gauges requires --otel-metrics-endpoint to be set "
+            p.error(f"{gauge_flag} requires --otel-metrics-endpoint to be set "
                     "(via flag or MEZMO_OTEL_METRICS_ENDPOINT)")
         if "metrics" not in selected:
-            p.error("--otel-emit-gauges requires --emit-selection to include 'metrics'")
+            p.error(f"{gauge_flag} requires --emit-selection to include 'metrics'")
     # Both gauge paths (``--otel-emit-gauges`` and ``--emit-selection gauges``)
     # feed per-component CSVs into ``heapq.merge``, which requires each input
     # iterator to be sorted by the timestamp key.
@@ -6674,7 +6688,9 @@ def parse_args(argv=None):
         args.otel_emit_gauges or "gauges" in selected
     ):
         flags = []
-        if args.otel_emit_gauges:
+        if args.otel_gauges_only:
+            flags.append("--otel-gauges-only")
+        elif args.otel_emit_gauges:
             flags.append("--otel-emit-gauges")
         if "gauges" in selected:
             flags.append("--emit-selection 'gauges'")
@@ -7810,6 +7826,29 @@ def _masked_headers(headers: dict[str, str]) -> dict[str, str]:
     return masked
 
 
+def _http_error_activity_fields(
+    exc, body: bytes, content_type: str
+) -> dict[str, str]:
+    """Return structured activity-log diagnostics for ``HTTPError`` failures."""
+    if not isinstance(exc, urllib.error.HTTPError):
+        return {}
+
+    fields: dict[str, str] = {}
+    if exc.headers is not None:
+        header_pairs = list(exc.headers.items())
+        if header_pairs:
+            fields["response_headers"] = json.dumps(
+                header_pairs, separators=(",", ":")
+            )
+        cf_ray = exc.headers.get("cf-ray") if hasattr(exc.headers, "get") else None
+        if cf_ray:
+            fields["cf_ray"] = cf_ray
+
+    if "json" in content_type:
+        fields["request_body"] = body.decode("utf-8", errors="replace")
+    return fields
+
+
 def stream_otel_signals(
     endpoints: dict[str, str], # {"logs": url, "metrics": url, "traces": url}
     anomaly_rows: list[dict],
@@ -7943,6 +7982,9 @@ def stream_otel_signals(
                         break
                     except (urllib.error.URLError, urllib.error.HTTPError) as exc:
                         attempts += 1
+                        http_error_fields = _http_error_activity_fields(
+                            exc, body, content_type
+                        )
                         err_fields: dict = {}
                         if verbose:
                             err_fields["error_type"] = type(exc).__name__
@@ -7962,6 +8004,7 @@ def stream_otel_signals(
                                 component=row["component"],
                                 metric=row["metric"],
                                 error=repr(str(exc)),
+                                **http_error_fields,
                                 **err_fields,
                             )
                             break
@@ -7980,6 +8023,7 @@ def stream_otel_signals(
                             metric=row["metric"],
                             attempt=f"{attempts}/{max_retries}",
                             error=repr(str(exc)),
+                            **http_error_fields,
                             **err_fields,
                         )
                         time.sleep(backoff)
@@ -10120,6 +10164,7 @@ def stream_otel_gauges(
     protocol: str,
     activity_log_path: Path | None,
     verbose: bool,
+    append_activity_log: bool = True,
 ) -> int:
     """Stream per-row metric values from per-component CSVs to an OTLP/HTTP
     metrics endpoint as Gauge data points.
@@ -10144,7 +10189,10 @@ def stream_otel_gauges(
     if activity_log_path is not None:
         activity_log_path.parent.mkdir(parents=True, exist_ok=True)
         # Append so a prior stream_otel_signals run's records are preserved.
-        log_file = open(activity_log_path, "a", encoding="utf-8")
+        # Gauge-only CLI mode passes ``append_activity_log=False`` because
+        # there is no signal pass creating a fresh log for this run.
+        mode = "a" if append_activity_log else "w"
+        log_file = open(activity_log_path, mode, encoding="utf-8")
 
     _write_activity(
         log_file,
@@ -10257,6 +10305,9 @@ def stream_otel_gauges(
                 break
             except (urllib.error.URLError, urllib.error.HTTPError) as exc:
                 attempts += 1
+                http_error_fields = _http_error_activity_fields(
+                    exc, body, content_type
+                )
                 err_fields: dict = {}
                 if verbose:
                     err_fields["error_type"] = type(exc).__name__
@@ -10276,6 +10327,7 @@ def stream_otel_gauges(
                         batch_end_ts=batch_end_ts,
                         data_points=data_points,
                         error=repr(str(exc)),
+                        **http_error_fields,
                         **err_fields,
                     )
                     break
@@ -10294,6 +10346,7 @@ def stream_otel_gauges(
                     data_points=data_points,
                     attempt=f"{attempts}/{max_retries}",
                     error=repr(str(exc)),
+                    **http_error_fields,
                     **err_fields,
                 )
                 time.sleep(backoff)
@@ -10735,13 +10788,14 @@ def main(argv=None):
         "traces": args.otel_traces_endpoint,
     }
     otel_active = args.otel_enabled and any(endpoints.values())
+    auth_headers = {}
     if otel_active:
-        auth_headers = {}
         for signal in ["logs", "metrics", "traces"]:
             token = getattr(args, f"otel_{signal}_auth_token")
             if token:
                 auth_headers[signal] = {"Authorization": f"{args.otel_stream_auth_scheme} {token}"}
 
+    if otel_active and not args.otel_gauges_only:
         streamed_events = stream_otel_signals(
             endpoints,
             filtered_anomalies,
@@ -10756,8 +10810,9 @@ def main(argv=None):
 
     gauge_requests_sent = 0
     if otel_active and args.otel_emit_gauges:
-        # Gauge stream runs after the anomaly-counter stream and writes to the
-        # same activity log file in append mode so both passes share one log.
+        # Gauge stream normally appends after the anomaly-counter stream so both
+        # passes share one log. In --otel-gauges-only mode there is no prior
+        # signal pass, so the gauge stream starts a fresh log instead.
         gauge_auth = auth_headers.get("metrics") if otel_active else None
         component_csv_paths = {
             c: args.output_dir / f"{c}.csv" for c in sorted(args.components)
@@ -10775,6 +10830,7 @@ def main(argv=None):
             protocol=args.otel_stream_protocol,
             activity_log_path=args.otel_activity_log,
             verbose=args.otel_verbose,
+            append_activity_log=not args.otel_gauges_only,
         )
 
     if args.combine:
@@ -10796,7 +10852,10 @@ def main(argv=None):
         print(f"   Gauge rows written: {gauge_rows_written:,} to gauges.csv")
     if otel_active:
         active = [f"{s} -> {u}" for s, u in endpoints.items() if u]
-        print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
+        if args.otel_gauges_only:
+            print("   OTEL signal stream skipped (--otel-gauges-only)")
+        else:
+            print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
         if args.otel_emit_gauges:
             print(f"   OTEL gauge requests streamed: {gauge_requests_sent} to "
                   f"metrics -> {args.otel_metrics_endpoint}")

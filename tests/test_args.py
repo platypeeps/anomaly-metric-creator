@@ -402,6 +402,51 @@ def test_otel_emit_gauges_cli_overrides_env(amc, monkeypatch):
     assert args.otel_emit_gauges is False
 
 
+def test_otel_gauges_only_implies_emit_gauges(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    args = amc.parse_args([
+        "--otel-enabled",
+        "--otel-gauges-only",
+        "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+        "--output-dir", "test_out",
+    ])
+    assert args.otel_gauges_only is True
+    assert args.otel_emit_gauges is True
+
+
+def test_otel_gauges_only_requires_otel_enabled(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-gauges-only",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_gauges_only_requires_metrics_endpoint(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-enabled",
+            "--otel-gauges-only",
+            "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_gauges_only_requires_metrics_in_emit_selection(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-enabled",
+            "--otel-gauges-only",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--emit-selection", "logs,traces",
+            "--output-dir", "test_out",
+        ])
+
+
 def test_otel_emit_gauges_requires_otel_enabled(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
@@ -467,6 +512,18 @@ def test_otel_emit_gauges_rejects_dst_artifact_combo(amc, monkeypatch):
         amc.parse_args([
             "--otel-enabled",
             "--otel-emit-gauges",
+            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--inject-dst-artifact-day", "1",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_otel_gauges_only_rejects_dst_artifact_combo(amc, monkeypatch):
+    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--otel-enabled",
+            "--otel-gauges-only",
             "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
             "--inject-dst-artifact-day", "1",
             "--output-dir", "test_out",
