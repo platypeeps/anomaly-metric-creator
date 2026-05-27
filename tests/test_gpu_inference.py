@@ -1,6 +1,7 @@
 import contextlib
 import csv
 import io
+import re
 import statistics
 
 
@@ -204,6 +205,38 @@ def test_gpu_inference_failure_labels_are_single_tick_specs(amc):
     assert len(failure_specs) == 1_204
     assert all("duration_seconds" not in spec for spec in failure_specs)
     assert all(spec.get("shape", "step") == "step" for spec in failure_specs)
+
+
+def test_gpu_inference_out_of_range_warning_uses_fractional_duration(amc, tmp_path):
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        amc.main([
+            "--seed", "42",
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--drop-rate", "0",
+            "--components", "gpu_inference",
+            "--scenarios", "gpu_inference_fragmentation",
+            "--output-dir", str(tmp_path),
+        ])
+
+    warning = stderr.getvalue()
+    match = re.search(r"Run with --duration-days ([0-9.]+) to include them", warning)
+    assert match, warning
+    suggested_days = float(match.group(1))
+    assert 1.0 < suggested_days < 35.0
+
+    scenario = amc.SCENARIOS["gpu_inference_fragmentation"]
+    max_start_idx = max(
+        int(round(spec["time_offset"] / 60.0))
+        for component, spec in scenario.primary_specs
+        if component == "gpu_inference"
+        and spec["time_offset"] >= amc.SECONDS_PER_DAY
+    )
+    suggested_rows = int(
+        (suggested_days * amc.SECONDS_PER_DAY) // amc.DEFAULT_INTERVAL_SECONDS
+    )
+    assert suggested_rows > max_start_idx
 
 
 def test_gpu_inference_metrics_move_together_like_serving_stress(amc, tmp_path):

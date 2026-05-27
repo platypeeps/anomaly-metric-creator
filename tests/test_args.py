@@ -20,8 +20,8 @@ def test_parse_args_help_duration_days_default_round_trips(amc, capsys):
     match = re.search(r"--duration-days.*?default:\s*([0-9.]+),", help_text, re.S)
     assert match, help_text
     copied_default = float(match.group(1))
-    rows = int(
-        (copied_default * amc.SECONDS_PER_DAY) // amc.DEFAULT_INTERVAL_SECONDS
+    rows = round(
+        copied_default * amc.SECONDS_PER_DAY / amc.DEFAULT_INTERVAL_SECONDS
     )
     assert rows == amc.DEFAULT_ROW_COUNT
 

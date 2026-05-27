@@ -1273,12 +1273,29 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             t_within = span_idx * interval
             expanded_overrides.append((row_idx, s, t_within, span_idx))
     if out_of_range:
-        max_offset = max(s["time_offset"] for s in out_of_range)
-        needed_days = max_offset // SECONDS_PER_DAY + 1
+        non_negative_offsets = [
+            s["time_offset"] for s in out_of_range
+            if s["time_offset"] >= 0
+        ]
+        if non_negative_offsets:
+            max_start_idx = max(
+                int(round(offset / interval))
+                for offset in non_negative_offsets
+            )
+            needed_seconds = (max_start_idx + 1) * interval
+            needed_days = max(
+                1.0,
+                math.nextafter(needed_seconds / SECONDS_PER_DAY, math.inf),
+            )
+            include_hint = (
+                f"Run with --duration-days {needed_days!r} to include them."
+            )
+        else:
+            include_hint = "Check anomaly specs for negative time_offset values."
         print(
             f"WARNING: {component_name}: skipping {len(out_of_range)} anomaly spec(s) "
             f"with time_offset outside [0, {total_seconds}). "
-            f"Run with --duration-days {needed_days} to include them.",
+            f"{include_hint}",
             file=sys.stderr,
         )
 
