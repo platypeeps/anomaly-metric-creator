@@ -9,23 +9,29 @@ CSVs and delete `anomalies.csv` from `--output-dir`. See [Output files](#output-
 for the exact emit-selection and packet-loss gating. Output is deterministic for a
 given `--seed`.
 
-By default the script emits **one day** of second-by-second metrics for thirteen
+By default the script emits **50,000 one-minute rows** over about 34.72 days for fourteen
 components: `authservice`, `cacheservice`, `apigateway`, `database`, `mqservice`,
 `llm_analytics`, `loadbalancer`, `objectstore`, `vectorstore`, `scheduler`,
-`paymentservice`, `identityprovider`, `observabilitypipeline`. Duration,
+`paymentservice`, `identityprovider`, `observabilitypipeline`, `gpu_inference`. Duration,
 sampling interval, drop rate, and output directory are all CLI-configurable.
 
 ## Significant changes
 
 Recent significant additions to the generator:
 
+- **GPU inference serving layer** — adds `gpu_inference.csv` with
+  serving-layer fields matching the reference observability telemetry shape:
+  `batch_size`, `model_size_b`, GPU/KV memory pressure, fragmentation,
+  utilization, throughput, p50/p99 latency, and `failure`. The
+  `gpu_inference_fragmentation` scenario models slow allocator pressure plus
+  sparse one-minute failure pulses.
 - **Flag-day default flip + integer-cast bundle** (phase 6) —
   `--topology-mode realistic` is now the default; `--topology-mode independent`
   is retained as a deprecation alias that emits a stderr `DeprecationWarning`
   and is scheduled for removal after phase 9. Under the new default,
   every `MetricSpec` column declared `dtype="int"` is cast via `np.rint` in
   `generate_component()` before derivations run, clearing all
-  fractional-integer `--validate-output` violations on the default 1-day
+  fractional-integer `--validate-output` violations on the 1-day compatibility
   output. The integer cast is intentionally tied to realistic mode only:
   the `--topology-mode independent` alias skips it (via
   `apply_dtype_int_cast=False`) so its CSV bytes stay byte-for-byte
@@ -76,16 +82,16 @@ python3 -m venv .venv
 ## Usage
 
 ```bash
-# Default: 1 day (86,400 rows per component)
+# Default: 50,000 rows per component at a 60s cadence
 python3 anomaly-metric-creator.py
 
-# Full week (604,800 rows per component). Each multi-day scenario activates at
+# Full week (10,080 rows per component at the default 60s cadence). Each multi-day scenario activates at
 # its own `days_required` (e.g. llm_viral_surge_day2 at 2 days, cache_leak_restart
-# at 2 days, jwks_rotation_chaos at 3 days, llm_second_viral at 7 days);
-# --duration-days 7 unlocks the complete multi-day catalog.
+# at 2 days, jwks_rotation_chaos at 3 days, llm_second_viral at 7 days).
+# The default 50,000-row window also includes the longer GPU inference pattern.
 python3 anomaly-metric-creator.py --duration-days 7
 
-# Coarser sampling: one row every 5 seconds (17,280 rows per component for 1 day).
+# Finer sampling: one row every 5 seconds (17,280 rows per component for 1 day).
 python3 anomaly-metric-creator.py --interval-seconds 5
 
 # Generate logs and produce the unified joined CSV in one shot:
@@ -171,25 +177,25 @@ python3 anomaly-metric-creator.py \
 
 | Flag                | Default     | Notes                                                              |
 | ------------------- | ----------- | ------------------------------------------------------------------ |
-| `--duration-days`   | `1`         | Days to generate. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2, `jwks_rotation_chaos` at 3, `llm_second_viral` at 7); see the [scenario catalog](#scenario-catalog) for per-scenario values. Pass `--duration-days 7` to unlock the full multi-day catalog. |
+| `--duration-days`   | `34.7222`   | Days to generate. The default combines with `--interval-seconds 60` to produce exactly 50,000 rows per component, matching the reference observability telemetry CSV shape. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2, `jwks_rotation_chaos` at 3, `gpu_inference_fragmentation` at 10); see the [scenario catalog](#scenario-catalog) for per-scenario values. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 | `--drop-rate`       | `0.0005`    | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Simulated packet loss. |
-| `--interval-seconds`| `1.0`       | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. Combinations of this flag with `--duration-days`, `--metrics-per-component`, and `--components` are validated against a preflight cell-count cap (200M cells total); see `--allow-huge-output`. |
+| `--interval-seconds`| `60.0`      | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. Combinations of this flag with `--duration-days`, `--metrics-per-component`, and `--components` are validated against a preflight cell-count cap (200M cells total); see `--allow-huge-output`. |
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`, `gauges`, `schema`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv), and `schema` (opt-in) writes a declarative [`schema.json`](#output-schema-document-schemajson). The `gauges` token requires `metrics`; `schema` has no other requirements. |
-| `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
+| `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `gpu_inference`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
 | `--scenarios`       | `all`       | Comma-separated allowlist of named scenario slugs (case-insensitive). Use `all` (default) to include every scenario in the `SCENARIOS` registry that passes the severity and duration gates. The `all` sentinel is mutually exclusive with explicit slugs (`all,foo` is rejected). Scenarios outside the active `--signal-level` severity hierarchy or whose `days_required` exceeds `--duration-days` are dropped with a stderr `WARNING: scenario <slug> requires …` message; scenarios whose `components_touched` is disjoint from `--components` are dropped silently. See the [scenario catalog](#scenario-catalog) for all known slugs and the composition order. |
 | `--exclude-scenarios` | _empty_   | Comma-separated denylist of scenario slugs to subtract from the resolved set (applied after `--scenarios`, before the severity/duration/components gates). Case-insensitive. Useful for `--exclude-scenarios jwks_rotation_chaos` to get every scenario except one; on overlap with `--scenarios`, exclusion wins. |
 | `--signal-level`    | `medium`    | Anomaly intensity level: `low`, `medium` (default), or `high`. Inclusion hierarchy: `low` only fires specs explicitly tagged `severity="low"` (today: a handful of benign Monday-morning baseline shifts) and intentionally has **no cascade fan-out** because benign baseline shifts do not realistically propagate as failures; `medium` adds the standard catalog plus its cascade fan-out (the default behavior); `high` additionally activates the high-pressure cross-component scenarios (regional failover storm, coordinated cache+DB meltdown, LLM provider outage, gateway DDoS saturation, storage layer pressure) and their cascades. |
 | `--anomaly-count`   | _unlimited_ | Optional cap on the total number of injected anomalies (primary specs + cascades) across the whole dataset. Sampling is deterministic for a given `--seed` and uses its own RNG stream so it doesn't perturb the column noise. Applied after `--signal-level` and `--components` filters. Out-of-range specs (e.g. multi-day cascades on a 1-day run) are excluded from the sampling pool. |
-| `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–8 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
+| `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–10 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
 | `--instances-per-component` | `1` | Fan each component out to N identical instances (must be in `[1, 20]`). `N=1` (the default) emits today's byte-identical output with no dimension columns. `N>1` prepends `id,host,pod,az,region,tenant` columns to every per-component CSV header and writes N row blocks per component — one block per instance, in the stable `i0`/`pod-0`, `i1`/`pod-1`, … order. `host`/`az`/`region`/`tenant` are empty in v1 (use `--instance-config` to fill them in via a declarative file). All instances share the same RNG-drawn natural values and the same anomaly overrides in v1 unless a scenario spec narrows the targets via `instance_filter` (Phase 4). `anomalies.csv` records one row per `(timestamp, component, metric)` regardless of N. The long-form file writers (`combined_metrics_unified.csv`, `gauges.csv`) became dimension-aware in Phase 5; the OTEL streaming path (`--otel-enabled`, `--otel-emit-gauges`) became dimension-aware in Phase 6; and the schema/validator (`--emit-selection 'schema'`, `--validate-output`) became dimension-aware in Phase 8 (per-component `dimensions` blocks in `schema.json` plus long-form header checks). The only remaining gate is `--inject-dst-artifact-day > 0`, which is rejected because the DST splice produces non-monotonic timestamps the multi-instance row builder is not prepared for. Mutually exclusive with `--instance-config`. Multiplies the preflight cell-count cap inputs linearly with N. |
 | `--instance-config` | _off_ | Path to a YAML (`.yaml`/`.yml`) or JSON (`.json`) file declaring a per-component instance topology for repeatable non-uniform fan-outs (Phase 3). The top-level key `components` maps component names to lists of `Instance` field dicts (`id, host, pod, az, region, tenant`). Components not listed in the file fall back to the module-level `INSTANCES` registry (single anonymous `Instance()` per component) so the default per-component CSV shape is preserved. `parse_args` checks the flag-shape invariants (path resolves to a regular file via `Path.is_file()`, suffix in `{.yaml, .yml, .json}`, mutex with `--instances-per-component`); schema validation runs in `main()` via `_load_instance_config`, which raises a `ValueError` (caught and re-raised as `sys.exit`) on malformed YAML/JSON, unknown component, unknown `Instance` field, non-mapping top-level value, non-mapping `components` value, per-component value not a list, empty per-component list, non-dict instance entry, duplicate `id`, and per-component count exceeding `MAX_INSTANCES_PER_COMPONENT=20`. YAML support requires PyYAML — install with `pip install 'anomaly-metric-creator[yaml]'` or `pip install pyyaml`; JSON works without it. Triggers the same multi-instance code path as `--instances-per-component > 1`, so it inherits the same downstream-flag state: the long-form file writers (Phase 5), OTEL streaming (Phase 6), and schema/validator (Phase 8) are all dimension-aware, so dimensioned `--instance-config` runs work with `--combine`, `--combine-only`, `--emit-selection 'gauges'`/`'schema'`, `--validate-output`, and the OTEL flags without further configuration; only `--inject-dst-artifact-day > 0` remains rejected. Preflight cell-count cap uses `MAX_INSTANCES_PER_COMPONENT=20` as a conservative upper bound since the per-component instance count is not known until `main()` parses the config file. |
 | `--allow-huge-output` | _off_       | Bypass the preflight cell-count cap (200,000,000 metric cells across all components, timestamps, and instances). Without this flag, `parse_args` rejects combinations of `--interval-seconds`, `--duration-days`, `--metrics-per-component`, `--instances-per-component`, `--instance-config` (counted as `MAX_INSTANCES_PER_COMPONENT=20` per component as a conservative upper bound since the per-component count isn't known until the file is parsed in `main()`), and `--components` whose row × metric × component × instances product exceeds the cap, and the error message names the offending flags. Pass `--allow-huge-output` when the size is intentional (the actual run can still be truncated by other flags). |
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--validate-output` | _off_       | Standalone validator mode (mutually exclusive with `--combine` / `--combine-only`). Loads `PATH/schema.json` and checks the artifacts in `PATH` against it (file presence, row counts, timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds, `counter`/`rate` non-negativity, derived-column consistency, and `anomalies.csv` sort order). Hard-fails on first violation (`exit 1`) unless `--validate-warn` is also passed. See [Output validation (`--validate-output`)](#output-validation---validate-output). |
-| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. After the phase 6 flag day the default 1-day output is violation-free; 7-day output still surfaces one `context_overflow_rate` overshoot (scenario-catalog re-tune deferred to phase 9), so `--validate-warn` is the right mode when piping 7-day output through CI until phase 9 lands. |
+| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. A 1-day compatibility run is violation-free; longer runs that include the context-overflow scenario still surface one `context_overflow_rate` overshoot (scenario-catalog re-tune deferred to phase 9), so `--validate-warn` is the right mode when piping multi-day output through CI until phase 9 lands. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
 | `--topology-mode`   | `realistic`  | Topology-aware baseline coupling (default since phase 6 flag day). `realistic` (default) walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. `independent` is a deprecation alias retained only for regenerating the pre-flag-day byte-for-byte baseline; it emits a stderr `DeprecationWarning` on use and is scheduled for removal after phase 9. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
 | `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
@@ -265,10 +271,11 @@ Batching, dropped rows, and pacing:
   unified CSV, mirroring the source files. Consumers that key on
   timestamp must handle the duplicates explicitly.
 
-Volume note: at `--interval-seconds 1` with the default 13 components × their
-default metric counts (a 1-day run is ≈ 7.5M data points after the natural
-drop rate), the gauge stream at `--otel-gauge-batch-seconds 60` produces on
-the order of 1,440 OTLP requests per simulated day. Tune
+Volume note: at the default `--interval-seconds 60` with the default 14
+components x their default metric counts, a default run emits about 4.25M data
+points before the natural drop rate. The gauge stream at
+`--otel-gauge-batch-seconds 60` produces one OTLP request per simulated minute.
+Tune
 `--otel-gauge-batch-seconds` up if your collector enforces a small request
 body limit, or down if it limits batch element counts. The activity log file
 (`--otel-activity-log`) is written in append mode for the gauge pass, so
@@ -324,8 +331,8 @@ does **not** apply to the file. Consumers that need a prefix join on the
 Volume: long-form row count equals wide-form cell count
 (rows-per-component × selected metrics × components). The existing preflight
 cell-count cap (`PREFLIGHT_CELL_CAP`) bounds the wide form, so it transitively
-bounds `gauges.csv` size. At default knobs a 1-day run produces roughly 7.5M
-data rows.
+bounds `gauges.csv` size. At default knobs the 50,000-row run produces roughly
+4.25M data rows.
 
 `--combine-only` does **not** regenerate `gauges.csv`; it's a derived
 artifact of a fresh generation run only. A pre-existing `gauges.csv` is left
@@ -458,14 +465,14 @@ The validator loads `PATH/schema.json` and runs:
   `span_end`, padded by 30s) are excluded from the row pool so
   scenario overrides don't dominate the realized correlation.
 
-After phase 6 (flag day) the default 1-day output is
-violation-free. The 7-day output still surfaces a single known
-violation — the LLM context-overflow scenario drives
+After phase 6 (flag day), a 1-day compatibility output is
+violation-free. Runs that include the LLM context-overflow scenario still
+surface a single known violation — the scenario drives
 `llm_analytics.context_overflow_rate` to 8.5 at day 5 + 2h to
 simulate context-window saturation, which exceeds the metric's
 declared `max_value=1`. Reconciling that scenario amplitude with the
 ratio bound is a scenario-catalog re-tune deferred to phase
-9. Pass `--validate-warn` to keep CI green on 7-day runs until then.
+9. Pass `--validate-warn` to keep CI green on those multi-day runs until then.
 
 ### Output files
 
@@ -573,6 +580,7 @@ when `--metrics-per-component` is set high enough to reach it.
 | `paymentservice`         | 5         | `txn_per_sec`, `provider_5xx_rate`, `webhook_delivery_lag_s`, `auth_decline_rate`, `avg_txn_latency_ms`, *`chargebacks_per_min`*, *`settlement_lag_s`*, *`fraud_score_avg`*, *`retry_rate`*, *`error_rate`* |
 | `identityprovider`       | 5         | `token_issuance_per_sec`, `jwks_fetch_latency_ms`, `mfa_challenges_per_min`, `failed_oidc_flows`, `key_rotation_events`, *`avg_token_size_bytes`*, *`revoked_tokens_per_min`*, *`session_introspection_rate`*, *`password_reset_rate`*, *`error_rate`* |
 | `observabilitypipeline`  | 4         | `metrics_ingested_per_sec`, `dropped_metrics_per_sec`, `ingest_lag_s`, `pipeline_error_rate`, *`cardinality_count`*, *`retention_hours`*, *`compactions_per_min`*, *`shard_count`*, *`flush_latency_ms`*, *`cpu_util_pct`* |
+| `gpu_inference`          | 10        | `batch_size`, `model_size_b`, `gpu_memory_pressure`, `kv_cache_usage`, `memory_fragmentation`, `gpu_utilization`, `throughput_tps`, `latency_p50_ms`, `latency_p99_ms`, `failure` |
 
 Anomaly specs only target metrics within the historic default set, so dropping the
 metric cap below a component's default count will filter out anomalies whose target
@@ -709,6 +717,7 @@ radius to additional components.
 | `llm_rate_limit_fallout` | medium | 5 | Day 5 09:30 | instant | `llm_analytics`, `apigateway` | Upstream rate-limiting — 18% error rate, latency spikes to 4,200 ms; cascades to gateway error rate ~22%. |
 | `llm_weekend_batch` | medium | 6 | Day 6 02:00 | instant | `llm_analytics`, `objectstore`, `cacheservice`, `database` | Weekend batch analytics — 320k tokens/s, context overflow rate 8.5; cascades to object-store bandwidth saturation, DB query/CPU surge, cache hit-ratio drop. |
 | `llm_second_viral` | medium | 7 | Day 7 16:45 | instant | `llm_analytics`, `apigateway`, `cacheservice`, `database` | Second viral event — 10× spike to 450/s, 420k tokens/s; cascades to gateway active connections, CPU, DB connections, cache errors. |
+| `gpu_inference_fragmentation` | medium | 10 | Day 10–31 | 21d ramp + sparse 1 min pulses | `gpu_inference`, `llm_analytics` | GPU serving allocator fragmentation and memory pressure creep upward while KV cache stays saturated; sparse failure pulses drive p50/p99 latency spikes, throughput collapse, lower utilization, and `failure=1`, with LLM latency/error cascades. |
 | `regional_failover_storm` | **high** | 1 | 05:00 | 5 min | `loadbalancer`, `apigateway`, `authservice`, `database`, `mqservice` | Regional failover — backend 5xx ramps to 220/s over 5 min; cascades to gateway 5xx (~30%), DB connections (~9,000), auth errors (~40%), MQ pending ~500k. |
 | `dns_provider_outage` | **high** | 1 | 11:00 | 6 min | `loadbalancer`, `apigateway`, `identityprovider`, `paymentservice` | External DNS provider outage — TLS handshake errors 45/s, backend 5xx 80/s, health check failures 8/s, sustained for 6 min; cascades to OIDC callback failures (~150), payment provider 5xx (~32%), gateway error rate (~28%). Sharp step-up at T0 and step-down at T1. |
 | `cache_db_meltdown` | **high** | 1 | 11:30 | 10 min | `cacheservice`, `database`, `llm_analytics`, `apigateway` | Coordinated cache memory saturation (80%→99.5%) + DB read latency (800 ms); cascades to doubled LLM latency and elevated gateway backend latency. |

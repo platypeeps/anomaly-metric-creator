@@ -33,12 +33,12 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _run(amc, out_dir, *, days, extra_args=None, interval_seconds=None):
+def _run(amc, out_dir, *, days, extra_args=None, interval_seconds=1.0):
     """Thin wrapper over conftest.run_capture that throws away the stderr
     SimpleNamespace so existing call sites can keep returning ``out_dir``.
 
-    ``interval_seconds=None`` (default) preserves the script's 1s default so
-    the locked N3_ONE_DAY_HASHES / N3_SEVEN_DAY_HASHES remain valid.
+    ``interval_seconds=1.0`` (default) preserves the full-resolution locked
+    N3_ONE_DAY_HASHES / N3_SEVEN_DAY_HASHES.
 
     Routing through the shared helper keeps the suite's single
     session-scoped ``amc`` module load (see conftest._load_amc) shared
@@ -361,24 +361,26 @@ def test_dst_artifact_with_multi_instance_rejected(amc, tmp_path):
 
 def test_preflight_cap_multiplied_by_n(amc, tmp_path):
     """A run that passes with N=1 trips the cap when N pushes it over."""
-    # Both invocations use the default --components all selector. With 13
-    # components each emitting their default metric counts (4–8 per
-    # component), ``total_metrics`` is ~75 metrics summed across the run.
-    # The cap formula is rows_per_component * total_metrics * N.
+    # Both invocations use the default --components all selector. With 14
+    # components each emitting their default metric counts (4–10 per
+    # component), ``total_metrics`` is 85 metrics summed across the run.
+    # The cap formula is rows_per_component * total_metrics * N. This test
+    # opts into 1s sampling explicitly because the CLI default is now 60s.
     #
-    # First leg: 86400 rows * ~75 metrics * 1 instance = ~6.5M cells —
+    # First leg: 86400 rows * 85 metrics * 1 instance = ~7.3M cells —
     # well under the 200M cap. Pair --allow-huge-output so the assertion
     # only exercises argument parsing (no generation) and stays fast.
     args_n1 = amc.parse_args([
-        "--output-dir", str(tmp_path),
-        "--duration-days", "1",
-        "--instances-per-component", "1",
-        "--allow-huge-output",
-    ])
+            "--output-dir", str(tmp_path),
+            "--duration-days", "1",
+            "--interval-seconds", "1.0",
+            "--instances-per-component", "1",
+            "--allow-huge-output",
+        ])
     assert args_n1.instances_per_component == 1
 
     # Second leg: same default --components all, but 7 days and N=20.
-    # 604800 rows * ~75 metrics * 20 instances = ~907M cells > 200M cap,
+    # 604800 rows * 85 metrics * 20 instances = ~1.03B cells > 200M cap,
     # so parse_args must reject without --allow-huge-output. (At 1 day
     # the same N=20 would land at ~130M, under the cap — the 7-day knob
     # is what trips it deterministically.)
@@ -386,6 +388,7 @@ def test_preflight_cap_multiplied_by_n(amc, tmp_path):
         amc.parse_args([
             "--output-dir", str(tmp_path),
             "--duration-days", "7",
+            "--interval-seconds", "1.0",
             "--instances-per-component", "20",
         ])
 

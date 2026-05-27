@@ -354,7 +354,7 @@ def test_scenarios_have_specs(amc):
 
 
 def test_expected_scenario_slugs_present(amc):
-    """All 29 expected scenario slugs are present in the registry."""
+    """All 32 expected scenario slugs are present in the registry."""
     expected = {
         # Same-day medium
         "auth_brute_force", "cache_collapse", "api_cpu_saturation", "db_stall",
@@ -375,6 +375,8 @@ def test_expected_scenario_slugs_present(amc):
         "cache_leak_restart", "jwks_rotation_chaos", "db_disk_exhaustion",
         # Partial-outage scenarios (Phase 7)
         "auth_pod_failure", "cache_az_isolation",
+        # GPU inference serving layer
+        "gpu_inference_fragmentation",
     }
     actual = set(amc.SCENARIOS.keys())
     missing = expected - actual

@@ -34,16 +34,16 @@ from conftest import SCRIPT_PATH, run_capture
 # - the per-row metric column order,
 # - the dropped-cell skip behavior on ``--drop-rate`` survivors.
 GAUGES_ONE_DAY_HASH = (
-    "f1b760f0cf1da0dc3eaeb55a4278cd56b024f758c26cdd5fc9693b6f3a5e9c08"
+    "a2f7f5a8c1a7bfea85cb2c7685f608bec0723587cb01d34fda297afad5ff6cb1"
 )
 GAUGES_SEVEN_DAY_HASH = (
-    "1076e0ac35a6b4e2bc3fc0532f4308eab684aadaa59243a47a52048f59045747"
+    "914d5a54030516518ec7ceef4d84788bf080457c31c0ad574f685d27ee486126"
 )
 
 
 def _sha256(path: Path) -> str:
-    """Chunked SHA-256 so the N=3 long-form gauges output (~1.3 GB at
-    1-day default) doesn't get slurped into memory in one shot."""
+    """Chunked SHA-256 so large long-form gauge outputs are not slurped
+    into memory in one shot."""
     h = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(65536), b""):
@@ -56,25 +56,23 @@ def _sha256(path: Path) -> str:
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def one_day_gauges_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so
-    # GAUGES_ONE_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution GAUGES_ONE_DAY_HASH.
     out = tmp_path_factory.mktemp("ver138_one_day_gauges")
     return run_capture(
         amc, out, days=1,
         extra_args=["--emit-selection", "metrics,gauges"],
-        interval_seconds=None,
+        interval_seconds=1.0,
     )
 
 
 @pytest.fixture(scope="module")
 def seven_day_gauges_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so
-    # GAUGES_SEVEN_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution GAUGES_SEVEN_DAY_HASH.
     out = tmp_path_factory.mktemp("ver138_seven_day_gauges")
     return run_capture(
         amc, out, days=7,
         extra_args=["--emit-selection", "metrics,gauges"],
-        interval_seconds=None,
+        interval_seconds=1.0,
     )
 
 
@@ -480,7 +478,7 @@ def test_non_component_files_excludes_gauges_csv_from_combine_discovery(amc):
 # when the per-component CSVs have dimension columns in their header.
 # ------------------------------------------------------------------
 N3_GAUGES_ONE_DAY_HASH = (
-    "71164965eb8ad036ff6e0cf1ce52dfadff00406b094f39ebf49c4808c108684c"
+    "d83f102c7bb5ca7a4ed9347e37fed71bd144c2e6b75b02780cd01e9da87a782c"
 )
 
 
@@ -553,7 +551,7 @@ def test_n3_gauges_csv_tie_break_within_timestamp(n3_one_day_gauges_run):
 
     Streams ``gauges.csv`` via ``csv.DictReader`` and bails out after
     the first 60 timestamp groups (the first minute of a 1-day run)
-    so the ~19.4M-row N=3 long-form file never sits in memory at once.
+    so the ~22M-row N=3 long-form file never sits in memory at once.
     The keep-only-the-current-group accumulator buffers at most one
     timestamp's rows (~117 entries at full fan-out) before flushing
     the per-group order checks."""
@@ -620,15 +618,15 @@ def test_n3_gauges_csv_dimension_values_match_per_component_csvs(
     from the closure would surface here even before the byte hash.
 
     Streams gauges.csv via ``csv.DictReader`` (no row-list materialization)
-    so the ~19.4M-row long-form file at N=3 1-second resolution doesn't
+    so the ~22M-row long-form file at N=3 1-second resolution doesn't
     blow up memory; derives ``expected_tuples`` from
     ``_scan_instance_block_layout`` (one tuple per block, not per row)
     instead of re-reading every per-component CSV cell-by-cell."""
     out_dir = n3_one_day_gauges_run.out_dir
 
     # Stream gauges.csv into a set of unique tuples (O(unique tuples)
-    # memory, NOT O(rows)). At N=3 we expect 13 components × 3 instances
-    # = 39 tuples max.
+    # memory, NOT O(rows)). At N=3 we expect 14 components × 3 instances
+    # = 42 tuples max.
     gauge_tuples: set[tuple[str, ...]] = set()
     with open(out_dir / "gauges.csv", "r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
@@ -866,8 +864,8 @@ def test_scan_instance_block_layout_dimensionless(amc, tmp_path):
 
 
 def test_ensure_long_form_fd_capacity_fits_under_default_limit(amc):
-    """At the documented N=3 default fan-out (13 components × 3 instances
-    = 39 sources), the FD pre-flight is a no-op on every platform that
+    """At the documented N=3 default fan-out (14 components × 3 instances
+    = 42 sources), the FD pre-flight is a no-op on every platform that
     has enough headroom in its FD hard limit — including macOS's
     default 256 soft limit. A regression that lowered the margin or
     capped the rlimit raise aggressively would surface here before the

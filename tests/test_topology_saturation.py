@@ -474,7 +474,7 @@ def test_realistic_mode_latency_csvs_byte_identical_to_default(
     byte-for-byte (the session-scoped ``one_day_run_a`` fixture)."""
     explicit = run_capture(
         amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=None,  # match one_day_run_a's 1s default for byte identity
+        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
         extra_args=["--topology-mode", "realistic"],
     )
     for filename in (
@@ -494,12 +494,12 @@ def test_realistic_mode_latency_csvs_byte_identical_to_default(
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def realistic_one_day_sat(amc, tmp_path_factory):
-    # interval_seconds=None keeps 86 400 rows/day so the Pearson correlation
+    # interval_seconds=1.0 keeps 86,400 rows/day so the Pearson correlation
     # checks in test_realistic_latency_correlates_with_upstream_load have
     # enough data points to clear the 0.15 threshold.
     out = tmp_path_factory.mktemp("phase4_realistic")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--topology-mode", "realistic"],
     )
 
@@ -511,11 +511,11 @@ def independent_one_day_sat(amc, tmp_path_factory):
     parametrizations so we do one ``run_capture`` per mode for this
     module instead of one per (component, metric) case (Copilot
     feedback on PR #49)."""
-    # interval_seconds=None keeps the same row density as realistic_one_day_sat
+    # interval_seconds=1.0 keeps the same row density as realistic_one_day_sat
     # so the contrast assertions compare equivalent sample sizes.
     out = tmp_path_factory.mktemp("phase4_independent")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--topology-mode", "independent"],
     )
 

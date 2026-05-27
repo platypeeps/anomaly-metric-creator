@@ -2,10 +2,12 @@
 """
 Generate IoT-style metric logs for a SaaS stack with built-in anomalies.
 
-Defaults to one day at 1-second resolution. Use ``--duration-days N`` to span
-more days; multi-day scenarios activate based on their own ``days_required``
-(see the README scenario catalog for current values). ``--duration-days 7``
-currently unlocks the complete multi-day catalog. Anomaly specs whose
+Defaults to 50,000 rows at 1-minute resolution, matching the reference
+observability telemetry CSV shape. Use ``--duration-days N`` to span more days;
+multi-day scenarios activate based on their own ``days_required`` (see the
+README scenario catalog for current values). ``--duration-days 7`` currently
+unlocks the original week-long catalog; the default 50,000-row window also
+captures the longer GPU inference serving pattern. Anomaly specs whose
 ``time_offset`` falls outside the configured window are skipped with a warning
 on stderr.
 """
@@ -39,11 +41,14 @@ import numpy as np
 # ------------------------------------------------------------------
 START = datetime.datetime(2026, 3, 10, 0, 0, 0)
 SECONDS_PER_DAY = 86_400
-DEFAULT_DURATION_DAYS = 1
+DEFAULT_ROW_COUNT = 50_000
 DEFAULT_SEED = 42
 DEFAULT_OUTPUT_DIR = Path("iot_logs")
 DEFAULT_DROP_RATE = 0.0005
-DEFAULT_INTERVAL_SECONDS = 1.0
+DEFAULT_INTERVAL_SECONDS = 60.0
+DEFAULT_DURATION_DAYS = (
+    DEFAULT_ROW_COUNT * DEFAULT_INTERVAL_SECONDS / SECONDS_PER_DAY
+)
 DEFAULT_OTEL_STREAM_AUTH_SCHEME = "Bearer"
 DEFAULT_SIGNAL_LEVEL = "medium"
 
@@ -334,6 +339,151 @@ class Edge:
     saturation: SaturationParams | None = None
     signal: Callable[[dict[str, np.ndarray]], "np.ndarray | None"] | None = None
     correlation_threshold: float | None = None
+
+
+# ------------------------------------------------------------------
+# Scenario helper builders
+# ------------------------------------------------------------------
+def _const_generator(value: float):
+    """Return a generator callable that emits ``value`` for every row."""
+    return lambda _ts, _idx, _value=value: _value
+
+
+def _gpu_inference_fragmentation_specs(
+) -> tuple[tuple[tuple[str, dict], ...], tuple[tuple[str, dict], ...]]:
+    """Scenario specs modeled after the reference observability telemetry CSV.
+
+    The CSV's failure labels are mostly isolated one-minute points, with
+    memory fragmentation and memory pressure carrying the strongest lift. The
+    scenario below therefore combines a slow allocator-pressure ramp with
+    sparse 60-second pulses rather than a single sustained outage.
+    """
+    start = 9 * SECONDS_PER_DAY + 4 * 3600  # Day 10 04:00
+    pulse_rows = (
+        (60, "early allocator recovery", 0.82, 0.90, 240.0, 900.0, 0.0, 0.62),
+        (2 * SECONDS_PER_DAY, "repeat OOM recovery", 0.84, 0.91, 248.0, 930.0, 0.0, 0.60),
+        (5 * SECONDS_PER_DAY, "KV-cache compaction stall", 0.87, 0.93, 258.0, 965.0, 0.0, 0.58),
+        (8 * SECONDS_PER_DAY, "allocator free-list churn", 0.89, 0.94, 266.0, 995.0, 0.0, 0.56),
+        (11 * SECONDS_PER_DAY, "serving admission throttle", 0.91, 0.96, 274.0, 1030.0, 0.0, 0.54),
+        (14 * SECONDS_PER_DAY, "CUDA OOM retry", 0.93, 0.97, 280.0, 1050.0, 0.0, 0.53),
+        (17 * SECONDS_PER_DAY, "late allocator collapse", 0.94, 0.98, 285.0, 1065.0, 0.0, 0.52),
+        (20 * SECONDS_PER_DAY, "tail-latency failure burst", 0.95, 0.98, 286.0, 1070.0, 0.0, 0.51),
+    )
+
+    specs: list[tuple[str, dict]] = [
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": 21 * SECONDS_PER_DAY,
+            "shape": "ramp_linear",
+            "shape_params": {"start": 0.62, "end": 0.88},
+            "metric": "memory_fragmentation",
+            "description": "GPU allocator fragmentation creep - memory_fragmentation ramps 0.62 -> 0.88 over 21d",
+            "generator": _const_generator(0.62),
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": 21 * SECONDS_PER_DAY,
+            "shape": "ramp_linear",
+            "shape_params": {"start": 0.72, "end": 0.94},
+            "metric": "gpu_memory_pressure",
+            "description": "GPU memory pressure creep - gpu_memory_pressure ramps 0.72 -> 0.94 over 21d",
+            "generator": _const_generator(0.72),
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": 21 * SECONDS_PER_DAY,
+            "shape": "sustained",
+            "metric": "kv_cache_usage",
+            "description": "KV cache saturation - kv_cache_usage pinned near 1.0 during allocator pressure",
+            "generator": _const_generator(1.0),
+        }),
+    ]
+
+    for offset, label, frag, pressure, p50, p99, throughput, util in pulse_rows:
+        pulse_start = start + offset
+        specs.extend([
+            ("gpu_inference", {
+                "time_offset": pulse_start,
+                "duration_seconds": 60,
+                "shape": "sustained",
+                "metric": "memory_fragmentation",
+                "description": f"GPU inference failure pulse ({label}) - memory_fragmentation {frag:.2f}",
+                "generator": _const_generator(frag),
+            }),
+            ("gpu_inference", {
+                "time_offset": pulse_start,
+                "duration_seconds": 60,
+                "shape": "sustained",
+                "metric": "gpu_memory_pressure",
+                "description": f"GPU inference failure pulse ({label}) - gpu_memory_pressure {pressure:.2f}",
+                "generator": _const_generator(pressure),
+            }),
+            ("gpu_inference", {
+                "time_offset": pulse_start,
+                "duration_seconds": 60,
+                "shape": "sustained",
+                "metric": "latency_p50_ms",
+                "description": f"GPU inference failure pulse ({label}) - p50 latency {p50:.0f} ms",
+                "generator": _const_generator(p50),
+            }),
+            ("gpu_inference", {
+                "time_offset": pulse_start,
+                "duration_seconds": 60,
+                "shape": "sustained",
+                "metric": "latency_p99_ms",
+                "description": f"GPU inference failure pulse ({label}) - p99 latency {p99:.0f} ms",
+                "generator": _const_generator(p99),
+            }),
+            ("gpu_inference", {
+                "time_offset": pulse_start,
+                "duration_seconds": 60,
+                "shape": "sustained",
+                "metric": "throughput_tps",
+                "description": f"GPU inference failure pulse ({label}) - throughput collapses",
+                "generator": _const_generator(throughput),
+            }),
+            ("gpu_inference", {
+                "time_offset": pulse_start,
+                "duration_seconds": 60,
+                "shape": "sustained",
+                "metric": "gpu_utilization",
+                "description": f"GPU inference failure pulse ({label}) - utilization dips to {util:.2f}",
+                "generator": _const_generator(util),
+            }),
+            ("gpu_inference", {
+                "time_offset": pulse_start,
+                "duration_seconds": 60,
+                "shape": "sustained",
+                "metric": "failure",
+                "description": f"GPU inference failure pulse ({label}) - failure label set",
+                "generator": _const_generator(1.0),
+            }),
+        ])
+
+    cascades: list[tuple[str, dict]] = [
+        ("llm_analytics", {
+            "time_offset": start + 90,
+            "metric": "avg_llm_latency_ms",
+            "description": "Cascading: GPU inference allocator recovery drags LLM latency to ~1,900 ms",
+            "generator": lambda ts, idx, rng: 1900 + rng.normal(0, 60),
+            "severity": DEFAULT_SEVERITY,
+        }),
+        ("llm_analytics", {
+            "time_offset": start + 20 * SECONDS_PER_DAY + 90,
+            "metric": "llm_api_error_rate",
+            "description": "Cascading: repeated GPU inference failures surface as LLM API errors (~12%)",
+            "generator": _const_generator(0.12),
+            "severity": DEFAULT_SEVERITY,
+        }),
+    ]
+
+    return tuple(specs), tuple(cascades)
+
+
+(
+    _GPU_INFERENCE_FRAGMENTATION_PRIMARY_SPECS,
+    _GPU_INFERENCE_FRAGMENTATION_CASCADE_SPECS,
+) = _gpu_inference_fragmentation_specs()
 
 
 # ------------------------------------------------------------------
@@ -2034,6 +2184,35 @@ COMPONENTS: dict[str, list[MetricSpec]] = {
                    unit="pct", semantic_type="ratio",
                    min_value=0, max_value=100),
     ],
+    "gpu_inference": [
+        MetricSpec("batch_size", 10.8, 7.0, clip_min=1,
+                   unit="requests", semantic_type="gauge",
+                   min_value=1, dtype="int"),
+        MetricSpec("model_size_b", 30.0, 14.0, clip_min=7,
+                   unit="B parameters", semantic_type="gauge",
+                   min_value=0, dtype="int"),
+        MetricSpec("gpu_memory_pressure", 0.625, 0.07, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("kv_cache_usage", 0.835, 0.03, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("memory_fragmentation", 0.50, 0.08, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("gpu_utilization", 0.75, 0.04, clip_min=0,
+                   unit="ratio", semantic_type="ratio",
+                   min_value=0, max_value=1),
+        MetricSpec("throughput_tps", 25.4, 10.0, clip_min=0,
+                   unit="tokens/s", semantic_type="rate", min_value=0),
+        MetricSpec("latency_p50_ms", 109.0, 28.0, clip_min=0,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("latency_p99_ms", 383.0, 110.0, clip_min=0,
+                   unit="ms", semantic_type="gauge", min_value=0),
+        MetricSpec("failure", 0.0, 0.0, clip_min=0,
+                   unit="bool", semantic_type="gauge",
+                   min_value=0, max_value=1, dtype="int"),
+    ],
 }
 
 # Maximum metrics any component can expose. Caps both the catalog above and
@@ -2064,6 +2243,7 @@ DEFAULT_METRICS_PER_COMPONENT: dict[str, int] = {
     "paymentservice": 5,
     "identityprovider": 5,
     "observabilitypipeline": 4,
+    "gpu_inference": 10,
 }
 
 _components_keys = set(COMPONENTS.keys())
@@ -4431,6 +4611,19 @@ SCENARIOS: dict[str, Scenario] = {
         ),
     ),
     # ------------------------------------------------------------------
+    # Long-window GPU inference serving catalog (default 50k-row shape)
+    # ------------------------------------------------------------------
+    "gpu_inference_fragmentation": Scenario(
+        id="gpu_inference_fragmentation",
+        name="GPU inference allocator fragmentation + sparse failures",
+        severity="medium",
+        days_required=10,
+        category="gpu_inference",
+        components_touched=("gpu_inference", "llm_analytics"),
+        primary_specs=_GPU_INFERENCE_FRAGMENTATION_PRIMARY_SPECS,
+        cascade_specs=_GPU_INFERENCE_FRAGMENTATION_CASCADE_SPECS,
+    ),
+    # ------------------------------------------------------------------
     # High-pressure cross-component scenarios (days_required=1, severity=high)
     # ------------------------------------------------------------------
     "regional_failover_storm": Scenario(
@@ -6259,8 +6452,11 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Generate synthetic IoT metric logs with anomalies.",
     )
-    p.add_argument("--duration-days", type=int, default=DEFAULT_DURATION_DAYS,
-                   help=f"Number of days of metrics to generate (default: {DEFAULT_DURATION_DAYS}). "
+    p.add_argument("--duration-days", type=float, default=DEFAULT_DURATION_DAYS,
+                   help=f"Number of days of metrics to generate "
+                        f"(default: {DEFAULT_DURATION_DAYS:.6g}, "
+                        f"which yields {DEFAULT_ROW_COUNT:,} rows at the "
+                        f"default {DEFAULT_INTERVAL_SECONDS:g}s interval). "
                         "Each scenario's ``days_required`` is the minimum value at which "
                         "any of its specs become in range; the full multi-day catalog "
                         "manifests at 7+.")
@@ -6609,6 +6805,8 @@ def parse_args(argv=None):
             file=sys.stderr,
         )
 
+    if not math.isfinite(args.duration_days):
+        p.error("--duration-days must be a finite number")
     if args.duration_days < 1:
         p.error("--duration-days must be >= 1")
     if not 0.0 <= args.drop_rate <= 1.0:
@@ -7196,7 +7394,7 @@ def _write_combined_long_form(
 
     # Each source holds an open file handle for the lifetime of the
     # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
-    # 13 components × 20 instances = 260 handles) either bump the
+    # 14 components × 20 instances = 280 handles) either bump the
     # rlimit up to fit or fail with an actionable message before
     # ``heapq.merge`` tries to prime the heap.
     _ensure_long_form_fd_capacity(len(sources))
@@ -8505,7 +8703,7 @@ def write_gauges_csv(
 
     # Each source holds an open file handle for the lifetime of the
     # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
-    # 13 components × 20 instances = 260 handles) either bump the
+    # 14 components × 20 instances = 280 handles) either bump the
     # rlimit up to fit or fail with an actionable message before
     # ``heapq.merge`` tries to prime the heap.
     _ensure_long_form_fd_capacity(len(sources))

@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added a `gpu_inference` component whose default CSV columns match the
+  reference observability telemetry shape: batch/model size, GPU memory
+  pressure, KV cache usage, memory fragmentation, utilization, throughput,
+  p50/p99 latency, and failure label.
+- Added the `gpu_inference_fragmentation` scenario to model slow allocator
+  pressure plus sparse one-minute GPU-serving failure pulses with LLM latency
+  and error cascades.
 - Added `--otel-gauges-only` to stream only OTLP Gauge metric payloads to
   `--otel-metrics-endpoint`, skipping the anomaly counter, log, and trace OTEL
   signal stream.
@@ -13,6 +20,9 @@
 
 ### Changed
 
+- Changed the CLI defaults to match the reference CSV shape: 50,000 rows at a
+  60-second interval, using a fractional default `--duration-days` value of
+  about 34.72 days.
 - Kept OTEL HTTP failure stderr output compact while moving the larger
   response-header and payload diagnostics into the activity log.
 - In gauge-only mode, the gauge streamer starts a fresh activity log instead

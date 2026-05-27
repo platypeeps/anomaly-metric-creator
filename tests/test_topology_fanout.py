@@ -116,7 +116,7 @@ def test_topology_fanout_realistic_matches_default_byte_for_byte(
     is the default path and explicitly passing the flag is a no-op."""
     explicit = run_capture(
         amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=None,  # match one_day_run_a's 1s default for byte identity
+        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
         extra_args=["--topology-mode", "realistic"],
     )
     for filename in (
@@ -165,11 +165,11 @@ def test_topology_generation_order_apigateway_before_fanout(amc):
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def realistic_one_day(amc, tmp_path_factory):
-    # interval_seconds=None keeps 86 400 rows/day so the Pearson correlation
+    # interval_seconds=1.0 keeps 86,400 rows/day so the Pearson correlation
     # checks have enough data points to clear their thresholds.
     out = tmp_path_factory.mktemp("phase3_realistic")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--topology-mode", "realistic"],
     )
 

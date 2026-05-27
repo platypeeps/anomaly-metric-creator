@@ -115,7 +115,7 @@ def test_manifest_csv_cross_check(amc, tmp_path, seed):
     # (round(time_offset / 1.0)) to verify manifest entries map back to
     # populated CSV cells. 60s rows would round multiple specs to the same
     # row and lose the per-second precision the assertion relies on.
-    run = run_capture(amc, out, days=1, seed=seed, interval_seconds=None)
+    run = run_capture(amc, out, days=1, seed=seed, interval_seconds=1.0)
 
     manifest = read_manifest(run.out_dir)
     assert manifest, f"seed={seed}: expected at least one manifest entry"
@@ -1022,7 +1022,7 @@ def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
     # manifest span_end against per-second timestamps in the component CSV
     # and matches scenario time_offsets (often at minute boundaries that
     # collide on the same 60s row).
-    run_capture(amc, out_dir, days=days, extra_args=extra, interval_seconds=None)
+    run_capture(amc, out_dir, days=days, extra_args=extra, interval_seconds=1.0)
 
     rows = read_manifest(out_dir)
     assert rows, f"manifest empty for {days}-day run"
@@ -1147,13 +1147,13 @@ def test_span_end_walks_back_when_nominal_end_row_is_dropped(amc, tmp_path):
     (caught by the strict walk-back invariant below).
     """
     out_dir = tmp_path / "walk_back_high_drop"
-    # interval_seconds=None pins the 1s default because this test
+    # interval_seconds=1.0 pins the 1s cadence because this test
     # asserts n_rows == 86400 and matches each manifest row's span_end back
     # to per-second timestamps in the component CSV.
     run_capture(
         amc, out_dir, days=1, drop_rate=0.7,
         extra_args=["--signal-level", "high"],
-        interval_seconds=None,
+        interval_seconds=1.0,
     )
 
     rows = read_manifest(out_dir)

@@ -3,9 +3,9 @@ from pathlib import Path
 
 def test_parse_args_defaults(amc):
     args = amc.parse_args(["--output-dir", "test_out"])
-    assert args.duration_days == 1
+    assert args.duration_days == amc.DEFAULT_DURATION_DAYS
     assert args.seed == 42
-    assert args.interval_seconds == 1.0
+    assert args.interval_seconds == 60.0
     assert args.drop_rate == 0.0005
     assert args.output_dir == Path("test_out")
 
@@ -26,6 +26,9 @@ def test_parse_args_custom(amc):
 @pytest.mark.parametrize("flag, value", [
     ("--duration-days", "0"),
     ("--duration-days", "-1"),
+    ("--duration-days", "nan"),
+    ("--duration-days", "inf"),
+    ("--duration-days", "-inf"),
     ("--drop-rate", "-0.1"),
     ("--drop-rate", "1.1"),
     ("--interval-seconds", "0"),
@@ -659,7 +662,7 @@ def test_preflight_accepts_large_run_when_narrow_components_drop_under_cap(amc):
     cell estimate under the cap.
 
     ``--duration-days 7 --interval-seconds 0.1`` emits 6.048M rows. With
-    all components and default metrics (75 total metrics) that is ~454M
+    all components and default metrics (85 total metrics) that is ~514M
     cells (over the cap), but narrowed to ``observabilitypipeline`` (4
     default metrics) it is ~24M cells (well under)."""
     args = amc.parse_args([

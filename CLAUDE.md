@@ -14,7 +14,8 @@ The script uses a single generator function `generate_component()` that:
    config (`base_dir`, `total_seconds`, `drop_rate`, `interval`, pre-built timestamp
    arrays).
 2. Builds `floor(total_seconds / interval)` rows. At `interval=1.0` this is one row
-   per second.
+   per second; the CLI default is 50,000 rows at `interval=60.0`, matching the
+   reference observability telemetry CSV shape.
 3. Injects anomalies at their nearest row (`round(time_offset / interval)`). Specs
    whose row index falls outside `[0, n_rows)` are warned on stderr and skipped.
 4. Randomly emits blank lines at `drop_rate` to simulate packet loss.
@@ -586,7 +587,7 @@ encodes "this measurement was emitted" via row presence), the same way
 **File-descriptor pre-flight (long-form path only).** The long-form
 merge holds one open file handle per `(component, instance)` source
 for the lifetime of the merge — `heapq.merge` primes every iterator,
-so at max fan-out (13 components × 20 instances = 260 sources) a run
+so at max fan-out (14 components × 20 instances = 280 sources) a run
 can exceed the default macOS soft limit (256). Before the merge,
 `_ensure_long_form_fd_capacity(len(sources))` reads `RLIMIT_NOFILE`,
 raises the soft limit to fit (capped by the hard limit), and otherwise

@@ -96,12 +96,12 @@ def synthetic_n3_run(amc, tmp_path_factory):
         out = tmp_path_factory.mktemp("ver158_n3_synthetic_pod0_spike")
         run = run_capture(
             amc, out, days=1,
-            # ``interval_seconds=None`` keeps 1 row/s so the
+            # ``interval_seconds=1.0`` keeps 1 row/s so the
             # positional ``vals[lo_s:hi_s]`` window slicing below
             # holds the "row index == elapsed seconds" invariant.
             # ``drop_rate=0.0`` prevents dropped rows from shifting
             # the spike/baseline window offsets.
-            interval_seconds=None,
+            interval_seconds=1.0,
             drop_rate=0.0,
             extra_args=[
                 "--instances-per-component", "3",

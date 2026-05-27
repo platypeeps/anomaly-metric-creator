@@ -118,15 +118,22 @@ SCENARIO_CASCADES_BY_SLUG = {
 # deprecation alias and is scheduled for removal after phase 9. When
 # updating these hashes again, regenerate against the realistic default
 # rather than the legacy alias.
+#
+# 2026-05-27: re-locked the topology-coupled front-half component hashes
+# after adding the gpu_inference component. The new component joins the
+# topology-aware generation pass, which changes coupled baselines for
+# apigateway/authservice/cacheservice/database/llm_analytics while leaving
+# the anomaly manifest and uncoupled component bytes stable.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
     "anomalies.csv": "b2978b6a5abdfc3e253120a04302895c6f678f382fd6fea1acba569b28f355e5",
-    "apigateway.csv": "bd4cad461c8c5d09c057f0cd40081e31c3987441ee4cfee1610ac9b33a171044",
-    "authservice.csv": "b199dc119b6780725729f557208d6437b60f059d21d98dcd975771c5c34b3594",
-    "cacheservice.csv": "aaea7333b9cd47bf2806129945f0dddeef861cfdd8c7bd0c665a29c4d62b3158",
-    "database.csv": "9687021257678a2bdf3316b3452f548e527e855f2f24dca78a015b419f9155fc",
+    "apigateway.csv": "1ba887ad5ae65ec5031f924cd47df11fd9aea80a0d085850020416c32c512965",
+    "authservice.csv": "de7944f02c35056dd732b7dc335d460279f6dc3bbe47c54d96d916624b754f3f",
+    "cacheservice.csv": "79199e9c12f354b7005328dad472cac659f7191805236239301e19710fb8b7e2",
+    "database.csv": "ee622c3478d22dbcdbaf450f7b2b2f1fe4b60eab0e638738ef0798607f8eb7f5",
+    "gpu_inference.csv": "0628fcd0d51422739f4632b429ba38ba13ca88b665575f7d751135cdd0b96e4f",
     "identityprovider.csv": "6ccf54d998faadb8cf2bee8a7e35b4b6f6ec406b6cff920121b2066220aeb4e1",
-    "llm_analytics.csv": "3c18b9f444a61950c8b9d9eadbcacd59fee1642f5ce274e05a616c605de2da6c",
+    "llm_analytics.csv": "f1ecaaab70c563736fca64acb84b78a05a4857033a28b6a50480bfc454836025",
     "loadbalancer.csv": "c1e1ea63928870c6905b863f4f14ed0e990012ddab7919ab00707a82c4ab00b2",
     "mqservice.csv": "6bcaa3310232f13fa018f99f71583397cf39c7b2d07530f92098b2b84f9be7d9",
     "objectstore.csv": "a6993057d62c0565cc9ca495db85d08e4a6186660b3c220ff7389bb4be21bc69",
@@ -138,12 +145,13 @@ DEFAULT_ONE_DAY_HASHES = {
 
 DEFAULT_SEVEN_DAY_HASHES = {
     "anomalies.csv": "97e4cb8b63d2629a0499dd27c07d5dce68003e0306bc68a22bcbd60b827ae725",
-    "apigateway.csv": "9b0ebf5457784bac311e9b318d7d4e30b5017678f16bda9ab46b778841050040",
-    "authservice.csv": "8fe3ade4c6b1a7e93f6d8918d9b7ef98acc4bd4b786e196e6dfc6907f756fca8",
-    "cacheservice.csv": "a92c39968368f9ecc468b36e55edbae6461bc9e4b84631f4084236d4ad7f0d19",
-    "database.csv": "9c56abe6bf559d21593f8057a0d1563688074033e3f02a9a9c4352aa49a97522",
+    "apigateway.csv": "1d93962f06bfce84956c4d923f0e37c7c6b325e909c37dec969edfdae73066d5",
+    "authservice.csv": "935944a4ef55c7585462fe034c2d66baaa37d4e72690f5bdec3086d0db65f597",
+    "cacheservice.csv": "f5b15d2ce5bf25242ab382127a8506c747b70289743b05e97a0624b94b9fad67",
+    "database.csv": "bd7f65864626528581a2e32d80641ed31e446945ce9e6283f0d4e3bbd449dd0a",
+    "gpu_inference.csv": "871603a802aa67833b65c546d4f072a45c395d5c69865dd17278a93d473fbde6",
     "identityprovider.csv": "926b28780af3efc4815ed964dd03c3ac8d686dcb3f8236e5cce71dea7530ae67",
-    "llm_analytics.csv": "2c195cdc46d203ee316689c09195558c1d747803e78b6b3b7513055dc17fb87b",
+    "llm_analytics.csv": "fd406d0892d468264a4f4c20f67ec3ebeede6712b7aa5770f6789fd5a70aecab",
     "loadbalancer.csv": "fcb55773a22331cbf249aadc0b4e7f5eb5fcfe9d4c1dede58270366fa8ac7c6f",
     "mqservice.csv": "265e99ecfebf21d5cb6cb11a068454873faafc861c156b88fef7dc2609c6896e",
     "objectstore.csv": "a21108e432b068a15bde2c8790b48b8961f792a87bd00227e3d18f965a75b88f",
@@ -208,13 +216,17 @@ HIGH_SEVEN_DAY_CAPPED_HASHES = {
     # adding auth_pod_failure and cache_az_isolation (both high severity,
     # days_required=1) expands the high-severity pool, shifting the
     # --anomaly-count 100 sampling draw.
+    #
+    # 2026-05-27: re-locked the same topology-coupled front-half component
+    # hashes affected by adding gpu_inference to the component graph.
     "anomalies.csv": "090cb62fa7926d635ade8510e4a3c3bd7d483b2481dd6d40849c6ba20ec09eea",
-    "apigateway.csv": "193d0ed891a7d40f0c32b434a7c26aceed0af0e404f0550dcb96f61fde4e02cb",
-    "authservice.csv": "5524ca908f65e6d364043ae0a5bf5b6664e2543ddb95326cbdad1c1c7f89738d",
-    "cacheservice.csv": "c6815565447f8fac7c00d743e550fa5cbc8391ffc216dc1f73726095af11e7b4",
-    "database.csv": "3e3868440e45f025719b8886c124685fbe9bdd23c3125b5ffba3eb3cafb72ae6",
+    "apigateway.csv": "dae275bd508610201591ccf12c85fe47c166e83a85ce47d2dbfbfdb575c8814b",
+    "authservice.csv": "9067a806a6532386b837e83a107ef92fbc55676d99de0881fdb9d1a7a8e527ee",
+    "cacheservice.csv": "7e05c2bf32dbbc82655020e7cc232ea217323deff43d070bdcce7d8c63d5c611",
+    "database.csv": "90a5aba9f55d3ae85f32b3b8b17f7c0ba5de2d30631bf62c68b0b5618708ab3c",
+    "gpu_inference.csv": "84edca2eb7ad35d720010fe14f0de9f1530b28d6b119d6bb4e6ab1eee32a5903",
     "identityprovider.csv": "9b94f63e9193d542e4dc3e10ed60a802ab655e5b54e617b51256b0be5535e235",
-    "llm_analytics.csv": "547a704eb7afa253142249a4056aa10842ce71e4edaff6bda9a3fb00e8b84ca8",
+    "llm_analytics.csv": "5fb102f4d7fcb850330ab09a0c2d0d41eb3c33a0621915c3d18e8b3b97214d61",
     "loadbalancer.csv": "3ecc8502d3a206ed90aaa39d9deca0f020f1bed8d664f1f53aed59124ec76b3e",
     "mqservice.csv": "cf66750270480bd42130cd2a33fcb7d58ee9df2efa32dbfb04f72d84d7e4170f",
     "objectstore.csv": "0da16866cbb766e962b8918fcd413dc339590615c782a741b67c6a557b6f1ae2",
@@ -1309,11 +1321,11 @@ def test_default_seven_day_csvs_byte_identical(seven_day_run, filename, expected
 # stay stable.
 @pytest.fixture(scope="session")
 def high_seven_day_capped_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # HIGH_SEVEN_DAY_CAPPED_HASHES keep matching.
+    # Explicit 1s cadence preserves the full-resolution locked
+    # HIGH_SEVEN_DAY_CAPPED_HASHES.
     out = tmp_path_factory.mktemp("high_seven_day_capped")
     return run_capture(
-        amc, out, days=7, interval_seconds=None,
+        amc, out, days=7, interval_seconds=1.0,
         extra_args=["--signal-level", "high", "--anomaly-count", "100"],
     )
 

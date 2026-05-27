@@ -1,8 +1,7 @@
 """Tests for the shared ``run_capture`` helper: it defaults to
 ``--interval-seconds 60`` so new tests automatically take the cheap
-path, with explicit ``interval_seconds=None`` (or ``=1.0``) for
-full-resolution runs and a ``@pytest.mark.full_resolution`` marker
-for declaring intent."""
+path, with explicit ``interval_seconds=1.0`` for full-resolution runs
+and a ``@pytest.mark.full_resolution`` marker for declaring intent."""
 from __future__ import annotations
 
 import json
@@ -39,13 +38,25 @@ def test_default_interval_seconds_is_60(amc, tmp_path):
 
 def test_interval_seconds_none_uses_script_default(amc, tmp_path):
     """``interval_seconds=None`` skips the ``--interval-seconds`` flag so
-    the script's own default (1s) applies. This is the opt-out path the
-    session-scoped fixtures use to preserve their locked SHA-256 hashes."""
+    the script's own default applies."""
     run_capture(
         amc, tmp_path,
         days=1,
         extra_args=["--emit-selection", "metrics,schema"],
         interval_seconds=None,
+    )
+    assert _schema_interval(tmp_path) == 60.0
+
+
+@pytest.mark.full_resolution
+def test_interval_seconds_one_keeps_full_resolution(amc, tmp_path):
+    """``interval_seconds=1.0`` is the explicit opt-in for tests that need
+    one row per second."""
+    run_capture(
+        amc, tmp_path,
+        days=1,
+        extra_args=["--emit-selection", "metrics,schema"],
+        interval_seconds=1.0,
     )
     assert _schema_interval(tmp_path) == 1.0
 
@@ -95,7 +106,7 @@ def test_full_resolution_marker_is_registered(pytestconfig):
     """The ``full_resolution`` marker is registered in pyproject.toml so
     ``pytest --strict-markers`` runs (and lint hooks) treat the marker as
     known. Tests use it to declare 'this case depends on 1s timestamps'
-    alongside an explicit ``interval_seconds=None`` (or ``=1.0``)."""
+    alongside an explicit ``interval_seconds=1.0``."""
     markers = pytestconfig.getini("markers")
     assert any(
         m.startswith("full_resolution") for m in markers
@@ -106,6 +117,6 @@ def test_full_resolution_marker_is_registered(pytestconfig):
 def test_full_resolution_marker_applies_to_tests():
     """Sanity: the registered marker can be applied to a test without
     pytest emitting an 'unknown mark' warning. Pairs with the
-    ``interval_seconds=None`` opt-out at call sites that need 1s rows."""
+    ``interval_seconds=1.0`` opt-in at call sites that need 1s rows."""
     # No assertion beyond decorator acceptance — pytest --strict-markers
     # would otherwise fail collection if the mark were unregistered.

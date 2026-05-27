@@ -38,10 +38,10 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 # - the ``files`` registry,
 # - the new ``topology`` block (source -> [{target, weight, saturation}, ...]).
 SCHEMA_ONE_DAY_HASH = (
-    "6032c2e6b3205478a1037711c5df0f5596fbc315f0b30fbd8ba57fe5e58c385c"
+    "f09f58b45e6ffc4b1108d1d1029b1fce9ee668aabc674deefa138fb49f4617d9"
 )
 SCHEMA_SEVEN_DAY_HASH = (
-    "6a31e3e9616f6b23425989ac8551d825c784ffef89ffd62d6e2b032ec484b0eb"
+    "be28b7e929505777a35f9d0d45eeffbf7d9ff348811c1656aa7c35b2c022bb70"
 )
 
 
@@ -54,22 +54,20 @@ def _sha256(path: Path) -> str:
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def one_day_schema_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_ONE_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_ONE_DAY_HASH.
     out = tmp_path_factory.mktemp("ver139_one_day_schema")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--emit-selection", "metrics,schema"],
     )
 
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_SEVEN_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_SEVEN_DAY_HASH.
     out = tmp_path_factory.mktemp("ver139_seven_day_schema")
     return run_capture(
-        amc, out, days=7, interval_seconds=None,
+        amc, out, days=7, interval_seconds=1.0,
         extra_args=["--emit-selection", "metrics,schema"],
     )
 
@@ -496,10 +494,10 @@ def test_schema_topology_version_is_two(one_day_schema_run, amc):
 # ``SCHEMA_ONE_DAY_HASH`` / ``SCHEMA_SEVEN_DAY_HASH`` constants
 # byte-identical above.
 SCHEMA_N3_ONE_DAY_HASH = (
-    "3ef12a53799f00deb2c76170f9f6acf4292f841cb1110e90fa4151507e612d80"
+    "67cc6d8979c679e1707fcb319dcbdd66195d63b1b5738e8816c53d07db7e7d43"
 )
 SCHEMA_N3_SEVEN_DAY_HASH = (
-    "dfd6dfa3d47ccef8a736dd0c9ae4c875c2da2c4e0274687ea2db4a5d28495f03"
+    "75715066ffbfcf66e007f8a2b36ad48505a2287d0aa7826c6e9d601f262ee53b"
 )
 
 
@@ -508,11 +506,10 @@ def one_day_schema_run_n3(amc, tmp_path_factory):
     """Full default 1-day run with ``--instances-per-component 3`` so the
     schema's dim block fires on every component. Module-scoped to amortize
     the ~25–30s generation across all N=3 assertions below."""
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_N3_ONE_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_N3_ONE_DAY_HASH.
     out = tmp_path_factory.mktemp("ver151_one_day_schema_n3")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instances-per-component", "3",
@@ -522,11 +519,10 @@ def one_day_schema_run_n3(amc, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run_n3(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_N3_SEVEN_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_N3_SEVEN_DAY_HASH.
     out = tmp_path_factory.mktemp("ver151_seven_day_schema_n3")
     return run_capture(
-        amc, out, days=7, interval_seconds=None,
+        amc, out, days=7, interval_seconds=1.0,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instances-per-component", "3",
