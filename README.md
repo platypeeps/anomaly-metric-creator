@@ -13,9 +13,10 @@ By default the script spans **50,000 one-minute slots** over about 34.72 days fo
 fourteen components: `authservice`, `cacheservice`, `apigateway`, `database`,
 `mqservice`, `llm_analytics`, `loadbalancer`, `objectstore`, `vectorstore`,
 `scheduler`, `paymentservice`, `identityprovider`, `observabilitypipeline`,
-`gpu_inference`. The built-in packet-loss mask can omit a small number of rows
-unless `--drop-rate 0` is used. Duration, sampling interval, drop rate, and
-output directory are all CLI-configurable.
+`gpu_inference`. The default packet-loss rate is `0`, so the default run emits
+the full 50,000-row shape; pass a non-zero `--drop-rate` to simulate missing
+samples. Duration, sampling interval, drop rate, and output directory are all
+CLI-configurable.
 
 ## Significant changes
 
@@ -26,9 +27,11 @@ Recent significant additions to the generator:
   `batch_size`, `model_size_b`, GPU/KV memory pressure, fragmentation,
   utilization, throughput, p50/p99 latency, and `failure`. The
   `gpu_inference_fragmentation` scenario models a reference-like sparse
-  failure field: 1,204 labeled failure minutes in the default 50,000-row
-  shape, mostly singletons, with fragmentation/pressure carrying useful but
-  imperfect lift.
+  failure field: 1,204 labeled failure rows in the default 50,000-row
+  shape, mostly singletons, with a detector-visible degradation core that
+  concentrates sparse failures while fragmentation, memory pressure, KV cache
+  occupancy, utilization, throughput, and tail latency cross bad thresholds
+  together.
 - **Flag-day default flip + integer-cast bundle** (phase 6) —
   `--topology-mode realistic` is now the default; `--topology-mode independent`
   is retained as a deprecation alias that emits a stderr `DeprecationWarning`
@@ -38,11 +41,10 @@ Recent significant additions to the generator:
   fractional-integer `--validate-output` violations on the 1-day compatibility
   output. The integer cast is intentionally tied to realistic mode only:
   the `--topology-mode independent` alias skips it (via
-  `apply_dtype_int_cast=False`) so its CSV bytes stay byte-for-byte
-  identical to the pre-flag-day baseline. All locked SHA-256 hashes in
-  `tests/` were re-baselined under realistic mode in this PR; the
-  pre-flag-day baseline is still reproducible via the deprecation alias
-  and is pinned by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
+  `apply_dtype_int_cast=False`) so it remains a no-topology contrast path.
+  All locked SHA-256 hashes in `tests/` were re-baselined under realistic
+  mode in this PR; the current independent-mode no-topology baseline is pinned
+  by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
 - **Topology graph v1** (`--topology-mode realistic`, the default) —
   declares a directed service-call graph (`TOPOLOGY`)
   and wires it into generation. Phase 2 couples downstream RPS baselines from
@@ -96,7 +98,7 @@ python3 anomaly-metric-creator.py
 python3 anomaly-metric-creator.py --duration-days 7
 
 # Finer sampling: one row every 5 seconds (17,280 rows per component for 1 day).
-python3 anomaly-metric-creator.py --interval-seconds 5
+python3 anomaly-metric-creator.py --duration-days 1 --interval-seconds 5
 
 # Generate logs and produce the unified joined CSV in one shot:
 python3 anomaly-metric-creator.py --combine
@@ -181,10 +183,10 @@ python3 anomaly-metric-creator.py \
 
 | Flag                | Default     | Notes                                                              |
 | ------------------- | ----------- | ------------------------------------------------------------------ |
-| `--duration-days`   | `34.7222`   | Days to generate. The default combines with `--interval-seconds 60` to produce exactly 50,000 rows per component, matching the reference observability telemetry CSV shape. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2, `jwks_rotation_chaos` at 3, `gpu_inference_fragmentation` at 10); see the [scenario catalog](#scenario-catalog) for per-scenario values. |
+| `--duration-days`   | `34.7222`   | Days to generate. The default combines with `--interval-seconds 60` to produce exactly 50,000 rows per component, matching the reference observability telemetry CSV shape. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2 and `jwks_rotation_chaos` at 3); see the [scenario catalog](#scenario-catalog) for per-scenario values. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
-| `--drop-rate`       | `0.0005`    | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Simulated packet loss. |
+| `--drop-rate`       | `0.0`       | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Default `0` preserves the full reference-shaped 50,000-row output; use a non-zero value to simulate packet loss. |
 | `--interval-seconds`| `60.0`      | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. Combinations of this flag with `--duration-days`, `--metrics-per-component`, and `--components` are validated against a preflight cell-count cap (200M cells total); see `--allow-huge-output`. |
 | `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`, `gauges`, `schema`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv), and `schema` (opt-in) writes a declarative [`schema.json`](#output-schema-document-schemajson). The `gauges` token requires `metrics`; `schema` has no other requirements. |
 | `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `gpu_inference`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
@@ -199,9 +201,9 @@ python3 anomaly-metric-creator.py \
 | `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
 | `--validate-output` | _off_       | Standalone validator mode (mutually exclusive with `--combine` / `--combine-only`). Loads `PATH/schema.json` and checks the artifacts in `PATH` against it (file presence, row counts, timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds, `counter`/`rate` non-negativity, derived-column consistency, and `anomalies.csv` sort order). Hard-fails on first violation (`exit 1`) unless `--validate-warn` is also passed. See [Output validation (`--validate-output`)](#output-validation---validate-output). |
-| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. A 1-day compatibility run is violation-free; longer runs that include the context-overflow scenario still surface one `context_overflow_rate` overshoot (scenario-catalog re-tune deferred to phase 9), so `--validate-warn` is the right mode when piping multi-day output through CI until phase 9 lands. |
+| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. A 1-day compatibility run is violation-free; longer runs that include the context-overflow scenario still surface the known `context_overflow_rate` bound overshoot (scenario-catalog re-tune deferred to phase 9), so `--validate-warn` is the right mode when piping multi-day output through CI until phase 9 lands. |
 | `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
-| `--topology-mode`   | `realistic`  | Topology-aware baseline coupling (default since phase 6 flag day). `realistic` (default) walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. `independent` is a deprecation alias retained only for regenerating the pre-flag-day byte-for-byte baseline; it emits a stderr `DeprecationWarning` on use and is scheduled for removal after phase 9. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
+| `--topology-mode`   | `realistic`  | Topology-aware baseline coupling (default since phase 6 flag day). `realistic` (default) walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. `independent` is a deprecated no-topology contrast alias; it emits a stderr `DeprecationWarning` on use and is scheduled for removal after phase 9. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
 | `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
 | `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
 | `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
@@ -277,7 +279,7 @@ Batching, dropped rows, and pacing:
 
 Volume note: at the default `--interval-seconds 60` with the default 14
 components x their default metric counts, a default run emits about 4.25M data
-points before the natural drop rate. The gauge stream at
+points with the default `--drop-rate 0`. The gauge stream at
 `--otel-gauge-batch-seconds 60` produces one OTLP request per simulated minute.
 Tune
 `--otel-gauge-batch-seconds` up if your collector enforces a small request
@@ -471,8 +473,8 @@ The validator loads `PATH/schema.json` and runs:
 
 After phase 6 (flag day), a 1-day compatibility output is
 violation-free. Runs that include the LLM context-overflow scenario still
-surface a single known violation — the scenario drives
-`llm_analytics.context_overflow_rate` to 8.5 at day 5 + 2h to
+surface a known violation type — the scenario drives
+`llm_analytics.context_overflow_rate` toward 8.5 from day 5 + 2h to
 simulate context-window saturation, which exceeds the metric's
 declared `max_value=1`. Reconciling that scenario amplitude with the
 ratio bound is a scenario-catalog re-tune deferred to phase
@@ -703,25 +705,25 @@ radius to additional components.
 
 | Slug | Signal | Days | Time / Day | Duration | Components touched | Description |
 | ---- | ------ | ---- | ---------- | -------- | ------------------ | ----------- |
-| `auth_brute_force` | medium | 1 | 02:15 | instant | `authservice`, `apigateway` | Login brute-force spike — error rate 42%, login surge 1,250/s; cascades to gateway 5xx and session invalidation. |
-| `cache_collapse` | medium | 1 | 06:00 | 4h | `cacheservice`, `database` | Cache hit-ratio collapse to 5% + slow memory leak 70%→96%; cascades to DB query spike and read latency. |
-| `api_cpu_saturation` | medium | 1 | 06:30 | 30 min sawtooth + 14h sustained step + 8 min retry storm | `apigateway`, `authservice`, `cacheservice` | Gateway CPU saturation (100%) + 25% config-push error burst + retry storm — cascades to auth errors (~35%) and cache errors (~15%). |
-| `db_stall` | medium | 1 | 00:00 | 24h disk ramp + 6h connection-leak ramp + 20 min brown-out (10 min down + 10 min recovery) | `database`, `apigateway`, `authservice`, `mqservice` | DB disk exhaustion ramp, backup-window connection pile-up, read-latency skyrocket, backend errors 35%, brown-out (~8% errors), nightly batch; cascades to backend latency, gateway 5xx (~30%), auth latency, MQ backpressure. |
-| `mq_jam` | medium | 1 | 12:30 | instant | `mqservice`, `apigateway`, `authservice`, `database` | Message queue DLQ blow-up + 1M pending + error rate 25%; cascades to slow API response, DB connection buildup, slow writes, auth session write delay. |
-| `lb_flapping` | medium | 1 | 03:00 | instant | `loadbalancer`, `apigateway` | TLS cert near-expiry errors 80/s + LB health-check failures; cascades to gateway 5xx (~30%) and reduced active connections. |
-| `object_store_5xx` | medium | 1 | 07:00 | instant | `objectstore`, `apigateway` | Object store 5xx surge (14%) + bandwidth saturation (950 Mbps); cascades to gateway 5xx (~6%). |
-| `vectorstore_pressure` | medium | 1 | 10:30 | instant | `vectorstore`, `llm_analytics` | Vector store index rebuild stall (280 ms), recall degrades to 0.62; cascades to LLM latency elevation and fallback retry errors (15%). |
-| `scheduler_overflow` | medium | 1 | 08:00 | instant | `scheduler`, `database` | Job overrun 4×, 12 missed schedules, 2,500-job queue overflow; cascades to DB connection buildup. |
-| `payment_5xx` | medium | 1 | 12:00 | instant | `paymentservice`, `apigateway` | Stripe-style provider 5xx (18%), webhook lag 5 min, fraud-rule decline-rate spike (35%); cascades to gateway 5xx (~28%). |
-| `idp_jwks_storm` | medium | 1 | 04:00 | instant | `identityprovider`, `authservice` | JWKS cache-miss storm — fetch latency 1,500 ms, MFA provider degradation; cascades to degraded login success rate. |
-| `observability_lag` | medium | 1 | 09:00 | instant | `observabilitypipeline`, `mqservice` | Ingest lag grows to 240s, high-cardinality push drops 8,500 metrics/s; cascades to downstream MQ queue backup. |
-| `monday_baseline` | low | 1 | 09:00 | instant | `authservice`, `apigateway` | Benign Monday-morning login burst (1,400/s) + RPS spike (2,200/s). No cascades — low severity baseline shift only. |
-| `llm_viral_surge_day2` | medium | 2 | Day 2 10:15 | instant | `llm_analytics`, `apigateway`, `cacheservice`, `database` | Viral LLM surge — 8× request spike to 360/s, token surge 185k/s; cascades to gateway RPS, cache misses, DB query spike and connections. |
-| `llm_enterprise_onboarding` | medium | 3 | Day 3 14:00 | instant | `llm_analytics`, `vectorstore`, `cacheservice`, `database` | Enterprise onboarding — request spike to 285/s, large context windows 12,500 tokens, 45 ceiling hits/min; cascades to embedding surge, DB latency, cache memory. |
-| `llm_rate_limit_fallout` | medium | 5 | Day 5 09:30 | instant | `llm_analytics`, `apigateway` | Upstream rate-limiting — 18% error rate, latency spikes to 4,200 ms; cascades to gateway error rate ~22%. |
-| `llm_weekend_batch` | medium | 6 | Day 6 02:00 | instant | `llm_analytics`, `objectstore`, `cacheservice`, `database` | Weekend batch analytics — 320k tokens/s, context overflow rate 8.5; cascades to object-store bandwidth saturation, DB query/CPU surge, cache hit-ratio drop. |
-| `llm_second_viral` | medium | 7 | Day 7 16:45 | instant | `llm_analytics`, `apigateway`, `cacheservice`, `database` | Second viral event — 10× spike to 450/s, 420k tokens/s; cascades to gateway active connections, CPU, DB connections, cache errors. |
-| `gpu_inference_fragmentation` | medium | 10 | Day 10 through default window end | reference-shaped sparse label field | `gpu_inference`, `llm_analytics` | GPU serving telemetry follows the reference CSV's incident geometry: 1,204 failure minutes in the default 50,000-row shape, 97% singleton runs, and statistical lift from fragmentation, memory pressure, utilization dips, low throughput, p99 latency, and KV cache saturation without making any one metric perfectly separable. |
+| `auth_brute_force` | medium | 1 | 02:15 | 15 min | `authservice`, `apigateway` | Login brute-force window — error rate 42%, login surge 1,250/s; cascades to gateway 5xx and session invalidation. |
+| `cache_collapse` | medium | 1 | 06:00 | 20 min miss collapse + 4h leak + 30 min memory plateau | `cacheservice`, `database` | Cache hit-ratio collapse to 5% + slow memory leak 70%→96% + later memory pressure plateau; cascades to DB query spike and read latency. |
+| `api_cpu_saturation` | medium | 1 | 06:30 | 10 min CPU saturation + 30 min sawtooth + 14h sustained step + 8 min retry storm + 5 min config error | `apigateway`, `authservice`, `cacheservice` | Gateway CPU saturation (100%) + 25% config-push error burst + retry storm — cascades to auth errors (~35%) and cache errors (~15%). |
+| `db_stall` | medium | 1 | 00:00 | 24h disk ramp + 30 min backup pile-up + 20 min DB stall + 6h connection-leak ramp + 20 min brown-out + 20 min nightly batch | `database`, `apigateway`, `authservice`, `mqservice` | DB disk exhaustion ramp, backup-window connection pile-up, read-latency stall, backend errors 35%, brown-out (~8% errors), nightly batch; cascades to backend latency, gateway 5xx (~30%), auth latency, MQ backpressure. |
+| `mq_jam` | medium | 1 | 12:30 | 15 min DLQ blow-up + 20 min queue jam | `mqservice`, `apigateway`, `authservice`, `database` | Message queue DLQ blow-up + 1M pending + error rate 25%; cascades to slow API response, DB connection buildup, slow writes, auth session write delay. |
+| `lb_flapping` | medium | 1 | 03:00 | 5 min TLS burst + 10 min health-check flap + 5 min resets + 8 min backend 5xx | `loadbalancer`, `apigateway` | TLS cert near-expiry errors 80/s + LB health-check failures; cascades to gateway 5xx (~30%) and reduced active connections. |
+| `object_store_5xx` | medium | 1 | 07:00 | 12 min 5xx wave + 30 min bandwidth saturation + 15 min latency tail | `objectstore`, `apigateway` | Object store 5xx surge (18%) + bandwidth saturation (950 Mbps); cascades to gateway 5xx (~6%). |
+| `vectorstore_pressure` | medium | 1 | 10:30 | 30 min index rebuild + 1h recall degradation | `vectorstore`, `llm_analytics` | Vector store index rebuild stall (280 ms), recall degrades to 0.62; cascades to LLM latency elevation and fallback retry errors (15%). |
+| `scheduler_overflow` | medium | 1 | 08:00 | 20 min job overrun + 30 min missed schedules + 45 min queue overflow | `scheduler`, `database` | Job overrun 4×, 12 missed schedules, 2,500-job queue overflow; cascades to DB connection buildup. |
+| `payment_5xx` | medium | 1 | 12:00 | 12 min provider 5xx + 30 min webhook lag + 45 min fraud-rule misfire | `paymentservice`, `apigateway` | Stripe-style provider 5xx (18%), webhook lag 5 min, fraud-rule decline-rate spike (35%); cascades to gateway 5xx (~28%). |
+| `idp_jwks_storm` | medium | 1 | 04:00 | 20 min JWKS storm + 30 min MFA outage + 15 min OIDC parse errors | `identityprovider`, `authservice` | JWKS cache-miss storm — fetch latency 1,500 ms, MFA provider degradation; cascades to degraded login success rate. |
+| `observability_lag` | medium | 1 | 09:00 | 30 min ingest lag + 20 min cardinality storm + 20 min pipeline errors | `observabilitypipeline`, `mqservice` | Ingest lag grows to 240s, high-cardinality push drops 8,500 metrics/s; cascades to downstream MQ queue backup. |
+| `monday_baseline` | low | 1 | 09:00 | 1h baseline shift | `authservice`, `apigateway` | Benign Monday-morning login burst (1,400/s) + RPS spike (2,200/s). No cascades — low severity baseline shift only. |
+| `llm_viral_surge_day2` | medium | 2 | Day 2 10:15 | 12 min viral surge | `llm_analytics`, `apigateway`, `cacheservice`, `database` | Viral LLM surge — 8× request spike to 360/s, token surge 185k/s; cascades to gateway RPS, cache misses, DB query spike and connections. |
+| `llm_enterprise_onboarding` | medium | 3 | Day 3 14:00 | 6h correlated capacity ramp | `llm_analytics`, `vectorstore`, `cacheservice`, `database` | Enterprise onboarding — requests, context windows, token-limit hits, embeddings, and LLM latency rise together; cascades to DB latency and cache memory. |
+| `llm_rate_limit_fallout` | medium | 5 | Day 5 09:30 | 90 min correlated rate-limit fallout | `llm_analytics`, `apigateway` | Upstream rate-limiting — LLM error rate, average latency, and gateway errors rise together; gateway cascade anchor spikes to ~28%. |
+| `llm_weekend_batch` | medium | 6 | Day 6 02:00 | 4h correlated batch saturation | `llm_analytics`, `objectstore`, `cacheservice`, `database` | Weekend batch analytics — input tokens, context overflow, LLM latency, object-store bandwidth, and DB query/CPU pressure rise together; cascades to cache misses. |
+| `llm_second_viral` | medium | 7 | Day 7 16:45 | 15 min viral surge | `llm_analytics`, `apigateway`, `cacheservice`, `database` | Second viral event — 10× spike to 450/s, 420k tokens/s; cascades to gateway active connections, CPU, DB connections, cache errors. |
+| `gpu_inference_fragmentation` | medium | 1 | full default window | sparse labels + coherent incident core | `gpu_inference`, `llm_analytics` | GPU serving telemetry follows the reference CSV's sparse label scale: 1,204 failure rows in the default 50,000-row shape, mostly singleton runs, and a dense detector-visible core. The core concentrates part of the sparse failure budget into a ramp/plateau/recovery window while fragmentation, memory pressure, utilization dips, low throughput, p99 latency, and KV cache saturation cross bad thresholds together for sustained rolling-window signal. |
 | `regional_failover_storm` | **high** | 1 | 05:00 | 5 min | `loadbalancer`, `apigateway`, `authservice`, `database`, `mqservice` | Regional failover — backend 5xx ramps to 220/s over 5 min; cascades to gateway 5xx (~30%), DB connections (~9,000), auth errors (~40%), MQ pending ~500k. |
 | `dns_provider_outage` | **high** | 1 | 11:00 | 6 min | `loadbalancer`, `apigateway`, `identityprovider`, `paymentservice` | External DNS provider outage — TLS handshake errors 45/s, backend 5xx 80/s, health check failures 8/s, sustained for 6 min; cascades to OIDC callback failures (~150), payment provider 5xx (~32%), gateway error rate (~28%). Sharp step-up at T0 and step-down at T1. |
 | `cache_db_meltdown` | **high** | 1 | 11:30 | 10 min | `cacheservice`, `database`, `llm_analytics`, `apigateway` | Coordinated cache memory saturation (80%→99.5%) + DB read latency (800 ms); cascades to doubled LLM latency and elevated gateway backend latency. |
@@ -730,11 +732,11 @@ radius to additional components.
 | `network_partition_az_split` | **high** | 1 | 18:20 | 4 min | `database`, `mqservice`, `apigateway`, `authservice` | Intra-region AZ network partition — DB replication lag 18 s, DB error rate 30%, MQ consumer lag 12,000, unacked messages 4,500, sustained 4 min until heal; cascades to gateway backend latency (~380 ms), auth replica read failures (~40%). Sharp step-up at T0 and step-down at T1. (Shifted from 18:00 to clear `db_stall`'s 18:00–18:20 brown-out on `database.error_rate`.) |
 | `gateway_ddos` | **high** | 1 | 16:00 | 10 min | `apigateway`, `authservice`, `database`, `mqservice` | Gateway DDoS-style saturation — 5,000 RPS + CPU 99% for 10 min; cascades to auth latency (~600 ms), DB CPU (~92%), MQ pending (~800k). |
 | `storage_layer_pressure` | **high** | 1 | 22:00 | 10 min | `objectstore`, `database`, `apigateway` | Storage layer pressure — PUT latency 60→700 ms + object-store 5xx 25%; cascades to DB write latency (~90 ms) and gateway error rate (~30%). |
-| `cache_leak_restart` | medium | 2 | Day 2–4 | 51h leak + 12h eviction cascade + 5 min restart/cold-start | `cacheservice`, `database`, `apigateway`, `mqservice` | Cache memory-leak death march 50%→95% over 51h → forced restart → cold-start cache miss / DB query stampede + brief gateway and MQ pressure. (Full sequence needs `--duration-days 4`; shorter multi-day runs emit the in-range portion with stderr WARNINGs for the tail.) |
+| `cache_leak_restart` | medium | 2 | Day 2–4 | 51h leak + 12h correlated eviction/DB pressure + 5 min restart/cold-start | `cacheservice`, `database`, `apigateway`, `mqservice` | Cache memory-leak death march 50%→95% over 51h with cache misses, DB query pressure, and DB read latency rising together → forced restart → cold-start cache miss / DB query stampede + brief gateway and MQ pressure. (Full sequence needs `--duration-days 4`; shorter multi-day runs emit the in-range portion with stderr WARNINGs for the tail.) |
 | `jwks_rotation_chaos` | medium | 3 | Day 3–5 | 6h TLS flapping + 8h JWKS latency + 6h login degradation + 2h cert-expiry window | `loadbalancer`, `identityprovider`, `authservice`, `apigateway`, `paymentservice`, `cacheservice` | Cert/JWKS rotation chaos — TLS flapping, JWKS latency, login degradation, hard cert expiry spike to 200/s + 800 OIDC failures; cascades across gateway, auth, payments, and cache. (Full sequence needs `--duration-days 5`.) |
-| `db_disk_exhaustion` | medium | 2 | Day 2–6 | 96h disk ramp + 12h I/O saturation drift + 20 min emergency log-truncation | `database`, `scheduler`, `observabilitypipeline`, `mqservice`, `apigateway` | DB disk creeps 65%→92% over 96h, write latency 12→90 ms, emergency log-truncation event; cascades to scheduler failures, observability lag, MQ backlog, elevated gateway backend latency. (Full sequence needs `--duration-days 6`.) |
-| `auth_pod_failure` | high | 1 | Day 1 | Auth pod-0 partial failure — `instance_filter=["i0"]` | `authservice`, `apigateway` | Single authservice pod (id=`i0`) suffers an error_rate spike to 85% and login_success_rate collapse to 30%; cascades to a gateway backend latency spike on that pod. Requires `--instances-per-component >= 2` or an `--instance-config` with named instances to observe the per-pod isolation. |
-| `cache_az_isolation` | high | 1 | Day 1 | Cache AZ `us-east-1a` isolation — callable `instance_filter` | `cacheservice` | Instances in AZ `us-east-1a` suffer a cache_hits collapse (~500) and cache_misses spike (~3000), driving the derived hit_ratio down sharply. Requires `--instance-config` with `az` fields set; instances without `az` see no effect (zero-match WARNING). |
+| `db_disk_exhaustion` | medium | 2 | Day 2–6 | 96h disk ramp + 12h correlated I/O saturation + 20 min emergency log-truncation | `database`, `scheduler`, `observabilitypipeline`, `mqservice`, `apigateway` | DB disk creeps 65%→92% over 96h; write latency, connections, CPU, observability lag, and MQ backlog rise together before emergency log truncation. (Full sequence needs `--duration-days 6`.) |
+| `auth_pod_failure` | high | 1 | Day 1 | 5 min auth pod-0 partial failure — `instance_filter=["i0"]` | `authservice`, `apigateway` | Single authservice pod (id=`i0`) suffers an error_rate spike to 85% and login_success_rate collapse to 30%; cascades to a gateway backend latency spike on that pod. Requires `--instances-per-component >= 2` or an `--instance-config` with named instances to observe the per-pod isolation. |
+| `cache_az_isolation` | high | 1 | Day 1 | 10 min Cache AZ `us-east-1a` isolation — callable `instance_filter` | `cacheservice` | Instances in AZ `us-east-1a` suffer a cache_hits collapse (~500) and cache_misses spike (~3000), driving the derived hit_ratio down sharply. Requires `--instance-config` with `az` fields set; instances without `az` see no effect (zero-match WARNING). |
 
 ## Tests
 

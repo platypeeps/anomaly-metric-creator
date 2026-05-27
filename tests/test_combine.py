@@ -64,9 +64,8 @@ def test_unified_csv_has_llm_analytics_columns(combined_dir):
 
 def test_unified_row_count_matches_timestamp_union(amc, combined_dir, one_day_run_a):
     """Unified row count equals the union of timestamps present across all source
-    CSVs. With the per-component drop_rate at 0.05% and 6+ components, the chance
-    every component drops the same second is effectively zero, so the union is
-    essentially every second in the day. No llm_analytics data is lost.
+    CSVs. With the default drop rate at zero, every component contributes every
+    second in the day. No llm_analytics data is lost.
     """
     iot_logs, components = combined_dir
     out_file = iot_logs / "combined_metrics_unified.csv"
@@ -371,7 +370,7 @@ def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
 # ---------------------------------------------------------------------------
 
 N3_COMBINED_ONE_DAY_HASH = (
-    "71164965eb8ad036ff6e0cf1ce52dfadff00406b094f39ebf49c4808c108684c"
+    "511f455075c8f82ab765dea783230a5a23404607958c4b9da93bcb6005368c5c"
 )
 
 

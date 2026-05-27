@@ -34,10 +34,10 @@ from conftest import SCRIPT_PATH, run_capture
 # - the per-row metric column order,
 # - the dropped-cell skip behavior on ``--drop-rate`` survivors.
 GAUGES_ONE_DAY_HASH = (
-    "a2f7f5a8c1a7bfea85cb2c7685f608bec0723587cb01d34fda297afad5ff6cb1"
+    "9e768eccd88d7ef5d9ee1b81f7e1624291d9ceeddaa7f8c4d99b8d285e68dd5a"
 )
 GAUGES_SEVEN_DAY_HASH = (
-    "914d5a54030516518ec7ceef4d84788bf080457c31c0ad574f685d27ee486126"
+    "ac5196eb7fd2cc94e21ceac544248981f20cbab7f844fa8fa1e9aa85670872fd"
 )
 
 
@@ -478,7 +478,7 @@ def test_non_component_files_excludes_gauges_csv_from_combine_discovery(amc):
 # when the per-component CSVs have dimension columns in their header.
 # ------------------------------------------------------------------
 N3_GAUGES_ONE_DAY_HASH = (
-    "d83f102c7bb5ca7a4ed9347e37fed71bd144c2e6b75b02780cd01e9da87a782c"
+    "511f455075c8f82ab765dea783230a5a23404607958c4b9da93bcb6005368c5c"
 )
 
 

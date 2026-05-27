@@ -10,7 +10,9 @@ under the default duration. A pair of seeded runs locks in deterministic
 
 from __future__ import annotations
 
+import csv
 import datetime
+import statistics
 
 from conftest import read_manifest, run_capture
 
@@ -112,6 +114,29 @@ def _day_index(amc, ts_str: str) -> int:
     return delta.days + 1
 
 
+def _component_rows(out_dir, component):
+    with open(out_dir / f"{component}.csv", newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+def _window_values(rows, metric, *, offset_seconds, duration_seconds):
+    start = int(offset_seconds // 60)
+    stop = start + int(duration_seconds // 60)
+    return [float(row[metric]) for row in rows[start:stop]]
+
+
+def _pearson(xs, ys):
+    x_mean = statistics.mean(xs)
+    y_mean = statistics.mean(ys)
+    x_delta = [x - x_mean for x in xs]
+    y_delta = [y - y_mean for y in ys]
+    numerator = sum(x * y for x, y in zip(x_delta, y_delta))
+    denominator = (
+        sum(x * x for x in x_delta) * sum(y * y for y in y_delta)
+    ) ** 0.5
+    return numerator / denominator
+
+
 # ------------------------------------------------------------------
 # Tests
 # ------------------------------------------------------------------
@@ -180,3 +205,97 @@ def test_seven_day_run_is_deterministic(amc, tmp_path_factory):
     bytes_a = (out_a / "anomalies.csv").read_bytes()
     bytes_b = (out_b / "anomalies.csv").read_bytes()
     assert bytes_a == bytes_b, "Seven-day anomalies.csv differs across seeded runs"
+
+
+def test_gradual_scenarios_have_correlated_span_signal(amc, tmp_path):
+    """Gradual scenarios should expose multivariate signal over their span."""
+    result = run_capture(
+        amc,
+        tmp_path,
+        days=7,
+        drop_rate=0,
+        extra_args=[
+            "--scenarios",
+            ",".join([
+                "cache_leak_restart",
+                "db_disk_exhaustion",
+                "llm_enterprise_onboarding",
+                "llm_rate_limit_fallout",
+                "llm_weekend_batch",
+            ]),
+        ],
+    )
+
+    cache = _component_rows(result.out_dir, "cacheservice")
+    database = _component_rows(result.out_dir, "database")
+    llm = _component_rows(result.out_dir, "llm_analytics")
+    gateway = _component_rows(result.out_dir, "apigateway")
+    objectstore = _component_rows(result.out_dir, "objectstore")
+
+    cache_eviction_start = 2*amc.SECONDS_PER_DAY + 12*3600 + 60
+    assert _pearson(
+        _window_values(
+            cache, "cache_misses", offset_seconds=cache_eviction_start,
+            duration_seconds=12*3600 - 60,
+        ),
+        _window_values(
+            database, "read_latency_ms", offset_seconds=cache_eviction_start,
+            duration_seconds=12*3600 - 60,
+        ),
+    ) > 0.55
+
+    disk_pressure_start = 4*amc.SECONDS_PER_DAY + 6*3600 + 120
+    write_latency = _window_values(
+        database, "write_latency_ms", offset_seconds=disk_pressure_start,
+        duration_seconds=12*3600 - 120,
+    )
+    assert _pearson(
+        write_latency,
+        _window_values(
+            database, "connections", offset_seconds=disk_pressure_start,
+            duration_seconds=12*3600 - 120,
+        ),
+    ) > 0.55
+    assert _pearson(
+        write_latency,
+        _window_values(
+            database, "cpu_util_pct", offset_seconds=disk_pressure_start,
+            duration_seconds=12*3600 - 120,
+        ),
+    ) > 0.55
+
+    enterprise_start = 2*amc.SECONDS_PER_DAY + 14*3600
+    assert _pearson(
+        _window_values(
+            llm, "avg_context_window_size", offset_seconds=enterprise_start,
+            duration_seconds=6*3600,
+        ),
+        _window_values(
+            llm, "avg_llm_latency_ms", offset_seconds=enterprise_start,
+            duration_seconds=6*3600,
+        ),
+    ) > 0.55
+
+    rate_limit_start = 4*amc.SECONDS_PER_DAY + 9*3600 + 31*60
+    assert _pearson(
+        _window_values(
+            llm, "llm_api_error_rate", offset_seconds=rate_limit_start,
+            duration_seconds=89*60,
+        ),
+        _window_values(
+            gateway, "error_rate", offset_seconds=rate_limit_start,
+            duration_seconds=89*60,
+        ),
+    ) > 0.55
+
+    weekend_start = 5*amc.SECONDS_PER_DAY + 2*3600
+    assert _pearson(
+        _window_values(
+            llm, "input_tokens_per_sec", offset_seconds=weekend_start,
+            duration_seconds=4*3600,
+        ),
+        _window_values(
+            objectstore, "bandwidth_mbps", offset_seconds=weekend_start,
+            duration_seconds=4*3600,
+        ),
+    ) > 0.55

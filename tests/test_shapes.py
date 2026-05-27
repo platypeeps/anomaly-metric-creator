@@ -62,7 +62,6 @@ def test_ramp_linear_endpoints(amc, one_day_run_a):
     span = _span_rows(one_day_run_a.out_dir, "cacheservice",
                       "memory_util_pct", start, duration)
     assert span, "memory_util_pct ramp_linear span is empty"
-    # Accept up to a couple of dropped rows near the endpoints.
     first_ts, first_v = span[0]
     last_ts, last_v = span[-1]
     assert first_ts == start, f"ramp start ts={first_ts}, expected {start}"
@@ -111,14 +110,15 @@ def test_ramp_exp_endpoints_directly(amc):
 def test_sustained_span_row_count_and_multiplier(amc, one_day_run_a):
     """Retry storm: requests_per_sec sustained 2× baseline for 8 min.
 
-    The span must contain ``duration / interval`` rows minus drops, and the
+    The span must contain ``duration / interval`` rows minus any configured drops, and the
     mean value across the span must be ≈ 2× the natural baseline (≈ 800).
     """
     start = amc.START + datetime.timedelta(hours=19)
     duration = 8 * 60
     span = _span_rows(one_day_run_a.out_dir, "apigateway",
                       "requests_per_sec", start, duration)
-    # At drop_rate=0.0005, expect ~480 rows; tolerate a couple of dropped rows.
+    # The default drop rate is zero; keep a small tolerance so this invariant
+    # still exercises non-zero drop-rate fixture variants cleanly.
     assert duration - 4 <= len(span) <= duration, (
         f"sustained span row count {len(span)} not within {duration} ± 4"
     )
@@ -327,7 +327,7 @@ def test_dst_artifact_duplicates_02_hour(amc, tmp_path):
     hour on day 1, so each component CSV gains 3,600 rows and the
     02:xx:xx timestamp range appears twice."""
     out = tmp_path / "dst_day1"
-    run_capture(amc, out, days=1)  # baseline run, no DST flag
+    run_capture(amc, out, days=1, interval_seconds=1.0)  # baseline run, no DST flag
     rows_baseline, _ = read_component_rows(out, "authservice")
     baseline_row_count = len(rows_baseline)
 
@@ -337,10 +337,11 @@ def test_dst_artifact_duplicates_02_hour(amc, tmp_path):
     import sys as _sys
     args = [
         "--seed", "42",
-        "--duration-days", "1",
-        "--inject-dst-artifact-day", "1",
-        "--output-dir", str(out_dst),
-    ]
+            "--duration-days", "1",
+            "--interval-seconds", "1.0",
+            "--inject-dst-artifact-day", "1",
+            "--output-dir", str(out_dst),
+        ]
     stderr_buf = io.StringIO()
     real_stderr = _sys.stderr
     _sys.stderr = stderr_buf

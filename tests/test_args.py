@@ -6,7 +6,7 @@ def test_parse_args_defaults(amc):
     assert args.duration_days == amc.DEFAULT_DURATION_DAYS
     assert args.seed == 42
     assert args.interval_seconds == 60.0
-    assert args.drop_rate == 0.0005
+    assert args.drop_rate == 0.0
     assert args.output_dir == Path("test_out")
 
 def test_parse_args_custom(amc):

@@ -44,7 +44,7 @@ SECONDS_PER_DAY = 86_400
 DEFAULT_ROW_COUNT = 50_000
 DEFAULT_SEED = 42
 DEFAULT_OUTPUT_DIR = Path("iot_logs")
-DEFAULT_DROP_RATE = 0.0005
+DEFAULT_DROP_RATE = 0.0
 DEFAULT_INTERVAL_SECONDS = 60.0
 DEFAULT_DURATION_DAYS = (
     DEFAULT_ROW_COUNT * DEFAULT_INTERVAL_SECONDS / SECONDS_PER_DAY
@@ -353,6 +353,46 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+def _scenario_stress_fraction(t_within: float, duration_seconds: float,
+                              *, phase: float = 0.0) -> float:
+    """Smooth 0→1 span stress with small shared oscillation."""
+    frac = _span_fraction(t_within, duration_seconds)
+    wave = 0.035 * math.sin((2.0 * math.pi * frac * 3.0) + phase)
+    ripple = 0.018 * math.sin((2.0 * math.pi * frac * 11.0) + phase * 0.5)
+    return _clamp(frac + wave + ripple, 0.0, 1.0)
+
+
+def _correlated_span_generator(
+    start: float,
+    end: float,
+    duration_seconds: float,
+    *,
+    noise: float = 0.0,
+    lo: float | None = None,
+    hi: float | None = None,
+    phase: float = 0.0,
+    curve: float = 1.0,
+):
+    """Return a span generator driven by a shared gradual-stress profile."""
+    def generator(ts, col, t_within, span_idx, rng):
+        stress = _scenario_stress_fraction(
+            t_within, duration_seconds, phase=phase
+        )
+        if curve != 1.0:
+            stress = stress ** curve
+        value = start + (end - start) * stress
+        if noise:
+            value += rng.normal(0.0, noise)
+        if lo is not None or hi is not None:
+            value = _clamp(
+                float(value),
+                float("-inf") if lo is None else lo,
+                float("inf") if hi is None else hi,
+            )
+        return float(value)
+    return generator
+
+
 def _weighted_choice(rng: "np.random.RandomState", choices: tuple[float, ...],
                      weights: tuple[float, ...]) -> float:
     threshold = float(rng.random())
@@ -364,23 +404,94 @@ def _weighted_choice(rng: "np.random.RandomState", choices: tuple[float, ...],
     return choices[-1]
 
 
-def _choice_set(rng: "np.random.RandomState", values: set[int],
-                count: int) -> set[int]:
+def _ranked_choice_set(values: set[int], count: int,
+                       score: "np.ndarray") -> set[int]:
+    """Pick the highest-scoring unique minutes from ``values``."""
     if count <= 0:
         return set()
-    ordered = np.array(sorted(values), dtype=np.int64)
-    if count > len(ordered):
+    if count > len(values):
         raise ValueError(
             f"Cannot sample {count} unique GPU inference minutes from "
-            f"{len(ordered)} candidates"
+            f"{len(values)} candidates"
         )
-    return {int(v) for v in rng.choice(ordered, size=count, replace=False)}
+    ranked = sorted(values, key=lambda minute: (float(score[minute]), -minute),
+                    reverse=True)
+    return {int(v) for v in ranked[:count]}
+
+
+def _gpu_inference_stress_score(
+    rng: "np.random.RandomState",
+    active_minutes: int,
+    failure_minutes: frozenset[int],
+) -> "np.ndarray":
+    """Shared serving-stress score used to couple GPU inference metrics."""
+    minutes = np.arange(active_minutes, dtype=np.float64)
+    daily = 0.5 + 0.5 * np.sin((2 * np.pi * minutes / 1440.0) - 0.9)
+    half_day = 0.5 + 0.5 * np.sin((2 * np.pi * minutes / 720.0) + 0.35)
+    slow_noise = rng.normal(0.0, 1.0, active_minutes)
+    kernel = np.ones(97, dtype=np.float64) / 97.0
+    slow_noise = np.convolve(slow_noise, kernel, mode="same")
+    incident_intensity = _gpu_inference_incident_intensity(active_minutes)
+    raw = (
+        0.85 * slow_noise
+        + 0.34 * daily
+        + 0.16 * half_day
+        + 2.85 * incident_intensity
+        + rng.normal(0.0, 0.18, active_minutes)
+    )
+    for minute in failure_minutes:
+        raw[minute] += 2.10
+        if minute > 0:
+            raw[minute - 1] += 0.42
+        if minute + 1 < active_minutes:
+            raw[minute + 1] += 0.42
+
+    order = np.argsort(raw, kind="mergesort")
+    score = np.empty(active_minutes, dtype=np.float64)
+    if active_minutes == 1:
+        score[order] = 1.0
+    else:
+        score[order] = np.linspace(0.0, 1.0, active_minutes)
+    return score
+
+
+def _gpu_inference_incident_windows(
+    active_minutes: int,
+) -> tuple[tuple[int, int], ...]:
+    """Deterministic degradation windows for the GPU serving incident field."""
+    if active_minutes <= 0:
+        return ()
+    if active_minutes < 1_000:
+        return ((0, active_minutes),)
+
+    length = min(active_minutes, max(12 * 60, int(round(active_minutes * 0.0288))))
+    start = min(int(round(active_minutes * 0.50)), active_minutes - length)
+    return ((max(0, start), max(0, start) + length),)
+
+
+def _gpu_inference_incident_intensity(active_minutes: int) -> "np.ndarray":
+    """Ramp/plateau/recovery envelope for time-coherent GPU degradation."""
+    intensity = np.zeros(active_minutes, dtype=np.float64)
+    for start, end in _gpu_inference_incident_windows(active_minutes):
+        length = end - start
+        if length <= 0:
+            continue
+        positions = np.linspace(0.0, 1.0, length, endpoint=True)
+        envelope = np.ones(length, dtype=np.float64)
+        ramp = positions < 0.20
+        recovery = positions > 0.82
+        envelope[ramp] = positions[ramp] / 0.20
+        envelope[recovery] = 1.0 - ((positions[recovery] - 0.82) / 0.18) * 0.35
+        envelope = np.clip(envelope, 0.0, 1.0)
+        intensity[start:end] = np.maximum(intensity[start:end], envelope)
+    return intensity
 
 
 def _gpu_inference_failure_minutes(active_minutes: int) -> frozenset[int]:
-    """Reference-like sparse failure labels for the GPU serving scenario."""
+    """Sparse GPU serving labels with coherent incident-window concentration."""
     rng = np.random.RandomState(20260527)
     failure: set[int] = set()
+    incident_windows = _gpu_inference_incident_windows(active_minutes)
 
     def can_add(start: int, length: int) -> bool:
         if start < 0 or start + length > active_minutes:
@@ -396,72 +507,158 @@ def _gpu_inference_failure_minutes(active_minutes: int) -> frozenset[int]:
         failure.update(range(start, start + length))
         return True
 
-    # Seed daily burst hours first. They create the "several failures in one
-    # hour" windows visible in the reference CSV without making long outages.
+    def is_incident_minute(minute: int) -> bool:
+        return any(start <= minute < end for start, end in incident_windows)
+
+    def incident_failure_count() -> int:
+        return sum(1 for minute in failure if is_incident_minute(minute))
+
+    def shuffled_candidates(candidates: list[int]) -> list[int]:
+        candidates = list(candidates)
+        rng.shuffle(candidates)
+        return candidates
+
+    def center_ranked_candidates(candidates: list[int]) -> list[int]:
+        if not incident_windows:
+            return shuffled_candidates(candidates)
+        center = (incident_windows[0][0] + incident_windows[0][1]) / 2.0
+        return sorted(candidates, key=lambda minute: (abs(minute - center), minute))
+
+    if active_minutes > 5:
+        add(5, 1)
+    if active_minutes > 30:
+        add(active_minutes - 18, 1)
+
+    # Match the reference's run geometry: almost all singleton failures, with
+    # a small tail of two-minute runs and no longer failure stretches. Most
+    # pairs are placed inside incident windows so rolling detectors see a
+    # consistent degradation episode rather than only uniformly sprinkled rows.
+    two_minute_runs = 80
+    added_two = 0
+    incident_pair_target = min(72, two_minute_runs)
+    incident_pair_starts = [
+        minute
+        for start, end in incident_windows
+        for minute in range(
+            max(start, ((start + end) // 2) - 180),
+            min(max(start, end - 1), ((start + end) // 2) + 180),
+            3,
+        )
+    ]
+    for start in center_ranked_candidates(incident_pair_starts):
+        if added_two >= incident_pair_target:
+            break
+        if add(start, 2):
+            added_two += 1
+
+    background_pair_starts = [
+        minute
+        for minute in range(0, max(0, active_minutes - 1))
+        if not is_incident_minute(minute) and not is_incident_minute(minute + 1)
+    ]
+    for start in shuffled_candidates(background_pair_starts):
+        if added_two >= two_minute_runs:
+            break
+        if add(start, 2):
+            added_two += 1
+    if added_two < two_minute_runs:
+        raise RuntimeError("Unable to place GPU inference two-minute runs")
+
+    target_rows = int(round(DEFAULT_ROW_COUNT * 0.02408))
+    incident_target_rows = min(int(round(target_rows * 0.60)),
+                               max(0, sum(end - start for start, end in incident_windows) // 2))
+    incident_singletons = [
+        minute
+        for start, end in incident_windows
+        for minute in range(start, end)
+    ]
+    for minute in center_ranked_candidates(incident_singletons):
+        if incident_failure_count() >= incident_target_rows:
+            break
+        add(minute, 1)
+
+    # Add a small daily background of sparse labels outside the core so the
+    # file still contains reference-like operational noise, but do it after
+    # the dense core is placed so the primary incident stays detector-visible.
     days = int(math.ceil(active_minutes / (SECONDS_PER_DAY / DEFAULT_INTERVAL_SECONDS)))
     for day in range(days):
         day_start = int(day * SECONDS_PER_DAY / DEFAULT_INTERVAL_SECONDS)
         if day_start >= active_minutes:
             break
         hour = int(rng.randint(0, 24))
-        burst_count = int(rng.choice([5, 6, 7], p=[0.45, 0.40, 0.15]))
+        burst_count = int(rng.choice([3, 4, 5], p=[0.45, 0.40, 0.15]))
         minute_choices = list(rng.choice(np.arange(0, 60, 2), size=burst_count, replace=False))
         for minute_in_hour in minute_choices:
-            add(day_start + hour * 60 + int(minute_in_hour), 1)
+            minute = day_start + hour * 60 + int(minute_in_hour)
+            if not is_incident_minute(minute):
+                add(minute, 1)
 
-    # Match the reference's run geometry: almost all singleton failures, with
-    # a small tail of two-minute runs and no longer failure stretches.
-    two_minute_runs = 32
-    added_two = 0
-    attempts = 0
-    while added_two < two_minute_runs:
-        attempts += 1
-        if attempts > 100_000:
-            raise RuntimeError("Unable to place GPU inference two-minute runs")
-        start = int(rng.randint(0, active_minutes - 1))
-        if add(start, 2):
-            added_two += 1
-
-    target_rows = int(round(DEFAULT_ROW_COUNT * 0.02408))
-    attempts = 0
-    while len(failure) < target_rows:
-        attempts += 1
-        if attempts > 500_000:
-            raise RuntimeError("Unable to place GPU inference failure rows")
-        add(int(rng.randint(0, active_minutes)), 1)
+    background_singletons = [
+        minute
+        for minute in range(active_minutes)
+        if not is_incident_minute(minute)
+    ]
+    for minute in shuffled_candidates(background_singletons):
+        if len(failure) >= target_rows:
+            break
+        add(minute, 1)
+    if len(failure) < target_rows:
+        for minute in shuffled_candidates(list(range(active_minutes))):
+            if len(failure) >= target_rows:
+                break
+            add(minute, 1)
+    if len(failure) < target_rows:
+        raise RuntimeError("Unable to place GPU inference failure rows")
 
     return frozenset(failure)
 
 
 def _gpu_feature_minutes(
-    rng: "np.random.RandomState",
     *,
     active_minutes: int,
     target_count: int,
     failure_minutes: frozenset[int],
     failure_count: int,
-    preferred_failure_minutes: set[int] | None = None,
-    preferred_failure_count: int = 0,
+    score: "np.ndarray",
+    preferred_failure_pools: tuple[tuple[set[int], int], ...] = (),
+    preferred_non_failure_pools: tuple[tuple[set[int], int], ...] = (),
 ) -> frozenset[int]:
-    """Sample a feature-high/low set with a controlled failure overlap."""
+    """Select feature-high/low minutes with controlled failure overlap."""
     selected: set[int] = set()
     failure_pool = set(failure_minutes)
 
-    if preferred_failure_minutes and preferred_failure_count > 0:
-        preferred_pool = failure_pool & set(preferred_failure_minutes)
-        selected |= _choice_set(
-            rng, preferred_pool, min(preferred_failure_count, failure_count)
+    if failure_count > target_count:
+        raise ValueError(
+            f"GPU inference feature failure_count {failure_count} exceeds "
+            f"target_count {target_count}"
         )
 
+    for pool, count in preferred_failure_pools:
+        needed = min(count, failure_count - len(selected))
+        selected |= _ranked_choice_set((failure_pool & pool) - selected,
+                                       needed, score)
+
     remaining_failure = failure_count - len(selected)
-    selected |= _choice_set(rng, failure_pool - selected, remaining_failure)
+    selected |= _ranked_choice_set(failure_pool - selected,
+                                   remaining_failure, score)
 
     non_failure_pool = set(range(active_minutes)) - failure_pool
-    selected |= _choice_set(rng, non_failure_pool, target_count - len(selected))
+    selected_non_failure = len(selected - failure_pool)
+    target_non_failure = target_count - failure_count
+
+    for pool, count in preferred_non_failure_pools:
+        needed = min(count, target_non_failure - selected_non_failure)
+        additions = _ranked_choice_set((non_failure_pool & pool) - selected,
+                                       needed, score)
+        selected |= additions
+        selected_non_failure += len(additions)
+
+    selected |= _ranked_choice_set(non_failure_pool - selected,
+                                   target_count - len(selected), score)
     return frozenset(selected)
 
 
-def _gpu_inference_reference_schedule(active_minutes: int) -> dict[str, frozenset[int]]:
+def _gpu_inference_reference_schedule(active_minutes: int) -> dict[str, object]:
     """Build deterministic row sets that mirror the reference CSV signal.
 
     The target counts come from ``observability_telemetry.csv``: 1,204 failure
@@ -472,34 +669,82 @@ def _gpu_inference_reference_schedule(active_minutes: int) -> dict[str, frozense
     """
     rng = np.random.RandomState(20260528)
     failure = _gpu_inference_failure_minutes(active_minutes)
+    stress = _gpu_inference_stress_score(rng, active_minutes, failure)
+    incident_intensity = _gpu_inference_incident_intensity(active_minutes)
+    core_pool = set(np.flatnonzero(incident_intensity >= 0.82).astype(int).tolist())
+    core_score = stress + 1.15 * incident_intensity
+    strict_core_count = min(320, len(core_pool))
+    strict_core = _ranked_choice_set(core_pool, strict_core_count, core_score)
+    strict_failure_count = len(strict_core & failure)
+    strict_non_failure_count = len(strict_core - failure)
+
+    def failure_count_for(target_count: int, desired: int) -> int:
+        lower = strict_failure_count
+        upper = target_count - strict_non_failure_count
+        return max(lower, min(desired, upper))
+
+    strict_failure_pool = ((strict_core, strict_failure_count),)
+    strict_non_failure_pool = ((strict_core, strict_non_failure_count),)
+
+    frag_score = (1.00 * stress + 1.10 * incident_intensity
+                  + rng.normal(0.0, 0.20, active_minutes))
+    pressure_score = (0.74 * stress + 1.18 * incident_intensity
+                      + rng.normal(0.0, 0.28, active_minutes))
+    util_score = (0.84 * stress + 1.12 * incident_intensity
+                  + rng.normal(0.0, 0.24, active_minutes))
+    p99_score = (0.68 * stress + 1.30 * incident_intensity
+                 + rng.normal(0.0, 0.24, active_minutes))
+    throughput_score = (0.56 * stress + 1.05 * incident_intensity
+                        + rng.normal(0.0, 0.34, active_minutes))
+    kv_score = (0.78 * stress + 0.72 * incident_intensity
+                + rng.normal(0.0, 0.18, active_minutes))
+
     high_frag = _gpu_feature_minutes(
-        rng, active_minutes=active_minutes, target_count=744,
-        failure_minutes=failure, failure_count=229,
+        active_minutes=active_minutes, target_count=744,
+        failure_minutes=failure, failure_count=failure_count_for(744, 420),
+        score=frag_score,
+        preferred_failure_pools=strict_failure_pool,
+        preferred_non_failure_pools=strict_non_failure_pool,
     )
     high_pressure = _gpu_feature_minutes(
-        rng, active_minutes=active_minutes, target_count=3_737,
-        failure_minutes=failure, failure_count=179,
+        active_minutes=active_minutes, target_count=3_737,
+        failure_minutes=failure, failure_count=failure_count_for(3_737, 520),
+        score=pressure_score,
+        preferred_failure_pools=strict_failure_pool,
+        preferred_non_failure_pools=strict_non_failure_pool,
     )
     low_util = _gpu_feature_minutes(
-        rng, active_minutes=active_minutes, target_count=3_271,
-        failure_minutes=failure, failure_count=190,
+        active_minutes=active_minutes, target_count=3_271,
+        failure_minutes=failure, failure_count=failure_count_for(3_271, 520),
+        score=util_score,
+        preferred_failure_pools=strict_failure_pool,
+        preferred_non_failure_pools=strict_non_failure_pool,
     )
     p99_high = _gpu_feature_minutes(
-        rng, active_minutes=active_minutes, target_count=350,
-        failure_minutes=failure, failure_count=22,
-        preferred_failure_minutes=set(high_frag) & set(failure),
-        preferred_failure_count=20,
+        active_minutes=active_minutes, target_count=420,
+        failure_minutes=failure, failure_count=failure_count_for(420, 260),
+        score=p99_score,
+        preferred_failure_pools=strict_failure_pool,
+        preferred_non_failure_pools=strict_non_failure_pool,
     )
     throughput_low = _gpu_feature_minutes(
-        rng, active_minutes=active_minutes, target_count=5_000,
-        failure_minutes=failure, failure_count=126,
+        active_minutes=active_minutes, target_count=5_000,
+        failure_minutes=failure, failure_count=failure_count_for(5_000, 520),
+        score=throughput_score,
+        preferred_failure_pools=strict_failure_pool,
+        preferred_non_failure_pools=strict_non_failure_pool,
     )
     kv_high = _gpu_feature_minutes(
-        rng, active_minutes=active_minutes, target_count=31_907,
-        failure_minutes=failure, failure_count=815,
+        active_minutes=active_minutes, target_count=31_907,
+        failure_minutes=failure, failure_count=1_020, score=kv_score,
+        preferred_failure_pools=strict_failure_pool,
+        preferred_non_failure_pools=strict_non_failure_pool,
     )
     return {
         "failure": failure,
+        "stress": stress,
+        "incident_intensity": incident_intensity,
+        "strict_core": strict_core,
         "high_frag": high_frag,
         "high_pressure": high_pressure,
         "low_util": low_util,
@@ -513,19 +758,25 @@ def _gpu_inference_fragmentation_specs(
 ) -> tuple[tuple[tuple[str, dict], ...], tuple[tuple[str, dict], ...]]:
     """Scenario specs modeled after the reference observability telemetry CSV.
 
-    The CSV's failure labels are mostly isolated one-minute points. The
+    The CSV's failure labels are mostly isolated one-row points. The
     strongest useful signal is not a perfect spike but a statistical lift in
     fragmentation/pressure plus weaker utilization, throughput, and latency
     evidence. This scenario therefore generates a dense but sparse-label
     incident field instead of a handful of perfectly separable pulses.
     """
-    start = 9 * SECONDS_PER_DAY + 4 * 3600  # Day 10 04:00
-    duration_seconds = DEFAULT_ROW_COUNT * DEFAULT_INTERVAL_SECONDS - start
+    start = 0
+    duration_seconds = DEFAULT_ROW_COUNT * DEFAULT_INTERVAL_SECONDS
     active_minutes = int(duration_seconds // DEFAULT_INTERVAL_SECONDS)
     schedule = _gpu_inference_reference_schedule(active_minutes)
 
     def minute_idx(t_within: float) -> int:
         return int(math.floor((t_within + 1e-9) / DEFAULT_INTERVAL_SECONDS))
+
+    def stress_for(minute: int) -> float:
+        return float(schedule["stress"][minute])
+
+    def incident_for(minute: int) -> float:
+        return float(schedule["incident_intensity"][minute])
 
     def batch_size_gen(ts, col, t_within, span_idx, rng):
         return _weighted_choice(
@@ -539,49 +790,72 @@ def _gpu_inference_fragmentation_specs(
 
     def memory_fragmentation_gen(ts, col, t_within, span_idx, rng):
         minute = minute_idx(t_within)
+        stress = stress_for(minute)
+        incident = incident_for(minute)
         if minute in schedule["high_frag"]:
-            if minute in schedule["failure"]:
-                return rng.uniform(0.80, 0.94)
-            return rng.uniform(0.80, 0.88)
-        return _clamp(float(rng.normal(0.50, 0.105)), 0.14, 0.799)
+            base = 0.80 + 0.12 * incident + 0.06 * stress + rng.normal(0.0, 0.008)
+            return _clamp(float(base), 0.80, 0.96)
+        base = 0.18 + 0.45 * stress + 0.18 * incident + rng.normal(0.0, 0.035)
+        return _clamp(float(base), 0.14, 0.799)
 
     def gpu_memory_pressure_gen(ts, col, t_within, span_idx, rng):
         minute = minute_idx(t_within)
+        stress = stress_for(minute)
+        incident = incident_for(minute)
         if minute in schedule["high_pressure"]:
-            if minute in schedule["failure"]:
-                return rng.uniform(0.90, 0.98)
-            return rng.uniform(0.90, 0.945)
-        return _clamp(float(rng.normal(0.62, 0.13)), 0.30, 0.899)
+            base = 0.90 + 0.08 * incident + 0.035 * stress + rng.normal(0.0, 0.006)
+            return _clamp(float(base), 0.90, 0.99)
+        base = 0.36 + 0.38 * stress + 0.18 * incident + rng.normal(0.0, 0.036)
+        return _clamp(float(base), 0.30, 0.899)
 
     def kv_cache_usage_gen(ts, col, t_within, span_idx, rng):
         minute = minute_idx(t_within)
+        stress = stress_for(minute)
+        incident = incident_for(minute)
         if minute in schedule["kv_high"]:
-            return 1.0
-        return 0.20 + float(rng.beta(0.8, 4.0)) * 0.74
+            base = 0.95 + 0.04 * incident + 0.02 * stress + rng.normal(0.0, 0.003)
+            return _clamp(float(base), 0.95, 1.0)
+        base = 0.20 + 0.54 * stress + 0.24 * incident + rng.normal(0.0, 0.040)
+        return _clamp(float(base), 0.20, 0.949)
 
     def gpu_utilization_gen(ts, col, t_within, span_idx, rng):
         minute = minute_idx(t_within)
+        stress = stress_for(minute)
+        incident = incident_for(minute)
         if minute in schedule["low_util"]:
-            return rng.uniform(0.58, 0.65)
-        return _clamp(float(rng.normal(0.76, 0.045)), 0.651, 0.91)
+            base = 0.66 - 0.11 * incident - 0.035 * stress + rng.normal(0.0, 0.008)
+            return _clamp(float(base), 0.52, 0.65)
+        base = 0.90 - 0.16 * stress - 0.13 * incident + rng.normal(0.0, 0.018)
+        return _clamp(float(base), 0.651, 0.93)
 
     def throughput_tps_gen(ts, col, t_within, span_idx, rng):
         minute = minute_idx(t_within)
+        stress = stress_for(minute)
+        incident = incident_for(minute)
         if minute in schedule["throughput_low"]:
-            return 0.8
-        return _clamp(float(rng.lognormal(np.log(12.0), 1.10)), 0.8, 220.0)
+            return _clamp(float(0.96 - 0.42 * incident + rng.normal(0.0, 0.020)), 0.45, 0.999)
+        base = float(rng.lognormal(np.log(18.0 - 8.0 * stress - 4.0 * incident), 0.50))
+        return _clamp(base, 1.001, 220.0)
 
     def latency_p50_ms_gen(ts, col, t_within, span_idx, rng):
         minute = minute_idx(t_within)
+        stress = stress_for(minute)
+        incident = incident_for(minute)
         if minute in schedule["p99_high"]:
-            return rng.uniform(130.0, 245.0)
-        return _clamp(float(rng.lognormal(np.log(85.0), 0.55)), 33.0, 245.0)
+            return _clamp(float(130.0 + 130.0 * incident + 50.0 * stress
+                                + rng.normal(0.0, 8.0)), 130.0, 320.0)
+        base = float(rng.lognormal(np.log(58.0 + 88.0 * stress + 58.0 * incident), 0.22))
+        return _clamp(base, 33.0, 245.0)
 
     def latency_p99_ms_gen(ts, col, t_within, span_idx, rng):
         minute = minute_idx(t_within)
+        stress = stress_for(minute)
+        incident = incident_for(minute)
         if minute in schedule["p99_high"]:
-            return rng.uniform(900.0, 1070.0)
-        return _clamp(float(rng.lognormal(np.log(311.0), 0.60)), 80.0, 899.0)
+            return _clamp(float(900.0 + 260.0 * incident + 90.0 * stress
+                                + rng.normal(0.0, 12.0)), 900.0, 1240.0)
+        base = float(rng.lognormal(np.log(150.0 + 360.0 * stress + 170.0 * incident), 0.22))
+        return _clamp(base, 80.0, 899.0)
 
     specs: list[tuple[str, dict]] = [
         ("gpu_inference", {
@@ -661,8 +935,6 @@ def _gpu_inference_fragmentation_specs(
     for minute in sorted(schedule["failure"]):
         specs.append(("gpu_inference", {
             "time_offset": start + minute * DEFAULT_INTERVAL_SECONDS,
-            "duration_seconds": DEFAULT_INTERVAL_SECONDS,
-            "shape": "sustained",
             "metric": "failure",
             "description": "GPU inference sparse reference-like failure label",
             "generator": _const_generator(1.0),
@@ -677,7 +949,7 @@ def _gpu_inference_fragmentation_specs(
             "severity": DEFAULT_SEVERITY,
         }),
         ("llm_analytics", {
-            "time_offset": start + 20 * SECONDS_PER_DAY + 90,
+            "time_offset": start + 20 * 3600 + 90,
             "metric": "llm_api_error_rate",
             "description": "Cascading: dense GPU inference failure field surfaces as LLM API errors (~12%)",
             "generator": _const_generator(0.12),
@@ -811,7 +1083,7 @@ def _resolve_instance_filter(spec_filter, instances: list["Instance"]):
 
     Returns ``None`` when every active instance matches (no filter declared
     or filter matches everyone) — the caller takes the shared-values fast
-    path and preserves Phase 2 byte parity.
+    path and preserves the single-shared-buffer behavior.
 
     Returns ``_INSTANCE_FILTER_NO_MATCH`` when the filter matches zero
     active instances — the caller emits one WARNING per spec and drops it.
@@ -869,8 +1141,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         has non-None dimension fields (the Phase 2 long-form CSV layout).
     apply_dtype_int_cast: if True (default), round columns with ``dtype="int"``
         to whole numbers via ``np.rint`` before derivations. Pass False
-        to preserve pre-flag-day float parity in the deprecated
-        independent mode.
+        for the deprecated independent mode so it keeps the no-topology
+        fractional-int contrast path.
 
     Vectorized: natural-value math is one numpy op per metric; anomaly overrides
     are masked writes on the column arrays; packet loss is a single boolean mask
@@ -992,16 +1264,14 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         start_idx = int(round(s["time_offset"] / interval))
         duration_seconds = float(s.get("duration_seconds", 0) or 0)
         duration_rows = max(1, int(np.ceil(duration_seconds / interval)))
-        span_has_row = False
-        for span_idx in range(duration_rows):
-            row_idx = start_idx + span_idx
-            if 0 <= row_idx < n_rows:
-                span_has_row = True
-                t_within = span_idx * interval
-                expanded_overrides.append((row_idx, s, t_within, span_idx))
-        if not span_has_row:
+        end_idx_exclusive = min(n_rows, start_idx + duration_rows)
+        if start_idx >= n_rows or end_idx_exclusive <= start_idx:
             out_of_range.append(s)
             continue
+        for row_idx in range(start_idx, end_idx_exclusive):
+            span_idx = row_idx - start_idx
+            t_within = span_idx * interval
+            expanded_overrides.append((row_idx, s, t_within, span_idx))
     if out_of_range:
         max_offset = max(s["time_offset"] for s in out_of_range)
         needed_days = max_offset // SECONDS_PER_DAY + 1
@@ -1293,8 +1563,8 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # ``_format_fixed3`` printing "1235.000" for an underlying float of
     # ``1235.0``. ``apply_dtype_int_cast=False`` (passed by main() in the
     # deprecated ``--topology-mode independent`` alias) skips the cast so
-    # the alias preserves the pre-flag-day byte-for-byte baseline; the
-    # validator still flags those columns as fractional in that mode.
+    # the alias preserves the no-topology fractional-int contrast behavior;
+    # the validator still flags those columns as fractional in that mode.
     if apply_dtype_int_cast:
         for col_idx, spec in enumerate(specs):
             if spec.dtype == "int":
@@ -1337,7 +1607,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # downstream coupling signal therefore stays self-consistent with
     # the on-disk row. ``None`` (the default for ``--topology-mode
     # independent``, set by ``main()``) short-circuits so the deprecated
-    # alias sees zero new work and reproduces the pre-flag-day bytes.
+    # alias sees zero topology work and remains the no-topology contrast path.
     if topology_capture is not None:
         entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
         if entry is not None:
@@ -2561,9 +2831,8 @@ _validate_metric_spec_schema_metadata()
 # columns) and ``_compose_topology_saturation_specs`` (phase 4/5:
 # lifts downstream latency/error specs via the logistic saturation
 # curve). Under the deprecated ``--topology-mode independent`` alias
-# the graph is not read, so byte-for-byte CSV output stays identical
-# to the pre-existing baseline; the alias is scheduled for removal
-# after phase 9.
+# the graph is not read, so output remains on the no-topology contrast
+# path; the alias is scheduled for removal after phase 9.
 #
 # v1 graph (per design):
 #   loadbalancer -> apigateway                   (constant weight 1.0)
@@ -3932,14 +4201,18 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("authservice", {
                 "time_offset": 2*3600 + 15*60,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "error_rate",
-                "description": "Spike in failed logins – possible brute force",
+                "description": "Sustained failed-login burst — possible brute force",
                 "generator": lambda ts, idx: 0.42,
             }),
             ("authservice", {
                 "time_offset": 2*3600 + 15*60,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "login_attempts",
-                "description": "Login attempts surge 5×",
+                "description": "Login attempts surge 5× for 15 min",
                 "generator": lambda ts, idx: 1250,
             }),
         ),
@@ -3970,14 +4243,18 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("cacheservice", {
                 "time_offset": 6*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "cache_misses",
-                "description": "Cache miss spike to 95,000 — derives hit ratio ~5%",
+                "description": "Cache miss collapse — misses hold near 95,000 for 20 min, hit ratio ~5%",
                 "generator": lambda ts, idx: 95000.0,
             }),
             ("cacheservice", {
                 "time_offset": 17*3600,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "memory_util_pct",
-                "description": "Memory pressure — 97% nearing eviction",
+                "description": "Memory pressure plateau — 97% nearing eviction for 30 min",
                 "generator": lambda ts, idx: 97.0,
             }),
             ("cacheservice", {
@@ -4024,14 +4301,18 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("apigateway", {
                 "time_offset": 6*3600 + 30*60,
+                "duration_seconds": 10*60,
+                "shape": "sustained",
                 "metric": "cpu_util_pct",
-                "description": "CPU saturates at 100 %",
+                "description": "CPU saturates at 100% for 10 min",
                 "generator": lambda ts, idx: 100.0,
             }),
             ("apigateway", {
                 "time_offset": 21*3600 + 45*60,
+                "duration_seconds": 5*60,
+                "shape": "sustained",
                 "metric": "error_rate",
-                "description": "5xx burst from bad config push — 25 %",
+                "description": "5xx burst from bad config push — 25% for 5 min",
                 "generator": lambda ts, idx: 0.25,
             }),
             ("apigateway", {
@@ -4096,32 +4377,42 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("database", {
                 "time_offset": 11*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "read_latency_ms",
-                "description": "Read latency skyrockets to 360 ms",
+                "description": "Read latency stall — 360 ms for 20 min",
                 "generator": lambda ts, idx: 360.0,
             }),
             ("database", {
                 "time_offset": 11*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "error_rate",
-                "description": "Backend errors rise 35 %",
+                "description": "Backend errors rise to 35% for 20 min",
                 "generator": lambda ts, idx: 0.35,
             }),
             ("database", {
                 "time_offset": 4*3600,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "connections",
-                "description": "Backup-window connection pile-up — 6,800 connections",
+                "description": "Backup-window connection pile-up — 6,800 connections for 30 min",
                 "generator": lambda ts, idx: 6800,
             }),
             ("database", {
                 "time_offset": 4*3600,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "write_latency_ms",
-                "description": "Backup I/O contention — writes 45 ms",
+                "description": "Backup I/O contention — writes hold near 45 ms for 30 min",
                 "generator": lambda ts, idx: 45.0,
             }),
             ("database", {
                 "time_offset": 23*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "queries_per_sec",
-                "description": "Nightly batch kickoff — 55k QPS",
+                "description": "Nightly batch kickoff — 55k QPS for 20 min",
                 "generator": lambda ts, idx: 55000,
             }),
             ("database", {
@@ -4202,20 +4493,26 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("mqservice", {
                 "time_offset": 14*3600 + 30*60,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "pending_messages",
-                "description": "Pending messages jam to 1 M",
+                "description": "Pending messages jam to 1M for 20 min",
                 "generator": lambda ts, idx: 1_000_000,
             }),
             ("mqservice", {
                 "time_offset": 14*3600 + 30*60,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "error_rate",
-                "description": "Error rate jumps to 25 %",
+                "description": "Error rate holds at 25% during queue jam",
                 "generator": lambda ts, idx: 0.25,
             }),
             ("mqservice", {
                 "time_offset": 12*3600 + 30*60,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "dead_letter_queue",
-                "description": "DLQ blow-up — 1,200 messages parked",
+                "description": "DLQ blow-up — 1,200 messages parked for 15 min",
                 "generator": lambda ts, idx: 1200,
             }),
         ),
@@ -4260,26 +4557,34 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("loadbalancer", {
                 "time_offset": 3*3600,
+                "duration_seconds": 5*60,
+                "shape": "sustained",
                 "metric": "tls_handshake_errors",
-                "description": "TLS handshake errors surge to 80/s (cert near-expiry warning)",
+                "description": "TLS handshake errors sustain at 80/s for 5 min (cert near-expiry warning)",
                 "generator": lambda ts, idx: 80.0,
             }),
             ("loadbalancer", {
                 "time_offset": 8*3600 + 15*60,
+                "duration_seconds": 10*60,
+                "shape": "sustained",
                 "metric": "healthcheck_failures",
-                "description": "Healthcheck failures jump to 12 (backend pool flapping)",
+                "description": "Healthcheck failures hold at 12 for 10 min (backend pool flapping)",
                 "generator": lambda ts, idx: 12.0,
             }),
             ("loadbalancer", {
                 "time_offset": 13*3600,
+                "duration_seconds": 5*60,
+                "shape": "sustained",
                 "metric": "connection_resets",
-                "description": "Connection resets spike to 450 (SYN flood-style burst)",
+                "description": "Connection resets sustain at 450 for 5 min (SYN flood-style burst)",
                 "generator": lambda ts, idx: 450.0,
             }),
             ("loadbalancer", {
                 "time_offset": 20*3600 + 30*60,
+                "duration_seconds": 8*60,
+                "shape": "sustained",
                 "metric": "backend_5xx_per_sec",
-                "description": "Backend 5xx jump to 75/s (region failover cascades 5xx upstream)",
+                "description": "Backend 5xx hold near 75/s for 8 min (region failover cascades 5xx upstream)",
                 "generator": lambda ts, idx: 75.0,
             }),
         ),
@@ -4310,20 +4615,26 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("objectstore", {
                 "time_offset": 7*3600,
+                "duration_seconds": 12*60,
+                "shape": "sustained",
                 "metric": "5xx_rate",
-                "description": "Object store 5xx rate spikes to 14 % (upstream provider 5xx wave)",
-                "generator": lambda ts, idx: 0.14,
+                "description": "Object store 5xx rate holds at 18% for 12 min (upstream provider 5xx wave)",
+                "generator": lambda ts, idx: 0.18,
             }),
             ("objectstore", {
                 "time_offset": 12*3600,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "bandwidth_mbps",
-                "description": "Bandwidth saturates at 950 Mbps (batch export)",
+                "description": "Bandwidth saturates at 950 Mbps for 30 min (batch export)",
                 "generator": lambda ts, idx: 950.0,
             }),
             ("objectstore", {
                 "time_offset": 18*3600 + 30*60,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "get_latency_ms",
-                "description": "GET latency tail at 380 ms (read-after-write)",
+                "description": "GET latency tail holds at 380 ms for 15 min (read-after-write)",
                 "generator": lambda ts, idx: 380.0,
             }),
         ),
@@ -4347,14 +4658,18 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("vectorstore", {
                 "time_offset": 10*3600 + 30*60,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "ann_query_latency_ms",
-                "description": "ANN query latency stalls at 280 ms (index rebuild)",
+                "description": "ANN query latency stalls at 280 ms for 30 min (index rebuild)",
                 "generator": lambda ts, idx: 280.0,
             }),
             ("vectorstore", {
                 "time_offset": 15*3600,
+                "duration_seconds": 60*60,
+                "shape": "sustained",
                 "metric": "recall_at_10",
-                "description": "Recall@10 degrades to 0.62 after model swap",
+                "description": "Recall@10 degrades to 0.62 for 1h after model swap",
                 "generator": lambda ts, idx: 0.62,
             }),
         ),
@@ -4385,20 +4700,26 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("scheduler", {
                 "time_offset": 8*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "avg_job_duration_s",
-                "description": "Job overrun — duration 4× baseline blocks next window",
+                "description": "Job overrun — duration 4× baseline for 20 min blocks next window",
                 "generator": lambda ts, idx: 480.0,
             }),
             ("scheduler", {
                 "time_offset": 8*3600 + 5*60,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "missed_schedules",
                 "description": "Missed schedule chain — 12 windows skipped after overrun",
                 "generator": lambda ts, idx: 12.0,
             }),
             ("scheduler", {
                 "time_offset": 10*3600,
+                "duration_seconds": 45*60,
+                "shape": "sustained",
                 "metric": "jobs_queued",
-                "description": "Job queue overflow — 2,500 jobs backlog",
+                "description": "Job queue overflow — 2,500 jobs backlog for 45 min",
                 "generator": lambda ts, idx: 2500.0,
             }),
         ),
@@ -4422,20 +4743,26 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("paymentservice", {
                 "time_offset": 12*3600,
+                "duration_seconds": 12*60,
+                "shape": "sustained",
                 "metric": "provider_5xx_rate",
-                "description": "Stripe-style provider 5xx surge — 18% error rate",
+                "description": "Stripe-style provider 5xx surge — 18% error rate for 12 min",
                 "generator": lambda ts, idx: 0.18,
             }),
             ("paymentservice", {
                 "time_offset": 13*3600 + 30*60,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "webhook_delivery_lag_s",
-                "description": "Webhook delivery 5 min behind — provider backlog",
+                "description": "Webhook delivery 5 min behind for 30 min — provider backlog",
                 "generator": lambda ts, idx: 300.0,
             }),
             ("paymentservice", {
                 "time_offset": 15*3600,
+                "duration_seconds": 45*60,
+                "shape": "sustained",
                 "metric": "auth_decline_rate",
-                "description": "Decline-rate jump to 35% — fraud rule misfire",
+                "description": "Decline-rate holds at 35% for 45 min — fraud rule misfire",
                 "generator": lambda ts, idx: 0.35,
             }),
         ),
@@ -4459,26 +4786,34 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("identityprovider", {
                 "time_offset": 4*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "jwks_fetch_latency_ms",
-                "description": "JWKS cache miss storm — fetch latency 1500 ms at key rotation",
+                "description": "JWKS cache miss storm — fetch latency 1500 ms for 20 min at key rotation",
                 "generator": lambda ts, idx: 1500.0,
             }),
             ("identityprovider", {
                 "time_offset": 4*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "key_rotation_events",
-                "description": "Concurrent key rotation events triggered cache miss storm",
+                "description": "Concurrent key rotation events sustain the cache miss storm",
                 "generator": lambda ts, idx: 50.0,
             }),
             ("identityprovider", {
                 "time_offset": 16*3600 + 30*60,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "mfa_challenges_per_min",
-                "description": "MFA SMS provider degradation — challenges drop to 0",
+                "description": "MFA SMS provider degradation — challenges drop to 0 for 30 min",
                 "generator": lambda ts, idx: 0.0,
             }),
             ("identityprovider", {
                 "time_offset": 19*3600,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "failed_oidc_flows",
-                "description": "SAML parse error spike — 120 failed flows from upstream IdP",
+                "description": "SAML parse error burst — 120 failed flows for 15 min from upstream IdP",
                 "generator": lambda ts, idx: 120.0,
             }),
         ),
@@ -4502,26 +4837,34 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("observabilitypipeline", {
                 "time_offset": 9*3600,
+                "duration_seconds": 30*60,
+                "shape": "sustained",
                 "metric": "ingest_lag_s",
-                "description": "Ingestion lag grows to 240s — pipeline can't keep up",
+                "description": "Ingestion lag holds near 240s for 30 min — pipeline can't keep up",
                 "generator": lambda ts, idx: 240.0,
             }),
             ("observabilitypipeline", {
                 "time_offset": 13*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "dropped_metrics_per_sec",
-                "description": "High-cardinality push drops 8,500 metrics/s",
+                "description": "High-cardinality push drops 8,500 metrics/s for 20 min",
                 "generator": lambda ts, idx: 8500.0,
             }),
             ("observabilitypipeline", {
                 "time_offset": 13*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "metrics_ingested_per_sec",
-                "description": "Ingest rate collapses to 12,000/s during cardinality storm",
+                "description": "Ingest rate collapses to 12,000/s for 20 min during cardinality storm",
                 "generator": lambda ts, idx: 12000.0,
             }),
             ("observabilitypipeline", {
                 "time_offset": 20*3600,
+                "duration_seconds": 20*60,
+                "shape": "sustained",
                 "metric": "pipeline_error_rate",
-                "description": "Pipeline error rate 8% — downstream dashboards go stale",
+                "description": "Pipeline error rate holds at 8% for 20 min — downstream dashboards go stale",
                 "generator": lambda ts, idx: 0.08,
             }),
         ),
@@ -4548,15 +4891,19 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("authservice", {
                 "time_offset": 9*3600,
+                "duration_seconds": 60*60,
+                "shape": "sustained",
                 "metric": "login_attempts",
-                "description": "Benign baseline shift: Monday morning login burst — 1,400 attempts/s",
+                "description": "Benign baseline shift: Monday morning login burst — 1,400 attempts/s for 1h",
                 "generator": lambda ts, idx: 1400,
                 "severity": "low",
             }),
             ("apigateway", {
                 "time_offset": 9*3600,
+                "duration_seconds": 60*60,
+                "shape": "sustained",
                 "metric": "requests_per_sec",
-                "description": "Monday-morning thundering herd — 2,200 RPS spike",
+                "description": "Monday-morning thundering herd — 2,200 RPS for 1h",
                 "generator": lambda ts, idx: 2200,
                 "severity": "low",
             }),
@@ -4580,20 +4927,26 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("llm_analytics", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
+                "duration_seconds": 12*60,
+                "shape": "sustained",
                 "metric": "llm_requests_per_sec",
-                "description": "Viral surge: Customer demo goes viral, 8× request spike",
+                "description": "Viral surge: Customer demo goes viral, 8× request spike for 12 min",
                 "generator": lambda ts, idx: 360,
             }),
             ("llm_analytics", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
+                "duration_seconds": 12*60,
+                "shape": "sustained",
                 "metric": "input_tokens_per_sec",
-                "description": "Token surge from viral traffic",
+                "description": "Token surge from viral traffic for 12 min",
                 "generator": lambda ts, idx: 185000,
             }),
             ("llm_analytics", {
                 "time_offset": 1*SECONDS_PER_DAY + 10*3600 + 15*60,
+                "duration_seconds": 12*60,
+                "shape": "sustained",
                 "metric": "output_tokens_per_sec",
-                "description": "Output token surge from viral traffic",
+                "description": "Output token surge from viral traffic for 12 min",
                 "generator": lambda ts, idx: 62000,
             }),
         ),
@@ -4638,27 +4991,58 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("llm_analytics", {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "duration_seconds": 6*3600,
+                "shape": "sustained",
                 "metric": "llm_requests_per_sec",
                 "description": "Enterprise onboarding: Major customer launches AI features",
-                "generator": lambda ts, idx: 285,
+                "generator": _correlated_span_generator(
+                    150.0, 285.0, 6*3600, noise=6.0,
+                    lo=120.0, hi=320.0, phase=0.75,
+                ),
             }),
             ("llm_analytics", {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "duration_seconds": 6*3600,
+                "shape": "sustained",
                 "metric": "avg_context_window_size",
                 "description": "Enterprise using large context windows for analytics",
-                "generator": lambda ts, idx: 12500,
+                "generator": _correlated_span_generator(
+                    6500.0, 12500.0, 6*3600, noise=220.0,
+                    lo=5600.0, hi=13200.0, phase=0.75,
+                ),
             }),
             ("llm_analytics", {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "duration_seconds": 6*3600,
+                "shape": "sustained",
                 "metric": "token_limit_hits_per_min",
                 "description": "Token limits hit frequently during enterprise rollout",
-                "generator": lambda ts, idx: 45,
+                "generator": _correlated_span_generator(
+                    10.0, 45.0, 6*3600, noise=1.2,
+                    lo=6.0, hi=52.0, phase=0.75,
+                ),
+            }),
+            ("llm_analytics", {
+                "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "duration_seconds": 6*3600,
+                "shape": "sustained",
+                "metric": "avg_llm_latency_ms",
+                "description": "Enterprise onboarding correlated LLM latency climb",
+                "generator": _correlated_span_generator(
+                    980.0, 2300.0, 6*3600, noise=55.0,
+                    lo=850.0, hi=2500.0, phase=0.75,
+                ),
             }),
             ("vectorstore", {
                 "time_offset": 2*SECONDS_PER_DAY + 14*3600,
+                "duration_seconds": 6*3600,
+                "shape": "sustained",
                 "metric": "embeddings_per_sec",
                 "description": "Enterprise onboarding drives embeddings to 350/s",
-                "generator": lambda ts, idx: 350.0,
+                "generator": _correlated_span_generator(
+                    180.0, 350.0, 6*3600, noise=9.0,
+                    lo=140.0, hi=390.0, phase=0.75,
+                ),
             }),
         ),
         cascade_specs=(
@@ -4688,15 +5072,36 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("llm_analytics", {
                 "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60,
+                "duration_seconds": 90*60,
+                "shape": "sustained",
                 "metric": "llm_api_error_rate",
                 "description": "LLM provider rate limits hit, 18% error rate",
-                "generator": lambda ts, idx: 0.18,
+                "generator": _correlated_span_generator(
+                    0.04, 0.18, 90*60, noise=0.006,
+                    lo=0.02, hi=0.22, phase=1.05,
+                ),
             }),
             ("llm_analytics", {
                 "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60,
+                "duration_seconds": 90*60,
+                "shape": "sustained",
                 "metric": "avg_llm_latency_ms",
                 "description": "LLM latency spikes due to rate limiting",
-                "generator": lambda ts, idx: 4200,
+                "generator": _correlated_span_generator(
+                    1200.0, 4200.0, 90*60, noise=95.0,
+                    lo=950.0, hi=4600.0, phase=1.05,
+                ),
+            }),
+            ("apigateway", {
+                "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 31*60,
+                "duration_seconds": 90*60,
+                "shape": "sustained",
+                "metric": "error_rate",
+                "description": "LLM rate limiting correlated gateway error plateau",
+                "generator": _correlated_span_generator(
+                    0.06, 0.22, 90*60, noise=0.006,
+                    lo=0.03, hi=0.26, phase=1.05,
+                ),
             }),
         ),
         cascade_specs=(
@@ -4704,7 +5109,7 @@ SCENARIOS: dict[str, Scenario] = {
                 "time_offset": 4*SECONDS_PER_DAY + 9*3600 + 30*60 + 8,
                 "metric": "error_rate",
                 "description": "Cascading: LLM API errors propagate to gateway",
-                "generator": lambda ts, idx: 0.22,
+                "generator": lambda ts, idx: 0.28,
                 "severity": DEFAULT_SEVERITY,
             }),
         ),
@@ -4719,21 +5124,69 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("llm_analytics", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+                "duration_seconds": 4*3600,
+                "shape": "sustained",
                 "metric": "input_tokens_per_sec",
                 "description": "Weekend batch analytics job processing historical data",
-                "generator": lambda ts, idx: 320000,
+                "generator": _correlated_span_generator(
+                    145000.0, 320000.0, 4*3600, noise=7000.0,
+                    lo=110000.0, hi=360000.0, phase=1.35,
+                ),
             }),
             ("llm_analytics", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+                "duration_seconds": 4*3600,
+                "shape": "sustained",
                 "metric": "context_overflow_rate",
                 "description": "Context overflow from large batch documents",
-                "generator": lambda ts, idx: 8.5,
+                "generator": _correlated_span_generator(
+                    1.4, 8.5, 4*3600, noise=0.18,
+                    lo=0.8, hi=9.4, phase=1.35,
+                ),
+            }),
+            ("llm_analytics", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+                "duration_seconds": 4*3600,
+                "shape": "sustained",
+                "metric": "avg_llm_latency_ms",
+                "description": "Weekend batch correlated LLM latency climb",
+                "generator": _correlated_span_generator(
+                    1100.0, 3400.0, 4*3600, noise=85.0,
+                    lo=850.0, hi=3800.0, phase=1.35,
+                ),
             }),
             ("objectstore", {
                 "time_offset": 5*SECONDS_PER_DAY + 2*3600,
+                "duration_seconds": 4*3600,
+                "shape": "sustained",
                 "metric": "bandwidth_mbps",
                 "description": "Weekend batch export saturates object store at 1400 Mbps",
-                "generator": lambda ts, idx: 1400.0,
+                "generator": _correlated_span_generator(
+                    650.0, 1400.0, 4*3600, noise=35.0,
+                    lo=500.0, hi=1550.0, phase=1.35,
+                ),
+            }),
+            ("database", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 180,
+                "duration_seconds": 4*3600,
+                "shape": "sustained",
+                "metric": "queries_per_sec",
+                "description": "Weekend batch correlated database query surge",
+                "generator": _correlated_span_generator(
+                    36000.0, 65000.0, 4*3600, noise=1800.0,
+                    lo=30000.0, hi=72000.0, phase=1.35,
+                ),
+            }),
+            ("database", {
+                "time_offset": 5*SECONDS_PER_DAY + 2*3600 + 240,
+                "duration_seconds": 4*3600,
+                "shape": "sustained",
+                "metric": "cpu_util_pct",
+                "description": "Weekend batch correlated database CPU saturation",
+                "generator": _correlated_span_generator(
+                    45.0, 94.0, 4*3600, noise=1.8,
+                    lo=35.0, hi=98.0, phase=1.35,
+                ),
             }),
         ),
         cascade_specs=(
@@ -4770,20 +5223,26 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("llm_analytics", {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "llm_requests_per_sec",
-                "description": "Social media mention drives 10× traffic spike",
+                "description": "Social media mention drives 10× traffic spike for 15 min",
                 "generator": lambda ts, idx: 450,
             }),
             ("llm_analytics", {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "input_tokens_per_sec",
-                "description": "Massive token usage from social traffic",
+                "description": "Massive token usage from social traffic for 15 min",
                 "generator": lambda ts, idx: 420000,
             }),
             ("llm_analytics", {
                 "time_offset": 6*SECONDS_PER_DAY + 16*3600 + 45*60,
+                "duration_seconds": 15*60,
+                "shape": "sustained",
                 "metric": "output_tokens_per_sec",
-                "description": "Output tokens surge from viral event",
+                "description": "Output tokens surge from viral event for 15 min",
                 "generator": lambda ts, idx: 135000,
             }),
         ),
@@ -4825,7 +5284,7 @@ SCENARIOS: dict[str, Scenario] = {
         id="gpu_inference_fragmentation",
         name="GPU inference allocator fragmentation + sparse failures",
         severity="medium",
-        days_required=10,
+        days_required=1,
         category="gpu_inference",
         components_touched=("gpu_inference", "llm_analytics"),
         primary_specs=_GPU_INFERENCE_FRAGMENTATION_PRIMARY_SPECS,
@@ -5275,20 +5734,46 @@ SCENARIOS: dict[str, Scenario] = {
             ("cacheservice", {
                 "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
                 "duration_seconds": 51*3600,
-                "shape": "ramp_linear",
-                "shape_params": {"start": 50.0, "end": 95.0},
+                "shape": "sustained",
                 "metric": "memory_util_pct",
                 "description": "Cache memory leak — slow growth 50%→95% over 51h",
-                "generator": lambda ts, idx: 50.0,
+                "generator": _correlated_span_generator(
+                    50.0, 95.0, 51*3600, noise=0.25,
+                    lo=48.0, hi=97.0, phase=0.15,
+                ),
             }),
             ("cacheservice", {
                 "time_offset": 2*SECONDS_PER_DAY + 12*3600,       # Day 3 12:00
                 "duration_seconds": 12*3600,
-                "shape": "ramp_linear",
-                "shape_params": {"start": 682.0, "end": 3333.0},
+                "shape": "sustained",
                 "metric": "cache_misses",
                 "description": "Cache eviction cascade — misses ramp 682→3,333 (hit ratio 88%→60%) over 12h",
-                "generator": lambda ts, idx: 682.0,
+                "generator": _correlated_span_generator(
+                    682.0, 3333.0, 12*3600, noise=55.0,
+                    lo=600.0, hi=3600.0, phase=0.15,
+                ),
+            }),
+            ("database", {
+                "time_offset": 1*SECONDS_PER_DAY + 12*3600 + 60,
+                "duration_seconds": 24*3600,
+                "shape": "sustained",
+                "metric": "queries_per_sec",
+                "description": "Cache leak correlated DB query pressure — sustained climb with miss volume",
+                "generator": _correlated_span_generator(
+                    32000.0, 43000.0, 24*3600, noise=900.0,
+                    lo=28000.0, hi=47000.0, phase=0.15,
+                ),
+            }),
+            ("database", {
+                "time_offset": 2*SECONDS_PER_DAY + 12*3600 + 60,
+                "duration_seconds": 12*3600,
+                "shape": "sustained",
+                "metric": "read_latency_ms",
+                "description": "Cache leak correlated DB read latency — rises with eviction pressure",
+                "generator": _correlated_span_generator(
+                    24.0, 58.0, 12*3600, noise=2.0,
+                    lo=18.0, hi=66.0, phase=0.15,
+                ),
             }),
             ("cacheservice", {
                 "time_offset": 3*SECONDS_PER_DAY + 3*3600,        # Day 4 03:00 — forced restart
@@ -5491,20 +5976,68 @@ SCENARIOS: dict[str, Scenario] = {
             ("database", {
                 "time_offset": 1*SECONDS_PER_DAY,                 # Day 2 00:00
                 "duration_seconds": 96*3600,
-                "shape": "ramp_linear",
-                "shape_params": {"start": 65.0, "end": 92.0},
+                "shape": "sustained",
                 "metric": "disk_used_pct",
                 "description": "Database disk slow exhaustion 65%→92% over 96h",
-                "generator": lambda ts, idx: 65.0,
+                "generator": _correlated_span_generator(
+                    65.0, 92.0, 96*3600, noise=0.18,
+                    lo=63.0, hi=94.0, phase=0.45,
+                ),
             }),
             ("database", {
                 "time_offset": 4*SECONDS_PER_DAY + 6*3600,        # Day 5 06:00
                 "duration_seconds": 12*3600,
-                "shape": "ramp_linear",
-                "shape_params": {"start": 12.0, "end": 90.0},
+                "shape": "sustained",
                 "metric": "write_latency_ms",
                 "description": "Database write latency drift 12→90 ms as I/O saturates",
-                "generator": lambda ts, idx: 12.0,
+                "generator": _correlated_span_generator(
+                    12.0, 90.0, 12*3600, noise=3.0,
+                    lo=10.0, hi=102.0, phase=0.45,
+                ),
+            }),
+            ("database", {
+                "time_offset": 4*SECONDS_PER_DAY + 6*3600 + 60,
+                "duration_seconds": 12*3600,
+                "shape": "sustained",
+                "metric": "connections",
+                "description": "Database disk pressure correlated connection buildup",
+                "generator": _correlated_span_generator(
+                    4200.0, 7800.0, 12*3600, noise=140.0,
+                    lo=3500.0, hi=8500.0, phase=0.45,
+                ),
+            }),
+            ("database", {
+                "time_offset": 4*SECONDS_PER_DAY + 6*3600 + 120,
+                "duration_seconds": 12*3600,
+                "shape": "sustained",
+                "metric": "cpu_util_pct",
+                "description": "Database disk pressure correlated CPU saturation",
+                "generator": _correlated_span_generator(
+                    35.0, 86.0, 12*3600, noise=1.5,
+                    lo=28.0, hi=92.0, phase=0.45,
+                ),
+            }),
+            ("observabilitypipeline", {
+                "time_offset": 4*SECONDS_PER_DAY + 6*3600 + 31*60,
+                "duration_seconds": 6*3600,
+                "shape": "sustained",
+                "metric": "ingest_lag_s",
+                "description": "DB disk pressure correlated observability ingest lag",
+                "generator": _correlated_span_generator(
+                    60.0, 180.0, 6*3600, noise=6.0,
+                    lo=40.0, hi=210.0, phase=0.45,
+                ),
+            }),
+            ("mqservice", {
+                "time_offset": 4*SECONDS_PER_DAY + 12*3600 + 60,
+                "duration_seconds": 12*3600,
+                "shape": "sustained",
+                "metric": "pending_messages",
+                "description": "DB disk pressure correlated MQ backlog growth",
+                "generator": _correlated_span_generator(
+                    120000.0, 330000.0, 12*3600, noise=9000.0,
+                    lo=90000.0, hi=380000.0, phase=0.45,
+                ),
             }),
             ("database", {
                 "time_offset": 5*SECONDS_PER_DAY + 3*3600,        # Day 6 03:00 — log truncation
@@ -5582,15 +6115,19 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("authservice", {
                 "time_offset": 3*3600 + 30*60,
+                "duration_seconds": 5*60,
+                "shape": "sustained",
                 "metric": "error_rate",
-                "description": "Pod-0 partial failure — error_rate spikes to ~85% on i0",
+                "description": "Pod-0 partial failure — error_rate holds near 85% on i0 for 5 min",
                 "generator": lambda ts, idx: 0.85,
                 "instance_filter": ["i0"],
             }),
             ("authservice", {
                 "time_offset": 3*3600 + 30*60,
+                "duration_seconds": 5*60,
+                "shape": "sustained",
                 "metric": "login_success_rate",
-                "description": "Pod-0 partial failure — login_success_rate collapses to ~30% on i0",
+                "description": "Pod-0 partial failure — login_success_rate holds near 30% on i0 for 5 min",
                 "generator": lambda ts, idx: 30.0,
                 "instance_filter": ["i0"],
             }),
@@ -5615,15 +6152,19 @@ SCENARIOS: dict[str, Scenario] = {
         primary_specs=(
             ("cacheservice", {
                 "time_offset": 5*3600,
+                "duration_seconds": 10*60,
+                "shape": "sustained",
                 "metric": "cache_hits",
-                "description": "AZ us-east-1a isolated — cache_hits collapse to ~500 on affected instances",
+                "description": "AZ us-east-1a isolated — cache_hits collapse to ~500 on affected instances for 10 min",
                 "generator": lambda ts, idx: 500,
                 "instance_filter": lambda inst: inst.az == "us-east-1a",
             }),
             ("cacheservice", {
                 "time_offset": 5*3600,
+                "duration_seconds": 10*60,
+                "shape": "sustained",
                 "metric": "cache_misses",
-                "description": "AZ us-east-1a isolated — cache_misses spike to ~3000 on affected instances",
+                "description": "AZ us-east-1a isolated — cache_misses spike to ~3000 on affected instances for 10 min",
                 "generator": lambda ts, idx: 3000,
                 "instance_filter": lambda inst: inst.az == "us-east-1a",
             }),
@@ -6667,7 +7208,7 @@ def parse_args(argv=None):
                         f"default {DEFAULT_INTERVAL_SECONDS:g}s interval). "
                         "Each scenario's ``days_required`` is the minimum value at which "
                         "any of its specs become in range; the full multi-day catalog "
-                        "manifests at 7+.")
+                        f"manifests at {max(s.days_required for s in SCENARIOS.values())}+.")
     p.add_argument("--seed", type=int, default=DEFAULT_SEED,
                    help=f"RNG seed for deterministic output (default: {DEFAULT_SEED}).")
     p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
@@ -6990,8 +7531,8 @@ def parse_args(argv=None):
              "Routes downstream baseline generation through the TOPOLOGY "
              "graph (upstream RPS * edge.weight + small noise; phase 4 "
              "saturation feedback layers logistic latency/error responses "
-             "on top). 'independent' is a deprecation alias retained for "
-             "byte-for-byte parity with the pre-flag-day baseline; it "
+             "on top). 'independent' is a deprecated no-topology contrast "
+             "alias; it "
              "emits a stderr DeprecationWarning on use and is scheduled "
              "for removal after phase 9.",
     )
@@ -6999,16 +7540,15 @@ def parse_args(argv=None):
 
     # Phase 6: --topology-mode independent is a deprecation alias.
     # The default flipped to "realistic" in this PR; "independent" stays
-    # callable only so the pre-flag-day byte-for-byte baseline can be
-    # regenerated for diffing. The alias is scheduled for removal after
-    # phase 9. Emit one stderr DeprecationWarning per invocation so
-    # users see it; tests can match the prefix.
+    # callable only as a no-topology contrast path. The alias is scheduled
+    # for removal after phase 9. Emit one stderr DeprecationWarning per
+    # invocation so users see it; tests can match the prefix.
     if args.topology_mode == "independent":
         print(
             "DeprecationWarning: --topology-mode independent is deprecated. "
             "The default flipped to 'realistic'; 'independent' is "
-            "retained only for byte-for-byte parity with the pre-flag-day "
-            "baseline and will be removed after phase 9. Drop the "
+            "retained only as a no-topology contrast path and will be "
+            "removed after phase 9. Drop the "
             "flag or pass --topology-mode realistic.",
             file=sys.stderr,
         )
@@ -9033,7 +9573,7 @@ def _component_dimensions_schema_entry(
     dim-aware CSV output and therefore declares ``dimensions`` in the
     schema. The single-anonymous-``Instance()`` default produces
     dimensionless output and omits the block so the v1 (default)
-    ``schema.json`` stays byte-identical to the pre-existing baseline.
+    ``schema.json`` stays byte-identical to the dimensionless baseline.
 
     The ``axes`` list is the sorted subset of
     ``_INSTANCE_DIMENSION_FIELDS`` (i.e. ``_INSTANCE_DIMENSION_COLUMNS``
@@ -9123,7 +9663,7 @@ def write_schema_json(
       is dim-aware (``--instances-per-component N>1`` fan-out or a non-
       default ``--instance-config`` entry); the block is omitted in the
       default single-anonymous-``Instance()`` path so the v1 schema bytes
-      stay byte-identical to the pre-existing baseline.
+      stay byte-identical to the dimensionless baseline.
     - ``files`` — sorted list of artifact filenames the run was supposed to
       write, so the validator can flag missing or extra files.
     - ``topology`` (phase 7) — the directed coupling graph

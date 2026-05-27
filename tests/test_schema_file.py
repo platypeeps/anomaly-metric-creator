@@ -38,10 +38,10 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 # - the ``files`` registry,
 # - the new ``topology`` block (source -> [{target, weight, saturation}, ...]).
 SCHEMA_ONE_DAY_HASH = (
-    "f09f58b45e6ffc4b1108d1d1029b1fce9ee668aabc674deefa138fb49f4617d9"
+    "6b79531d611755bd0df5bf14cca2244853d8339602d5703828534d4666b92aec"
 )
 SCHEMA_SEVEN_DAY_HASH = (
-    "be28b7e929505777a35f9d0d45eeffbf7d9ff348811c1656aa7c35b2c022bb70"
+    "5a1e5653c615f12560ab4b078fa0b26008d4c2b995b5a79b7b49743dd6838a46"
 )
 
 
@@ -168,7 +168,7 @@ def test_schema_metadata_captures_run_parameters(one_day_schema_run, amc):
     assert meta["total_seconds"] == amc.SECONDS_PER_DAY
     assert meta["rows_per_component"] == amc.SECONDS_PER_DAY  # interval 1.0
     assert meta["signal_level"] == "medium"
-    assert meta["drop_rate"] == pytest.approx(0.0005)
+    assert meta["drop_rate"] == pytest.approx(0.0)
     assert meta["inject_dst_artifact_day"] == 0
     assert meta["start"] == amc.START.isoformat()
     assert meta["combine"] is False
@@ -494,10 +494,10 @@ def test_schema_topology_version_is_two(one_day_schema_run, amc):
 # ``SCHEMA_ONE_DAY_HASH`` / ``SCHEMA_SEVEN_DAY_HASH`` constants
 # byte-identical above.
 SCHEMA_N3_ONE_DAY_HASH = (
-    "67cc6d8979c679e1707fcb319dcbdd66195d63b1b5738e8816c53d07db7e7d43"
+    "a5b385e419b646f960efeb0eba16418be4276f217512984b7b84298a85e1ef9f"
 )
 SCHEMA_N3_SEVEN_DAY_HASH = (
-    "75715066ffbfcf66e007f8a2b36ad48505a2287d0aa7826c6e9d601f262ee53b"
+    "795e069ae587ab546b1f71bdcd1d6c9cde8b7523d5128fb78fb9e8843421852a"
 )
 
 

@@ -418,10 +418,11 @@ def test_derived_hit_ratio_consistency_seven_day(seven_day_run):
 # Anomaly value coherence (catches wire-to-wrong-field)
 # ------------------------------------------------------------------
 def test_anomalies_match_declared_value(amc, seven_day_run):
-    """For each primary (non-cascade) anomaly, the CSV cell at the declared
-    (component, metric, timestamp) matches the spec's generator output. Cascade
-    generators draw from numpy random state so we can't reproduce them bit-exact;
-    the cross-check test above already proves cascade anomalies land in a cell.
+    """For each deterministic primary anomaly, the CSV cell at the declared
+    (component, metric, timestamp) matches the resolved spec value. Cascade
+    generators and RNG-driven span generators draw from numpy random state so
+    we can't reproduce them bit-exact; the cross-check test above already
+    proves cascade anomalies land in a cell.
 
     Catches "anomaly generator wired to wrong field" regressions: if the anomaly
     were written to a sibling metric, the declared column would carry its natural
@@ -444,19 +445,31 @@ def test_anomalies_match_declared_value(amc, seven_day_run):
         spec = lookup.get(key)
         if spec is None:
             continue  # cascade — covered by manifest/CSV cross-check
-        if int(spec.get("duration_seconds", 0) or 0) > 0:
-            # Span anomalies use shape-driven values rather than the generator
-            # output at the start row. Per-shape value coverage lives in the
-            # dedicated shape tests below.
-            continue
         ts = datetime.datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S")
         header = headers_by_c[entry["component"]]
         col_idx = header.index(entry["metric"])
         spec_idx = col_idx - 1  # value generators are indexed without the timestamp column
+        meta = amc._cached_generator_meta(spec["generator"])
+        if (
+            float(spec.get("duration_seconds", 0) or 0) > 0
+            and spec.get("shape", "step") in {"step", "sustained"}
+            and meta["required_positional"] > 2
+        ):
+            # Correlated/noisy span generators need the live run RNG state.
+            # Their shape math is covered by shape tests and deviation tests.
+            continue
         row = rows_by_c[entry["component"]].get(entry["timestamp"])
         assert row is not None, f"missing CSV row for manifest entry {entry}"
         actual = float(row[col_idx])
-        expected = round(float(spec["generator"](ts, spec_idx)), 3)
+        t_within = (
+            ts - amc.START
+        ).total_seconds() - float(spec.get("time_offset", 0) or 0)
+        expected = round(
+            float(amc._resolve_anomaly_value(
+                spec, ts, spec_idx, max(0.0, t_within), 0, None,
+            )),
+            3,
+        )
         if actual != expected:
             failures.append((entry, expected, actual))
         checked += 1
@@ -721,7 +734,7 @@ def one_day_interval5_run(amc, tmp_path_factory):
 
 def test_interval_seconds_row_count(amc, one_day_interval5_run):
     """At --interval-seconds 5 for one day, each component should have
-    floor(86400 / 5) = 17,280 rows minus the small drop-rate count."""
+    floor(86400 / 5) = 17,280 rows minus the configured drop-rate count."""
     drop_rate = amc.DEFAULT_DROP_RATE
     expected = amc.SECONDS_PER_DAY // 5  # 17,280
     mean_dropped = drop_rate * expected
@@ -756,14 +769,16 @@ def test_interval_seconds_anomalies_at_correct_seconds(amc, one_day_interval5_ru
     primary/cascade specs sit at minute or hour boundaries → divisible by 5,
     so the rounded row's timestamp equals the spec's exact time_offset."""
     manifest = read_manifest(one_day_interval5_run.out_dir)
-    by_key = {(m["component"], m["metric"], m["description"]): m for m in manifest}
+    by_key = {}
+    for entry in manifest:
+        key = (entry["component"], entry["metric"], entry["description"])
+        by_key.setdefault(key, []).append(entry)
     declared = declared_specs(amc, days=1, signal_level="medium")
 
     # All declared one-day specs land within 17,280 rows at interval=5 except
     # those whose rounded index would equal 17,280 — none of the current
-    # one-day specs hit that boundary, so every spec should be present unless
-    # dropped (drop_rate ~0.05% → at most a couple). Assert most are present
-    # and every present one's timestamp matches the rounded row.
+    # one-day specs hit that boundary. With the default drop rate at zero,
+    # every spec should be present and match the rounded row.
     interval = 5
     n_rows = amc.SECONDS_PER_DAY // interval
     expected_present = 0
@@ -775,31 +790,31 @@ def test_interval_seconds_anomalies_at_correct_seconds(amc, one_day_interval5_ru
         if idx >= n_rows:
             continue
         expected_present += 1
-        manifest_entry = by_key.get((component, metric, description))
-        if manifest_entry is None:
-            continue  # almost certainly drop_rate; verified by overall count below
+        manifest_entries = by_key.get((component, metric, description), [])
+        if not manifest_entries:
+            continue
         expected_ts = amc.START + datetime.timedelta(seconds=idx * interval)
-        actual_ts = datetime.datetime.fromisoformat(manifest_entry["timestamp"])
-        assert actual_ts == expected_ts, (
+        actual_timestamps = {
+            datetime.datetime.fromisoformat(entry["timestamp"])
+            for entry in manifest_entries
+        }
+        assert expected_ts in actual_timestamps, (
             f"{component}/{metric} @ time_offset={time_offset}: manifest ts "
-            f"{actual_ts} != expected nearest-row ts {expected_ts}"
+            f"does not include expected nearest-row ts {expected_ts}"
         )
         matched += 1
 
-    # Drop rate is ~0.05% — almost every declared spec should appear.
     assert expected_present >= 15, "sanity: at least 15 one-day specs should be in range"
-    assert matched >= expected_present - 2, (
-        f"too many specs missing from manifest at interval=5: "
+    assert matched == expected_present, (
+        f"specs missing from manifest at interval=5: "
         f"matched={matched} / expected={expected_present}"
     )
 
 
-def test_interval_seconds_default_is_one(amc):
-    """The flag's CLI default must remain 1.0 so existing callers keep their
-    behavior — the rest of the existing suite asserts the resulting output is
-    unchanged at that default."""
+def test_interval_seconds_default_is_sixty(amc):
+    """The CLI default matches the reference 50,000-row telemetry shape."""
     args = amc.parse_args(["--output-dir", "ignored"])
-    assert args.interval_seconds == 1.0
+    assert args.interval_seconds == 60.0
 
 
 # ------------------------------------------------------------------
@@ -1135,8 +1150,8 @@ def test_manifest_sorted_and_cascade_parents_resolve(amc, tmp_path, days):
 def test_span_end_walks_back_when_nominal_end_row_is_dropped(amc, tmp_path):
     """Deterministic regression test for the ``span_end`` walk-back fix.
 
-    Under the default ``--drop-rate 0.0005`` the seed-42 run happens to
-    keep every shaped span's nominal end row, so a revert of the walk-back
+    Under the default ``--drop-rate 0`` the seed-42 run keeps every shaped
+    span's nominal end row, so a revert of the walk-back
     fix to ``end_idx = end_idx_nominal`` would silently pass
     ``test_manifest_sorted_and_cascade_parents_resolve``. Re-run at
     ``--drop-rate 0.7 --signal-level high``: many shaped spans survive
