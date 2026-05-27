@@ -8,9 +8,11 @@
   reference observability telemetry shape: batch/model size, GPU memory
   pressure, KV cache usage, memory fragmentation, utilization, throughput,
   p50/p99 latency, and failure label.
-- Added the `gpu_inference_fragmentation` scenario to model slow allocator
-  pressure plus sparse one-minute GPU-serving failure pulses with LLM latency
-  and error cascades.
+- Added the `gpu_inference_fragmentation` scenario to model the reference
+  telemetry's sparse incident field: 1,204 failure minutes in the default
+  50,000-row shape, mostly singleton runs, with imperfect but detectable lift
+  from fragmentation, pressure, utilization, throughput, p99 latency, and KV
+  cache occupancy.
 - Added `--otel-gauges-only` to stream only OTLP Gauge metric payloads to
   `--otel-metrics-endpoint`, skipping the anomaly counter, log, and trace OTEL
   signal stream.

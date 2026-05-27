@@ -349,116 +349,324 @@ def _const_generator(value: float):
     return lambda _ts, _idx, _value=value: _value
 
 
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _weighted_choice(rng: "np.random.RandomState", choices: tuple[float, ...],
+                     weights: tuple[float, ...]) -> float:
+    threshold = float(rng.random())
+    cumulative = 0.0
+    for choice, weight in zip(choices, weights):
+        cumulative += weight
+        if threshold <= cumulative:
+            return choice
+    return choices[-1]
+
+
+def _choice_set(rng: "np.random.RandomState", values: set[int],
+                count: int) -> set[int]:
+    if count <= 0:
+        return set()
+    ordered = np.array(sorted(values), dtype=np.int64)
+    if count > len(ordered):
+        raise ValueError(
+            f"Cannot sample {count} unique GPU inference minutes from "
+            f"{len(ordered)} candidates"
+        )
+    return {int(v) for v in rng.choice(ordered, size=count, replace=False)}
+
+
+def _gpu_inference_failure_minutes(active_minutes: int) -> frozenset[int]:
+    """Reference-like sparse failure labels for the GPU serving scenario."""
+    rng = np.random.RandomState(20260527)
+    failure: set[int] = set()
+
+    def can_add(start: int, length: int) -> bool:
+        if start < 0 or start + length > active_minutes:
+            return False
+        for minute in range(start - 1, start + length + 1):
+            if minute in failure:
+                return False
+        return True
+
+    def add(start: int, length: int) -> bool:
+        if not can_add(start, length):
+            return False
+        failure.update(range(start, start + length))
+        return True
+
+    # Seed daily burst hours first. They create the "several failures in one
+    # hour" windows visible in the reference CSV without making long outages.
+    days = int(math.ceil(active_minutes / (SECONDS_PER_DAY / DEFAULT_INTERVAL_SECONDS)))
+    for day in range(days):
+        day_start = int(day * SECONDS_PER_DAY / DEFAULT_INTERVAL_SECONDS)
+        if day_start >= active_minutes:
+            break
+        hour = int(rng.randint(0, 24))
+        burst_count = int(rng.choice([5, 6, 7], p=[0.45, 0.40, 0.15]))
+        minute_choices = list(rng.choice(np.arange(0, 60, 2), size=burst_count, replace=False))
+        for minute_in_hour in minute_choices:
+            add(day_start + hour * 60 + int(minute_in_hour), 1)
+
+    # Match the reference's run geometry: almost all singleton failures, with
+    # a small tail of two-minute runs and no longer failure stretches.
+    two_minute_runs = 32
+    added_two = 0
+    attempts = 0
+    while added_two < two_minute_runs:
+        attempts += 1
+        if attempts > 100_000:
+            raise RuntimeError("Unable to place GPU inference two-minute runs")
+        start = int(rng.randint(0, active_minutes - 1))
+        if add(start, 2):
+            added_two += 1
+
+    target_rows = int(round(DEFAULT_ROW_COUNT * 0.02408))
+    attempts = 0
+    while len(failure) < target_rows:
+        attempts += 1
+        if attempts > 500_000:
+            raise RuntimeError("Unable to place GPU inference failure rows")
+        add(int(rng.randint(0, active_minutes)), 1)
+
+    return frozenset(failure)
+
+
+def _gpu_feature_minutes(
+    rng: "np.random.RandomState",
+    *,
+    active_minutes: int,
+    target_count: int,
+    failure_minutes: frozenset[int],
+    failure_count: int,
+    preferred_failure_minutes: set[int] | None = None,
+    preferred_failure_count: int = 0,
+) -> frozenset[int]:
+    """Sample a feature-high/low set with a controlled failure overlap."""
+    selected: set[int] = set()
+    failure_pool = set(failure_minutes)
+
+    if preferred_failure_minutes and preferred_failure_count > 0:
+        preferred_pool = failure_pool & set(preferred_failure_minutes)
+        selected |= _choice_set(
+            rng, preferred_pool, min(preferred_failure_count, failure_count)
+        )
+
+    remaining_failure = failure_count - len(selected)
+    selected |= _choice_set(rng, failure_pool - selected, remaining_failure)
+
+    non_failure_pool = set(range(active_minutes)) - failure_pool
+    selected |= _choice_set(rng, non_failure_pool, target_count - len(selected))
+    return frozenset(selected)
+
+
+def _gpu_inference_reference_schedule(active_minutes: int) -> dict[str, frozenset[int]]:
+    """Build deterministic row sets that mirror the reference CSV signal.
+
+    The target counts come from ``observability_telemetry.csv``: 1,204 failure
+    rows, 744 rows with memory fragmentation >= 0.8, 3,737 rows with memory
+    pressure >= 0.9, 3,271 rows with utilization <= 0.65, 5,000 rows with
+    throughput <= 1, 350 rows with p99 latency >= 900, and 31,907 rows with
+    KV cache usage >= 0.95.
+    """
+    rng = np.random.RandomState(20260528)
+    failure = _gpu_inference_failure_minutes(active_minutes)
+    high_frag = _gpu_feature_minutes(
+        rng, active_minutes=active_minutes, target_count=744,
+        failure_minutes=failure, failure_count=229,
+    )
+    high_pressure = _gpu_feature_minutes(
+        rng, active_minutes=active_minutes, target_count=3_737,
+        failure_minutes=failure, failure_count=179,
+    )
+    low_util = _gpu_feature_minutes(
+        rng, active_minutes=active_minutes, target_count=3_271,
+        failure_minutes=failure, failure_count=190,
+    )
+    p99_high = _gpu_feature_minutes(
+        rng, active_minutes=active_minutes, target_count=350,
+        failure_minutes=failure, failure_count=22,
+        preferred_failure_minutes=set(high_frag) & set(failure),
+        preferred_failure_count=20,
+    )
+    throughput_low = _gpu_feature_minutes(
+        rng, active_minutes=active_minutes, target_count=5_000,
+        failure_minutes=failure, failure_count=126,
+    )
+    kv_high = _gpu_feature_minutes(
+        rng, active_minutes=active_minutes, target_count=31_907,
+        failure_minutes=failure, failure_count=815,
+    )
+    return {
+        "failure": failure,
+        "high_frag": high_frag,
+        "high_pressure": high_pressure,
+        "low_util": low_util,
+        "p99_high": p99_high,
+        "throughput_low": throughput_low,
+        "kv_high": kv_high,
+    }
+
+
 def _gpu_inference_fragmentation_specs(
 ) -> tuple[tuple[tuple[str, dict], ...], tuple[tuple[str, dict], ...]]:
     """Scenario specs modeled after the reference observability telemetry CSV.
 
-    The CSV's failure labels are mostly isolated one-minute points, with
-    memory fragmentation and memory pressure carrying the strongest lift. The
-    scenario below therefore combines a slow allocator-pressure ramp with
-    sparse 60-second pulses rather than a single sustained outage.
+    The CSV's failure labels are mostly isolated one-minute points. The
+    strongest useful signal is not a perfect spike but a statistical lift in
+    fragmentation/pressure plus weaker utilization, throughput, and latency
+    evidence. This scenario therefore generates a dense but sparse-label
+    incident field instead of a handful of perfectly separable pulses.
     """
     start = 9 * SECONDS_PER_DAY + 4 * 3600  # Day 10 04:00
-    pulse_rows = (
-        (60, "early allocator recovery", 0.82, 0.90, 240.0, 900.0, 0.0, 0.62),
-        (2 * SECONDS_PER_DAY, "repeat OOM recovery", 0.84, 0.91, 248.0, 930.0, 0.0, 0.60),
-        (5 * SECONDS_PER_DAY, "KV-cache compaction stall", 0.87, 0.93, 258.0, 965.0, 0.0, 0.58),
-        (8 * SECONDS_PER_DAY, "allocator free-list churn", 0.89, 0.94, 266.0, 995.0, 0.0, 0.56),
-        (11 * SECONDS_PER_DAY, "serving admission throttle", 0.91, 0.96, 274.0, 1030.0, 0.0, 0.54),
-        (14 * SECONDS_PER_DAY, "CUDA OOM retry", 0.93, 0.97, 280.0, 1050.0, 0.0, 0.53),
-        (17 * SECONDS_PER_DAY, "late allocator collapse", 0.94, 0.98, 285.0, 1065.0, 0.0, 0.52),
-        (20 * SECONDS_PER_DAY, "tail-latency failure burst", 0.95, 0.98, 286.0, 1070.0, 0.0, 0.51),
-    )
+    duration_seconds = DEFAULT_ROW_COUNT * DEFAULT_INTERVAL_SECONDS - start
+    active_minutes = int(duration_seconds // DEFAULT_INTERVAL_SECONDS)
+    schedule = _gpu_inference_reference_schedule(active_minutes)
+
+    def minute_idx(t_within: float) -> int:
+        return int(math.floor((t_within + 1e-9) / DEFAULT_INTERVAL_SECONDS))
+
+    def batch_size_gen(ts, col, t_within, span_idx, rng):
+        return _weighted_choice(
+            rng,
+            (1.0, 4.0, 8.0, 16.0, 32.0),
+            (0.12, 0.18, 0.30, 0.25, 0.15),
+        )
+
+    def model_size_gen(ts, col, t_within, span_idx, rng):
+        return _weighted_choice(rng, (7.0, 13.0, 70.0), (0.35, 0.45, 0.20))
+
+    def memory_fragmentation_gen(ts, col, t_within, span_idx, rng):
+        minute = minute_idx(t_within)
+        if minute in schedule["high_frag"]:
+            if minute in schedule["failure"]:
+                return rng.uniform(0.80, 0.94)
+            return rng.uniform(0.80, 0.88)
+        return _clamp(float(rng.normal(0.50, 0.105)), 0.14, 0.799)
+
+    def gpu_memory_pressure_gen(ts, col, t_within, span_idx, rng):
+        minute = minute_idx(t_within)
+        if minute in schedule["high_pressure"]:
+            if minute in schedule["failure"]:
+                return rng.uniform(0.90, 0.98)
+            return rng.uniform(0.90, 0.945)
+        return _clamp(float(rng.normal(0.62, 0.13)), 0.30, 0.899)
+
+    def kv_cache_usage_gen(ts, col, t_within, span_idx, rng):
+        minute = minute_idx(t_within)
+        if minute in schedule["kv_high"]:
+            return 1.0
+        return 0.20 + float(rng.beta(0.8, 4.0)) * 0.74
+
+    def gpu_utilization_gen(ts, col, t_within, span_idx, rng):
+        minute = minute_idx(t_within)
+        if minute in schedule["low_util"]:
+            return rng.uniform(0.58, 0.65)
+        return _clamp(float(rng.normal(0.76, 0.045)), 0.651, 0.91)
+
+    def throughput_tps_gen(ts, col, t_within, span_idx, rng):
+        minute = minute_idx(t_within)
+        if minute in schedule["throughput_low"]:
+            return 0.8
+        return _clamp(float(rng.lognormal(np.log(12.0), 1.10)), 0.8, 220.0)
+
+    def latency_p50_ms_gen(ts, col, t_within, span_idx, rng):
+        minute = minute_idx(t_within)
+        if minute in schedule["p99_high"]:
+            return rng.uniform(130.0, 245.0)
+        return _clamp(float(rng.lognormal(np.log(85.0), 0.55)), 33.0, 245.0)
+
+    def latency_p99_ms_gen(ts, col, t_within, span_idx, rng):
+        minute = minute_idx(t_within)
+        if minute in schedule["p99_high"]:
+            return rng.uniform(900.0, 1070.0)
+        return _clamp(float(rng.lognormal(np.log(311.0), 0.60)), 80.0, 899.0)
 
     specs: list[tuple[str, dict]] = [
         ("gpu_inference", {
             "time_offset": start,
-            "duration_seconds": 21 * SECONDS_PER_DAY,
-            "shape": "ramp_linear",
-            "shape_params": {"start": 0.62, "end": 0.88},
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
+            "metric": "batch_size",
+            "description": "GPU inference serving layer - batch_size follows reference-like discrete serving batches",
+            "generator": batch_size_gen,
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
+            "metric": "model_size_b",
+            "description": "GPU inference serving layer - model_size_b follows reference-like 7B/13B/70B mix",
+            "generator": model_size_gen,
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
             "metric": "memory_fragmentation",
-            "description": "GPU allocator fragmentation creep - memory_fragmentation ramps 0.62 -> 0.88 over 21d",
-            "generator": _const_generator(0.62),
+            "description": "GPU allocator fragmentation incident field - memory_fragmentation has reference-like high-risk lift",
+            "generator": memory_fragmentation_gen,
         }),
         ("gpu_inference", {
             "time_offset": start,
-            "duration_seconds": 21 * SECONDS_PER_DAY,
-            "shape": "ramp_linear",
-            "shape_params": {"start": 0.72, "end": 0.94},
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
             "metric": "gpu_memory_pressure",
-            "description": "GPU memory pressure creep - gpu_memory_pressure ramps 0.72 -> 0.94 over 21d",
-            "generator": _const_generator(0.72),
+            "description": "GPU memory pressure incident field - pressure high rows provide weak but useful lift",
+            "generator": gpu_memory_pressure_gen,
         }),
         ("gpu_inference", {
             "time_offset": start,
-            "duration_seconds": 21 * SECONDS_PER_DAY,
+            "duration_seconds": duration_seconds,
             "shape": "sustained",
             "metric": "kv_cache_usage",
-            "description": "KV cache saturation - kv_cache_usage pinned near 1.0 during allocator pressure",
-            "generator": _const_generator(1.0),
+            "description": "KV cache serving profile - high cache occupancy mirrors reference distribution",
+            "generator": kv_cache_usage_gen,
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
+            "metric": "gpu_utilization",
+            "description": "GPU utilization incident field - utilization dips are weak failure evidence",
+            "generator": gpu_utilization_gen,
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
+            "metric": "throughput_tps",
+            "description": "GPU throughput incident field - low-throughput minutes are common but only weakly predictive",
+            "generator": throughput_tps_gen,
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
+            "metric": "latency_p50_ms",
+            "description": "GPU inference p50 latency field - heavy-tailed latency with incident lift",
+            "generator": latency_p50_ms_gen,
+        }),
+        ("gpu_inference", {
+            "time_offset": start,
+            "duration_seconds": duration_seconds,
+            "shape": "sustained",
+            "metric": "latency_p99_ms",
+            "description": "GPU inference p99 latency field - sparse tail spikes avoid perfect separability",
+            "generator": latency_p99_ms_gen,
         }),
     ]
 
-    for offset, label, frag, pressure, p50, p99, throughput, util in pulse_rows:
-        pulse_start = start + offset
-        specs.extend([
-            ("gpu_inference", {
-                "time_offset": pulse_start,
-                "duration_seconds": 60,
-                "shape": "sustained",
-                "metric": "memory_fragmentation",
-                "description": f"GPU inference failure pulse ({label}) - memory_fragmentation {frag:.2f}",
-                "generator": _const_generator(frag),
-            }),
-            ("gpu_inference", {
-                "time_offset": pulse_start,
-                "duration_seconds": 60,
-                "shape": "sustained",
-                "metric": "gpu_memory_pressure",
-                "description": f"GPU inference failure pulse ({label}) - gpu_memory_pressure {pressure:.2f}",
-                "generator": _const_generator(pressure),
-            }),
-            ("gpu_inference", {
-                "time_offset": pulse_start,
-                "duration_seconds": 60,
-                "shape": "sustained",
-                "metric": "latency_p50_ms",
-                "description": f"GPU inference failure pulse ({label}) - p50 latency {p50:.0f} ms",
-                "generator": _const_generator(p50),
-            }),
-            ("gpu_inference", {
-                "time_offset": pulse_start,
-                "duration_seconds": 60,
-                "shape": "sustained",
-                "metric": "latency_p99_ms",
-                "description": f"GPU inference failure pulse ({label}) - p99 latency {p99:.0f} ms",
-                "generator": _const_generator(p99),
-            }),
-            ("gpu_inference", {
-                "time_offset": pulse_start,
-                "duration_seconds": 60,
-                "shape": "sustained",
-                "metric": "throughput_tps",
-                "description": f"GPU inference failure pulse ({label}) - throughput collapses",
-                "generator": _const_generator(throughput),
-            }),
-            ("gpu_inference", {
-                "time_offset": pulse_start,
-                "duration_seconds": 60,
-                "shape": "sustained",
-                "metric": "gpu_utilization",
-                "description": f"GPU inference failure pulse ({label}) - utilization dips to {util:.2f}",
-                "generator": _const_generator(util),
-            }),
-            ("gpu_inference", {
-                "time_offset": pulse_start,
-                "duration_seconds": 60,
-                "shape": "sustained",
-                "metric": "failure",
-                "description": f"GPU inference failure pulse ({label}) - failure label set",
-                "generator": _const_generator(1.0),
-            }),
-        ])
+    for minute in sorted(schedule["failure"]):
+        specs.append(("gpu_inference", {
+            "time_offset": start + minute * DEFAULT_INTERVAL_SECONDS,
+            "duration_seconds": DEFAULT_INTERVAL_SECONDS,
+            "shape": "sustained",
+            "metric": "failure",
+            "description": "GPU inference sparse reference-like failure label",
+            "generator": _const_generator(1.0),
+        }))
 
     cascades: list[tuple[str, dict]] = [
         ("llm_analytics", {
@@ -471,7 +679,7 @@ def _gpu_inference_fragmentation_specs(
         ("llm_analytics", {
             "time_offset": start + 20 * SECONDS_PER_DAY + 90,
             "metric": "llm_api_error_rate",
-            "description": "Cascading: repeated GPU inference failures surface as LLM API errors (~12%)",
+            "description": "Cascading: dense GPU inference failure field surfaces as LLM API errors (~12%)",
             "generator": _const_generator(0.12),
             "severity": DEFAULT_SEVERITY,
         }),

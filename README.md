@@ -9,11 +9,13 @@ CSVs and delete `anomalies.csv` from `--output-dir`. See [Output files](#output-
 for the exact emit-selection and packet-loss gating. Output is deterministic for a
 given `--seed`.
 
-By default the script emits **50,000 one-minute rows** over about 34.72 days for fourteen
-components: `authservice`, `cacheservice`, `apigateway`, `database`, `mqservice`,
-`llm_analytics`, `loadbalancer`, `objectstore`, `vectorstore`, `scheduler`,
-`paymentservice`, `identityprovider`, `observabilitypipeline`, `gpu_inference`. Duration,
-sampling interval, drop rate, and output directory are all CLI-configurable.
+By default the script spans **50,000 one-minute slots** over about 34.72 days for
+fourteen components: `authservice`, `cacheservice`, `apigateway`, `database`,
+`mqservice`, `llm_analytics`, `loadbalancer`, `objectstore`, `vectorstore`,
+`scheduler`, `paymentservice`, `identityprovider`, `observabilitypipeline`,
+`gpu_inference`. The built-in packet-loss mask can omit a small number of rows
+unless `--drop-rate 0` is used. Duration, sampling interval, drop rate, and
+output directory are all CLI-configurable.
 
 ## Significant changes
 
@@ -23,8 +25,10 @@ Recent significant additions to the generator:
   serving-layer fields matching the reference observability telemetry shape:
   `batch_size`, `model_size_b`, GPU/KV memory pressure, fragmentation,
   utilization, throughput, p50/p99 latency, and `failure`. The
-  `gpu_inference_fragmentation` scenario models slow allocator pressure plus
-  sparse one-minute failure pulses.
+  `gpu_inference_fragmentation` scenario models a reference-like sparse
+  failure field: 1,204 labeled failure minutes in the default 50,000-row
+  shape, mostly singletons, with fragmentation/pressure carrying useful but
+  imperfect lift.
 - **Flag-day default flip + integer-cast bundle** (phase 6) —
   `--topology-mode realistic` is now the default; `--topology-mode independent`
   is retained as a deprecation alias that emits a stderr `DeprecationWarning`
@@ -717,7 +721,7 @@ radius to additional components.
 | `llm_rate_limit_fallout` | medium | 5 | Day 5 09:30 | instant | `llm_analytics`, `apigateway` | Upstream rate-limiting — 18% error rate, latency spikes to 4,200 ms; cascades to gateway error rate ~22%. |
 | `llm_weekend_batch` | medium | 6 | Day 6 02:00 | instant | `llm_analytics`, `objectstore`, `cacheservice`, `database` | Weekend batch analytics — 320k tokens/s, context overflow rate 8.5; cascades to object-store bandwidth saturation, DB query/CPU surge, cache hit-ratio drop. |
 | `llm_second_viral` | medium | 7 | Day 7 16:45 | instant | `llm_analytics`, `apigateway`, `cacheservice`, `database` | Second viral event — 10× spike to 450/s, 420k tokens/s; cascades to gateway active connections, CPU, DB connections, cache errors. |
-| `gpu_inference_fragmentation` | medium | 10 | Day 10–31 | 21d ramp + sparse 1 min pulses | `gpu_inference`, `llm_analytics` | GPU serving allocator fragmentation and memory pressure creep upward while KV cache stays saturated; sparse failure pulses drive p50/p99 latency spikes, throughput collapse, lower utilization, and `failure=1`, with LLM latency/error cascades. |
+| `gpu_inference_fragmentation` | medium | 10 | Day 10 through default window end | reference-shaped sparse label field | `gpu_inference`, `llm_analytics` | GPU serving telemetry follows the reference CSV's incident geometry: 1,204 failure minutes in the default 50,000-row shape, 97% singleton runs, and statistical lift from fragmentation, memory pressure, utilization dips, low throughput, p99 latency, and KV cache saturation without making any one metric perfectly separable. |
 | `regional_failover_storm` | **high** | 1 | 05:00 | 5 min | `loadbalancer`, `apigateway`, `authservice`, `database`, `mqservice` | Regional failover — backend 5xx ramps to 220/s over 5 min; cascades to gateway 5xx (~30%), DB connections (~9,000), auth errors (~40%), MQ pending ~500k. |
 | `dns_provider_outage` | **high** | 1 | 11:00 | 6 min | `loadbalancer`, `apigateway`, `identityprovider`, `paymentservice` | External DNS provider outage — TLS handshake errors 45/s, backend 5xx 80/s, health check failures 8/s, sustained for 6 min; cascades to OIDC callback failures (~150), payment provider 5xx (~32%), gateway error rate (~28%). Sharp step-up at T0 and step-down at T1. |
 | `cache_db_meltdown` | **high** | 1 | 11:30 | 10 min | `cacheservice`, `database`, `llm_analytics`, `apigateway` | Coordinated cache memory saturation (80%→99.5%) + DB read latency (800 ms); cascades to doubled LLM latency and elevated gateway backend latency. |
