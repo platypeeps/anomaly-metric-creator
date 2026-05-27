@@ -371,12 +371,12 @@ def test_preflight_cap_multiplied_by_n(amc, tmp_path):
     # well under the 200M cap. Pair --allow-huge-output so the assertion
     # only exercises argument parsing (no generation) and stays fast.
     args_n1 = amc.parse_args([
-            "--output-dir", str(tmp_path),
-            "--duration-days", "1",
-            "--interval-seconds", "1.0",
-            "--instances-per-component", "1",
-            "--allow-huge-output",
-        ])
+        "--output-dir", str(tmp_path),
+        "--duration-days", "1",
+        "--interval-seconds", "1.0",
+        "--instances-per-component", "1",
+        "--allow-huge-output",
+    ])
     assert args_n1.instances_per_component == 1
 
     # Second leg: same default --components all, but 7 days and N=20.

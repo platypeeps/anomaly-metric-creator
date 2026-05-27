@@ -664,7 +664,7 @@ def _gpu_inference_reference_schedule(active_minutes: int) -> dict[str, object]:
     The target counts come from ``observability_telemetry.csv``: 1,204 failure
     rows, 744 rows with memory fragmentation >= 0.8, 3,737 rows with memory
     pressure >= 0.9, 3,271 rows with utilization <= 0.65, 5,000 rows with
-    throughput <= 1, 350 rows with p99 latency >= 900, and 31,907 rows with
+    throughput <= 1, 420 rows with p99 latency >= 900, and 31,907 rows with
     KV cache usage >= 0.95.
     """
     rng = np.random.RandomState(20260528)

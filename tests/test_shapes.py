@@ -337,11 +337,11 @@ def test_dst_artifact_duplicates_02_hour(amc, tmp_path):
     import sys as _sys
     args = [
         "--seed", "42",
-            "--duration-days", "1",
-            "--interval-seconds", "1.0",
-            "--inject-dst-artifact-day", "1",
-            "--output-dir", str(out_dst),
-        ]
+        "--duration-days", "1",
+        "--interval-seconds", "1.0",
+        "--inject-dst-artifact-day", "1",
+        "--output-dir", str(out_dst),
+    ]
     stderr_buf = io.StringIO()
     real_stderr = _sys.stderr
     _sys.stderr = stderr_buf
