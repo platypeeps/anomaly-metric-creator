@@ -183,7 +183,7 @@ python3 anomaly-metric-creator.py \
 
 | Flag                | Default     | Notes                                                              |
 | ------------------- | ----------- | ------------------------------------------------------------------ |
-| `--duration-days`   | `34.7222`   | Days to generate. The default combines with `--interval-seconds 60` to produce exactly 50,000 rows per component, matching the reference observability telemetry CSV shape. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2 and `jwks_rotation_chaos` at 3); see the [scenario catalog](#scenario-catalog) for per-scenario values. |
+| `--duration-days`   | `34.72222222222222` | Days to generate. The default combines with `--interval-seconds 60` to produce exactly 50,000 rows per component, matching the reference observability telemetry CSV shape. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2 and `jwks_rotation_chaos` at 3); see the [scenario catalog](#scenario-catalog) for per-scenario values. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 | `--drop-rate`       | `0.0`       | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Default `0` preserves the full reference-shaped 50,000-row output; use a non-zero value to simulate packet loss. |

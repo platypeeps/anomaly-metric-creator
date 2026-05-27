@@ -7203,7 +7203,7 @@ def parse_args(argv=None):
     )
     p.add_argument("--duration-days", type=float, default=DEFAULT_DURATION_DAYS,
                    help=f"Number of days of metrics to generate "
-                        f"(default: {DEFAULT_DURATION_DAYS:.6g}, "
+                        f"(default: {DEFAULT_DURATION_DAYS!r}, "
                         f"which yields {DEFAULT_ROW_COUNT:,} rows at the "
                         f"default {DEFAULT_INTERVAL_SECONDS:g}s interval). "
                         "Each scenario's ``days_required`` is the minimum value at which "

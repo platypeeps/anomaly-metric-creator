@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from pathlib import Path
 
@@ -8,6 +10,20 @@ def test_parse_args_defaults(amc):
     assert args.interval_seconds == 60.0
     assert args.drop_rate == 0.0
     assert args.output_dir == Path("test_out")
+
+
+def test_parse_args_help_duration_days_default_round_trips(amc, capsys):
+    with pytest.raises(SystemExit):
+        amc.parse_args(["--help"])
+
+    help_text = capsys.readouterr().out
+    match = re.search(r"--duration-days.*?default:\s*([0-9.]+),", help_text, re.S)
+    assert match, help_text
+    copied_default = float(match.group(1))
+    rows = int(
+        (copied_default * amc.SECONDS_PER_DAY) // amc.DEFAULT_INTERVAL_SECONDS
+    )
+    assert rows == amc.DEFAULT_ROW_COUNT
 
 def test_parse_args_custom(amc):
     args = amc.parse_args([
