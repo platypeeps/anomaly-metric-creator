@@ -524,16 +524,18 @@ def _gpu_inference_failure_minutes(active_minutes: int) -> frozenset[int]:
         center = (incident_windows[0][0] + incident_windows[0][1]) / 2.0
         return sorted(candidates, key=lambda minute: (abs(minute - center), minute))
 
-    if active_minutes > 5:
+    target_rows = min(active_minutes, int(round(active_minutes * 0.02408)))
+
+    if len(failure) < target_rows and active_minutes > 5:
         add(5, 1)
-    if active_minutes > 30:
+    if len(failure) < target_rows and active_minutes > 30:
         add(active_minutes - 18, 1)
 
     # Match the reference's run geometry: almost all singleton failures, with
     # a small tail of two-minute runs and no longer failure stretches. Most
     # pairs are placed inside incident windows so rolling detectors see a
     # consistent degradation episode rather than only uniformly sprinkled rows.
-    two_minute_runs = 80
+    two_minute_runs = min(80, max(0, (target_rows - len(failure)) // 2))
     added_two = 0
     incident_pair_target = min(72, two_minute_runs)
     incident_pair_starts = [
@@ -564,7 +566,6 @@ def _gpu_inference_failure_minutes(active_minutes: int) -> frozenset[int]:
     if added_two < two_minute_runs:
         raise RuntimeError("Unable to place GPU inference two-minute runs")
 
-    target_rows = int(round(DEFAULT_ROW_COUNT * 0.02408))
     incident_target_rows = min(int(round(target_rows * 0.60)),
                                max(0, sum(end - start for start, end in incident_windows) // 2))
     incident_singletons = [
@@ -573,7 +574,7 @@ def _gpu_inference_failure_minutes(active_minutes: int) -> frozenset[int]:
         for minute in range(start, end)
     ]
     for minute in center_ranked_candidates(incident_singletons):
-        if incident_failure_count() >= incident_target_rows:
+        if len(failure) >= target_rows or incident_failure_count() >= incident_target_rows:
             break
         add(minute, 1)
 
@@ -589,6 +590,8 @@ def _gpu_inference_failure_minutes(active_minutes: int) -> frozenset[int]:
         burst_count = int(rng.choice([3, 4, 5], p=[0.45, 0.40, 0.15]))
         minute_choices = list(rng.choice(np.arange(0, 60, 2), size=burst_count, replace=False))
         for minute_in_hour in minute_choices:
+            if len(failure) >= target_rows:
+                break
             minute = day_start + hour * 60 + int(minute_in_hour)
             if not is_incident_minute(minute):
                 add(minute, 1)
@@ -1253,11 +1256,12 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 file=sys.stderr,
             )
 
-    # Expand every anomaly spec into concrete row overrides. Out-of-range is
-    # anything whose full span lies outside ``[0, n_rows)``.
-    expanded_overrides: list[tuple[int, dict, float, int]] = []
+    # Keep in-range anomaly spans compact here. The override loop below merges
+    # these ranges lazily so long sustained scenarios do not materialize one
+    # Python tuple per affected row before vectorized generation starts.
+    override_spans: list[tuple[int, int, dict, int]] = []
     out_of_range: list[dict] = []
-    for s in all_anomalies:
+    for spec_order, s in enumerate(all_anomalies):
         if s["time_offset"] < 0:
             out_of_range.append(s)
             continue
@@ -1268,10 +1272,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         if start_idx >= n_rows or end_idx_exclusive <= start_idx:
             out_of_range.append(s)
             continue
-        for row_idx in range(start_idx, end_idx_exclusive):
-            span_idx = row_idx - start_idx
-            t_within = span_idx * interval
-            expanded_overrides.append((row_idx, s, t_within, span_idx))
+        override_spans.append((start_idx, end_idx_exclusive, s, spec_order))
     if out_of_range:
         non_negative_offsets = [
             s["time_offset"] for s in out_of_range
@@ -1315,14 +1316,23 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             f"Overlapping anomaly specs (component, metric, time_offset): {duplicates}"
         )
 
-    # Sort all overrides by row index and then by metric. When multiple specs
-    # target the same row+metric (e.g. a single-row cascade firing inside a
-    # shaped span), they apply in order. Stable sort + all_anomalies order
-    # (primary then cascades) ensures the cascade wins.
-    sorted_overrides = sorted(
-        expanded_overrides,
-        key=lambda item: (item[0], item[1]["metric"]),
-    )
+    def iter_sorted_overrides():
+        """Yield concrete overrides in row/metric/spec order without a row list."""
+        heap = [
+            (start_idx, aspec["metric"], spec_order, start_idx, end_idx, aspec)
+            for start_idx, end_idx, aspec, spec_order in override_spans
+        ]
+        heapq.heapify(heap)
+        while heap:
+            row_idx, metric, spec_order, start_idx, end_idx, aspec = heapq.heappop(heap)
+            span_idx = row_idx - start_idx
+            yield row_idx, aspec, span_idx * interval, span_idx
+            next_row_idx = row_idx + 1
+            if next_row_idx < end_idx:
+                heapq.heappush(
+                    heap,
+                    (next_row_idx, metric, spec_order, start_idx, end_idx, aspec),
+                )
 
     if ts_array is None or ts_strings is None:
         ts_array, ts_strings = _build_timestamp_arrays(total_seconds, interval)
@@ -1484,8 +1494,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
 
     # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
     # CSV stay coherent: a dropped row has no CSV entry, so it must have no
-    # manifest entry either. Sort for a deterministic order of scale/jitter
-    # draws within a run.
+    # manifest entry either.
     #
     # Phase 4: per-instance value buffers are materialized lazily
     # for any instance touched by a partial ``instance_filter``. An
@@ -1497,11 +1506,11 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # and the shared-values fast path is preserved — locked Phase 2 hashes
     # do not move. RNG draw order is identical to today's path because
     # ``_resolve_anomaly_value`` is still called exactly once per
-    # ``(row_idx, span_idx, aspec)`` triple in sorted order, regardless of
-    # filter resolution.
+    # ``(row_idx, span_idx, aspec)`` triple in row/metric/spec order,
+    # regardless of filter resolution.
     name_to_col = {s.name: i for i, s in enumerate(specs)}
     per_instance_values: dict[int, np.ndarray] = dict(pre_populated_per_instance_eager)
-    for row_idx, aspec, t_within, span_idx in sorted_overrides:
+    for row_idx, aspec, t_within, span_idx in iter_sorted_overrides():
         if drop_mask[row_idx]:
             continue
         col = name_to_col[aspec["metric"]]

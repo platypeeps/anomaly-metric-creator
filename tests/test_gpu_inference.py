@@ -207,6 +207,19 @@ def test_gpu_inference_failure_labels_are_single_tick_specs(amc):
     assert all(spec.get("shape", "step") == "step" for spec in failure_specs)
 
 
+def test_gpu_inference_failure_budget_scales_with_active_minutes(amc):
+    default_failure = amc._gpu_inference_failure_minutes(amc.DEFAULT_ROW_COUNT)
+    scaled_failures = [
+        (1_000, amc._gpu_inference_failure_minutes(1_000)),
+        (5_000, amc._gpu_inference_failure_minutes(5_000)),
+    ]
+
+    assert len(default_failure) == 1_204
+    for active_minutes, failure in scaled_failures:
+        assert len(failure) == round(active_minutes * 0.02408)
+        assert max(failure) < active_minutes
+
+
 def test_gpu_inference_out_of_range_warning_uses_fractional_duration(amc, tmp_path):
     stderr = io.StringIO()
     with contextlib.redirect_stderr(stderr):
