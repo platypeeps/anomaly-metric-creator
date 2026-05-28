@@ -38,10 +38,10 @@ SHORT_RUN_ARGS = ("--interval-seconds", "60")
 # - the ``files`` registry,
 # - the new ``topology`` block (source -> [{target, weight, saturation}, ...]).
 SCHEMA_ONE_DAY_HASH = (
-    "6032c2e6b3205478a1037711c5df0f5596fbc315f0b30fbd8ba57fe5e58c385c"
+    "6b79531d611755bd0df5bf14cca2244853d8339602d5703828534d4666b92aec"
 )
 SCHEMA_SEVEN_DAY_HASH = (
-    "6a31e3e9616f6b23425989ac8551d825c784ffef89ffd62d6e2b032ec484b0eb"
+    "5a1e5653c615f12560ab4b078fa0b26008d4c2b995b5a79b7b49743dd6838a46"
 )
 
 
@@ -54,22 +54,20 @@ def _sha256(path: Path) -> str:
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def one_day_schema_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_ONE_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_ONE_DAY_HASH.
     out = tmp_path_factory.mktemp("ver139_one_day_schema")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--emit-selection", "metrics,schema"],
     )
 
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_SEVEN_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_SEVEN_DAY_HASH.
     out = tmp_path_factory.mktemp("ver139_seven_day_schema")
     return run_capture(
-        amc, out, days=7, interval_seconds=None,
+        amc, out, days=7, interval_seconds=1.0,
         extra_args=["--emit-selection", "metrics,schema"],
     )
 
@@ -170,7 +168,7 @@ def test_schema_metadata_captures_run_parameters(one_day_schema_run, amc):
     assert meta["total_seconds"] == amc.SECONDS_PER_DAY
     assert meta["rows_per_component"] == amc.SECONDS_PER_DAY  # interval 1.0
     assert meta["signal_level"] == "medium"
-    assert meta["drop_rate"] == pytest.approx(0.0005)
+    assert meta["drop_rate"] == pytest.approx(0.0)
     assert meta["inject_dst_artifact_day"] == 0
     assert meta["start"] == amc.START.isoformat()
     assert meta["combine"] is False
@@ -496,10 +494,10 @@ def test_schema_topology_version_is_two(one_day_schema_run, amc):
 # ``SCHEMA_ONE_DAY_HASH`` / ``SCHEMA_SEVEN_DAY_HASH`` constants
 # byte-identical above.
 SCHEMA_N3_ONE_DAY_HASH = (
-    "3ef12a53799f00deb2c76170f9f6acf4292f841cb1110e90fa4151507e612d80"
+    "a5b385e419b646f960efeb0eba16418be4276f217512984b7b84298a85e1ef9f"
 )
 SCHEMA_N3_SEVEN_DAY_HASH = (
-    "dfd6dfa3d47ccef8a736dd0c9ae4c875c2da2c4e0274687ea2db4a5d28495f03"
+    "795e069ae587ab546b1f71bdcd1d6c9cde8b7523d5128fb78fb9e8843421852a"
 )
 
 
@@ -508,11 +506,10 @@ def one_day_schema_run_n3(amc, tmp_path_factory):
     """Full default 1-day run with ``--instances-per-component 3`` so the
     schema's dim block fires on every component. Module-scoped to amortize
     the ~25–30s generation across all N=3 assertions below."""
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_N3_ONE_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_N3_ONE_DAY_HASH.
     out = tmp_path_factory.mktemp("ver151_one_day_schema_n3")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instances-per-component", "3",
@@ -522,11 +519,10 @@ def one_day_schema_run_n3(amc, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run_n3(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # SCHEMA_N3_SEVEN_DAY_HASH keeps matching.
+    # Explicit 1s cadence preserves the full-resolution SCHEMA_N3_SEVEN_DAY_HASH.
     out = tmp_path_factory.mktemp("ver151_seven_day_schema_n3")
     return run_capture(
-        amc, out, days=7, interval_seconds=None,
+        amc, out, days=7, interval_seconds=1.0,
         extra_args=[
             "--emit-selection", "metrics,schema",
             "--instances-per-component", "3",

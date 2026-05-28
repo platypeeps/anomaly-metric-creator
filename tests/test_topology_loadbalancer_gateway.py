@@ -7,9 +7,9 @@ These tests cover:
   alias that emits a stderr ``DeprecationWarning``).
 * Byte-identical default output: explicit ``--topology-mode realistic``
   must produce the same per-component CSVs as the no-flag default.
-* Legacy regression: ``--topology-mode independent`` must reproduce the
-  pre-flag-day baseline byte-for-byte so the deprecated alias keeps
-  working until its post-phase-9 removal.
+* Legacy regression: ``--topology-mode independent`` is pinned to the
+  current no-topology baseline so the deprecated alias stays topology-free
+  until its post-phase-9 removal.
 * Realistic coupling: makes ``apigateway.requests_per_sec`` track
   ``loadbalancer.requests_per_sec`` with Pearson correlation >= 0.95
   (edge weight = 1.0 + small noise).
@@ -120,7 +120,7 @@ def test_topology_mode_realistic_matches_default_byte_for_byte(
 ):
     explicit = run_capture(
         amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=None,  # match one_day_run_a's 1s default for byte identity
+        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
         extra_args=["--topology-mode", "realistic"],
     )
     for filename in ("apigateway.csv", "loadbalancer.csv", "anomalies.csv"):
@@ -133,26 +133,25 @@ def test_topology_mode_realistic_matches_default_byte_for_byte(
 
 
 # ------------------------------------------------------------------
-# Legacy regression: ``--topology-mode independent`` must reproduce the
-# pre-flag-day baseline byte-for-byte. This guards the deprecated alias
-# from silent drift before it is removed after phase 9.
+# Legacy regression: ``--topology-mode independent`` stays pinned to the
+# current no-topology baseline. This guards the deprecated alias from
+# accidentally re-enabling realistic coupling before removal.
 # ------------------------------------------------------------------
 def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
     amc, tmp_path
 ):
     explicit = run_capture(
         amc, tmp_path / "explicit_independent", days=1,
-        interval_seconds=None,  # locked hashes pinned at 1s resolution
+        interval_seconds=1.0,  # locked hashes pinned at 1s resolution
         extra_args=["--topology-mode", "independent"],
     )
     for filename, expected_hash in sorted(LEGACY_INDEPENDENT_ONE_DAY_HASHES.items()):
         actual = _sha256_path(explicit.out_dir / filename)
         assert actual == expected_hash, (
-            f"{filename} drifted from the pre-flag-day independent baseline "
+            f"{filename} drifted from the locked independent-mode baseline "
             f"under --topology-mode independent. expected={expected_hash} "
-            f"actual={actual}. The deprecated alias must remain byte-for-byte "
-            f"identical to its pre-existing output until phase 9 "
-            f"removes it."
+            f"actual={actual}. The deprecated alias must stay byte-for-byte "
+            f"stable and topology-free until phase 9 removes it."
         )
 
 
@@ -169,7 +168,7 @@ def test_topology_mode_realistic_apigateway_tracks_loadbalancer(amc, tmp_path):
     # the api_cpu_saturation retry-storm window (19:00-19:08) below.
     result = run_capture(
         amc, tmp_path / "realistic", days=1,
-        interval_seconds=None,  # Pearson >= 0.95 requires 86 400 rows at 1s
+        interval_seconds=1.0,  # Pearson >= 0.95 requires 86,400 rows at 1s
         extra_args=["--topology-mode", "realistic"],
     )
     lb_vals, lb_ts = _column_values(result.out_dir, "loadbalancer", "requests_per_sec")
@@ -187,12 +186,17 @@ def test_topology_mode_realistic_apigateway_tracks_loadbalancer(amc, tmp_path):
     lb_arr = np.array([lb_lookup[t] for t in common], dtype=np.float64)
     api_arr = np.array([api_lookup[t] for t in common], dtype=np.float64)
 
-    # Exclude the api_cpu_saturation retry-storm window (19:00:00..19:08:00)
-    # so the anomaly span doesn't dominate the correlation. START is
+    # Exclude apigateway.requests_per_sec anomaly windows so those spans do
+    # not dominate the correlation. START is
     # ``2026-03-10 00:00:00`` (see amc.START).
-    storm_start = "2026-03-10 19:00:00"
-    storm_end = "2026-03-10 19:08:00"
-    keep = [i for i, t in enumerate(common) if not (storm_start <= t <= storm_end)]
+    anomaly_windows = [
+        ("2026-03-10 09:00:00", "2026-03-10 10:00:00"),
+        ("2026-03-10 19:00:00", "2026-03-10 19:08:00"),
+    ]
+    keep = [
+        i for i, t in enumerate(common)
+        if not any(start <= t <= end for start, end in anomaly_windows)
+    ]
     lb_arr = lb_arr[keep]
     api_arr = api_arr[keep]
     corr = float(np.corrcoef(lb_arr, api_arr)[0, 1])

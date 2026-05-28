@@ -21,8 +21,8 @@ These tests cover:
   ``HIGH_SEVEN_DAY_CAPPED_HASHES``) capture realistic-mode bytes;
   the high-signal + ``--anomaly-count`` capped 7-day hashes were
   captured against the current registry-only sampling-pool ordering,
-  which this PR did not change. The pre-flag-day independent baseline is
-  preserved verbatim in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` and is
+  which this PR did not change. The current independent-mode no-topology
+  baseline is preserved in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` and is
   pinned by
   ``tests/test_topology_loadbalancer_gateway.py::test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``.
 """
@@ -110,71 +110,85 @@ SCENARIO_CASCADES_BY_SLUG = {
 # 2026-05-19 (phase-6 flag day): re-baselined every entry here when
 # ``--topology-mode realistic`` became the default and ``dtype="int"``
 # columns started being rounded via ``np.rint`` before derivations. The
-# pre-flag-day independent baseline (the lineage locked by historical
-# commits) lives in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is
-# pinned by
+# current independent-mode no-topology baseline lives in
+# ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is pinned by
 # ``test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``;
-# the legacy table is the byte-for-byte parity reference for the
-# deprecation alias and is scheduled for removal after phase 9. When
-# updating these hashes again, regenerate against the realistic default
-# rather than the legacy alias.
+# that table is re-locked for intentional scenario-byte changes while
+# still guarding the deprecation alias against accidental topology coupling.
+# When updating these hashes again, regenerate against the realistic default
+# rather than the independent alias.
+#
+# 2026-05-27: re-locked the topology-coupled front-half component hashes
+# after adding the gpu_inference component. The new component joins the
+# topology-aware generation pass, which changes coupled baselines for
+# apigateway/authservice/cacheservice/database/llm_analytics while leaving
+# the anomaly manifest and uncoupled component bytes stable.
+#
+# 2026-05-27: re-locked again after the gpu_inference_fragmentation scenario
+# moved to a full-window correlated serving-stress field (days_required=1).
+# That intentionally changes the anomaly manifest plus the coupled
+# apigateway/authservice/cacheservice/database/llm_analytics/GPU bytes.
+#
+# 2026-05-27: re-locked after older point scenarios were promoted to short
+# detector-visible spans, so one-row incident breadcrumbs now expand across
+# their primary windows in the generated CSVs.
 # ------------------------------------------------------------------
 DEFAULT_ONE_DAY_HASHES = {
-    "anomalies.csv": "b2978b6a5abdfc3e253120a04302895c6f678f382fd6fea1acba569b28f355e5",
-    "apigateway.csv": "bd4cad461c8c5d09c057f0cd40081e31c3987441ee4cfee1610ac9b33a171044",
-    "authservice.csv": "b199dc119b6780725729f557208d6437b60f059d21d98dcd975771c5c34b3594",
-    "cacheservice.csv": "aaea7333b9cd47bf2806129945f0dddeef861cfdd8c7bd0c665a29c4d62b3158",
-    "database.csv": "9687021257678a2bdf3316b3452f548e527e855f2f24dca78a015b419f9155fc",
-    "identityprovider.csv": "6ccf54d998faadb8cf2bee8a7e35b4b6f6ec406b6cff920121b2066220aeb4e1",
-    "llm_analytics.csv": "3c18b9f444a61950c8b9d9eadbcacd59fee1642f5ce274e05a616c605de2da6c",
-    "loadbalancer.csv": "c1e1ea63928870c6905b863f4f14ed0e990012ddab7919ab00707a82c4ab00b2",
-    "mqservice.csv": "6bcaa3310232f13fa018f99f71583397cf39c7b2d07530f92098b2b84f9be7d9",
-    "objectstore.csv": "a6993057d62c0565cc9ca495db85d08e4a6186660b3c220ff7389bb4be21bc69",
-    "observabilitypipeline.csv": "dfd89b922312ee53c8afc5ebcb26d310f6466ca4fc8753f53ea6e69e901748fc",
-    "paymentservice.csv": "f60145f9f360c2a0c785c869cd046eda5895672d40b0ec2ec0caef5af1f27ba1",
-    "scheduler.csv": "1ae06a98848fe404da0af873826ed7de8e653eed78deb8f67ef49c973e7752a1",
-    "vectorstore.csv": "e3a0b6e511ca879eebbe08cffff59fb02df7d36bb2f30ae0b8075dcda84e0955",
+    "anomalies.csv": "954cc16cf814a78ea26b309ebb8223a44f7603884b7f9cf10ba7bd76de701615",
+    "apigateway.csv": "346221ba66a1a32d00840d1c4c0c05044298ed4dbb46a9e5149d801c70bcdca4",
+    "authservice.csv": "c9b94f0180ec9d90a3a86fbefd969bc80ad5498462fb3b78c4620bcc151c8e8a",
+    "cacheservice.csv": "510259fdb8dcfeabfc30c8165bea153af1ce21fcb95fbe75dc9efcf13315fb22",
+    "database.csv": "c5d25ca0dc8013addd9f0a6cfcdb244f36bff7ac77484e0f900e90d04dc36286",
+    "gpu_inference.csv": "c38dab33c7861fe89ccb32fb9b2669a384710b315038bd129af6a20a2750f30f",
+    "identityprovider.csv": "ab8743529fa84d6ab885cadf2b99be77ab852abb78664ad5eceac99beadf202a",
+    "llm_analytics.csv": "6775f52174809d553a03cf54ba27ddb915b1f6e11215dab54375fc5b970bfa3e",
+    "loadbalancer.csv": "8d94f4c08c3d09ff46bfd21bef4393356ce2e0e57810a3cac909fc81ec856924",
+    "mqservice.csv": "92958b64a154167d48f74be9583b650273e630864183ff20ff19b775150256da",
+    "objectstore.csv": "5f0c830ee4f4cc8785bbbe4a50359715e9081e97df4e2c980429266a92b1a736",
+    "observabilitypipeline.csv": "dabc1c62c2b425205578be9b985cc8a9ffcb78a528be842ef8b40852e8193cda",
+    "paymentservice.csv": "6046d40777c21a1c28a250aa81045866c37131537533f314fa599ec454cfa822",
+    "scheduler.csv": "b75c0944fb04a544b2f52421e4939c094b0cdcedc9d63321414fcea0df3636a3",
+    "vectorstore.csv": "2bdc51cdaf95d97b66e8142285668db5ba1d611bb103386d1fc0210cd91bed2a",
 }
 
 DEFAULT_SEVEN_DAY_HASHES = {
-    "anomalies.csv": "97e4cb8b63d2629a0499dd27c07d5dce68003e0306bc68a22bcbd60b827ae725",
-    "apigateway.csv": "9b0ebf5457784bac311e9b318d7d4e30b5017678f16bda9ab46b778841050040",
-    "authservice.csv": "8fe3ade4c6b1a7e93f6d8918d9b7ef98acc4bd4b786e196e6dfc6907f756fca8",
-    "cacheservice.csv": "a92c39968368f9ecc468b36e55edbae6461bc9e4b84631f4084236d4ad7f0d19",
-    "database.csv": "9c56abe6bf559d21593f8057a0d1563688074033e3f02a9a9c4352aa49a97522",
-    "identityprovider.csv": "926b28780af3efc4815ed964dd03c3ac8d686dcb3f8236e5cce71dea7530ae67",
-    "llm_analytics.csv": "2c195cdc46d203ee316689c09195558c1d747803e78b6b3b7513055dc17fb87b",
-    "loadbalancer.csv": "fcb55773a22331cbf249aadc0b4e7f5eb5fcfe9d4c1dede58270366fa8ac7c6f",
-    "mqservice.csv": "265e99ecfebf21d5cb6cb11a068454873faafc861c156b88fef7dc2609c6896e",
-    "objectstore.csv": "a21108e432b068a15bde2c8790b48b8961f792a87bd00227e3d18f965a75b88f",
-    "observabilitypipeline.csv": "5e6cae855793d2e14b258b6b0801f7a7958775281baa43809d99a86e28daf6b4",
-    "paymentservice.csv": "923dc4369f426c66146fabbce6b3306d81213fcb731bc43a15642913cd743425",
-    "scheduler.csv": "27a47467d91902604ac182b661bada4ac92daafa4b980b6071d8d5e803d1bd7b",
-    "vectorstore.csv": "5fafee33e0e394a20d11b0984b8856ff8d708ef109bdc72f83d84ae476cd4e93",
+    "anomalies.csv": "9c31ede26ec85676f7d9f143617485b4f68b9374bfae30aca3a1c4f051537ba7",
+    "apigateway.csv": "427d3a3bd0cccc567d13d88c90cd61adfaa10e3075c382462a2ec32c58eabc99",
+    "authservice.csv": "f53bdfec7d1d043ec816eded7cfba302498361ef1b141ceccad63f46d60e2220",
+    "cacheservice.csv": "21368036781cf9485d026ce099ab257e66d9ee3beae4eefab6c7ee1569824058",
+    "database.csv": "1d96db47600cdaa77bed7cbe82ad85ade2b6eefc0a8807af8fe66e028b011e35",
+    "gpu_inference.csv": "1a86efc27722763a326d5f10d3cc6bbde452418a90b46ac571ed7c8d572f0f0c",
+    "identityprovider.csv": "87b884c42a4a03379fac57bc35cf4618f0d0e1c480e9aec000e9fe689b02af2b",
+    "llm_analytics.csv": "af7cd862e0495970c6c92dcb63f083f473f05092a48c526243760c09f3d6455b",
+    "loadbalancer.csv": "7920724bae82c17f80727d53df67c8c1d08778e3570f12c355c399d439f5923e",
+    "mqservice.csv": "45ee2524f35f842727531fe3e4218d1cf234a472d57dad2cd691b57ad5c251e3",
+    "objectstore.csv": "b07a4f6cedb132626531763997c706e24f4521bdead1fb95970275624a1d6d84",
+    "observabilitypipeline.csv": "0863fdd4f30b92b0964bace22d4b0b6a48188794ee85a96173da630e191e7c86",
+    "paymentservice.csv": "39e46549bc028006df8c71a8c46f75d3c78c4fc57d472463e5631f072185d570",
+    "scheduler.csv": "c4c287c40a60948b61fe622106c1d99af3a2f6a9f5b5f1958f8706e9c3658086",
+    "vectorstore.csv": "43a05e9e2a35f9323e8823bb6ec1973bd230975131991149873cfd615a154762",
 }
 
-# Pre-flag-day baseline hashes captured under the original
-# ``--topology-mode independent`` mode (no topology coupling, no
-# integer-cast bundle). Phase 6 retained ``--topology-mode
-# independent`` as a deprecation alias whose CSV bytes must remain
-# byte-for-byte identical to this baseline, so test_topology_loadbalancer_gateway
-# pins them against the alias output to catch any silent drift in the
-# deprecated path before it is removed (scheduled for after phase 9).
+# Independent-mode baseline hashes captured with no topology coupling. Phase 6
+# retained ``--topology-mode independent`` as a deprecation alias; this block
+# is re-locked when intentional scenario-byte changes land, while still
+# pinning independent-mode output against accidental topology-coupling drift.
 LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
-    "anomalies.csv": "b2978b6a5abdfc3e253120a04302895c6f678f382fd6fea1acba569b28f355e5",
-    "apigateway.csv": "86df1f5a027badae5057da98072773b17cadb31ca117bd0a3948857328fe76eb",
-    "authservice.csv": "06ab97884f65eb53db6eff0c61147f576809517b841e21b98b2861cb99dd5617",
-    "cacheservice.csv": "7ace2f8b8dd6c6ed43ed90058eae8a0f1b1f077a37bbedd88ea9f7523246dde3",
-    "database.csv": "e7d34120ae207c8ec6697a891730118a3962e96b0e3f203346cb2c9794e9e4e8",
-    "identityprovider.csv": "c884970f063d58a8cd2289be8500b810a022727c407601c503d841844cdf1577",
-    "llm_analytics.csv": "bb8c614dc7b0b3e5a88d185b3b8cc4cac8c5a079fdaa1e67ed5bef55003bceba",
-    "loadbalancer.csv": "a1de03bfba5aabbeaf86c2346e603218fd23e38bfa3cb31f51453e15077656b1",
-    "mqservice.csv": "b56b3fb5306049cfa13e06620954708314967d965263dd5940e05494e0dea6f8",
-    "objectstore.csv": "fc4ea917e6591cd6839eb315775bf20371bd4569c53df05a7dd7f9323c2e899d",
-    "observabilitypipeline.csv": "e26bac024a6b192519792e056d5e7a60378d438df5c635a4c168420823b56f63",
-    "paymentservice.csv": "fd768a451f4dd9e35436659eff6bb6f121252395b0302eea44cff21600cedec9",
-    "scheduler.csv": "09f2fd6953dcf4ca9e47332f332e8fa206c4d392637eccff0e4f5840fd7a9aa7",
-    "vectorstore.csv": "45f40482e8fffbe0d0e0bd6b871cdbb984ccf1e3d79e65600e8da2e34853fa88",
+    "anomalies.csv": "954cc16cf814a78ea26b309ebb8223a44f7603884b7f9cf10ba7bd76de701615",
+    "apigateway.csv": "3e482088f1674d99a8ddad32ddb36a944e086af2442d4159a453763f1af24c69",
+    "authservice.csv": "39d86fe29bd2a4b575c758ad4dcfe8c947dc2d5047f7c5fc61211283c279fcc7",
+    "cacheservice.csv": "a139a6e02c778cde09cd3ca9ba0b397c00bb4d640784350f1ceae1b3e7927c41",
+    "database.csv": "9f14dd258645d8ed5db43421f5c494d1e3cccb865f2a86bc158f3a8a46119999",
+    "gpu_inference.csv": "44ea53d625bc46c862ba018863881469f0229f47cc3b89dda44307d204173258",
+    "identityprovider.csv": "9bc8018f07330bab2d1840cceac45acb04fe5673cfe5d55cc52d1d1ef9072f6f",
+    "llm_analytics.csv": "2f01c9f78d0d04bfa994ffbe0ff6de11f11d6dc2f37b46b7e9d335ab2ea745d3",
+    "loadbalancer.csv": "535e32c224c084b48850d122b42261bea7b41223322d39a17ad00d53bd992ed0",
+    "mqservice.csv": "d28631d14c47ec000fdcb57eddec599073a05086dd2395bfdcadddb649d399ad",
+    "objectstore.csv": "b9973618b15f6dad4f282892fba224ce0ac50a447f3f45ae3594910297f6f807",
+    "observabilitypipeline.csv": "1ba71b933c68974cb42d3e4f1746bee1a24705f32361b92b780decba2ad91d71",
+    "paymentservice.csv": "afc289f16ceb5f6f2a99c267fca289d3519fd1895839289eb36f3c164b3593a8",
+    "scheduler.csv": "46c0230dbd697658ec444a7e288d6371b9700c1e9a65cd29430a16afd6062bf2",
+    "vectorstore.csv": "9f9b51e3579c1759eefcf1b0d4de6608ef9c85ead9d186f37f51dfd611a963ce",
 }
 
 # SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
@@ -208,20 +222,31 @@ HIGH_SEVEN_DAY_CAPPED_HASHES = {
     # adding auth_pod_failure and cache_az_isolation (both high severity,
     # days_required=1) expands the high-severity pool, shifting the
     # --anomaly-count 100 sampling draw.
-    "anomalies.csv": "090cb62fa7926d635ade8510e4a3c3bd7d483b2481dd6d40849c6ba20ec09eea",
-    "apigateway.csv": "193d0ed891a7d40f0c32b434a7c26aceed0af0e404f0550dcb96f61fde4e02cb",
-    "authservice.csv": "5524ca908f65e6d364043ae0a5bf5b6664e2543ddb95326cbdad1c1c7f89738d",
-    "cacheservice.csv": "c6815565447f8fac7c00d743e550fa5cbc8391ffc216dc1f73726095af11e7b4",
-    "database.csv": "3e3868440e45f025719b8886c124685fbe9bdd23c3125b5ffba3eb3cafb72ae6",
-    "identityprovider.csv": "9b94f63e9193d542e4dc3e10ed60a802ab655e5b54e617b51256b0be5535e235",
-    "llm_analytics.csv": "547a704eb7afa253142249a4056aa10842ce71e4edaff6bda9a3fb00e8b84ca8",
-    "loadbalancer.csv": "3ecc8502d3a206ed90aaa39d9deca0f020f1bed8d664f1f53aed59124ec76b3e",
-    "mqservice.csv": "cf66750270480bd42130cd2a33fcb7d58ee9df2efa32dbfb04f72d84d7e4170f",
-    "objectstore.csv": "0da16866cbb766e962b8918fcd413dc339590615c782a741b67c6a557b6f1ae2",
-    "observabilitypipeline.csv": "2efea14f28ce4d9079083bb36fd3863fa70ddfcf584ee40605f5fa5b89a953d9",
-    "paymentservice.csv": "36eba5c6b5a14ffbe4ddf51f71ac2df609bd21b92af812215215b75304bdfa33",
-    "scheduler.csv": "5af0c2e0ac9d6ceeed0422c88308d41067fca66e40fe88bc2be3de7b7baa0eaf",
-    "vectorstore.csv": "8c7dde14773bfcb775c3389b606151efa9a07b46a4adc08fc311154c8313990d",
+    #
+    # 2026-05-27: re-locked the same topology-coupled front-half component
+    # hashes affected by adding gpu_inference to the component graph.
+    #
+    # 2026-05-27: re-locked after the GPU scenario became a full-window
+    # correlated signal, which changes the in-range anomaly-count pool.
+    #
+    # 2026-05-27: re-locked after older point scenarios were promoted to
+    # detector-visible spans, shifting both selected anomaly rows and the
+    # generated bytes for components sampled by --anomaly-count 100.
+    "anomalies.csv": "625f17673ae01684e44c5ea262e08c4ef714ecf12f8e7cacc016d67c4c67d280",
+    "apigateway.csv": "32511fec4ed70caca6d2d956f0a0633202855f06570630328c5be1745a96a6b1",
+    "authservice.csv": "ab5b9c01f851ed0f944381715f9003ba8bd4844d8612ec279a01171e112ff75d",
+    "cacheservice.csv": "926e12a5ad68763c2722d60467a177c59defc93cda571fa9539d56b60726031c",
+    "database.csv": "f33a80e970d31200844feefcabaf709ccb0cc839a1b34cd60c797614113f5785",
+    "gpu_inference.csv": "5ff509caab6505d49074d1aeb8f57bf36fbacbf88de6c48dc0512a37876faf63",
+    "identityprovider.csv": "6f20ba5020c973d68b5f3327d2e790311401d56c856d5da44c5f5a0d2feb0837",
+    "llm_analytics.csv": "2dd998f867fd9d0e578ccedce7b90ea5dc1ecc65e5e33e1a2cad200fda68a9c7",
+    "loadbalancer.csv": "64835453114a888ed5f843b8f7bdf55b3488c0443a4854384471512d743bc2ac",
+    "mqservice.csv": "de6f857017cb3baf373c6e10b5e8c6461878e1cd17bd674ad2d814f860ca3e81",
+    "objectstore.csv": "f18e8d30b76f3c16994e87c41be0f7d6a2340cbf4712e56143639a07eefaa44e",
+    "observabilitypipeline.csv": "b25f3596a4225b725bb24bc801c75b15fb46509c3ffbdf49d1fed67974474260",
+    "paymentservice.csv": "e44a69c7c8ea3bbd6b0798e455b849b643462e8810d4d991272e3cf6ee9a09a6",
+    "scheduler.csv": "cf44977a5232108ca8afc3ab7c8df24772eb6351cc1c1c9a750ac6ef1b239586",
+    "vectorstore.csv": "d3d63d50fadc6d29ff3cd36f468d943c27de5f14f710472d80076c744f35d592",
 }
 
 
@@ -253,6 +278,29 @@ def test_scenario_id_matches_dict_key(amc):
             f"SCENARIOS[{slug!r}].id is {scenario.id!r}; "
             f"id must equal the registry key"
         )
+
+
+def test_scenarios_have_detector_visible_primary_span(amc):
+    """Every catalog scenario should leave more than a single-row breadcrumb.
+
+    Sparse labels are useful, but the GPU inference scenario showed that
+    detectors need at least one coherent primary window to anchor rolling and
+    compound-signal analysis. Cascades remain single-row by design, so this
+    guard checks primary specs only.
+    """
+    weak = []
+    for slug, scenario in amc.SCENARIOS.items():
+        durations = [
+            float(spec.get("duration_seconds", 0) or 0)
+            for _, spec in scenario.primary_specs
+        ]
+        if not durations or max(durations) < 4 * 60:
+            weak.append((slug, max(durations, default=0.0)))
+
+    assert not weak, (
+        "Each scenario should declare at least one primary span lasting "
+        f"four minutes or longer; weak scenarios: {weak}"
+    )
 
 
 @pytest.mark.parametrize("slug", sorted(THREE_MULTI_DAY_SCENARIOS))
@@ -1309,11 +1357,11 @@ def test_default_seven_day_csvs_byte_identical(seven_day_run, filename, expected
 # stay stable.
 @pytest.fixture(scope="session")
 def high_seven_day_capped_run(amc, tmp_path_factory):
-    # interval_seconds=None preserves the script's 1s default so the locked
-    # HIGH_SEVEN_DAY_CAPPED_HASHES keep matching.
+    # Explicit 1s cadence preserves the full-resolution locked
+    # HIGH_SEVEN_DAY_CAPPED_HASHES.
     out = tmp_path_factory.mktemp("high_seven_day_capped")
     return run_capture(
-        amc, out, days=7, interval_seconds=None,
+        amc, out, days=7, interval_seconds=1.0,
         extra_args=["--signal-level", "high", "--anomaly-count", "100"],
     )
 

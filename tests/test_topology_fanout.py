@@ -19,8 +19,8 @@ These tests cover:
   flag day) byte-identical with an explicit ``--topology-mode
   realistic`` run, so the no-flag default and the explicit alias stay
   in lockstep on every coupled downstream CSV. The deprecated
-  ``--topology-mode independent`` alias's byte-for-byte parity with
-  the pre-existing baseline is pinned in
+  ``--topology-mode independent`` alias's current no-topology baseline
+  is pinned in
   ``tests/test_topology_loadbalancer_gateway.py`` against
   ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 * Realistic-mode correlations between downstream load metrics and
@@ -65,14 +65,16 @@ def _column_values(out_dir, component, metric):
 # the correlation slice so the override values do not dominate the Pearson
 # coefficient. START is ``2026-03-10 00:00:00``.
 _EXCLUSION_WINDOWS = [
+    # auth_brute_force on authservice.login_attempts/error_rate
+    ("2026-03-10 02:15:00", "2026-03-10 02:30:00"),
+    # cache_collapse primary: cache_misses collapse for 20 minutes.
+    ("2026-03-10 06:00:00", "2026-03-10 06:20:00"),
+    # monday_baseline on apigateway.requests_per_sec and authservice.login_attempts
+    ("2026-03-10 09:00:00", "2026-03-10 10:00:00"),
     # api_cpu_saturation retry storm on apigateway.requests_per_sec
     ("2026-03-10 19:00:00", "2026-03-10 19:08:00"),
-    # db_stall nightly batch kickoff on database.queries_per_sec @ 23:00:00
-    ("2026-03-10 23:00:00", "2026-03-10 23:00:01"),
-    # cache_collapse primary: cache_misses spike to 95,000 at 06:00:00 and
-    # cascade at 06:00:20 (cache_misses=~2400). These uncoupled misses spikes
-    # would pull cacheservice ops far above the api-correlated baseline.
-    ("2026-03-10 06:00:00", "2026-03-10 06:01:00"),
+    # db_stall nightly batch kickoff on database.queries_per_sec
+    ("2026-03-10 23:00:00", "2026-03-10 23:20:00"),
 ]
 
 
@@ -116,7 +118,7 @@ def test_topology_fanout_realistic_matches_default_byte_for_byte(
     is the default path and explicitly passing the flag is a no-op."""
     explicit = run_capture(
         amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=None,  # match one_day_run_a's 1s default for byte identity
+        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
         extra_args=["--topology-mode", "realistic"],
     )
     for filename in (
@@ -165,11 +167,11 @@ def test_topology_generation_order_apigateway_before_fanout(amc):
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def realistic_one_day(amc, tmp_path_factory):
-    # interval_seconds=None keeps 86 400 rows/day so the Pearson correlation
+    # interval_seconds=1.0 keeps 86,400 rows/day so the Pearson correlation
     # checks have enough data points to clear their thresholds.
     out = tmp_path_factory.mktemp("phase3_realistic")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--topology-mode", "realistic"],
     )
 

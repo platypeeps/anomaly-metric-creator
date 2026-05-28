@@ -14,7 +14,8 @@ The script uses a single generator function `generate_component()` that:
    config (`base_dir`, `total_seconds`, `drop_rate`, `interval`, pre-built timestamp
    arrays).
 2. Builds `floor(total_seconds / interval)` rows. At `interval=1.0` this is one row
-   per second.
+   per second; the CLI default is 50,000 rows at `interval=60.0`, matching the
+   reference observability telemetry CSV shape.
 3. Injects anomalies at their nearest row (`round(time_offset / interval)`). Specs
    whose row index falls outside `[0, n_rows)` are warned on stderr and skipped.
 4. Randomly emits blank lines at `drop_rate` to simulate packet loss.
@@ -425,10 +426,10 @@ column declared `dtype="int"` is rounded via `np.rint` in
 `generate_component()` before derivations run and before the
 `topology_capture` snapshot, so the recorded value is whole-integer
 on disk. The deprecated `--topology-mode independent` alias skips
-the cast (`apply_dtype_int_cast=False` in `main()`) to preserve
-byte-for-byte parity with the pre-flag-day baseline, so `dtype="int"`
-columns there are still emitted as fractional floats — the rounding
-is a realistic-mode behavior, not a declarative-metadata behavior.
+the cast (`apply_dtype_int_cast=False` in `main()`) to preserve the
+no-topology fractional-int contrast behavior, so `dtype="int"` columns
+there are still emitted as fractional floats — the rounding is a
+realistic-mode behavior, not a declarative-metadata behavior.
 `_validate_metric_spec_schema_metadata` enforces the vocabulary at
 import time (`semantic_type ∈ {counter, gauge, ratio, rate}`,
 `dtype ∈ {float, int}`, finite numeric bounds,
@@ -453,7 +454,7 @@ scenario-catalog issue tracked for phase 9 re-tune — it is
 place. Under `--topology-mode independent` the validator
 additionally surfaces every previously-flagged fractional-int
 violation (the alias intentionally skips the cast to keep its
-pre-flag-day byte parity).
+no-topology contrast behavior).
 
 ### Output validator (`--validate-output`)
 
@@ -586,7 +587,7 @@ encodes "this measurement was emitted" via row presence), the same way
 **File-descriptor pre-flight (long-form path only).** The long-form
 merge holds one open file handle per `(component, instance)` source
 for the lifetime of the merge — `heapq.merge` primes every iterator,
-so at max fan-out (13 components × 20 instances = 260 sources) a run
+so at max fan-out (14 components × 20 instances = 280 sources) a run
 can exceed the default macOS soft limit (256). Before the merge,
 `_ensure_long_form_fd_capacity(len(sources))` reads `RLIMIT_NOFILE`,
 raises the soft limit to fit (capped by the hard limit), and otherwise
@@ -747,7 +748,7 @@ import-time validator; phase 2 added the
 that re-shapes downstream RPS baselines from upstream RPS columns. The
 consumer was opt-in through phase 5 and flipped to the default in
 Phase 6; `--topology-mode independent` survives only as a
-deprecation alias for pre-flag-day byte parity.
+deprecated no-topology contrast alias.
 Phase 3 extended coupling to every front-half fan-out edge.
 Phase 4 reads `Edge.saturation` and adds a logistic-shaped
 latency multiplier and error offset onto each downstream's
@@ -1001,9 +1002,8 @@ tests in `tests/test_topology_saturation.py` assert both invariants on
 the realized CSV columns.
 
 The deprecated `--topology-mode independent` alias never invokes
-`_compose_topology_saturation_specs`, so its output stays byte-for-byte
-identical to the pre-existing baseline (pinned alongside the broader
-pre-flag-day baseline via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
+`_compose_topology_saturation_specs`, so it remains the no-topology contrast
+path (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
 `tests/test_scenarios.py` and `tests/test_topology_loadbalancer_gateway.py`).
 The no-flag default and explicit `--topology-mode realistic` now produce
 identical latency CSV bytes; that invariant is pinned by
@@ -1076,7 +1076,7 @@ catalog exposes — not the generic `error_rate`, which
   overrides are masked by the coupling); and
 - `llm_analytics.csv` byte-identity between the no-flag default and an
   explicit `--topology-mode realistic` run (after phase 6 the
-  default is realistic; the deprecation alias's pre-flag-day parity
+  default is realistic; the deprecation alias's no-topology baseline
   lives in `tests/test_topology_loadbalancer_gateway.py`).
 
 `_validate_topology()` rejects, at import time: unknown source keys,

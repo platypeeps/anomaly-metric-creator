@@ -8,8 +8,8 @@ plus end-to-end integration coverage of the CLI mode against the default
 Known residual violations (phase 6 flag day): the
 fractional-counter set previously flagged here was cleared by the
 integer-cast bundle, so the 1-day default integration test now asserts
-an empty violation set. The 7-day default still surfaces one
-``above_max`` violation on ``llm_analytics.context_overflow_rate`` —
+an empty violation set. The 7-day default still surfaces a known
+``above_max`` violation type on ``llm_analytics.context_overflow_rate`` —
 that scenario-amplitude reconciliation is explicitly deferred to
 Phase 9. Extra violations are regressions; fewer are progress
 and require updating the constants below.
@@ -526,7 +526,9 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 # Known residual violations (phase 6 flag-day). The
 # validator MUST find exactly this set on the default 1-day and 7-day
 # runs; extras are regressions, missing ones are progress that requires
-# updating this list. Each entry is ``(component_csv, metric, kind)``.
+# updating this list. The set is keyed by violation type, not by the number
+# of rows that trip the same known bound. Each entry is
+# ``(component_csv, metric, kind)``.
 # Kinds are normalized to:
 #  - ``fractional``  — value not whole-integer despite ``dtype="int"``
 #  - ``above_max``   — value above declared ``max_value``
@@ -537,11 +539,11 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 # integer-cast bundle in ``generate_component``.
 # Both default runs are now violation-free, with one exception:
 #
-# The 7-day run still surfaces a single ``above_max`` violation on
+# The 7-day run still surfaces a known ``above_max`` violation type on
 # ``llm_analytics.context_overflow_rate``. The LLM context-overflow
-# scenario (``llm_weekend_batch_overflow``) drives that ratio to 8.5
-# at day 5 + 2h to simulate context-window saturation, which exceeds
-# the metric's declared ``max_value=1``. Reconciling the scenario
+# scenario (``llm_weekend_batch``) drives that ratio toward 8.5 from
+# day 5 + 2h to simulate context-window saturation, which exceeds the
+# metric's declared ``max_value=1``. Reconciling the scenario
 # amplitude with the ratio bound is a scenario-catalog re-tune
 # explicitly deferred to phase 9.
 _EXPECTED_VIOLATIONS_ONE_DAY: set[tuple[str, str, str]] = set()

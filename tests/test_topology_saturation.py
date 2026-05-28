@@ -11,11 +11,11 @@ saturation curve on top of incoming edges that carry `SaturationParams`:
   latency-family `MetricSpec.multiplier` and error-family `MetricSpec.additive`
   by composing on top of any pre-existing multiplier/additive.
 - The deprecated `--topology-mode independent` alias never invokes the
-  saturation path, so per-component CSVs stay byte-identical to the
-  pre-existing baseline (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES`
-  in `tests/test_topology_loadbalancer_gateway.py`). The default
-  flipped to `--topology-mode realistic` in phase 6, so the
-  saturation path is now on by default.
+  saturation path, so per-component CSVs stay on the current no-topology
+  baseline (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
+  `tests/test_topology_loadbalancer_gateway.py`). The default flipped to
+  `--topology-mode realistic` in phase 6, so the saturation path is now
+  on by default.
 
 These tests cover:
 
@@ -82,12 +82,20 @@ def _aligned_columns(out_dir, *pairs):
 # them keeps the Pearson correlation reflective of the saturation curve, not the
 # scenario overrides. START is `2026-03-10 00:00:00`.
 _EXCLUSION_WINDOWS = [
+    # auth_brute_force on authservice login/error columns
+    ("2026-03-10 02:15:00", "2026-03-10 02:30:00"),
+    # db_stall backup I/O write-latency and connection pile-up
+    ("2026-03-10 04:00:00", "2026-03-10 04:30:00"),
+    # cache_collapse primary miss collapse
+    ("2026-03-10 06:00:00", "2026-03-10 06:20:00"),
+    # monday_baseline apigateway RPS shift
+    ("2026-03-10 09:00:00", "2026-03-10 10:00:00"),
+    # db_stall read-latency/error stall
+    ("2026-03-10 11:00:00", "2026-03-10 11:20:00"),
     # api_cpu_saturation retry storm on apigateway.requests_per_sec
     ("2026-03-10 19:00:00", "2026-03-10 19:08:00"),
-    # db_stall nightly batch kickoff on database.queries_per_sec @ 23:00:00
-    ("2026-03-10 23:00:00", "2026-03-10 23:00:01"),
-    # cache_collapse primary spike on cacheservice.cache_misses @ 06:00:00
-    ("2026-03-10 06:00:00", "2026-03-10 06:01:00"),
+    # db_stall nightly batch kickoff on database.queries_per_sec
+    ("2026-03-10 23:00:00", "2026-03-10 23:20:00"),
 ]
 
 
@@ -462,8 +470,8 @@ def test_topology_saturation_params_in_planned_ranges(amc):
 # Default mode byte-identical: after phase 6 the no-flag default
 # is realistic mode, so explicit ``--topology-mode realistic`` must
 # match the default per-component CSVs byte-for-byte under the
-# saturation phase. The legacy ``--topology-mode independent`` parity
-# check (against the pre-flag-day baseline) lives in
+# saturation phase. The deprecated ``--topology-mode independent``
+# no-topology baseline check lives in
 # ``test_topology_loadbalancer_gateway``.
 # ------------------------------------------------------------------
 def test_realistic_mode_latency_csvs_byte_identical_to_default(
@@ -474,7 +482,7 @@ def test_realistic_mode_latency_csvs_byte_identical_to_default(
     byte-for-byte (the session-scoped ``one_day_run_a`` fixture)."""
     explicit = run_capture(
         amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=None,  # match one_day_run_a's 1s default for byte identity
+        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
         extra_args=["--topology-mode", "realistic"],
     )
     for filename in (
@@ -494,12 +502,12 @@ def test_realistic_mode_latency_csvs_byte_identical_to_default(
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def realistic_one_day_sat(amc, tmp_path_factory):
-    # interval_seconds=None keeps 86 400 rows/day so the Pearson correlation
+    # interval_seconds=1.0 keeps 86,400 rows/day so the Pearson correlation
     # checks in test_realistic_latency_correlates_with_upstream_load have
     # enough data points to clear the 0.15 threshold.
     out = tmp_path_factory.mktemp("phase4_realistic")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--topology-mode", "realistic"],
     )
 
@@ -511,11 +519,11 @@ def independent_one_day_sat(amc, tmp_path_factory):
     parametrizations so we do one ``run_capture`` per mode for this
     module instead of one per (component, metric) case (Copilot
     feedback on PR #49)."""
-    # interval_seconds=None keeps the same row density as realistic_one_day_sat
+    # interval_seconds=1.0 keeps the same row density as realistic_one_day_sat
     # so the contrast assertions compare equivalent sample sizes.
     out = tmp_path_factory.mktemp("phase4_independent")
     return run_capture(
-        amc, out, days=1, interval_seconds=None,
+        amc, out, days=1, interval_seconds=1.0,
         extra_args=["--topology-mode", "independent"],
     )
 

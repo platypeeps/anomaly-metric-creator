@@ -79,10 +79,9 @@ def _load_component_column(out_dir: Path, component: str, metric: str):
     """Return (list_of_row_timestamps, np.ndarray_of_values) for the named
     metric.
 
-    While the CLI default has a non-zero ``--drop-rate`` (omitting rows
-    entirely from the CSV), this test explicitly sets it to 0 in
-    ``_run_scenario`` to ensure row alignment between runs. We still check
-    for empty rows defensively.
+    This test explicitly sets ``--drop-rate 0`` in ``_run_scenario`` to
+    ensure row alignment between runs, even if the project default changes.
+    We still check for empty rows defensively.
 
     Opens with ``newline=""`` and ``encoding="utf-8"`` so the ``csv``
     module sees the file's raw line terminators (CSV's universal-newlines
