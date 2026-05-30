@@ -74,13 +74,13 @@ Recent significant additions to the generator:
 Requires Python 3.11+.
 
 ```bash
-# Library install (numpy only):
-pip install numpy
+# Runtime install (uses the dependencies declared in pyproject.toml):
+python3 -m pip install -e .
 
 # Optional: enable YAML --instance-config files (JSON works without it):
-pip install 'anomaly-metric-creator[yaml]'
+python3 -m pip install -e '.[yaml]'
 
-# Editable install with dev extras (pytest + numpy + pyyaml):
+# Editable install with dev extras (pytest, xdist, ruff, pre-commit, etc.):
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```

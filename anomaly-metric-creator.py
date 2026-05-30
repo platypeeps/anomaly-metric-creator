@@ -34,7 +34,21 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Callable
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError as exc:
+    if exc.name not in {None, "numpy"}:
+        raise
+    print(
+        "Missing required dependency: numpy\n"
+        "Install this project into the Python you are using, for example:\n"
+        "  python3 -m pip install -e .\n"
+        "or create the documented dev environment:\n"
+        "  python3 -m venv .venv\n"
+        "  .venv/bin/pip install -e '.[dev]'\n",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from None
 
 # ------------------------------------------------------------------
 # Configuration

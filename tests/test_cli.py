@@ -7,6 +7,7 @@ state is leaking determinism.
 
 import filecmp
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -15,12 +16,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from conftest import COMPONENTS, SCRIPT_PATH
 
 
-def _invoke(*args, cwd=None):
+def _invoke(*args, cwd=None, env=None):
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), *args],
         capture_output=True,
         text=True,
         cwd=cwd,
+        env=env,
     )
 
 
@@ -45,6 +47,29 @@ def test_help_lists_every_flag():
         # something non-trivial follows so the flag isn't just a bare token.
         after = out.split(flag, 1)[1]
         assert any(c.isalpha() for c in after[:200]), f"{flag} has empty help text"
+
+
+def test_missing_numpy_dependency_has_actionable_error(tmp_path):
+    sitecustomize = tmp_path / "sitecustomize.py"
+    sitecustomize.write_text(
+        "import importlib.abc\n"
+        "\n"
+        "class _BlockNumpy(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname == 'numpy' or fullname.startswith('numpy.'):\n"
+        "            raise ModuleNotFoundError(\"No module named 'numpy'\")\n"
+        "        return None\n"
+        "\n"
+        "import sys\n"
+        "sys.meta_path.insert(0, _BlockNumpy())\n"
+    )
+
+    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+    result = _invoke("--help", env=env)
+
+    assert result.returncode != 0
+    assert "Missing required dependency: numpy" in result.stderr
+    assert "python3 -m pip install -e ." in result.stderr
 
 
 def test_invalid_duration_days_fails(tmp_path):
