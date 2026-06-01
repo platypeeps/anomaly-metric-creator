@@ -8,7 +8,7 @@ This is a single-file Python project (`anomaly-metric-creator.py`) plus a tests
 suite in `tests/`. `CLAUDE.md` is the authoritative architecture and review
 guide; `README.md` documents the user-facing surface. Read the relevant
 sections from both before reviewing a change — do not produce overview-only
-or generic Python feedback. If a change touches behaviour that `CLAUDE.md`
+or generic Python feedback. If a change touches behavior that `CLAUDE.md`
 already specifies, the review should be grounded in those specifics.
 
 ## Where to look first by diff shape
@@ -94,6 +94,26 @@ already specifies, the review should be grounded in those specifics.
 - **Action order in `Done -` summary.** The end-of-run summary only
   names artifacts that were actually written, and prints only after
   every named writer has succeeded.
+- **Derived metrics overwrite scenario overrides.** Derived columns
+  (e.g. `cacheservice.hit_ratio = 100 * cache_hits / (cache_hits +
+  cache_misses)`) are recomputed inside `generate_component()` after
+  the anomaly-override pass. A scenario spec that writes the derived
+  column directly (e.g. an anomaly on `hit_ratio`) is silently
+  overwritten by the recomputation. Anomalies that want to influence a
+  derived metric must drive its source columns instead — flag any
+  scenario diff that targets a derived metric directly.
+- **pytest-xdist test isolation.** The suite runs under
+  `-n 4 --dist loadfile` by default. Tests must remain
+  order-independent and file-isolated: every test writes only into
+  `tmp_path`, and every `main()` invocation passes an explicit
+  `--seed`. Do not introduce cross-file shared mutable state —
+  module-level caches, file system fixtures outside `tmp_path`, or
+  environment variables set without `monkeypatch` — because xdist
+  distributes those tests to different workers and the failure mode
+  is a non-reproducible flake. Session-scoped fixtures in
+  `tests/conftest.py` are instantiated per worker; a `module`-scoped
+  duplicate of a session-scoped fixture multiplies suite wall-time
+  and peak RSS.
 
 ## Pre-PR checklist headings (canonical in CLAUDE.md)
 
@@ -102,7 +122,7 @@ PR descriptions in this repo carry a 13-heading checklist copied from
 each heading and call out any item that the PR description marked
 confirmed but the diff does not support:
 
-1. **Scope & description** — every behaviour change in the diff is
+1. **Scope & description** — every behavior change in the diff is
    named in the PR description.
 2. **Validators and schema checks** — non-canonical inputs enumerated;
    every discriminator branch validated; dispatch tables strict.
@@ -135,7 +155,7 @@ confirmed but the diff does not support:
     on cross-platform modules (`select.epoll`, `signal.SIGSTOP`, …)
     guarded with `pytest.skipif(not hasattr(...))` or a module-top
     skip.
-13. **Default-behaviour changes** — any default parameter value or
+13. **Default-behavior changes** — any default parameter value or
     fallback path change is named in the PR description and tested
     on both old and new caller shapes.
 
