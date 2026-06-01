@@ -27,8 +27,9 @@ The gate refuses on two distinct conditions:
 
 2. **Self-correction prefix.** A body whose first non-blank line
    carries ``Correction to previous comment`` (case-insensitive) or
-   starts with ``Correction:`` (case-insensitive, ``:`` or ``-`` as
-   the separator) is announcing a correction. The structurally
+   starts with ``Correction:`` / ``Correction -`` / ``Correction —``
+   (case-insensitive; ``:``, ``-``, or ``—`` as the separator, no
+   space required after) is announcing a correction. The structurally
    correct move is to edit the comment being corrected, not to add a
    fresh one. The diagnostic flags the body and tells the caller to
    PATCH instead of POST. This arm fires independently of the
@@ -77,9 +78,10 @@ Exit codes:
 Mirrors the structure of ``tools/check_role_name_leaks.py`` and
 ``tools/check_branch_name.py``: a single source of truth for the
 detector predicates (``_is_approval_shape``,
-``_self_correction_match``, ``_collect_duplicate_priors``), three
-clear invocation modes, and an exit-code priority where I/O errors
-take precedence over refusals.
+``_self_correction_match``, ``_collect_duplicate_priors``), two
+clear invocation modes (``--pr <N>`` production / fixture flags),
+and an exit-code priority where I/O errors take precedence over
+refusals.
 """
 
 from __future__ import annotations
@@ -111,16 +113,19 @@ _CORRECTION_PHRASE = re.compile(
     re.IGNORECASE,
 )
 
-# Self-correction signal #2: an opening "Correction:" or
-# "Correction -" / "Correction —" at the start of the first line,
-# which is the other natural shape a self-correction body takes when
-# the author hasn't kept the original ``APPROVED`` prefix. The trailing
-# match is ``(?:\s|$)`` so ``Correction:`` alone on the first line
-# (no body content on that line) trips the gate too — splitlines()
-# strips the line terminator, so end-of-line on the first non-blank
-# line matches ``$``.
+# Self-correction signal #2: an opening "Correction:", "Correction -",
+# or "Correction —" at the start of the first line — the other
+# natural shape a self-correction body takes when the author hasn't
+# kept the original ``APPROVED`` prefix. The regex deliberately does
+# NOT require any specific character after the separator: it matches
+# ``Correction:`` alone on the first line (end-of-line case),
+# ``Correction: foo`` (space-separated), and ``Correction:foo``
+# (no-space case) uniformly. The separator class is ``:``, ``-``, or
+# the em-dash ``—`` — anything immediately following is body text.
+# A no-separator opener like ``Correctionx`` does not match because
+# the separator class is required.
 _CORRECTION_PREFIX = re.compile(
-    r"^\s*correction\s*[:\-—](?:\s|$)",
+    r"^\s*correction\s*[:\-—]",
     re.IGNORECASE,
 )
 
@@ -206,12 +211,18 @@ def _collect_duplicate_priors(
     """Return the subset of ``prior_comments`` that count as
     duplicates against the current head commit.
 
-    A comment counts as a duplicate when all three hold:
+    A comment counts as a duplicate when all four hold:
 
-    - its ``user.login`` matches ``author`` (case-sensitive — GitHub
-      logins are case-insensitive but the API returns the canonical
-      case, and a mismatched-case prior is almost certainly a
-      different account);
+    - the entry is a dict carrying string ``id`` (or int ``id``) and
+      string ``created_at`` fields — ``_diagnose`` later indexes both
+      and would raise ``KeyError`` on a partial entry, so we filter
+      those out up front to keep the "partial fixtures don't crash"
+      guarantee true;
+    - its ``user.login`` matches ``author`` case-insensitively —
+      GitHub logins are case-insensitive (distinct accounts cannot
+      differ only by case), so an ``--author`` passed with
+      non-canonical casing must still match the canonical case the
+      API returned;
     - its ``created_at`` ISO-8601 timestamp is >= ``head_date``
       (parsed via ``_parse_iso_timestamp`` rather than lex-compared so
       millisecond precision and ``+00:00`` offsets compare correctly
@@ -220,22 +231,34 @@ def _collect_duplicate_priors(
 
     ``prior_comments`` is the raw shape ``gh api …/issues/{n}/comments``
     returns: a list of ``{id, user: {login}, created_at, body}``
-    dicts. Missing keys or unparseable timestamps are treated as
-    "does not match" rather than raising, so a partial fixture
-    doesn't crash the gate.
+    dicts. Non-dict entries, missing keys, and unparseable timestamps
+    are treated as "does not match" rather than raising, so a partial
+    fixture doesn't crash the gate.
     """
     head_dt = _parse_iso_timestamp(head_date)
     if head_dt is None:
         raise OSError(
             f"head-commit-date is not a parseable ISO-8601 timestamp: {head_date!r}"
         )
+    author_lc = author.lower()
     duplicates: list[dict[str, Any]] = []
     for comment in prior_comments:
+        if not isinstance(comment, dict):
+            continue
+        # Both fields must be present *and* well-typed before
+        # _diagnose can reference them. An int id (gh api shape) or
+        # str id (some fixtures) is fine; anything else is skipped.
+        cid = comment.get("id")
+        if not isinstance(cid, (int, str)) or isinstance(cid, bool):
+            continue
+        created_raw = comment.get("created_at")
+        if not isinstance(created_raw, str):
+            continue
         user = comment.get("user") or {}
         login = user.get("login") if isinstance(user, dict) else None
-        if login != author:
+        if not isinstance(login, str) or login.lower() != author_lc:
             continue
-        created_dt = _parse_iso_timestamp(comment.get("created_at"))
+        created_dt = _parse_iso_timestamp(created_raw)
         if created_dt is None or created_dt < head_dt:
             continue
         body = comment.get("body")
@@ -308,9 +331,24 @@ _PR_URL_PATTERN = re.compile(
 )
 
 
+def _gh_json(args: list[str], context: str) -> Any:
+    """Run ``gh`` and parse stdout as JSON. ``json.JSONDecodeError`` is
+    wrapped as ``OSError`` so the script's documented exit-2 contract
+    holds for malformed payloads (e.g. a ``gh`` version that adds a
+    leading log line, or a paginated endpoint where ``--paginate``
+    emits an unexpected shape)."""
+    raw = _gh(args)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise OSError(f"{context}: gh returned malformed JSON: {exc}") from exc
+
+
 def _gh_pr_head(pr: int) -> tuple[str, str]:
-    raw = _gh(["pr", "view", str(pr), "--json", "headRefOid,url"])
-    payload = json.loads(raw)
+    payload = _gh_json(
+        ["pr", "view", str(pr), "--json", "headRefOid,url"],
+        context=f"gh pr view {pr}",
+    )
     oid = payload.get("headRefOid")
     url = payload.get("url")
     if not (isinstance(oid, str) and isinstance(url, str)):
@@ -322,8 +360,10 @@ def _gh_pr_head(pr: int) -> tuple[str, str]:
 
 
 def _gh_commit_date(owner_repo: str, oid: str) -> str:
-    raw = _gh(["api", f"repos/{owner_repo}/commits/{oid}"])
-    payload = json.loads(raw)
+    payload = _gh_json(
+        ["api", f"repos/{owner_repo}/commits/{oid}"],
+        context=f"gh api commits/{oid}",
+    )
     committer = (payload.get("commit") or {}).get("committer") or {}
     date = committer.get("date")
     if not isinstance(date, str):
@@ -340,8 +380,10 @@ def _gh_current_user() -> str:
 
 
 def _gh_pr_comments(owner_repo: str, pr: int) -> list[dict[str, Any]]:
-    raw = _gh(["api", f"repos/{owner_repo}/issues/{pr}/comments", "--paginate"])
-    payload = json.loads(raw)
+    payload = _gh_json(
+        ["api", f"repos/{owner_repo}/issues/{pr}/comments", "--paginate"],
+        context=f"gh api issues/{pr}/comments",
+    )
     if not isinstance(payload, list):
         raise OSError(f"gh api issues/{pr}/comments returned non-list: {type(payload).__name__}")
     return payload

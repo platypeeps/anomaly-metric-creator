@@ -1653,13 +1653,19 @@ Two refusal arms (each fires independently of the other):
   write is rejected; the diagnostic names the *most recent* prior
   comment id (the natural edit target) and the count of any other
   same-author priors that also matched, so the caller can switch
-  the write to an in-place edit. When a new commit is pushed the
-  head timestamp advances and prior approvals fall before it, so a
-  fresh approval against the new commit is allowed. Timestamps on
-  both sides are parsed via `datetime.fromisoformat` (with `Z` →
-  `+00:00` substitution) rather than lex-compared, so millisecond
-  precision and `+00:00`-offset priors gate identically to the
-  canonical `…Z` form GitHub emits today.
+  the write to an in-place edit. When a new commit is pushed whose
+  committer date is *after* the prior approvals, those priors fall
+  before the head and a fresh approval is allowed — the typical case
+  for fast-forward pushes. A cherry-pick / rebase / amend that lands
+  a head commit with an *older* committer date will *not* clear the
+  window; rewriting history doesn't silently re-open the
+  duplicate-approval path. The gate uses the commit's
+  ``committer.date`` field, which the user normally cannot backdate
+  except by these rewrite paths. Timestamps on both sides are parsed
+  via `datetime.fromisoformat` (with `Z` → `+00:00` substitution)
+  rather than lex-compared, so millisecond precision and
+  `+00:00`-offset priors gate identically to the canonical `…Z` form
+  GitHub emits today.
 - **Self-correction prefix** — a body whose first non-blank line
   carries `Correction to previous comment` (case-insensitive,
   whitespace-flexible) or starts with `Correction:` /

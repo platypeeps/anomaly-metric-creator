@@ -519,6 +519,122 @@ def test_correction_emdash_alone_on_first_line_is_refused(tmp_path: Path):
     assert result.returncode == 1, result.stderr
 
 
+def test_correction_no_space_after_colon_is_refused(tmp_path: Path):
+    """``Correction:foo`` (no whitespace between the colon and the
+    body text) is a common terse form. The regex is documented as
+    whitespace-flexible — a missing space must not let the body
+    sneak past the gate. Covers Copilot review feedback that the
+    earlier ``(?:\\s|$)`` trailer was inconsistent with the
+    docstring's whitespace-flexible claim."""
+    body = "Correction:typo in previous comment about the OID.\n\nDetails.\n"
+    result = _run_fixture(body, prior_comments=[], tmp_path=tmp_path)
+    assert result.returncode == 1, result.stderr
+    assert "correction" in result.stderr.lower()
+
+
+def test_correction_no_space_after_dash_is_refused(tmp_path: Path):
+    """Mirror of the no-space-after-colon case for ``Correction-foo``
+    and ``Correction—foo``. Same lockstep coverage rationale."""
+    for body in (
+        "Correction-typo in previous comment.\n",
+        "Correction—typo in previous comment.\n",
+    ):
+        result = _run_fixture(body, prior_comments=[], tmp_path=tmp_path)
+        assert result.returncode == 1, f"body={body!r}: {result.stderr}"
+
+
+def test_duplicate_login_compare_is_case_insensitive(tmp_path: Path):
+    """GitHub logins are case-insensitive — distinct accounts cannot
+    differ only by case. The gate must treat ``--author Sdelmas``
+    against a prior ``user.login = sdelmas`` as a same-author
+    duplicate, not let the casing mismatch sneak the new comment
+    through. Covers Copilot review feedback that the earlier
+    case-sensitive compare contradicted GitHub's identity model."""
+    prior = [
+        {
+            "id": 8001,
+            "user": {"login": "sdelmas"},
+            "created_at": "2026-06-01T00:16:25Z",
+            "body": "APPROVED\n\nFirst.\n",
+        }
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nSecond.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+        author="Sdelmas",  # different casing on input
+    )
+    assert result.returncode == 1, result.stderr
+    assert "8001" in result.stderr
+
+
+def test_partial_prior_missing_id_does_not_crash(tmp_path: Path):
+    """If a prior fixture entry is missing the ``id`` field,
+    ``_diagnose`` would have indexed ``prior['id']`` and crashed with
+    KeyError → exit 2. The "partial fixtures don't crash" guarantee
+    in the ``_collect_duplicate_priors`` docstring requires those
+    entries to be filtered out up front. Confirm by feeding a
+    fixture that has one well-formed prior and one ``id``-less
+    prior: the gate must refuse on the well-formed prior and ignore
+    the partial one (exit 1, not exit 2)."""
+    prior = [
+        {
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:30:00Z",
+            "body": "APPROVED\n\nPartial — no id.\n",
+        },
+        {
+            "id": 9101,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25Z",
+            "body": "APPROVED\n\nWell-formed.\n",
+        },
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nSecond.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+    )
+    # Refusal (exit 1), not crash (exit 2 with KeyError traceback).
+    assert result.returncode == 1, result.stderr
+    assert "9101" in result.stderr
+    # The partial-fixture entry must not surface in the diagnostic.
+    assert "no id" not in result.stderr.lower()
+
+
+def test_partial_prior_non_string_login_does_not_crash(tmp_path: Path):
+    """Defense-in-depth: a prior whose ``user`` is missing entirely
+    or whose ``user.login`` is not a string must not crash the gate.
+    This is the type-shape backstop for unexpected API drift."""
+    prior = [
+        {
+            "id": 9201,
+            # No user key.
+            "created_at": "2026-06-01T00:30:00Z",
+            "body": "APPROVED\n\nNo user.\n",
+        },
+        {
+            "id": 9202,
+            "user": {"login": None},  # wrong type
+            "created_at": "2026-06-01T00:30:00Z",
+            "body": "APPROVED\n\nNo login string.\n",
+        },
+        {
+            "id": 9203,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25Z",
+            "body": "APPROVED\n\nWell-formed.\n",
+        },
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nSecond.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "9203" in result.stderr
+
+
 def test_fixture_mode_missing_author_returns_2(tmp_path: Path):
     """Fixture mode requires ``--author`` (no ``gh api user`` fallback,
     because no network in fixture mode). A run without ``--author`` is
