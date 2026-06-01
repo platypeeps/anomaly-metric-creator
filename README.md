@@ -811,15 +811,28 @@ Install and run locally (the `dev` extra installs both `ruff` and
 ```bash
 .venv/bin/pip install -e '.[dev]'           # installs ruff + pre-commit
 .venv/bin/pre-commit install                # one-time per clone
+.venv/bin/pre-commit install --hook-type pre-push  # one-time per clone
 .venv/bin/pre-commit run --all-files        # ad-hoc full sweep
 .venv/bin/ruff check tests/                 # same check, no pre-commit
 ```
 
-Both hooks run automatically on `git commit` for any staged Python file
-under `tests/` (the `files: ^tests/.*\.py$` pattern matches
-subdirectories too). Adding or moving an unused import to `tests/`
-makes the commit fail with an `F401` diagnostic; `ruff check --fix
-tests/` removes it. Adding a `spec_from_file_location(...)` call in
-a new test file fails the commit with a pointer to the canonical
-loader; switch to the `amc` fixture or annotate the line with
-`# noqa: amc-load`.
+Both `tests/`-scoped hooks run automatically on `git commit` for any
+staged Python file under `tests/` (the `files: ^tests/.*\.py$`
+pattern matches subdirectories too). Adding or moving an unused
+import to `tests/` makes the commit fail with an `F401` diagnostic;
+`ruff check --fix tests/` removes it. Adding a
+`spec_from_file_location(...)` call in a new test file fails the
+commit with a pointer to the canonical loader; switch to the `amc`
+fixture or annotate the line with `# noqa: amc-load`.
+
+The `branch-name` hook runs at the `pre-push` stage (a separate
+git hook from `pre-commit`), which is why
+`pre-commit install --hook-type pre-push` is a one-time per-clone
+step. It rejects
+any branch name matching `(?i)(^|\b)ver-\d+` — see
+[CLAUDE.md "Branch-name lint"](CLAUDE.md) for the policy, anchors,
+and full invocation modes of `tools/check_branch_name.py`. The
+pre-commit hook checks the current local branch only; for full
+coverage of refspec pushes (`git push origin clean:ver-123`) and
+detached-HEAD pushes (`git push origin HEAD:ver-123`), see the
+hand-rolled `.git/hooks/pre-push` snippet in CLAUDE.md.

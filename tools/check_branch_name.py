@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Reject branch names that leak the project's ticket literal.
+
+Historically a stretch of feature branches landed with head refs
+shaped like ``sdelmas/ver-<N>-…``, republishing the internal
+ticket identifier in the public PR URL even after PR titles had
+been cleaned up. This lint closes that gap structurally: any
+branch name matching ``(?i)(^|\\b)ver-\\d+`` is rejected at push
+time so the leak cannot reach GitHub.
+
+The lint is wired into ``.pre-commit-config.yaml`` as a
+``pre-push`` stage hook (install via
+``pre-commit install --hook-type pre-push``), invoked with
+``--current`` so each push checks the branch the developer is about
+to publish. The script also supports literal branch-name arguments
+and the raw git pre-push stdin protocol, so it can be called
+directly from a hand-written ``.git/hooks/pre-push`` or from CI.
+
+Three invocation modes:
+
+* ``check_branch_name.py <name>...`` — check each literal branch
+  name. Used by the test suite and by ad-hoc CLI runs ("is this
+  name allowed?").
+* ``check_branch_name.py --current`` — read the current branch via
+  ``git symbolic-ref --short HEAD`` and check it. Used by the
+  pre-commit pre-push hook with ``pass_filenames: false`` so the
+  hook does not depend on the diff. A detached HEAD has no
+  symbolic ref and is treated as "nothing to check" (exit 0),
+  since there is no branch about to be pushed. Known gap: a
+  refspec push like ``git push origin clean:ver-123`` or a
+  detached-HEAD push like ``git push origin HEAD:ver-123``
+  publishes a leaking *remote* ref name while the *local* branch
+  is clean — ``--current`` cannot see those. For full coverage,
+  use a hand-rolled ``.git/hooks/pre-push`` that pipes git's
+  protocol stdin into the ``-`` mode below; that mode checks
+  both the local and the remote ref name for every pushed line.
+* ``check_branch_name.py -`` — read git's pre-push protocol from
+  stdin and check every pushed branch. Each line carries
+  ``<local-ref> <local-sha> <remote-ref> <remote-sha>``; both
+  the local and the remote ref name are linted (and de-duped when
+  they are equal) so a ``clean:ver-123`` refspec push is rejected
+  on the *remote* side even though the local ref is clean. Lines
+  whose ``<local-sha>`` is all zeros are deletions (no local
+  branch to lint) and are skipped. Refs that are not
+  ``refs/heads/...`` (e.g. ``refs/tags/v1.0.0``) are skipped too.
+  This is the mode a hand-rolled ``.git/hooks/pre-push`` would
+  pipe into.
+
+Pattern: ``(?i)(^|\\b)ver-\\d+`` — case-insensitive, anchored to
+start-of-string OR a word boundary, requires at least one digit
+after the dash. The digit requirement keeps generic ``ver-``
+prefixes (``verify-something``, ``ver-test-branch``) legal —
+the leak is specifically the ticket form ``ver-<N>``. The word
+boundary keeps ``fever-pitch`` and ``discover-foo`` legal, since
+neither has a boundary before ``ver``. The case-insensitive flag
+covers ``ver-655`` / ``VER-655`` / ``Ver-655`` uniformly.
+
+Exit codes:
+
+* ``0`` — every checked branch is clean (also: detached HEAD,
+  empty stdin, all-deletion stdin, tag-only push).
+* ``1`` — at least one branch matches the leak pattern; one
+  violation line per match is written to stderr followed by a
+  one-line footer naming the policy.
+* ``2`` — argument error (no args, unknown flag), I/O error
+  reading git refs, or git itself not installed.
+
+There is no per-branch escape hatch. Unlike the role-name lint —
+which protects external-facing text that may legitimately discuss
+internal labels in docstrings or test fixtures — a branch name has
+no legitimate reason to embed a ticket literal. The structural fix
+is to choose a descriptive branch name instead.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+
+# Case-insensitive, start-of-string OR word boundary, then ``ver-``
+# followed by at least one digit. See module docstring for the full
+# rationale on each anchor.
+_PATTERN = re.compile(r"(?i)(?:^|\b)ver-\d+")
+
+# All-zero sha indicates a deletion in git's pre-push protocol.
+# https://git-scm.com/docs/githooks#_pre_push
+_NULL_SHA_RE = re.compile(r"^0+$")
+
+# Branch refs only — tag pushes use ``refs/tags/...`` and have
+# nothing to do with feature-branch naming.
+_BRANCH_REF_PREFIX = "refs/heads/"
+
+
+def _check_name(name: str) -> str | None:
+    """Return a diagnostic line for ``name`` if it leaks, else
+    ``None``. Single source of truth for the lint rule so the three
+    invocation modes cannot drift on the regex or the message
+    format."""
+    match = _PATTERN.search(name)
+    if match is None:
+        return None
+    return (
+        f"branch name '{name}' embeds ticket literal "
+        f"'{match.group(0)}' at column {match.start() + 1} — "
+        "rename the branch to a descriptive label (no ticket "
+        "identifiers) before pushing."
+    )
+
+
+def _current_branch() -> str | None:
+    """Return the current branch's short name, or ``None`` if HEAD
+    is detached. Raises ``OSError`` (re-raised by callers as exit 2)
+    if git itself is unavailable."""
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        # `--quiet` makes ``symbolic-ref`` exit 1 (not print) on a
+        # detached HEAD. Any other non-zero is a real git failure
+        # that should surface as exit 2.
+        if result.returncode == 1 and not result.stderr.strip():
+            return None
+        raise OSError(
+            f"git symbolic-ref failed (exit {result.returncode}): "
+            f"{result.stderr.strip() or '<no stderr>'}"
+        )
+    return result.stdout.strip() or None
+
+
+def _parse_pre_push_stdin(text: str) -> list[str]:
+    """Extract branch short names from git's pre-push stdin.
+
+    Each line: ``<local-ref> <local-sha> <remote-ref> <remote-sha>``.
+    Both the local and the remote ref name are linted so a
+    refspec push (``git push origin clean:ver-123``) or a
+    detached-HEAD push (``git push origin HEAD:ver-123``) cannot
+    smuggle a leaking *remote* ref name past the guard. When local
+    and remote ref names are equal (the common case — same name on
+    both sides) the line emits only one entry. Order is preserved
+    on a per-line basis (local before remote) so the diagnostic
+    report stays predictable.
+
+    Deletions (all-zero local sha) and non-branch refs (tags etc.)
+    are skipped. Malformed lines (< 4 tokens) are silently ignored:
+    the protocol guarantees the 4-token shape, but trailing newlines
+    and CR/LF artifacts can produce empty splits in practice.
+
+    The remote-ref check is gated independently of the local-ref
+    check on the same line: a clean local ref pushed against a
+    leaking remote ref is rejected; a leaking local ref pushed
+    against a clean remote ref is also rejected; a refspec that
+    deletes the remote (``:ver-old``, local sha all-zeros) skips
+    the line entirely because there is no live branch to lint."""
+    branches: list[str] = []
+    for raw in text.splitlines():
+        tokens = raw.split()
+        if len(tokens) < 4:
+            continue
+        local_ref, local_sha, remote_ref, _remote_sha = tokens[:4]
+        if _NULL_SHA_RE.match(local_sha):
+            continue
+        # De-dupe within a single line so the same branch isn't
+        # reported twice when the user pushes a same-named ref to
+        # the same name on the remote. Across lines we still keep
+        # both refs even if a different line names the same branch,
+        # because each pushed ref represents an independent
+        # publication and the violation message is per-line useful.
+        seen_on_line: set[str] = set()
+        for ref in (local_ref, remote_ref):
+            if not ref.startswith(_BRANCH_REF_PREFIX):
+                continue
+            short = ref[len(_BRANCH_REF_PREFIX):]
+            if short in seen_on_line:
+                continue
+            seen_on_line.add(short)
+            branches.append(short)
+    return branches
+
+
+def _print_violations(violations: list[str]) -> None:
+    print("\n".join(violations), file=sys.stderr)
+    print(
+        "\nBranch names must not embed ticket literals (ver-<N> / "
+        "VER-<N>). Rename the branch to a descriptive, non-ticket "
+        "label before pushing. Policy lives in CLAUDE.md under "
+        "'Branch-name lint'.",
+        file=sys.stderr,
+    )
+
+
+def _usage(stream) -> None:
+    print(
+        "usage: check_branch_name.py [--current | - | <branch>...]\n"
+        "  --current   read the current git branch and check it\n"
+        "  -           read git pre-push protocol lines from stdin\n"
+        "  <branch>    one or more literal branch names to check",
+        file=stream,
+    )
+
+
+def main(argv: list[str]) -> int:
+    args = argv[1:]
+    if not args:
+        _usage(sys.stderr)
+        return 2
+
+    # Mode dispatch: --current and - are exclusive single-flag modes.
+    # Anything else is treated as a list of literal branch names.
+    if args[0] == "--current":
+        if len(args) != 1:
+            _usage(sys.stderr)
+            return 2
+        try:
+            branch = _current_branch()
+        except OSError as exc:
+            print(f"check_branch_name: {exc}", file=sys.stderr)
+            return 2
+        if branch is None:
+            return 0
+        names = [branch]
+    elif args[0] == "-":
+        # Git invokes ``.git/hooks/pre-push`` as
+        # ``hook <remote-name> <remote-url>`` and pipes the protocol
+        # lines on stdin. A hand-rolled hook that forwards its own
+        # argv (``exec python3 tools/check_branch_name.py - "$@"``)
+        # therefore reaches us with two extra positional arguments
+        # after the ``-``. Accept and ignore any tail args here so
+        # the documented hook is not rejected with exit 2 (which
+        # would silently block every push). The values themselves
+        # are unused — the lint operates on the stdin protocol
+        # only.
+        try:
+            text = sys.stdin.read()
+        except OSError as exc:
+            print(f"check_branch_name: stdin unreadable: {exc}", file=sys.stderr)
+            return 2
+        names = _parse_pre_push_stdin(text)
+    elif any(a.startswith("-") for a in args):
+        # Reject unknown flags so a typo (``--currrent``) does not
+        # silently fall through to the literal-name branch.
+        _usage(sys.stderr)
+        return 2
+    else:
+        names = list(args)
+
+    violations: list[str] = []
+    for name in names:
+        diag = _check_name(name)
+        if diag is not None:
+            violations.append(diag)
+
+    if violations:
+        _print_violations(violations)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

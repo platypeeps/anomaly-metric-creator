@@ -953,12 +953,22 @@ def test_otel_activity_log_records_failure(tmp_path):
 
 
 def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, capsys):
-    """HTTP receiver failures log response headers and payloads, including CF-Ray."""
+    """HTTP receiver failures log response headers and payloads, including CF-Ray.
+
+    The sensitive ``Set-Cookie`` and ``Authorization`` headers that
+    Cloudflare-style intermediaries can echo on a 4xx response must be
+    masked before they reach the on-disk activity log; the
+    ``CF-Ray`` / ``X-Debug-Header`` diagnostic pair survives so the
+    failure record stays useful.
+    """
     class _Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
             self.send_response(403)
             self.send_header("CF-Ray", "test-ray-123")
             self.send_header("X-Debug-Header", "visible")
+            self.send_header("Set-Cookie", "session=plaintext-cookie; Secure")
+            self.send_header("Authorization", "Bearer echoed-token-abc")
+            self.send_header("X-Api-Key", "sk_live_super_secret")
             self.end_headers()
 
         def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
@@ -1009,8 +1019,21 @@ def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, c
         if "=" in token
     }
     assert kv["cf_ray"] == "test-ray-123"
-    assert ["CF-Ray", "test-ray-123"] in json.loads(kv["response_headers"])
-    assert ["X-Debug-Header", "visible"] in json.loads(kv["response_headers"])
+    log_text = log_target.read_text()
+    response_headers = json.loads(kv["response_headers"])
+    assert ["CF-Ray", "test-ray-123"] in response_headers
+    assert ["X-Debug-Header", "visible"] in response_headers
+    # Sensitive headers must reach the activity log only in their
+    # redacted form. Asserting both the (name, "***") pair is present
+    # AND the plaintext value is absent from the full log file
+    # catches a regression where the redaction is skipped or
+    # bypassed by a future logging path.
+    assert ["Set-Cookie", "***"] in response_headers
+    assert ["Authorization", "Bearer ***"] in response_headers
+    assert ["X-Api-Key", "***"] in response_headers
+    assert "plaintext-cookie" not in log_text
+    assert "echoed-token-abc" not in log_text
+    assert "sk_live_super_secret" not in log_text
     assert '"resourceMetrics"' in kv["request_body"]
     assert '"write_latency_ms"' in kv["request_body"]
 

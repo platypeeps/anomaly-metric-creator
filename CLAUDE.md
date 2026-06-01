@@ -54,6 +54,25 @@ path reads existing per-component CSVs as inputs and pre-cleaning them would
 remove the combine inputs. The early `return` in the `--combine-only` branch
 already keeps it out of the cleanup path. `./otel-activity.log` lives outside
 `--output-dir` and is append-only by design; it must stay outside the registry.
+The file is also listed in the repo `.gitignore` so a stray run from inside a
+clone never commits OTLP transport diagnostics. PR #83 widened the HTTP-error
+diagnostics inside `_http_error_activity_fields` to dump every response
+header into the `response_headers` field; an intermediary that echoes
+`Set-Cookie` / `Authorization` / `X-Api-Key` on a 4xx/5xx would have leaked
+credential material into that on-disk log. The redaction shim
+`_redact_sensitive_headers(header_pairs)` runs *before* the JSON dump and
+masks the value of any header whose name (case-insensitive) is in
+`_SENSITIVE_HEADER_NAMES`: `Authorization`, `Cookie`, `Set-Cookie`,
+`Proxy-Authorization`, `X-Api-Key`. `Authorization` and
+`Proxy-Authorization` are also in `_SCHEMED_SENSITIVE_HEADERS`, so the
+scheme prefix (`Bearer` / `Basic`) is kept and only the credential is
+replaced with `***`; every other sensitive header has its full value
+replaced. The request-side `_masked_headers` reads the same set so
+the two paths cannot drift. Allowlist + round-trip coverage lives in
+`tests/test_redact_sensitive_headers.py`, and
+`tests/test_cli.py::test_otel_http_error_activity_log_includes_response_headers`
++ `tests/test_otel_gauges.py::test_stream_otel_gauges_http_error_activity_log_includes_response_headers`
+exercise the redaction through the live HTTP error path.
 
 ### Combine step
 
@@ -1567,6 +1586,213 @@ PRs open as **draft** and walk the pre-PR checklist above before draft
 status is removed. The pre-PR checklist is the structural backstop —
 caught-in-draft issues are fixed before Copilot's first review, not
 after.
+
+### External-comment role-name lint
+
+The `role-name-leaks` pre-commit hook
+(`tools/check_role_name_leaks.py`) catches internal role-name
+references (canonical list in `_FORBIDDEN_LABELS`) in the
+text-bearing files the staged-diff scan passes to pre-commit —
+Python source, Markdown docs, YAML configs, PR templates, and helper
+scripts that build comment bodies. PR #86 shipped two approval
+comments that leaked the role name in the handoff sentence and
+VER-701 added the lint as the structural fix.
+
+Scope note: at the default pre-commit stage the hook only sees files
+in the staged diff. It does **not** scan `git commit` messages
+(those would require a `commit-msg` stage hook that
+`pre-commit install --hook-type commit-msg` would enable, which is
+not wired up in this repo today), and it does not scan text typed
+directly into the GitHub web UI. For comment bodies authored
+outside the staged tree (e.g. `gh pr comment --body-file`
+payloads), use the stdin pre-flight pattern below — that is the
+structural coverage path for "text destined for an external thread
+that never touches a repo file".
+
+The script also accepts stdin so an ad-hoc comment body can be
+pre-flighted before being piped through `gh`:
+
+```bash
+.venv/bin/python3 tools/check_role_name_leaks.py - < /tmp/body.md \
+    && gh pr comment <N> --body-file /tmp/body.md
+```
+
+Use this for every `gh pr comment`, `gh issue comment`, `gh pr create
+--body-file`, and `gh pr review --body-file` invocation; the `&&`
+chain keeps `gh` from posting when the body is dirty.
+
+The literal trailing marker `# role-name-lint: allow` on a line skips
+that line wholesale (the script checks `line.rstrip().endswith(...)`
+— a mid-line occurrence inside a string literal does NOT exempt the
+line). Use sparingly: the canonical-labels tuple inside the lint
+script and the acceptance tests in
+`tests/test_role_name_leaks_lint.py` (which bake the literal labels
+into fixtures) are the only intended consumers today.
+
+Exit codes: `0` clean, `1` at least one label match (the "Internal
+role names must not appear…" footer fires only on this branch),
+`2` argument or I/O error (e.g. an unreadable path that is not a
+binary-skip). Callers chaining the script in `&&` therefore see a
+genuine label leak distinct from a structural script failure.
+
+### Approval-duplicate lint
+
+The `tools/check_approval_duplicate.py` script gates `APPROVED`-shaped
+PR comments on `(author, commit OID)`. PR #86 accumulated five
+`APPROVED`-shaped comments from the same author against the same
+head commit, including one `APPROVED (Correction to previous comment:
+…)` self-edit that should have been an in-place edit of the prior
+comment; VER-704 closes that pattern structurally.
+
+Two refusal arms (each fires independently of the other):
+
+- **Duplicate** — a same-author comment whose body starts with the
+  literal upper-case token `APPROVED` and whose `created_at` is at or
+  after the PR's current head commit's committer timestamp counts as
+  an approval for that commit. The next same-author approval-shape
+  write is rejected; the diagnostic names the *most recent* prior
+  comment id (the natural edit target) and the count of any other
+  same-author priors that also matched, so the caller can switch
+  the write to an in-place edit. When a new commit is pushed whose
+  committer date is *after* the prior approvals, those priors fall
+  before the head and a fresh approval is allowed — the typical case
+  for fast-forward pushes. A cherry-pick / rebase / amend that lands
+  a head commit with an *older* committer date will *not* clear the
+  window; rewriting history doesn't silently re-open the
+  duplicate-approval path. The gate uses the commit's
+  ``committer.date`` field, which the user normally cannot backdate
+  except by these rewrite paths. Timestamps on both sides are parsed
+  via `datetime.fromisoformat` (with `Z` → `+00:00` substitution)
+  rather than lex-compared, so millisecond precision and
+  `+00:00`-offset priors gate identically to the canonical `…Z` form
+  GitHub emits today.
+- **Self-correction prefix** — a body whose first non-blank line
+  carries `Correction to previous comment` (case-insensitive,
+  whitespace-flexible) or starts with `Correction:` /
+  `Correction —` is announcing a correction and must be an edit, not
+  a new comment. This arm fires regardless of whether the body is
+  approval-shape, so a non-`APPROVED`-prefixed correction body still
+  trips the gate.
+
+The gate is invoked the same way as the role-name lint — chained
+into the existing `gh pr comment --body-file …` pre-flight slot:
+
+```bash
+.venv/bin/python3 tools/check_approval_duplicate.py --pr <N> < /tmp/body.md \
+    && gh pr comment <N> --body-file /tmp/body.md
+```
+
+Under `--pr <N>`, the script calls `gh api` to read the head SHA, the
+head commit's committer timestamp, the prior issue-comments thread,
+and (when `--author` is omitted) the current user's login. The
+`<owner>/<repo>` slug is also fetched in this mode and threaded into
+the diagnostic so the suggested `gh api … -X PATCH` command is
+copy-paste-ready. For offline tests and CI hooks, fixture mode
+accepts every input as flags / paths: `--head-commit-oid`,
+`--head-commit-date`, `--author`, `--prior-comments-json`; the
+diagnostic falls back to `<owner>/<repo>` placeholders. The two
+modes are mutually exclusive — mixing them exits 2. The script also
+refuses up front (exit 2) when stdin is a TTY: the body must be
+piped in, never typed interactively.
+
+Scope: the gate inspects issue comments
+(`/repos/<owner>/<repo>/issues/<n>/comments`), which is where PR
+#86's spam landed. Native PR `reviews` (the `Approve / Request
+changes / Comment` flow) are a separate endpoint and out of scope for
+v1.
+
+Exit codes: `0` clean (chain `gh pr comment …`), `1` duplicate or
+self-correction refusal (at most one summary diagnostic per arm —
+the duplicate arm collapses N priors into one line naming the most
+recent), `2` argument error, missing required flag, malformed JSON,
+TTY stdin, or `gh` failure. The exit-code split mirrors the
+role-name lint so an `&&` chain stops the `gh` write on a refusal
+without silencing structural script failures.
+
+### Branch-name lint
+
+The `branch-name` pre-commit hook
+(`tools/check_branch_name.py`) rejects any branch name matching
+`(?i)(^|\b)ver-\d+`, so feature branches cannot republish the
+internal ticket literal through a PR head ref. PRs #47–#77 and #86
+all shipped head refs shaped like `sdelmas/ver-<N>-…`, which is the
+gap this lint closes. The hook runs at the `pre-push` stage so it
+fires once per push (a check on every commit would be noisy on
+clean branches) and uses
+`pass_filenames: false` + `always_run: true` so it does not depend
+on the diff. Install with
+`pre-commit install --hook-type pre-push` after the standard
+`pre-commit install` invocation — the default install only
+registers the `pre-commit`-stage hooks.
+
+Pattern anchors and the digit requirement:
+
+- **Case-insensitive.** `ver-655`, `VER-655`, and `Ver-655` are all
+  rejected uniformly. The leak is the literal ticket id; the case
+  of the prefix is irrelevant.
+- **Start-of-string OR word boundary.** `ver-655-foo` (whole-string
+  prefix) and `sdelmas/ver-655-foo` (boundary after `/`) both
+  match; `fever-pitch` and `discover-foo` stay legal because
+  neither has a word boundary before `ver`.
+- **Digit required after the dash.** Generic `ver-` prefixes
+  (`verify-something`, `ver-test-branch`) stay legal — the lint
+  specifically catches the ticket form `ver-<N>`, not arbitrary
+  `ver`-prefixed words.
+
+Three invocation modes are supported (full details live in the
+script's module docstring):
+
+```bash
+# Literal branch names (used by the test suite and ad-hoc checks).
+.venv/bin/python3 tools/check_branch_name.py feature/clean ver-655
+# Current branch via `git symbolic-ref --short HEAD` (the
+# pre-commit hook mode; detached HEAD is treated as "nothing to
+# check" so a no-branch state cannot wedge `git push`).
+.venv/bin/python3 tools/check_branch_name.py --current
+# Raw git pre-push stdin protocol — for a hand-rolled
+# .git/hooks/pre-push that bypasses pre-commit.
+.venv/bin/python3 tools/check_branch_name.py -
+```
+
+Exit codes: `0` clean (also: detached HEAD, empty stdin,
+all-deletion stdin, tag-only push), `1` at least one branch leaks
+the ticket literal, `2` argument or I/O error. There is no
+per-branch escape hatch — unlike the role-name lint, a branch
+name has no legitimate reason to embed a ticket literal; the
+structural fix is to rename the branch.
+
+Scope note: the hook only fires on `git push`. Branches created
+locally that never push (throwaway worktrees, exploratory work)
+are not checked, by design — the leak is specifically about what
+reaches GitHub. CI / server-side hooks are out of scope for this
+repo today; the pre-push hook is the single client-side guard.
+
+Known gap (refspec push bypass): the pre-commit hook runs
+`check_branch_name.py --current`, which reads the *current local*
+branch name. A refspec push of the form
+`git push origin clean:ver-123` or a detached-HEAD push
+`git push origin HEAD:ver-123` publishes a leaking *remote* ref
+name while the local branch is clean — `--current` cannot see the
+remote side, so the hook will not flag it. The
+`-` stdin mode does close this gap: it parses git's pre-push
+protocol (`<local-ref> <local-sha> <remote-ref> <remote-sha>`) and
+lints *both* ref names per line, de-duped when they are equal.
+pre-commit's framework consumes git's pre-push stdin internally
+and does not pipe it through to individual hooks, so the stdin
+mode cannot be invoked from `.pre-commit-config.yaml` directly.
+Developers who want full coverage can drop a one-line
+hand-rolled hook in `.git/hooks/pre-push`:
+
+```sh
+#!/bin/sh
+exec python3 tools/check_branch_name.py - "$@"
+```
+
+(make it executable with `chmod +x .git/hooks/pre-push`). The
+hand-rolled hook runs in addition to pre-commit's pre-push stage,
+so the two layers compose: pre-commit catches the common-case
+plain `git push` and the hand-rolled hook catches the refspec
+edge cases.
 
 ## Tests
 
