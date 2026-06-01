@@ -34,8 +34,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "check_approval_duplicate.py"
 
@@ -455,6 +453,146 @@ def test_pr_86_actual_thread_flags_subsequent_duplicates(tmp_path: Path):
         tmp_path=tmp_path,
     )
     assert r4.returncode == 1, r4.stderr
+
+
+def test_millisecond_precision_prior_timestamp_recognized(tmp_path: Path):
+    """Real-world fixtures occasionally carry millisecond precision
+    (``…T00:16:25.123Z``) on the prior comment. A naive lex compare
+    against the canonical ``…T00:10:00Z`` head_date would mis-rank the
+    timestamps because ``.`` < ``Z`` in the ASCII table; the gate
+    must parse both sides as datetimes so the duplicate is still
+    flagged."""
+    prior = [
+        {
+            "id": 9001,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25.123Z",
+            "body": "APPROVED\n\nFirst pass.\n",
+        }
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nSecond pass.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "9001" in result.stderr
+
+
+def test_offset_form_prior_timestamp_recognized(tmp_path: Path):
+    """``+00:00`` UTC offset is the RFC-3339 equivalent of ``Z``;
+    fixtures that emit the offset form must still gate as duplicates.
+    A lex compare would have rejected this because ``+`` (0x2b) sorts
+    before ``Z`` (0x5a)."""
+    prior = [
+        {
+            "id": 9002,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25+00:00",
+            "body": "APPROVED\n\nFirst pass.\n",
+        }
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nSecond pass.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+    )
+    assert result.returncode == 1, result.stderr
+
+
+def test_correction_colon_alone_on_first_line_is_refused(tmp_path: Path):
+    """``Correction:`` alone on the first non-blank line (no further
+    text on the same line) is a self-correction announcement and must
+    trip the gate. The body content of the correction follows on the
+    next line."""
+    body = "Correction:\n\nThe previous note had the wrong commit OID.\n"
+    result = _run_fixture(body, prior_comments=[], tmp_path=tmp_path)
+    assert result.returncode == 1, result.stderr
+    assert "correction" in result.stderr.lower()
+
+
+def test_correction_emdash_alone_on_first_line_is_refused(tmp_path: Path):
+    """``Correction —`` with no trailing space (em-dash at end of
+    first line) is also a self-correction announcement."""
+    body = "Correction —\n\nDetails.\n"
+    result = _run_fixture(body, prior_comments=[], tmp_path=tmp_path)
+    assert result.returncode == 1, result.stderr
+
+
+def test_fixture_mode_missing_author_returns_2(tmp_path: Path):
+    """Fixture mode requires ``--author`` (no ``gh api user`` fallback,
+    because no network in fixture mode). A run without ``--author`` is
+    an argument error (exit 2), distinct from a refusal (exit 1)."""
+    prior_path = _write_prior(tmp_path, [])
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--head-commit-oid",
+            HEAD_OID,
+            "--head-commit-date",
+            HEAD_DATE,
+            "--prior-comments-json",
+            str(prior_path),
+        ],
+        input="APPROVED\n",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2, result.stderr
+    assert "--author" in result.stderr
+
+
+def test_unparseable_head_commit_date_returns_2(tmp_path: Path):
+    """A malformed --head-commit-date is an I/O / argument error,
+    not a refusal — the gate cannot decide what's a duplicate without
+    a valid boundary timestamp."""
+    prior_path = _write_prior(tmp_path, [])
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--head-commit-oid",
+            HEAD_OID,
+            "--head-commit-date",
+            "not-a-timestamp",
+            "--author",
+            AUTHOR,
+            "--prior-comments-json",
+            str(prior_path),
+        ],
+        input="APPROVED\n",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2, result.stderr
+    assert "head-commit-date" in result.stderr.lower()
+
+
+def test_pr_mixed_with_fixture_flags_returns_2(tmp_path: Path):
+    """``--pr`` is mutually exclusive with every fixture-mode flag.
+    Mixing them is an argument error, not a refusal."""
+    prior_path = _write_prior(tmp_path, [])
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--pr",
+            "92",
+            "--head-commit-oid",
+            HEAD_OID,
+            "--head-commit-date",
+            HEAD_DATE,
+            "--author",
+            AUTHOR,
+            "--prior-comments-json",
+            str(prior_path),
+        ],
+        input="APPROVED\n",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2, result.stderr
 
 
 def test_pr_mode_help_text_documents_invocation():

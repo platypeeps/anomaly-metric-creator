@@ -89,6 +89,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -111,11 +112,15 @@ _CORRECTION_PHRASE = re.compile(
 )
 
 # Self-correction signal #2: an opening "Correction:" or
-# "Correction -" at the start of the first line, which is the other
-# natural shape a self-correction body takes when the author hasn't
-# kept the original ``APPROVED`` prefix.
+# "Correction -" / "Correction —" at the start of the first line,
+# which is the other natural shape a self-correction body takes when
+# the author hasn't kept the original ``APPROVED`` prefix. The trailing
+# match is ``(?:\s|$)`` so ``Correction:`` alone on the first line
+# (no body content on that line) trips the gate too — splitlines()
+# strips the line terminator, so end-of-line on the first non-blank
+# line matches ``$``.
 _CORRECTION_PREFIX = re.compile(
-    r"^\s*correction\s*[:\-—]\s",
+    r"^\s*correction\s*[:\-—](?:\s|$)",
     re.IGNORECASE,
 )
 
@@ -172,6 +177,26 @@ def _self_correction_match(body: str) -> str | None:
     return None
 
 
+def _parse_iso_timestamp(raw: str) -> datetime | None:
+    """Parse a GitHub ISO-8601 timestamp into a tz-aware ``datetime``.
+
+    GitHub canonically emits ``YYYY-MM-DDTHH:MM:SSZ``, but
+    ``fromisoformat`` accepts the broader RFC-3339 superset (offsets,
+    millisecond precision, ``+00:00`` instead of ``Z``). Returning
+    ``None`` on parse failure lets the caller treat a partial fixture
+    as "does not match" without raising.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def _collect_duplicate_priors(
     *,
     prior_comments: list[dict[str, Any]],
@@ -188,23 +213,30 @@ def _collect_duplicate_priors(
       case, and a mismatched-case prior is almost certainly a
       different account);
     - its ``created_at`` ISO-8601 timestamp is >= ``head_date``
-      (lexicographic compare is correct because both strings are in
-      strict ISO-8601 UTC form with the trailing ``Z``); and
+      (parsed via ``_parse_iso_timestamp`` rather than lex-compared so
+      millisecond precision and ``+00:00`` offsets compare correctly
+      against the canonical ``Z`` form GitHub emits today); and
     - its ``body`` is an ``_is_approval_shape`` match.
 
     ``prior_comments`` is the raw shape ``gh api …/issues/{n}/comments``
     returns: a list of ``{id, user: {login}, created_at, body}``
-    dicts. Missing keys are treated as "does not match" rather than
-    raising, so a partial fixture doesn't crash the gate.
+    dicts. Missing keys or unparseable timestamps are treated as
+    "does not match" rather than raising, so a partial fixture
+    doesn't crash the gate.
     """
+    head_dt = _parse_iso_timestamp(head_date)
+    if head_dt is None:
+        raise OSError(
+            f"head-commit-date is not a parseable ISO-8601 timestamp: {head_date!r}"
+        )
     duplicates: list[dict[str, Any]] = []
     for comment in prior_comments:
         user = comment.get("user") or {}
         login = user.get("login") if isinstance(user, dict) else None
         if login != author:
             continue
-        created = comment.get("created_at")
-        if not isinstance(created, str) or created < head_date:
+        created_dt = _parse_iso_timestamp(comment.get("created_at"))
+        if created_dt is None or created_dt < head_dt:
             continue
         body = comment.get("body")
         if not isinstance(body, str) or not _is_approval_shape(body):
@@ -501,17 +533,17 @@ def main(argv: list[str]) -> int:
             head_date = args.head_commit_date
             author = args.author
             prior_comments = _load_prior_comments(args.prior_comments_json)
+        diagnostics = _diagnose(
+            body,
+            head_oid=head_oid,
+            head_date=head_date,
+            author=author,
+            prior_comments=prior_comments,
+        )
     except OSError as exc:
         print(f"check_approval_duplicate: {exc}", file=sys.stderr)
         return 2
 
-    diagnostics = _diagnose(
-        body,
-        head_oid=head_oid,
-        head_date=head_date,
-        author=author,
-        prior_comments=prior_comments,
-    )
     if diagnostics:
         _print_violations(diagnostics)
         return 1
