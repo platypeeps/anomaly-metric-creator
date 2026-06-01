@@ -1568,6 +1568,54 @@ status is removed. The pre-PR checklist is the structural backstop —
 caught-in-draft issues are fixed before Copilot's first review, not
 after.
 
+### External-comment role-name lint
+
+The `role-name-leaks` pre-commit hook
+(`tools/check_role_name_leaks.py`) catches internal role-name
+references (canonical list in `_FORBIDDEN_LABELS`) in the
+text-bearing files the staged-diff scan passes to pre-commit —
+Python source, Markdown docs, YAML configs, PR templates, and helper
+scripts that build comment bodies. PR #86 shipped two approval
+comments that leaked the role name in the handoff sentence and
+VER-701 added the lint as the structural fix.
+
+Scope note: at the default pre-commit stage the hook only sees files
+in the staged diff. It does **not** scan `git commit` messages
+(those would require a `commit-msg` stage hook that
+`pre-commit install --hook-type commit-msg` would enable, which is
+not wired up in this repo today), and it does not scan text typed
+directly into the GitHub web UI. For comment bodies authored
+outside the staged tree (e.g. `gh pr comment --body-file`
+payloads), use the stdin pre-flight pattern below — that is the
+structural coverage path for "text destined for an external thread
+that never touches a repo file".
+
+The script also accepts stdin so an ad-hoc comment body can be
+pre-flighted before being piped through `gh`:
+
+```bash
+.venv/bin/python3 tools/check_role_name_leaks.py - < /tmp/body.md \
+    && gh pr comment <N> --body-file /tmp/body.md
+```
+
+Use this for every `gh pr comment`, `gh issue comment`, `gh pr create
+--body-file`, and `gh pr review --body-file` invocation; the `&&`
+chain keeps `gh` from posting when the body is dirty.
+
+The literal trailing marker `# role-name-lint: allow` on a line skips
+that line wholesale (the script checks `line.rstrip().endswith(...)`
+— a mid-line occurrence inside a string literal does NOT exempt the
+line). Use sparingly: the canonical-labels tuple inside the lint
+script and the acceptance tests in
+`tests/test_role_name_leaks_lint.py` (which bake the literal labels
+into fixtures) are the only intended consumers today.
+
+Exit codes: `0` clean, `1` at least one label match (the "Internal
+role names must not appear…" footer fires only on this branch),
+`2` argument or I/O error (e.g. an unreadable path that is not a
+binary-skip). Callers chaining the script in `&&` therefore see a
+genuine label leak distinct from a structural script failure.
+
 ## Tests
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
