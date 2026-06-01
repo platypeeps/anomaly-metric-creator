@@ -66,7 +66,7 @@ Recent significant additions to the generator:
   before generation starts.
 - **Scenario registry refactor + RNG instance** — all anomaly
   scenarios live in the `SCENARIOS` dict; per-run state moves into `RunContext`
-  with an explicit `np.random.RandomState` so seed behaviour is deterministic
+  with an explicit `np.random.RandomState` so seed behavior is deterministic
   regardless of import order.
 
 ## Install

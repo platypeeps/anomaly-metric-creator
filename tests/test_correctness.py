@@ -271,7 +271,7 @@ def test_value_range_sanity(amc, one_day_independent_run):
     outside that natural band via topology coupling and saturation
     feedback. We therefore pin this band check to ``--topology-mode
     independent`` (the deprecation alias whose retirement is scheduled
-    after phase 9); realistic-mode behaviour is validated by the
+    after phase 9); realistic-mode behavior is validated by the
     dedicated coupling/saturation tests in ``tests/test_topology_*``."""
     _assert_value_band_sanity(
         amc,

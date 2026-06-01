@@ -145,7 +145,7 @@ def test_cache_az_isolation_high_severity_not_in_default_pool(amc):
 
 
 # ---------------------------------------------------------------------------
-# Runtime behaviour: auth_pod_failure overrides only i0
+# Runtime behavior: auth_pod_failure overrides only i0
 # ---------------------------------------------------------------------------
 
 def test_auth_pod_failure_registry_spec_out_of_range_warns(amc, tmp_path, capsys):
@@ -249,7 +249,7 @@ def test_auth_pod_failure_synthetic_only_i0_overridden(amc, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Runtime behaviour: cache_az_isolation overrides only matching-az instances
+# Runtime behavior: cache_az_isolation overrides only matching-az instances
 # ---------------------------------------------------------------------------
 
 def test_cache_az_isolation_synthetic_only_matching_az_overridden(amc, tmp_path):
