@@ -177,7 +177,7 @@ def one_day_independent_run(amc, tmp_path_factory):
     realistic-mode topology coupling or saturation feedback. Pinning to the
     deprecation alias is intentional: the natural-band invariant is a property
     of the independent baseline model, which is the building block of both
-    modes; realistic-mode behaviour is exercised by the topology-specific
+    modes; realistic-mode behavior is exercised by the topology-specific
     tests (coupling correlation, saturation lift). Schedule this fixture's
     retirement together with the alias removal after phase 9.
     Explicit ``interval_seconds=1.0`` keeps the natural-band check on the

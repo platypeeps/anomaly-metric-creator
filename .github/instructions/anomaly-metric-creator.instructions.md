@@ -166,7 +166,7 @@ confirmed but the diff does not support:
 - Suggesting `__init__.py` / package layout changes — the script is
   intentionally a single file imported via `importlib`.
 - Suggesting that `anomalies` / `cascading_anomalies` move back to
-  module level — they were intentionally removed in favour of
+  module level — they were intentionally removed in favor of
   `RunContext`.
 - Asking for comments that explain *what* the code does — the project
   convention is to comment only when the *why* is non-obvious.
