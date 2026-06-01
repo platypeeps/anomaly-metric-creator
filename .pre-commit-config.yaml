@@ -35,3 +35,25 @@ repos:
         language: python
         files: ^tests/.*\.py$
         pass_filenames: true
+      # Forbid internal role-name leaks (canonical list lives in
+      # `tools/check_role_name_leaks.py::_FORBIDDEN_LABELS`) in any
+      # text-bearing file in the repo. Two `APPROVED` comments on
+      # PR #86 leaked an internal role name in the handoff sentence;
+      # VER-701 edited those comments and added this lint so future
+      # leaks fail structurally at commit time instead of surfacing in
+      # a PR thread. The script also accepts a `-` stdin mode so it
+      # can pre-flight comment-body files before they are piped
+      # through `gh pr comment --body-file …` (see the script's
+      # module docstring for the full invocation pattern and the
+      # `# role-name-lint: allow` per-line escape hatch).
+      - id: role-name-leaks
+        name: forbid internal role-name leaks
+        entry: python tools/check_role_name_leaks.py
+        language: python
+        # `types: [text]` lets pre-commit's own identify pass filter
+        # binary files (images / fonts / archives) before we ever see
+        # them. The script's own `UnicodeDecodeError` skip is a
+        # belt-and-braces fallback for files pre-commit mis-classifies
+        # and for ad-hoc CLI runs that pass arbitrary paths.
+        types: [text]
+        pass_filenames: true

@@ -1568,6 +1568,34 @@ status is removed. The pre-PR checklist is the structural backstop —
 caught-in-draft issues are fixed before Copilot's first review, not
 after.
 
+### External-comment role-name lint
+
+The `role-name-leaks` pre-commit hook
+(`tools/check_role_name_leaks.py`) catches internal role-name
+references (canonical list in `_FORBIDDEN_LABELS`) in any text-bearing
+file in the repo, so phrases like "Handoff to … for merge" or
+"… verdict:" can't sneak into commit messages, PR templates, docs, or
+scripts that build comment bodies. PR #86 shipped two approval
+comments that leaked the role name in the handoff sentence and VER-701
+added the lint as the structural fix.
+
+The script also accepts stdin so an ad-hoc comment body can be
+pre-flighted before being piped through `gh`:
+
+```bash
+.venv/bin/python3 tools/check_role_name_leaks.py - < /tmp/body.md \
+    && gh pr comment <N> --body-file /tmp/body.md
+```
+
+Use this for every `gh pr comment`, `gh issue comment`, `gh pr create
+--body-file`, and `gh pr review --body-file` invocation; the `&&`
+chain keeps `gh` from posting when the body is dirty.
+
+The literal trailing marker `# role-name-lint: allow` on a line skips
+that line wholesale. Use sparingly — the canonical-labels tuple
+inside the lint script and one explanatory comment in the same file
+are the only intended consumers today.
+
 ## Tests
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
