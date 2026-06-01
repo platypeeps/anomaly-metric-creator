@@ -32,6 +32,10 @@ flowchart TD
     api -- "0.3<br/>sat(760,6,0.60,0.015)" --> db
     api -- "1.0 (phase 5)<br/>sat(760,6,0.55,0.015)" --> llm
     cache -- "callable:<br/>miss_ratio × db_base" --> db
+
+    subgraph standalone["standalone components<br/>(no topology edges)"]
+        gpu["gpu_inference<br/>(throughput_tps,<br/>latency_p99_ms, …)"]
+    end
 ```
 
 Edge labels carry the constant fan-out weight (or `callable:` marker)
@@ -45,6 +49,18 @@ is additive on top of the `apigateway → database` constant contribution
 and carries no saturation in v1. See the
 [per-edge bullet list](../README.md#topology-graph-v1) in the README
 for the parameter rationale and bounds.
+
+The `gpu_inference` component is in `COMPONENTS` but has **no
+entry in `TOPOLOGY`** (no incoming or outgoing edges). It is
+driven entirely by its natural-column draws plus the
+`gpu_inference_fragmentation` scenario's correlated stress signals
+— no coupling, no saturation feedback. The
+`gpu_inference_fragmentation` scenario does declare a multi-component
+blast radius via `components_touched=("gpu_inference",
+"llm_analytics")`, but that is a scenario-level cascade (handled
+through `cascade_specs`), not a `TOPOLOGY` edge — see the
+[scenarios vs. topology overlap note in CLAUDE.md](../CLAUDE.md#topology-graph)
+for the distinction.
 
 ## Per-instance routing dispatch (phase 8)
 
@@ -82,6 +98,16 @@ per-component instance list is named or fanned out.
 
 Recent significant additions reflected in the diagrams above:
 
+- **`gpu_inference` is standalone** — the new reference-shaped
+  `gpu_inference` component sits in `COMPONENTS` but is
+  intentionally absent from `TOPOLOGY`. Its 10 default metrics
+  (batch size, model size, GPU memory pressure, KV cache usage,
+  memory fragmentation, GPU utilization, throughput, p50/p99
+  latency, failure label) are driven by natural draws plus the
+  `gpu_inference_fragmentation` scenario's correlated stress
+  signals rather than by upstream load. The diagram surfaces this
+  via the `standalone components` subgraph above the routing
+  graph.
 - **Per-instance routing dispatch** (Phase 8) — under
   `--instances-per-component N>1` (or any dimensioned
   `--instance-config`), each edge routes 1:1 by pod index when

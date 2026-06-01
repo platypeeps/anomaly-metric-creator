@@ -19,7 +19,7 @@ flowchart TD
     validate -- "violations + --validate-warn" --> finish
     validate -- "violations (default)" --> failexit([exit 1])
 
-    mode -- "default: generate" --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit-selection / --components / --combine)"]
+    mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit-selection / --components / --combine)"]
     preclean --> ctx["RunContext(rng=np.random.RandomState(--seed))"]
     ctx --> instances{"instance map?"}
     instances -- "default (N=1, anonymous)" --> instdefault["ctx.instances =<br/>{name: [Instance()] for name in COMPONENTS}<br/>→ byte-identical legacy CSV (no dim prefix)"]
@@ -49,8 +49,13 @@ flowchart TD
     anomcsv --> reports["write_reporting_artifacts<br/>→ metric_report.log, metric_traces.jsonl<br/>(when 'logs'/'traces' in --emit-selection)"]
     reports --> gauges["write_gauges_csv<br/>→ gauges.csv<br/>(4-col wide OR 10-col long layout,<br/>auto-detected from per-component CSV headers;<br/>when 'gauges' in --emit-selection)"]
     gauges --> schema["write_schema_json<br/>→ schema.json (v2)<br/>metadata + components (with optional<br/>per-component dimensions block) +<br/>files + topology snapshot<br/>(when 'schema' in --emit-selection)"]
-    schema --> otel["stream_otel_signals +<br/>stream_otel_gauges<br/>(non-empty dim cells surface as<br/>OTLP data point attributes;<br/>when --otel-enabled)"]
-    otel --> combine["combine_logs<br/>→ combined_metrics_unified.csv<br/>(wide OR long layout — same auto-detect<br/>as gauges.csv; when --combine)"]
+    schema --> otelmode{"--otel-enabled<br/>+ which stream?"}
+    otelmode -- "default<br/>(signals + optional gauges)" --> otelfull["stream_otel_signals<br/>(anomaly counter/log/trace)<br/>→ stream_otel_gauges<br/>(when --otel-emit-gauges;<br/>shared otel-activity.log<br/>with RETRY/FAIL diagnostics:<br/>response headers, cf_ray,<br/>original JSON body)"]
+    otelmode -- "--otel-gauges-only" --> otelgaugesonly["stream_otel_gauges only<br/>(signal stream skipped;<br/>fresh otel-activity.log;<br/>implies --otel-emit-gauges +<br/>requires --otel-enabled,<br/>--otel-metrics-endpoint,<br/>'metrics' in --emit-selection)"]
+    otelmode -- "--otel-enabled off" --> otelskip["OTEL streams skipped"]
+    otelfull --> combine["combine_logs<br/>→ combined_metrics_unified.csv<br/>(wide OR long layout — same auto-detect<br/>as gauges.csv; when --combine)"]
+    otelgaugesonly --> combine
+    otelskip --> combine
     combine --> summary["print 'Done -' summary line<br/>(only names artifacts actually written)"]
     summary --> finish
 ```
@@ -89,11 +94,61 @@ flowchart TD
   dispatch propagates into `gauges.csv` (10-column long layout) and
   `combined_metrics_unified.csv` (the long writer dispatches when
   *any* per-component CSV is dimensioned).
+- `--otel-gauges-only` is a gauge-only streaming mode peer of
+  `--otel-emit-gauges`: it implies the gauge stream, skips
+  `stream_otel_signals()`, requires `--otel-enabled` +
+  `--otel-metrics-endpoint` + `metrics` in `--emit-selection`, and
+  starts a fresh `otel-activity.log` instead of appending to a stale
+  signal-stream run. The summary line prints
+  `OTEL signal stream skipped (--otel-gauges-only)` so it is
+  obvious from the run output which path fired.
+- Default CLI shape matches the reference observability telemetry
+  CSV: 50,000 rows at `--interval-seconds 60.0` (≈ 34.72 days),
+  `--drop-rate 0`. The 1-day runs the test suite pins are still
+  available via explicit `--duration-days 1`.
 
 ## Significant changes
 
 Recent significant additions reflected in the diagram above:
 
+- **`gpu_inference` reference-shaped component** — the catalog now
+  carries a 10-metric `gpu_inference` entry whose default CSV
+  columns mirror the reference observability telemetry shape
+  (`batch_size`, `model_size_b`, `gpu_memory_pressure`,
+  `kv_cache_usage`, `memory_fragmentation`, `gpu_utilization`,
+  `throughput_tps`, `latency_p50_ms`, `latency_p99_ms`,
+  `failure`). It is a standalone component — *not* in `TOPOLOGY`,
+  so no coupling or saturation edges flow into it — and is driven
+  by the `gpu_inference_fragmentation` scenario (`components_touched
+  = ("gpu_inference", "llm_analytics")`) which spans the full
+  default window with correlated stress on fragmentation, memory
+  pressure, KV cache occupancy, utilization, throughput, p99
+  latency, and a sparse failure label sized to the reference
+  incident field (~1,204 failures in 50,000 rows).
+- **Default run shape matches reference CSV** — `DEFAULT_ROW_COUNT
+  = 50_000`, `DEFAULT_INTERVAL_SECONDS = 60.0`, `DEFAULT_DROP_RATE
+  = 0.0`, and `DEFAULT_DURATION_DAYS ≈ 34.72`. Explicit
+  `--duration-days 1` / `--duration-days 7` still hit the locked
+  1-day / 7-day fixture paths, but a no-flag invocation now lands
+  on the reference-aligned 50,000-row shape.
+- **OTEL gauge-only streaming** (`--otel-gauges-only`) — the OTEL
+  step now forks on the gauge-only mode: signals (anomaly counter
+  + logs + traces) are skipped, only the gauge stream fires, and
+  `otel-activity.log` starts fresh instead of appending to a stale
+  signal-stream run. RETRY / FAIL records in the activity log carry
+  response headers, `cf_ray` when present, and the original JSON
+  body for JSON OTEL requests so HTTP failures are diagnosable
+  without re-running.
+- **Detector-visible scenario signals** — gradual cache, database,
+  and LLM capacity scenarios now use correlated span-stress
+  generators across related metrics (coherent multivariate
+  degradation windows instead of isolated single-row anchors), and
+  older same-day point scenarios and partial-outage scenarios emit
+  short detector-visible primary spans so rolling-window analysis
+  can distinguish sustained incidents from single-row breadcrumbs.
+  `tests/test_scenarios.py` pins a "every catalog scenario keeps at
+  least one detector-visible primary span" invariant as the
+  regression guard.
 - **Multi-instance fan-out** (`Instance` dataclass, Phases 1–6) —
   `ctx.instances` map seeded from one of three paths (default
   anonymous, `--instances-per-component N`, or `--instance-config
