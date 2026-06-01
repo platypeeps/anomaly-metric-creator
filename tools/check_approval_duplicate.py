@@ -245,21 +245,25 @@ def _collect_duplicate_priors(
     return duplicates
 
 
-def _fetch_via_gh(pr: int, author: str | None) -> tuple[str, str, str, list[dict[str, Any]]]:
+def _fetch_via_gh(pr: int, author: str | None) -> tuple[str, str, str, str, list[dict[str, Any]]]:
     """Call ``gh api`` to populate the (head_oid, head_date, author,
-    prior_comments) tuple the gate needs.
+    owner_repo, prior_comments) tuple the gate needs.
 
-    Three calls:
+    Four calls (``--author`` skips the fourth):
 
-    - ``gh pr view <pr> --json headRefOid,baseRepository`` for the
-      head SHA and the ``<owner>/<repo>`` slug needed by the
-      subsequent endpoints.
+    - ``gh pr view <pr> --json headRefOid,url`` for the head SHA and
+      the ``<owner>/<repo>`` slug needed by the subsequent endpoints.
     - ``gh api repos/<owner>/<repo>/commits/<oid>`` for the head
       commit's ``committer.date``.
     - ``gh api repos/<owner>/<repo>/issues/<pr>/comments`` for the
       prior comments thread.
     - ``gh api user --jq .login`` (only when ``author`` is None) for
       the current user's login.
+
+    ``owner_repo`` flows through into ``_diagnose`` so the suggested
+    ``gh api ...`` PATCH command in any refusal message is
+    copy-paste-ready in production mode rather than carrying the
+    ``<owner>/<repo>`` placeholders fixture mode falls back to.
 
     Any non-zero ``gh`` exit code or JSON-decode failure is re-raised
     as ``OSError`` so ``main()`` can surface it as exit ``2`` without
@@ -270,7 +274,7 @@ def _fetch_via_gh(pr: int, author: str | None) -> tuple[str, str, str, list[dict
     if author is None:
         author = _gh_current_user()
     prior_comments = _gh_pr_comments(owner_repo, pr)
-    return head_oid, head_date, author, prior_comments
+    return head_oid, head_date, author, owner_repo, prior_comments
 
 
 def _gh(args: list[str]) -> str:
@@ -449,6 +453,9 @@ def _validate_modes(args: argparse.Namespace) -> str | None:
     return None
 
 
+_OWNER_REPO_PLACEHOLDER = "<owner>/<repo>"
+
+
 def _diagnose(
     body: str,
     *,
@@ -456,19 +463,35 @@ def _diagnose(
     head_date: str,
     author: str,
     prior_comments: list[dict[str, Any]],
+    owner_repo: str | None = None,
 ) -> list[str]:
     """Return zero or more diagnostic lines for the body. Empty list
     means the body is safe to post. Single source of truth so both
     invocation modes produce identical diagnostics on identical
     inputs.
+
+    Emits at most one summary line per arm: one for the
+    self-correction match (if any), one for the duplicate-prior set
+    (if any). When multiple priors collide on the same commit, the
+    duplicate summary names the *most recent* prior id (the natural
+    edit target) and the total prior count — emitting one diagnostic
+    line per prior would be N copies of the same "edit the existing
+    comment" advice with N different ids, which is confusing on the
+    PR #86 5-prior shape.
+
+    ``owner_repo`` is the ``<owner>/<repo>`` slug to substitute into
+    the suggested ``gh api …`` PATCH command. ``--pr`` mode threads
+    the real slug in via ``_fetch_via_gh``; fixture mode leaves it
+    ``None`` and the placeholder is used.
     """
+    repo_slug = owner_repo or _OWNER_REPO_PLACEHOLDER
     diagnostics: list[str] = []
     correction = _self_correction_match(body)
     if correction is not None:
         diagnostics.append(
             f"self-correction prefix detected ({correction!r}) — "
             "edit the existing comment in place via "
-            "`gh api repos/<owner>/<repo>/issues/comments/<id> "
+            f"`gh api repos/{repo_slug}/issues/comments/<id> "
             "-X PATCH -f body=@<file>` instead of posting a new "
             "comment."
         )
@@ -478,15 +501,33 @@ def _diagnose(
             author=author,
             head_date=head_date,
         )
-        for prior in duplicates:
+        if duplicates:
+            # Sort by parsed timestamp so "most recent" doesn't depend
+            # on API ordering. _parse_iso_timestamp returns a
+            # tz-aware datetime; the duplicates list is guaranteed
+            # parseable because _collect_duplicate_priors already
+            # filtered on it.
+            sorted_dups = sorted(
+                duplicates,
+                key=lambda p: _parse_iso_timestamp(p["created_at"]),
+            )
+            most_recent = sorted_dups[-1]
+            others = len(sorted_dups) - 1
+            other_phrase = (
+                f" ({others} earlier same-author approval"
+                f"{'s' if others != 1 else ''} on this commit also)"
+                if others
+                else ""
+            )
             diagnostics.append(
                 f"duplicate APPROVED-shape comment by {author!r} "
-                f"against head {head_oid[:8]} (prior comment id "
-                f"{prior['id']}, created_at {prior['created_at']}) — "
-                "edit the existing comment in place via "
-                f"`gh api repos/<owner>/<repo>/issues/comments/"
-                f"{prior['id']} -X PATCH -f body=@<file>` instead of "
-                "posting a new comment."
+                f"against head {head_oid[:8]}: most recent prior is "
+                f"id {most_recent['id']} at "
+                f"{most_recent['created_at']}{other_phrase} — "
+                "edit that comment in place via "
+                f"`gh api repos/{repo_slug}/issues/comments/"
+                f"{most_recent['id']} -X PATCH -f body=@<file>` "
+                "instead of posting a new comment."
             )
     return diagnostics
 
@@ -517,6 +558,16 @@ def main(argv: list[str]) -> int:
         print(f"check_approval_duplicate: {err}", file=sys.stderr)
         return 2
 
+    if sys.stdin.isatty():
+        print(
+            "check_approval_duplicate: stdin is a TTY; the body must "
+            "be piped in. Typical invocation: "
+            "`python tools/check_approval_duplicate.py --pr <N> "
+            "< /tmp/body.md && gh pr comment <N> --body-file "
+            "/tmp/body.md`.",
+            file=sys.stderr,
+        )
+        return 2
     try:
         body = sys.stdin.read()
     except OSError as exc:
@@ -525,13 +576,14 @@ def main(argv: list[str]) -> int:
 
     try:
         if args.pr is not None:
-            head_oid, head_date, author, prior_comments = _fetch_via_gh(
+            head_oid, head_date, author, owner_repo, prior_comments = _fetch_via_gh(
                 args.pr, args.author
             )
         else:
             head_oid = args.head_commit_oid
             head_date = args.head_commit_date
             author = args.author
+            owner_repo = None
             prior_comments = _load_prior_comments(args.prior_comments_json)
         diagnostics = _diagnose(
             body,
@@ -539,6 +591,7 @@ def main(argv: list[str]) -> int:
             head_date=head_date,
             author=author,
             prior_comments=prior_comments,
+            owner_repo=owner_repo,
         )
     except OSError as exc:
         print(f"check_approval_duplicate: {exc}", file=sys.stderr)

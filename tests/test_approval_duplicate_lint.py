@@ -595,6 +595,144 @@ def test_pr_mixed_with_fixture_flags_returns_2(tmp_path: Path):
     assert result.returncode == 2, result.stderr
 
 
+def test_multiple_priors_collapse_to_one_diagnostic_line(tmp_path: Path):
+    """The PR #86 shape had 5 same-author APPROVED priors. Emitting
+    one "edit comment X" line per prior was confusing (N copies of
+    the same advice, each pointing at a different id). The gate now
+    emits one summary line naming the most recent prior + the count
+    of others — the user picks the most recent as the edit target."""
+    prior = [
+        {
+            "id": 1001,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25Z",
+            "body": "APPROVED\n\nFirst pass.\n",
+        },
+        {
+            "id": 1002,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:30:00Z",
+            "body": "APPROVED\n\nSecond pass.\n",
+        },
+        {
+            "id": 1003,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:45:00Z",
+            "body": "APPROVED\n\nThird pass.\n",
+        },
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nFourth pass.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+    )
+    assert result.returncode == 1
+    # Only one "duplicate APPROVED-shape comment" diagnostic line, not three.
+    duplicate_lines = [
+        line for line in result.stderr.splitlines()
+        if "duplicate APPROVED-shape" in line
+    ]
+    assert len(duplicate_lines) == 1, (
+        f"expected one consolidated diagnostic, got {len(duplicate_lines)}:\n"
+        + "\n".join(duplicate_lines)
+    )
+    # The summary names the MOST RECENT prior (1003) and counts the others (2).
+    assert "1003" in result.stderr
+    assert "2 earlier same-author approval" in result.stderr
+
+
+def test_single_prior_does_not_say_others(tmp_path: Path):
+    """With exactly one prior, the diagnostic should NOT mention any
+    "earlier same-author approval" parenthetical — there are no
+    others to mention."""
+    prior = [
+        {
+            "id": 2001,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25Z",
+            "body": "APPROVED\n\nFirst pass.\n",
+        }
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nSecond pass.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+    )
+    assert result.returncode == 1
+    assert "2001" in result.stderr
+    assert "earlier same-author approval" not in result.stderr
+
+
+def test_owner_repo_placeholder_used_in_fixture_mode(tmp_path: Path):
+    """Fixture mode doesn't know the real owner/repo, so the
+    diagnostic's suggested ``gh api …`` command falls back to the
+    ``<owner>/<repo>`` placeholder. (The ``--pr`` production path
+    threads the real slug in via ``_fetch_via_gh``; that path is
+    structurally tied to the slug being in the return tuple, so the
+    placeholder fixture-mode assertion is the test surface that
+    distinguishes the two modes.)"""
+    prior = [
+        {
+            "id": 3001,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25Z",
+            "body": "APPROVED\n\nFirst.\n",
+        }
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nSecond.\n",
+        prior_comments=prior,
+        tmp_path=tmp_path,
+    )
+    assert result.returncode == 1
+    assert "<owner>/<repo>" in result.stderr
+
+
+def test_tty_stdin_exits_2(tmp_path: Path):
+    """Running the script with stdin attached to a TTY (no pipe)
+    would block on ``sys.stdin.read()`` forever. The gate refuses
+    up front with exit 2 and a clear message naming the intended
+    pipe pattern.
+
+    Uses the POSIX-only ``pty`` module to fabricate a TTY; the test
+    is skipped on Windows because ``pty.openpty`` is unavailable
+    there. The production-side guard (``sys.stdin.isatty()``) is
+    cross-platform — Windows still benefits from the guard, the
+    test just can't fabricate the input shape from there.
+    """
+    if sys.platform == "win32":
+        import pytest
+        pytest.skip("pty.openpty is POSIX-only")
+    import os
+    import pty
+    prior_path = _write_prior(tmp_path, [])
+    parent_fd, child_fd = pty.openpty()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--head-commit-oid",
+                HEAD_OID,
+                "--head-commit-date",
+                HEAD_DATE,
+                "--author",
+                AUTHOR,
+                "--prior-comments-json",
+                str(prior_path),
+            ],
+            stdin=child_fd,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    finally:
+        os.close(parent_fd)
+        os.close(child_fd)
+    assert result.returncode == 2, result.stderr
+    assert "TTY" in result.stderr
+
+
 def test_pr_mode_help_text_documents_invocation():
     """``--help`` must document both modes so the agent driving the
     pre-flight chain can see at a glance that ``--pr <N>`` exists

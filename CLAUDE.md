@@ -1650,11 +1650,16 @@ Two refusal arms (each fires independently of the other):
   literal upper-case token `APPROVED` and whose `created_at` is at or
   after the PR's current head commit's committer timestamp counts as
   an approval for that commit. The next same-author approval-shape
-  write is rejected; the diagnostic names the existing comment id so
-  the caller can switch the write to an in-place edit. When a new
-  commit is pushed the head timestamp advances and prior approvals
-  fall before it, so a fresh approval against the new commit is
-  allowed.
+  write is rejected; the diagnostic names the *most recent* prior
+  comment id (the natural edit target) and the count of any other
+  same-author priors that also matched, so the caller can switch
+  the write to an in-place edit. When a new commit is pushed the
+  head timestamp advances and prior approvals fall before it, so a
+  fresh approval against the new commit is allowed. Timestamps on
+  both sides are parsed via `datetime.fromisoformat` (with `Z` →
+  `+00:00` substitution) rather than lex-compared, so millisecond
+  precision and `+00:00`-offset priors gate identically to the
+  canonical `…Z` form GitHub emits today.
 - **Self-correction prefix** — a body whose first non-blank line
   carries `Correction to previous comment` (case-insensitive,
   whitespace-flexible) or starts with `Correction:` /
@@ -1673,11 +1678,16 @@ into the existing `gh pr comment --body-file …` pre-flight slot:
 
 Under `--pr <N>`, the script calls `gh api` to read the head SHA, the
 head commit's committer timestamp, the prior issue-comments thread,
-and (when `--author` is omitted) the current user's login. For
-offline tests and CI hooks, fixture mode accepts every input as
-flags / paths: `--head-commit-oid`, `--head-commit-date`,
-`--author`, `--prior-comments-json`. The two modes are mutually
-exclusive — mixing them exits 2.
+and (when `--author` is omitted) the current user's login. The
+`<owner>/<repo>` slug is also fetched in this mode and threaded into
+the diagnostic so the suggested `gh api … -X PATCH` command is
+copy-paste-ready. For offline tests and CI hooks, fixture mode
+accepts every input as flags / paths: `--head-commit-oid`,
+`--head-commit-date`, `--author`, `--prior-comments-json`; the
+diagnostic falls back to `<owner>/<repo>` placeholders. The two
+modes are mutually exclusive — mixing them exits 2. The script also
+refuses up front (exit 2) when stdin is a TTY: the body must be
+piped in, never typed interactively.
 
 Scope: the gate inspects issue comments
 (`/repos/<owner>/<repo>/issues/<n>/comments`), which is where PR
@@ -1686,11 +1696,12 @@ changes / Comment` flow) are a separate endpoint and out of scope for
 v1.
 
 Exit codes: `0` clean (chain `gh pr comment …`), `1` duplicate or
-self-correction refusal (one diagnostic line per finding), `2`
-argument error, missing required flag, malformed JSON, or `gh`
-failure. The exit-code split mirrors the role-name lint so an `&&`
-chain stops the `gh` write on a refusal without silencing structural
-script failures.
+self-correction refusal (at most one summary diagnostic per arm —
+the duplicate arm collapses N priors into one line naming the most
+recent), `2` argument error, missing required flag, malformed JSON,
+TTY stdin, or `gh` failure. The exit-code split mirrors the
+role-name lint so an `&&` chain stops the `gh` write on a refusal
+without silencing structural script failures.
 
 ### Branch-name lint
 
