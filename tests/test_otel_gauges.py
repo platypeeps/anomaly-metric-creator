@@ -748,7 +748,13 @@ def test_stream_otel_gauges_max_events_caps_attempts_not_successes(amc, tmp_path
 def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
     amc, tmp_path, capsys
 ):
-    """Gauge HTTP failures log response headers and payloads, including CF-Ray."""
+    """Gauge HTTP failures log response headers and payloads, including CF-Ray.
+
+    The sensitive ``Set-Cookie`` / ``Authorization`` / ``X-Api-Key``
+    headers an upstream proxy can echo on a 4xx response are masked
+    before they reach the activity log; the diagnostic
+    ``CF-Ray`` / ``X-Debug-Header`` pair survives.
+    """
     csv_path = tmp_path / "database.csv"
     log_target = tmp_path / "gauge_http_error.log"
     csv_path.write_text(
@@ -764,6 +770,9 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
             self.send_response(403)
             self.send_header("CF-Ray", "gauge-ray-456")
             self.send_header("X-Debug-Header", "gauge-visible")
+            self.send_header("Set-Cookie", "session=gauge-cookie; Secure")
+            self.send_header("Authorization", "Bearer gauge-echoed-token")
+            self.send_header("X-Api-Key", "sk_live_gauge_secret")
             self.end_headers()
 
         def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
@@ -810,8 +819,16 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
         if "=" in token
     }
     assert kv["cf_ray"] == "gauge-ray-456"
-    assert ["CF-Ray", "gauge-ray-456"] in json.loads(kv["response_headers"])
-    assert ["X-Debug-Header", "gauge-visible"] in json.loads(kv["response_headers"])
+    log_text = log_target.read_text()
+    response_headers = json.loads(kv["response_headers"])
+    assert ["CF-Ray", "gauge-ray-456"] in response_headers
+    assert ["X-Debug-Header", "gauge-visible"] in response_headers
+    assert ["Set-Cookie", "***"] in response_headers
+    assert ["Authorization", "Bearer ***"] in response_headers
+    assert ["X-Api-Key", "***"] in response_headers
+    assert "gauge-cookie" not in log_text
+    assert "gauge-echoed-token" not in log_text
+    assert "sk_live_gauge_secret" not in log_text
     assert '"resourceMetrics"' in kv["request_body"]
     assert '"write_latency_ms"' in kv["request_body"]
     assert '"gauge"' in kv["request_body"]
