@@ -1644,8 +1644,9 @@ internal ticket literal through a PR head ref. PRs #47–#77 and #86
 all shipped head refs shaped like `sdelmas/ver-<N>-…`, which is the
 gap this lint closes. The hook runs at the `pre-push` stage so it
 fires once per push (a check on every commit would be noisy on
-clean branches) and uses `pass_filenames: false` + `always_run:
-true` so it does not depend on the diff. Install with
+clean branches) and uses
+`pass_filenames: false` + `always_run: true` so it does not depend
+on the diff. Install with
 `pre-commit install --hook-type pre-push` after the standard
 `pre-commit install` invocation — the default install only
 registers the `pre-commit`-stage hooks.

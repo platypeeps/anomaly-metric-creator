@@ -222,9 +222,16 @@ def main(argv: list[str]) -> int:
             return 0
         names = [branch]
     elif args[0] == "-":
-        if len(args) != 1:
-            _usage(sys.stderr)
-            return 2
+        # Git invokes ``.git/hooks/pre-push`` as
+        # ``hook <remote-name> <remote-url>`` and pipes the protocol
+        # lines on stdin. A hand-rolled hook that forwards its own
+        # argv (``exec python3 tools/check_branch_name.py - "$@"``)
+        # therefore reaches us with two extra positional arguments
+        # after the ``-``. Accept and ignore any tail args here so
+        # the documented hook is not rejected with exit 2 (which
+        # would silently block every push). The values themselves
+        # are unused — the lint operates on the stdin protocol
+        # only.
         try:
             text = sys.stdin.read()
         except OSError as exc:

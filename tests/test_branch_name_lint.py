@@ -22,7 +22,14 @@ edit cannot silently weaken the guardrail:
   ``git symbolic-ref --short HEAD``;
 - ``-`` stdin mode parses git's pre-push protocol lines
   ``<local-ref> <local-sha> <remote-ref> <remote-sha>`` and checks
-  each non-deleted local ref's short name;
+  both the local and the remote ref short names per non-deleted
+  line (de-duped when equal), so a refspec push that publishes a
+  leaking remote ref name from a clean local ref is still
+  rejected;
+- ``-`` stdin mode accepts and ignores any extra positional
+  arguments after the ``-`` so a real ``.git/hooks/pre-push``
+  hook can pass git's ``<remote-name> <remote-url>`` argv
+  through without breaking the lint;
 - exit codes ``0`` clean / ``1`` leaked branch / ``2`` argument or
   I/O error;
 - only the "Branch names must not embed" footer prints when an
@@ -35,6 +42,7 @@ lints stay structurally parallel.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +51,17 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "check_branch_name.py"
+
+# The ``--current`` mode shells out to ``git symbolic-ref``; the
+# stdin pre-push tests bootstrap a fresh repo via ``git init``. A
+# minimal source-distribution environment without git on PATH should
+# skip those tests with a clear reason rather than crash with a raw
+# ``FileNotFoundError``. The shared marker keeps the skip reason
+# uniform across every test that needs git.
+_requires_git = pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="git executable not on PATH; skipping --current / pre-push tests",
+)
 
 
 def _run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
@@ -154,6 +173,7 @@ def _init_repo_with_branch(tmp_path: Path, branch: str) -> Path:
     return repo
 
 
+@_requires_git
 def test_current_mode_rejects_leaking_branch(tmp_path: Path):
     repo = _init_repo_with_branch(tmp_path, "ver-42-foo")
     result = subprocess.run(
@@ -164,6 +184,7 @@ def test_current_mode_rejects_leaking_branch(tmp_path: Path):
     assert "ver-42-foo" in result.stderr
 
 
+@_requires_git
 def test_current_mode_accepts_clean_branch(tmp_path: Path):
     repo = _init_repo_with_branch(tmp_path, "feature/clean")
     result = subprocess.run(
@@ -173,6 +194,7 @@ def test_current_mode_accepts_clean_branch(tmp_path: Path):
     assert result.returncode == 0, result.stderr
 
 
+@_requires_git
 def test_current_mode_detached_head_exits_zero(tmp_path: Path):
     """A detached HEAD has no symbolic ref. The lint cannot lint a
     branch name that does not exist; it must not crash — a detached
@@ -307,6 +329,30 @@ def test_stdin_mode_dedupes_same_local_and_remote_ref():
     # Count occurrences of the bracketed branch-name diagnostic
     # ("branch name 'ver-42' embeds …"); should fire exactly once.
     assert result.stderr.count("branch name 'ver-42'") == 1
+
+
+def test_stdin_mode_accepts_pre_push_argv_clean():
+    """Git invokes ``.git/hooks/pre-push`` with two argv entries
+    (``<remote-name> <remote-url>``) and pipes the protocol lines on
+    stdin. The documented hand-rolled hook forwards its own argv
+    (``exec python3 tools/check_branch_name.py - "$@"``), so the
+    script must accept and ignore extra args after the ``-`` token.
+    Regression for the second-round Copilot finding that
+    ``len(args) != 1`` would silently break every push from a real
+    pre-push hook even when the branch name is clean."""
+    body = "refs/heads/feature/clean abc123 refs/heads/feature/clean def456\n"
+    result = _run("-", "origin", "git@github.com:example/repo.git", stdin=body)
+    assert result.returncode == 0, result.stderr
+
+
+def test_stdin_mode_accepts_pre_push_argv_leak():
+    """The hardened ``-`` mode must still detect a leak even when
+    git's two extra argv entries are present — accepting the tail
+    args cannot collapse into "ignore the whole invocation"."""
+    body = "refs/heads/ver-42 abc123 refs/heads/ver-42 def456\n"
+    result = _run("-", "origin", "git@github.com:example/repo.git", stdin=body)
+    assert result.returncode == 1, result.stderr
+    assert "ver-42" in result.stderr
 
 
 def test_stdin_mode_remote_ref_deletion_skipped():

@@ -826,8 +826,9 @@ commit with a pointer to the canonical loader; switch to the `amc`
 fixture or annotate the line with `# noqa: amc-load`.
 
 The `branch-name` hook runs at the `pre-push` stage (a separate
-git hook from `pre-commit`), which is why `pre-commit install
---hook-type pre-push` is a one-time per-clone step. It rejects
+git hook from `pre-commit`), which is why
+`pre-commit install --hook-type pre-push` is a one-time per-clone
+step. It rejects
 any branch name matching `(?i)(^|\b)ver-\d+` — see
 [CLAUDE.md "Branch-name lint"](CLAUDE.md) for the policy, anchors,
 and full invocation modes of `tools/check_branch_name.py`. The
