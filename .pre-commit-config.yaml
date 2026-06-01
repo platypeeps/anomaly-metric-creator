@@ -57,3 +57,22 @@ repos:
         # and for ad-hoc CLI runs that pass arbitrary paths.
         types: [text]
         pass_filenames: true
+      # Reject branch names that embed the ticket literal
+      # `ver-<N>` / `VER-<N>`. PRs #47–#77 and #86 all shipped a
+      # head ref shaped like `sdelmas/ver-<N>-…`, republishing the
+      # internal ticket id in the public PR URL even after PR
+      # titles had been cleaned up. The hook runs at the `pre-push`
+      # stage so it fires once per push (a check on every commit
+      # would be noisy for routine work on a clean branch), and
+      # uses `pass_filenames: false` + `always_run: true` so it
+      # does not depend on the diff. Install with
+      # `pre-commit install --hook-type pre-push` after the
+      # standard `pre-commit install` invocation; the default
+      # install only registers the pre-commit-stage hooks.
+      - id: branch-name
+        name: forbid ver-NNN literals in branch names
+        entry: python tools/check_branch_name.py --current
+        language: python
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false

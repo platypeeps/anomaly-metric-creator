@@ -1635,6 +1635,91 @@ role names must not appear…" footer fires only on this branch),
 binary-skip). Callers chaining the script in `&&` therefore see a
 genuine label leak distinct from a structural script failure.
 
+### Branch-name lint
+
+The `branch-name` pre-commit hook
+(`tools/check_branch_name.py`) rejects any branch name matching
+`(?i)(^|\b)ver-\d+`, so feature branches cannot republish the
+internal ticket literal through a PR head ref. PRs #47–#77 and #86
+all shipped head refs shaped like `sdelmas/ver-<N>-…`, which is the
+gap this lint closes. The hook runs at the `pre-push` stage so it
+fires once per push (a check on every commit would be noisy on
+clean branches) and uses
+`pass_filenames: false` + `always_run: true` so it does not depend
+on the diff. Install with
+`pre-commit install --hook-type pre-push` after the standard
+`pre-commit install` invocation — the default install only
+registers the `pre-commit`-stage hooks.
+
+Pattern anchors and the digit requirement:
+
+- **Case-insensitive.** `ver-655`, `VER-655`, and `Ver-655` are all
+  rejected uniformly. The leak is the literal ticket id; the case
+  of the prefix is irrelevant.
+- **Start-of-string OR word boundary.** `ver-655-foo` (whole-string
+  prefix) and `sdelmas/ver-655-foo` (boundary after `/`) both
+  match; `fever-pitch` and `discover-foo` stay legal because
+  neither has a word boundary before `ver`.
+- **Digit required after the dash.** Generic `ver-` prefixes
+  (`verify-something`, `ver-test-branch`) stay legal — the lint
+  specifically catches the ticket form `ver-<N>`, not arbitrary
+  `ver`-prefixed words.
+
+Three invocation modes are supported (full details live in the
+script's module docstring):
+
+```bash
+# Literal branch names (used by the test suite and ad-hoc checks).
+.venv/bin/python3 tools/check_branch_name.py feature/clean ver-655
+# Current branch via `git symbolic-ref --short HEAD` (the
+# pre-commit hook mode; detached HEAD is treated as "nothing to
+# check" so a no-branch state cannot wedge `git push`).
+.venv/bin/python3 tools/check_branch_name.py --current
+# Raw git pre-push stdin protocol — for a hand-rolled
+# .git/hooks/pre-push that bypasses pre-commit.
+.venv/bin/python3 tools/check_branch_name.py -
+```
+
+Exit codes: `0` clean (also: detached HEAD, empty stdin,
+all-deletion stdin, tag-only push), `1` at least one branch leaks
+the ticket literal, `2` argument or I/O error. There is no
+per-branch escape hatch — unlike the role-name lint, a branch
+name has no legitimate reason to embed a ticket literal; the
+structural fix is to rename the branch.
+
+Scope note: the hook only fires on `git push`. Branches created
+locally that never push (throwaway worktrees, exploratory work)
+are not checked, by design — the leak is specifically about what
+reaches GitHub. CI / server-side hooks are out of scope for this
+repo today; the pre-push hook is the single client-side guard.
+
+Known gap (refspec push bypass): the pre-commit hook runs
+`check_branch_name.py --current`, which reads the *current local*
+branch name. A refspec push of the form
+`git push origin clean:ver-123` or a detached-HEAD push
+`git push origin HEAD:ver-123` publishes a leaking *remote* ref
+name while the local branch is clean — `--current` cannot see the
+remote side, so the hook will not flag it. The
+`-` stdin mode does close this gap: it parses git's pre-push
+protocol (`<local-ref> <local-sha> <remote-ref> <remote-sha>`) and
+lints *both* ref names per line, de-duped when they are equal.
+pre-commit's framework consumes git's pre-push stdin internally
+and does not pipe it through to individual hooks, so the stdin
+mode cannot be invoked from `.pre-commit-config.yaml` directly.
+Developers who want full coverage can drop a one-line
+hand-rolled hook in `.git/hooks/pre-push`:
+
+```sh
+#!/bin/sh
+exec python3 tools/check_branch_name.py - "$@"
+```
+
+(make it executable with `chmod +x .git/hooks/pre-push`). The
+hand-rolled hook runs in addition to pre-commit's pre-push stage,
+so the two layers compose: pre-commit catches the common-case
+plain `git push` and the hand-rolled hook catches the refspec
+edge cases.
+
 ## Tests
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
