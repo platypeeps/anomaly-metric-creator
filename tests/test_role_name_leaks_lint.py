@@ -282,11 +282,15 @@ def test_binary_file_silent_skip(tmp_path: Path):
 def test_lock_file_silent_skip(tmp_path: Path):
     """``*.lock`` files (poetry / npm / cargo) are not in scope —
     contents are machine-generated and may contain forbidden
-    substrings outside the author's control."""
+    substrings outside the author's control. The body intentionally
+    embeds a forbidden label so the test would fail (exit 1, label in
+    stderr) if the ``.lock`` suffix skip ever regressed and the file
+    were scanned normally. Copilot PR #89 round-2."""
     lock = tmp_path / "package-lock.json.lock"
-    lock.write_text('# leak text\n')
+    lock.write_text("Handoff to CEO for sign-off.\n")  # role-name-lint: allow
     result = _run(lock)
     assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
 
 
 @pytest.mark.parametrize("skip_dir", [".git", ".venv", "node_modules"])
@@ -316,17 +320,23 @@ def test_multiple_files_partial_violation(tmp_path: Path):
 def test_real_repo_tree_is_clean():
     """The real repo must pass the lint at HEAD. Globs every text-y
     path the pre-commit hook would feed: Python, Markdown, YAML, TOML
-    in the top-level tracked tree. Equivalent to the
-    ``test_real_test_tree_is_clean`` regression in
+    in the top-level tracked tree, plus the ``docs/`` tree and the
+    root-level Markdown / dotfiles (``AGENTS.md``, ``CHANGELOG.md``,
+    ``.gitignore``) that Copilot PR #89 round-2 flagged as gaps.
+    Equivalent to the ``test_real_test_tree_is_clean`` regression in
     ``tests/test_amc_module_load_lint.py``."""
     candidate_dirs = [
         REPO_ROOT / "tools",
         REPO_ROOT / "tests",
         REPO_ROOT / ".github",
+        REPO_ROOT / "docs",
     ]
     candidate_files = [
         REPO_ROOT / "CLAUDE.md",
         REPO_ROOT / "README.md",
+        REPO_ROOT / "AGENTS.md",
+        REPO_ROOT / "CHANGELOG.md",
+        REPO_ROOT / ".gitignore",
         REPO_ROOT / "pyproject.toml",
         REPO_ROOT / ".pre-commit-config.yaml",
         REPO_ROOT / "anomaly-metric-creator.py",

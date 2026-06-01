@@ -138,8 +138,11 @@ def _scan_path(path: Path) -> tuple[list[str], list[str]]:
     Returns ``(violations, unreadable)`` where ``violations`` is the
     list of label-leak diagnostic lines (drives exit ``1``) and
     ``unreadable`` is the list of I/O-error diagnostic lines (drives
-    exit ``2``). Binary content (UTF-8 decode failure) is a silent
-    skip and contributes to neither list.
+    exit ``2``). Neither list is printed here — ``main()`` is the sole
+    printer so diagnostics aggregate in a single ordered block at the
+    end of the run rather than interleaving with downstream scans.
+    Binary content (UTF-8 decode failure) is a silent skip and
+    contributes to neither list.
     """
     if _should_skip(path):
         return [], []
@@ -155,8 +158,7 @@ def _scan_path(path: Path) -> tuple[list[str], list[str]]:
         # an exemption.
         return [], []
     except OSError as exc:
-        print(f"{path}: read failed: {exc}", file=sys.stderr)
-        return [], [f"{path}:0:0: unreadable"]
+        return [], [f"{path}:0:0: unreadable: {exc}"]
     return _scan_text(str(path), text), []
 
 
@@ -164,13 +166,13 @@ def _scan_stdin() -> tuple[list[str], list[str]]:
     """Scan stdin as a single buffer.
 
     Used for the ``gh pr comment --body-file …`` pre-flight check.
-    Same ``(violations, unreadable)`` return shape as ``_scan_path``.
+    Same ``(violations, unreadable)`` return shape as ``_scan_path``;
+    ``main()`` is the sole printer of the returned diagnostics.
     """
     try:
         text = sys.stdin.read()
     except OSError as exc:
-        print(f"<stdin>: read failed: {exc}", file=sys.stderr)
-        return [], ["<stdin>:0:0: unreadable"]
+        return [], [f"<stdin>:0:0: unreadable: {exc}"]
     return _scan_text("<stdin>", text), []
 
 
