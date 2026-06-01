@@ -128,7 +128,14 @@ def test_footer_prints_on_match():
 
 
 def test_footer_does_not_print_on_clean_run():
+    # Assert the full clean-path contract: exit 0 AND empty stderr.
+    # A bare "Branch names must not embed" not in result.stderr check
+    # would pass vacuously if the script ever exited 2 with a usage
+    # error in stderr (which also lacks the footer substring), so we
+    # pin the success path on three independent observable surfaces.
     result = _run("feature/clean-name")
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == "", result.stderr
     assert "Branch names must not embed" not in result.stderr
 
 
