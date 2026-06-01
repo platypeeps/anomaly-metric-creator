@@ -54,6 +54,25 @@ path reads existing per-component CSVs as inputs and pre-cleaning them would
 remove the combine inputs. The early `return` in the `--combine-only` branch
 already keeps it out of the cleanup path. `./otel-activity.log` lives outside
 `--output-dir` and is append-only by design; it must stay outside the registry.
+The file is also listed in the repo `.gitignore` so a stray run from inside a
+clone never commits OTLP transport diagnostics. PR #83 widened the HTTP-error
+diagnostics inside `_http_error_activity_fields` to dump every response
+header into the `response_headers` field; an intermediary that echoes
+`Set-Cookie` / `Authorization` / `X-Api-Key` on a 4xx/5xx would have leaked
+credential material into that on-disk log. The redaction shim
+`_redact_sensitive_headers(header_pairs)` runs *before* the JSON dump and
+masks the value of any header whose name (case-insensitive) is in
+`_SENSITIVE_HEADER_NAMES`: `Authorization`, `Cookie`, `Set-Cookie`,
+`Proxy-Authorization`, `X-Api-Key`. `Authorization` and
+`Proxy-Authorization` are also in `_SCHEMED_SENSITIVE_HEADERS`, so the
+scheme prefix (`Bearer` / `Basic`) is kept and only the credential is
+replaced with `***`; every other sensitive header has its full value
+replaced. The request-side `_masked_headers` reads the same set so
+the two paths cannot drift. Allowlist + round-trip coverage lives in
+`tests/test_redact_sensitive_headers.py`, and
+`tests/test_cli.py::test_otel_http_error_activity_log_includes_response_headers`
++ `tests/test_otel_gauges.py::test_stream_otel_gauges_http_error_activity_log_includes_response_headers`
+exercise the redaction through the live HTTP error path.
 
 ### Combine step
 
