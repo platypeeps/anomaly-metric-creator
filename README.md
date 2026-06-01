@@ -830,4 +830,8 @@ git hook from `pre-commit`), which is why `pre-commit install
 --hook-type pre-push` is a one-time per-clone step. It rejects
 any branch name matching `(?i)(^|\b)ver-\d+` — see
 [CLAUDE.md "Branch-name lint"](CLAUDE.md) for the policy, anchors,
-and full invocation modes of `tools/check_branch_name.py`.
+and full invocation modes of `tools/check_branch_name.py`. The
+pre-commit hook checks the current local branch only; for full
+coverage of refspec pushes (`git push origin clean:ver-123`) and
+detached-HEAD pushes (`git push origin HEAD:ver-123`), see the
+hand-rolled `.git/hooks/pre-push` snippet in CLAUDE.md.

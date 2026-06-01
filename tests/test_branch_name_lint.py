@@ -155,13 +155,13 @@ def _init_repo_with_branch(tmp_path: Path, branch: str) -> Path:
 
 
 def test_current_mode_rejects_leaking_branch(tmp_path: Path):
-    repo = _init_repo_with_branch(tmp_path, "ver-702-foo")
+    repo = _init_repo_with_branch(tmp_path, "ver-42-foo")
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--current"],
         cwd=repo, capture_output=True, text=True,
     )
     assert result.returncode == 1, result.stderr
-    assert "ver-702-foo" in result.stderr
+    assert "ver-42-foo" in result.stderr
 
 
 def test_current_mode_accepts_clean_branch(tmp_path: Path):
@@ -262,6 +262,61 @@ def test_stdin_mode_garbage_line_is_silent_skip():
     skipped — git's pre-push protocol guarantees the 4-token shape
     but real-world hooks see CR/LF and trailing-newline edge cases."""
     body = "not a valid line\n\n"
+    result = _run("-", stdin=body)
+    assert result.returncode == 0, result.stderr
+
+
+def test_stdin_mode_rejects_leaking_remote_ref_with_clean_local():
+    """``git push origin clean:ver-42`` pushes a leaking remote ref
+    while the local ref is clean. The hook must reject the *remote*
+    side so a refspec push cannot smuggle a leaking head ref past
+    the guard."""
+    body = (
+        "refs/heads/feature/clean abc123 refs/heads/ver-42 def456\n"
+    )
+    result = _run("-", stdin=body)
+    assert result.returncode == 1, result.stderr
+    assert "ver-42" in result.stderr
+    # The local side is clean, so its name should not appear in
+    # the violation report.
+    assert "feature/clean" not in result.stderr
+
+
+def test_stdin_mode_rejects_leaking_local_with_clean_remote():
+    """Conversely, a leaking *local* ref pushed to a clean remote
+    ref name is still a violation — the local branch is the one
+    the developer has been working on, and a future plain
+    ``git push`` would publish it under that name."""
+    body = (
+        "refs/heads/ver-7-foo abc123 refs/heads/feature/published def456\n"
+    )
+    result = _run("-", stdin=body)
+    assert result.returncode == 1, result.stderr
+    assert "ver-7-foo" in result.stderr
+
+
+def test_stdin_mode_dedupes_same_local_and_remote_ref():
+    """When local and remote ref names are equal (the common
+    plain-``git push`` case), the line emits exactly one
+    violation entry, not two duplicates of the same name."""
+    body = (
+        "refs/heads/ver-42 abc123 refs/heads/ver-42 def456\n"
+    )
+    result = _run("-", stdin=body)
+    assert result.returncode == 1, result.stderr
+    # Count occurrences of the bracketed branch-name diagnostic
+    # ("branch name 'ver-42' embeds …"); should fire exactly once.
+    assert result.stderr.count("branch name 'ver-42'") == 1
+
+
+def test_stdin_mode_remote_ref_deletion_skipped():
+    """A refspec deletion (``git push origin :ver-old``) has the
+    local sha set to all zeros — there is no live local branch
+    to publish, so the line is skipped on both sides."""
+    zero = "0" * 40
+    body = (
+        f"(delete) {zero} refs/heads/ver-old abc123\n"
+    )
     result = _run("-", stdin=body)
     assert result.returncode == 0, result.stderr
 

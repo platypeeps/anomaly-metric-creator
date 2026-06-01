@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Reject branch names that leak the project's ticket literal.
 
-PRs #47–#77 and #86 all shipped a head ref shaped like
-``sdelmas/ver-<N>-…``, republishing the internal ticket identifier
-in the public PR URL even after PR titles had been cleaned up.
-VER-702 adds this lint as the structural fix: any branch name
-matching ``(?i)(^|\\b)ver-\\d+`` is rejected at push time so the
-leak cannot reach GitHub.
+Historically a stretch of feature branches landed with head refs
+shaped like ``sdelmas/ver-<N>-…``, republishing the internal
+ticket identifier in the public PR URL even after PR titles had
+been cleaned up. This lint closes that gap structurally: any
+branch name matching ``(?i)(^|\\b)ver-\\d+`` is rejected at push
+time so the leak cannot reach GitHub.
 
 The lint is wired into ``.pre-commit-config.yaml`` as a
 ``pre-push`` stage hook (install via
@@ -26,10 +26,20 @@ Three invocation modes:
   pre-commit pre-push hook with ``pass_filenames: false`` so the
   hook does not depend on the diff. A detached HEAD has no
   symbolic ref and is treated as "nothing to check" (exit 0),
-  since there is no branch about to be pushed.
+  since there is no branch about to be pushed. Known gap: a
+  refspec push like ``git push origin clean:ver-123`` or a
+  detached-HEAD push like ``git push origin HEAD:ver-123``
+  publishes a leaking *remote* ref name while the *local* branch
+  is clean — ``--current`` cannot see those. For full coverage,
+  use a hand-rolled ``.git/hooks/pre-push`` that pipes git's
+  protocol stdin into the ``-`` mode below; that mode checks
+  both the local and the remote ref name for every pushed line.
 * ``check_branch_name.py -`` — read git's pre-push protocol from
-  stdin and check each pushed branch. Each line carries
-  ``<local-ref> <local-sha> <remote-ref> <remote-sha>``; lines
+  stdin and check every pushed branch. Each line carries
+  ``<local-ref> <local-sha> <remote-ref> <remote-sha>``; both
+  the local and the remote ref name are linted (and de-duped when
+  they are equal) so a ``clean:ver-123`` refspec push is rejected
+  on the *remote* side even though the local ref is clean. Lines
   whose ``<local-sha>`` is all zeros are deletions (no local
   branch to lint) and are skipped. Refs that are not
   ``refs/heads/...`` (e.g. ``refs/tags/v1.0.0``) are skipped too.
@@ -67,7 +77,6 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 # Case-insensitive, start-of-string OR word boundary, then ``ver-``
 # followed by at least one digit. See module docstring for the full
@@ -122,24 +131,52 @@ def _current_branch() -> str | None:
 
 
 def _parse_pre_push_stdin(text: str) -> list[str]:
-    """Extract local branch short names from git's pre-push stdin.
+    """Extract branch short names from git's pre-push stdin.
 
     Each line: ``<local-ref> <local-sha> <remote-ref> <remote-sha>``.
+    Both the local and the remote ref name are linted so a
+    refspec push (``git push origin clean:ver-123``) or a
+    detached-HEAD push (``git push origin HEAD:ver-123``) cannot
+    smuggle a leaking *remote* ref name past the guard. When local
+    and remote ref names are equal (the common case — same name on
+    both sides) the line emits only one entry. Order is preserved
+    on a per-line basis (local before remote) so the diagnostic
+    report stays predictable.
+
     Deletions (all-zero local sha) and non-branch refs (tags etc.)
     are skipped. Malformed lines (< 4 tokens) are silently ignored:
     the protocol guarantees the 4-token shape, but trailing newlines
-    and CR/LF artifacts can produce empty splits in practice."""
+    and CR/LF artifacts can produce empty splits in practice.
+
+    The remote-ref check is gated independently of the local-ref
+    check on the same line: a clean local ref pushed against a
+    leaking remote ref is rejected; a leaking local ref pushed
+    against a clean remote ref is also rejected; a refspec that
+    deletes the remote (``:ver-old``, local sha all-zeros) skips
+    the line entirely because there is no live branch to lint."""
     branches: list[str] = []
     for raw in text.splitlines():
         tokens = raw.split()
         if len(tokens) < 4:
             continue
-        local_ref, local_sha, _remote_ref, _remote_sha = tokens[:4]
+        local_ref, local_sha, remote_ref, _remote_sha = tokens[:4]
         if _NULL_SHA_RE.match(local_sha):
             continue
-        if not local_ref.startswith(_BRANCH_REF_PREFIX):
-            continue
-        branches.append(local_ref[len(_BRANCH_REF_PREFIX):])
+        # De-dupe within a single line so the same branch isn't
+        # reported twice when the user pushes a same-named ref to
+        # the same name on the remote. Across lines we still keep
+        # both refs even if a different line names the same branch,
+        # because each pushed ref represents an independent
+        # publication and the violation message is per-line useful.
+        seen_on_line: set[str] = set()
+        for ref in (local_ref, remote_ref):
+            if not ref.startswith(_BRANCH_REF_PREFIX):
+                continue
+            short = ref[len(_BRANCH_REF_PREFIX):]
+            if short in seen_on_line:
+                continue
+            seen_on_line.add(short)
+            branches.append(short)
     return branches
 
 
@@ -147,9 +184,9 @@ def _print_violations(violations: list[str]) -> None:
     print("\n".join(violations), file=sys.stderr)
     print(
         "\nBranch names must not embed ticket literals (ver-<N> / "
-        "VER-<N>). Pick a descriptive branch name — the PR title and "
-        "description carry the ticket reference instead. Policy lives "
-        "in CLAUDE.md under 'Branch-name lint'.",
+        "VER-<N>). Rename the branch to a descriptive, non-ticket "
+        "label before pushing. Policy lives in CLAUDE.md under "
+        "'Branch-name lint'.",
         file=sys.stderr,
     )
 

@@ -1692,6 +1692,33 @@ are not checked, by design — the leak is specifically about what
 reaches GitHub. CI / server-side hooks are out of scope for this
 repo today; the pre-push hook is the single client-side guard.
 
+Known gap (refspec push bypass): the pre-commit hook runs
+`check_branch_name.py --current`, which reads the *current local*
+branch name. A refspec push of the form
+`git push origin clean:ver-123` or a detached-HEAD push
+`git push origin HEAD:ver-123` publishes a leaking *remote* ref
+name while the local branch is clean — `--current` cannot see the
+remote side, so the hook will not flag it. The
+`-` stdin mode does close this gap: it parses git's pre-push
+protocol (`<local-ref> <local-sha> <remote-ref> <remote-sha>`) and
+lints *both* ref names per line, de-duped when they are equal.
+pre-commit's framework consumes git's pre-push stdin internally
+and does not pipe it through to individual hooks, so the stdin
+mode cannot be invoked from `.pre-commit-config.yaml` directly.
+Developers who want full coverage can drop a one-line
+hand-rolled hook in `.git/hooks/pre-push`:
+
+```sh
+#!/bin/sh
+exec python3 tools/check_branch_name.py - "$@"
+```
+
+(make it executable with `chmod +x .git/hooks/pre-push`). The
+hand-rolled hook runs in addition to pre-commit's pre-push stage,
+so the two layers compose: pre-commit catches the common-case
+plain `git push` and the hand-rolled hook catches the refspec
+edge cases.
+
 ## Tests
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
