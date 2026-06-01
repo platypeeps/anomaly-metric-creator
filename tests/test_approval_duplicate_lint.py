@@ -641,6 +641,52 @@ def test_multiple_priors_collapse_to_one_diagnostic_line(tmp_path: Path):
     assert "2 earlier same-author approval" in result.stderr
 
 
+def test_multiple_priors_most_recent_independent_of_input_order(tmp_path: Path):
+    """``_collect_duplicate_priors`` returns priors in the input
+    order (``gh api`` ascending ``created_at``), but the diagnostic's
+    "most recent" pick must depend on parsed timestamps, not on
+    list-position. Pass priors in REVERSE order and assert the
+    diagnostic still names the chronologically-latest prior — proves
+    the sort actually fires rather than coincidentally lining up
+    with the natural API ordering."""
+    prior_reverse = [
+        {
+            "id": 7003,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:45:00Z",  # latest
+            "body": "APPROVED\n\nThird pass.\n",
+        },
+        {
+            "id": 7002,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:30:00Z",
+            "body": "APPROVED\n\nSecond pass.\n",
+        },
+        {
+            "id": 7001,
+            "user": {"login": AUTHOR},
+            "created_at": "2026-06-01T00:16:25Z",  # earliest
+            "body": "APPROVED\n\nFirst pass.\n",
+        },
+    ]
+    result = _run_fixture(
+        "APPROVED\n\nFourth pass.\n",
+        prior_comments=prior_reverse,
+        tmp_path=tmp_path,
+    )
+    assert result.returncode == 1
+    # 7003 is chronologically latest (00:45) regardless of list position.
+    assert "7003" in result.stderr
+    # 7001 should NOT be cited as the edit target.
+    duplicate_lines = [
+        line for line in result.stderr.splitlines()
+        if "duplicate APPROVED-shape" in line
+    ]
+    assert len(duplicate_lines) == 1
+    assert "comments/7003" in duplicate_lines[0]
+    assert "comments/7001" not in duplicate_lines[0]
+
+
 def test_single_prior_does_not_say_others(tmp_path: Path):
     """With exactly one prior, the diagnostic should NOT mention any
     "earlier same-author approval" parenthetical — there are no
