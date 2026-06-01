@@ -42,14 +42,17 @@ The lint reports every match it finds in a single run (it does not stop
 at the first violation) so reviewers see the full list rather than
 playing whack-a-mole one fix at a time.
 
-Escape hatch: a line carrying the literal trailing marker
-``# role-name-lint: allow`` is skipped wholesale. Use sparingly — the
-two known legitimate use cases are the ``_FORBIDDEN_LABELS`` tuple
-below (which must list the labels verbatim) and any docs that
-genuinely need to discuss the forbidden vocabulary. The marker is a
-plain substring check rather than a Python ``tokenize`` comment so it
-works across Markdown, YAML, and any other text format pre-commit
-hands to the script.
+Escape hatch: a line whose right-stripped content ends with the
+literal marker ``# role-name-lint: allow`` is skipped wholesale. The
+trailing-only rule is deliberate — a mid-line occurrence (whether
+accidental or intentional) must not silence the lint on the rest of
+the line. Use sparingly: the two known legitimate use cases are the
+``_FORBIDDEN_LABELS`` tuple below (which must list the labels
+verbatim) and any docs that genuinely need to discuss the forbidden
+vocabulary. The marker is matched against the line's trailing
+content rather than a Python ``tokenize`` comment so it works
+across Markdown, YAML, and any other text format pre-commit hands to
+the script.
 """
 
 from __future__ import annotations
@@ -95,17 +98,29 @@ def _should_skip(path: Path) -> bool:
     return any(part in _SKIP_DIR_PARTS for part in path.parts)
 
 
+def _line_is_exempted(line: str) -> bool:
+    """Return True iff ``line`` carries the *trailing* allow marker.
+
+    The marker only exempts a line when it appears at the right edge
+    (after any trailing whitespace). A mid-line occurrence — e.g. the
+    marker inside a string literal followed by more code — does not
+    silence the lint, since otherwise an accidental occurrence could
+    disable the check on real leaks further along the same line.
+    """
+    return line.rstrip().endswith(_NOQA_MARKER)
+
+
 def _scan_text(label: str, text: str) -> list[str]:
     """Return one violation line per match of a forbidden label.
 
     ``label`` is the human-facing path or stream name printed in the
-    diagnostic; the scanner itself does not open files. A line carrying
-    the ``_NOQA_MARKER`` substring is skipped wholesale (see the
-    module-level "Escape hatch" note).
+    diagnostic; the scanner itself does not open files. A line whose
+    right-stripped content ends with ``_NOQA_MARKER`` is skipped
+    wholesale (see the module-level "Escape hatch" note).
     """
     violations: list[str] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
-        if _NOQA_MARKER in line:
+        if _line_is_exempted(line):
             continue
         for match in _PATTERN.finditer(line):
             violations.append(
@@ -117,12 +132,19 @@ def _scan_text(label: str, text: str) -> list[str]:
     return violations
 
 
-def _scan_path(path: Path) -> list[str]:
-    """Scan a single file path; treat binary content as a silent skip."""
+def _scan_path(path: Path) -> tuple[list[str], list[str]]:
+    """Scan a single file path.
+
+    Returns ``(violations, unreadable)`` where ``violations`` is the
+    list of label-leak diagnostic lines (drives exit ``1``) and
+    ``unreadable`` is the list of I/O-error diagnostic lines (drives
+    exit ``2``). Binary content (UTF-8 decode failure) is a silent
+    skip and contributes to neither list.
+    """
     if _should_skip(path):
-        return []
+        return [], []
     if not path.is_file():
-        return []
+        return [], []
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
@@ -131,24 +153,25 @@ def _scan_path(path: Path) -> list[str]:
         # repos that grow them; skip silently rather than emit a noisy
         # diagnostic that would force every binary-add commit to add
         # an exemption.
-        return []
+        return [], []
     except OSError as exc:
         print(f"{path}: read failed: {exc}", file=sys.stderr)
-        return [f"{path}:0:0: unreadable"]
-    return _scan_text(str(path), text)
+        return [], [f"{path}:0:0: unreadable"]
+    return _scan_text(str(path), text), []
 
 
-def _scan_stdin() -> list[str]:
+def _scan_stdin() -> tuple[list[str], list[str]]:
     """Scan stdin as a single buffer.
 
     Used for the ``gh pr comment --body-file …`` pre-flight check.
+    Same ``(violations, unreadable)`` return shape as ``_scan_path``.
     """
     try:
         text = sys.stdin.read()
     except OSError as exc:
         print(f"<stdin>: read failed: {exc}", file=sys.stderr)
-        return ["<stdin>:0:0: unreadable"]
-    return _scan_text("<stdin>", text)
+        return [], ["<stdin>:0:0: unreadable"]
+    return _scan_text("<stdin>", text), []
 
 
 def main(argv: list[str]) -> int:
@@ -162,19 +185,30 @@ def main(argv: list[str]) -> int:
         )
         return 2
     violations: list[str] = []
+    unreadable: list[str] = []
     for raw in args:
-        if raw == "-":
-            violations.extend(_scan_stdin())
-        else:
-            violations.extend(_scan_path(Path(raw)))
+        v, u = _scan_stdin() if raw == "-" else _scan_path(Path(raw))
+        violations.extend(v)
+        unreadable.extend(u)
+    # Print every diagnostic the run produced. The footer below is
+    # specific to label leaks; it only fires when ``violations`` is
+    # non-empty so an "unreadable"-only run does not falsely advertise
+    # a role-name match.
+    if violations or unreadable:
+        print("\n".join(violations + unreadable), file=sys.stderr)
     if violations:
-        print("\n".join(violations), file=sys.stderr)
         print(
             "\nInternal role names must not appear in external-facing text "
-            "(commits, PR titles/bodies, issue comments, docs). Use a "
-            "neutral reference (e.g. 'reviewer', 'Sven Delmas') instead.",
+            "(PR titles/bodies, issue comments, docs). Use a neutral "
+            "reference (e.g. 'reviewer', 'Sven Delmas') instead.",
             file=sys.stderr,
         )
+    # Exit-code priority: I/O errors (exit 2) take precedence over
+    # label leaks (exit 1) so the caller surfaces the structural
+    # failure first; a clean run exits 0.
+    if unreadable:
+        return 2
+    if violations:
         return 1
     return 0
 
