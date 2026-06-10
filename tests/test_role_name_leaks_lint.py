@@ -382,3 +382,33 @@ def test_directory_argument_still_silently_skipped(tmp_path: Path):
     only *nonexistent* paths are the typo hazard."""
     result = _run(tmp_path)
     assert result.returncode == 0, result.stderr
+
+
+def test_nonexistent_path_matching_skip_rule_still_exits_two(tmp_path: Path):
+    """The existence check must run *before* the skip rules: a typo'd
+    path with a skip-listed suffix (``.lock``) or a skip-listed
+    directory component (``.venv``) is still a typo, and the ``&&``
+    pre-flight chain must stay blocked. (Copilot review on PR #97: the
+    original ordering let ``_should_skip`` silently pass nonexistent
+    skip-rule matches.)"""
+    for missing in (
+        tmp_path / "missing-body.lock",
+        tmp_path / ".venv" / "missing-body.md",
+    ):
+        result = _run(missing)
+        assert result.returncode == 2, (
+            f"{missing}: expected exit 2, got {result.returncode}; "
+            f"stderr: {result.stderr}"
+        )
+        assert "no such file" in result.stderr
+
+
+def test_existing_skip_rule_path_still_silently_skipped(tmp_path: Path):
+    """Reordering the existence check must not change skip-rule
+    semantics for paths that DO exist: an on-disk ``.lock`` file —
+    even one containing a forbidden label that would exit 1 if it
+    were scanned — stays a silent exit-0 skip."""
+    lock = tmp_path / "deps.lock"
+    lock.write_text("Handoff to Lead Engineer for merge.\n")  # role-name-lint: allow
+    result = _run(lock)
+    assert result.returncode == 0, result.stderr
