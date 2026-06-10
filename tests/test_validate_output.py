@@ -318,6 +318,85 @@ def test_cell_bounds_flags_fractional_int(amc, schema_run):
     assert any("active_connections" in v and "fractional" in v for v in violations)
 
 
+@pytest.mark.parametrize("bad_cell", ["nan", "inf", "-inf"])
+def test_cell_bounds_flags_non_finite_in_int_column(amc, schema_run, bad_cell):
+    """A NaN/±inf cell in a ``dtype='int'`` column must surface a
+    ``non_finite`` violation — not crash the validator. Pre-guard,
+    ``float('nan')`` parsed fine and then ``round(nan)`` raised an
+    uncaught ValueError (OverflowError for ±inf) out of
+    ``_validate_component_cells``, turning a corrupted CSV into a raw
+    traceback instead of a violation report."""
+    schema = _load_schema(schema_run)
+    component = "apigateway"
+    csv_path = schema_run / f"{component}.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("active_connections")
+    parts = rows[1].split(",")
+    parts[col] = bad_cell
+    rows[1] = ",".join(parts)
+    csv_path.write_text("\n".join(rows) + "\n")
+    violations = amc._validate_component_cells(schema_run, schema, component)
+    assert any(
+        "active_connections" in v and "not finite" in v for v in violations
+    )
+
+
+def test_cell_bounds_flags_nan_in_float_column(amc, schema_run):
+    """A NaN cell in a float column must surface a ``non_finite``
+    violation. Pre-guard it passed every range check silently: every
+    comparison against NaN is False, so ``below_min`` / ``above_max`` /
+    ``negative_kind`` never fired."""
+    schema = _load_schema(schema_run)
+    component = "apigateway"
+    csv_path = schema_run / f"{component}.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("error_rate")
+    parts = rows[1].split(",")
+    parts[col] = "nan"
+    rows[1] = ",".join(parts)
+    csv_path.write_text("\n".join(rows) + "\n")
+    violations = amc._validate_component_cells(schema_run, schema, component)
+    assert any("error_rate" in v and "not finite" in v for v in violations)
+
+
+def test_derivation_flags_non_finite_derived_cell(amc, schema_run):
+    """A NaN ``hit_ratio`` cell must surface a derivation violation.
+    Pre-guard, NaN poisoned the tolerance gate (``abs(nan - x) > tol``
+    is False) so a corrupted derived column validated clean."""
+    schema = _load_schema(schema_run)
+    component = "cacheservice"
+    csv_path = schema_run / f"{component}.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("hit_ratio")
+    parts = rows[1].split(",")
+    parts[col] = "nan"
+    rows[1] = ",".join(parts)
+    csv_path.write_text("\n".join(rows) + "\n")
+    violations = amc._validate_component_derivations(schema_run, schema, component)
+    assert any("hit_ratio" in v and "not finite" in v for v in violations)
+
+
+def test_derivation_flags_non_finite_recomputed_source(amc, schema_run):
+    """A NaN *source* cell (``cache_hits``) makes the recomputed
+    ``hit_ratio`` non-finite; the derivation check must flag it rather
+    than let the NaN poison the tolerance comparison."""
+    schema = _load_schema(schema_run)
+    component = "cacheservice"
+    csv_path = schema_run / f"{component}.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("cache_hits")
+    parts = rows[1].split(",")
+    parts[col] = "nan"
+    rows[1] = ",".join(parts)
+    csv_path.write_text("\n".join(rows) + "\n")
+    violations = amc._validate_component_derivations(schema_run, schema, component)
+    assert any("hit_ratio" in v and "not finite" in v for v in violations)
+
+
 def test_cell_bounds_flags_negative_for_counter(amc, schema_run):
     """A negative cache_hits cell must surface the counter-non-negative
     check (also the min_value=0 check; the validator records each kind

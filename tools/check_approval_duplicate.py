@@ -335,13 +335,56 @@ def _gh_json(args: list[str], context: str) -> Any:
     """Run ``gh`` and parse stdout as JSON. ``json.JSONDecodeError`` is
     wrapped as ``OSError`` so the script's documented exit-2 contract
     holds for malformed payloads (e.g. a ``gh`` version that adds a
-    leading log line, or a paginated endpoint where ``--paginate``
-    emits an unexpected shape)."""
+    leading log line). Single-document endpoints only — paginated
+    array endpoints go through ``_parse_paginated_json_arrays``."""
     raw = _gh(args)
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise OSError(f"{context}: gh returned malformed JSON: {exc}") from exc
+
+
+def _parse_paginated_json_arrays(raw: str, context: str) -> list[Any]:
+    """Parse ``gh api --paginate`` stdout for a JSON-*array* endpoint.
+
+    For array endpoints ``--paginate`` concatenates each page's JSON
+    array back-to-back (``[...][...]``), which is not a single valid
+    JSON document — ``json.loads`` raises ``Extra data`` as soon as a
+    thread exceeds one page (100 comments). Decode page-by-page with
+    ``raw_decode`` and flatten, preserving page order. The single-page
+    common case is one array and decodes in one pass.
+
+    Fail-closed posture matches ``_gh_json``: empty stdout, a non-array
+    page, or trailing junk raise ``OSError`` (exit 2 at ``main()``) so
+    the ``&&`` chain blocks the ``gh`` write instead of treating a
+    malformed response as "no prior comments".
+    """
+    decoder = json.JSONDecoder()
+    items: list[Any] = []
+    idx = 0
+    length = len(raw)
+    decoded_pages = 0
+    while True:
+        while idx < length and raw[idx].isspace():
+            idx += 1
+        if idx >= length:
+            break
+        try:
+            page, idx = decoder.raw_decode(raw, idx)
+        except json.JSONDecodeError as exc:
+            raise OSError(
+                f"{context}: gh returned malformed JSON: {exc}"
+            ) from exc
+        if not isinstance(page, list):
+            raise OSError(
+                f"{context}: gh --paginate page {decoded_pages + 1} is "
+                f"non-list: {type(page).__name__}"
+            )
+        items.extend(page)
+        decoded_pages += 1
+    if decoded_pages == 0:
+        raise OSError(f"{context}: gh returned empty output")
+    return items
 
 
 def _gh_pr_head(pr: int) -> tuple[str, str]:
@@ -380,13 +423,10 @@ def _gh_current_user() -> str:
 
 
 def _gh_pr_comments(owner_repo: str, pr: int) -> list[dict[str, Any]]:
-    payload = _gh_json(
-        ["api", f"repos/{owner_repo}/issues/{pr}/comments", "--paginate"],
-        context=f"gh api issues/{pr}/comments",
+    raw = _gh(["api", f"repos/{owner_repo}/issues/{pr}/comments", "--paginate"])
+    return _parse_paginated_json_arrays(
+        raw, context=f"gh api issues/{pr}/comments"
     )
-    if not isinstance(payload, list):
-        raise OSError(f"gh api issues/{pr}/comments returned non-list: {type(payload).__name__}")
-    return payload
 
 
 def _load_prior_comments(path: Path) -> list[dict[str, Any]]:

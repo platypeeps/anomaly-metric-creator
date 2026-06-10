@@ -15,6 +15,7 @@ import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
 
 from conftest import SCRIPT_PATH
 
@@ -745,15 +746,19 @@ def test_stream_otel_gauges_max_events_caps_attempts_not_successes(amc, tmp_path
     )
 
 
+@pytest.mark.parametrize("verbose", [False, True])
 def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
-    amc, tmp_path, capsys
+    amc, tmp_path, capsys, verbose
 ):
-    """Gauge HTTP failures log response headers and payloads, including CF-Ray.
+    """Gauge HTTP failures log response headers — and, only under
+    ``verbose=True``, the request payload — including CF-Ray.
 
     The sensitive ``Set-Cookie`` / ``Authorization`` / ``X-Api-Key``
     headers an upstream proxy can echo on a 4xx response are masked
     before they reach the activity log; the diagnostic
-    ``CF-Ray`` / ``X-Debug-Header`` pair survives.
+    ``CF-Ray`` / ``X-Debug-Header`` pair survives. The raw
+    ``request_body`` follows the ``--otel-verbose`` contract: present
+    in verbose failure records, absent otherwise.
     """
     csv_path = tmp_path / "database.csv"
     log_target = tmp_path / "gauge_http_error.log"
@@ -794,7 +799,7 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
             auth_headers=None,
             protocol="json",
             activity_log_path=log_target,
-            verbose=False,
+            verbose=verbose,
         )
     finally:
         server.shutdown()
@@ -829,9 +834,15 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
     assert "gauge-cookie" not in log_text
     assert "gauge-echoed-token" not in log_text
     assert "sk_live_gauge_secret" not in log_text
-    assert '"resourceMetrics"' in kv["request_body"]
-    assert '"write_latency_ms"' in kv["request_body"]
-    assert '"gauge"' in kv["request_body"]
+    if verbose:
+        assert '"resourceMetrics"' in kv["request_body"]
+        assert '"write_latency_ms"' in kv["request_body"]
+        assert '"gauge"' in kv["request_body"]
+    else:
+        assert "request_body" not in kv, (
+            "non-verbose FAIL records must not carry the raw request "
+            "payload (--otel-verbose contract)"
+        )
 
 
 def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_path):
