@@ -1,5 +1,6 @@
 import csv
 import datetime
+import hashlib
 import importlib.util
 import io
 import sys
@@ -328,6 +329,24 @@ def count_lines(path: Path) -> int:
 def count_blank_lines(path: Path) -> int:
     with open(path) as f:
         return sum(1 for line in f if line.strip() == "")
+
+
+def sha256_path(path) -> str:
+    """Streaming SHA-256 hex digest of a file.
+
+    The single shared helper for every locked-hash test. Reads in 1 MiB
+    chunks so peak RSS stays bounded regardless of file size — the
+    7-day full-resolution CSVs run to multi-hundred-MB, and the Pre-PR
+    checklist's "Test resource cost" rule forbids whole-file
+    ``read_bytes()`` hashing (the PR #67 antipattern). Eleven test
+    files previously carried near-identical private copies, two of
+    them non-streaming; this is their replacement.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def read_manifest(out_dir: Path):

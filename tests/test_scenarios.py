@@ -29,12 +29,10 @@ These tests cover:
 
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
 
 import pytest
 
-from conftest import read_manifest, run_capture
+from conftest import read_manifest, run_capture, sha256_path
 
 
 THREE_MULTI_DAY_SCENARIOS = {"cache_leak_restart", "jwks_rotation_chaos", "db_disk_exhaustion"}
@@ -250,8 +248,6 @@ HIGH_SEVEN_DAY_CAPPED_HASHES = {
 }
 
 
-def _sha256_path(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 # ------------------------------------------------------------------
@@ -1281,6 +1277,15 @@ def test_resolve_scenarios_warning_order_is_deterministic(amc, tmp_path):
         if scenario.severity not in allowed_severities
         or scenario.days_required > days
     )
+    # Non-empty guard (pre-PR checklist "Test path determinism"): if a
+    # catalog re-tune ever made every scenario medium-severity/1-day,
+    # both sides would be empty and `[] == []` would pass while
+    # asserting nothing about WARNING ordering.
+    assert expected, (
+        "registry filter produced no dropped scenarios at "
+        f"--duration-days {days} --signal-level {signal_level}; the "
+        "ordering assertion below would be vacuous"
+    )
     assert warning_slugs == expected, (
         "Expected scenario WARNING lines in sorted-slug order "
         f"{expected}; got {warning_slugs}"
@@ -1330,7 +1335,7 @@ def test_exclude_scenarios_jwks_drops_only_b(amc, tmp_path):
 def test_default_one_day_csvs_byte_identical(one_day_run_a, filename, expected_hash):
     path = one_day_run_a.out_dir / filename
     assert path.exists(), f"{filename} missing from default 1-day run"
-    actual = _sha256_path(path)
+    actual = sha256_path(path)
     assert actual == expected_hash, (
         f"{filename} drifted from pre-refactor hash. "
         f"expected={expected_hash} actual={actual}"
@@ -1341,7 +1346,7 @@ def test_default_one_day_csvs_byte_identical(one_day_run_a, filename, expected_h
 def test_default_seven_day_csvs_byte_identical(seven_day_run, filename, expected_hash):
     path = seven_day_run.out_dir / filename
     assert path.exists(), f"{filename} missing from default 7-day run"
-    actual = _sha256_path(path)
+    actual = sha256_path(path)
     assert actual == expected_hash, (
         f"{filename} drifted from pre-refactor hash. "
         f"expected={expected_hash} actual={actual}"
@@ -1377,7 +1382,7 @@ def test_high_seven_day_capped_csvs_byte_identical(
         f"{filename} missing from --signal-level high --duration-days 7 "
         f"--anomaly-count 100 run"
     )
-    actual = _sha256_path(path)
+    actual = sha256_path(path)
     assert actual == expected_hash, (
         f"{filename} drifted from pre-refactor hash under "
         f"--signal-level high --anomaly-count 100. The scenario / "
@@ -1879,7 +1884,7 @@ def test_anomaly_count_with_scenarios_is_deterministic_for_seed(amc, tmp_path):
     ]
     run_capture(amc, out_a, days=7, extra_args=extra)
     run_capture(amc, out_b, days=7, extra_args=extra)
-    assert _sha256_path(out_a / "anomalies.csv") == _sha256_path(out_b / "anomalies.csv"), (
+    assert sha256_path(out_a / "anomalies.csv") == sha256_path(out_b / "anomalies.csv"), (
         "Two runs of --scenarios + --anomaly-count at the same --seed must "
         "produce byte-identical anomalies.csv"
     )

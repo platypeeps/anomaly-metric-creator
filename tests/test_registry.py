@@ -125,9 +125,11 @@ def test_scenarios_spec_level_severity_in_vocabulary(amc):
     the same reason; this test mirrors that invariant for explicit coverage.
     """
     valid = {"low", "medium", "high"}
+    explicit_severity_count = 0
     for slug, scenario in amc.SCENARIOS.items():
         for component, spec in scenario.primary_specs:
             if "severity" in spec:
+                explicit_severity_count += 1
                 assert spec["severity"] in valid, (
                     f"SCENARIOS[{slug!r}].primary_specs entry for "
                     f"{component!r} has severity {spec['severity']!r}; "
@@ -135,11 +137,19 @@ def test_scenarios_spec_level_severity_in_vocabulary(amc):
                 )
         for target, cascade in scenario.cascade_specs:
             if "severity" in cascade:
+                explicit_severity_count += 1
                 assert cascade["severity"] in valid, (
                     f"SCENARIOS[{slug!r}].cascade_specs entry targeting "
                     f"{target!r} has severity {cascade['severity']!r}; "
                     f"must be one of {sorted(valid)}"
                 )
+    # Non-empty guard (pre-PR checklist "Test path determinism"): if the
+    # catalog migrated to scenario-level-only severity, the loops above
+    # would assert zero times while keeping their green checkmark.
+    assert explicit_severity_count > 0, (
+        "no primary or cascade spec carries an explicit severity; the "
+        "vocabulary assertions above ran zero times"
+    )
 
 
 def test_validate_scenarios_registry_rejects_bad_spec_severity(amc, monkeypatch):

@@ -50,24 +50,17 @@ Acceptance gates exercised here:
 """
 from __future__ import annotations
 
-import hashlib
 from datetime import timedelta
 
 import numpy as np
 import pytest
 
-from conftest import _load_amc, read_component_rows, run_capture
+from conftest import _load_amc, read_component_rows, run_capture, sha256_path
 
 
 # ------------------------------------------------------------------
 # Helpers (mirror tests/test_topology_saturation.py)
 # ------------------------------------------------------------------
-def _sha256_path(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _column_values(out_dir, component, metric):
@@ -326,8 +319,8 @@ def test_realistic_mode_llm_analytics_byte_identical_to_default(
     """Explicit ``--topology-mode realistic`` produces the same
     ``llm_analytics.csv`` bytes as the no-flag default 1-day run
     captured by the session-scoped fixture (after the phase 6 flag day)."""
-    default_hash = _sha256_path(one_day_run_a.out_dir / "llm_analytics.csv")
-    explicit_hash = _sha256_path(
+    default_hash = sha256_path(one_day_run_a.out_dir / "llm_analytics.csv")
+    explicit_hash = sha256_path(
         realistic_one_day_llm.out_dir / "llm_analytics.csv"
     )
     assert default_hash == explicit_hash, (

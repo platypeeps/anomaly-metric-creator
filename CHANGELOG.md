@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed
+
+- Fixed a latent saturation-composition bug: a metric listed in both the
+  latency-family and error-family tuples of a `_TOPOLOGY_SATURATION_TARGETS`
+  entry would lose its latency multiplier (the error pass rebuilt the spec
+  from the pristine list). No v1 registry entry overlaps, so shipped output
+  is unchanged; the fix keeps the shared path aligned with the per-instance
+  path for the first entry that does.
+- `tools/check_role_name_leaks.py` now exits 2 with a diagnostic when a path
+  argument does not exist, so a typo'd body filename in the documented
+  `&& gh pr comment` pre-flight chain blocks the post instead of exiting 0
+  and letting an unchecked body through.
+
+### Changed
+
+- Topology metric registries (`_TOPOLOGY_LOAD_METRICS`,
+  `_TOPOLOGY_SATURATION_TARGETS`) are now validated at import time: unknown
+  components, typo'd metric names, and edges whose source/target lacks a
+  required registry entry raise a clear `ValueError` instead of silently
+  generating decoupled output.
+- `generate_component()` skips the fixed-3 CSV string formatting (historically
+  ~80% of generation runtime) when the run's `--emit-selection` omits
+  `metrics`; CSV bytes for runs that do emit metrics are unchanged.
+
 ### Added
 
 - Added a `gpu_inference` component whose default CSV columns match the
@@ -45,6 +69,14 @@
 
 ### Tests
 
+- Consolidated eleven per-file `_sha256` helpers into a single streaming
+  `conftest.sha256_path` (two copies read whole multi-hundred-MB CSVs into
+  RAM via `read_bytes()`), and added non-emptiness guards to four
+  registry-derived `expected` assertions that could otherwise pass
+  vacuously if a catalog change emptied the filter.
+- Added regression tests for the topology-registry import validation, the
+  saturation overlap-target composition, the emit-selection formatting
+  skip, and the role-name lint's nonexistent-path exit code.
 - Added parser and end-to-end coverage for `--otel-gauges-only`.
 - Added HTTP failure coverage for anomaly metrics and gauge metrics to verify
   Cloudflare IDs, response headers, and JSON request payloads are logged only

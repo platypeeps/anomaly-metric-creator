@@ -351,3 +351,34 @@ def test_real_repo_tree_is_clean():
     assert result.returncode == 0, (
         f"lint failed against current repo tree:\nstderr:\n{result.stderr}"
     )
+
+
+def test_nonexistent_path_exits_two(tmp_path: Path):
+    """A typo'd path argument must exit 2, not 0: the documented ad-hoc
+    pre-flight chains this script with ``&&`` before ``gh pr comment``,
+    so a silently-clean exit on a missing body file would let an
+    unchecked body post."""
+    missing = tmp_path / "definitely-missing-body.md"
+    result = _run(missing)
+    assert result.returncode == 2, (
+        f"expected exit 2 for nonexistent path, got {result.returncode}; "
+        f"stderr: {result.stderr}"
+    )
+    assert "no such file" in result.stderr
+
+
+def test_nonexistent_path_takes_precedence_over_clean_files(tmp_path: Path):
+    """Mixing a clean file with a missing one still exits 2 — the I/O
+    error must not be masked by the clean scan."""
+    clean = tmp_path / "clean.md"
+    clean.write_text("nothing to see here\n", encoding="utf-8")
+    result = _run(clean, tmp_path / "missing.md")
+    assert result.returncode == 2, result.stderr
+
+
+def test_directory_argument_still_silently_skipped(tmp_path: Path):
+    """An existing directory keeps the historic silent skip (exit 0):
+    pre-commit only passes files, and a directory has no text to leak —
+    only *nonexistent* paths are the typo hazard."""
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr

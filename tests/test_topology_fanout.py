@@ -35,20 +35,13 @@ These tests cover:
 """
 from __future__ import annotations
 
-import hashlib
 
 import numpy as np
 import pytest
 
-from conftest import read_component_rows, read_manifest, run_capture
+from conftest import read_component_rows, read_manifest, run_capture, sha256_path
 
 
-def _sha256_path(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _column_values(out_dir, component, metric):
@@ -125,8 +118,8 @@ def test_topology_fanout_realistic_matches_default_byte_for_byte(
         "loadbalancer.csv", "apigateway.csv", "authservice.csv",
         "cacheservice.csv", "database.csv", "anomalies.csv",
     ):
-        default_hash = _sha256_path(one_day_run_a.out_dir / filename)
-        explicit_hash = _sha256_path(explicit.out_dir / filename)
+        default_hash = sha256_path(one_day_run_a.out_dir / filename)
+        explicit_hash = sha256_path(explicit.out_dir / filename)
         assert default_hash == explicit_hash, (
             f"{filename} drifted between default run and "
             f"--topology-mode realistic run"
