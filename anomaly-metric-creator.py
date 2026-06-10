@@ -3371,9 +3371,13 @@ _validate_topology()
 # injected on top of the coupled upstream signal in
 # ``--topology-mode realistic``. Kept small (5.0) relative to the typical
 # coupling signal std (~15–1600 depending on component) so the Pearson
-# correlation between upstream and downstream stays well above the 0.9/0.95
-# acceptance thresholds while the column still looks like a noisy signal
-# rather than a perfect copy of the upstream.
+# correlation between upstream and downstream stays well above every
+# gate that reads it — the 0.95 phase-2 acceptance threshold in
+# ``tests/test_topology_loadbalancer_gateway.py``, the 0.9 phase-3
+# thresholds in ``tests/test_topology_fanout.py``, and the validator's
+# ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD = 0.85`` — while the
+# column still looks like a noisy signal rather than a perfect copy
+# of the upstream.
 _TOPOLOGY_COUPLE_NOISE_STD = 5.0
 
 
@@ -3384,9 +3388,12 @@ def _topology_generation_order(active_components: set[str]) -> list[str]:
     first; downstream components come after their upstream(s). Only edges
     where both endpoints are in ``active_components`` are considered, so
     ``--components`` filtering naturally restricts the dependency graph.
-    Cycles are not expected in TOPOLOGY (v1 graph is a DAG); if one ever
-    appears, fall back to ``COMPONENTS`` insertion order for the cycle
-    members so we always make forward progress.
+    Cycles are not expected in TOPOLOGY (``_validate_topology`` rejects
+    them at import time, so this branch is defensive dead code); if one
+    ever appeared, the fallback flushes *all* remaining nodes — cycle
+    members and their not-yet-ready downstreams alike — in one
+    ``COMPONENTS``-insertion-order pass so the walk always makes
+    forward progress.
 
     Ties (multiple roots / multiple ready nodes at the same Kahn step)
     break on ``COMPONENTS`` insertion order so the result is deterministic
@@ -4018,8 +4025,8 @@ def _compute_topology_arrays_per_instance(
     # Cache shared across downstream instances: under mismatched
     # cardinality, ``_per_instance_upstream_view`` averages every
     # upstream pod into a single dict that is identical for every
-    # downstream pod. Without the cache the same ``np.stack`` /
-    # ``np.mean`` work runs N_down times per upstream
+    # downstream pod. Without the cache the same incremental
+    # sum-then-divide averaging runs N_down times per upstream
     # (O(N_down * N_up * n_rows)); with the cache it runs once
     # (O(N_up * n_rows)).
     uniform_fanout_cache: dict[str, dict[str, np.ndarray]] = {}
@@ -4186,8 +4193,14 @@ def _arrays_equal_dict(
     Used by ``generate_component`` to detect whether the
     per-instance topology arrays returned by
     ``_compute_topology_arrays_per_instance`` diverge from instance
-    0. Equality is element-wise via ``np.array_equal`` — covers both
-    identical floats and identical NaN propagation.
+    0. Equality is element-wise via ``np.array_equal`` with its
+    default ``equal_nan=False`` — two byte-identical arrays that
+    contain NaN therefore compare *unequal* and force the divergent
+    per-instance path. That is fail-safe (the divergent path still
+    produces correct, identical output with an unchanged RNG schedule
+    since coupling noise is pre-drawn and shared; only memory is
+    wasted on redundant per-instance buffers), and NaN never reaches
+    these arrays from the catalog generators today.
     """
     if a.keys() != b.keys():
         return False
@@ -9198,7 +9211,7 @@ def _ensure_long_form_fd_capacity(n_sources: int) -> None:
     iterators primes every source, so all of them hold an open
     ``csv.reader`` handle for the lifetime of the merge. At max
     fan-out (``len(COMPONENTS) * MAX_INSTANCES_PER_COMPONENT`` =
-    13 × 20 = 260) we can exceed the default macOS soft limit
+    14 × 20 = 280) we can exceed the default macOS soft limit
     (256), causing ``EMFILE`` deep inside the writer.
 
     Fix on POSIX (Linux, macOS): try to bump the soft limit (up to
@@ -9213,7 +9226,7 @@ def _ensure_long_form_fd_capacity(n_sources: int) -> None:
     helper returns silently and lets ``open()`` surface the real
     error inside ``heapq.merge`` if the OS-level FD cap is reached.
     In practice the Windows default open-file table is plenty large
-    for ``MAX_INSTANCES_PER_COMPONENT * len(COMPONENTS) = 260`` so
+    for ``MAX_INSTANCES_PER_COMPONENT * len(COMPONENTS) = 280`` so
     this is unlikely to bite; tests
     (``test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low``)
     skip on Windows via ``pytest.importorskip("resource")``.
@@ -9488,9 +9501,12 @@ def write_gauges_csv(
     instance id (sorted), then on the per-component CSV's column order
     (``MetricSpec`` order). The function sorts ``component_csv_paths.keys()``
     internally so the component tiebreaker holds regardless of how the
-    caller built the mapping; the instance tiebreaker follows the
-    generated CSV's per-instance block order (id ``i0`` before ``i1`` etc.
-    in v1).
+    caller built the mapping; the instance tiebreaker sorts ids
+    *lexicographically*, which matches the generated per-instance block
+    order for single-digit fan-outs but diverges from numeric order at
+    ``--instances-per-component`` >= 11 (``i0, i1, i10, i11, …, i19,
+    i2, …``). ``_write_combined_long_form`` sorts the same way, so the
+    two long-form artifacts always agree on the tie-break.
 
     Values are written through verbatim from the per-component CSV's raw
     cell string — no ``float(raw)`` coercion is attempted, so the on-disk
