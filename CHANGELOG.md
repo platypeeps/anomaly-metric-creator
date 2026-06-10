@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Fixed
+
+- Fixed a manifest-coherence bug under `--drop-rate > 0`: a shaped span
+  anomaly whose first row was dropped wrote its surviving rows into the
+  component CSV but recorded no `anomalies.csv` entry. The manifest entry is
+  now anchored at the span's first kept row (a span dropped in its entirety
+  still records none).
+- Fixed `--validate-output` handling of non-finite cells: a NaN/±inf cell in
+  a `dtype="int"` column crashed the validator with an uncaught
+  `ValueError`/`OverflowError` from `round()`, and a NaN cell in a float
+  column (or a NaN flowing through a derivation recomputation) passed every
+  range and tolerance check silently. Both now report `non_finite`
+  violations.
+- Fixed `tools/check_approval_duplicate.py` production mode on PRs with more
+  than 100 comments: `gh api --paginate` concatenates JSON arrays
+  back-to-back, which the single-document parse rejected with `Extra data`,
+  exiting 2 on every long-thread invocation. Pages are now decoded
+  individually and flattened.
+
 ### Added
 
 - Added a `gpu_inference` component whose default CSV columns match the
@@ -22,6 +41,10 @@
 
 ### Changed
 
+- The raw `request_body` diagnostic in `otel-activity.log` `RETRY`/`FAIL`
+  records is now emitted only under `--otel-verbose`, matching the
+  documented verbose contract. Non-verbose error records keep the always-on
+  `response_headers` (redacted) and `cf_ray` diagnostics.
 - Changed the CLI defaults to match the reference CSV shape: 50,000 rows at a
   60-second interval, using a fractional default `--duration-days` value of
   about 34.72 days and a default `--drop-rate 0`.

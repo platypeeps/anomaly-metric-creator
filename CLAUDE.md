@@ -18,7 +18,11 @@ The script uses a single generator function `generate_component()` that:
    reference observability telemetry CSV shape.
 3. Injects anomalies at their nearest row (`round(time_offset / interval)`). Specs
    whose row index falls outside `[0, n_rows)` are warned on stderr and skipped.
-4. Randomly emits blank lines at `drop_rate` to simulate packet loss.
+4. Randomly drops rows at `drop_rate` to simulate packet loss (the row is
+   omitted from the CSV entirely; no blank line is emitted). A dropped row
+   emits neither a CSV row nor a manifest entry; a shaped span whose
+   leading row(s) are dropped records its manifest entry at the span's
+   first kept row (a span dropped in its entirety records none).
 5. Writes timestamp + metric columns to `{component}.csv`.
 
 `generate_component()` is fully vectorized: one numpy op per metric column, anomalies
@@ -68,8 +72,13 @@ masks the value of any header whose name (case-insensitive) is in
 scheme prefix (`Bearer` / `Basic`) is kept and only the credential is
 replaced with `***`; every other sensitive header has its full value
 replaced. The request-side `_masked_headers` reads the same set so
-the two paths cannot drift. Allowlist + round-trip coverage lives in
-`tests/test_redact_sensitive_headers.py`, and
+the two paths cannot drift. The raw `request_body` diagnostic on
+RETRY/FAIL records is gated behind `--otel-verbose` (threaded as the
+`verbose` kwarg into `_http_error_activity_fields`); non-verbose error
+records carry only the always-on `response_headers` / `cf_ray`
+diagnostics, so a failing endpoint cannot re-serialize a full gauge
+batch into the log on every retry. Allowlist + round-trip coverage
+lives in `tests/test_redact_sensitive_headers.py`, and
 `tests/test_cli.py::test_otel_http_error_activity_log_includes_response_headers`
 + `tests/test_otel_gauges.py::test_stream_otel_gauges_http_error_activity_log_includes_response_headers`
 exercise the redaction through the live HTTP error path.
@@ -496,7 +505,11 @@ the validator knows about against the artifacts in `PATH`:
 - `_validate_component_timestamp_coverage` — every row's timestamp is in
   `[START, START + total_seconds)`.
 - `_validate_component_cells` — header column order matches the schema's
-  MetricSpec list; each cell parses as float, falls in
+  MetricSpec list; each cell parses as float, is finite (NaN/±inf cells
+  are reported as `non_finite` violations — without the guard a NaN
+  cell passes every range check silently because every comparison
+  against NaN is False, and a NaN/inf cell in a `dtype="int"` column
+  crashes `round()` instead of reporting), falls in
   `[min_value, max_value]` when declared, is whole-integer (modulo
   3-decimal CSV precision) when `dtype="int"`, and is ≥ 0 when
   `semantic_type` is `counter` or `rate`. Each unique
@@ -511,6 +524,9 @@ the validator knows about against the artifacts in `PATH`:
 - `_validate_component_derivations` — for every metric whose schema entry
   declares a `derivation`, recompute the value from its source columns
   and assert agreement within `_VALIDATE_DERIVATION_TOLERANCE` (0.01).
+  A non-finite value on either side (a NaN derived cell, or a NaN
+  source flowing through the recomputer) is itself a violation — NaN
+  would otherwise poison the tolerance comparison and validate clean.
   Dispatched by `(component, metric)` via the `_RECOMPUTERS` table —
   add a `DERIVATIONS` entry (generator) and a `_RECOMPUTERS` entry
   (validator) in lockstep. Phase 8: the `name_to_col`
@@ -1683,8 +1699,12 @@ into the existing `gh pr comment --body-file …` pre-flight slot:
 ```
 
 Under `--pr <N>`, the script calls `gh api` to read the head SHA, the
-head commit's committer timestamp, the prior issue-comments thread,
-and (when `--author` is omitted) the current user's login. The
+head commit's committer timestamp, the prior issue-comments thread
+(`--paginate`; the page-concatenated `[...][...]` output gh emits for
+multi-page array endpoints is parsed page-by-page and flattened, so
+threads past 100 comments — the exact PR #86 shape — gate correctly
+instead of exiting 2 on `Extra data`), and (when `--author` is
+omitted) the current user's login. The
 `<owner>/<repo>` slug is also fetched in this mode and threaded into
 the diagnostic so the suggested `gh api … -X PATCH` command is
 copy-paste-ready. For offline tests and CI hooks, fixture mode

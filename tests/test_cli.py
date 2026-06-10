@@ -13,6 +13,8 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
+
 from conftest import COMPONENTS, SCRIPT_PATH
 
 
@@ -952,14 +954,20 @@ def test_otel_activity_log_records_failure(tmp_path):
     assert "FAIL" in contents
 
 
-def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, capsys):
-    """HTTP receiver failures log response headers and payloads, including CF-Ray.
+@pytest.mark.parametrize("verbose", [False, True])
+def test_otel_http_error_activity_log_includes_response_headers(
+    amc, tmp_path, capsys, verbose
+):
+    """HTTP receiver failures log response headers — and, only under
+    ``verbose=True``, the request payload — including CF-Ray.
 
     The sensitive ``Set-Cookie`` and ``Authorization`` headers that
     Cloudflare-style intermediaries can echo on a 4xx response must be
     masked before they reach the on-disk activity log; the
     ``CF-Ray`` / ``X-Debug-Header`` diagnostic pair survives so the
-    failure record stays useful.
+    failure record stays useful. The raw ``request_body`` follows the
+    ``--otel-verbose`` contract: present in verbose failure records,
+    absent otherwise.
     """
     class _Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
@@ -994,7 +1002,7 @@ def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, c
             auth_headers=None,
             protocol="json",
             activity_log_path=log_target,
-            verbose=False,
+            verbose=verbose,
         )
     finally:
         server.shutdown()
@@ -1034,8 +1042,14 @@ def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, c
     assert "plaintext-cookie" not in log_text
     assert "echoed-token-abc" not in log_text
     assert "sk_live_super_secret" not in log_text
-    assert '"resourceMetrics"' in kv["request_body"]
-    assert '"write_latency_ms"' in kv["request_body"]
+    if verbose:
+        assert '"resourceMetrics"' in kv["request_body"]
+        assert '"write_latency_ms"' in kv["request_body"]
+    else:
+        assert "request_body" not in kv, (
+            "non-verbose FAIL records must not carry the raw request "
+            "payload (--otel-verbose contract)"
+        )
 
 
 def test_otel_activity_log_not_created_when_streaming_disabled(tmp_path):
