@@ -167,28 +167,17 @@ def _exclude_anomaly_rows(ts_list, *arrays):
 
 
 # ------------------------------------------------------------------
-# Module-scoped 1-day realistic + independent runs (shared across tests)
+# 1-day realistic + independent runs (shared across tests)
+#
+# Statistical tests consume the session-scoped ``one_day_run_a``
+# (default no-flag run; realistic mode is the argparse default since
+# the phase 6 flag day) and ``one_day_independent_run`` (same
+# args as the module-scoped duplicates this file used to carry).
+# Regenerating either here would be the PR #63 duplicate-fixture
+# antipattern from the "Test resource cost" checklist; the
+# explicit-flag byte-identity is pinned by
+# ``test_realistic_mode_llm_analytics_byte_identical_to_default``.
 # ------------------------------------------------------------------
-@pytest.fixture(scope="module")
-def realistic_one_day_llm(amc, tmp_path_factory):
-    # interval_seconds=1.0 keeps 86,400 rows/day so the byte-identity and
-    # Pearson correlation checks have enough data.
-    out = tmp_path_factory.mktemp("phase5_realistic")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=["--topology-mode", "realistic"],
-    )
-
-
-@pytest.fixture(scope="module")
-def independent_one_day_llm(amc, tmp_path_factory):
-    # interval_seconds=1.0 matches realistic_one_day_llm's row density for
-    # valid realistic-vs-independent contrast assertions.
-    out = tmp_path_factory.mktemp("phase5_independent")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=["--topology-mode", "independent"],
-    )
 
 
 # ------------------------------------------------------------------
@@ -321,15 +310,24 @@ def test_llm_analytics_in_saturation_targets_registry(amc):
 # the realistic alias must produce the same llm_analytics CSV bytes.
 # ------------------------------------------------------------------
 def test_realistic_mode_llm_analytics_byte_identical_to_default(
-    amc, one_day_run_a, realistic_one_day_llm,
+    amc, one_day_run_a, tmp_path,
 ):
     """Explicit ``--topology-mode realistic`` produces the same
     ``llm_analytics.csv`` bytes as the no-flag default 1-day run
-    captured by the session-scoped fixture (after the phase 6 flag day)."""
-    default_hash = _sha256_path(one_day_run_a.out_dir / "llm_analytics.csv")
-    explicit_hash = _sha256_path(
-        realistic_one_day_llm.out_dir / "llm_analytics.csv"
+    captured by the session-scoped fixture (after the phase 6 flag day).
+
+    The explicit-flag run is function-scoped (mirroring the equivalent
+    pins in ``test_topology_fanout.py`` / ``test_topology_saturation.py``)
+    because it is the only consumer that genuinely needs the flag spelled
+    out; every statistical test below reads the session-scoped default
+    run instead."""
+    explicit = run_capture(
+        amc, tmp_path / "explicit_realistic", days=1,
+        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
+        extra_args=["--topology-mode", "realistic"],
     )
+    default_hash = _sha256_path(one_day_run_a.out_dir / "llm_analytics.csv")
+    explicit_hash = _sha256_path(explicit.out_dir / "llm_analytics.csv")
     assert default_hash == explicit_hash, (
         "llm_analytics.csv drifted between the default 1-day run and "
         "an explicit --topology-mode realistic run; after the "
@@ -342,7 +340,7 @@ def test_realistic_mode_llm_analytics_byte_identical_to_default(
 # Realistic mode: RPS coupling tracks apigateway
 # ------------------------------------------------------------------
 def test_realistic_llm_token_throughput_tracks_apigateway(
-    realistic_one_day_llm, amc,
+    one_day_run_a, amc,
 ):
     """Issue acceptance: ``llm_analytics`` RPS / token-throughput now
     tracks upstream gating in realistic mode at >= 0.85 Pearson
@@ -356,7 +354,7 @@ def test_realistic_llm_token_throughput_tracks_apigateway(
     signal dominates and the correlation lands close to 1.
     """
     common, (api_rps, llm_tokens) = _aligned_columns(
-        realistic_one_day_llm.out_dir,
+        one_day_run_a.out_dir,
         ("apigateway", "requests_per_sec"),
         ("llm_analytics", "input_tokens_per_sec"),
     )
@@ -374,7 +372,7 @@ def test_realistic_llm_token_throughput_tracks_apigateway(
 
 
 def test_independent_mode_llm_token_throughput_uncoupled(
-    independent_one_day_llm,
+    one_day_independent_run,
 ):
     """Sanity check: in independent mode ``input_tokens_per_sec`` is
     driven by its own ``_llm_business_hours`` envelope and Gaussian
@@ -382,7 +380,7 @@ def test_independent_mode_llm_token_throughput_uncoupled(
     comparatively low (well below the realistic threshold). Mirrors
     the contrast test in test_topology_loadbalancer_gateway.py."""
     common, (api_rps, llm_tokens) = _aligned_columns(
-        independent_one_day_llm.out_dir,
+        one_day_independent_run.out_dir,
         ("apigateway", "requests_per_sec"),
         ("llm_analytics", "input_tokens_per_sec"),
     )
@@ -404,7 +402,7 @@ def test_independent_mode_llm_token_throughput_uncoupled(
 # Realistic mode: saturation lifts latency / error vs independent
 # ------------------------------------------------------------------
 def test_realistic_llm_latency_mean_elevated_vs_independent(
-    realistic_one_day_llm, independent_one_day_llm,
+    one_day_run_a, one_day_independent_run,
 ):
     """Saturation feedback must lift ``avg_llm_latency_ms`` above the
     independent-mode mean. ``p95_llm_latency_ms`` is a supplemental
@@ -423,10 +421,10 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
     """
     metric = "avg_llm_latency_ms"
     indep_vals, indep_ts = _column_values(
-        independent_one_day_llm.out_dir, "llm_analytics", metric
+        one_day_independent_run.out_dir, "llm_analytics", metric
     )
     real_vals, real_ts = _column_values(
-        realistic_one_day_llm.out_dir, "llm_analytics", metric
+        one_day_run_a.out_dir, "llm_analytics", metric
     )
     # Align on the common timestamps so anomaly exclusion is consistent.
     common = sorted(set(indep_ts) & set(real_ts))
@@ -453,16 +451,16 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
 
 
 def test_realistic_llm_api_error_rate_mean_elevated_vs_independent(
-    realistic_one_day_llm, independent_one_day_llm,
+    one_day_run_a, one_day_independent_run,
 ):
     """Saturation adds a positive error offset proportional to the
     logistic, so the llm_api_error_rate mean must lift above the
     independent baseline."""
     indep_vals, indep_ts = _column_values(
-        independent_one_day_llm.out_dir, "llm_analytics", "llm_api_error_rate"
+        one_day_independent_run.out_dir, "llm_analytics", "llm_api_error_rate"
     )
     real_vals, real_ts = _column_values(
-        realistic_one_day_llm.out_dir, "llm_analytics", "llm_api_error_rate"
+        one_day_run_a.out_dir, "llm_analytics", "llm_api_error_rate"
     )
     common = sorted(set(indep_ts) & set(real_ts))
     indep_lookup = dict(zip(indep_ts, indep_vals))
@@ -487,7 +485,7 @@ def test_realistic_llm_api_error_rate_mean_elevated_vs_independent(
 # ------------------------------------------------------------------
 # Realistic mode: caps on saturated columns
 # ------------------------------------------------------------------
-def test_realistic_llm_latency_never_negative(realistic_one_day_llm):
+def test_realistic_llm_latency_never_negative(one_day_run_a):
     """Phase 4 acceptance carries through: latency multiplier is always
     >= 1, so the column must stay non-negative under realistic-mode
     saturation. ``avg_llm_latency_ms`` is the default-emitted target;
@@ -495,7 +493,7 @@ def test_realistic_llm_latency_never_negative(realistic_one_day_llm):
     fixture test below.
     """
     vals, _ = _column_values(
-        realistic_one_day_llm.out_dir, "llm_analytics", "avg_llm_latency_ms"
+        one_day_run_a.out_dir, "llm_analytics", "avg_llm_latency_ms"
     )
     assert vals.min() >= 0.0, (
         f"llm_analytics.avg_llm_latency_ms min={vals.min():.6f} went "
@@ -506,36 +504,18 @@ def test_realistic_llm_latency_never_negative(realistic_one_day_llm):
 # ------------------------------------------------------------------
 # Supplemental-zone p95 metric: covered via --metrics-per-component 10
 # ------------------------------------------------------------------
-@pytest.fixture(scope="module")
-def realistic_full_metrics_one_day_llm(amc, tmp_path_factory):
-    """Realistic 1-day run with --metrics-per-component 10 so the
-    supplemental ``p95_llm_latency_ms`` column is emitted and the
-    saturation composition is observable on it."""
-    out = tmp_path_factory.mktemp("phase5_realistic_full")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=[
-            "--topology-mode", "realistic",
-            "--metrics-per-component", "10",
-        ],
-    )
-
-
-@pytest.fixture(scope="module")
-def independent_full_metrics_one_day_llm(amc, tmp_path_factory):
-    out = tmp_path_factory.mktemp("phase5_independent_full")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=[
-            "--topology-mode", "independent",
-            "--metrics-per-component", "10",
-        ],
-    )
+# The supplemental-zone tests consume the session-scoped
+# ``one_day_full_metrics_run`` (``--metrics-per-component 10``;
+# realistic by default) and ``one_day_full_metrics_independent_run``
+# from ``conftest.py`` — same args as the module-scoped duplicates
+# this file used to carry, minus the redundant explicit
+# ``--topology-mode realistic`` (the argparse default; byte-identity
+# of flag-vs-default is pinned above on the default-metrics run).
 
 
 def test_realistic_llm_supplemental_p95_latency_lifted(
-    realistic_full_metrics_one_day_llm,
-    independent_full_metrics_one_day_llm,
+    one_day_full_metrics_run,
+    one_day_full_metrics_independent_run,
 ):
     """``p95_llm_latency_ms`` sits in llm_analytics' supplemental zone
     (zero-based index 8, beyond the default
@@ -547,11 +527,11 @@ def test_realistic_llm_supplemental_p95_latency_lifted(
     Saturation feedback must lift its mean above the independent-mode
     baseline."""
     indep_vals, _ = _column_values(
-        independent_full_metrics_one_day_llm.out_dir,
+        one_day_full_metrics_independent_run.out_dir,
         "llm_analytics", "p95_llm_latency_ms",
     )
     real_vals, _ = _column_values(
-        realistic_full_metrics_one_day_llm.out_dir,
+        one_day_full_metrics_run.out_dir,
         "llm_analytics", "p95_llm_latency_ms",
     )
     lift = float(np.mean(real_vals) - np.mean(indep_vals))
@@ -563,11 +543,11 @@ def test_realistic_llm_supplemental_p95_latency_lifted(
 
 
 def test_realistic_llm_supplemental_p95_latency_never_negative(
-    realistic_full_metrics_one_day_llm,
+    one_day_full_metrics_run,
 ):
     """Cap check on the supplemental p95 metric."""
     vals, _ = _column_values(
-        realistic_full_metrics_one_day_llm.out_dir,
+        one_day_full_metrics_run.out_dir,
         "llm_analytics", "p95_llm_latency_ms",
     )
     assert vals.min() >= 0.0, (
@@ -576,7 +556,7 @@ def test_realistic_llm_supplemental_p95_latency_never_negative(
     )
 
 
-def test_realistic_llm_api_error_rate_never_above_one(realistic_one_day_llm):
+def test_realistic_llm_api_error_rate_never_above_one(one_day_run_a):
     """Phase 4 acceptance carries through: saturation never drives
     error rates above 1.0. The natural llm_api_error_rate base is ~0.05
     and ``error_gain`` is at most 0.02, so a saturated column lives
@@ -585,7 +565,7 @@ def test_realistic_llm_api_error_rate_never_above_one(realistic_one_day_llm):
     cap at 1.0 (the schema bound), not at 0.1.
     """
     vals, _ = _column_values(
-        realistic_one_day_llm.out_dir, "llm_analytics", "llm_api_error_rate"
+        one_day_run_a.out_dir, "llm_analytics", "llm_api_error_rate"
     )
     assert vals.max() <= 1.0, (
         f"llm_analytics.llm_api_error_rate max={vals.max():.6f} exceeded "
@@ -597,7 +577,7 @@ def test_realistic_llm_api_error_rate_never_above_one(realistic_one_day_llm):
 # Scenario sanity: LLM scenarios still fire in realistic mode
 # ------------------------------------------------------------------
 def test_llm_scenarios_still_fire_in_realistic_mode(
-    realistic_one_day_llm, amc,
+    one_day_run_a, amc,
 ):
     """Issue acceptance: 'LLM-specific scenarios in the catalog still
     fire (no shifting needed yet — phase 9 handles catalog re-tuning).'
@@ -635,7 +615,7 @@ def test_llm_scenarios_still_fire_in_realistic_mode(
         "filter or pick a different acceptance signal"
     )
     seen_rows: set[tuple[str, str, str]] = set()
-    with open(realistic_one_day_llm.out_dir / "anomalies.csv") as f:
+    with open(one_day_run_a.out_dir / "anomalies.csv") as f:
         for row in csv.DictReader(f):
             comp = row.get("component")
             metric = row.get("metric")
