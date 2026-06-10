@@ -18,7 +18,8 @@
   signal stream.
 - Added HTTP failure diagnostics to `otel-activity.log` `RETRY` and `FAIL`
   records, including response headers, `cf_ray` when present, and the original
-  JSON request body for JSON OTEL requests.
+  JSON request body for JSON OTEL requests. Sensitive response-header values
+  are masked before reaching disk — see the Security section below. (#90)
 
 ### Changed
 
@@ -42,6 +43,37 @@
   response-header and payload diagnostics into the activity log.
 - In gauge-only mode, the gauge streamer starts a fresh activity log instead
   of appending to stale records from a prior signal-stream run.
+- Improved the missing-dependency guidance printed when optional imports
+  (numpy, PyYAML, protobuf) are unavailable. (#85)
+
+### Security
+
+- `otel-activity.log` HTTP-error `RETRY`/`FAIL` records now redact sensitive
+  response-header values before they reach disk: `Authorization` /
+  `Proxy-Authorization` keep their scheme prefix with the credential masked
+  (`Bearer ***`), and `Cookie` / `Set-Cookie` / `X-Api-Key` are masked in
+  full. An intermediary that echoed those headers on a 4xx/5xx previously
+  leaked credential material into the on-disk log. (#90)
+
+### Tooling
+
+- Added `tools/check_role_name_leaks.py` (pre-commit hook + stdin pre-flight
+  for `gh` comment bodies) to block internal role names from reaching
+  external PR threads. (#89)
+- Added `tools/check_branch_name.py` as a pre-push hook rejecting `ver-NNN`
+  ticket literals in branch names (install with
+  `pre-commit install --hook-type pre-push`). (#91)
+- Added `tools/check_approval_duplicate.py` to gate duplicate
+  `APPROVED`-shaped PR comments by `(author, commit OID)` and refuse
+  self-correction bodies that should be in-place edits. (#92)
+
+### Docs
+
+- Added `.github/PULL_REQUEST_TEMPLATE.md` prefilling the 13 pre-PR
+  checklist headings from CLAUDE.md. (#93)
+- Added Copilot path-specific instructions pointing at CLAUDE.md and synced
+  checklist headings. (#87, #88)
+- Refreshed the application-flow and topology mermaid diagrams. (#86)
 
 ### Tests
 

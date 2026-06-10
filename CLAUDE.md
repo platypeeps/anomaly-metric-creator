@@ -53,7 +53,10 @@ Do **not** call `_pre_clean_output_dir()` from the `--combine-only` branch — t
 path reads existing per-component CSVs as inputs and pre-cleaning them would
 remove the combine inputs. The early `return` in the `--combine-only` branch
 already keeps it out of the cleanup path. `./otel-activity.log` lives outside
-`--output-dir` and is append-only by design; it must stay outside the registry.
+`--output-dir` and must stay outside the registry. It is a per-run log,
+not append-only across runs: `stream_otel_signals` opens it with mode
+`"w"` (truncating the previous run's records), the gauge pass of the
+same run appends to it, and `--otel-gauges-only` starts it fresh.
 The file is also listed in the repo `.gitignore` so a stray run from inside a
 clone never commits OTLP transport diagnostics. PR #83 widened the HTTP-error
 diagnostics inside `_http_error_activity_fields` to dump every response
@@ -80,8 +83,10 @@ exercise the redaction through the live HTTP error path.
 `input_dir` into `combined_metrics_unified.csv`. When `components` is provided,
 it acts as the allowlist for which CSVs to combine (missing per-component
 CSVs raise `SystemExit`); when omitted, every `*.csv` in `input_dir` is
-autodiscovered (excluding the anomalies manifest, the long-form
-`gauges.csv`, and prior combine outputs — see `_NON_COMPONENT_FILES`).
+autodiscovered (excluding the anomalies manifest and the long-form
+`gauges.csv` via `_NON_COMPONENT_FILES`, and prior combine outputs via
+a separate `combined_metrics_` filename-prefix check inside
+`discover_components` — the constant does not cover all three).
 `main()` threads `--components` into both call sites (`--combine` and
 `--combine-only`) so the combine output honors the same allowlist as
 generation, `anomalies.csv`, reporting artifacts, and OTEL streaming.
@@ -236,27 +241,28 @@ long-form `timestamp,id,host,pod,az,region,tenant,<metrics…>`
 header and writes one full row block per instance (all rows for
 `instances[0]`, then all rows for `instances[1]`, …) — column
 order is fixed and tested in `tests/test_instances_per_component.py`.
-All instances share the same RNG-drawn natural values and the same
-anomaly overrides in v1; Phase 4 (`instance_filter` on anomaly
-specs) will let scenarios target individual instances.
+All instances share the same RNG-drawn natural values, and unfiltered
+anomaly overrides apply to every instance; Phase 4's `instance_filter`
+(see the anomaly injection schema) lets a spec target individual
+instances, forking a per-instance value buffer for the matched pods.
 
-Out-of-scope until Phase 8: schema.json dimension columns +
-`--validate-output` dimension awareness (Phase 8). Already
-shipped: `--instance-config PATH` (Phase 3), per-anomaly
-`instance_filter` (Phase 4), dimension-aware
-`gauges.csv` / `combined_metrics_unified.csv` writers (Phase 5), and OTLP data point attributes (Phase 6) — the
-work covered in this branch. After Phase 6, `stream_otel_gauges`
+Every phase of the multi-instance plan has shipped:
+`--instance-config PATH` (Phase 3), per-anomaly `instance_filter`
+(Phase 4), dimension-aware `gauges.csv` /
+`combined_metrics_unified.csv` writers (Phase 5), OTLP data point
+attributes (Phase 6), and the schema.json `dimensions` block +
+dim-aware `--validate-output` (Phase 8 — see the schema-document and
+validator sections of this file). After Phase 6, `stream_otel_gauges`
 and `stream_otel_signals` lift every non-empty
 `_INSTANCE_DIMENSION_COLUMNS` cell off each row and surface it as a
 string attribute on every OTLP data point (metric datapoint
 attributes, not OTEL resource attributes), so `--otel-enabled`,
 `--otel-emit-gauges`, and the gauge-only streaming mode
-(`--otel-gauges-only`) are no longer gated against N>1. The only
-remaining dimension-blind emitter group is Phase 8 — `parse_args`
-rejects `--instances-per-component > 1` paired with `--emit-selection
-'schema'` or `--validate-output` with a Phase 8 error
-message (so users see a clear failure instead of `--validate-output`
-flagging dimension columns as schema drift). `generate_component()`
+(`--otel-gauges-only`) are no longer gated against N>1. After
+Phase 8, `--emit-selection 'schema'` and `--validate-output` work
+under `--instances-per-component > 1` too — no parse-time
+multi-instance gate remains except the DST one
+(`--inject-dst-artifact-day > 0`). `generate_component()`
 mirrors the DST guard inside the helper as well — passing a
 non-anonymous instance list together with `dst_inject_day > 0`
 raises `ValueError` even when the call bypasses `parse_args`. The
@@ -268,8 +274,9 @@ Locked SHA-256 N=3 golden hashes at 1d and 7d live in
 `tests/test_instances_per_component.py` (`N3_ONE_DAY_HASHES` /
 `N3_SEVEN_DAY_HASHES`); `anomalies.csv` matches the default-run hash
 because v1 records one event per `(timestamp, component, metric)`
-regardless of `N` — Phase 4 will reshape that contract when
-`instance_filter` lands.
+regardless of `N` — a contract Phase 4 preserved: a spec with an
+`instance_filter` still records one manifest entry no matter how many
+instances matched (and none on zero-match).
 
 ### Per-instance topology (phase 8)
 
@@ -1669,8 +1676,9 @@ Two refusal arms (each fires independently of the other):
 - **Self-correction prefix** — a body whose first non-blank line
   carries `Correction to previous comment` (case-insensitive,
   whitespace-flexible) or starts with `Correction:` /
-  `Correction —` is announcing a correction and must be an edit, not
-  a new comment. This arm fires regardless of whether the body is
+  `Correction -` / `Correction —` (any of the three separators the
+  script's `_CORRECTION_PREFIX` accepts) is announcing a correction
+  and must be an edit, not a new comment. This arm fires regardless of whether the body is
   approval-shape, so a non-`APPROVED`-prefixed correction body still
   trips the gate.
 
