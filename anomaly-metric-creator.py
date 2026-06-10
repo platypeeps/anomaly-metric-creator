@@ -3351,8 +3351,9 @@ _validate_topology()
 # ``--topology-mode realistic``. Kept small (5.0) relative to the typical
 # coupling signal std (~15–1600 depending on component) so the Pearson
 # correlation between upstream and downstream stays well above every
-# gate that reads it — the 0.9/0.95 phase-2/3 acceptance-test
-# thresholds in ``tests/test_topology_fanout.py`` and the validator's
+# gate that reads it — the 0.95 phase-2 acceptance threshold in
+# ``tests/test_topology_loadbalancer_gateway.py``, the 0.9 phase-3
+# thresholds in ``tests/test_topology_fanout.py``, and the validator's
 # ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD = 0.85`` — while the
 # column still looks like a noisy signal rather than a perfect copy
 # of the upstream.
@@ -9197,7 +9198,7 @@ def _ensure_long_form_fd_capacity(n_sources: int) -> None:
     helper returns silently and lets ``open()`` surface the real
     error inside ``heapq.merge`` if the OS-level FD cap is reached.
     In practice the Windows default open-file table is plenty large
-    for ``MAX_INSTANCES_PER_COMPONENT * len(COMPONENTS) = 260`` so
+    for ``MAX_INSTANCES_PER_COMPONENT * len(COMPONENTS) = 280`` so
     this is unlikely to bite; tests
     (``test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low``)
     skip on Windows via ``pytest.importorskip("resource")``.
