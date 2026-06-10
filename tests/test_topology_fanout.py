@@ -164,23 +164,22 @@ def test_topology_generation_order_apigateway_before_fanout(amc):
 
 # ------------------------------------------------------------------
 # Realistic mode: downstream load metrics track apigateway RPS.
+#
+# These tests consume the session-scoped ``one_day_run_a`` (default
+# no-flag run): realistic mode is the argparse default since the
+# phase 6 flag day, so an explicit ``--topology-mode realistic``
+# module fixture would regenerate a byte-identical 86,400-row dataset
+# (the PR #63 duplicate-fixture antipattern). The byte-identity of the
+# explicit flag vs. the default is pinned separately by
+# ``test_topology_fanout_realistic_matches_default_byte_for_byte`` above.
 # ------------------------------------------------------------------
-@pytest.fixture(scope="module")
-def realistic_one_day(amc, tmp_path_factory):
-    # interval_seconds=1.0 keeps 86,400 rows/day so the Pearson correlation
-    # checks have enough data points to clear their thresholds.
-    out = tmp_path_factory.mktemp("phase3_realistic")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=["--topology-mode", "realistic"],
-    )
 
 
 def test_realistic_authservice_login_attempts_tracks_apigateway(
-    realistic_one_day, amc
+    one_day_run_a, amc
 ):
     common, (api, auth) = _aligned_columns(
-        realistic_one_day.out_dir,
+        one_day_run_a.out_dir,
         ("apigateway", "requests_per_sec"),
         ("authservice", "login_attempts"),
     )
@@ -196,10 +195,10 @@ def test_realistic_authservice_login_attempts_tracks_apigateway(
 
 
 def test_realistic_cacheservice_ops_tracks_apigateway(
-    realistic_one_day, amc
+    one_day_run_a, amc
 ):
     common, (api, hits, misses) = _aligned_columns(
-        realistic_one_day.out_dir,
+        one_day_run_a.out_dir,
         ("apigateway", "requests_per_sec"),
         ("cacheservice", "cache_hits"),
         ("cacheservice", "cache_misses"),
@@ -214,10 +213,10 @@ def test_realistic_cacheservice_ops_tracks_apigateway(
 
 
 def test_realistic_database_qps_tracks_apigateway(
-    realistic_one_day, amc
+    one_day_run_a, amc
 ):
     common, (api, db_qps) = _aligned_columns(
-        realistic_one_day.out_dir,
+        one_day_run_a.out_dir,
         ("apigateway", "requests_per_sec"),
         ("database", "queries_per_sec"),
     )
@@ -230,7 +229,7 @@ def test_realistic_database_qps_tracks_apigateway(
 
 
 def test_realistic_database_tracks_cache_miss_load(
-    realistic_one_day, amc
+    one_day_run_a, amc
 ):
     """The cacheservice -> database callable edge should make database
     queries_per_sec correlate with ``miss_ratio * gateway_rps``. This is
@@ -238,7 +237,7 @@ def test_realistic_database_tracks_cache_miss_load(
     apigateway -> database edge also contributes, but miss-rate driven
     load must be a non-trivial signal in the column."""
     common, (api, hits, misses, db_qps) = _aligned_columns(
-        realistic_one_day.out_dir,
+        one_day_run_a.out_dir,
         ("apigateway", "requests_per_sec"),
         ("cacheservice", "cache_hits"),
         ("cacheservice", "cache_misses"),
@@ -385,7 +384,7 @@ def test_validate_topology_accepts_current_acyclic_graph(amc):
 # Roots remain uncoupled under realistic mode.
 # ------------------------------------------------------------------
 def test_realistic_apigateway_central_tendency_preserved(
-    realistic_one_day, amc
+    one_day_run_a, amc
 ):
     """apigateway.requests_per_sec under realistic coupling should still
     average near its natural baseline (~800). The Phase-3 formula
@@ -393,7 +392,7 @@ def test_realistic_apigateway_central_tendency_preserved(
     over-amplifies (or under-amplifies) the coupling would shift the
     mean materially."""
     api_vals, api_ts = _column_values(
-        realistic_one_day.out_dir, "apigateway", "requests_per_sec"
+        one_day_run_a.out_dir, "apigateway", "requests_per_sec"
     )
     keep = [
         i for i, t in enumerate(api_ts)
