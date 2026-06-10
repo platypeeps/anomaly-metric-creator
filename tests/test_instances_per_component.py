@@ -9,14 +9,13 @@ Verifies:
 """
 
 import csv
-import hashlib
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from conftest import run_capture
+from conftest import run_capture, sha256_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
@@ -25,12 +24,6 @@ SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _run(amc, out_dir, *, days, extra_args=None, interval_seconds=1.0):
@@ -132,8 +125,8 @@ def test_n1_byte_identical_to_default(amc, default_1d, n1_explicit_1d):
     assert len(components) > 0
     for name in components:
         fname = f"{name}.csv"
-        default_hash = _sha256(default_1d / fname)
-        n1_hash = _sha256(n1_explicit_1d / fname)
+        default_hash = sha256_path(default_1d / fname)
+        n1_hash = sha256_path(n1_explicit_1d / fname)
         assert default_hash == n1_hash, (
             f"{fname}: N=1 hash {n1_hash!r} != default hash {default_hash!r}"
         )
@@ -467,7 +460,7 @@ def test_n3_one_day_csvs_byte_identical(amc, n3_1d):
     component_names = set(amc.COMPONENTS)
     assert component_names, "COMPONENTS registry is empty"
     for fname, expected in N3_ONE_DAY_HASHES.items():
-        actual = _sha256(n3_1d / fname)
+        actual = sha256_path(n3_1d / fname)
         assert actual == expected, (
             f"{fname}: N=3 1-day hash drifted. expected={expected} actual={actual}"
         )
@@ -485,7 +478,7 @@ def test_n3_seven_day_csvs_byte_identical(amc, n3_7d):
     component_names = set(amc.COMPONENTS)
     assert component_names, "COMPONENTS registry is empty"
     for fname, expected in N3_SEVEN_DAY_HASHES.items():
-        actual = _sha256(n3_7d / fname)
+        actual = sha256_path(n3_7d / fname)
         assert actual == expected, (
             f"{fname}: N=3 7-day hash drifted. expected={expected} actual={actual}"
         )
@@ -521,7 +514,7 @@ def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
     ])
     for name in amc.COMPONENTS:
         fname = f"{name}.csv"
-        assert _sha256(n3_1d / fname) == _sha256(out2 / fname), (
+        assert sha256_path(n3_1d / fname) == sha256_path(out2 / fname), (
             f"{fname}: N=3 1-day output is not byte-stable"
         )
 
@@ -547,7 +540,7 @@ def test_n3_7d_hashes_stable(amc, tmp_path_factory):
     _run(amc, out2, days=7, extra_args=extra, interval_seconds=60.0)
     for name in amc.COMPONENTS:
         fname = f"{name}.csv"
-        assert _sha256(out1 / fname) == _sha256(out2 / fname), (
+        assert sha256_path(out1 / fname) == sha256_path(out2 / fname), (
             f"{fname}: N=3 7-day output is not byte-stable"
         )
 

@@ -1768,26 +1768,6 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             if any(per_inst_caps):
                 topology_capture_by_instance[component_name] = per_inst_caps
 
-    np.round(values, 3, out=values)
-    for buf in per_instance_values.values():
-        np.round(buf, 3, out=buf)
-
-    keep_mask = ~drop_mask
-    kept_ts = ts_strings[keep_mask]
-    kept_vals = values[keep_mask]
-
-    # Format values to fixed 3 decimals. ``np.char.mod("%.3f", ...)`` is correct
-    # but spends ~80% of the run inside ``_vec_string``. Scaling to int + numpy
-    # string ops produces the same output ~2x faster.
-    str_vals = _format_fixed3(kept_vals)
-    # Phase 4: per-instance string buffers for instances that diverged from
-    # the shared baseline via a partial ``instance_filter``. Other instances
-    # reuse ``str_vals`` directly.
-    per_instance_str_vals: dict[int, np.ndarray] = {
-        inst_idx: _format_fixed3(buf[keep_mask])
-        for inst_idx, buf in per_instance_values.items()
-    }
-
     # Multi-instance fan-out (Phase 2/4). When the active instance list
     # is a single anonymous Instance() (all fields None), emit today's
     # byte-identical format: ``timestamp,m0,m1,...``. When the list carries
@@ -1812,6 +1792,36 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # duplicate hour (the PR #63 long-form DST drop).
 
     if emit_metrics:
+        # Rounding and fixed-3 string formatting exist only to produce
+        # the CSV bytes, so they run inside the emit guard: a run whose
+        # ``--emit-selection`` omits ``metrics`` previously paid the
+        # full formatting cost (historically ~80% of generation
+        # runtime, per the comment below) and threw the result away.
+        # Safe to skip when not emitting: the ``topology_capture``
+        # snapshots above were taken pre-round by design, and nothing
+        # after this block reads ``values`` / the per-instance buffers.
+        # No RNG is consumed here, so draw order — and therefore every
+        # locked hash — is unchanged for runs that do emit metrics.
+        np.round(values, 3, out=values)
+        for buf in per_instance_values.values():
+            np.round(buf, 3, out=buf)
+
+        keep_mask = ~drop_mask
+        kept_ts = ts_strings[keep_mask]
+        kept_vals = values[keep_mask]
+
+        # Format values to fixed 3 decimals. ``np.char.mod("%.3f", ...)`` is correct
+        # but spends ~80% of the run inside ``_vec_string``. Scaling to int + numpy
+        # string ops produces the same output ~2x faster.
+        str_vals = _format_fixed3(kept_vals)
+        # Phase 4: per-instance string buffers for instances that diverged from
+        # the shared baseline via a partial ``instance_filter``. Other instances
+        # reuse ``str_vals`` directly.
+        per_instance_str_vals: dict[int, np.ndarray] = {
+            inst_idx: _format_fixed3(buf[keep_mask])
+            for inst_idx, buf in per_instance_values.items()
+        }
+
         with open(file_path, "w", newline="") as f:
             # Precompute the shared metric suffix once per component. Every
             # instance not in ``per_instance_str_vals`` reuses this array,
@@ -3684,6 +3694,113 @@ _TOPOLOGY_SATURATION_TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]]
 }
 
 
+def _validate_topology_metric_registries() -> None:
+    """Import-time validation of the topology *metric* registries.
+
+    ``_validate_topology()`` exhaustively validates ``TOPOLOGY`` itself,
+    but the two companion registries that name actual metric columns —
+    ``_TOPOLOGY_LOAD_METRICS`` and ``_TOPOLOGY_SATURATION_TARGETS`` —
+    were previously unchecked, and every runtime consumer degrades
+    *silently* on a miss: a typo'd canonical load metric makes
+    ``_component_metric_base`` return 0.0 so the coupling edge is
+    skipped; an unregistered saturating source falls through
+    ``ups_entry is None``; a typo'd saturation target falls through
+    ``name_to_idx.get(...)``. Those soft fallbacks exist to tolerate
+    legitimate runtime states (``--metrics-per-component`` trims,
+    ``--components`` subsets) — but they also swallowed registry typos,
+    so a new edge with a misspelled metric would pass import, generate
+    fully decoupled output, and surface only at the opt-in
+    ``--validate-output`` Pearson check. This validator fails the typo
+    at import time instead. Checks:
+
+    * every ``_TOPOLOGY_LOAD_METRICS`` key is a ``COMPONENTS`` key, and
+      its canonical + supplementary names all exist in that component's
+      *full* metric catalog (the un-trimmed list — trimming is a
+      runtime state, not a registry property);
+    * every ``_TOPOLOGY_SATURATION_TARGETS`` key is a ``COMPONENTS``
+      key, and every latency-family / error-family name exists in that
+      component's full catalog;
+    * every ``TOPOLOGY`` source with at least one constant-weight or
+      saturating outgoing edge has a ``_TOPOLOGY_LOAD_METRICS`` entry
+      (the constant-weight composer and the saturation driver both
+      read the source's canonical column);
+    * every constant-weight edge's *target* has a
+      ``_TOPOLOGY_LOAD_METRICS`` entry (the composer rewrites the
+      target's own load metrics — a missing entry makes the edge
+      silently inert);
+    * every saturating edge's target has a
+      ``_TOPOLOGY_SATURATION_TARGETS`` entry.
+
+    Mirrored by ``tests/test_topology_registry.py``.
+    """
+    catalog_names = {
+        comp: {s.name for s in specs} for comp, specs in COMPONENTS.items()
+    }
+    for comp, entry in _TOPOLOGY_LOAD_METRICS.items():
+        if comp not in COMPONENTS:
+            raise ValueError(
+                f"_TOPOLOGY_LOAD_METRICS key {comp!r} is not a COMPONENTS key"
+            )
+        canonical, supplementary = entry
+        for metric in (canonical, *supplementary):
+            if metric not in catalog_names[comp]:
+                raise ValueError(
+                    f"_TOPOLOGY_LOAD_METRICS[{comp!r}] names metric "
+                    f"{metric!r} which is not in COMPONENTS[{comp!r}]"
+                )
+    for comp, (latency_metrics, error_metrics) in _TOPOLOGY_SATURATION_TARGETS.items():
+        if comp not in COMPONENTS:
+            raise ValueError(
+                f"_TOPOLOGY_SATURATION_TARGETS key {comp!r} is not a "
+                "COMPONENTS key"
+            )
+        for metric in (*latency_metrics, *error_metrics):
+            if metric not in catalog_names[comp]:
+                raise ValueError(
+                    f"_TOPOLOGY_SATURATION_TARGETS[{comp!r}] names metric "
+                    f"{metric!r} which is not in COMPONENTS[{comp!r}]"
+                )
+    for source, edges in TOPOLOGY.items():
+        for edge in edges:
+            saturating = edge.saturation is not None and (
+                edge.saturation.latency_gain != 0.0
+                or edge.saturation.error_gain != 0.0
+            )
+            if callable(edge.weight) and not saturating:
+                # Callable-weight edges read the source's captured
+                # columns through their own ``signal``, which
+                # ``_validate_topology`` already probes against
+                # ``_TOPOLOGY_LOAD_METRICS`` — but only a non-callable
+                # weight or a saturating edge *requires* the canonical
+                # column below.
+                continue
+            if source not in _TOPOLOGY_LOAD_METRICS:
+                raise ValueError(
+                    f"TOPOLOGY source {source!r} has a constant-weight or "
+                    f"saturating edge to {edge.target!r} but no "
+                    "_TOPOLOGY_LOAD_METRICS entry; the coupling composer "
+                    "and saturation driver would silently skip the edge"
+                )
+            if not callable(edge.weight) and edge.target not in _TOPOLOGY_LOAD_METRICS:
+                raise ValueError(
+                    f"TOPOLOGY constant-weight edge {source!r} -> "
+                    f"{edge.target!r} targets a component with no "
+                    "_TOPOLOGY_LOAD_METRICS entry; the composer rewrites "
+                    "the target's load metrics, so the edge would be "
+                    "silently inert"
+                )
+            if saturating and edge.target not in _TOPOLOGY_SATURATION_TARGETS:
+                raise ValueError(
+                    f"TOPOLOGY saturating edge {source!r} -> {edge.target!r} "
+                    "targets a component with no _TOPOLOGY_SATURATION_TARGETS "
+                    "entry; the saturation contribution would be silently "
+                    "dropped"
+                )
+
+
+_validate_topology_metric_registries()
+
+
 def _compose_topology_saturation_specs(
     component_name: str,
     specs: list[MetricSpec],
@@ -3758,12 +3875,21 @@ def _compose_topology_saturation_specs(
     if not any_active:
         return specs
 
+    # Both loops read (and replace into) ``new_specs`` rather than the
+    # pristine ``specs`` so a metric that appears in BOTH the latency and
+    # error tuples composes both effects. Reading ``specs[idx]`` in the
+    # second loop would rebuild the spec from the original and silently
+    # discard the multiplier wrap the first loop installed — diverging
+    # from the per-instance path, which applies both sides of the
+    # ``(latency_factor, error_offset)`` tuple to an overlap target. No
+    # v1 registry entry overlaps today; this keeps the two paths aligned
+    # for the first one that does.
     new_specs = list(specs)
     for metric_name in latency_metrics:
         idx = name_to_idx.get(metric_name)
         if idx is None:
             continue
-        original = specs[idx]
+        original = new_specs[idx]
         old_mult = original.multiplier
         if old_mult is None:
             new_mult = lambda ts, elapsed, baked=latency_factor: baked
@@ -3777,7 +3903,7 @@ def _compose_topology_saturation_specs(
         idx = name_to_idx.get(metric_name)
         if idx is None:
             continue
-        original = specs[idx]
+        original = new_specs[idx]
         old_add = original.additive
         if old_add is None:
             new_add = lambda ts, elapsed, baked=error_offset: baked

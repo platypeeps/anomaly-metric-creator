@@ -11,7 +11,6 @@ Covers:
   is dropped from the next run's emit-selection.
 - ``--combine-only`` does NOT regenerate ``schema.json``.
 """
-import hashlib
 import json
 import subprocess
 import sys
@@ -20,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import SCRIPT_PATH, run_capture
+from conftest import SCRIPT_PATH, run_capture, sha256_path
 
 
 # Short-run helper so most tests stay under a couple of seconds.
@@ -46,8 +45,6 @@ SCHEMA_SEVEN_DAY_HASH = (
 )
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 # ------------------------------------------------------------------
@@ -247,14 +244,14 @@ def test_schema_byte_deterministic_same_seed(amc, tmp_path):
     out_b = tmp_path / "b"
     run_capture(amc, out_a, days=1, extra_args=["--emit-selection", "metrics,schema"])
     run_capture(amc, out_b, days=1, extra_args=["--emit-selection", "metrics,schema"])
-    assert _sha256(out_a / "schema.json") == _sha256(out_b / "schema.json"), (
+    assert sha256_path(out_a / "schema.json") == sha256_path(out_b / "schema.json"), (
         "schema.json must be byte-identical across two identical runs"
     )
 
 
 def test_schema_byte_identical_default_one_day(one_day_schema_run):
     path = one_day_schema_run.out_dir / "schema.json"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == SCHEMA_ONE_DAY_HASH, (
         f"schema.json drifted from locked 1-day hash. "
         f"expected={SCHEMA_ONE_DAY_HASH} actual={actual}"
@@ -263,7 +260,7 @@ def test_schema_byte_identical_default_one_day(one_day_schema_run):
 
 def test_schema_byte_identical_default_seven_day(seven_day_schema_run):
     path = seven_day_schema_run.out_dir / "schema.json"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == SCHEMA_SEVEN_DAY_HASH, (
         f"schema.json drifted from locked 7-day hash. "
         f"expected={SCHEMA_SEVEN_DAY_HASH} actual={actual}"
@@ -584,7 +581,7 @@ def test_schema_n3_byte_identical_one_day(one_day_schema_run_n3):
     silent drift in the dim-block emitter (axes ordering, cardinality
     derivation, payload key set) gets caught at test time."""
     path = one_day_schema_run_n3.out_dir / "schema.json"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == SCHEMA_N3_ONE_DAY_HASH, (
         f"N=3 1-day schema.json drifted from locked hash. "
         f"expected={SCHEMA_N3_ONE_DAY_HASH} actual={actual}"
@@ -597,7 +594,7 @@ def test_schema_n3_byte_identical_seven_day(seven_day_schema_run_n3):
     multi-day boundaries (e.g. a metadata field that depends on
     duration)."""
     path = seven_day_schema_run_n3.out_dir / "schema.json"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == SCHEMA_N3_SEVEN_DAY_HASH, (
         f"N=3 7-day schema.json drifted from locked hash. "
         f"expected={SCHEMA_N3_SEVEN_DAY_HASH} actual={actual}"
@@ -617,7 +614,7 @@ def test_schema_n3_byte_deterministic(amc, tmp_path):
     run_capture(amc, out_b, days=1, interval_seconds=600,
                 extra_args=["--emit-selection", "metrics,schema",
                             "--instances-per-component", "3"])
-    assert _sha256(out_a / "schema.json") == _sha256(out_b / "schema.json")
+    assert sha256_path(out_a / "schema.json") == sha256_path(out_b / "schema.json")
 
 
 def test_schema_dimensions_from_instance_config_multiple_axes(amc, tmp_path):

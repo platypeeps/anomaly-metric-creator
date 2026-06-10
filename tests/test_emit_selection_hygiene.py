@@ -144,3 +144,47 @@ def test_pre_clean_leaves_unknown_files_alone(amc, tmp_path):
         "pre-clean should leave user-provided files in --output-dir alone"
     )
     assert sentinel.read_text() == "user-provided extra file; do not delete"
+
+
+def test_no_metric_formatting_work_when_metrics_not_emitted(amc, tmp_path, monkeypatch):
+    """``emit_metrics=False`` must skip the fixed-3 CSV string formatting
+    entirely — the formatted buffers exist only to produce CSV bytes, and
+    the formatting historically dominated generation runtime (~80% per
+    the comment in ``generate_component``). Before the hoist, a
+    ``--emit-selection logs`` run paid the full cost and threw the
+    result away.
+    """
+    import numpy as np
+
+    calls = {"n": 0}
+    real_format = amc._format_fixed3
+
+    def counting_format(arr):
+        calls["n"] += 1
+        return real_format(arr)
+
+    monkeypatch.setattr(amc, "_format_fixed3", counting_format)
+    specs = [amc.MetricSpec(name="m0", base=10.0, std=0.0)]
+    ts_array, ts_strings = amc._build_timestamp_arrays(10, 1.0)
+
+    amc.generate_component(
+        "comp_fmt_off", specs, [],
+        base_dir=tmp_path, total_seconds=10, drop_rate=0.0, interval=1.0,
+        ts_array=ts_array, ts_strings=ts_strings,
+        ctx=amc.RunContext(rng=np.random.RandomState(42)),
+        emit_metrics=False,
+    )
+    assert calls["n"] == 0, (
+        "emit_metrics=False must not invoke the CSV cell formatter"
+    )
+    assert not (tmp_path / "comp_fmt_off.csv").exists()
+
+    amc.generate_component(
+        "comp_fmt_on", specs, [],
+        base_dir=tmp_path, total_seconds=10, drop_rate=0.0, interval=1.0,
+        ts_array=ts_array, ts_strings=ts_strings,
+        ctx=amc.RunContext(rng=np.random.RandomState(42)),
+        emit_metrics=True,
+    )
+    assert calls["n"] > 0, "emit_metrics=True must still format CSV cells"
+    assert (tmp_path / "comp_fmt_on.csv").exists()

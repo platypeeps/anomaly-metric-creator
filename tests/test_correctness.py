@@ -4,10 +4,8 @@ value-band sanity, and schema-driven plumbing.
 
 import csv
 import datetime
-import hashlib
 import importlib.util
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -24,6 +22,7 @@ from conftest import (
     read_component_rows,
     read_manifest,
     run_capture,
+    sha256_path,
 )
 
 
@@ -304,6 +303,7 @@ def _assert_clip_min_invariant(amc, run, emitted_count):
     that no row, anomalous or otherwise, breaches it.
     """
     failures = []
+    checked = 0
     for component, specs in amc.COMPONENTS.items():
         clip_specs = [
             s for s in specs[: emitted_count(component)]
@@ -311,6 +311,7 @@ def _assert_clip_min_invariant(amc, run, emitted_count):
         ]
         if not clip_specs:
             continue
+        checked += len(clip_specs)
         rows, header = read_component_rows(run.out_dir, component)
         for spec in clip_specs:
             field_idx = header.index(spec.name)
@@ -328,6 +329,14 @@ def _assert_clip_min_invariant(amc, run, emitted_count):
                 failures.append(
                     (component, spec.name, spec.clip_min, offenders, min_seen, sample)
                 )
+    # Non-empty guard (pre-PR checklist "Test path determinism"): if a
+    # catalog change removed clip_min from every emitted-zone spec, the
+    # loop above would iterate zero metrics and the no-failures assert
+    # below would pass vacuously.
+    assert checked > 0, (
+        "no emitted-zone MetricSpec declares clip_min; the invariant "
+        "below checked nothing"
+    )
     assert not failures, (
         "Metrics breached their declared clip_min floor in emitted CSV "
         f"(component, metric, clip_min, count, min, sample): {failures}"
@@ -908,8 +917,6 @@ def test_sub_second_interval_timestamps_have_fractional_resolution(amc, tmp_path
 # omitting the flag, for both 1-day and 7-day runs at the documented
 # seed 42.
 # ------------------------------------------------------------------
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _all_artifact_filenames():
@@ -937,7 +944,7 @@ def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
         explicit_path = out_explicit / filename
         assert default_path.exists(), f"default run missing {filename}"
         assert explicit_path.exists(), f"--scenarios all run missing {filename}"
-        assert _sha256(default_path) == _sha256(explicit_path), (
+        assert sha256_path(default_path) == sha256_path(explicit_path), (
             f"{filename}: --scenarios all diverged from the default run bytes "
             f"at --duration-days {days}"
         )
@@ -1003,7 +1010,7 @@ def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
         on_path = out_on / filename
         assert off_path.exists(), f"flag-off run missing {filename}"
         assert on_path.exists(), f"flag-on run missing {filename}"
-        assert _sha256(off_path) == _sha256(on_path), (
+        assert sha256_path(off_path) == sha256_path(on_path), (
             f"{filename}: --otel-emit-gauges on/off CSV bytes diverged"
         )
 

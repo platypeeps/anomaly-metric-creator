@@ -30,20 +30,13 @@ Tests also pin:
 from __future__ import annotations
 
 import csv
-import hashlib
 
 import numpy as np
 import pytest
 
-from conftest import run_capture
+from conftest import run_capture, sha256_path
 
 
-def _sha256_path(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 # Time the synthetic scenario fires. 03:30 keeps it away from the
@@ -231,7 +224,7 @@ def test_instances_per_component_1_byte_identity(
     assert n1_files == default_files
     assert n1_files, "expected at least one CSV"
     for fname in n1_files:
-        assert _sha256_path(n1_run.out_dir / fname) == _sha256_path(
+        assert sha256_path(n1_run.out_dir / fname) == sha256_path(
             default_1d.out_dir / fname
         ), f"{fname} diverged between default and explicit --instances-per-component 1"
 

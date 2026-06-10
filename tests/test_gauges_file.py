@@ -12,7 +12,6 @@ Covers:
 - ``--combine-only`` does NOT regenerate ``gauges.csv``.
 """
 import csv
-import hashlib
 import os
 import subprocess
 import sys
@@ -21,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import SCRIPT_PATH, run_capture
+from conftest import SCRIPT_PATH, run_capture, sha256_path
 
 
 # Locked SHA-256 golden hashes for ``gauges.csv`` at the default --seed (42)
@@ -41,14 +40,6 @@ GAUGES_SEVEN_DAY_HASH = (
 )
 
 
-def _sha256(path: Path) -> str:
-    """Chunked SHA-256 so large long-form gauge outputs are not slurped
-    into memory in one shot."""
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 # ------------------------------------------------------------------
@@ -194,12 +185,12 @@ def test_gauges_csv_byte_deterministic_same_seed(amc, tmp_path):
     out_b = tmp_path / "b"
     run_capture(amc, out_a, days=1, extra_args=["--emit-selection", "metrics,gauges"])
     run_capture(amc, out_b, days=1, extra_args=["--emit-selection", "metrics,gauges"])
-    assert _sha256(out_a / "gauges.csv") == _sha256(out_b / "gauges.csv")
+    assert sha256_path(out_a / "gauges.csv") == sha256_path(out_b / "gauges.csv")
 
 
 def test_gauges_csv_byte_identical_default_one_day(one_day_gauges_run):
     path = one_day_gauges_run.out_dir / "gauges.csv"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == GAUGES_ONE_DAY_HASH, (
         f"gauges.csv drifted from locked 1-day hash. "
         f"expected={GAUGES_ONE_DAY_HASH} actual={actual}"
@@ -208,7 +199,7 @@ def test_gauges_csv_byte_identical_default_one_day(one_day_gauges_run):
 
 def test_gauges_csv_byte_identical_default_seven_day(seven_day_gauges_run):
     path = seven_day_gauges_run.out_dir / "gauges.csv"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == GAUGES_SEVEN_DAY_HASH, (
         f"gauges.csv drifted from locked 7-day hash. "
         f"expected={GAUGES_SEVEN_DAY_HASH} actual={actual}"
@@ -318,6 +309,11 @@ def test_gauges_csv_matches_iter_component_rows(one_day_gauges_run, amc):
         for ts, comp, values, _dimensions in amc._iter_component_rows(component, csv_path):
             for metric_name, value in values:
                 expected.add((ts, comp, metric_name, value))
+    # Non-empty guard (pre-PR checklist "Test path determinism"): a
+    # regression that wrote zero per-component CSVs alongside a
+    # header-only gauges.csv would make both sets empty and the
+    # equality below pass vacuously.
+    assert expected, "no per-component CSV rows found in the run dir"
     actual = set()
     with open(out_dir / "gauges.csv", "r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
@@ -413,7 +409,7 @@ def test_combine_only_preserves_existing_gauges_csv(amc, tmp_path):
         ],
     )
     gauges_path = tmp_path / "gauges.csv"
-    pre_hash = _sha256(gauges_path)
+    pre_hash = sha256_path(gauges_path)
     result = subprocess.run(
         [
             sys.executable, str(SCRIPT_PATH),
@@ -425,7 +421,7 @@ def test_combine_only_preserves_existing_gauges_csv(amc, tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert gauges_path.exists()
-    assert _sha256(gauges_path) == pre_hash
+    assert sha256_path(gauges_path) == pre_hash
 
 
 def test_done_summary_names_gauges_csv(amc, tmp_path, capsys):
@@ -534,7 +530,7 @@ def test_n3_gauges_csv_byte_identical_one_day(n3_one_day_gauges_run):
     skip behavior under the dimensioned path must regenerate this hash
     and document the cause in the PR description."""
     path = n3_one_day_gauges_run.out_dir / "gauges.csv"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == N3_GAUGES_ONE_DAY_HASH, (
         f"N=3 gauges.csv drifted from locked 1-day hash. "
         f"expected={N3_GAUGES_ONE_DAY_HASH} actual={actual}"

@@ -596,3 +596,109 @@ def test_component_metric_base_reads_live_components(amc, monkeypatch):
     ]
     monkeypatch.setitem(amc.COMPONENTS, "database", patched_specs)
     assert amc._component_metric_base("database", "queries_per_sec") == new_base
+
+
+# ------------------------------------------------------------------
+# _validate_topology_metric_registries — import-time validation of
+# _TOPOLOGY_LOAD_METRICS / _TOPOLOGY_SATURATION_TARGETS. Every runtime
+# consumer of these registries degrades silently on a miss (the soft
+# fallbacks exist for --metrics-per-component trims and --components
+# subsets), so a registry typo must fail at import instead of
+# generating decoupled output.
+# ------------------------------------------------------------------
+def test_validate_metric_registries_accepts_current_registries(amc):
+    """The shipped registries must pass the validator."""
+    amc._validate_topology_metric_registries()  # must not raise
+
+
+def test_metric_registries_reject_unknown_load_metrics_component(amc, monkeypatch):
+    patched = dict(amc._TOPOLOGY_LOAD_METRICS)
+    patched["not_a_component"] = ("requests_per_sec", ())
+    monkeypatch.setattr(amc, "_TOPOLOGY_LOAD_METRICS", patched)
+    with pytest.raises(ValueError, match="not_a_component"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_reject_typo_canonical_load_metric(amc, monkeypatch):
+    patched = dict(amc._TOPOLOGY_LOAD_METRICS)
+    patched["apigateway"] = ("requests_per_secc", ())
+    monkeypatch.setattr(amc, "_TOPOLOGY_LOAD_METRICS", patched)
+    with pytest.raises(ValueError, match="requests_per_secc"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_reject_typo_supplementary_load_metric(amc, monkeypatch):
+    patched = dict(amc._TOPOLOGY_LOAD_METRICS)
+    patched["cacheservice"] = ("cache_hits", ("cache_missez",))
+    monkeypatch.setattr(amc, "_TOPOLOGY_LOAD_METRICS", patched)
+    with pytest.raises(ValueError, match="cache_missez"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_reject_unknown_saturation_component(amc, monkeypatch):
+    patched = dict(amc._TOPOLOGY_SATURATION_TARGETS)
+    patched["ghost_component"] = (("latency_ms",), ("error_rate",))
+    monkeypatch.setattr(amc, "_TOPOLOGY_SATURATION_TARGETS", patched)
+    with pytest.raises(ValueError, match="ghost_component"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_reject_typo_saturation_latency_metric(amc, monkeypatch):
+    patched = dict(amc._TOPOLOGY_SATURATION_TARGETS)
+    patched["apigateway"] = (("avg_response_time_msz",), ("error_rate",))
+    monkeypatch.setattr(amc, "_TOPOLOGY_SATURATION_TARGETS", patched)
+    with pytest.raises(ValueError, match="avg_response_time_msz"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_reject_typo_saturation_error_metric(amc, monkeypatch):
+    patched = dict(amc._TOPOLOGY_SATURATION_TARGETS)
+    patched["apigateway"] = (("avg_response_time_ms",), ("error_ratez",))
+    monkeypatch.setattr(amc, "_TOPOLOGY_SATURATION_TARGETS", patched)
+    with pytest.raises(ValueError, match="error_ratez"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_reject_constant_edge_source_without_load_entry(
+    amc, monkeypatch
+):
+    """Removing the loadbalancer load-metrics entry must fail: the
+    loadbalancer -> apigateway constant edge would be silently skipped
+    by the coupling composer."""
+    patched = dict(amc._TOPOLOGY_LOAD_METRICS)
+    del patched["loadbalancer"]
+    monkeypatch.setattr(amc, "_TOPOLOGY_LOAD_METRICS", patched)
+    with pytest.raises(ValueError, match="loadbalancer"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_reject_saturating_edge_target_without_targets_entry(
+    amc, monkeypatch
+):
+    """Removing the llm_analytics saturation-targets entry must fail:
+    the apigateway -> llm_analytics saturating edge's contribution
+    would be silently dropped."""
+    patched = dict(amc._TOPOLOGY_SATURATION_TARGETS)
+    del patched["llm_analytics"]
+    monkeypatch.setattr(amc, "_TOPOLOGY_SATURATION_TARGETS", patched)
+    with pytest.raises(ValueError, match="llm_analytics"):
+        amc._validate_topology_metric_registries()
+
+
+def test_metric_registries_allow_callable_only_source_without_load_entry(
+    amc, monkeypatch
+):
+    """A non-saturating callable-weight edge does not require its source
+    in _TOPOLOGY_LOAD_METRICS via this validator — the callable path
+    reads captured columns through its own ``signal``, which
+    ``_validate_topology`` probes separately."""
+    patched_topology = dict(amc.TOPOLOGY)
+    patched_topology["scheduler"] = [
+        amc.Edge(
+            target="database",
+            weight=lambda signal: signal * 2.0,
+            signal=lambda cols: None,
+        )
+    ]
+    monkeypatch.setattr(amc, "TOPOLOGY", patched_topology)
+    amc._validate_topology_metric_registries()  # must not raise

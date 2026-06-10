@@ -36,23 +36,16 @@ These tests cover:
 """
 from __future__ import annotations
 
-import hashlib
 
 import numpy as np
 import pytest
 
-from conftest import read_component_rows, run_capture
+from conftest import read_component_rows, run_capture, sha256_path
 
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-def _sha256_path(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _column_values(out_dir, component, metric):
@@ -489,8 +482,8 @@ def test_realistic_mode_latency_csvs_byte_identical_to_default(
         "loadbalancer.csv", "apigateway.csv", "authservice.csv",
         "cacheservice.csv", "database.csv", "anomalies.csv",
     ):
-        default_hash = _sha256_path(one_day_run_a.out_dir / filename)
-        explicit_hash = _sha256_path(explicit.out_dir / filename)
+        default_hash = sha256_path(one_day_run_a.out_dir / filename)
+        explicit_hash = sha256_path(explicit.out_dir / filename)
         assert default_hash == explicit_hash, (
             f"{filename} drifted between default run and "
             f"--topology-mode realistic run under saturation phase"
@@ -674,3 +667,64 @@ def test_realistic_latency_mean_elevated_vs_independent(
         f"elevated above independent-mode mean={indep_mean:.2f}; "
         f"saturation looks inert"
     )
+
+
+def test_saturation_overlap_target_composes_both_effects(amc):
+    """A metric listed in BOTH the latency-family and error-family tuples
+    of a ``_TOPOLOGY_SATURATION_TARGETS`` entry must receive the latency
+    multiplier AND the error offset.
+
+    Regression: the error loop in ``_compose_topology_saturation_specs``
+    used to rebuild the spec from the pristine ``specs[idx]`` instead of
+    ``new_specs[idx]``, silently discarding the multiplier wrap the
+    latency loop had installed — diverging from the per-instance path,
+    which applies both sides of its ``(latency_factor, error_offset)``
+    tuple to an overlap target. No v1 registry entry overlaps; this
+    pins the synthetic-overlap contract so the first real one composes
+    identically on both paths.
+    """
+    n_rows = 16
+    load = np.full(n_rows, 1000.0)
+    sat = amc.SaturationParams(
+        midpoint=500.0, steepness=6.0,
+        latency_gain=0.5, error_gain=0.02,
+    )
+
+    saved_targets = amc._TOPOLOGY_SATURATION_TARGETS.copy()
+    saved_topology = dict(amc.TOPOLOGY)
+    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
+    try:
+        amc._TOPOLOGY_SATURATION_TARGETS["synthcomp"] = (
+            ("overlap_ms",), ("overlap_ms",),
+        )
+        amc.TOPOLOGY["synthup"] = [
+            amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
+        ]
+        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ())
+
+        specs = [amc.MetricSpec(name="overlap_ms", base=100.0, std=0.0)]
+        out = amc._compose_topology_saturation_specs(
+            "synthcomp", specs,
+            {"synthup": {"synthload": load}},
+            n_rows=n_rows,
+        )
+        expected_lat, expected_err = amc._apply_saturation(load, sat)
+        composed = out[0]
+        ts = np.zeros(n_rows)
+        elapsed = np.zeros(n_rows)
+        assert composed.multiplier is not None, (
+            "overlap target lost its latency multiplier — the error "
+            "loop rebuilt the spec from the pristine list"
+        )
+        assert np.allclose(composed.multiplier(ts, elapsed), expected_lat)
+        assert composed.additive is not None, (
+            "overlap target lost its error offset"
+        )
+        assert np.allclose(composed.additive(ts, elapsed), expected_err)
+    finally:
+        amc._TOPOLOGY_SATURATION_TARGETS.clear()
+        amc._TOPOLOGY_SATURATION_TARGETS.update(saved_targets)
+        amc.TOPOLOGY.clear()
+        amc.TOPOLOGY.update(saved_topology)
+        amc._TOPOLOGY_LOAD_METRICS.clear()
+        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)

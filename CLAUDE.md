@@ -1142,6 +1142,22 @@ non-negative non-`bool` `int`/`float`. `_apply_saturation()` re-runs
 the same check at call time so direct callers (tests, future
 consumers) cannot smuggle in `NaN`/`inf`/`bool`/negative values.
 
+The companion metric registries are validated at import time by
+`_validate_topology_metric_registries()` (defined and invoked right
+after `_TOPOLOGY_SATURATION_TARGETS`, which it reads): every
+`_TOPOLOGY_LOAD_METRICS` / `_TOPOLOGY_SATURATION_TARGETS` key must be
+a `COMPONENTS` key and every named metric must exist in that
+component's *full* catalog; every `TOPOLOGY` source with a
+constant-weight or saturating outgoing edge must have a
+`_TOPOLOGY_LOAD_METRICS` entry; every constant-weight edge's target
+must have a `_TOPOLOGY_LOAD_METRICS` entry; and every saturating
+edge's target must have a `_TOPOLOGY_SATURATION_TARGETS` entry. The
+runtime consumers keep their soft fallbacks (which exist to tolerate
+`--metrics-per-component` trims and `--components` subsets), but a
+registry typo now fails at import instead of silently generating
+decoupled output that only the opt-in `--validate-output` Pearson
+check would catch.
+
 Mirror these invariants in `tests/test_topology_registry.py` when
 adding new edges or constraints.
 
@@ -1592,7 +1608,7 @@ This checklist maps to 13 recurring patterns identified across past PR reviews (
 
 **Test resource cost**
 - Fixtures generating full 1-day, 7-day, or `--instances-per-component N > 1` (N=3 and larger) datasets must reuse the session-scoped fixtures already declared in `tests/conftest.py` rather than redefine module-scoped duplicates. A `module`-scoped fixture that runs `main()` end-to-end will re-execute the generator once per test file and multiply suite wall-time and peak RSS by the number of duplicating files (PR #67 had three separate ~1.3 GB N=3 dataset fixtures; PR #63 module-scoped fixtures duplicated session-scoped runs from conftest).
-- Reading multi-hundred-MB CSVs into memory via `Path.read_bytes()` is forbidden in tests. Use chunked streaming for hashing (`with path.open("rb") as f: while chunk := f.read(1 << 20): hasher.update(chunk)`) so peak RSS stays bounded regardless of file size. PR #67's `_sha256` helper read 1.3 GB into RAM in one shot — replace with a streaming loop.
+- Reading multi-hundred-MB CSVs into memory via `Path.read_bytes()` is forbidden in tests. Use chunked streaming for hashing (`with path.open("rb") as f: while chunk := f.read(1 << 20): hasher.update(chunk)`) so peak RSS stays bounded regardless of file size. The suite's shared helper is `conftest.sha256_path` — use it instead of declaring a per-file copy. PR #67's `_sha256` helper read 1.3 GB into RAM in one shot — replace with a streaming loop.
 - A test that needs only a row count must not call `f.readlines()` or `path.read_text().splitlines()` on the full file. Use `sum(1 for _ in f)` (or `with path.open() as f: next(f); count = sum(1 for _ in f)` to skip the header) so the file streams line-by-line. PR #64 read a full N=2 1-day CSV with `readlines()` just to count rows.
 
 **Cross-platform test guards**

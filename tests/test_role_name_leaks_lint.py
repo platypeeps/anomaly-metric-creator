@@ -351,3 +351,64 @@ def test_real_repo_tree_is_clean():
     assert result.returncode == 0, (
         f"lint failed against current repo tree:\nstderr:\n{result.stderr}"
     )
+
+
+def test_nonexistent_path_exits_two(tmp_path: Path):
+    """A typo'd path argument must exit 2, not 0: the documented ad-hoc
+    pre-flight chains this script with ``&&`` before ``gh pr comment``,
+    so a silently-clean exit on a missing body file would let an
+    unchecked body post."""
+    missing = tmp_path / "definitely-missing-body.md"
+    result = _run(missing)
+    assert result.returncode == 2, (
+        f"expected exit 2 for nonexistent path, got {result.returncode}; "
+        f"stderr: {result.stderr}"
+    )
+    assert "no such file" in result.stderr
+
+
+def test_nonexistent_path_takes_precedence_over_clean_files(tmp_path: Path):
+    """Mixing a clean file with a missing one still exits 2 — the I/O
+    error must not be masked by the clean scan."""
+    clean = tmp_path / "clean.md"
+    clean.write_text("nothing to see here\n", encoding="utf-8")
+    result = _run(clean, tmp_path / "missing.md")
+    assert result.returncode == 2, result.stderr
+
+
+def test_directory_argument_still_silently_skipped(tmp_path: Path):
+    """An existing directory keeps the historic silent skip (exit 0):
+    pre-commit only passes files, and a directory has no text to leak —
+    only *nonexistent* paths are the typo hazard."""
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_nonexistent_path_matching_skip_rule_still_exits_two(tmp_path: Path):
+    """The existence check must run *before* the skip rules: a typo'd
+    path with a skip-listed suffix (``.lock``) or a skip-listed
+    directory component (``.venv``) is still a typo, and the ``&&``
+    pre-flight chain must stay blocked. (Copilot review on PR #97: the
+    original ordering let ``_should_skip`` silently pass nonexistent
+    skip-rule matches.)"""
+    for missing in (
+        tmp_path / "missing-body.lock",
+        tmp_path / ".venv" / "missing-body.md",
+    ):
+        result = _run(missing)
+        assert result.returncode == 2, (
+            f"{missing}: expected exit 2, got {result.returncode}; "
+            f"stderr: {result.stderr}"
+        )
+        assert "no such file" in result.stderr
+
+
+def test_existing_skip_rule_path_still_silently_skipped(tmp_path: Path):
+    """Reordering the existence check must not change skip-rule
+    semantics for paths that DO exist: an on-disk ``.lock`` file —
+    even one containing a forbidden label that would exit 1 if it
+    were scanned — stays a silent exit-0 skip."""
+    lock = tmp_path / "deps.lock"
+    lock.write_text("Handoff to Lead Engineer for merge.\n")  # role-name-lint: allow
+    result = _run(lock)
+    assert result.returncode == 0, result.stderr

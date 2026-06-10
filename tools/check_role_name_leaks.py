@@ -142,8 +142,24 @@ def _scan_path(path: Path) -> tuple[list[str], list[str]]:
     printer so diagnostics aggregate in a single ordered block at the
     end of the run rather than interleaving with downstream scans.
     Binary content (UTF-8 decode failure) is a silent skip and
-    contributes to neither list.
+    contributes to neither list. A *nonexistent* path is an
+    ``unreadable`` diagnostic (exit ``2``): the documented ad-hoc
+    pre-flight chains this script with ``&&`` before ``gh pr comment``,
+    so a typo'd body filename must block the post rather than exit 0
+    and let the unchecked body through. The existence check runs
+    *before* the skip rules — a nonexistent path that happens to match
+    a skip rule (a ``.lock`` suffix, a ``.venv``/``.git`` path
+    component) is still a typo and must fail closed; the skip rules
+    only classify paths that actually exist. Existing non-file paths
+    (directories) keep the silent skip — pre-commit only passes files,
+    and a directory argument has no text to leak.
     """
+    if not path.exists():
+        return [], [
+            f"{path}:0:0: unreadable: no such file (a typo'd path must "
+            "not exit 0 — the && pre-flight chain would post an "
+            "unchecked body)"
+        ]
     if _should_skip(path):
         return [], []
     if not path.is_file():

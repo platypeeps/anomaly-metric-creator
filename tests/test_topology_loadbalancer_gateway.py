@@ -21,21 +21,14 @@ These tests cover:
 """
 from __future__ import annotations
 
-import hashlib
 
 import numpy as np
 import pytest
 
-from conftest import read_component_rows, read_manifest, run_capture
+from conftest import read_component_rows, read_manifest, run_capture, sha256_path
 from test_scenarios import LEGACY_INDEPENDENT_ONE_DAY_HASHES
 
 
-def _sha256_path(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _column_values(out_dir, component, metric):
@@ -124,8 +117,8 @@ def test_topology_mode_realistic_matches_default_byte_for_byte(
         extra_args=["--topology-mode", "realistic"],
     )
     for filename in ("apigateway.csv", "loadbalancer.csv", "anomalies.csv"):
-        default_hash = _sha256_path(one_day_run_a.out_dir / filename)
-        explicit_hash = _sha256_path(explicit.out_dir / filename)
+        default_hash = sha256_path(one_day_run_a.out_dir / filename)
+        explicit_hash = sha256_path(explicit.out_dir / filename)
         assert default_hash == explicit_hash, (
             f"{filename} drifted between default run and explicit "
             f"--topology-mode realistic run"
@@ -146,7 +139,7 @@ def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
         extra_args=["--topology-mode", "independent"],
     )
     for filename, expected_hash in sorted(LEGACY_INDEPENDENT_ONE_DAY_HASHES.items()):
-        actual = _sha256_path(explicit.out_dir / filename)
+        actual = sha256_path(explicit.out_dir / filename)
         assert actual == expected_hash, (
             f"{filename} drifted from the locked independent-mode baseline "
             f"under --topology-mode independent. expected={expected_hash} "

@@ -3,15 +3,13 @@ row preservation, and the synthetic-extra-component case.
 """
 
 import csv
-import hashlib
 import os
 import shutil
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from conftest import COMPONENTS, run_capture
+from conftest import COMPONENTS, run_capture, sha256_path
 
 
 @pytest.fixture(scope="module")
@@ -374,14 +372,6 @@ N3_COMBINED_ONE_DAY_HASH = (
 )
 
 
-def _sha256(path: Path) -> str:
-    """Chunked SHA-256 so the N=3 long-form combine output (~1.3 GB at
-    1-day default) doesn't get slurped into memory in one shot."""
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 @pytest.fixture(scope="module")
@@ -438,7 +428,7 @@ def test_n3_combined_byte_identical_one_day(n3_one_day_combine_run):
     and tie-break order as ``write_gauges_csv``, so this hash captures
     the same coverage on the combine writer side."""
     path = n3_one_day_combine_run.out_dir / "combined_metrics_unified.csv"
-    actual = _sha256(path)
+    actual = sha256_path(path)
     assert actual == N3_COMBINED_ONE_DAY_HASH, (
         f"N=3 combined drifted from locked 1-day hash. "
         f"expected={N3_COMBINED_ONE_DAY_HASH} actual={actual}"
