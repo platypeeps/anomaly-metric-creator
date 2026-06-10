@@ -744,3 +744,47 @@ def test_preflight_row_count_matches_generator_derivation(amc):
     ])
     assert args.duration_days == duration_days
     assert args.interval_seconds == interval
+
+
+# ---------------------------------------------------------------------------
+# OTEL stream scalars are validated unconditionally (not only when an
+# endpoint is configured) + --seed range check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("flag,value", [
+    ("--otel-stream-speedup", "-5"),
+    ("--otel-stream-speedup", "0"),
+    ("--otel-stream-timeout-seconds", "0"),
+    ("--otel-stream-max-events", "0"),
+    ("--otel-stream-protocol", "garbage"),
+])
+def test_otel_stream_scalars_rejected_without_endpoint(amc, flag, value):
+    """Bad OTEL stream scalars must be usage errors even when no
+    endpoint is configured — previously they were silently accepted and
+    could sit in a wrapper script until the day an endpoint was added."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([flag, value, "--output-dir", "test_out"])
+
+
+def test_otel_stream_scalar_defaults_accepted_without_endpoint(amc):
+    """Hoisting the scalar checks must not reject the defaults — a plain
+    no-OTEL run still parses (the checklist's 'new parse_args checks
+    must not spuriously reject' rule)."""
+    args = amc.parse_args(["--output-dir", "test_out"])
+    assert args.otel_stream_protocol in {"json", "protobuf"}
+
+
+@pytest.mark.parametrize("seed", ["-1", str(2**32)])
+def test_seed_out_of_numpy_range_rejected(amc, seed):
+    """np.random.RandomState accepts seeds in [0, 2**32); an out-of-range
+    --seed used to crash later in main() with a raw numpy ValueError
+    traceback instead of a clean usage error."""
+    with pytest.raises(SystemExit):
+        amc.parse_args(["--seed", seed, "--output-dir", "test_out"])
+
+
+@pytest.mark.parametrize("seed", ["0", str(2**32 - 1)])
+def test_seed_boundary_values_accepted(amc, seed):
+    args = amc.parse_args(["--seed", seed, "--output-dir", "test_out"])
+    assert args.seed == int(seed)

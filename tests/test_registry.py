@@ -393,3 +393,45 @@ def test_expected_scenario_slugs_present(amc):
     extra = actual - expected
     assert not missing, f"Expected slugs missing from SCENARIOS: {missing}"
     assert not extra, f"Unexpected slugs in SCENARIOS: {extra}"
+
+
+# ---------------------------------------------------------------------------
+# DERIVATIONS <-> MetricSpec.derivation two-way consistency
+# ---------------------------------------------------------------------------
+
+
+def test_derivations_registry_accepts_current_catalogs(amc):
+    """The shipped COMPONENTS/DERIVATIONS pair must pass the two-way
+    validation (every declared `derivation` string registered, every
+    registered metric declared)."""
+    amc._validate_derivations_registry()  # must not raise
+
+
+def test_derivation_string_without_registry_entry_rejected(amc, monkeypatch):
+    """A MetricSpec declaring a `derivation` string with no DERIVATIONS
+    entry must fail at import-time validation — previously it surfaced
+    only as a runtime KeyError from the strict _RECOMPUTERS lookup at
+    --validate-output time."""
+    import dataclasses
+    patched = dict(amc.COMPONENTS)
+    specs = list(patched["apigateway"])
+    specs[0] = dataclasses.replace(
+        specs[0], derivation="synthetic_formula(x)"
+    )
+    patched["apigateway"] = specs
+    monkeypatch.setattr(amc, "COMPONENTS", patched)
+    with pytest.raises(ValueError, match="no DERIVATIONS entry"):
+        amc._validate_derivations_registry()
+
+
+def test_registry_entry_without_derivation_string_rejected(amc, monkeypatch):
+    """The mirror drift: a DERIVATIONS metric whose MetricSpec declares
+    no `derivation` string would be recomputed by the generator but
+    never checked by --validate-output (schema.json omits the
+    derivation)."""
+    patched = dict(amc.DERIVATIONS)
+    recompute_fn, _metrics = patched["cacheservice"]
+    patched["apigateway"] = (recompute_fn, ("requests_per_sec",))
+    monkeypatch.setattr(amc, "DERIVATIONS", patched)
+    with pytest.raises(ValueError, match="declares no"):
+        amc._validate_derivations_registry()

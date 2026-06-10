@@ -1554,9 +1554,14 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             # forked the buffer: e.g. a filtered spec at t=60 forks
             # pod-0's buffer; a later unfiltered spec at t=120 must
             # apply to pod-0 too, not stay stuck on its forked baseline
-            # from t=60. Same-cell collisions cannot occur — the
-            # duplicate-spec guard above rejects two specs at the same
-            # ``(metric, time_offset)``.
+            # from t=60. Same-cell collisions CAN occur here — the
+            # duplicate-spec guard above only rejects *identical*
+            # ``(metric, time_offset)`` pairs, while two specs with
+            # different offsets can round to the same row at a coarse
+            # ``--interval-seconds`` (or a cascade can land inside a
+            # shaped span). Colliding specs resolve last-writer-wins per
+            # buffer in ``(row_idx, metric, spec_order)`` order — the
+            # documented contract in CLAUDE.md's RNG-ordering section.
             values[row_idx, col] = override_value
             for buf in per_instance_values.values():
                 buf[row_idx, col] = override_value
@@ -1822,7 +1827,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             for inst_idx, buf in per_instance_values.items()
         }
 
-        with open(file_path, "w", newline="") as f:
+        with open(file_path, "w", encoding="utf-8", newline="") as f:
             # Precompute the shared metric suffix once per component. Every
             # instance not in ``per_instance_str_vals`` reuses this array,
             # preserving Phase 2's "precompute once, reuse per instance"
@@ -1974,11 +1979,23 @@ def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
         meta = _cached_generator_meta(spec["generator"])
         if not meta["inspectable"]:
             # Conservative fallback: try only the two canonical shapes
-            # (3-arg first, then 2-arg). No intermediate calls.
+            # (3-arg first, then 2-arg). No intermediate calls. Retry
+            # only on a call-*binding* TypeError (arity mismatch raised
+            # at the call site: the traceback has no frame beyond this
+            # one). A TypeError raised *inside* the generator body has a
+            # deeper traceback; retrying it with 2 args would mask the
+            # real bug and — if the body drew from ``rng`` before
+            # raising — double-advance the RNG stream. (A C-extension
+            # body raising TypeError without Python frames is
+            # indistinguishable from a binding failure and still
+            # retries; that is the best the fallback can do.)
             try:
-                return float(spec["generator"](ts, col, rng))
-            except TypeError:
-                return float(spec["generator"](ts, col))
+                value = spec["generator"](ts, col, rng)
+            except TypeError as exc:
+                if exc.__traceback__.tb_next is not None:
+                    raise
+                value = spec["generator"](ts, col)
+            return float(value)
         required = meta["required_positional"]
         fixed = meta["fixed_positional_count"]
         if meta["has_var_positional"]:
@@ -2175,13 +2192,19 @@ def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col:
     Uninspectable callables (e.g., C extensions) fall back to a try/except
     chain that tries only the two canonical shapes (5-arg then 2-arg) — no
     intermediate 3- or 4-arg attempts, because those would themselves be
-    misbinding vectors.
+    misbinding vectors. The fallback retries only on a call-*binding*
+    TypeError; a TypeError raised inside the generator body propagates
+    (see the step-path fallback in ``_resolve_anomaly_value``).
     """
     meta = _cached_generator_meta(generator)
     if not meta["inspectable"]:
+        # See the matching step-path fallback in ``_resolve_anomaly_value``
+        # for the binding-vs-body TypeError distinction.
         try:
             return generator(ts, col, t_within, span_idx, rng)
-        except TypeError:
+        except TypeError as exc:
+            if exc.__traceback__.tb_next is not None:
+                raise
             return generator(ts, col)
     required = meta["required_positional"]
     fixed = meta["fixed_positional_count"]
@@ -3512,6 +3535,43 @@ def _compose_topology_coupled_specs(
     if not incoming:
         return specs
 
+    # Callable-weight contributions are computed once per component —
+    # ``edge.signal`` / ``edge.weight`` are metric-invariant, so
+    # re-evaluating them per coupled metric was redundant — and applied
+    # only to the *canonical* load metric below: the weight callable
+    # returns values in the downstream's canonical-metric units (e.g.
+    # ``_cache_miss_ratio_signal``'s weight scales to
+    # ``database.queries_per_sec``'s natural base), so adding the same
+    # array to a supplementary metric with a different base would inject
+    # a wrong-unit contribution. Inert today — no callable-edge target
+    # declares supplementary captures — but the first one added would
+    # have silently mixed units. Track whether any callable signal was
+    # successfully evaluated separately from the numeric contribution —
+    # a callable that happens to be exactly zero everywhere (e.g. a
+    # cache with a 0% miss rate for the whole run) is still a valid
+    # coupling signal, not an absent one, and must not silently fall
+    # back to the natural Gaussian baseline.
+    callable_active = False
+    callable_contrib = np.zeros(n_rows, dtype=np.float64)
+    for upstream, edge in incoming:
+        if not callable(edge.weight):
+            continue
+        if edge.signal is None:
+            # Defence-in-depth: the validator rejects callable-weight
+            # edges without ``signal`` at import-time. A missing
+            # ``signal`` here means a future contributor bypassed the
+            # validator (e.g. via a monkeypatched TOPOLOGY in a test);
+            # skip the edge rather than crashing the generator.
+            continue
+        ups_cols = upstream_arrays.get(upstream, {})
+        signal = edge.signal(ups_cols)
+        if signal is None:
+            continue
+        callable_contrib = callable_contrib + np.asarray(
+            edge.weight(signal), dtype=np.float64
+        )
+        callable_active = True
+
     new_specs = list(specs)
     for metric_name in coupled_metric_names:
         if metric_name not in name_to_idx:
@@ -3520,6 +3580,10 @@ def _compose_topology_coupled_specs(
         downstream_base = float(original.base)
         if downstream_base <= 0:
             continue
+        # Canonical-only: see the callable-contribution comment above.
+        metric_callable_active = (
+            callable_active and metric_name == canonical_down
+        )
 
         # First pass: collect all active constant-weight edges to compute
         # the normalization factor that maps ``sum(weight)`` to 1.0 so the
@@ -3548,34 +3612,7 @@ def _compose_topology_coupled_specs(
                         (ups_cols[ups_canonical], ups_base, w)
                     )
 
-        # Second pass: build the callable contributions. Track whether any
-        # callable signal was successfully evaluated separately from the
-        # numeric contribution — a callable that happens to be exactly
-        # zero everywhere (e.g. a cache with a 0% miss rate for the whole
-        # run) is still a valid coupling signal, not an absent one, and
-        # must not silently fall back to the natural Gaussian baseline.
-        callable_active = False
-        callable_contrib = np.zeros(n_rows, dtype=np.float64)
-        for upstream, edge in incoming:
-            if not callable(edge.weight):
-                continue
-            if edge.signal is None:
-                # Defence-in-depth: the validator rejects callable-weight
-                # edges without ``signal`` at import-time. A missing
-                # ``signal`` here means a future contributor bypassed the
-                # validator (e.g. via a monkeypatched TOPOLOGY in a test);
-                # skip the edge rather than crashing the generator.
-                continue
-            ups_cols = upstream_arrays.get(upstream, {})
-            signal = edge.signal(ups_cols)
-            if signal is None:
-                continue
-            callable_contrib = callable_contrib + np.asarray(
-                edge.weight(signal), dtype=np.float64
-            )
-            callable_active = True
-
-        if not active_constant and not callable_active:
+        if not active_constant and not metric_callable_active:
             continue
 
         # Constant contributions: normalize by sum(w) so the constant term
@@ -3595,7 +3632,7 @@ def _compose_topology_coupled_specs(
 
         coupled = (
             constant_contrib
-            + callable_contrib
+            + (callable_contrib if metric_callable_active else 0.0)
             + rng.normal(0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)
         )
         new_specs[name_to_idx[metric_name]] = dataclasses.replace(
@@ -3859,12 +3896,15 @@ def _compose_topology_saturation_specs(
             ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
             if ups_entry is None:
                 continue
-            ups_canonical, ups_supplementary = ups_entry
-            driver = None
-            for lm in (ups_canonical, *ups_supplementary):
-                if lm in ups_cols:
-                    driver = ups_cols[lm]
-                    break
+            ups_canonical, _ups_supplementary = ups_entry
+            # Canonical-only driver: ``sat.midpoint`` is tuned in the
+            # upstream's canonical load-metric units, so a supplementary
+            # column (different units — e.g. cacheservice's
+            # ``cache_misses``) must never drive the logistic. When the
+            # canonical column is absent (``--metrics-per-component``
+            # trim) the edge is skipped, matching the constant-weight
+            # coupling path's posture.
+            driver = ups_cols.get(ups_canonical)
             if driver is None or driver.shape[0] != n_rows:
                 continue
             lat_mult, err_off = _apply_saturation(driver, sat)
@@ -4100,8 +4140,10 @@ def _compute_topology_arrays_per_instance(
     # Determine which downstream metrics need either coupling or
     # saturation arrays.
     coupled_metric_names: tuple[str, ...] = ()
+    canonical_down: str | None = None
     if coupled_entry is not None:
-        coupled_metric_names = (coupled_entry[0], *coupled_entry[1])
+        canonical_down = coupled_entry[0]
+        coupled_metric_names = (canonical_down, *coupled_entry[1])
     latency_metrics: tuple[str, ...] = ()
     error_metrics: tuple[str, ...] = ()
     if sat_targets is not None:
@@ -4174,7 +4216,30 @@ def _compute_topology_arrays_per_instance(
 
         # ------------------------------------------------------------
         # Coupling arrays (one per coupled metric on this component).
+        #
+        # Callable-weight contributions are computed once per instance
+        # (``edge.signal`` / ``edge.weight`` are metric-invariant) and
+        # applied only to the canonical load metric — the weight
+        # callable returns canonical-metric units, so a supplementary
+        # metric with a different base must not receive it. Mirrors the
+        # shared-path rule in ``_compose_topology_coupled_specs``.
         # ------------------------------------------------------------
+        callable_active = False
+        callable_contrib = np.zeros(n_rows, dtype=np.float64)
+        for upstream, edge in incoming:
+            if not callable(edge.weight):
+                continue
+            if edge.signal is None:
+                continue
+            ups_cols = per_instance_upstream_cols.get(upstream, {})
+            signal = edge.signal(ups_cols)
+            if signal is None:
+                continue
+            callable_contrib = callable_contrib + np.asarray(
+                edge.weight(signal), dtype=np.float64
+            )
+            callable_active = True
+
         for metric_name in coupled_metric_names:
             if metric_name not in name_to_idx:
                 continue
@@ -4182,6 +4247,9 @@ def _compute_topology_arrays_per_instance(
             downstream_base = float(original.base)
             if downstream_base <= 0:
                 continue
+            metric_callable_active = (
+                callable_active and metric_name == canonical_down
+            )
 
             # First: active constant-weight edges for normalization.
             active_constant: list[tuple[np.ndarray, float, float]] = []
@@ -4207,24 +4275,7 @@ def _compute_topology_arrays_per_instance(
                             (ups_cols[ups_canonical], ups_base, w)
                         )
 
-            # Second: callable-weight edges.
-            callable_active = False
-            callable_contrib = np.zeros(n_rows, dtype=np.float64)
-            for upstream, edge in incoming:
-                if not callable(edge.weight):
-                    continue
-                if edge.signal is None:
-                    continue
-                ups_cols = per_instance_upstream_cols.get(upstream, {})
-                signal = edge.signal(ups_cols)
-                if signal is None:
-                    continue
-                callable_contrib = callable_contrib + np.asarray(
-                    edge.weight(signal), dtype=np.float64
-                )
-                callable_active = True
-
-            if not active_constant and not callable_active:
+            if not active_constant and not metric_callable_active:
                 continue
 
             constant_contrib = np.zeros(n_rows, dtype=np.float64)
@@ -4249,7 +4300,9 @@ def _compute_topology_arrays_per_instance(
                 )
                 shared_coupling_noise[metric_name] = noise
             coupling_by_instance[inst_idx][metric_name] = (
-                constant_contrib + callable_contrib + noise
+                constant_contrib
+                + (callable_contrib if metric_callable_active else 0.0)
+                + noise
             )
 
         # ------------------------------------------------------------
@@ -4270,12 +4323,15 @@ def _compute_topology_arrays_per_instance(
             ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
             if ups_entry is None:
                 continue
-            ups_canonical, ups_supplementary = ups_entry
-            driver = None
-            for lm in (ups_canonical, *ups_supplementary):
-                if lm in ups_cols:
-                    driver = ups_cols[lm]
-                    break
+            ups_canonical, _ups_supplementary = ups_entry
+            # Canonical-only driver: ``sat.midpoint`` is tuned in the
+            # upstream's canonical load-metric units, so a supplementary
+            # column (different units — e.g. cacheservice's
+            # ``cache_misses``) must never drive the logistic. When the
+            # canonical column is absent (``--metrics-per-component``
+            # trim) the edge is skipped, matching the constant-weight
+            # coupling path's posture.
+            driver = ups_cols.get(ups_canonical)
             if driver is None or driver.shape[0] != n_rows:
                 continue
             lat_mult, err_off = _apply_saturation(driver, sat)
@@ -6382,6 +6438,15 @@ def _validate_scenario_spec(slug: str, component: str, spec: dict,
     field on any drift. Cascade specs reject ``shape`` / ``duration_seconds``
     / ``shape_params`` because the cascade injection path is single-row step
     writes only (see CLAUDE.md § Anomaly injection schema).
+
+    One deliberate write side effect: an iterable ``instance_filter`` is
+    normalized in place to a ``frozenset`` (``spec["instance_filter"] =
+    frozenset(items)``). This is load-bearing, not incidental — element
+    validation must iterate the filter, which would *exhaust* a one-shot
+    iterable (a generator, ``iter(...)``) before the runtime ever saw it,
+    so the materialized form has to be stored back. Callers passing a
+    spec dict should expect the field to be rewritten; everything else in
+    the dict is read-only to this function.
     """
     kind = "cascade_specs" if is_cascade else "primary_specs"
     location = f"SCENARIOS[{slug!r}].{kind} entry for component {component!r}"
@@ -6833,6 +6898,37 @@ def _validate_derivations_registry() -> None:
                 f"DERIVATIONS[{component!r}] declares derived metrics "
                 f"{unknown_metrics} that are not in COMPONENTS[{component!r}]; "
                 f"register the MetricSpec first or correct the name."
+            )
+    # Reverse direction: the consistency must hold both ways. A
+    # MetricSpec that declares a ``derivation`` string without a
+    # matching DERIVATIONS entry would emit a schema.json claiming a
+    # derivation the generator never recomputes, and the failure would
+    # surface only at ``--validate-output`` time as a runtime KeyError
+    # from the strict ``_RECOMPUTERS[...]`` lookup instead of a clear
+    # import-time error here. A DERIVATIONS metric whose MetricSpec
+    # does NOT declare a ``derivation`` string is the mirror drift: the
+    # generator recomputes the column but the schema never tells the
+    # validator to check it.
+    for component, specs in COMPONENTS.items():
+        declared = {s.name for s in specs if s.derivation is not None}
+        registered = set(DERIVATIONS.get(component, (None, ()))[1])
+        unregistered = sorted(declared - registered)
+        if unregistered:
+            raise ValueError(
+                f"COMPONENTS[{component!r}] metrics {unregistered} declare "
+                "a `derivation` string but have no DERIVATIONS entry; the "
+                "generator would never recompute them and --validate-output "
+                "would fail with a KeyError. Add the DERIVATIONS (and "
+                "_RECOMPUTERS) entries in lockstep."
+            )
+        undeclared = sorted(registered - declared)
+        if undeclared:
+            raise ValueError(
+                f"DERIVATIONS[{component!r}] recomputes metrics "
+                f"{undeclared} whose MetricSpec declares no `derivation` "
+                "string; schema.json would omit the derivation and "
+                "--validate-output would silently skip the check. Declare "
+                "`derivation=` on the MetricSpec."
             )
 
 
@@ -7759,6 +7855,11 @@ def parse_args(argv=None):
         p.error("--duration-days must be >= 1")
     if not 0.0 <= args.drop_rate <= 1.0:
         p.error("--drop-rate must be between 0 and 1")
+    # np.random.RandomState accepts seeds in [0, 2**32). An out-of-range
+    # value (e.g. --seed -1) used to crash later in main() with a raw
+    # numpy ValueError traceback instead of a clean usage error.
+    if not 0 <= args.seed < 2**32:
+        p.error("--seed must be in [0, 2**32) (numpy RandomState range)")
     # NaN and infinity slip past plain <= 0 / < 0.001 comparisons:
     # NaN compares false to everything, and inf is greater than every finite
     # bound. NaN later crashes when row counts are cast to int; inf silently
@@ -7924,6 +8025,23 @@ def parse_args(argv=None):
     # downstream-flag rejection is the DST guard above.
     if args.otel_gauge_batch_seconds <= 0:
         p.error("--otel-gauge-batch-seconds must be > 0")
+    # The OTEL stream scalar checks run unconditionally (matching
+    # --otel-gauge-batch-seconds above): a bad value used to be silently
+    # accepted whenever no endpoint was configured, so e.g.
+    # `--otel-stream-speedup -5` could sit unnoticed in a wrapper script
+    # until the day an endpoint was added. Endpoint-shape and token
+    # checks stay inside the endpoint conditional — they validate the
+    # endpoint values themselves.
+    if args.otel_stream_speedup <= 0:
+        p.error("--otel-stream-speedup must be > 0")
+    if args.otel_stream_timeout_seconds <= 0:
+        p.error("--otel-stream-timeout-seconds must be > 0")
+    if args.otel_stream_max_events is not None and args.otel_stream_max_events < 1:
+        p.error("--otel-stream-max-events must be >= 1")
+    if args.otel_stream_auth_scheme.strip() == "":
+        p.error("--otel-stream-auth-scheme must be non-empty")
+    if args.otel_stream_protocol not in {"json", "protobuf"}:
+        p.error("--otel-stream-protocol must be one of: json, protobuf")
     if any([args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint]):
         endpoints = [
             ("logs", args.otel_logs_endpoint, args.otel_logs_auth_token),
@@ -7936,17 +8054,6 @@ def parse_args(argv=None):
                     p.error(f"--otel-{signal}-endpoint must start with http:// or https://")
                 if token and not token.strip():
                     p.error(f"--otel-{signal}-auth-token must be non-empty when provided")
-
-        if args.otel_stream_speedup <= 0:
-            p.error("--otel-stream-speedup must be > 0")
-        if args.otel_stream_timeout_seconds <= 0:
-            p.error("--otel-stream-timeout-seconds must be > 0")
-        if args.otel_stream_max_events is not None and args.otel_stream_max_events < 1:
-            p.error("--otel-stream-max-events must be >= 1")
-        if args.otel_stream_auth_scheme.strip() == "":
-            p.error("--otel-stream-auth-scheme must be non-empty")
-        if args.otel_stream_protocol not in {"json", "protobuf"}:
-            p.error("--otel-stream-protocol must be one of: json, protobuf")
     args.emit_selection = selected
 
     raw_components = [item.strip().lower() for item in args.components.split(",") if item.strip()]
@@ -8204,7 +8311,7 @@ def combine_logs_unified(components, input_dir, output_file=None):
         print(f"Loading {component}.csv...")
 
         seen_in_component = {}
-        with open(input_path, "r") as infile:
+        with open(input_path, "r", encoding="utf-8") as infile:
             reader = csv.DictReader(infile)
             # The any-dimensioned dispatch above already routed the long-
             # form CSVs into ``_write_combined_long_form``, so by the time
@@ -8253,7 +8360,7 @@ def combine_logs_unified(components, input_dir, output_file=None):
 
     print(f"Total columns: {len(fieldnames)} (1 timestamp + {len(fieldnames) - 1} metrics)")
 
-    with open(output_file, "w", newline="") as outfile:
+    with open(output_file, "w", encoding="utf-8", newline="") as outfile:
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -8438,12 +8545,12 @@ def write_reporting_artifacts(
 
     with contextlib.ExitStack() as stack:
         log_f = (
-            stack.enter_context(open(log_path, "w", newline=""))
+            stack.enter_context(open(log_path, "w", encoding="utf-8", newline=""))
             if emit_logs
             else None
         )
         trace_f = (
-            stack.enter_context(open(trace_path, "w", newline=""))
+            stack.enter_context(open(trace_path, "w", encoding="utf-8", newline=""))
             if emit_traces
             else None
         )
@@ -11090,13 +11197,21 @@ def _validate_topology_coupling(
             # (zero-variance column). Treat that as a coupling
             # regression: a constant downstream load is exactly the
             # mutation the validator is supposed to flag.
-            if (np.std(source_kept) == 0.0
-                    or np.std(target_kept) == 0.0):
+            source_std = float(np.std(source_kept))
+            target_std = float(np.std(target_kept))
+            if source_std == 0.0 or target_std == 0.0:
+                # Name the offending side(s) explicitly — both std
+                # values are already computed, and "X or Y" forces the
+                # operator to inspect two columns when the violation
+                # already knows which one is constant.
+                sides = []
+                if source_std == 0.0:
+                    sides.append(f"{source}.{source_canonical}")
+                if target_std == 0.0:
+                    sides.append(f"{target}.{target_canonical}")
                 violations.append(
                     f"topology coupling {source}->{target}: zero-variance "
-                    f"column "
-                    f"({source}.{source_canonical} or "
-                    f"{target}.{target_canonical}); Pearson correlation "
+                    f"column ({' and '.join(sides)}); Pearson correlation "
                     f"undefined (expected >= {threshold:.4f})"
                 )
                 continue
@@ -11952,7 +12067,7 @@ def main(argv=None):
     ]
 
     if "metrics" in args.emit_selection:
-        with open(args.output_dir / "anomalies.csv", "w", newline="") as f:
+        with open(args.output_dir / "anomalies.csv", "w", encoding="utf-8", newline="") as f:
             # ``extrasaction="ignore"`` is a defensive guard so any future
             # ``_``-prefixed private keys on entry dicts cannot leak into the CSV.
             writer = csv.DictWriter(

@@ -728,3 +728,66 @@ def test_saturation_overlap_target_composes_both_effects(amc):
         amc.TOPOLOGY.update(saved_topology)
         amc._TOPOLOGY_LOAD_METRICS.clear()
         amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)
+
+
+def test_saturation_driver_requires_canonical_column(amc):
+    """The saturation logistic must be driven by the upstream's
+    *canonical* load metric only: ``sat.midpoint`` is tuned in canonical
+    units, so a supplementary column (different units) must never drive
+    the curve. When the canonical capture is absent the edge is skipped
+    and the specs come back untouched by identity.
+
+    Regression: the driver loop used to fall back to the first
+    supplementary column present, silently mixing units."""
+    n_rows = 16
+    supplementary_load = np.full(n_rows, 1000.0)
+    sat = amc.SaturationParams(
+        midpoint=500.0, steepness=6.0,
+        latency_gain=0.5, error_gain=0.02,
+    )
+
+    saved_targets = amc._TOPOLOGY_SATURATION_TARGETS.copy()
+    saved_topology = dict(amc.TOPOLOGY)
+    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
+    try:
+        amc._TOPOLOGY_SATURATION_TARGETS["synthcomp"] = (
+            ("latency_ms",), ("err_rate",),
+        )
+        amc.TOPOLOGY["synthup"] = [
+            amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
+        ]
+        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ("synthextra",))
+
+        specs = [
+            amc.MetricSpec(name="latency_ms", base=100.0, std=0.0),
+            amc.MetricSpec(name="err_rate", base=0.1, std=0.0),
+        ]
+        # Captured columns carry ONLY the supplementary metric — the
+        # canonical 'synthload' was trimmed (the --metrics-per-component
+        # degradation case).
+        upstream_arrays = {"synthup": {"synthextra": supplementary_load}}
+        out = amc._compose_topology_saturation_specs(
+            "synthcomp", specs, upstream_arrays, n_rows=n_rows,
+        )
+        assert all(a is b for a, b in zip(out, specs)), (
+            "saturation must skip an edge whose canonical load capture "
+            "is absent instead of driving the logistic from a "
+            "supplementary column in different units"
+        )
+
+        # Positive control: with the canonical column present the edge
+        # fires and the latency spec is rewritten.
+        upstream_arrays = {"synthup": {"synthload": supplementary_load}}
+        out = amc._compose_topology_saturation_specs(
+            "synthcomp", specs, upstream_arrays, n_rows=n_rows,
+        )
+        assert out[0] is not specs[0], (
+            "canonical-driven edge must rewrite the latency spec"
+        )
+    finally:
+        amc._TOPOLOGY_SATURATION_TARGETS.clear()
+        amc._TOPOLOGY_SATURATION_TARGETS.update(saved_targets)
+        amc.TOPOLOGY.clear()
+        amc.TOPOLOGY.update(saved_topology)
+        amc._TOPOLOGY_LOAD_METRICS.clear()
+        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)

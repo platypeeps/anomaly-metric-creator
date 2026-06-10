@@ -777,6 +777,23 @@ def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
         f"validator must flag a constant downstream as a coupling "
         f"regression; got: {violations}"
     )
+    # The zero-variance diagnostic must name the offending side
+    # explicitly (here: the constant *target* column) rather than the
+    # ambiguous "source or target" both-sides form — CLAUDE.md promises
+    # the violation names the side.
+    zv = [
+        v for v in violations
+        if "loadbalancer->apigateway" in v and "zero-variance" in v
+    ]
+    assert zv, (
+        "expected the zero-variance branch to fire for an all-constant "
+        f"target column; got: {violations}"
+    )
+    for v in zv:
+        assert "(apigateway.requests_per_sec)" in v, (
+            f"zero-variance violation must name exactly the constant "
+            f"side; got: {v!r}"
+        )
 
 
 def test_topology_coupling_flags_random_downstream(amc, tmp_path):
