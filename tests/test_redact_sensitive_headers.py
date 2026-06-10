@@ -267,6 +267,35 @@ def test_http_error_activity_fields_redacts_case_variant_response_headers(amc):
     assert headers_map["x-api-key"] == "***"
 
 
+def test_http_error_activity_fields_request_body_gated_on_verbose(amc):
+    """The raw request body reaches the activity-log fields only under
+    ``verbose=True`` — the ``--otel-verbose`` contract. Non-verbose
+    error records keep the always-on diagnostics (``response_headers``,
+    ``cf_ray``) but never the payload, which for the gauge stream can be
+    a multi-thousand-data-point batch re-serialized on every retry."""
+    exc = _build_http_error(403, [("CF-Ray", "ray-verbose-001")])
+    body = b'{"resourceMetrics": []}'
+
+    fields_quiet = amc._http_error_activity_fields(
+        exc, body=body, content_type="application/json"
+    )
+    assert "request_body" not in fields_quiet
+    assert fields_quiet["cf_ray"] == "ray-verbose-001"
+
+    fields_verbose = amc._http_error_activity_fields(
+        exc, body=body, content_type="application/json", verbose=True
+    )
+    assert fields_verbose["request_body"] == '{"resourceMetrics": []}'
+    assert fields_verbose["cf_ray"] == "ray-verbose-001"
+
+    # Non-JSON content types never include the body, verbose or not
+    # (protobuf payloads are not human-readable in a text log).
+    fields_proto = amc._http_error_activity_fields(
+        exc, body=b"\x00\x01", content_type="application/x-protobuf", verbose=True
+    )
+    assert "request_body" not in fields_proto
+
+
 def test_http_error_activity_fields_non_http_error_returns_empty(amc):
     """Non-HTTPError exceptions short-circuit out of the helper — the
     redaction call site is only reached for HTTPError, so this test

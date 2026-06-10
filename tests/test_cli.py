@@ -13,6 +13,8 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
+
 from conftest import COMPONENTS, SCRIPT_PATH
 
 
@@ -260,6 +262,7 @@ def test_components_filter_limits_otel_stream(tmp_path):
             "--interval-seconds", "60",
             "--components", "authservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-logs-endpoint", f"{base_url}/v1/logs",
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
@@ -546,6 +549,7 @@ def test_otel_stream_posts_events_to_endpoints(tmp_path):
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-logs-endpoint", f"{base_url}/v1/logs",
             "--otel-metrics-endpoint", f"{base_url}/v1/metrics",
             "--otel-traces-endpoint", f"{base_url}/v1/traces",
@@ -666,6 +670,7 @@ def test_otel_stream_warns_and_continues_on_receiver_failure(tmp_path):
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -703,6 +708,7 @@ def test_otel_stream_uses_env_based_auth_token(tmp_path, monkeypatch):
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_auth_run"),
@@ -737,6 +743,7 @@ def test_otel_stream_uses_explicit_auth_token_and_scheme(tmp_path):
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-logs-endpoint", endpoint,
             "--otel-logs-auth-token", "direct-token",
             "--otel-stream-auth-scheme", "ApiKey",
@@ -776,6 +783,7 @@ def test_otel_stream_uses_env_controls_for_endpoint_and_auth(tmp_path, monkeypat
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_env_auth_run"),
         )
@@ -809,6 +817,7 @@ def test_otel_stream_protobuf_sets_content_type(tmp_path):
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-protocol", "protobuf",
             "--otel-stream-max-events", "1",
@@ -952,14 +961,20 @@ def test_otel_activity_log_records_failure(tmp_path):
     assert "FAIL" in contents
 
 
-def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, capsys):
-    """HTTP receiver failures log response headers and payloads, including CF-Ray.
+@pytest.mark.parametrize("verbose", [False, True])
+def test_otel_http_error_activity_log_includes_response_headers(
+    amc, tmp_path, capsys, verbose
+):
+    """HTTP receiver failures log response headers — and, only under
+    ``verbose=True``, the request payload — including CF-Ray.
 
     The sensitive ``Set-Cookie`` and ``Authorization`` headers that
     Cloudflare-style intermediaries can echo on a 4xx response must be
     masked before they reach the on-disk activity log; the
     ``CF-Ray`` / ``X-Debug-Header`` diagnostic pair survives so the
-    failure record stays useful.
+    failure record stays useful. The raw ``request_body`` follows the
+    ``--otel-verbose`` contract: present in verbose failure records,
+    absent otherwise.
     """
     class _Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
@@ -994,7 +1009,7 @@ def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, c
             auth_headers=None,
             protocol="json",
             activity_log_path=log_target,
-            verbose=False,
+            verbose=verbose,
         )
     finally:
         server.shutdown()
@@ -1034,8 +1049,14 @@ def test_otel_http_error_activity_log_includes_response_headers(amc, tmp_path, c
     assert "plaintext-cookie" not in log_text
     assert "echoed-token-abc" not in log_text
     assert "sk_live_super_secret" not in log_text
-    assert '"resourceMetrics"' in kv["request_body"]
-    assert '"write_latency_ms"' in kv["request_body"]
+    if verbose:
+        assert '"resourceMetrics"' in kv["request_body"]
+        assert '"write_latency_ms"' in kv["request_body"]
+    else:
+        assert "request_body" not in kv, (
+            "non-verbose FAIL records must not carry the raw request "
+            "payload (--otel-verbose contract)"
+        )
 
 
 def test_otel_activity_log_not_created_when_streaming_disabled(tmp_path):
@@ -1176,6 +1197,7 @@ def test_otel_stream_default_protocol_is_protobuf(tmp_path):
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-logs-endpoint", endpoint,
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_default_proto_run"),

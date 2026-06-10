@@ -492,33 +492,16 @@ def test_realistic_mode_latency_csvs_byte_identical_to_default(
 
 # ------------------------------------------------------------------
 # Realistic-mode: latency and error rate correlate with upstream load
+#
+# These tests consume the session-scoped ``one_day_run_a`` (default
+# no-flag run; realistic mode is the argparse default since the
+# phase 6 flag day) and ``one_day_independent_run`` (same args as the
+# module-scoped duplicates this file used to carry: days=1, 1s
+# cadence, ``--topology-mode independent``). Regenerating either here
+# would be the PR #63 duplicate-fixture antipattern; the explicit-flag
+# byte-identity is pinned by
+# ``test_realistic_mode_latency_csvs_byte_identical_to_default`` above.
 # ------------------------------------------------------------------
-@pytest.fixture(scope="module")
-def realistic_one_day_sat(amc, tmp_path_factory):
-    # interval_seconds=1.0 keeps 86,400 rows/day so the Pearson correlation
-    # checks in test_realistic_latency_correlates_with_upstream_load have
-    # enough data points to clear the 0.15 threshold.
-    out = tmp_path_factory.mktemp("phase4_realistic")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=["--topology-mode", "realistic"],
-    )
-
-
-@pytest.fixture(scope="module")
-def independent_one_day_sat(amc, tmp_path_factory):
-    """Module-scoped independent-mode run for the realistic-vs-independent
-    contrast tests. Shared across the latency- and error-elevation
-    parametrizations so we do one ``run_capture`` per mode for this
-    module instead of one per (component, metric) case (Copilot
-    feedback on PR #49)."""
-    # interval_seconds=1.0 keeps the same row density as realistic_one_day_sat
-    # so the contrast assertions compare equivalent sample sizes.
-    out = tmp_path_factory.mktemp("phase4_independent")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=["--topology-mode", "independent"],
-    )
 
 
 @pytest.mark.parametrize(
@@ -542,7 +525,7 @@ def independent_one_day_sat(amc, tmp_path_factory):
     ],
 )
 def test_realistic_latency_correlates_with_upstream_load(
-    realistic_one_day_sat, amc, upstream_metric, downstream_metric
+    one_day_run_a, amc, upstream_metric, downstream_metric
 ):
     """Each saturating edge must drive a positive correlation between
     upstream load and downstream latency. The correlation is dominated by
@@ -550,7 +533,7 @@ def test_realistic_latency_correlates_with_upstream_load(
     to clear a modest positive threshold — well above the ~0 we would
     see if saturation was not wired through."""
     common, (upstream, latency) = _aligned_columns(
-        realistic_one_day_sat.out_dir, upstream_metric, downstream_metric
+        one_day_run_a.out_dir, upstream_metric, downstream_metric
     )
     upstream_x, latency_x = _exclude_anomaly_rows(common, upstream, latency)
     corr = float(np.corrcoef(upstream_x, latency_x)[0, 1])
@@ -572,7 +555,7 @@ def test_realistic_latency_correlates_with_upstream_load(
     ],
 )
 def test_realistic_error_rate_mean_elevated_vs_independent(
-    independent_one_day_sat, realistic_one_day_sat,
+    one_day_independent_run, one_day_run_a,
     component, natural_base, error_gain,
 ):
     """Per-edge ``error_gain`` is small (≤ 0.02) relative to the natural
@@ -585,10 +568,10 @@ def test_realistic_error_rate_mean_elevated_vs_independent(
     around its midpoint), so we accept anything materially above zero.
     """
     indep_vals, _ = _column_values(
-        independent_one_day_sat.out_dir, component, "error_rate"
+        one_day_independent_run.out_dir, component, "error_rate"
     )
     real_vals, _ = _column_values(
-        realistic_one_day_sat.out_dir, component, "error_rate"
+        one_day_run_a.out_dir, component, "error_rate"
     )
     lift = float(np.mean(real_vals) - np.mean(indep_vals))
     # Allow for noise jitter: the lift floor is a tenth of the error_gain
@@ -609,11 +592,11 @@ def test_realistic_error_rate_mean_elevated_vs_independent(
     "component", ["apigateway", "authservice", "cacheservice", "database"],
 )
 def test_realistic_error_rate_never_above_one(
-    realistic_one_day_sat, component
+    one_day_run_a, component
 ):
     """Phase 4 acceptance: 'Saturation never drives error rates above 1.0'."""
     vals, _ = _column_values(
-        realistic_one_day_sat.out_dir, component, "error_rate"
+        one_day_run_a.out_dir, component, "error_rate"
     )
     assert vals.max() <= 1.0, (
         f"{component}.error_rate max={vals.max():.6f} exceeded 1.0 under "
@@ -633,12 +616,12 @@ def test_realistic_error_rate_never_above_one(
     ],
 )
 def test_realistic_latency_never_negative(
-    realistic_one_day_sat, component, metric
+    one_day_run_a, component, metric
 ):
     """Phase 4 acceptance: 'Latency multiplier never negative'. Because the
     natural latency base is positive and the multiplier is always >= 1,
     the resulting column must stay non-negative."""
-    vals, _ = _column_values(realistic_one_day_sat.out_dir, component, metric)
+    vals, _ = _column_values(one_day_run_a.out_dir, component, metric)
     assert vals.min() >= 0.0, (
         f"{component}.{metric} min={vals.min():.6f} went negative under "
         f"realistic saturation"
@@ -660,7 +643,7 @@ def test_realistic_latency_never_negative(
     ],
 )
 def test_realistic_latency_mean_elevated_vs_independent(
-    independent_one_day_sat, realistic_one_day_sat, component, metric,
+    one_day_independent_run, one_day_run_a, component, metric,
 ):
     """Under realistic mode the saturation curve must lift the latency
     column's mean above the independent-mode mean. We can't pin the
@@ -672,10 +655,10 @@ def test_realistic_latency_mean_elevated_vs_independent(
     those baked-in overrides.
     """
     indep_vals, _ = _column_values(
-        independent_one_day_sat.out_dir, component, metric
+        one_day_independent_run.out_dir, component, metric
     )
     real_vals, _ = _column_values(
-        realistic_one_day_sat.out_dir, component, metric
+        one_day_run_a.out_dir, component, metric
     )
     indep_mean = float(np.mean(indep_vals))
     real_mean = float(np.mean(real_vals))

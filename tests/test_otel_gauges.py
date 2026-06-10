@@ -15,6 +15,7 @@ import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
 
 from conftest import SCRIPT_PATH
 
@@ -300,6 +301,7 @@ def test_stream_otel_gauges_off_by_default_no_gauge_requests(tmp_path):
             "--interval-seconds", "600",
             "--components", "authservice,cacheservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
@@ -326,6 +328,7 @@ def test_stream_otel_gauges_only_skips_anomaly_counter_requests(tmp_path):
             "--drop-rate", "0",
             "--components", "authservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-gauges-only",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",
@@ -360,6 +363,7 @@ def test_stream_otel_gauges_batches_by_seconds(tmp_path):
             "--drop-rate", "0",
             "--components", "authservice,cacheservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",
@@ -396,6 +400,7 @@ def test_stream_otel_gauges_skips_dropped_rows(tmp_path):
             "--seed", "123",
             "--components", "authservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",
@@ -438,6 +443,7 @@ def test_stream_otel_gauges_json_and_protobuf_parity_e2e(tmp_path):
                 "--seed", "7",
                 "--components", "authservice",
                 "--otel-enabled",
+                "--otel-activity-log", str(tmp_path / "otel-activity.log"),
                 "--otel-emit-gauges",
                 "--otel-metrics-endpoint", f"{base}/v1/metrics",
                 "--otel-stream-protocol", protocol,
@@ -476,6 +482,7 @@ def test_stream_otel_gauges_respects_max_events_cap(tmp_path):
             "--drop-rate", "0",
             "--components", "authservice,cacheservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",
@@ -538,6 +545,7 @@ def test_stream_otel_gauges_metric_prefix_applied(tmp_path):
             "--drop-rate", "0",
             "--components", "authservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-gauge-metric-prefix", "amc.",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
@@ -582,6 +590,7 @@ def test_stream_otel_gauges_does_not_change_csv_output(tmp_path):
             "--interval-seconds", "600",
             "--seed", "42",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",
@@ -611,6 +620,7 @@ def test_stream_otel_gauges_with_protobuf_default(tmp_path):
             "--drop-rate", "0",
             "--components", "authservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-speedup", "1000000",
@@ -655,6 +665,7 @@ def test_stream_otel_gauges_with_auth_header(tmp_path, monkeypatch):
             "--drop-rate", "0",
             "--components", "authservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-metrics-auth-token", "secret-gauge-token",
@@ -745,15 +756,19 @@ def test_stream_otel_gauges_max_events_caps_attempts_not_successes(amc, tmp_path
     )
 
 
+@pytest.mark.parametrize("verbose", [False, True])
 def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
-    amc, tmp_path, capsys
+    amc, tmp_path, capsys, verbose
 ):
-    """Gauge HTTP failures log response headers and payloads, including CF-Ray.
+    """Gauge HTTP failures log response headers — and, only under
+    ``verbose=True``, the request payload — including CF-Ray.
 
     The sensitive ``Set-Cookie`` / ``Authorization`` / ``X-Api-Key``
     headers an upstream proxy can echo on a 4xx response are masked
     before they reach the activity log; the diagnostic
-    ``CF-Ray`` / ``X-Debug-Header`` pair survives.
+    ``CF-Ray`` / ``X-Debug-Header`` pair survives. The raw
+    ``request_body`` follows the ``--otel-verbose`` contract: present
+    in verbose failure records, absent otherwise.
     """
     csv_path = tmp_path / "database.csv"
     log_target = tmp_path / "gauge_http_error.log"
@@ -794,7 +809,7 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
             auth_headers=None,
             protocol="json",
             activity_log_path=log_target,
-            verbose=False,
+            verbose=verbose,
         )
     finally:
         server.shutdown()
@@ -829,9 +844,15 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
     assert "gauge-cookie" not in log_text
     assert "gauge-echoed-token" not in log_text
     assert "sk_live_gauge_secret" not in log_text
-    assert '"resourceMetrics"' in kv["request_body"]
-    assert '"write_latency_ms"' in kv["request_body"]
-    assert '"gauge"' in kv["request_body"]
+    if verbose:
+        assert '"resourceMetrics"' in kv["request_body"]
+        assert '"write_latency_ms"' in kv["request_body"]
+        assert '"gauge"' in kv["request_body"]
+    else:
+        assert "request_body" not in kv, (
+            "non-verbose FAIL records must not carry the raw request "
+            "payload (--otel-verbose contract)"
+        )
 
 
 def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_path):
@@ -1082,6 +1103,7 @@ def test_stream_otel_gauges_emits_pod_attribute_with_instances(tmp_path):
             "--components", "authservice",
             "--instances-per-component", "3",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",
@@ -1142,6 +1164,7 @@ def test_stream_otel_gauges_dimensionless_csv_byte_identical_to_pre_phase6(tmp_p
             "--drop-rate", "0",
             "--components", "authservice",
             "--otel-enabled",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-emit-gauges",
             "--otel-metrics-endpoint", f"{base}/v1/metrics",
             "--otel-stream-protocol", "json",

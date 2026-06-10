@@ -54,7 +54,7 @@ addopts = "-ra --dist loadfile -n 4"
 # registrations at runtime. See CLAUDE.md "Test resource cost" for the
 # cheap-default convention these markers attach to.
 markers = [
-  "full_resolution: declares the test depends on the script's 1s --interval-seconds default and pairs with interval_seconds=None (or =1.0) at the run_capture call site.",
+  "full_resolution: declares the test depends on 1s rows (86,400/day); pairs with an explicit interval_seconds=1.0 at the run_capture call site. The script's --interval-seconds default is 60s, and interval_seconds=None inherits that default.",
 ]
 
 [tool.ruff]

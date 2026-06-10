@@ -497,6 +497,7 @@ Written to `--output-dir` (default `iot_logs/`):
 - `paymentservice.csv`
 - `identityprovider.csv`
 - `observabilitypipeline.csv`
+- `gpu_inference.csv`
 - `anomalies.csv` — written alongside the per-component CSVs whenever
   `--emit-selection` includes `metrics` (the default); explicitly deleted
   from `--output-dir` on runs that omit `metrics` (e.g.
@@ -688,7 +689,8 @@ scenario, or name specific slugs to narrow or exclude them.
 
 ### Scenario catalog
 
-All 29 scenarios are listed below. The **Signal** column shows the minimum
+Every scenario in `SCENARIOS` is listed below (one table row per catalog
+entry). The **Signal** column shows the minimum
 `--signal-level` required (`low`/`medium`/`high`). The **Days** column shows the
 minimum `--duration-days` required. The **Duration** column summarizes the span
 lengths of the scenario's **primary** specs (`duration_seconds` in `SCENARIOS`).

@@ -907,3 +907,94 @@ def test_pr_mode_help_text_documents_invocation():
     assert result.returncode == 0, result.stderr
     assert "--pr" in result.stdout
     assert "--head-commit-oid" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# --paginate handling: gh emits concatenated JSON arrays for multi-page
+# array endpoints ([...][...]), which a single json.loads rejects with
+# "Extra data". The gate must keep working on exactly the long comment
+# threads it exists for (PR #86 exceeded one page), so the production
+# comments fetch parses page-by-page and flattens.
+# ---------------------------------------------------------------------------
+
+
+def _load_tool_module():
+    """Import the script as a module so the paginated-array parser and
+    ``_gh_pr_comments`` can be unit-tested without a live ``gh``."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(  # noqa: amc-load
+        "check_approval_duplicate", SCRIPT
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_parse_paginated_single_page_array():
+    tool = _load_tool_module()
+    raw = '[{"id": 1}, {"id": 2}]'
+    assert tool._parse_paginated_json_arrays(raw, context="t") == [
+        {"id": 1},
+        {"id": 2},
+    ]
+
+
+def test_parse_paginated_concatenated_pages_flatten_in_order():
+    """The exact ``--paginate`` failure shape: two pages concatenated
+    back-to-back (with and without whitespace between them) must
+    flatten in page order instead of raising ``Extra data``."""
+    tool = _load_tool_module()
+    for sep in ("", "\n", "  \n  "):
+        raw = f'[{{"id": 1}}, {{"id": 2}}]{sep}[{{"id": 3}}]'
+        items = tool._parse_paginated_json_arrays(raw, context="t")
+        assert [item["id"] for item in items] == [1, 2, 3], repr(raw)
+
+
+def test_parse_paginated_empty_output_raises():
+    """Empty stdout stays fail-closed (exit-2 path), matching the
+    pre-existing ``json.loads("")`` behavior — a malformed gh response
+    must block the post, not read as 'no prior comments'."""
+    import pytest
+
+    tool = _load_tool_module()
+    for raw in ("", "   \n"):
+        with pytest.raises(OSError):
+            tool._parse_paginated_json_arrays(raw, context="t")
+
+
+def test_parse_paginated_non_list_page_raises():
+    import pytest
+
+    tool = _load_tool_module()
+    with pytest.raises(OSError):
+        tool._parse_paginated_json_arrays('{"id": 1}', context="t")
+
+
+def test_parse_paginated_trailing_junk_raises():
+    import pytest
+
+    tool = _load_tool_module()
+    with pytest.raises(OSError):
+        tool._parse_paginated_json_arrays('[{"id": 1}] garbage', context="t")
+
+
+def test_gh_pr_comments_flattens_multi_page_paginate_output(monkeypatch):
+    """End-to-end through ``_gh_pr_comments`` with ``_gh`` stubbed to
+    return a two-page ``--paginate`` payload: the comments list must
+    flatten across pages (the pre-fix ``json.loads`` raised and the
+    gate exited 2 on every >100-comment thread)."""
+    tool = _load_tool_module()
+    pages = '[{"id": 1, "body": "APPROVED"}]\n[{"id": 2, "body": "later"}]'
+    captured_args = []
+
+    def _fake_gh(args):
+        captured_args.append(args)
+        return pages
+
+    monkeypatch.setattr(tool, "_gh", _fake_gh)
+    comments = tool._gh_pr_comments("owner/repo", 86)
+    assert [c["id"] for c in comments] == [1, 2]
+    assert captured_args == [
+        ["api", "repos/owner/repo/issues/86/comments", "--paginate"]
+    ]

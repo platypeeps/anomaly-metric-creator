@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -499,32 +500,28 @@ SCHEMA_N3_SEVEN_DAY_HASH = (
 
 
 @pytest.fixture(scope="module")
-def one_day_schema_run_n3(amc, tmp_path_factory):
-    """Full default 1-day run with ``--instances-per-component 3`` so the
-    schema's dim block fires on every component. Module-scoped to amortize
-    the ~25–30s generation across all N=3 assertions below."""
-    # Explicit 1s cadence preserves the full-resolution SCHEMA_N3_ONE_DAY_HASH.
-    out = tmp_path_factory.mktemp("ver151_one_day_schema_n3")
-    return run_capture(
-        amc, out, days=1, interval_seconds=1.0,
-        extra_args=[
-            "--emit-selection", "metrics,schema",
-            "--instances-per-component", "3",
-        ],
-    )
+def one_day_schema_run_n3(n3_one_day_dataset_dir):
+    """N=3 1-day run with ``metrics,schema`` emit-selection so the
+    schema's dim block fires on every component. Delegates to the
+    session-scoped ``n3_one_day_dataset_dir`` in ``conftest.py``
+    (identical args: days=1, 1s cadence, N=3, ``metrics,schema``)
+    instead of regenerating the ~25-30s / ~1.3 GB dataset for this
+    module — the PR #63 module-scoped-duplicate antipattern from the
+    "Test resource cost" checklist. The locked
+    ``SCHEMA_N3_ONE_DAY_HASH`` holds byte-identically because the
+    shared fixture uses the same emit-selection this module's fixture
+    used when the hash was locked."""
+    return SimpleNamespace(out_dir=n3_one_day_dataset_dir)
 
 
 @pytest.fixture(scope="module")
-def seven_day_schema_run_n3(amc, tmp_path_factory):
-    # Explicit 1s cadence preserves the full-resolution SCHEMA_N3_SEVEN_DAY_HASH.
-    out = tmp_path_factory.mktemp("ver151_seven_day_schema_n3")
-    return run_capture(
-        amc, out, days=7, interval_seconds=1.0,
-        extra_args=[
-            "--emit-selection", "metrics,schema",
-            "--instances-per-component", "3",
-        ],
-    )
+def seven_day_schema_run_n3(n3_seven_day_dataset_dir):
+    """Delegates to the session-scoped 7-day N=3 dataset — the single
+    most expensive generation in the suite; see
+    ``conftest.n3_seven_day_dataset_dir`` for the sharing rationale.
+    ``SCHEMA_N3_SEVEN_DAY_HASH`` holds byte-identically (same args,
+    same ``metrics,schema`` emit-selection)."""
+    return SimpleNamespace(out_dir=n3_seven_day_dataset_dir)
 
 
 def test_schema_omits_dimensions_block_for_anonymous_default(one_day_schema_run):

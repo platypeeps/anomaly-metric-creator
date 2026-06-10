@@ -73,10 +73,14 @@ def _invoke(args, *, expect_fail=False):
 
 
 @pytest.fixture(scope="module")
-def default_1d(amc, tmp_path_factory):
-    out = tmp_path_factory.mktemp("inst_default_1d")
-    _run(amc, out, days=1)
-    return out
+def default_1d(one_day_run_a):
+    """Default 1-day run for the N=1 byte-identity and row-count checks.
+    Delegates to the session-scoped ``one_day_run_a`` (same args:
+    days=1, ``interval_seconds=1.0``, no extra flags) instead of
+    regenerating a byte-identical 86,400-row dataset for this module —
+    the PR #63 module-scoped-duplicate antipattern from the
+    "Test resource cost" checklist."""
+    return one_day_run_a.out_dir
 
 
 @pytest.fixture(scope="module")
@@ -99,10 +103,16 @@ def n3_1d(n3_one_day_dataset_dir):
 
 
 @pytest.fixture(scope="module")
-def n3_7d(amc, tmp_path_factory):
-    out = tmp_path_factory.mktemp("inst_n3_7d")
-    _run(amc, out, days=7, extra_args=["--instances-per-component", "3"])
-    return out
+def n3_7d(n3_seven_day_dataset_dir):
+    """N=3 7-day dataset for the locked-hash check. Delegates to the
+    session-scoped ``n3_seven_day_dataset_dir`` in ``conftest.py`` —
+    the single most expensive generation in the suite (~9 GB at 1s
+    resolution) — so it runs at most once per worker instead of once
+    per consuming module. The shared fixture's
+    ``--emit-selection metrics,schema`` does not move the per-component
+    CSV hashes (CSV bytes are independent of ``--emit-selection``;
+    the writers consume no RNG)."""
+    return n3_seven_day_dataset_dir
 
 
 # ---------------------------------------------------------------------------
@@ -509,13 +519,28 @@ def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
         )
 
 
-def test_n3_7d_hashes_stable(amc, n3_7d, tmp_path_factory):
-    """N=3 7-day output is byte-stable across two identical runs."""
-    out2 = tmp_path_factory.mktemp("inst_n3_7d_v2")
-    _run(amc, out2, days=7, extra_args=["--instances-per-component", "3"])
+def test_n3_7d_hashes_stable(amc, tmp_path_factory):
+    """N=3 7-day output is byte-stable across two identical runs.
+
+    Byte-stability is interval-independent (the invariant is "same args
+    twice -> same bytes", not any specific locked hash), so this test
+    runs both passes at the cheap 60s default instead of duplicating
+    the ~9 GB full-resolution session dataset — the second
+    full-resolution pass was one of the three independent 7-day N=3
+    generations the "Test resource cost" checklist forbids. The
+    full-resolution locked hashes are covered separately by
+    ``test_n3_seven_day_csvs_byte_identical`` against the shared
+    session fixture, and full-resolution stability by
+    ``test_n3_1d_hashes_stable`` at 1 day.
+    """
+    extra = ["--instances-per-component", "3", "--emit-selection", "metrics"]
+    out1 = tmp_path_factory.mktemp("inst_n3_7d_stab_a")
+    _run(amc, out1, days=7, extra_args=extra, interval_seconds=60.0)
+    out2 = tmp_path_factory.mktemp("inst_n3_7d_stab_b")
+    _run(amc, out2, days=7, extra_args=extra, interval_seconds=60.0)
     for name in amc.COMPONENTS:
         fname = f"{name}.csv"
-        assert sha256_path(n3_7d / fname) == sha256_path(out2 / fname), (
+        assert sha256_path(out1 / fname) == sha256_path(out2 / fname), (
             f"{fname}: N=3 7-day output is not byte-stable"
         )
 

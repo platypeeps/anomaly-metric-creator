@@ -126,6 +126,29 @@ def _isolate_otel_env_session():
     mp.undo()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _guard_cwd_otel_activity_log():
+    # --otel-activity-log defaults to ./otel-activity.log relative to the
+    # process CWD, and subprocess _invoke() helpers inherit pytest's CWD —
+    # so a streaming test that forgets to pass --otel-activity-log (or set
+    # cwd=) appends transport diagnostics into whatever directory pytest
+    # was launched from, typically the repo root. That violates the
+    # "tests write only into tmp_path" rule and creates a shared append
+    # target across xdist workers. Snapshot the CWD file's state at
+    # session start and fail the session teardown if anything touched it.
+    leak_target = Path.cwd() / "otel-activity.log"
+    before = leak_target.stat().st_mtime_ns if leak_target.exists() else None
+    yield
+    after = leak_target.stat().st_mtime_ns if leak_target.exists() else None
+    assert before == after, (
+        f"{leak_target} was created or modified during the test run. A "
+        "streaming test invoked the CLI without --otel-activity-log (or "
+        "an explicit cwd=), leaking the activity log outside tmp_path. "
+        "Pass --otel-activity-log str(tmp_path / 'otel-activity.log') in "
+        "the test's _invoke() call."
+    )
+
+
 @pytest.fixture(scope="session")
 def amc():
     return _load_amc()
@@ -212,21 +235,31 @@ def one_day_full_metrics_independent_run(amc, tmp_path_factory):
 @pytest.fixture(scope="session")
 def n3_one_day_dataset_dir(amc, tmp_path_factory):
     """1-day ``--instances-per-component 3`` per-component CSVs +
-    ``anomalies.csv``, generated once and shared across the long-form writer tests (``tests/test_gauges_file.py`` and
-    ``tests/test_combine.py``).
+    ``anomalies.csv`` + ``schema.json``, generated once and shared across
+    the long-form writer tests (``tests/test_gauges_file.py`` and
+    ``tests/test_combine.py``), the per-component hash locks in
+    ``tests/test_instances_per_component.py``, and the N=3 schema
+    assertions in ``tests/test_schema_file.py``.
 
     The generation pass costs ~25-30 seconds and produces ~1.3 GB of
     output, so running it once per consuming test module would
-    double both the wall time and the disk pressure. The Phase 5
+    multiply both the wall time and the disk pressure. The Phase 5
     writer tests instead invoke ``write_gauges_csv`` and
     ``combine_logs`` directly against the shared dataset (the
     writers are pure functions of the per-component CSV bytes), so
     the locked SHA-256 golden hashes hold byte-identically with no
     second generation pass.
 
-    ``--emit-selection metrics`` keeps the dataset narrow:
-    per-component CSVs + ``anomalies.csv`` only, no logs / traces
-    artifacts that the writer tests don't consume.
+    ``--emit-selection metrics,schema`` keeps the dataset narrow:
+    per-component CSVs + ``anomalies.csv`` + ``schema.json``, no
+    logs / traces artifacts that no consumer reads. Per-component CSV
+    bytes are independent of ``--emit-selection`` (the writers consume
+    no RNG), so the locked ``N3_ONE_DAY_HASHES`` are unaffected by the
+    ``schema`` token; the ``schema.json`` bytes match the locked
+    ``SCHEMA_N3_ONE_DAY_HASH`` because that hash was locked under the
+    same ``metrics,schema`` selection. ``combine_logs`` autodiscovery
+    globs ``*.csv`` only, so the extra ``schema.json`` is invisible to
+    the hardlink-based writer fixtures.
     Explicit ``interval_seconds=1.0`` preserves the full-resolution locked
     ``N3_ONE_DAY_HASHES`` in
     ``tests/test_instances_per_component.py`` keep matching."""
@@ -235,7 +268,37 @@ def n3_one_day_dataset_dir(amc, tmp_path_factory):
         amc, out, days=1,
         extra_args=[
             "--instances-per-component", "3",
-            "--emit-selection", "metrics",
+            "--emit-selection", "metrics,schema",
+        ],
+        interval_seconds=1.0,
+    ).out_dir
+
+
+@pytest.fixture(scope="session")
+def n3_seven_day_dataset_dir(amc, tmp_path_factory):
+    """7-day ``--instances-per-component 3`` dataset, generated once and
+    shared by the 7-day hash locks in
+    ``tests/test_instances_per_component.py`` (``N3_SEVEN_DAY_HASHES``)
+    and the N=3 schema hash in ``tests/test_schema_file.py``
+    (``SCHEMA_N3_SEVEN_DAY_HASH``).
+
+    This is the single most expensive generation in the suite (~7x the
+    1-day N=3 pass; multiple minutes and ~9 GB at 1s resolution), so it
+    must never be duplicated in a module-scoped fixture — the suite
+    previously ran three independent copies of it across two modules
+    (the PR #67 antipattern from the "Test resource cost" checklist).
+    ``--emit-selection metrics,schema`` trims the logs / traces
+    artifacts no consumer reads; per-component CSV bytes are
+    independent of ``--emit-selection`` so ``N3_SEVEN_DAY_HASHES``
+    are unaffected, and ``SCHEMA_N3_SEVEN_DAY_HASH`` was locked under
+    the same ``metrics,schema`` selection. Explicit
+    ``interval_seconds=1.0`` preserves the full-resolution locks."""
+    out = tmp_path_factory.mktemp("n3_seven_day_dataset")
+    return run_capture(
+        amc, out, days=7,
+        extra_args=[
+            "--instances-per-component", "3",
+            "--emit-selection", "metrics,schema",
         ],
         interval_seconds=1.0,
     ).out_dir
