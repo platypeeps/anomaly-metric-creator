@@ -187,7 +187,7 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 # Per-metric schema. One MetricSpec per CSV column per component.
 # ------------------------------------------------------------------
 # Vocabulary for ``MetricSpec.semantic_type``. Drives both the ``schema.json``
-# emitter and the the ``validate`` subcommand checks (e.g. ``counter`` / ``rate``
+# emitter and the ``validate`` subcommand's checks (e.g. ``counter`` / ``rate``
 # columns must be non-negative). Values map onto the OTLP semantic instrument
 # kinds the generator uses elsewhere (``stream_otel_signals`` Sum data points
 # for counters, ``stream_otel_gauges`` Gauge data points for gauges).
@@ -215,7 +215,7 @@ class MetricSpec:
     Schema fields (``unit``, ``semantic_type``, ``min_value``, ``max_value``,
     ``dtype``, ``derivation``) are declarative metadata only — they do not
     affect generation. They flow into ``schema.json`` and the
-    the ``validate`` subcommand checks. Defaults preserve existing behavior for
+    ``validate`` subcommand's checks. Defaults preserve existing behavior for
     catalog entries that have not been backfilled yet (the generator still
     emits the same bytes whether or not these fields are populated).
     """
@@ -3753,7 +3753,7 @@ def _validate_topology_metric_registries() -> None:
     ``--components`` subsets) — but they also swallowed registry typos,
     so a new edge with a misspelled metric would pass import, generate
     fully decoupled output, and surface only at the opt-in
-    the ``validate`` subcommand Pearson check. This validator fails the typo
+    ``validate`` subcommand's Pearson check. This validator fails the typo
     at import time instead. Checks:
 
     * every ``_TOPOLOGY_LOAD_METRICS`` key is a ``COMPONENTS`` key, and
@@ -6917,7 +6917,7 @@ def _validate_derivations_registry() -> None:
     # MetricSpec that declares a ``derivation`` string without a
     # matching DERIVATIONS entry would emit a schema.json claiming a
     # derivation the generator never recomputes, and the failure would
-    # surface only at the ``validate`` subcommand time as a runtime KeyError
+    # surface only at ``validate``-subcommand time as a runtime KeyError
     # from the strict ``_RECOMPUTERS[...]`` lookup instead of a clear
     # import-time error here. A DERIVATIONS metric whose MetricSpec
     # does NOT declare a ``derivation`` string is the mirror drift: the
