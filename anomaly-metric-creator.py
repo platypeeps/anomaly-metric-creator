@@ -8054,9 +8054,12 @@ def parse_args(argv=None):
     invalid = sorted(selected - allowed)
     if invalid:
         p.error("--emit contains invalid value(s): "
-                f"{', '.join(invalid)}. Allowed: metrics,logs,traces,gauges,schema,combined")
+                f"{', '.join(invalid)}. "
+                "Allowed: metrics,logs,traces,gauges,schema "
+                "(plus 'combined', consumed at --emit parse time)")
     if not selected:
-        p.error("--emit must contain at least one of metrics,logs,traces,gauges,schema,combined")
+        p.error("--emit must contain at least one of "
+                "metrics,logs,traces,gauges,schema")
     if args.combine and "metrics" not in selected:
         p.error("--emit 'combined' requires 'metrics' in the selection "
                 "(e.g. --emit metrics,combined)")
