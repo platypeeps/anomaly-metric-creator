@@ -95,7 +95,15 @@ def test_help_all_lists_every_flag_with_deprecation_notes():
                  "--otel-verbose", "--no-otel-verbose",
                  "--emit", "--otel-send", "--otel-endpoint",
                  "--otel-auth-token", "--topology-mode",
-                 "--inject-dst-artifact-day"):
+                 "--inject-dst-artifact-day",
+                 # The full alias + advanced sets (Copilot: substring
+                 # coverage gaps weaken the two-tier help contract).
+                 "--combine", "--combine-only", "--validate-output",
+                 "--validate-warn", "--allow-huge-output",
+                 "--otel-emit-gauges", "--otel-no-emit-gauges",
+                 "--otel-gauge-batch-seconds", "--otel-gauge-metric-prefix",
+                 "--otel-stream-timeout-seconds", "--otel-stream-max-events",
+                 "--otel-activity-log"):
         _assert_flag_listed(out, flag)
     assert "[deprecated -> use" in out, (
         "--help-all must annotate deprecated aliases with their "

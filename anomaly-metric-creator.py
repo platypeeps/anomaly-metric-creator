@@ -7686,6 +7686,14 @@ def _reconcile_cli_surface(p, args, raw_argv):
             args.otel_enabled = True
             args.otel_emit_gauges = "gauges" in send_tokens
             args.otel_gauges_only = send_tokens == {"gauges"}
+            # The anomaly-signal selection, minus the gauge stream:
+            # main() filters stream_otel_signals' endpoint dict by this
+            # so that e.g. --otel-send logs,gauges derives the metrics
+            # ENDPOINT (the gauge stream posts there) without leaking
+            # the anomaly-count metrics SIGNAL. None (the default, set
+            # in parse_args for the legacy toggle path) means
+            # "no filtering — every configured endpoint streams".
+            args.otel_signal_selection = frozenset(send_tokens - {"gauges"})
 
     # ------------------------------------------------------------------
     # --otel-endpoint / --otel-auth-token -> the per-signal sextet.
@@ -8212,6 +8220,11 @@ def parse_args(argv=None):
                 action.help = argparse.SUPPRESS
 
     args = p.parse_args(argv)
+
+    # Default: no signal filtering (legacy toggle semantics — every
+    # configured endpoint streams). _reconcile_cli_surface overrides
+    # this with the --otel-send selection when given.
+    args.otel_signal_selection = None
 
     _reconcile_cli_surface(p, args, raw_argv)
 
@@ -12683,6 +12696,18 @@ def main(argv=None):
         "metrics": args.otel_metrics_endpoint,
         "traces": args.otel_traces_endpoint,
     }
+    # --otel-send is authoritative for the anomaly-signal stream too:
+    # the gauge stream needs the metrics endpoint to exist, but a
+    # selection like 'logs,gauges' must not leak the anomaly-count
+    # metrics signal through it. None = legacy toggles, no filtering.
+    signal_selection = getattr(args, "otel_signal_selection", None)
+    if signal_selection is not None:
+        signal_endpoints = {
+            sig: (url if sig in signal_selection else None)
+            for sig, url in endpoints.items()
+        }
+    else:
+        signal_endpoints = endpoints
     otel_active = args.otel_enabled and any(endpoints.values())
     auth_headers = {}
     if otel_active:
@@ -12691,9 +12716,9 @@ def main(argv=None):
             if token:
                 auth_headers[signal] = {"Authorization": f"{args.otel_stream_auth_scheme} {token}"}
 
-    if otel_active and not args.otel_gauges_only:
+    if otel_active and not args.otel_gauges_only and any(signal_endpoints.values()):
         streamed_events = stream_otel_signals(
-            endpoints,
+            signal_endpoints,
             filtered_anomalies,
             speedup=args.otel_stream_speedup,
             timeout_seconds=args.otel_stream_timeout_seconds,

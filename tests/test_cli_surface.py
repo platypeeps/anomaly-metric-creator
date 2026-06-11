@@ -492,3 +492,66 @@ def test_otel_send_none_clears_env_endpoints_before_validation(amc, monkeypatch)
     assert not args.otel_enabled
     assert args.otel_logs_endpoint is None
     assert args.otel_logs_auth_token is None
+
+
+def test_otel_send_logs_gauges_does_not_leak_metrics_signal(tmp_path):
+    """--otel-send logs,gauges derives the metrics ENDPOINT (the gauge
+    stream posts there) but must not leak the anomaly-count metrics
+    SIGNAL through it (Copilot round 5). End-to-end against a mock
+    collector: /v1/metrics receives only Gauge payloads, never Sum
+    anomaly counters; /v1/logs receives the log signal."""
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    received = []
+
+    class _Collector(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            received.append((self.path, body))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Collector)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _invoke(
+            "--seed", "42", "--duration-days", "1",
+            "--interval-seconds", "600",
+            "--emit", "metrics",
+            "--otel-send", "logs,gauges",
+            "--otel-endpoint", f"http://127.0.0.1:{server.server_port}",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-protocol", "json",
+            "--otel-gauge-batch-seconds", "86400",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
+            "--output-dir", str(tmp_path / "run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    paths = {path for path, _ in received}
+    assert "/v1/logs" in paths, "selected logs signal must stream"
+    metrics_bodies = [body for path, body in received if path == "/v1/metrics"]
+    assert metrics_bodies, "gauge stream must post to the metrics endpoint"
+    for body in metrics_bodies:
+        payload = _json.loads(body)
+        names = {
+            m["name"]
+            for rm in payload["resourceMetrics"]
+            for sm in rm["scopeMetrics"]
+            for m in sm["metrics"]
+        }
+        assert "anomaly.count" not in names, (
+            "unselected metrics signal leaked through the gauge endpoint"
+        )
+    assert "/v1/traces" not in paths, "unselected traces signal must not stream"
