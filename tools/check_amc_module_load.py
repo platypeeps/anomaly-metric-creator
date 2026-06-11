@@ -214,7 +214,7 @@ def _check_file(path: Path) -> list[str]:
         if name != _FN:
             continue
         lineno = node.lineno
-        # Multi-line calls: accept the noqa marker on the opening line
+        # Multi-line calls: accept the allow marker on the opening line
         # OR the closing line (`node.end_lineno`), since the trailing
         # comment convention varies — some formatters place it on the
         # closing paren's line, others on the opening line. Both are
