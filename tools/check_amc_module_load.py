@@ -39,7 +39,7 @@ are not call nodes.
 Exemptions:
 
 - Files named `conftest.py` are skipped wholesale.
-- A trailing ``# noqa: amc-load`` comment on the call's opening line
+- A trailing ``# amc-load: allow`` comment on the call's opening line
   *or* closing line opts that specific call out of the check. The
   marker is detected via the ``tokenize`` stream — only real
   ``tokenize.COMMENT`` tokens count, so the same marker text appearing
@@ -63,18 +63,18 @@ import tokenize
 from pathlib import Path
 
 _FN = "spec_from_file_location"
-_NOQA_MARKER = "# noqa: amc-load"
+_ALLOW_MARKER = "# amc-load: allow"
 
 
-def _collect_noqa_lines(src: str) -> set[int]:
-    """Return line numbers that carry a real ``# noqa: amc-load`` comment.
+def _collect_allow_lines(src: str) -> set[int]:
+    """Return line numbers that carry a real ``# amc-load: allow`` comment.
 
     The exemption must live in an actual ``tokenize.COMMENT`` token so a
     raw substring match inside a string literal (or anywhere else on
     the line) does not silently bypass the lint. Copilot PR #74 round-4
     flagged the prior raw-line ``in`` check as accidentally / trivially
     bypassable — e.g.
-    ``spec_from_file_location('amc', '# noqa: amc-load')`` would have
+    ``spec_from_file_location('amc', '# amc-load: allow')`` would have
     been silenced because the marker text appeared verbatim on the
     physical line even though no real comment was present.
 
@@ -101,7 +101,7 @@ def _collect_noqa_lines(src: str) -> set[int]:
     exempt: set[int] = set()
     try:
         for tok in tokenize.generate_tokens(io.StringIO(src).readline):
-            if tok.type == tokenize.COMMENT and _NOQA_MARKER in tok.string:
+            if tok.type == tokenize.COMMENT and _ALLOW_MARKER in tok.string:
                 exempt.add(tok.start[0])
     except tokenize.TokenizeError:
         pass
@@ -183,7 +183,7 @@ def _check_file(path: Path) -> list[str]:
         tree = ast.parse(src, filename=str(path))
     except SyntaxError as exc:
         return [f"{path}:{exc.lineno}: syntax error: {exc.msg}"]
-    noqa_lines = _collect_noqa_lines(src)
+    allow_lines = _collect_allow_lines(src)
     local_names = _collect_local_aliases(tree)
     violations: list[str] = []
     for node in ast.walk(tree):
@@ -224,12 +224,12 @@ def _check_file(path: Path) -> list[str]:
         # always present, but fall back to `lineno` defensively in
         # case a future ast walker returns a node without it.
         end_lineno = getattr(node, "end_lineno", None) or lineno
-        if lineno in noqa_lines or end_lineno in noqa_lines:
+        if lineno in allow_lines or end_lineno in allow_lines:
             continue
         violations.append(
             f"{path}:{lineno}: `spec_from_file_location(...)` call outside "
             "tests/conftest.py — use the session-scoped `amc` fixture "
-            f"(or annotate the call line with `{_NOQA_MARKER}` if a "
+            f"(or annotate the call line with `{_ALLOW_MARKER}` if a "
             "fresh module instance is genuinely required)."
         )
     return violations

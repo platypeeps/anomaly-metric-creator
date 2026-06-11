@@ -923,7 +923,7 @@ def _load_tool_module():
     ``_gh_pr_comments`` can be unit-tested without a live ``gh``."""
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location(  # noqa: amc-load
+    spec = importlib.util.spec_from_file_location(  # amc-load: allow
         "check_approval_duplicate", SCRIPT
     )
     module = importlib.util.module_from_spec(spec)

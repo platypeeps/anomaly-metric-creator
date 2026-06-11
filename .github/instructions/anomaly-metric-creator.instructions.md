@@ -143,7 +143,7 @@ confirmed but the diff does not support:
 10. **Test hygiene** — no unused imports / helpers; no
     `importlib.util.spec_from_file_location("amc", …)` re-load
     (route through `conftest._load_amc()` or annotate
-    `# noqa: amc-load`).
+    `# amc-load: allow`).
 11. **Test resource cost** — reuse session-scoped fixtures from
     `tests/conftest.py`; no `Path.read_bytes()` on multi-hundred-MB
     CSVs (chunked SHA-256 streaming); no `f.readlines()` /
