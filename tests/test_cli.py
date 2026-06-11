@@ -32,8 +32,8 @@ def _assert_flag_listed(out: str, flag: str) -> None:
     """Assert ``flag`` appears as a full option token in help output.
 
     Plain substring matching false-positives on prefix flags
-    (``--otel-endpoint`` is a substring of an ``--otel-endpoint``-prefixed
-    spelling; ``--otel-verbose`` of ``--no-otel-verbose``), so anchor on
+    (``--help`` is a substring of ``--help-all``; ``--otel-verbose``
+    of ``--no-otel-verbose``), so anchor on
     token boundaries: the flag must
     be followed by whitespace, ``,``, ``=``, ``]``, or end-of-string,
     and not be preceded by more flag characters.
