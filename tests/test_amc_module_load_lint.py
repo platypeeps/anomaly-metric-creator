@@ -10,7 +10,7 @@ calls pay the full registry-validation cost again.
 The script flags `spec_from_file_location(...)` *function calls* (not
 string literals or comments) in any file passed on the command line
 unless the file is `conftest.py` or the offending line carries the
-`# noqa: amc-load` marker.
+`# amc-load: allow` marker.
 """
 
 import subprocess
@@ -158,48 +158,48 @@ def test_string_literal_not_flagged(tmp_path: Path):
     assert result.returncode == 0, result.stderr
 
 
-def test_noqa_marker_exempts_line(tmp_path: Path):
-    """`# noqa: amc-load` on the call line opts that line out of the lint
+def test_allow_marker_exempts_line(tmp_path: Path):
+    """`# amc-load: allow` on the call line opts that line out of the lint
     for cases that legitimately need a fresh module copy (e.g.
     monkeypatching `_apply_scenarios` in `test_correctness.py`, or a
     collection-time parametrize loader in `test_scenarios.py`)."""
     ok = tmp_path / "test_exempt.py"
     ok.write_text(
         "import importlib.util\n"
-        "spec = importlib.util.spec_from_file_location('amc', '/dev/null')  # noqa: amc-load\n"
+        "spec = importlib.util.spec_from_file_location('amc', '/dev/null')  # amc-load: allow\n"
     )
     result = _run(ok)
     assert result.returncode == 0, result.stderr
 
 
-def test_noqa_marker_on_closing_line_exempts_multiline_call(tmp_path: Path):
-    """For a multi-line call the trailing `# noqa: amc-load` comment
+def test_allow_marker_on_closing_line_exempts_multiline_call(tmp_path: Path):
+    """For a multi-line call the trailing `# amc-load: allow` comment
     is conventionally written on the closing line — that is
     ``node.end_lineno`` in `ast`, not ``node.lineno`` (which is the
     opening-paren line). The exemption must accept the marker on
     either line so common multi-line formatting works. Copilot PR #74
     round-5."""
-    ok = tmp_path / "test_multiline_noqa.py"
+    ok = tmp_path / "test_multiline_allow.py"
     ok.write_text(
         "import importlib.util\n"
         "spec = importlib.util.spec_from_file_location(\n"
         "    'amc',\n"
         "    '/dev/null',\n"
-        ")  # noqa: amc-load\n"
+        ")  # amc-load: allow\n"
     )
     result = _run(ok)
     assert result.returncode == 0, result.stderr
 
 
-def test_noqa_marker_on_opening_line_exempts_multiline_call(tmp_path: Path):
+def test_allow_marker_on_opening_line_exempts_multiline_call(tmp_path: Path):
     """Multi-line call with the marker on the opening line (less
     conventional but still legal Python). The exemption must accept
     this shape too — it's the original single-line behavior extended
     to start-line on a multi-line call. Copilot PR #74 round-5."""
-    ok = tmp_path / "test_multiline_noqa_open.py"
+    ok = tmp_path / "test_multiline_allow_open.py"
     ok.write_text(
         "import importlib.util\n"
-        "spec = importlib.util.spec_from_file_location(  # noqa: amc-load\n"
+        "spec = importlib.util.spec_from_file_location(  # amc-load: allow\n"
         "    'amc',\n"
         "    '/dev/null',\n"
         ")\n"
@@ -208,16 +208,16 @@ def test_noqa_marker_on_opening_line_exempts_multiline_call(tmp_path: Path):
     assert result.returncode == 0, result.stderr
 
 
-def test_noqa_marker_in_string_literal_does_not_exempt(tmp_path: Path):
+def test_allow_marker_in_string_literal_does_not_exempt(tmp_path: Path):
     """The exemption must be a real comment token, not a substring match.
     A file where the marker text appears only inside a string literal on
     the same line as the call must still be flagged. Copilot PR #74
-    round-4 — the prior raw-substring check let any `# noqa: amc-load`
+    round-4 — the prior raw-substring check let any `# amc-load: allow`
     text anywhere on the physical line silence the lint."""
-    bad = tmp_path / "test_string_noqa.py"
+    bad = tmp_path / "test_string_allow.py"
     bad.write_text(
         "import importlib.util\n"
-        "spec = importlib.util.spec_from_file_location('amc', '# noqa: amc-load')\n"
+        "spec = importlib.util.spec_from_file_location('amc', '# amc-load: allow')\n"
     )
     result = _run(bad)
     assert result.returncode == 1, result.stderr
@@ -241,8 +241,8 @@ def test_multiple_files_partial_violation(tmp_path: Path):
 def test_real_test_tree_is_clean():
     """Running the lint against the actual `tests/` tree must pass after
     the existing legitimate uses are annotated. This guards against a
-    future test file re-introducing the duplicate load pattern without a
-    noqa marker.
+    future test file re-introducing the duplicate load pattern without an
+    allow marker.
 
     Globs every `*.py` under `tests/` (matching the pre-commit hook's
     `^tests/.*\\.py$` pattern) so the suite also covers `conftest.py`

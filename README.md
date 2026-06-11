@@ -802,7 +802,7 @@ Two `tests/`-scoped checks run on every `git commit` via
   `anomaly-metric-creator.py` instead of consuming the session-scoped
   `amc` fixture from `tests/conftest.py:_load_amc`, doubling the
   registry-build cost). `conftest.py` is exempted wholesale; an
-  individual call line opts out with a trailing `# noqa: amc-load`
+  individual call line opts out with a trailing `# amc-load: allow`
   comment for the rare case that genuinely needs a fresh module
   instance (e.g. monkey-patching `_apply_scenarios` in
   `tests/test_correctness.py`).
@@ -825,7 +825,7 @@ import to `tests/` makes the commit fail with an `F401` diagnostic;
 `ruff check --fix tests/` removes it. Adding a
 `spec_from_file_location(...)` call in a new test file fails the
 commit with a pointer to the canonical loader; switch to the `amc`
-fixture or annotate the line with `# noqa: amc-load`.
+fixture or annotate the line with `# amc-load: allow`.
 
 The `branch-name` hook runs at the `pre-push` stage (a separate
 git hook from `pre-commit`), which is why

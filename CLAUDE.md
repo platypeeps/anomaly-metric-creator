@@ -1616,7 +1616,7 @@ This checklist maps to 13 recurring patterns identified across past PR reviews (
   `test_scenarios.py` loads `_VALID_ANOMALY_SHAPES` at parametrize
   collection time), route through `conftest._load_amc()` (memoized) or
   annotate the `spec_from_file_location` call line with
-  `# noqa: amc-load`.
+  `# amc-load: allow`.
 
 **Test resource cost**
 - Fixtures generating full 1-day, 7-day, or `--instances-per-component N > 1` (N=3 and larger) datasets must reuse the session-scoped fixtures already declared in `tests/conftest.py` rather than redefine module-scoped duplicates. A `module`-scoped fixture that runs `main()` end-to-end will re-execute the generator once per test file and multiply suite wall-time and peak RSS by the number of duplicating files (PR #67 had three separate ~1.3 GB N=3 dataset fixtures; PR #63 module-scoped fixtures duplicated session-scoped runs from conftest).

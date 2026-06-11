@@ -21,7 +21,7 @@ repos:
       # PR #64 each shipped a fresh `spec_from_file_location` call in
       # a new test file; the lint catches that pattern structurally
       # instead of relying on Copilot to notice on every new test.
-      # Exempt a line with a trailing `# noqa: amc-load` when a fresh
+      # Exempt a line with a trailing `# amc-load: allow` when a fresh
       # module instance is genuinely required (monkey-patch isolation,
       # collection-time parametrize loaders).
       - id: amc-no-direct-spec-load

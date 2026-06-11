@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-06-10
+
+First cut release. Everything below shipped between the initial 0.1.0
+state and this tag — including the full-codebase-review program
+(PRs #94-#99: four verified bug fixes, test-isolation and fixture-cost
+work, a documentation-drift sweep, structural hardening of the topology
+registries and generator dispatch, latent unit-mixing fixes, and the
+validator/merge-writer performance pass).
+
 ### Changed
 
 - Validator and merge-writer hot paths trimmed: `_validate_component_cells`
@@ -146,6 +155,11 @@
 
 ### Tooling
 
+- Renamed the module-load lint's exemption marker from `# noqa: amc-load`
+  to `# amc-load: allow`, matching the sibling `# role-name-lint: allow`
+  convention: the marker is consumed by `tools/check_amc_module_load.py`,
+  not by ruff, and the `noqa:` spelling made ruff warn
+  "invalid `# noqa` directive" on every annotated line.
 - Added `tools/check_role_name_leaks.py` (pre-commit hook + stdin pre-flight
   for `gh` comment bodies) to block internal role names from reaching
   external PR threads. (#89)
