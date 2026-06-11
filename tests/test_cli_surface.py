@@ -309,16 +309,24 @@ def test_subcommand_directory_errors_distinguish_missing_from_file(amc, tmp_path
         assert "does not exist" in buf.getvalue(), (sub, buf.getvalue())
 
 
-def test_otel_send_clears_env_endpoint_for_unselected_signal(amc, monkeypatch):
-    """--otel-send is authoritative: env-var endpoint defaults for
-    unselected signals are cleared, so a configured-but-unselected
-    signal cannot leak into the stream."""
+def test_otel_send_clears_env_endpoint_and_token_for_unselected_signal(
+        amc, monkeypatch):
+    """--otel-send is authoritative: env-var endpoint AND auth-token
+    defaults for unselected signals are cleared, so a
+    configured-but-unselected signal cannot leak into the stream and a
+    dangling credential is not carried in the namespace (matching the
+    stricter clearing of the 'none' branch)."""
     monkeypatch.setenv("MEZMO_OTEL_LOGS_ENDPOINT", "http://env:1/v1/logs")
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_AUTH_TOKEN", "logs-token")
     monkeypatch.setenv("MEZMO_OTEL_METRICS_ENDPOINT", "http://env:1/v1/metrics")
+    monkeypatch.setenv("MEZMO_OTEL_METRICS_AUTH_TOKEN", "metrics-token")
     args, _ = _parse(amc, ["--otel-send", "logs", "--output-dir", "x"])
     assert args.otel_logs_endpoint == "http://env:1/v1/logs"
+    assert args.otel_logs_auth_token == "logs-token"
     assert args.otel_metrics_endpoint is None
+    assert args.otel_metrics_auth_token is None
     assert args.otel_traces_endpoint is None
+    assert args.otel_traces_auth_token is None
 
 
 def test_abbreviated_flags_rejected(amc):

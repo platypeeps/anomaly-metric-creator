@@ -7665,10 +7665,13 @@ def _reconcile_cli_surface(p, args):
                             args.otel_auth_token)
             else:
                 # --otel-send is authoritative for signal selection:
-                # env-var endpoint defaults for unselected signals are
-                # cleared so a configured-but-unselected signal cannot
-                # leak into the stream.
+                # env-var endpoint AND token defaults for unselected
+                # signals are cleared so a configured-but-unselected
+                # signal cannot leak into the stream and a dangling
+                # credential is not carried in the namespace (matching
+                # the stricter clearing the 'none' branch does).
                 setattr(args, f"otel_{sig}_endpoint", None)
+                setattr(args, f"otel_{sig}_auth_token", None)
     if send_tokens:
         if not any([args.otel_logs_endpoint, args.otel_metrics_endpoint,
                     args.otel_traces_endpoint]):
