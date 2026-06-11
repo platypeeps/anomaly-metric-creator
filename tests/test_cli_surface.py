@@ -480,3 +480,15 @@ def test_dst_gauges_gate_uses_canonical_wording_for_emit(amc):
     ])
     assert "--emit 'gauges'" in err
     assert "--emit-selection" not in err
+
+
+def test_otel_send_none_clears_env_endpoints_before_validation(amc, monkeypatch):
+    """'none' is truly off: env-provided per-signal values are cleared
+    before the endpoint-shape validation, so a malformed shell export
+    cannot fail a run the user explicitly disabled (Copilot round 4)."""
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_ENDPOINT", "not-a-url")
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_AUTH_TOKEN", "   ")
+    args, _ = _parse(amc, ["--otel-send", "none", "--output-dir", "x"])
+    assert not args.otel_enabled
+    assert args.otel_logs_endpoint is None
+    assert args.otel_logs_auth_token is None

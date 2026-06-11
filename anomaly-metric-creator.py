@@ -7574,9 +7574,11 @@ def _parse_components_value(error, raw: str) -> set[str]:
 def _reconcile_cli_surface(p, args, raw_argv):
     """Map the canonical CLI surface onto the legacy argument namespace.
 
-    Everything downstream of ``parse_args`` (the validation gates and
-    ``main()``) consumes the historic names: the ``emit_selection``
-    string, the ``combine`` boolean, the ``otel_enabled`` /
+    Everything downstream of ``parse_args`` consumes the historic
+    names: ``emit_selection`` (written here in its raw comma-separated
+    *string* form — the gates that run after this function re-parse it
+    and replace it with the final ``set``), the ``combine`` boolean,
+    the ``otel_enabled`` /
     ``otel_emit_gauges`` / ``otel_gauges_only`` toggles, and the
     per-signal endpoint/token sextet. The canonical flags introduced by
     the CLI consolidation (``--emit``, ``--otel-send``,
@@ -7666,6 +7668,17 @@ def _reconcile_cli_surface(p, args, raw_argv):
             args.otel_enabled = False
             args.otel_emit_gauges = False
             args.otel_gauges_only = False
+            # Clear env-provided per-signal endpoints/tokens: 'none' must
+            # be truly off — leaving them would route the values into the
+            # endpoint-shape validation below, so a malformed shell
+            # export could fail a run the user explicitly disabled.
+            # Explicitly passed per-signal flags are kept (inert at
+            # runtime, but explicit input still deserves validation).
+            for _sig in ("logs", "metrics", "traces"):
+                if not _flag_in_argv(raw_argv, f"--otel-{_sig}-endpoint"):
+                    setattr(args, f"otel_{_sig}_endpoint", None)
+                if not _flag_in_argv(raw_argv, f"--otel-{_sig}-auth-token"):
+                    setattr(args, f"otel_{_sig}_auth_token", None)
             send_tokens = set()
         else:
             if "all" in send_tokens:
@@ -7826,9 +7839,10 @@ def parse_args(argv=None):
         help="OTLP/HTTP base endpoint (e.g. http://localhost:4318). "
              "Per-signal URLs are derived as BASE/v1/logs, BASE/v1/metrics, "
              "BASE/v1/traces for the signals selected by --otel-send. "
-             "Per-signal overrides remain available via the "
-             "MEZMO_OTEL_*_ENDPOINT env vars or the deprecated per-signal "
-             "flags.",
+             "Per-signal precedence: a deprecated per-signal flag beats "
+             "this derivation, which beats the MEZMO_OTEL_*_ENDPOINT env "
+             "vars (they supply per-signal defaults when no base is "
+             "given).",
     )
     g_otel.add_argument(
         "--otel-auth-token",
@@ -7837,9 +7851,10 @@ def parse_args(argv=None):
         metavar="TOKEN",
         help="Auth token applied to every selected signal endpoint "
              "(scheme via --otel-stream-auth-scheme, default Bearer). "
-             "Per-signal overrides remain available via the "
-             "MEZMO_OTEL_*_AUTH_TOKEN env vars or the deprecated "
-             "per-signal flags.",
+             "Per-signal precedence: a deprecated per-signal flag beats "
+             "this token, which beats the MEZMO_OTEL_*_AUTH_TOKEN env "
+             "vars (they supply per-signal defaults when this flag is "
+             "not given).",
     )
     g_common.add_argument("--duration-days", type=float, default=DEFAULT_DURATION_DAYS,
                    help=f"Number of days of metrics to generate "

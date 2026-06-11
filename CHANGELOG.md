@@ -18,7 +18,9 @@
     over env-var endpoint defaults.
   - `--otel-endpoint BASE` + `--otel-auth-token` replace the per-signal
     endpoint/token sextet, deriving `BASE/v1/<signal>` URLs for the
-    selected signals (per-signal env vars / flags still override).
+    selected signals (explicit per-signal flags beat the derivation,
+    which beats the per-signal env vars; the env vars supply defaults
+    when no base is given).
   - Two-tier help: `-h` shows the grouped common surface; `--help-all`
     additionally lists the advanced knobs and the deprecated aliases,
     each annotated with its canonical replacement.

@@ -28,6 +28,23 @@ def _invoke(*args, cwd=None, env=None):
     )
 
 
+def _assert_flag_listed(out: str, flag: str) -> None:
+    """Assert ``flag`` appears as a full option token in help output.
+
+    Plain substring matching false-positives on prefix flags (``--emit``
+    is a substring of ``--emit-selection``; ``--otel-verbose`` of
+    ``--no-otel-verbose``), so anchor on token boundaries: the flag must
+    be followed by whitespace, ``,``, ``=``, ``]``, or end-of-string,
+    and not be preceded by more flag characters.
+    """
+    import re
+    pattern = rf"(?<![\w-]){re.escape(flag)}(?![\w-])"
+    m = re.search(pattern, out)
+    assert m, f"--help missing flag {flag}"
+    after = out[m.end():]
+    assert any(c.isalpha() for c in after[:200]), f"{flag} has empty help text"
+
+
 def test_help_lists_visible_surface_and_hides_advanced():
     """The brief ``-h`` shows the common surface (grouped) and hides the
     advanced knobs and deprecated aliases; ``--help-all`` lists
@@ -43,9 +60,7 @@ def test_help_lists_visible_surface_and_hides_advanced():
                  "--instance-config", "--otel-send", "--otel-endpoint",
                  "--otel-auth-token", "--otel-stream-speedup",
                  "--otel-stream-protocol"):
-        assert flag in out, f"--help missing flag {flag}"
-        after = out.split(flag, 1)[1]
-        assert any(c.isalpha() for c in after[:200]), f"{flag} has empty help text"
+        _assert_flag_listed(out, flag)
     # Group headers structure the brief help.
     for header in ("common:", "anomaly selection:", "dataset shape:",
                    "artifacts:", "OTEL streaming:"):
@@ -53,10 +68,12 @@ def test_help_lists_visible_surface_and_hides_advanced():
     # Hidden flags must not surface as options in the brief view. (The
     # canonical flags' help text cross-references a few deprecated
     # spellings by name, so probe flags that are never cross-referenced.)
+    import re
     for hidden in ("--combine-only", "--validate-output", "--anomaly-count",
                    "--topology-mode", "--inject-dst-artifact-day",
                    "--otel-logs-endpoint", "--otel-activity-log"):
-        assert hidden not in out, f"brief --help leaks hidden flag {hidden}"
+        assert not re.search(rf"(?<![\w-]){re.escape(hidden)}(?![\w-])", out), \
+            f"brief --help leaks hidden flag {hidden}"
     assert "--help-all" in out, "brief help must point at --help-all"
 
 
@@ -79,9 +96,7 @@ def test_help_all_lists_every_flag_with_deprecation_notes():
                  "--emit", "--otel-send", "--otel-endpoint",
                  "--otel-auth-token", "--topology-mode",
                  "--inject-dst-artifact-day"):
-        assert flag in out, f"--help-all missing flag {flag}"
-        after = out.split(flag, 1)[1]
-        assert any(c.isalpha() for c in after[:200]), f"{flag} has empty help text"
+        _assert_flag_listed(out, flag)
     assert "[deprecated -> use" in out, (
         "--help-all must annotate deprecated aliases with their "
         "canonical replacements"
