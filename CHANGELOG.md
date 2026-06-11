@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+(no unreleased changes)
+
+## 0.3.0 - 2026-06-11
+
+**Breaking release.** The CLI consolidated around the common use cases
+(PR #101) and then completed its phase-9 flag day in the same cycle:
+`--topology-mode` (PR #103) and the 16 consolidation alias flags
+(PR #104) no longer parse. No released version ever shipped the
+aliases — 0.2.0 users migrate directly from the historic flat surface
+to the canonical one (`--emit`, the `combine`/`validate` subcommands,
+`--otel-send`/`--otel-endpoint`/`--otel-auth-token`; see the README
+CLI reference). The phase-9 scenario re-tune (PR #102) also makes
+default output validator-violation-free at every duration.
+
 ### Removed
 
 - Phase-9 flag day, part 2 (CLI): the 16 deprecated alias flags from the
