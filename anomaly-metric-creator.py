@@ -7651,7 +7651,11 @@ def _reconcile_cli_surface(p, args, raw_argv):
                 p.error("--otel-send 'none' cannot be combined with other "
                         "signals")
             # Explicit off: the canonical replacement for --otel-disabled,
-            # overriding any env-var endpoint defaults.
+            # overriding any env-var endpoint defaults. Like
+            # --otel-disabled, 'none' tolerates per-signal endpoint flags
+            # — main() keys streaming on otel_enabled, so the endpoints
+            # are inert; the unselected-signal rejection below applies
+            # only to non-empty selections.
             args.otel_enabled = False
             args.otel_emit_gauges = False
             args.otel_gauges_only = False
@@ -7677,17 +7681,21 @@ def _reconcile_cli_surface(p, args, raw_argv):
         if not args.otel_endpoint.startswith(("http://", "https://")):
             p.error("--otel-endpoint must start with http:// or https://")
         base = args.otel_endpoint.rstrip("/")
-    if send_tokens is not None or base is not None or args.otel_auth_token is not None:
-        if send_tokens is not None:
-            wanted = {s for s in ("logs", "metrics", "traces")
-                      if s in send_tokens}
-            if "gauges" in send_tokens:
-                # The gauge stream posts to the metrics endpoint.
-                wanted.add("metrics")
-        else:
-            # Canonical endpoint/token paired with the deprecated
-            # --otel-enabled toggle: derive every signal endpoint.
-            wanted = {"logs", "metrics", "traces"}
+    wanted = None
+    if send_tokens:
+        wanted = {s for s in ("logs", "metrics", "traces")
+                  if s in send_tokens}
+        if "gauges" in send_tokens:
+            # The gauge stream posts to the metrics endpoint.
+            wanted.add("metrics")
+    elif send_tokens is None and (base is not None
+                                  or args.otel_auth_token is not None):
+        # Canonical endpoint/token paired with the deprecated
+        # --otel-enabled toggle: derive every signal endpoint.
+        # (--otel-send none skips derivation entirely — streaming is
+        # off, so there is nothing to derive for.)
+        wanted = {"logs", "metrics", "traces"}
+    if wanted is not None:
         for sig in ("logs", "metrics", "traces"):
             ep_flag = f"--otel-{sig}-endpoint"
             tok_flag = f"--otel-{sig}-auth-token"
@@ -7699,7 +7707,7 @@ def _reconcile_cli_surface(p, args, raw_argv):
                         and not _flag_in_argv(raw_argv, tok_flag)):
                     setattr(args, f"otel_{sig}_auth_token",
                             args.otel_auth_token)
-            elif send_tokens is not None:
+            elif send_tokens:
                 # --otel-send is authoritative for signal selection. An
                 # explicit per-signal endpoint flag for an unselected
                 # signal is a contradiction — main() streams whatever has
@@ -7747,6 +7755,10 @@ def parse_args(argv=None):
 
     p = argparse.ArgumentParser(
         description="Generate synthetic IoT metric logs with anomalies.",
+        # Abbreviated flags (--emit-sel, --otel-en, ...) would bypass the
+        # canonical/alias mixing checks and the deprecation notices, which
+        # scan raw argv for exact spellings. Exact flags only.
+        allow_abbrev=False,
         epilog=(
             "Subcommands: 'generate' (the default when no subcommand is "
             "given), 'combine DIR' (join existing per-component CSVs into "
@@ -8262,7 +8274,12 @@ def parse_args(argv=None):
     if args.otel_gauges_only:
         args.otel_emit_gauges = True
     if args.otel_emit_gauges:
-        gauge_flag = "--otel-gauges-only" if args.otel_gauges_only else "--otel-emit-gauges"
+        if args.otel_send is not None:
+            gauge_flag = ("--otel-send gauges" if args.otel_gauges_only
+                          else "--otel-send with 'gauges'")
+        else:
+            gauge_flag = ("--otel-gauges-only" if args.otel_gauges_only
+                          else "--otel-emit-gauges")
         if not args.otel_enabled:
             p.error(f"{gauge_flag} requires --otel-enabled")
         if not args.otel_metrics_endpoint:

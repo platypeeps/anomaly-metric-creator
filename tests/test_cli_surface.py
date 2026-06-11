@@ -370,3 +370,60 @@ def test_otel_send_rejects_endpoint_flag_for_unselected_signal(amc):
     # Env-var defaults for unselected signals are still cleared silently
     # (covered by test_otel_send_gauges_only_mapping); only the explicit
     # flag is the contradiction.
+
+
+def test_otel_send_none_tolerates_per_signal_endpoint_flags(amc):
+    """'none' is the explicit-off escape hatch and must tolerate inert
+    per-signal endpoint flags exactly like its deprecated twin
+    --otel-disabled does (main() keys streaming on otel_enabled, so the
+    endpoints never fire). The unselected-signal rejection applies only
+    to non-empty selections."""
+    args, _ = _parse(amc, [
+        "--otel-send", "none",
+        "--otel-logs-endpoint", "http://legacy:1/v1/logs",
+        "--output-dir", "x",
+    ])
+    assert not args.otel_enabled
+
+    legacy, _ = _parse(amc, [
+        "--otel-disabled",
+        "--otel-logs-endpoint", "http://legacy:1/v1/logs",
+        "--output-dir", "x",
+    ])
+    assert args.otel_enabled == legacy.otel_enabled
+
+
+def test_abbreviated_flags_rejected(amc):
+    """allow_abbrev is off: prefix-abbreviated aliases (--emit-sel,
+    --otel-en) would bypass the canonical/alias mixing checks and the
+    deprecation notices, which scan raw argv for exact spellings."""
+    for argv in (["--emit-sel", "metrics"],
+                 ["--otel-en", "--otel-logs-endpoint", "http://h:1/v1/logs"]):
+        _parse_error(amc, argv + ["--output-dir", "x"])
+
+
+def test_gauge_gate_message_uses_canonical_wording_for_otel_send(amc):
+    """A canonical user who selects gauges without the 'metrics' artifact
+    must see the gate message in canonical terms, not the deprecated
+    toggle's name."""
+    err = _parse_error(amc, [
+        "--otel-send", "gauges",
+        "--otel-endpoint", "http://h:1",
+        "--emit", "logs",
+        "--output-dir", "x",
+    ])
+    assert "--otel-send gauges" in err
+    assert "--otel-gauges-only" not in err
+
+
+def test_otel_send_none_with_endpoint_stays_off_without_derivation(amc):
+    """'none' + --otel-endpoint parses (off wins; the endpoint is inert)
+    and does not derive per-signal endpoints — there is nothing to
+    derive for when streaming is off."""
+    args, _ = _parse(amc, ["--otel-send", "none",
+                           "--otel-endpoint", "http://h:1",
+                           "--output-dir", "x"])
+    assert not args.otel_enabled
+    assert args.otel_logs_endpoint is None
+    assert args.otel_metrics_endpoint is None
+    assert args.otel_traces_endpoint is None
