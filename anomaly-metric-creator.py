@@ -7499,10 +7499,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 # Deprecated flag spellings and their canonical replacements. Consumed in
-# two places: ``parse_args`` annotates each alias's --help-all entry and
-# emits one ``DEPRECATION:`` stderr line per alias actually used, and the
-# subcommand translators suppress the warning for internally generated
-# argv. Aliases remain fully functional until the post-phase-9 flag day.
+# two places: ``parse_args`` annotates each alias's --help-all entry, and
+# ``_reconcile_cli_surface`` emits one ``DEPRECATION:`` stderr line per
+# alias actually used. The combine/validate subcommands carry dedicated
+# parsers and never route through ``parse_args``, so canonical
+# invocations are structurally warning-free. Aliases remain fully
+# functional until the post-phase-9 flag day.
 _DEPRECATED_FLAGS: dict[str, str] = {
     "--emit-selection": "--emit",
     "--combine": "--emit <artifacts>,combined",
@@ -7821,11 +7823,11 @@ def parse_args(argv=None):
                    help=f"RNG seed for deterministic output (default: {DEFAULT_SEED}).")
     g_common.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
                    help=f"Directory to write CSV files into (default: {DEFAULT_OUTPUT_DIR}).")
-    g_common.add_argument("--drop-rate", type=float, default=DEFAULT_DROP_RATE,
+    g_shape.add_argument("--drop-rate", type=float, default=DEFAULT_DROP_RATE,
                    help=f"Per-row probability of dropping the row entirely from the per-component CSV "
                         f"(no row is emitted for that timestamp). Simulated packet loss "
                         f"(default: {DEFAULT_DROP_RATE}).")
-    g_common.add_argument("--interval-seconds", type=float, default=DEFAULT_INTERVAL_SECONDS,
+    g_shape.add_argument("--interval-seconds", type=float, default=DEFAULT_INTERVAL_SECONDS,
                    help=f"Seconds between consecutive emitted rows "
                         f"(default: {DEFAULT_INTERVAL_SECONDS}). Controls sampling "
                         f"density; timeline coverage stays --duration-days * 86400 "
@@ -12235,6 +12237,9 @@ def _main_combine_subcommand(argv):
                          "*.csv in DIR.")
     a = sp.parse_args(argv)
     if not a.directory.is_dir():
+        if a.directory.exists():
+            sp.error(f"combine requires a directory; "
+                     f"{a.directory} exists but is not one")
         sp.error(f"combine requires an existing directory; "
                  f"{a.directory} does not exist")
     selected = _parse_components_value(sp.error, a.components)
@@ -12263,6 +12268,9 @@ def _main_validate_subcommand(argv):
                          "exit 1 on any violation).")
     a = sp.parse_args(argv)
     if not a.directory.is_dir():
+        if a.directory.exists():
+            sp.error(f"validate requires a directory; "
+                     f"{a.directory} exists but is not one")
         sp.error(f"validate requires an existing directory; "
                  f"{a.directory} does not exist")
     violations = validate_output(a.directory)

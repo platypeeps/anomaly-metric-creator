@@ -334,3 +334,21 @@ def test_subprocess_emit_and_subcommands_roundtrip(tmp_path):
     val = _invoke("validate", str(out))
     assert val.returncode == 0, val.stderr
     assert "OK (no violations)" in val.stdout
+
+
+def test_subcommand_directory_errors_distinguish_missing_from_file(amc, tmp_path):
+    """A path that exists but is a file gets a 'not a directory' error,
+    not a misleading 'does not exist' (Copilot review on PR #101)."""
+    not_a_dir = tmp_path / "file.txt"
+    not_a_dir.write_text("x\n")
+    for sub in ("combine", "validate"):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            with pytest.raises(SystemExit):
+                amc.main([sub, str(not_a_dir)])
+        assert "exists but is not one" in buf.getvalue(), (sub, buf.getvalue())
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            with pytest.raises(SystemExit):
+                amc.main([sub, str(tmp_path / "missing")])
+        assert "does not exist" in buf.getvalue(), (sub, buf.getvalue())
