@@ -58,9 +58,10 @@ post-phase-9 CLI flag day and no longer parse. Canonical surface:
   overriding env-var endpoint defaults). `--otel-send gauges` alone is
   the gauges-only mode. The selection is authoritative —
   unselected signals get their endpoint forced to `None` even when an
-  env var exports one. The `MEZMO_OTEL_EMIT_GAUGES` env var survives
-  as a gauge-stream default but requires `--otel-send` (and is
-  overridden by any explicit selection).
+  env var exports one. The `MEZMO_OTEL_EMIT_GAUGES` env default was
+  removed with the toggles — the authoritative selection meant it
+  could never take effect once `--otel-send` became the only enable
+  path.
 - **`--otel-endpoint BASE` / `--otel-auth-token TOKEN`**: per-signal
   URLs derive as `BASE/v1/<signal>` for
   the selected signals (gauges posts to the metrics endpoint) and the

@@ -7490,21 +7490,6 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
 # ------------------------------------------------------------------
 # CLI + entry point
 # ------------------------------------------------------------------
-def _env_bool(name: str, default: bool = False) -> bool:
-    """Parse a boolean env var with three-valued contract:
-
-    - missing, empty, or whitespace-only → returns ``default``
-    - truthy (``1``/``true``/``yes``/``on``, case-insensitive) → returns ``True``
-    - any other non-empty value (``0``/``false``/``no``/``off``/garbage) → returns ``False``
-
-    The empty/missing path honors ``default`` so ``MEZMO_FOO=""`` with
-    ``default=True`` does not silently flip to ``False``; explicit falsy
-    values always win over ``default`` so opt-out env vars behave as
-    expected without surprise."""
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 # Flags hidden from the default ``-h`` (shown by ``--help-all``): the
@@ -7874,13 +7859,13 @@ def parse_args(argv=None):
              f"--instances-per-component that would emit more cells than "
              f"the cap. Pass this flag when the size is intentional.",
     )
-    # OTEL streaming state: --otel-send is the only flag-level writer
-    # (the five toggle aliases were removed at the CLI flag day).
-    # MEZMO_OTEL_EMIT_GAUGES survives as an env-level default for the
-    # gauge stream; a non-gauge --otel-send selection overrides it
-    # (the selection is authoritative).
+    # OTEL streaming state: --otel-send is the only writer (the five
+    # toggle aliases were removed at the CLI flag day, and the
+    # MEZMO_OTEL_EMIT_GAUGES env default went with them — once the
+    # selection became the only enable path it was authoritative over
+    # the env var, which therefore could never take effect).
     p.set_defaults(otel_enabled=False)
-    p.set_defaults(otel_emit_gauges=_env_bool("MEZMO_OTEL_EMIT_GAUGES", False))
+    p.set_defaults(otel_emit_gauges=False)
     p.set_defaults(otel_gauges_only=False)
     g_adv.add_argument(
         "--otel-gauge-batch-seconds",
@@ -8076,8 +8061,9 @@ def parse_args(argv=None):
             gauge_flag = ("--otel-send gauges" if args.otel_gauges_only
                           else "--otel-send with 'gauges'")
         else:
-            # The only remaining non-flag writer is the env default.
-            gauge_flag = "MEZMO_OTEL_EMIT_GAUGES"
+            # No flag or env var writes otel_emit_gauges anymore; only a
+            # programmatic namespace can reach this branch.
+            gauge_flag = "the gauge stream (otel_emit_gauges)"
         if not args.otel_enabled:
             p.error(f"{gauge_flag} requires --otel-send to enable streaming")
         if not args.otel_metrics_endpoint:

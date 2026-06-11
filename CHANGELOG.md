@@ -14,9 +14,11 @@
   and `validate` subcommands, `--otel-send`, `--otel-endpoint`, and
   `--otel-auth-token`. Per-signal endpoint/token overrides remain
   available via the `MEZMO_OTEL_*` env vars (which an explicitly typed
-  `--otel-endpoint` base still beats for selected signals), and
-  `MEZMO_OTEL_EMIT_GAUGES` survives as a gauge-stream default that now
-  requires `--otel-send`. The `DEPRECATION:` stderr notice mechanism,
+  `--otel-endpoint` base still beats for selected signals). The
+  `MEZMO_OTEL_EMIT_GAUGES` env default is removed along with the
+  toggles: with `--otel-send` as the only enable path its
+  authoritative selection meant the env var could never take effect
+  (it could only error or be overridden). The `DEPRECATION:` stderr notice mechanism,
   the `_DEPRECATED_FLAGS` registry, and the canonical/alias mixing
   gates are gone; `--help-all` lists only the advanced knobs. Default
   output bytes are unchanged (the default invocation never used an

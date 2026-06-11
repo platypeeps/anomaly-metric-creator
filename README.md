@@ -269,9 +269,8 @@ per-signal endpoint/token overrides remain available via the
 The default OTEL streaming path posts one `anomaly.count` Sum data point per
 injected anomaly. Add `gauges` to `--otel-send` to additionally stream
 **every per-row metric value** from the per-component CSVs to the metrics
-endpoint as OTLP `Gauge` data points. (`--otel-send` is authoritative:
-the `MEZMO_OTEL_EMIT_GAUGES=1` env var has no effect unless `gauges` is
-selected.) The two streams run sequentially: anomaly counters first, then
+endpoint as OTLP `Gauge` data points. The two streams run
+sequentially: anomaly counters first, then
 gauges, both against the same endpoint (and the same auth token / activity
 log). Pass `--otel-send gauges` alone when the receiver should get only the
 Gauge payloads; that mode skips the anomaly log/metric/trace stream entirely.

@@ -378,48 +378,28 @@ def test_parse_args_exclude_scenarios_invalid_name_fails(amc):
 
 
 # ------------------------------------------------------------------
-# --otel-send gauge selection / MEZMO_OTEL_EMIT_GAUGES / --otel-gauge-*
+# --otel-send gauge selection / --otel-gauge-*
 # ------------------------------------------------------------------
-def test_otel_emit_gauges_defaults_false(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+def test_otel_emit_gauges_defaults_false(amc):
     args = amc.parse_args(["--output-dir", "test_out"])
     assert args.otel_emit_gauges is False
     assert args.otel_gauge_batch_seconds == 60
     assert args.otel_gauge_metric_prefix == ""
 
 
-@pytest.mark.parametrize("value, expected", [
-    ("1", True), ("true", True), ("TRUE", True),
-    ("yes", True), ("YeS", True), ("on", True),
-    ("0", False), ("false", False), ("", False),
-    ("no", False), ("off", False), ("nonsense", False),
+@pytest.mark.parametrize("value", [
+    "1", "true", "TRUE", "yes", "on",
+    "0", "false", "", "nonsense",
 ])
-def test_otel_emit_gauges_env_truthy_matrix(amc, monkeypatch, capsys, value, expected):
-    """MEZMO_OTEL_EMIT_GAUGES sets the gauge-stream default, but without
-    an ``--otel-send`` selection there is no streaming to attach it to —
-    a truthy value is rejected with an error naming ``--otel-send``;
-    falsy values parse cleanly with the gauge stream off."""
+def test_otel_emit_gauges_env_var_removed(amc, monkeypatch, value):
+    """The MEZMO_OTEL_EMIT_GAUGES env default was removed with the
+    toggle aliases at the CLI flag day: once --otel-send became the
+    only enable path, its authoritative selection meant the env var
+    could never take effect (it could only error or be overridden).
+    Any value — truthy or not — is now ignored entirely."""
     monkeypatch.setenv("MEZMO_OTEL_EMIT_GAUGES", value)
-    if expected:
-        with pytest.raises(SystemExit):
-            amc.parse_args(["--output-dir", "test_out"])
-        err = capsys.readouterr().err
-        assert "MEZMO_OTEL_EMIT_GAUGES requires --otel-send" in err
-    else:
-        args = amc.parse_args(["--output-dir", "test_out"])
-        assert args.otel_emit_gauges is False
-
-
-def test_otel_emit_gauges_env_missing_defaults_false(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     args = amc.parse_args(["--output-dir", "test_out"])
     assert args.otel_emit_gauges is False
-
-
-def test_otel_send_selection_overrides_env_gauge_default(amc, monkeypatch):
-    """A non-gauge ``--otel-send`` selection on the CLI must beat a truthy
-    MEZMO_OTEL_EMIT_GAUGES env var (the selection is authoritative)."""
-    monkeypatch.setenv("MEZMO_OTEL_EMIT_GAUGES", "1")
     args = amc.parse_args([
         "--otel-send", "logs",
         "--otel-endpoint", "http://localhost:4318",
@@ -429,7 +409,6 @@ def test_otel_send_selection_overrides_env_gauge_default(amc, monkeypatch):
 
 
 def test_otel_send_gauges_alone_implies_gauges_only(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     args = amc.parse_args([
         "--otel-send", "gauges",
         "--otel-endpoint", "http://localhost:4318",
@@ -442,7 +421,6 @@ def test_otel_send_gauges_alone_implies_gauges_only(amc, monkeypatch):
 
 
 def test_otel_send_gauges_alone_without_endpoint_fails(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--otel-send", "gauges",
@@ -453,7 +431,6 @@ def test_otel_send_gauges_alone_without_endpoint_fails(amc, monkeypatch):
 def test_otel_send_gauges_requires_metrics_endpoint(amc, monkeypatch):
     """``--otel-send logs,gauges`` with only a logs endpoint configured
     (via env) must fail: the gauge stream posts to the metrics endpoint."""
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     monkeypatch.setenv(
         "MEZMO_OTEL_LOGS_ENDPOINT", "http://localhost:4318/v1/logs"
     )
@@ -465,7 +442,6 @@ def test_otel_send_gauges_requires_metrics_endpoint(amc, monkeypatch):
 
 
 def test_otel_send_gauges_only_requires_metrics_in_emit_selection(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--otel-send", "gauges",
@@ -476,7 +452,6 @@ def test_otel_send_gauges_only_requires_metrics_in_emit_selection(amc, monkeypat
 
 
 def test_otel_send_with_gauges_requires_metrics_in_emit_selection(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--otel-send", "logs,gauges",
@@ -512,7 +487,6 @@ def test_otel_send_with_gauges_rejects_dst_artifact_combo(amc, monkeypatch):
     """The DST artifact splice (``_splice_dst_artifact``) makes per-component
     CSV timestamps non-monotonic, which breaks ``heapq.merge`` inside
     ``stream_otel_gauges``. Reject the combination at parse time."""
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--otel-send", "metrics,gauges",
@@ -523,7 +497,6 @@ def test_otel_send_with_gauges_rejects_dst_artifact_combo(amc, monkeypatch):
 
 
 def test_otel_send_gauges_only_rejects_dst_artifact_combo(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--otel-send", "gauges",
@@ -536,7 +509,6 @@ def test_otel_send_gauges_only_rejects_dst_artifact_combo(amc, monkeypatch):
 def test_otel_send_with_gauges_allows_dst_artifact_zero(amc, monkeypatch):
     """``--inject-dst-artifact-day 0`` (the default, off) must coexist freely
     with a gauge-selecting ``--otel-send``."""
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     args = amc.parse_args([
         "--otel-send", "metrics,gauges",
         "--otel-endpoint", "http://localhost:4318",
@@ -545,43 +517,6 @@ def test_otel_send_with_gauges_allows_dst_artifact_zero(amc, monkeypatch):
     ])
     assert args.otel_emit_gauges is True
     assert args.inject_dst_artifact_day == 0
-
-
-# ------------------------------------------------------------------
-# _env_bool helper
-# ------------------------------------------------------------------
-@pytest.mark.parametrize("value", ["1", "true", "TRUE", "Yes", "on", "  ON  "])
-def test_env_bool_truthy_values_return_true(amc, monkeypatch, value):
-    monkeypatch.setenv("AMC_TEST_BOOL", value)
-    assert amc._env_bool("AMC_TEST_BOOL") is True
-    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
-    assert amc._env_bool("AMC_TEST_BOOL", default=False) is True
-
-
-@pytest.mark.parametrize("value", ["0", "false", "no", "off", "nonsense"])
-def test_env_bool_non_truthy_returns_false(amc, monkeypatch, value):
-    """Non-truthy non-empty values return False regardless of ``default``."""
-    monkeypatch.setenv("AMC_TEST_BOOL", value)
-    assert amc._env_bool("AMC_TEST_BOOL") is False
-    assert amc._env_bool("AMC_TEST_BOOL", default=True) is False
-
-
-def test_env_bool_missing_returns_default(amc, monkeypatch):
-    monkeypatch.delenv("AMC_TEST_BOOL", raising=False)
-    assert amc._env_bool("AMC_TEST_BOOL") is False
-    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
-    assert amc._env_bool("AMC_TEST_BOOL", default=False) is False
-
-
-@pytest.mark.parametrize("value", ["", "   ", "\t", "\n"])
-def test_env_bool_empty_or_whitespace_honors_default(amc, monkeypatch, value):
-    """Regression for the docstring contract: an empty or whitespace-only env
-    var must return ``default`` (not False), so MEZMO_FOO='' with default=True
-    does not silently flip to False."""
-    monkeypatch.setenv("AMC_TEST_BOOL", value)
-    assert amc._env_bool("AMC_TEST_BOOL") is False
-    assert amc._env_bool("AMC_TEST_BOOL", default=True) is True
-    assert amc._env_bool("AMC_TEST_BOOL", default=False) is False
 
 
 # ----------------------------------------------------------------------
