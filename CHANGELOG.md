@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+(no unreleased changes)
+
 ## 0.3.0 - 2026-06-11
 
 **Breaking release.** The CLI consolidated around the common use cases
