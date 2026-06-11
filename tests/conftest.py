@@ -202,12 +202,18 @@ def _generate_natural_baseline(amc, out, *, metrics_per_component=None):
     directly with the raw ``COMPONENTS`` specs — no topology coupling, no
     saturation feedback, no anomalies. Replaces the retired
     ``--topology-mode independent`` fixtures (phase-9 flag day) as the
-    pure-natural statistical baseline: the distribution is identical
-    (same MetricSpec model, same MT19937 generator, one shared RNG
-    stream across components in ``COMPONENTS`` insertion order — the
-    retired mode's draw model); only the absence of anomaly-override
-    and drop-rate draws shifts the absolute draw positions, which no
-    statistical consumer observes.
+    pure-natural statistical baseline: same MetricSpec model, same
+    MT19937 generator, one shared RNG stream across components in
+    ``COMPONENTS`` insertion order — the retired mode's draw model.
+    Only the absence of anomaly-override draws shifts the absolute
+    draw positions (the drop-mask draw still runs —
+    ``generate_component`` draws it even at ``drop_rate=0.0`` —
+    exactly as a real run with the default drop rate would), which no
+    statistical consumer observes. One deliberate difference from the
+    retired alias: ``dtype="int"`` columns keep the default
+    ``np.rint`` cast (the alias skipped it), matching current on-disk
+    rounding — immaterial to the 8-sigma band and Pearson-contrast
+    consumers (a <=0.5 shift on integer-scale metrics).
     A header-only ``anomalies.csv`` is written so manifest-reading
     consumers see an empty manifest instead of a missing file."""
     out.mkdir(parents=True, exist_ok=True)
@@ -227,9 +233,12 @@ def _generate_natural_baseline(amc, out, *, metrics_per_component=None):
             base_dir=out, total_seconds=86400, drop_rate=0.0, interval=1.0,
             ts_array=ts_array, ts_strings=ts_strings, ctx=ctx,
         )
+    # Header order mirrors main()'s ``manifest_fieldnames`` exactly so
+    # consumers that pin the canonical column order read both manifests
+    # identically.
     (out / "anomalies.csv").write_text(
         "timestamp,component,metric,description,scenario_id,severity,"
-        "is_cascade,span_start,span_end,shape,event_id,parent_event_id\n",
+        "is_cascade,event_id,parent_event_id,span_start,span_end,shape\n",
         encoding="utf-8",
     )
     return out
