@@ -11,10 +11,13 @@
   stays 3.2–6.7 sigma above the 0.3 natural baseline, so the
   context-window saturation pattern remains clearly detectable, and both
   default runs are now violation-free (pinned by empty expected-violation
-  sets in `tests/test_validate_output.py`). Affected 7-day golden hashes
-  (`llm_analytics.csv`, `gauges.csv`, the combined CSV, and the N=3
-  variants) were re-locked; `anomalies.csv` and every other component are
-  byte-identical (the generator draws the same RNG sequence).
+  sets in `tests/test_validate_output.py`). The four hash-locked 7-day
+  artifacts containing `llm_analytics` values were re-locked — the default
+  and `--signal-level high --anomaly-count 100` `llm_analytics.csv`
+  hashes, the 7-day `gauges.csv` hash, and the N=3 7-day
+  `llm_analytics.csv` hash (no 7-day combined-CSV hash lock exists);
+  `anomalies.csv` and every other component are byte-identical (the
+  generator draws the same RNG sequence).
 
 ### Added
 

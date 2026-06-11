@@ -600,12 +600,13 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 # ------------------------------------------------------------------
 # Integration against the default 1-day and 7-day outputs
 # ------------------------------------------------------------------
-# Known residual violations (phase 6 flag-day). The
-# validator MUST find exactly this set on the default 1-day and 7-day
-# runs; extras are regressions, missing ones are progress that requires
-# updating this list. The set is keyed by violation type, not by the number
-# of rows that trip the same known bound. Each entry is
-# ``(component_csv, metric, kind)``.
+# Expected violations on the default 1-day and 7-day runs: both sets
+# are intentionally EMPTY since the phase-9 scenario re-tune — the
+# validator must find nothing, so *any* violation on default output is
+# a regression and fails here. The set shape is kept (keyed by
+# violation type, ``(component_csv, metric, kind)``) so a future
+# deliberate exception can be declared explicitly rather than by
+# weakening the assertion.
 # Kinds are normalized to:
 #  - ``fractional``  — value not whole-integer despite ``dtype="int"``
 #  - ``above_max``   — value above declared ``max_value``
