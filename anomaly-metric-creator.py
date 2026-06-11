@@ -5400,9 +5400,17 @@ SCENARIOS: dict[str, Scenario] = {
                 "shape": "sustained",
                 "metric": "context_overflow_rate",
                 "description": "Context overflow from large batch documents",
+                # Phase 9 re-tune: the ratio is declared in [0, 1]
+                # (max_value=1), so the span saturates toward 0.97
+                # instead of the pre-retune 8.5 that violated the bound
+                # on every default 7-day --validate-output run. The
+                # natural baseline is 0.3 +/- 0.1, so the 0.62 -> 0.97
+                # stress ramp stays 3.2-6.7 sigma above it — still
+                # unmistakably the context-window saturation pattern,
+                # now physically plausible for a ratio.
                 "generator": _correlated_span_generator(
-                    1.4, 8.5, 4*3600, noise=0.18,
-                    lo=0.8, hi=9.4, phase=1.35,
+                    0.62, 0.97, 4*3600, noise=0.015,
+                    lo=0.55, hi=0.995, phase=1.35,
                 ),
             }),
             ("llm_analytics", {

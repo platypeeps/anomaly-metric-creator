@@ -542,13 +542,14 @@ same integer values the CSV records (cache miss ratios derived from
 int-cast values, not the pre-cast floats; the qualitative behavior
 is unchanged because the ratio is bounded in [0, 1] in either case).
 
-After phase 6 the only known validator violation on default output is
-the LLM context-overflow scenario driving `context_overflow_rate`
-above its declared `max_value=1` (8.5 at day 5 + 2h, exercising the
-context-window saturation pattern). That overshoot is a
-scenario-catalog issue tracked for phase 9 re-tune — it is
-*not* the integer-cast bundle's scope and is intentionally left in
-place.
+After the phase 9 scenario re-tune there are no known validator
+violations on default output: the LLM context-overflow scenario
+(`llm_weekend_batch`) now saturates `context_overflow_rate` toward
+0.97 — inside its declared `max_value=1` — instead of the historic
+8.5, while staying 3.2–6.7 sigma above the 0.3 natural baseline so
+the context-window saturation pattern remains unmistakable.
+`tests/test_validate_output.py` pins the empty violation sets for
+both default runs.
 
 ### Output validator (the `validate` subcommand / `--validate-output`)
 
