@@ -36,6 +36,65 @@ making changes.
 `if __name__ == "__main__"`. Importing the module does not trigger generation, which
 keeps tests and ad-hoc reuse of `generate_component()` cheap.
 
+### CLI surface (canonical flags, subcommands, deprecated aliases)
+
+The CLI was consolidated around the common use cases. Canonical
+surface:
+
+- **Subcommands** (dispatched in `main()` before argparse on
+  `argv[0]`): `generate` (the default when no subcommand token is
+  given — every historic bare invocation is unchanged), `combine DIR
+  [--components ...]` (replaces `--combine-only`), and `validate DIR
+  [--warn]` (replaces `--validate-output PATH [--validate-warn]`).
+  The subcommands carry dedicated parsers
+  (`_main_combine_subcommand` / `_main_validate_subcommand`) and never
+  route through `parse_args`, so canonical invocations are
+  structurally free of deprecation noise.
+- **`--emit ARTIFACTS`** replaces `--emit-selection` + `--combine`:
+  tokens `metrics, logs, traces, gauges, schema, combined` (default
+  `metrics,logs,traces`). `combined` sets the legacy `args.combine`
+  and requires `metrics`.
+- **`--otel-send SIGNALS`** replaces the five OTEL toggles
+  (`--otel-enabled`/`--otel-disabled`/`--otel-emit-gauges`/
+  `--otel-no-emit-gauges`/`--otel-gauges-only`): a subset of
+  `logs, metrics, traces, gauges`, or `all`, or `none` (explicit off,
+  overriding env-var endpoint defaults). `--otel-send gauges` alone is
+  the old gauges-only mode. The selection is authoritative —
+  unselected signals get their endpoint forced to `None` even when an
+  env var exports one.
+- **`--otel-endpoint BASE` / `--otel-auth-token TOKEN`** replace the
+  per-signal sextet: per-signal URLs derive as `BASE/v1/<signal>` for
+  the selected signals (gauges posts to the metrics endpoint) and the
+  token fans out to every selected signal. Per-signal precedence is
+  explicit-CLI-first: an explicit per-signal *flag* beats the
+  derivation, the derivation beats a `MEZMO_OTEL_*` env var (an
+  explicitly typed base must not be silently hijacked by a stale
+  shell export), and the env var supplies the per-signal default
+  when no base is given.
+- **Two-tier help**: `-h` renders five argument groups (common /
+  anomaly selection / dataset shape / artifacts / OTEL streaming);
+  `--help-all` un-hides the advanced knobs (`--anomaly-count`,
+  `--allow-huge-output`, `--inject-dst-artifact-day`,
+  `--topology-mode`, the OTEL transport tuning flags) and the
+  deprecated aliases, annotating each alias with
+  `[deprecated -> use X]`. Hiding is a post-construction pass over
+  `p._actions` keyed by `_ADVANCED_DESTS`; the alias->replacement map
+  is `_DEPRECATED_FLAGS`.
+
+Reconciliation lives in `_reconcile_cli_surface`, called immediately
+after `p.parse_args` and *before* every validation gate: the canonical
+flags translate onto the historic argument-namespace names
+(`emit_selection`, `combine`, `otel_enabled`, the per-signal
+endpoints, ...) so all downstream gates and `main()` consume one
+namespace regardless of spelling. Mixing a canonical flag with the
+aliases it replaces is a parse error; each alias used emits exactly
+one `DEPRECATION:` stderr line (prefix deliberately distinct from the
+`WARNING:` scenario diagnostics so stderr filters cannot cross-match).
+Aliases are scheduled for removal at a post-phase-9 flag day. When
+adding a new flag, place it in the right group, add it to
+`_ADVANCED_DESTS` if it is not a common-use-case flag, and extend
+`tests/test_cli_surface.py`.
+
 ### Output directory hygiene
 
 `main()` calls `_pre_clean_output_dir()` immediately after `args.output_dir.mkdir(...)`
@@ -148,8 +207,9 @@ slot unchanged.
 `write_schema_json(output_path, *, components, effective_specs, metadata,
 emitted_files, instances_by_component=None)` writes a declarative
 `schema.json` alongside the rest of the artifacts. It is opt-in via
-`schema` in `--emit-selection` (parallel to `metrics`, `logs`, `traces`,
-`gauges`) and is the single source of truth `--validate-output` consumes.
+`schema` in `--emit` (parallel to `metrics`, `logs`, `traces`,
+`gauges`) and is the single source of truth the `validate` subcommand
+(alias `--validate-output`) consumes.
 
 The document carries five slices of information:
 
@@ -491,10 +551,11 @@ additionally surfaces every previously-flagged fractional-int
 violation (the alias intentionally skips the cast to keep its
 no-topology contrast behavior).
 
-### Output validator (`--validate-output`)
+### Output validator (the `validate` subcommand / `--validate-output`)
 
-`--validate-output PATH` runs the validator in a standalone mode (peer
-of `--combine-only`) that loads `PATH/schema.json` and runs every check
+`validate PATH` (canonical; `--validate-output PATH` is the deprecated
+alias) runs the validator in a standalone mode (peer of the `combine`
+subcommand) that loads `PATH/schema.json` and runs every check
 the validator knows about against the artifacts in `PATH`:
 
 - `_validate_required_files_present` — every declared file is on disk.
@@ -584,8 +645,8 @@ the validator knows about against the artifacts in `PATH`:
   any single instance's value, so the N=1 path is byte-identical.
 
 CLI semantics: default mode hard-fails (`exit 1` on any violation);
-`--validate-warn` downgrades to a stderr report and `exit 0`. Mutually
-exclusive with `--combine` and `--combine-only`.
+`--warn` (alias `--validate-warn`) downgrades to a stderr report and
+`exit 0`. Mutually exclusive with combine (flag or subcommand).
 
 ### Gauge metric file (`gauges.csv`)
 
@@ -655,8 +716,9 @@ that implies the OTEL gauge stream but skips `stream_otel_signals()`,
 so receivers that only accept Gauge payloads do not see the anomaly
 counter/log/trace stream first.
 
-`gauges.csv` is opt-in via `gauges` in `--emit-selection` (which the
-parser enforces alongside `metrics`); `--combine-only` does not
+`gauges.csv` is opt-in via `gauges` in `--emit` (which the
+parser enforces alongside `metrics`); the `combine` subcommand /
+`--combine-only` does not
 regenerate it. The end-of-run `Done -` summary additionally prints
 `Gauge rows written: N to gauges.csv` so a CI run records how many
 data points landed in the file. Locked SHA-256 golden hashes at 1d and

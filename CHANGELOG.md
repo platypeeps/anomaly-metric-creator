@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Added
+
+- Consolidated the CLI around the common use cases (41 flat flags -> ~18
+  visible, grouped):
+  - `generate` / `combine DIR` / `validate DIR [--warn]` subcommands
+    (`generate` is the default, so every historic bare invocation is
+    unchanged; the subcommands replace `--combine-only` and
+    `--validate-output [--validate-warn]`).
+  - `--emit ARTIFACTS` replaces `--emit-selection` + `--combine`, adding a
+    `combined` token for the unified-CSV join.
+  - `--otel-send SIGNALS` (subset of logs/metrics/traces/gauges, or
+    `all`/`none`) replaces the five OTEL toggles; `--otel-send gauges`
+    alone is the old gauges-only mode and the selection is authoritative
+    over env-var endpoint defaults.
+  - `--otel-endpoint BASE` + `--otel-auth-token` replace the per-signal
+    endpoint/token sextet, deriving `BASE/v1/<signal>` URLs for the
+    selected signals (explicit per-signal flags beat the derivation,
+    which beats the per-signal env vars; the env vars supply defaults
+    when no base is given).
+  - Two-tier help: `-h` shows the grouped common surface; `--help-all`
+    additionally lists the advanced knobs and the deprecated aliases,
+    each annotated with its canonical replacement.
+
+### Deprecated
+
+- All 16 replaced flag spellings (`--emit-selection`, `--combine`,
+  `--combine-only`, `--validate-output`, `--validate-warn`, the five OTEL
+  toggles, and the six per-signal endpoint/token flags) keep working but
+  emit one `DEPRECATION:` stderr line each; mixing a canonical flag with
+  the aliases it replaces is a parse error. Removal is scheduled for a
+  post-phase-9 CLI flag day.
+
 ## 0.2.0 - 2026-06-10
 
 First cut release. Everything below shipped between the initial 0.1.0
