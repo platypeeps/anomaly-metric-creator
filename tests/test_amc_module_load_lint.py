@@ -241,7 +241,7 @@ def test_multiple_files_partial_violation(tmp_path: Path):
 def test_real_test_tree_is_clean():
     """Running the lint against the actual `tests/` tree must pass after
     the existing legitimate uses are annotated. This guards against a
-    future test file re-introducing the duplicate load pattern without a
+    future test file re-introducing the duplicate load pattern without an
     allow marker.
 
     Globs every `*.py` under `tests/` (matching the pre-commit hook's
