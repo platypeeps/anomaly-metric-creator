@@ -15,9 +15,10 @@ finalized at the post-phase-9 flag day:
   surface never emits ``DEPRECATION:`` noise (the notice mechanism is
   gone from the script entirely).
 
-Byte-equivalence pins run at the cheap 600s interval — the spellings
-reconcile onto the same argument namespace before any generation runs,
-so full-resolution runs would prove nothing extra.
+Byte-equivalence pins run at the cheap 600s interval — the compared
+entry points (inline ``--emit ...,combined`` emission vs. the post-hoc
+``combine`` subcommand) drive the same combine writer over the same
+generated inputs, so full-resolution runs would prove nothing extra.
 """
 
 import contextlib
