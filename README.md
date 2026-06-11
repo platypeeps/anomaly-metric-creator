@@ -534,14 +534,14 @@ The validator loads `DIR/schema.json` and runs:
   `span_end`, padded by 30s) are excluded from the row pool so
   scenario overrides don't dominate the realized correlation.
 
-After phase 6 (flag day), a 1-day compatibility output is
-violation-free. Runs that include the LLM context-overflow scenario still
-surface a known violation type — the scenario drives
-`llm_analytics.context_overflow_rate` toward 8.5 from day 5 + 2h to
-simulate context-window saturation, which exceeds the metric's
-declared `max_value=1`. Reconciling that scenario amplitude with the
-ratio bound is a scenario-catalog re-tune deferred to phase
-9. Pass `--warn` to keep CI green on those multi-day runs until then.
+Default output is violation-free at every duration: the phase 6 flag
+day cleared the fractional-integer set, and the phase 9 scenario
+re-tune cleared the last known violation (the LLM context-overflow
+scenario now saturates `llm_analytics.context_overflow_rate` toward
+0.97, inside its declared `max_value=1`, instead of the historic 8.5).
+A non-empty report from `validate` on unmodified default output is a
+bug; `--warn` remains available for CI flows that prefer a report over
+a failing exit code.
 
 ### Output files
 

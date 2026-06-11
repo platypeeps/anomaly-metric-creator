@@ -5,14 +5,12 @@ schema or a target CSV, run the function, assert the expected violation),
 plus end-to-end integration coverage of the CLI mode against the default
 1-day and 7-day outputs.
 
-Known residual violations (phase 6 flag day): the
-fractional-counter set previously flagged here was cleared by the
-integer-cast bundle, so the 1-day default integration test now asserts
-an empty violation set. The 7-day default still surfaces a known
-``above_max`` violation type on ``llm_analytics.context_overflow_rate`` —
-that scenario-amplitude reconciliation is explicitly deferred to
-Phase 9. Extra violations are regressions; fewer are progress
-and require updating the constants below.
+Known residual violations: none. The phase 6 flag day cleared the
+fractional-counter set via the integer-cast bundle, and the phase 9
+scenario re-tune cleared the last ``above_max`` violation
+(``llm_analytics.context_overflow_rate`` now saturates toward 0.97
+instead of 8.5). Both default integration tests assert empty
+violation sets; any new violation on default output is a regression.
 """
 import json
 import re
@@ -602,12 +600,13 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 # ------------------------------------------------------------------
 # Integration against the default 1-day and 7-day outputs
 # ------------------------------------------------------------------
-# Known residual violations (phase 6 flag-day). The
-# validator MUST find exactly this set on the default 1-day and 7-day
-# runs; extras are regressions, missing ones are progress that requires
-# updating this list. The set is keyed by violation type, not by the number
-# of rows that trip the same known bound. Each entry is
-# ``(component_csv, metric, kind)``.
+# Expected violations on the default 1-day and 7-day runs: both sets
+# are intentionally EMPTY since the phase-9 scenario re-tune — the
+# validator must find nothing, so *any* violation on default output is
+# a regression and fails here. The set shape is kept (keyed by
+# violation type, ``(component_csv, metric, kind)``) so a future
+# deliberate exception can be declared explicitly rather than by
+# weakening the assertion.
 # Kinds are normalized to:
 #  - ``fractional``  — value not whole-integer despite ``dtype="int"``
 #  - ``above_max``   — value above declared ``max_value``
@@ -615,21 +614,17 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
 #  - ``negative_kind`` — value negative despite counter/rate semantic_type
 #
 # Phase 6 cleared every fractional-int violation flagged by the
-# integer-cast bundle in ``generate_component``.
-# Both default runs are now violation-free, with one exception:
-#
-# The 7-day run still surfaces a known ``above_max`` violation type on
-# ``llm_analytics.context_overflow_rate``. The LLM context-overflow
-# scenario (``llm_weekend_batch``) drives that ratio toward 8.5 from
-# day 5 + 2h to simulate context-window saturation, which exceeds the
-# metric's declared ``max_value=1``. Reconciling the scenario
-# amplitude with the ratio bound is a scenario-catalog re-tune
-# explicitly deferred to phase 9.
+# integer-cast bundle in ``generate_component``, and the phase 9
+# scenario re-tune cleared the last known violation (the
+# ``llm_weekend_batch`` context-overflow span used to drive
+# ``llm_analytics.context_overflow_rate`` toward 8.5 against its
+# declared ``max_value=1``; it now saturates toward 0.97). Both
+# default runs are violation-free — these sets pin that invariant, so
+# any future scenario or saturation change that breaches a declared
+# bound on default output fails here.
 _EXPECTED_VIOLATIONS_ONE_DAY: set[tuple[str, str, str]] = set()
 
-_EXPECTED_VIOLATIONS_SEVEN_DAY = {
-    ("llm_analytics.csv", "context_overflow_rate", "above_max"),
-}
+_EXPECTED_VIOLATIONS_SEVEN_DAY: set[tuple[str, str, str]] = set()
 
 
 def _classify(line: str) -> tuple[str, str, str] | None:
