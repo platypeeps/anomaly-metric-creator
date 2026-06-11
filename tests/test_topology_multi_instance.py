@@ -34,7 +34,7 @@ import csv
 import numpy as np
 import pytest
 
-from conftest import run_capture, sha256_path
+from conftest import registry_overlay, run_capture, sha256_path
 
 
 
@@ -83,9 +83,10 @@ def synthetic_n3_run(amc, tmp_path_factory):
         ),
         cascade_specs=(),
     )
-    original = dict(amc.SCENARIOS)
-    amc.SCENARIOS[extra.id] = extra
-    try:
+    # ``registry_overlay`` rebinds amc.SCENARIOS to a patched copy for
+    # the duration of the run — the original registry dict is never
+    # mutated, so a mid-run failure cannot leave synthetic state behind.
+    with registry_overlay(amc, SCENARIOS={extra.id: extra}):
         out = tmp_path_factory.mktemp("ver158_n3_synthetic_pod0_spike")
         run = run_capture(
             amc, out, days=1,
@@ -117,9 +118,6 @@ def synthetic_n3_run(amc, tmp_path_factory):
                 "loadbalancer,apigateway,authservice,cacheservice,database,llm_analytics",
             ],
         )
-    finally:
-        amc.SCENARIOS.clear()
-        amc.SCENARIOS.update(original)
     return run.out_dir
 
 

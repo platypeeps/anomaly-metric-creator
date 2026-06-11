@@ -39,7 +39,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from conftest import read_component_rows, read_manifest, run_capture, sha256_path
+from conftest import (
+    read_component_rows,
+    read_manifest,
+    registry_overlay,
+    run_capture,
+    sha256_path,
+)
 
 
 
@@ -102,6 +108,7 @@ def _aligned_columns(out_dir, *pairs):
 # parity check moves to the realistic alias and the legacy-baseline
 # check lives in ``test_topology_loadbalancer_gateway``.
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_topology_fanout_realistic_matches_default_byte_for_byte(
     amc, one_day_run_a, tmp_path
 ):
@@ -415,19 +422,22 @@ def test_callable_contribution_applies_to_canonical_metric_only(amc):
     rng = np.random.RandomState(7)
     signal_col = np.linspace(0.0, 1.0, n_rows)
 
-    saved_topology = dict(amc.TOPOLOGY)
-    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
-    try:
-        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("upload", ())
-        amc._TOPOLOGY_LOAD_METRICS["synthdown"] = ("main_qps", ("extra_ops",))
-        amc.TOPOLOGY["synthup"] = [
-            amc.Edge(
-                target="synthdown",
-                weight=lambda s: s * 500.0,
-                signal=lambda cols: cols.get("upload"),
-            )
-        ]
-
+    with registry_overlay(
+        amc,
+        _TOPOLOGY_LOAD_METRICS={
+            "synthup": ("upload", ()),
+            "synthdown": ("main_qps", ("extra_ops",)),
+        },
+        TOPOLOGY={
+            "synthup": [
+                amc.Edge(
+                    target="synthdown",
+                    weight=lambda s: s * 500.0,
+                    signal=lambda cols: cols.get("upload"),
+                )
+            ]
+        },
+    ):
         specs = [
             amc.MetricSpec(name="main_qps", base=100.0, std=1.0),
             amc.MetricSpec(name="extra_ops", base=5.0, std=0.5),
@@ -448,8 +458,3 @@ def test_callable_contribution_applies_to_canonical_metric_only(amc):
             "supplementary metric must not receive a canonical-unit "
             "callable contribution"
         )
-    finally:
-        amc.TOPOLOGY.clear()
-        amc.TOPOLOGY.update(saved_topology)
-        amc._TOPOLOGY_LOAD_METRICS.clear()
-        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)

@@ -322,6 +322,7 @@ def test_no_dead_shape_params_in_catalog(amc):
 # ------------------------------------------------------------------
 # DST artifact — duplicate hour around 02:00 on the configured day.
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_dst_artifact_duplicates_02_hour(amc, tmp_path):
     """--inject-dst-artifact-day 1 duplicates the 02:00–02:59 wall-clock
     hour on day 1, so each component CSV gains 3,600 rows and the
@@ -332,23 +333,11 @@ def test_dst_artifact_duplicates_02_hour(amc, tmp_path):
     baseline_row_count = len(rows_baseline)
 
     out_dst = tmp_path / "dst_day1_on"
-    out_dst.mkdir()
-    import io
-    import sys as _sys
-    args = [
-        "--seed", "42",
-        "--duration-days", "1",
-        "--interval-seconds", "1.0",
-        "--inject-dst-artifact-day", "1",
-        "--output-dir", str(out_dst),
-    ]
-    stderr_buf = io.StringIO()
-    real_stderr = _sys.stderr
-    _sys.stderr = stderr_buf
-    try:
-        amc.main(args)
-    finally:
-        _sys.stderr = real_stderr
+    run_capture(
+        amc, out_dst, days=1,
+        interval_seconds=1.0,  # the DST splice duplicates one wall-clock hour of 1s rows
+        extra_args=["--inject-dst-artifact-day", "1"],
+    )
 
     # Count duplicate-timestamp lines directly (read_component_rows dedupes
     # by timestamp, so we count via a second pass).

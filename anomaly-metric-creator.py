@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.request
 import dataclasses
+import functools
 from dataclasses import dataclass, field
 from hashlib import sha1
 from pathlib import Path
@@ -1040,11 +1041,15 @@ def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
 
     The optional kwargs decouple two pieces of state that were previously
     baked into ``MetricSpec.multiplier`` / ``MetricSpec.additive`` lambdas
-    by ``_compose_topology_*_specs``. They are byte-identical to the
-    pre-existing lambda-baked path when called with ``latency_factor`` and
-    ``error_offset`` equal to what the lambdas would have computed, and
-    they unlock the per-instance saturation path where each
-    instance's curve depends on its own upstream view:
+    by ``_compose_topology_*_specs``. Called with ``latency_factor`` and
+    ``error_offset`` equal to what the lambdas would have computed, the
+    result matches the lambda-baked path byte-for-byte on the locked
+    baselines (pinned by the N=3 golden hashes; IEEE-754 multiplication
+    and addition are not associative, so the equality is an empirical
+    property of the shipped seeds holding through the 3-decimal CSV
+    rounding, not a mathematical guarantee), and they unlock the
+    per-instance saturation path where each instance's curve depends on
+    its own upstream view:
 
     * ``noise`` — pre-drawn ``rng.normal(0, spec.std, n_rows)`` array.
       When provided, the function uses it instead of drawing fresh
@@ -8562,9 +8567,15 @@ def write_reporting_artifacts(
             description = entry["description"]
 
             if log_f is not None:
+                # Escape embedded double quotes so the key=value line
+                # stays parseable if a future catalog description carries
+                # one (today's descriptions are quote-free, so emitted
+                # bytes are unchanged). Mirrors the shlex.quote posture
+                # of _write_activity.
+                safe_description = description.replace('"', '\\"')
                 log_f.write(
                     f"{timestamp} INFO metric_report event_id={event_id} "
-                    f"component={component} metric={metric} msg=\"{description}\"\n"
+                    f"component={component} metric={metric} msg=\"{safe_description}\"\n"
                 )
 
             if trace_f is not None:
@@ -8580,6 +8591,7 @@ def write_reporting_artifacts(
                 }) + "\n")
 
 
+@functools.lru_cache(maxsize=4096)
 def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
     """Parse a ``YYYY-MM-DD HH:MM:SS[.SSS]`` CSV timestamp into a naive datetime.
 
@@ -8587,6 +8599,15 @@ def _parse_csv_timestamp(timestamp: str) -> datetime.datetime:
     ``_build_timestamp_arrays`` are both accepted. Centralizing the format
     dispatch here keeps every consumer (OTLP payload conversion, OTEL stream
     pacing, future readers) in lockstep on the supported formats.
+
+    Cached: every per-(component, instance) source in the ``heapq.merge``
+    writers re-parses the same shared timestamp grid (~42 parses per
+    unique string on an N=3 14-component run). Merge access is
+    window-local — the same timestamp recurs across sources within a
+    merge window, then never again — so a small LRU absorbs the repeats
+    without holding a 7-day grid (~600k datetimes) in memory. The
+    returned ``datetime`` is immutable, so sharing one instance across
+    callers is safe.
     """
     fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in timestamp else "%Y-%m-%d %H:%M:%S"
     return datetime.datetime.strptime(timestamp, fmt)
@@ -8621,7 +8642,6 @@ def _build_otlp_trace_payload(entry: dict) -> dict:
     component = entry["component"]
     metric = entry["metric"]
     timestamp = entry["timestamp"]
-    description = entry["description"]
     attributes = [
         {"key": "event.id", "value": {"stringValue": event_id}},
         {"key": "signal.type", "value": {"stringValue": "metric_anomaly"}},
@@ -8673,7 +8693,6 @@ def _build_otlp_trace_protobuf(entry: dict) -> bytes:
     component = entry["component"]
     metric = entry["metric"]
     timestamp = entry["timestamp"]
-    description = entry["description"]
     attributes = [
         KeyValue(key="event.id", value=AnyValue(string_value=event_id)),
         KeyValue(key="signal.type", value=AnyValue(string_value="metric_anomaly")),
@@ -10414,11 +10433,27 @@ def _validate_component_cells(
             seen.add(key)
             violations.append(msg)
 
+        # Hoist the per-column constants out of the row loop: the dict
+        # lookups (name, dtype, bounds, semantic_type) are invariant per
+        # column, and re-fetching them per cell costs ~4 lookups x rows x
+        # metrics (~85M on a default 7-day validation) — the exact
+        # "per-row re-computation of constants" pattern the pre-PR
+        # checklist forbids in hot paths.
+        column_checks = [
+            (
+                col_idx,
+                m["name"],
+                m.get("dtype") == "int",
+                m.get("min_value"),
+                m.get("max_value"),
+                m.get("semantic_type"),
+            )
+            for col_idx, m in enumerate(metrics, start=metric_col_start)
+        ]
         for i, row in enumerate(reader, start=2):
             if not row:
                 continue
-            for col_idx, metric_meta in enumerate(metrics, start=metric_col_start):
-                name = metric_meta["name"]
+            for col_idx, name, is_int, lo, hi, semantic in column_checks:
                 if col_idx >= len(row):
                     _record(name, "missing_col",
                             f"{csv_filename} line {i}: missing column for "
@@ -10445,13 +10480,11 @@ def _validate_component_cells(
                             f"{csv_filename} line {i}: {name}={raw!r} is "
                             "not finite")
                     continue
-                if metric_meta.get("dtype") == "int":
+                if is_int:
                     if abs(value - round(value)) > _VALIDATE_INT_TOLERANCE:
                         _record(name, "fractional",
                                 f"{csv_filename} line {i}: {name}={value} "
                                 "is fractional but dtype='int'")
-                lo = metric_meta.get("min_value")
-                hi = metric_meta.get("max_value")
                 if lo is not None and value < lo:
                     _record(name, "below_min",
                             f"{csv_filename} line {i}: {name}={value} "
@@ -10460,7 +10493,6 @@ def _validate_component_cells(
                     _record(name, "above_max",
                             f"{csv_filename} line {i}: {name}={value} "
                             f"above max_value={hi}")
-                semantic = metric_meta.get("semantic_type")
                 if semantic in ("counter", "rate") and value < 0:
                     _record(name, "negative_kind",
                             f"{csv_filename} line {i}: {name}={value} "
@@ -10519,6 +10551,11 @@ def _validate_component_derivations(
             return violations
         seen: set[str] = set()
         for i, row in enumerate(reader, start=2):
+            if len(seen) == len(derived_entries):
+                # Every derived metric has already recorded its
+                # one-per-file violation; the remaining rows cannot add
+                # anything (each metric reports at most once per CSV).
+                break
             if not row:
                 continue
             for entry in derived_entries:
@@ -10999,6 +11036,11 @@ def _validate_topology_coupling(
         output_dir / "anomalies.csv"
     )
 
+    # Per-run cache for the per-instance long-form column reads: one
+    # parse per (component, metric) for the whole edge loop instead of
+    # one per edge (see _validate_topology_coupling_per_instance).
+    per_instance_column_cache: dict = {}
+
     violations: list[str] = []
     for source in sorted(topology.keys()):
         source_entry = _TOPOLOGY_LOAD_METRICS.get(source)
@@ -11237,6 +11279,7 @@ def _validate_topology_coupling(
                 output_dir, schema, source, target,
                 source_canonical, target_canonical,
                 threshold, anomaly_windows,
+                column_cache=per_instance_column_cache,
             )
     return violations
 
@@ -11247,6 +11290,7 @@ def _validate_topology_coupling_per_instance(
     source_canonical: str, target_canonical: str,
     threshold: float,
     anomaly_windows: list[tuple[datetime.datetime, datetime.datetime, str, str]],
+    column_cache: dict | None = None,
 ) -> list[str]:
     """Per-instance edge correlation check (phase 8).
 
@@ -11308,12 +11352,25 @@ def _validate_topology_coupling_per_instance(
         # fan-out applies, per-pod isolation is not the contract.
         return []
 
-    source_per_inst = _read_component_metric_column_per_instance(
-        output_dir / f"{source}.csv", source_canonical
-    )
-    target_per_inst = _read_component_metric_column_per_instance(
-        output_dir / f"{target}.csv", target_canonical
-    )
+    def _read_cached(component: str, metric: str):
+        # One full long-form parse per (CSV, metric) per validation run:
+        # a source with several outgoing edges (apigateway has four)
+        # used to have its entire per-instance CSV re-parsed once per
+        # edge. The cache is owned by ``_validate_topology_coupling``
+        # and lives only for the duration of one validation pass.
+        if column_cache is None:
+            return _read_component_metric_column_per_instance(
+                output_dir / f"{component}.csv", metric
+            )
+        key = (component, metric)
+        if key not in column_cache:
+            column_cache[key] = _read_component_metric_column_per_instance(
+                output_dir / f"{component}.csv", metric
+            )
+        return column_cache[key]
+
+    source_per_inst = _read_cached(source, source_canonical)
+    target_per_inst = _read_cached(target, target_canonical)
     if source_per_inst is None or target_per_inst is None:
         return []
 
@@ -11336,6 +11393,14 @@ def _validate_topology_coupling_per_instance(
         return []
 
     violations: list[str] = []
+    # Loop-invariant: the window filter depends only on the edge's
+    # (component, metric) pairs, not on the pod pair — hoisted out of
+    # the per-pod loop.
+    pair_windows = _filter_windows_for_pair(
+        anomaly_windows,
+        source, source_canonical,
+        target, target_canonical,
+    )
     for src_id, tgt_id in zip(source_ids, target_ids):
         src_ts, src_vals = source_per_inst[src_id]
         tgt_ts, tgt_vals = target_per_inst[tgt_id]
@@ -11367,11 +11432,6 @@ def _validate_topology_coupling_per_instance(
 
         if len(common_ts) < 100:
             continue
-        pair_windows = _filter_windows_for_pair(
-            anomaly_windows,
-            source, source_canonical,
-            target, target_canonical,
-        )
         source_arr = np.array(source_aligned, dtype=np.float64)
         target_arr = np.array(target_aligned, dtype=np.float64)
         if pair_windows:
@@ -11580,7 +11640,16 @@ def stream_otel_gauges(
         for ts, comp, values, dimensions in _iter_component_rows(component, csv_path):
             yield (_parse_csv_timestamp(ts), ts, comp, values, dimensions)
 
-    iters = [_keyed_iter(c, p) for c, p in component_csv_paths.items() if p.exists()]
+    # Sort internally (matching write_gauges_csv) so the equal-timestamp
+    # component tiebreaker holds regardless of how the caller built the
+    # mapping. main() already passes a sorted dict, so the live OTLP
+    # emission order is unchanged; this closes the asymmetry for direct
+    # callers only.
+    iters = [
+        _keyed_iter(c, p)
+        for c, p in sorted(component_csv_paths.items())
+        if p.exists()
+    ]
 
     batch: list[dict] = []
     batch_start_dt: datetime.datetime | None = None

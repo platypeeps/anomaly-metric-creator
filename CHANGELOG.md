@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed
+
+- Validator and merge-writer hot paths trimmed: `_validate_component_cells`
+  hoists the per-column schema constants out of the row loop (previously ~4
+  dict lookups per cell), `_validate_component_derivations` stops scanning
+  once every derived metric has recorded its one-per-file violation, the
+  per-instance topology-coupling check caches the long-form column reads
+  per validation run (one parse per (component, metric) instead of one per
+  edge) and hoists the loop-invariant anomaly-window filter out of the
+  per-pod loop, and `_parse_csv_timestamp` gains a small LRU so the
+  `heapq.merge` writers stop re-parsing the shared timestamp grid once per
+  source.
+- `stream_otel_gauges` sorts its component iterators internally (matching
+  `write_gauges_csv`) so the equal-timestamp tie-break holds for direct
+  callers; the live path already passed a sorted mapping.
+- `metric_report.log` escapes embedded double quotes in the `msg="…"`
+  field so the key=value line stays parseable if a future scenario
+  description carries one (current descriptions are quote-free, so emitted
+  bytes are unchanged).
+
 ### Fixed
 
 - Fixed two latent unit-mixing paths in the topology composers: the
@@ -145,6 +165,23 @@
 - Refreshed the application-flow and topology mermaid diagrams. (#86)
 
 ### Tests
+
+- Routed the four remaining hand-rolled `main()` drivers
+  (`test_correctness.py`'s interval-5 fixture, `test_scenario_deviation.py`'s
+  `_run_scenario`, `test_instance_config.py`'s `_run`, and `test_shapes.py`'s
+  inline DST run) through the canonical `conftest.run_capture`, which now
+  scopes its stderr capture with `contextlib.redirect_stderr` instead of a
+  global `sys.stderr` swap.
+- Replaced every mutate-in-place registry save/restore block with the new
+  `conftest.registry_overlay` context manager, which rebinds the module
+  registries to patched copies — the originals are never touched, so a
+  mid-test failure cannot leave synthetic entries behind.
+- Applied `@pytest.mark.full_resolution` to every directly-invoking
+  test function that opts into 1s rows (fixtures document the rationale in
+  their docstrings; markers cannot attach to fixtures, and the two cheap
+  marker meta-tests deliberately carry no static marker), and
+  `test_determinism.py` streams its byte-identity comparison via
+  `filecmp.cmp` instead of whole-file `read_bytes()`.
 
 - Fixed OTEL streaming subprocess tests leaking `otel-activity.log` into the
   CWD pytest was launched from (typically the repo root): every streaming

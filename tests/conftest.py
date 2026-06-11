@@ -1,9 +1,9 @@
+import contextlib
 import csv
 import datetime
 import hashlib
 import importlib.util
 import io
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -56,6 +56,9 @@ def run_capture(
       sub-second timestamp checks, 86,400-row sweeps, or legacy locked
       hashes should pair the explicit value with
       ``@pytest.mark.full_resolution`` so the intent is auditable.
+      Fixtures cannot carry markers — session/module fixtures that opt
+      into 1s rows document the rationale in their docstrings instead,
+      and the marker lands on directly-invoking test functions only.
 
     ``--interval-seconds`` in ``extra_args`` raises ``ValueError`` —
     in either the standalone ``--interval-seconds VALUE`` form or the
@@ -87,12 +90,12 @@ def run_capture(
         args += ["--interval-seconds", str(interval_seconds)]
     args += extra_args_list
     stderr_buf = io.StringIO()
-    real_stderr = sys.stderr
-    sys.stderr = stderr_buf
-    try:
+    # redirect_stderr scopes the capture to the main() call — safer than
+    # the previous global ``sys.stderr`` swap, which was not exception- or
+    # thread-safe (test_scenario_deviation pioneered this form; the
+    # helper now owns it so every driver gets it).
+    with contextlib.redirect_stderr(stderr_buf):
         amc.main(args)
-    finally:
-        sys.stderr = real_stderr
     return SimpleNamespace(out_dir=out_dir, stderr=stderr_buf.getvalue())
 
 
@@ -392,6 +395,42 @@ def count_lines(path: Path) -> int:
 def count_blank_lines(path: Path) -> int:
     with open(path) as f:
         return sum(1 for line in f if line.strip() == "")
+
+
+@contextlib.contextmanager
+def registry_overlay(amc, **overlays):
+    """Temporarily rebind module-level registries on the shared ``amc``
+    module to *copies* with ``overlays`` merged in, restoring the
+    original objects on exit.
+
+    Structural replacement for the historical mutate-in-place +
+    save/restore-in-``finally`` pattern: the original registry dicts are
+    never touched, so a session-scoped fixture instantiated inside the
+    patched window (or an assertion failure mid-test) can never bake
+    synthetic entries into suite-wide state. Generator and validator
+    code reads these registries as module globals by name, so rebinding
+    the attribute is sufficient.
+
+    Usage::
+
+        with registry_overlay(
+            amc,
+            TOPOLOGY={"synthup": [amc.Edge(...)]},
+            _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ())},
+        ):
+            ...
+    """
+    saved = {}
+    for name, extra in overlays.items():
+        saved[name] = getattr(amc, name)
+        patched = dict(saved[name])
+        patched.update(extra)
+        setattr(amc, name, patched)
+    try:
+        yield
+    finally:
+        for name, original in saved.items():
+            setattr(amc, name, original)
 
 
 def sha256_path(path) -> str:
