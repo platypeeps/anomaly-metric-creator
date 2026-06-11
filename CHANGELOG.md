@@ -166,18 +166,20 @@
 
 ### Tests
 
-- Routed the two remaining hand-rolled `main()` drivers
-  (`test_correctness.py`'s interval-5 fixture and
-  `test_scenario_deviation.py`'s `_run_scenario`) through the canonical
-  `conftest.run_capture`, which now scopes its stderr capture with
-  `contextlib.redirect_stderr` instead of a global `sys.stderr` swap.
+- Routed the four remaining hand-rolled `main()` drivers
+  (`test_correctness.py`'s interval-5 fixture, `test_scenario_deviation.py`'s
+  `_run_scenario`, `test_instance_config.py`'s `_run`, and `test_shapes.py`'s
+  inline DST run) through the canonical `conftest.run_capture`, which now
+  scopes its stderr capture with `contextlib.redirect_stderr` instead of a
+  global `sys.stderr` swap.
 - Replaced every mutate-in-place registry save/restore block with the new
   `conftest.registry_overlay` context manager, which rebinds the module
   registries to patched copies — the originals are never touched, so a
   mid-test failure cannot leave synthetic entries behind.
-- Applied `@pytest.mark.full_resolution` to the eight directly-invoking
-  test functions that opt into 1s rows (fixtures document the rationale in
-  their docstrings; markers cannot attach to fixtures), and
+- Applied `@pytest.mark.full_resolution` to every directly-invoking
+  test function that opts into 1s rows (fixtures document the rationale in
+  their docstrings; markers cannot attach to fixtures, and the two cheap
+  marker meta-tests deliberately carry no static marker), and
   `test_determinism.py` streams its byte-identity comparison via
   `filecmp.cmp` instead of whole-file `read_bytes()`.
 

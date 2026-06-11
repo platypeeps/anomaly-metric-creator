@@ -338,15 +338,16 @@ def test_compose_saturation_specs_zero_gain_edges_skipped(amc):
 
     with registry_overlay(
         amc,
-        _TOPOLOGY_SATURATION_TARGETS={"synthcomp": (
-                ("latency_ms",), ("error_rate",),
-            )},
-        TOPOLOGY={"synthup": [
+        _TOPOLOGY_SATURATION_TARGETS={
+            "synthcomp": (("latency_ms",), ("error_rate",)),
+        },
+        TOPOLOGY={
+            "synthup": [
                 amc.Edge(target="synthcomp", weight=1.0, saturation=zero_sat)
-            ]},
+            ]
+        },
         _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ())},
     ):
-
         specs = [
             amc.MetricSpec(name="latency_ms", base=100.0, std=0.0),
             amc.MetricSpec(name="error_rate", base=0.1, std=0.0),
@@ -679,15 +680,16 @@ def test_saturation_overlap_target_composes_both_effects(amc):
 
     with registry_overlay(
         amc,
-        _TOPOLOGY_SATURATION_TARGETS={"synthcomp": (
-                ("overlap_ms",), ("overlap_ms",),
-            )},
-        TOPOLOGY={"synthup": [
+        _TOPOLOGY_SATURATION_TARGETS={
+            "synthcomp": (("overlap_ms",), ("overlap_ms",)),
+        },
+        TOPOLOGY={
+            "synthup": [
                 amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
-            ]},
+            ]
+        },
         _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ())},
     ):
-
         specs = [amc.MetricSpec(name="overlap_ms", base=100.0, std=0.0)]
         out = amc._compose_topology_saturation_specs(
             "synthcomp", specs,
@@ -727,15 +729,16 @@ def test_saturation_driver_requires_canonical_column(amc):
 
     with registry_overlay(
         amc,
-        _TOPOLOGY_SATURATION_TARGETS={"synthcomp": (
-                ("latency_ms",), ("err_rate",),
-            )},
-        TOPOLOGY={"synthup": [
+        _TOPOLOGY_SATURATION_TARGETS={
+            "synthcomp": (("latency_ms",), ("err_rate",)),
+        },
+        TOPOLOGY={
+            "synthup": [
                 amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
-            ]},
+            ]
+        },
         _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ("synthextra",))},
     ):
-
         specs = [
             amc.MetricSpec(name="latency_ms", base=100.0, std=0.0),
             amc.MetricSpec(name="err_rate", base=0.1, std=0.0),
