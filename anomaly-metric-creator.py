@@ -10310,7 +10310,8 @@ def _load_schema_document(schema_path: Path) -> dict:
     if not schema_path.exists():
         raise ValueError(
             f"validate requires {schema_path}; "
-            "regenerate the run with --emit metrics,logs,traces,schema"
+            "regenerate the run with 'schema' included in --emit "
+            "(e.g. --emit metrics,schema)"
         )
     try:
         document = json.loads(schema_path.read_text(encoding="utf-8"))
