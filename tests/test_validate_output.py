@@ -514,7 +514,7 @@ def test_validate_output_returns_violation_list(amc, schema_run):
     assert isinstance(violations, list)
 
 
-def test_validate_output_cli_exits_nonzero_on_violation(amc, tmp_path, capsys):
+def test_validate_subcommand_exits_nonzero_on_violation(amc, tmp_path, capsys):
     """End-to-end: a run with an injected bad cell must exit 1 under
     the ``validate`` subcommand in default (hard-fail) mode."""
     out = tmp_path / "bad"
@@ -539,7 +539,7 @@ def test_validate_output_cli_exits_nonzero_on_violation(amc, tmp_path, capsys):
     assert "cpu_util_pct" in err
 
 
-def test_validate_output_cli_warn_mode_exits_zero(amc, tmp_path, capsys):
+def test_validate_subcommand_warn_mode_exits_zero(amc, tmp_path, capsys):
     """``validate DIR --warn`` downgrades violations to a non-fatal report and
     exits 0 (so CI can run the validator informationally without breaking
     the build during the topology-aware re-baseline window)."""
@@ -563,7 +563,7 @@ def test_validate_output_cli_warn_mode_exits_zero(amc, tmp_path, capsys):
     assert "--warn" in err
 
 
-def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
+def test_validate_subcommand_clean_directory_exits_zero(amc, tmp_path, capsys):
     """A directory whose contents match its schema produces no violations
     and the CLI exits 0 with an OK message on stdout. Uses a controlled
     one-component run so we can construct a case with no fractional-int
@@ -1620,7 +1620,7 @@ def test_validate_long_form_dimensions_noop_without_dimensions(amc, schema_run):
     assert amc._validate_long_form_dimensions(schema_run, schema) == []
 
 
-def test_validate_output_cli_clean_on_fresh_n3_run(amc, one_day_run_n3, capsys):
+def test_validate_subcommand_clean_on_fresh_n3_run(amc, one_day_run_n3, capsys):
     """End-to-end: a fresh 1-day ``--instances-per-component 3`` run
     must validate clean under the ``validate`` subcommand."""
     amc.main(["validate", str(one_day_run_n3.out_dir)])
@@ -1669,7 +1669,7 @@ def test_validate_component_derivations_flags_drift_under_n3(amc, schema_run_n3)
 # ------------------------------------------------------------------
 # parse_args gate lift (phase 8)
 # ------------------------------------------------------------------
-def test_schema_emit_selection_compatible_with_instances_per_component(
+def test_schema_emit_compatible_with_instances_per_component(
     amc, tmp_path,
 ):
     """Phase 8 gate lift: ``--emit ...,schema`` was rejected

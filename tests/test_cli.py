@@ -208,13 +208,13 @@ def test_cross_process_determinism(tmp_path):
     assert not differ, f"cross-process determinism broken for: {differ}"
 
 
-def test_invalid_emit_selection_fails(tmp_path):
+def test_invalid_emit_fails(tmp_path):
     result = _invoke("--emit", "metrics,invalid", "--output-dir", str(tmp_path))
     assert result.returncode != 0, "expected non-zero exit for invalid --emit"
     assert "--emit" in (result.stderr + result.stdout)
 
 
-def test_emit_selection_logs_and_traces_only(tmp_path):
+def test_emit_logs_and_traces_only(tmp_path):
     out = tmp_path / "emit_logs_traces"
     result = _invoke(
         "--duration-days", "1",
@@ -230,7 +230,7 @@ def test_emit_selection_logs_and_traces_only(tmp_path):
     assert (out / "metric_traces.jsonl").exists()
 
 
-def test_emit_selection_metrics_only(tmp_path):
+def test_emit_metrics_only(tmp_path):
     out = tmp_path / "emit_metrics_only"
     result = _invoke(
         "--duration-days", "1",

@@ -78,11 +78,11 @@ def test_parse_args_interval_seconds_accepts_millisecond_floor(amc):
     ])
     assert args.interval_seconds == 0.001
 
-def test_parse_args_emit_selection(amc):
+def test_parse_args_emit(amc):
     args = amc.parse_args(["--emit", "metrics,logs", "--output-dir", "test_out"])
     assert args.emit_selection == {"metrics", "logs"}
 
-def test_parse_args_invalid_emit_selection(amc):
+def test_parse_args_invalid_emit(amc):
     with pytest.raises(SystemExit):
         amc.parse_args(["--emit", "invalid", "--output-dir", "test_out"])
 
@@ -380,7 +380,7 @@ def test_parse_args_exclude_scenarios_invalid_name_fails(amc):
 # ------------------------------------------------------------------
 # --otel-send gauge selection / --otel-gauge-*
 # ------------------------------------------------------------------
-def test_otel_emit_gauges_defaults_false(amc):
+def test_otel_gauge_stream_defaults_off(amc):
     args = amc.parse_args(["--output-dir", "test_out"])
     assert args.otel_emit_gauges is False
     assert args.otel_gauge_batch_seconds == 60
@@ -441,7 +441,7 @@ def test_otel_send_gauges_requires_metrics_endpoint(amc, monkeypatch):
         ])
 
 
-def test_otel_send_gauges_only_requires_metrics_in_emit_selection(amc, monkeypatch):
+def test_otel_send_gauges_only_requires_metrics_in_emit(amc, monkeypatch):
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--otel-send", "gauges",
@@ -451,7 +451,7 @@ def test_otel_send_gauges_only_requires_metrics_in_emit_selection(amc, monkeypat
         ])
 
 
-def test_otel_send_with_gauges_requires_metrics_in_emit_selection(amc, monkeypatch):
+def test_otel_send_with_gauges_requires_metrics_in_emit(amc, monkeypatch):
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--otel-send", "logs,gauges",

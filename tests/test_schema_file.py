@@ -77,7 +77,7 @@ def _load_schema(out_dir: Path) -> dict:
 # ------------------------------------------------------------------
 # parse_args validation
 # ------------------------------------------------------------------
-def test_emit_selection_accepts_schema_token(amc, tmp_path):
+def test_emit_accepts_schema_token(amc, tmp_path):
     args = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
@@ -87,7 +87,7 @@ def test_emit_selection_accepts_schema_token(amc, tmp_path):
     assert "metrics" in args.emit_selection
 
 
-def test_emit_selection_schema_standalone_allowed(amc, tmp_path):
+def test_emit_schema_standalone_allowed(amc, tmp_path):
     """Unlike ``gauges``, ``schema`` does not require ``metrics`` — the
     metric metadata catalog is static and still useful documentation when
     no per-component CSVs are emitted."""
@@ -99,7 +99,7 @@ def test_emit_selection_schema_standalone_allowed(amc, tmp_path):
     assert "schema" in args.emit_selection
 
 
-def test_emit_selection_help_advertises_schema(amc):
+def test_emit_help_advertises_schema(amc):
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--help"],
         capture_output=True, text=True,
@@ -107,7 +107,7 @@ def test_emit_selection_help_advertises_schema(amc):
     assert "schema" in result.stdout
 
 
-def test_emit_selection_rejects_unknown_token_lists_schema(capsys, amc, tmp_path):
+def test_emit_rejects_unknown_token_lists_schema(capsys, amc, tmp_path):
     """The validator error message should advertise the new token alongside
     the existing ones so callers can discover ``schema`` from a typo."""
     with pytest.raises(SystemExit):

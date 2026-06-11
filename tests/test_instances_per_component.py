@@ -631,7 +631,7 @@ def test_n2_plus_combine_subcommand_allowed(tmp_path):
     assert header[2] == "id"
 
 
-def test_n2_plus_emit_gauges_allowed(tmp_path):
+def test_n2_plus_otel_send_gauges_allowed(tmp_path):
     """Phase 5: ``--instances-per-component > 1`` +
     ``--emit ...,gauges`` is now permitted. The file-form gauge
     writer emits the 10-column long form with the dimension prefix

@@ -70,7 +70,7 @@ def seven_day_gauges_run(amc, tmp_path_factory):
 # ------------------------------------------------------------------
 # parse_args validation
 # ------------------------------------------------------------------
-def test_emit_selection_accepts_gauges_token(amc, tmp_path):
+def test_emit_accepts_gauges_token(amc, tmp_path):
     args = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
@@ -80,7 +80,7 @@ def test_emit_selection_accepts_gauges_token(amc, tmp_path):
     assert "metrics" in args.emit_selection
 
 
-def test_emit_selection_gauges_requires_metrics(capsys, amc, tmp_path):
+def test_emit_gauges_requires_metrics(capsys, amc, tmp_path):
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--output-dir", str(tmp_path),
@@ -91,7 +91,7 @@ def test_emit_selection_gauges_requires_metrics(capsys, amc, tmp_path):
     assert "gauges" in err and "metrics" in err
 
 
-def test_emit_selection_gauges_with_logs_traces_still_requires_metrics(
+def test_emit_gauges_with_logs_traces_still_requires_metrics(
     capsys, amc, tmp_path
 ):
     with pytest.raises(SystemExit):
@@ -104,7 +104,7 @@ def test_emit_selection_gauges_with_logs_traces_still_requires_metrics(
     assert "gauges" in err and "metrics" in err
 
 
-def test_emit_selection_rejects_unknown_token(capsys, amc, tmp_path):
+def test_emit_rejects_unknown_token(capsys, amc, tmp_path):
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--output-dir", str(tmp_path),
@@ -117,7 +117,7 @@ def test_emit_selection_rejects_unknown_token(capsys, amc, tmp_path):
     assert "gauges" in err
 
 
-def test_emit_selection_help_advertises_gauges(amc):
+def test_emit_help_advertises_gauges(amc):
     # parse_args() builds the parser and returns the parsed namespace; the
     # parser instance isn't exposed, so probe through --help output instead.
     result = subprocess.run(
@@ -127,7 +127,7 @@ def test_emit_selection_help_advertises_gauges(amc):
     assert "gauges" in result.stdout
 
 
-def test_emit_selection_gauges_rejects_dst_artifact_combo(amc, capsys, tmp_path):
+def test_emit_gauges_rejects_dst_artifact_combo(amc, capsys, tmp_path):
     """The DST artifact splice (``_splice_dst_artifact``) makes per-component
     CSV timestamps non-monotonic, which breaks the ``heapq.merge`` inside
     ``write_gauges_csv`` (the file peer of ``stream_otel_gauges``). The
@@ -144,7 +144,7 @@ def test_emit_selection_gauges_rejects_dst_artifact_combo(amc, capsys, tmp_path)
     assert "gauges" in err and "inject-dst-artifact-day" in err
 
 
-def test_emit_selection_gauges_allows_dst_artifact_zero(amc, tmp_path):
+def test_emit_gauges_allows_dst_artifact_zero(amc, tmp_path):
     """``--inject-dst-artifact-day 0`` (the default, off) must coexist freely
     with ``--emit gauges``."""
     args = amc.parse_args([
