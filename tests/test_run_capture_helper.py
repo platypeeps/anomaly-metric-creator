@@ -102,7 +102,6 @@ def test_interval_seconds_equals_form_in_extra_args_raises(amc, tmp_path):
         )
 
 
-@pytest.mark.full_resolution
 def test_full_resolution_marker_is_registered(pytestconfig):
     """The ``full_resolution`` marker is registered in pyproject.toml so
     ``pytest --strict-markers`` runs (and lint hooks) treat the marker as
@@ -114,10 +113,15 @@ def test_full_resolution_marker_is_registered(pytestconfig):
     ), "full_resolution marker must be registered in pyproject.toml"
 
 
-@pytest.mark.full_resolution
-def test_full_resolution_marker_applies_to_tests():
+def test_full_resolution_marker_applies_to_tests(request):
     """Sanity: the registered marker can be applied to a test without
     pytest emitting an 'unknown mark' warning. Pairs with the
-    ``interval_seconds=1.0`` opt-in at call sites that need 1s rows."""
-    # No assertion beyond decorator acceptance — pytest --strict-markers
-    # would otherwise fail collection if the mark were unregistered.
+    ``interval_seconds=1.0`` opt-in at call sites that need 1s rows.
+
+    The marker is applied *dynamically* via ``request.applymarker``
+    rather than as a decorator: these meta-tests run at the cheap
+    default interval, and a static decorator would deselect them from
+    ``pytest -m 'not full_resolution'`` runs for no benefit — the
+    marker means "this test depends on 1s rows", which they don't."""
+    request.applymarker(pytest.mark.full_resolution)
+    assert request.node.get_closest_marker("full_resolution") is not None
