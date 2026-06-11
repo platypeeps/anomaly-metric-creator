@@ -427,3 +427,43 @@ def test_otel_send_none_with_endpoint_stays_off_without_derivation(amc):
     assert args.otel_logs_endpoint is None
     assert args.otel_metrics_endpoint is None
     assert args.otel_traces_endpoint is None
+
+
+def test_otel_endpoint_precedence_ladder(amc, monkeypatch):
+    """Per-signal precedence is explicit-CLI-first (Copilot round 3
+    surfaced the doc/code mismatch; the code's ladder is the intended
+    one): explicit per-signal flag > --otel-endpoint derivation >
+    MEZMO_OTEL_* env var. An explicitly typed base must never be
+    silently hijacked by a stale shell export, and the env var supplies
+    the default when no base is given."""
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_ENDPOINT", "http://envhost:9/custom/logs")
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_AUTH_TOKEN", "env-token")
+
+    # Rung 3: env var supplies the default when no base is given.
+    args, _ = _parse(amc, ["--otel-send", "logs", "--output-dir", "x"])
+    assert args.otel_logs_endpoint == "http://envhost:9/custom/logs"
+    assert args.otel_logs_auth_token == "env-token"
+
+    # Rung 2: an explicitly typed base beats the env var.
+    args, _ = _parse(amc, ["--otel-send", "logs",
+                           "--otel-endpoint", "http://cli:4318",
+                           "--otel-auth-token", "cli-token",
+                           "--output-dir", "x"])
+    assert args.otel_logs_endpoint == "http://cli:4318/v1/logs"
+    assert args.otel_logs_auth_token == "cli-token"
+
+    # Rung 1: an explicit per-signal flag beats the base derivation.
+    args, w = _parse(amc, ["--otel-send", "logs",
+                           "--otel-endpoint", "http://cli:4318",
+                           "--otel-logs-endpoint", "http://special:1/x/logs",
+                           "--output-dir", "x"])
+    assert args.otel_logs_endpoint == "http://special:1/x/logs"
+    assert "DEPRECATION: --otel-logs-endpoint" in w
+
+
+def test_emit_gauges_without_metrics_uses_canonical_wording(amc):
+    """--emit gauges without 'metrics' errors in canonical terms instead
+    of falling through to the legacy gate that names --emit-selection."""
+    err = _parse_error(amc, ["--emit", "gauges,logs", "--output-dir", "x"])
+    assert "--emit 'gauges' requires 'metrics'" in err
+    assert "--emit-selection" not in err

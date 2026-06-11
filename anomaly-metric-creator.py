@@ -7619,6 +7619,13 @@ def _reconcile_cli_surface(p, args, raw_argv):
                     "requires the generated artifacts alongside it — "
                     "include 'metrics' (e.g. --emit metrics,combined)"
                 )
+        # Canonical-worded twin of the legacy emit-selection gate below,
+        # so a --emit user never sees an error naming the deprecated
+        # spelling. (gauges.csv derives from the per-component CSVs that
+        # only 'metrics' writes.)
+        if "gauges" in tokens and "metrics" not in tokens:
+            p.error("--emit 'gauges' requires 'metrics' in the selection "
+                    "(gauges.csv derives from the per-component CSVs)")
         args.emit_selection = ",".join(sorted(tokens))
 
     # ------------------------------------------------------------------

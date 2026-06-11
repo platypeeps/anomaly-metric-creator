@@ -64,9 +64,13 @@ surface:
   env var exports one.
 - **`--otel-endpoint BASE` / `--otel-auth-token TOKEN`** replace the
   per-signal sextet: per-signal URLs derive as `BASE/v1/<signal>` for
-  the selected signals (gauges posts to the metrics endpoint), the
-  token fans out to every selected signal, and an explicit per-signal
-  flag or `MEZMO_OTEL_*` env var still overrides per signal.
+  the selected signals (gauges posts to the metrics endpoint) and the
+  token fans out to every selected signal. Per-signal precedence is
+  explicit-CLI-first: an explicit per-signal *flag* beats the
+  derivation, the derivation beats a `MEZMO_OTEL_*` env var (an
+  explicitly typed base must not be silently hijacked by a stale
+  shell export), and the env var supplies the per-signal default
+  when no base is given.
 - **Two-tier help**: `-h` renders five argument groups (common /
   anomaly selection / dataset shape / artifacts / OTEL streaming);
   `--help-all` un-hides the advanced knobs (`--anomaly-count`,

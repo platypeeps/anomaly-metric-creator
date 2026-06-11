@@ -242,8 +242,8 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 | Flag | Default | Notes |
 | ---- | ------- | ----- |
 | `--otel-send` | _none_ | Comma-separated OTLP signals to stream: any subset of `logs`, `metrics`, `traces`, `gauges`, or `all`, or `none` (explicit off, overriding env defaults). Streaming is off by default, and the selection is authoritative — unselected signals do not stream even when env-var endpoints are configured. `logs` replays anomaly events as `resourceLogs`, `metrics` replays them as `anomaly.count` Sum data points, `traces` replays them as span events, and `gauges` streams every per-row metric value from the per-component CSVs as OTLP Gauge data points to the metrics endpoint (see [Gauge metric streaming](#gauge-metric-streaming---otel-send-gauges)). `--otel-send gauges` alone streams only the Gauge data points, skipping the anomaly log/metric/trace stream — useful for receivers that only accept OTLP Gauge payloads. The `gauges` signal requires `metrics` in `--emit`. Selecting a signal without a configured endpoint is a usage error. |
-| `--otel-endpoint` | _unset_ | Base OTLP/HTTP URL for every signal selected by `--otel-send`. Per-signal URLs are derived from it (`BASE/v1/logs`, `BASE/v1/metrics`, `BASE/v1/traces`; the gauge stream shares the metrics URL). Per-signal overrides remain available via the `MEZMO_OTEL_LOGS_ENDPOINT` / `MEZMO_OTEL_METRICS_ENDPOINT` / `MEZMO_OTEL_TRACES_ENDPOINT` env vars or the deprecated per-signal flags — an explicit per-signal flag wins over the derivation for that signal. |
-| `--otel-auth-token` | _unset_ | Auth token applied to every signal selected by `--otel-send`. Per-signal overrides remain available via the `MEZMO_OTEL_LOGS_AUTH_TOKEN` / `MEZMO_OTEL_METRICS_AUTH_TOKEN` / `MEZMO_OTEL_TRACES_AUTH_TOKEN` env vars or the deprecated per-signal flags. |
+| `--otel-endpoint` | _unset_ | Base OTLP/HTTP URL for every signal selected by `--otel-send`. Per-signal URLs are derived from it (`BASE/v1/logs`, `BASE/v1/metrics`, `BASE/v1/traces`; the gauge stream shares the metrics URL). Per-signal precedence is explicit-CLI-first: a deprecated per-signal flag wins over the derivation, the derivation wins over the `MEZMO_OTEL_LOGS_ENDPOINT` / `MEZMO_OTEL_METRICS_ENDPOINT` / `MEZMO_OTEL_TRACES_ENDPOINT` env vars (an explicitly typed base is never silently hijacked by a stale shell export), and the env vars supply the per-signal defaults when no base is given. |
+| `--otel-auth-token` | _unset_ | Auth token applied to every signal selected by `--otel-send`. Same per-signal precedence as `--otel-endpoint`: deprecated per-signal flag > this token > the `MEZMO_OTEL_LOGS_AUTH_TOKEN` / `MEZMO_OTEL_METRICS_AUTH_TOKEN` / `MEZMO_OTEL_TRACES_AUTH_TOKEN` env vars (which supply the defaults when this flag is not given). |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
 
@@ -274,12 +274,12 @@ the aliases it replaces is a parse error.
 | `--otel-emit-gauges` | add `gauges` to `--otel-send` |
 | `--otel-no-emit-gauges` | omit `gauges` from `--otel-send` |
 | `--otel-gauges-only` | `--otel-send gauges` |
-| `--otel-logs-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/logs`; the `MEZMO_OTEL_LOGS_ENDPOINT` env var still overrides per signal) |
-| `--otel-logs-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_LOGS_AUTH_TOKEN` env var still overrides per signal) |
-| `--otel-metrics-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/metrics`; the `MEZMO_OTEL_METRICS_ENDPOINT` env var still overrides per signal) |
-| `--otel-metrics-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_METRICS_AUTH_TOKEN` env var still overrides per signal) |
-| `--otel-traces-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/traces`; the `MEZMO_OTEL_TRACES_ENDPOINT` env var still overrides per signal) |
-| `--otel-traces-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_TRACES_AUTH_TOKEN` env var still overrides per signal) |
+| `--otel-logs-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/logs`; the `MEZMO_OTEL_LOGS_ENDPOINT` env var supplies the default when no base is given) |
+| `--otel-logs-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_LOGS_AUTH_TOKEN` env var supplies the default when no token flag is given) |
+| `--otel-metrics-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/metrics`; the `MEZMO_OTEL_METRICS_ENDPOINT` env var supplies the default when no base is given) |
+| `--otel-metrics-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_METRICS_AUTH_TOKEN` env var supplies the default when no token flag is given) |
+| `--otel-traces-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/traces`; the `MEZMO_OTEL_TRACES_ENDPOINT` env var supplies the default when no base is given) |
+| `--otel-traces-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_TRACES_AUTH_TOKEN` env var supplies the default when no token flag is given) |
 
 An explicit deprecated per-signal endpoint/auth flag still wins over the
 `--otel-endpoint` derivation for that signal.
