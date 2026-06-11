@@ -399,3 +399,57 @@ def test_realistic_apigateway_central_tendency_preserved(
         f"apigateway.requests_per_sec mean={mean:.2f} drifted significantly "
         f"from the natural baseline (800); coupling scaling looks wrong"
     )
+
+
+def test_callable_contribution_applies_to_canonical_metric_only(amc):
+    """A callable-weight edge's contribution is in the downstream's
+    *canonical*-metric units (the weight callable bakes that scaling),
+    so only the canonical load metric may receive it; a supplementary
+    coupled metric with a different base must stay on its natural
+    baseline when no constant-weight edge is active.
+
+    Regression: the composer used to add the same canonical-unit array
+    to every coupled metric (inert today only because no callable-edge
+    target declares supplementary captures)."""
+    n_rows = 200
+    rng = np.random.RandomState(7)
+    signal_col = np.linspace(0.0, 1.0, n_rows)
+
+    saved_topology = dict(amc.TOPOLOGY)
+    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
+    try:
+        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("upload", ())
+        amc._TOPOLOGY_LOAD_METRICS["synthdown"] = ("main_qps", ("extra_ops",))
+        amc.TOPOLOGY["synthup"] = [
+            amc.Edge(
+                target="synthdown",
+                weight=lambda s: s * 500.0,
+                signal=lambda cols: cols.get("upload"),
+            )
+        ]
+
+        specs = [
+            amc.MetricSpec(name="main_qps", base=100.0, std=1.0),
+            amc.MetricSpec(name="extra_ops", base=5.0, std=0.5),
+        ]
+        out = amc._compose_topology_coupled_specs(
+            "synthdown", specs,
+            {"synthup": {"upload": signal_col}},
+            rng, n_rows=n_rows,
+        )
+        # Canonical metric: coupled (spec rewritten to the baked baseline).
+        assert out[0] is not specs[0], (
+            "canonical load metric must receive the callable contribution"
+        )
+        # Supplementary metric: untouched by identity — the callable
+        # array is in canonical units (peaks at 500, vs extra_ops base
+        # 5.0) and must not replace its natural baseline.
+        assert out[1] is specs[1], (
+            "supplementary metric must not receive a canonical-unit "
+            "callable contribution"
+        )
+    finally:
+        amc.TOPOLOGY.clear()
+        amc.TOPOLOGY.update(saved_topology)
+        amc._TOPOLOGY_LOAD_METRICS.clear()
+        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)

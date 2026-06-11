@@ -1022,27 +1022,90 @@ def test_validate_scenarios_registry_rejects_unhashable_severity_cascade(amc):
 def test_uninspectable_callable_span_dispatch_skips_intermediate_arities(amc):
     """When inspect.signature() fails, the span dispatcher must attempt only
     the two canonical shapes (5-arg then 2-arg) — never an intermediate
-    4- or 3-arg call that could silently misbind t_within/span_idx."""
+    4- or 3-arg call that could silently misbind t_within/span_idx.
+
+    The probe callable takes exactly ``(ts, col)`` so the 5-arg attempt
+    fails as a genuine call-*binding* TypeError (raised at the call
+    site, before the body runs) — the only TypeError the fallback may
+    retry. The body records every arity that actually binds: a 4- or
+    3-arg intermediate attempt would also fail binding, so a clean
+    ``[2]`` here plus the in-body propagation tests below pin the
+    chain to exactly the two canonical shapes."""
     import datetime as _dt
-    arities_tried = []
-    class HiddenSig:
-        """Callable whose signature cannot be introspected."""
-        def __call__(self, *args):
-            arities_tried.append(len(args))
-            if len(args) == 5:
-                raise TypeError("simulate 5-arg refusal")
-            if len(args) == 2:
-                return 1.0
-            raise TypeError(f"unexpected arity {len(args)}")
+    arities_entered = []
+    class HiddenSigTwoArg:
+        """Two-positional callable whose signature cannot be introspected."""
+        def __call__(self, ts, col):
+            arities_entered.append(2)
+            return 1.0
         # Hide signature from inspect.signature.
         __signature__ = property(lambda self: (_ for _ in ()).throw(ValueError("hidden")))
 
-    gen = HiddenSig()
-    amc._call_generator_within_span(gen, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None)
-    # Must have attempted 5 (failed), then 2 (succeeded); never 3 or 4.
-    assert arities_tried == [5, 2], (
-        f"Uninspectable span dispatch must try only [5, 2]; got {arities_tried}"
+    gen = HiddenSigTwoArg()
+    result = amc._call_generator_within_span(
+        gen, _dt.datetime(2026, 1, 1), 0, 1.0, 0, None
     )
+    assert result == 1.0
+    assert arities_entered == [2], (
+        f"expected exactly one 2-arg body entry; got {arities_entered}"
+    )
+
+
+def test_uninspectable_span_in_body_typeerror_propagates(amc):
+    """A TypeError raised *inside* an uninspectable generator's body must
+    propagate, not trigger the 2-arg retry: retrying would mask the real
+    bug and — had the body drawn from ``rng`` first — double-advance the
+    RNG stream. (Regression: the fallback used to catch any TypeError.)"""
+    import datetime as _dt
+    import pytest as _pytest
+    class InBodyRaiser:
+        def __call__(self, *args):
+            if len(args) == 5:
+                raise TypeError("synthetic in-body failure")
+            return 42.0
+        __signature__ = property(lambda self: (_ for _ in ()).throw(ValueError("hidden")))
+
+    with _pytest.raises(TypeError, match="synthetic in-body failure"):
+        amc._call_generator_within_span(
+            InBodyRaiser(), _dt.datetime(2026, 1, 1), 0, 1.0, 0, None
+        )
+
+
+def test_uninspectable_step_in_body_typeerror_propagates(amc):
+    """Step-path twin of the span test above: ``_resolve_anomaly_value``'s
+    uninspectable fallback must not retry an in-body TypeError."""
+    import datetime as _dt
+    import pytest as _pytest
+    class InBodyRaiser:
+        def __call__(self, *args):
+            if len(args) == 3:
+                raise TypeError("synthetic in-body failure")
+            return 42.0
+        __signature__ = property(lambda self: (_ for _ in ()).throw(ValueError("hidden")))
+
+    spec = {"generator": InBodyRaiser(), "metric": "m0",
+            "time_offset": 0, "description": "x"}
+    with _pytest.raises(TypeError, match="synthetic in-body failure"):
+        amc._resolve_anomaly_value(
+            spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, None
+        )
+
+
+def test_uninspectable_step_binding_failure_still_falls_back(amc):
+    """Step-path positive control: a genuine 3-arg binding failure on an
+    uninspectable two-positional callable still falls back to the 2-arg
+    canonical shape."""
+    import datetime as _dt
+    class HiddenSigTwoArg:
+        def __call__(self, ts, col):
+            return 7.0
+        __signature__ = property(lambda self: (_ for _ in ()).throw(ValueError("hidden")))
+
+    spec = {"generator": HiddenSigTwoArg(), "metric": "m0",
+            "time_offset": 0, "description": "x"}
+    assert amc._resolve_anomaly_value(
+        spec, _dt.datetime(2026, 1, 1), 0, 0.0, 0, None
+    ) == 7.0
 
 
 def test_validate_scenario_spec_required_kwarg_only_rejected(amc):

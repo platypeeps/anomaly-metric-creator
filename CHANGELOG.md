@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- Fixed two latent unit-mixing paths in the topology composers: the
+  saturation logistic is now driven only by the upstream's *canonical* load
+  metric (it used to fall back to the first supplementary column, whose
+  units `midpoint` was never tuned for), and a callable-weight edge's
+  contribution — which is in canonical-metric units — is now applied only to
+  the canonical load metric instead of every coupled metric. Shipped output
+  is unchanged (no v1 registry shape reaches either path); the callable
+  evaluation is also hoisted out of the per-metric loop.
+- Fixed the uninspectable-generator dispatch fallback to retry only on a
+  call-*binding* `TypeError`: a `TypeError` raised inside the generator body
+  now propagates instead of being masked by a second call with fewer
+  arguments (which could also double-advance the RNG stream).
+- The topology-coupling zero-variance violation now names exactly the
+  constant side(s) instead of the ambiguous "source or target" form.
+- `parse_args` now validates the OTEL stream scalars (`--otel-stream-speedup`
+  etc.) unconditionally rather than only when an endpoint is configured, and
+  rejects `--seed` values outside numpy's `[0, 2**32)` range with a clean
+  usage error instead of a later raw traceback.
+
 - Fixed a manifest-coherence bug under `--drop-rate > 0`: a shaped span
   anomaly whose first row was dropped wrote its surviving rows into the
   component CSV but recorded no `anomalies.csv` entry. The manifest entry is
@@ -51,6 +70,15 @@
   are masked before reaching disk — see the Security section below. (#90)
 
 ### Changed
+
+- `_validate_derivations_registry` now enforces the
+  `MetricSpec.derivation` <-> `DERIVATIONS` consistency in both directions
+  at import time (a declared-but-unregistered derivation used to surface
+  only as a runtime `KeyError` at `--validate-output` time).
+- All text-mode artifact writers (per-component CSVs, `anomalies.csv`,
+  `metric_report.log`, `metric_traces.jsonl`, the combine reader/writer)
+  now pin `encoding="utf-8"`, matching the readers, so a non-UTF-8 locale
+  cannot produce artifacts the rest of the pipeline mis-decodes.
 
 - The raw `request_body` diagnostic in `otel-activity.log` `RETRY`/`FAIL`
   records is now emitted only under `--otel-verbose`, matching the

@@ -900,14 +900,21 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
     calls `edge.signal(upstream_cols)`; a `None` return means
     "skip this edge" (e.g. `--metrics-per-component` trimmed a
     required column). The composer then calls `edge.weight(signal)`
-    to produce an additive contribution in downstream-metric units.
+    to produce an additive contribution in the downstream's
+    *canonical*-metric units; the contribution is computed once per
+    component (the signal/weight evaluation is metric-invariant) and
+    applied only to the canonical load metric — a supplementary
+    coupled metric has a different base, so it never receives the
+    callable array (a supplementary metric whose only incoming
+    contribution would be callable stays on its natural baseline).
     `_validate_topology` enforces the pairing: callable weight
     requires a `signal`, constant weight forbids one, and the
     validator probes the `signal` with a captured-column dict
     built from `_TOPOLOGY_LOAD_METRICS[source]` so a mis-shaped
     signal fails at import time.
   The final coupled column is `constant_contrib + callable_contrib +
-  rng.normal(0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)`. The original
+  rng.normal(0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)` (with
+  `callable_contrib` present on the canonical metric only). The original
   MetricSpec's declarative metadata (unit, semantic_type, min/max,
   dtype, derivation, clip_min) survives via `dataclasses.replace`;
   only `base`, `std`, `multiplier`, and `additive` change.
@@ -1285,7 +1292,12 @@ are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries
   forms and runtime semantics.
 
 Every primary and cascade spec is schema-checked at import time by
-`_validate_scenario_spec()` (called from `_validate_scenarios_registry`):
+`_validate_scenario_spec()` (called from `_validate_scenarios_registry`).
+The check has one deliberate write side effect: an iterable
+`instance_filter` is normalized in place to a `frozenset` (element
+validation must iterate the filter, which would exhaust a one-shot
+iterable before runtime, so the materialized form is stored back).
+Checks performed:
 required keys present, `metric` in the full `COMPONENTS[component]` catalog,
 `generator` callable, `time_offset` a finite non-negative non-bool
 `int`/`float`, `description` a non-empty string, `shape` a string in
