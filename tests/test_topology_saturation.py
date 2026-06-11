@@ -10,21 +10,18 @@ saturation curve on top of incoming edges that carry `SaturationParams`:
 - `_compose_topology_saturation_specs(...)` modifies the downstream's
   latency-family `MetricSpec.multiplier` and error-family `MetricSpec.additive`
   by composing on top of any pre-existing multiplier/additive.
-- The deprecated `--topology-mode independent` alias never invokes the
-  saturation path, so per-component CSVs stay on the current no-topology
-  baseline (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
-  `tests/test_topology_loadbalancer_gateway.py`). The default flipped to
-  `--topology-mode realistic` in phase 6, so the saturation path is now
-  on by default.
+- Realistic topology coupling flipped to the default in phase 6 and the
+  phase-9 flag day removed the deprecated `--topology-mode independent`
+  alias entirely, so the saturation path is always on for CLI runs. The
+  no-saturation statistical contrast comes from the direct-natural
+  baseline fixtures in `tests/conftest.py` (`natural_one_day_run`),
+  which invoke `generate_component` directly with the raw specs.
 
 These tests cover:
 
 * `_apply_saturation` shape, range, monotonicity, and edge cases.
 * `_compose_topology_saturation_specs` composition correctness with absent /
   present natural multiplier/additive on the downstream MetricSpec.
-* Default-vs-explicit realistic-mode byte-identity: the no-flag run
-  and explicit `--topology-mode realistic` produce the same latency
-  CSVs (locks the default flip).
 * Realistic-mode positive correlation between upstream load and downstream
   latency and error rate.
 * Cap tests: error_rate column stays <= 1.0 under realistic mode; latency
@@ -43,8 +40,6 @@ import pytest
 from conftest import (
     read_component_rows,
     registry_overlay,
-    run_capture,
-    sha256_path,
 )
 
 
@@ -377,8 +372,8 @@ def _saturating_edges(amc):
 
 def test_topology_has_saturating_edges_for_phase4(amc):
     """Phase 4 declared SaturationParams on the four front-half edges
-    so saturation feedback actually fires under --topology-mode
-    realistic. Phase 5 then promoted the
+    so saturation feedback actually fires under realistic topology
+    coupling. Phase 5 then promoted the
     ``apigateway -> llm_analytics`` placeholder into a real saturating
     edge as well (covered by
     ``test_topology_llm_analytics_edge_carries_phase5_gains`` below);
@@ -447,48 +442,15 @@ def test_topology_saturation_params_in_planned_ranges(amc):
 
 
 # ------------------------------------------------------------------
-# Default mode byte-identical: after phase 6 the no-flag default
-# is realistic mode, so explicit ``--topology-mode realistic`` must
-# match the default per-component CSVs byte-for-byte under the
-# saturation phase. The deprecated ``--topology-mode independent``
-# no-topology baseline check lives in
-# ``test_topology_loadbalancer_gateway``.
-# ------------------------------------------------------------------
-@pytest.mark.full_resolution
-def test_realistic_mode_latency_csvs_byte_identical_to_default(
-    amc, one_day_run_a, tmp_path
-):
-    """Explicit ``--topology-mode realistic`` invokes saturation, so
-    latency and error CSVs must match the no-flag default 1-day run
-    byte-for-byte (the session-scoped ``one_day_run_a`` fixture)."""
-    explicit = run_capture(
-        amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
-        extra_args=["--topology-mode", "realistic"],
-    )
-    for filename in (
-        "loadbalancer.csv", "apigateway.csv", "authservice.csv",
-        "cacheservice.csv", "database.csv", "anomalies.csv",
-    ):
-        default_hash = sha256_path(one_day_run_a.out_dir / filename)
-        explicit_hash = sha256_path(explicit.out_dir / filename)
-        assert default_hash == explicit_hash, (
-            f"{filename} drifted between default run and "
-            f"--topology-mode realistic run under saturation phase"
-        )
-
-
-# ------------------------------------------------------------------
 # Realistic-mode: latency and error rate correlate with upstream load
 #
 # These tests consume the session-scoped ``one_day_run_a`` (default
-# no-flag run; realistic mode is the argparse default since the
-# phase 6 flag day) and ``one_day_independent_run`` (same args as the
-# module-scoped duplicates this file used to carry: days=1, 1s
-# cadence, ``--topology-mode independent``). Regenerating either here
-# would be the PR #63 duplicate-fixture antipattern; the explicit-flag
-# byte-identity is pinned by
-# ``test_realistic_mode_latency_csvs_byte_identical_to_default`` above.
+# run; realistic coupling is always on since the phase-9 flag day
+# removed the ``--topology-mode`` flag) and ``natural_one_day_run``
+# (the direct-natural baseline: ``generate_component`` invoked with
+# the raw specs — no topology, no saturation, no anomalies).
+# Regenerating either here would be the PR #63 duplicate-fixture
+# antipattern.
 # ------------------------------------------------------------------
 
 
@@ -542,8 +504,8 @@ def test_realistic_latency_correlates_with_upstream_load(
         ("database", 0.10, 0.015),
     ],
 )
-def test_realistic_error_rate_mean_elevated_vs_independent(
-    one_day_independent_run, one_day_run_a,
+def test_realistic_error_rate_mean_elevated_vs_natural_baseline(
+    natural_one_day_run, one_day_run_a,
     component, natural_base, error_gain,
 ):
     """Per-edge ``error_gain`` is small (≤ 0.02) relative to the natural
@@ -551,24 +513,26 @@ def test_realistic_error_rate_mean_elevated_vs_independent(
     correlation is hard to detect statistically. The first-moment shift
     is the cleaner signal: the saturation offset adds a positive bias
     proportional to the logistic, which lifts the column mean under
-    realistic mode relative to independent. The expected lift is on
-    the order of ``error_gain * 0.5`` (logistic averages roughly 0.5
-    around its midpoint), so we accept anything materially above zero.
+    realistic mode relative to the direct-natural baseline (no
+    topology; the independent alias was removed at the phase-9 flag
+    day). The expected lift is on the order of ``error_gain * 0.5``
+    (logistic averages roughly 0.5 around its midpoint), so we accept
+    anything materially above zero.
     """
-    indep_vals, _ = _column_values(
-        one_day_independent_run.out_dir, component, "error_rate"
+    natural_vals, _ = _column_values(
+        natural_one_day_run.out_dir, component, "error_rate"
     )
     real_vals, _ = _column_values(
         one_day_run_a.out_dir, component, "error_rate"
     )
-    lift = float(np.mean(real_vals) - np.mean(indep_vals))
+    lift = float(np.mean(real_vals) - np.mean(natural_vals))
     # Allow for noise jitter: the lift floor is a tenth of the error_gain
     # which is well below the analytical expectation but well above zero.
     floor = error_gain * 0.1
     assert lift > floor, (
         f"realistic error_rate mean for {component} not elevated above "
-        f"independent: realistic={np.mean(real_vals):.5f}, "
-        f"independent={np.mean(indep_vals):.5f}, lift={lift:.5f}, "
+        f"the natural baseline: realistic={np.mean(real_vals):.5f}, "
+        f"natural={np.mean(natural_vals):.5f}, lift={lift:.5f}, "
         f"floor={floor:.5f}; saturation error offset looks inert"
     )
 
@@ -617,7 +581,7 @@ def test_realistic_latency_never_negative(
 
 
 # ------------------------------------------------------------------
-# Realistic-mode contrast: independent latency means stay near natural base
+# Realistic-mode contrast: natural-baseline latency means stay near base
 # ------------------------------------------------------------------
 @pytest.mark.parametrize(
     "component,metric",
@@ -630,29 +594,30 @@ def test_realistic_latency_never_negative(
         ("database", "write_latency_ms"),
     ],
 )
-def test_realistic_latency_mean_elevated_vs_independent(
-    one_day_independent_run, one_day_run_a, component, metric,
+def test_realistic_latency_mean_elevated_vs_natural_baseline(
+    natural_one_day_run, one_day_run_a, component, metric,
 ):
     """Under realistic mode the saturation curve must lift the latency
-    column's mean above the independent-mode mean. We can't pin the
-    independent mean to the natural ``MetricSpec.base`` because several
-    scenarios already inject long-duration latency overrides (e.g. the
-    apigateway ``Deploy regression`` step from 10:00 onwards). The
-    contrast against independent mode is therefore the cleaner signal:
-    saturation must produce a measurable positive lift that survives
-    those baked-in overrides.
+    column's mean above the direct-natural baseline mean (no topology;
+    the independent alias was removed at the phase-9 flag day). The
+    realistic side carries the default scenario set's long-duration
+    latency overrides (e.g. the apigateway ``Deploy regression`` step
+    from 10:00 onwards), so the contrast against the anomaly-free
+    natural baseline is conservative: saturation must produce a
+    measurable positive lift on top of whichever direction those
+    overrides push the realistic mean.
     """
-    indep_vals, _ = _column_values(
-        one_day_independent_run.out_dir, component, metric
+    natural_vals, _ = _column_values(
+        natural_one_day_run.out_dir, component, metric
     )
     real_vals, _ = _column_values(
         one_day_run_a.out_dir, component, metric
     )
-    indep_mean = float(np.mean(indep_vals))
+    natural_mean = float(np.mean(natural_vals))
     real_mean = float(np.mean(real_vals))
-    assert real_mean > indep_mean + 1.0, (
+    assert real_mean > natural_mean + 1.0, (
         f"realistic-mode {component}.{metric} mean={real_mean:.2f} not "
-        f"elevated above independent-mode mean={indep_mean:.2f}; "
+        f"elevated above natural-baseline mean={natural_mean:.2f}; "
         f"saturation looks inert"
     )
 

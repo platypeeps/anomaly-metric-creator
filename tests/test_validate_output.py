@@ -724,19 +724,44 @@ def test_topology_coupling_clean_on_fresh_realistic_run(
 
 
 def test_topology_coupling_skipped_under_independent_mode(amc, tmp_path):
-    """Independent mode produces decoupled baselines by construction;
+    """A schema document carrying ``metadata.topology_mode ==
+    "independent"`` declared decoupled baselines by construction, so
     the coupling check must not even run, regardless of the actual
-    correlation realized on disk."""
+    correlation realized on disk. The phase-9 flag day removed the
+    ``--topology-mode`` CLI flag (the writer now always records
+    ``"realistic"``), but the validator still honors older /
+    hand-edited documents — construct one by editing a generated
+    schema. To prove the skip is real (not rescued by a passing
+    correlation), first break the downstream column so the realistic
+    document IS flagged, then flip the mode and assert silence."""
     out = tmp_path / "indep"
     run_capture(
         amc, out, days=1,
         extra_args=[
             "--emit-selection", "metrics,schema",
-            "--topology-mode", "independent",
+            "--components", "loadbalancer,apigateway",
         ],
     )
+    # Constant-ify the target's canonical load metric — the
+    # zero-variance branch deterministically flags this under
+    # "realistic" (see test_topology_coupling_flags_constant_downstream).
+    csv_path = out / "apigateway.csv"
+    rows = csv_path.read_text().splitlines()
+    header = rows[0].split(",")
+    col = header.index("requests_per_sec")
+    new_rows = [rows[0]]
+    for r in rows[1:]:
+        parts = r.split(",")
+        parts[col] = "800.000"
+        new_rows.append(",".join(parts))
+    csv_path.write_text("\n".join(new_rows) + "\n")
     schema = _load_schema(out)
-    assert schema["metadata"]["topology_mode"] == "independent"
+    assert schema["metadata"]["topology_mode"] == "realistic"
+    assert amc._validate_topology_coupling(out, schema), (
+        "precondition: the broken downstream must be flagged under the "
+        "generated realistic-mode schema document"
+    )
+    schema["metadata"]["topology_mode"] = "independent"
     assert amc._validate_topology_coupling(out, schema) == []
 
 

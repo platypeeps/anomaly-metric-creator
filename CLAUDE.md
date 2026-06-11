@@ -75,7 +75,7 @@ surface:
   anomaly selection / dataset shape / artifacts / OTEL streaming);
   `--help-all` un-hides the advanced knobs (`--anomaly-count`,
   `--allow-huge-output`, `--inject-dst-artifact-day`,
-  `--topology-mode`, the OTEL transport tuning flags) and the
+  the OTEL transport tuning flags) and the
   deprecated aliases, annotating each alias with
   `[deprecated -> use X]`. Hiding is a post-construction pass over
   `p._actions` keyed by `_ADVANCED_DESTS`; the alias->replacement map
@@ -227,8 +227,11 @@ The document carries five slices of information:
   `drop_rate`, `signal_level`, `scenarios`, `exclude_scenarios`,
   `components`, `inject_dst_artifact_day`, `metrics_per_component`,
   `anomaly_count`, `emit_selection`, `combine`, `topology_mode`).
-  `topology_mode` (`realistic` | `independent`) lets the validator
-  short-circuit the new coupling check under `independent`.
+  `topology_mode` lets the validator short-circuit the coupling
+  check under `independent`. The writer only ever emits
+  `"realistic"` since the phase-9 flag day removed the independent
+  alias; the reader still honors `"independent"` so documents
+  produced under the historic mode keep validating.
 - `components` — per-component metric metadata in MetricSpec column
   order (each entry carries `name`, `unit`, `semantic_type`, `dtype`,
   `min_value`, `max_value`, `derivation`). Phase 8 adds an
@@ -349,7 +352,7 @@ instances matched (and none on zero-match).
 
 ### Per-instance topology (phase 8)
 
-Under `--topology-mode realistic` with `--instances-per-component
+Under realistic topology coupling with `--instances-per-component
 N > 1` (or any non-default `--instance-config`), the topology
 two-pass generation runs against each downstream instance's
 *matching* upstream view rather than the shared aggregate column.
@@ -520,11 +523,10 @@ default `--topology-mode realistic` (phase 6 flag day) every
 column declared `dtype="int"` is rounded via `np.rint` in
 `generate_component()` before derivations run and before the
 `topology_capture` snapshot, so the recorded value is whole-integer
-on disk. The deprecated `--topology-mode independent` alias skips
-the cast (`apply_dtype_int_cast=False` in `main()`) to preserve the
-no-topology fractional-int contrast behavior, so `dtype="int"` columns
-there are still emitted as fractional floats — the rounding is a
-realistic-mode behavior, not a declarative-metadata behavior.
+on disk (`main()` always passes `apply_dtype_int_cast=True` since
+the phase-9 flag day removed the independent alias; the
+`generate_component` kwarg survives for programmatic callers that
+need the pre-cast fractional contrast).
 `_validate_metric_spec_schema_metadata` enforces the vocabulary at
 import time (`semantic_type ∈ {counter, gauge, ratio, rate}`,
 `dtype ∈ {float, int}`, finite numeric bounds,
@@ -546,10 +548,7 @@ above its declared `max_value=1` (8.5 at day 5 + 2h, exercising the
 context-window saturation pattern). That overshoot is a
 scenario-catalog issue tracked for phase 9 re-tune — it is
 *not* the integer-cast bundle's scope and is intentionally left in
-place. Under `--topology-mode independent` the validator
-additionally surfaces every previously-flagged fractional-int
-violation (the alias intentionally skips the cast to keep its
-no-topology contrast behavior).
+place.
 
 ### Output validator (the `validate` subcommand / `--validate-output`)
 
@@ -848,11 +847,11 @@ specs in `primary_specs`, not in `cascade_specs`.
 `TOPOLOGY: dict[str, list[Edge]]` declares the directed service-call graph
 alongside `COMPONENTS`. Phase 1 landed the constant and its
 import-time validator; phase 2 added the
-`--topology-mode realistic` consumer (see "Generation order" below)
+topology-coupling consumer (see "Generation order" below)
 that re-shapes downstream RPS baselines from upstream RPS columns. The
-consumer was opt-in through phase 5 and flipped to the default in
-Phase 6; `--topology-mode independent` survives only as a
-deprecated no-topology contrast alias.
+consumer was opt-in through phase 5, flipped to the default in
+Phase 6, and became the only mode at the phase-9 flag day (the
+`--topology-mode independent` contrast alias was removed).
 Phase 3 extended coupling to every front-half fan-out edge.
 Phase 4 reads `Edge.saturation` and adds a logistic-shaped
 latency multiplier and error offset onto each downstream's
@@ -921,11 +920,11 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
 - `cacheservice → database` — callable weight (cache-miss ratio); no
   saturation in v1.
 
-**Generation order (`--topology-mode`).** `main()` walks
-`args.components` in one of two orders depending on
-`--topology-mode`:
+**Generation order.** Since the phase-9 flag day removed the
+`--topology-mode independent` contrast alias, `main()` has exactly
+one generation order:
 
-- `realistic` (default since phase 6) — topological order via
+- realistic (the only mode) — topological order via
   `_topology_generation_order(args.components)`. Kahn's algorithm
   walks reverse-adjacency of `TOPOLOGY` restricted to
   `args.components`; ties break on `COMPONENTS` insertion order so
@@ -980,22 +979,16 @@ The v1 graph (phase 1 declarations + phase 4/5 saturation tuning):
   MetricSpec's declarative metadata (unit, semantic_type, min/max,
   dtype, derivation, clip_min) survives via `dataclasses.replace`;
   only `base`, `std`, `multiplier`, and `additive` change.
-- `independent` (deprecation alias since phase 6) — iteration
-  order of `effective_specs`, which is `COMPONENTS` insertion order.
-  No coupling, no upstream capture. Pre-flag-day baseline path kept
-  only so the pre-existing byte-for-byte output can be regenerated for
-  diffing; emits a stderr `DeprecationWarning` on use and is scheduled
-  for removal after phase 9.
-
-The realistic and independent modes share the same `RunContext.rng`,
-but because the generation order differs every component's RNG draws
-shift. Realistic-mode CSV bytes therefore do **not** match
-independent-mode CSV bytes for any component — even uncoupled roots
-like `loadbalancer`. All locked SHA-256 hashes in `tests/` were
-re-baselined under realistic mode (phase 6 flag day);
-tests pinning behavior under either mode now either use locked
-hashes against realistic output or statistical assertions (means,
-correlations, in-window values) that hold across both modes.
+The deprecated `--topology-mode independent` no-topology contrast
+alias was removed at the phase-9 flag day (the flag no longer
+parses). The pure-natural baseline that tests previously obtained
+via the alias now comes from `tests/conftest.py`'s
+`_generate_natural_baseline` (`natural_one_day_run` /
+`natural_full_metrics_one_day_run` fixtures): `generate_component`
+invoked directly with the raw `COMPONENTS` specs over one shared
+RNG stream in `COMPONENTS` insertion order — no coupling, no
+saturation, no anomalies. All locked SHA-256 hashes in `tests/`
+target realistic output.
 
 Anomaly overrides apply on top of the coupled baseline: the
 two-pass pipeline (natural → anomaly overrides → derivations →
@@ -1039,7 +1032,7 @@ distinguishable: the cascade override produces a sharp step at the
 recorded row, while saturation produces a smooth load-shaped band
 underneath it.
 
-### Saturation feedback (`--topology-mode realistic`, phase 4)
+### Saturation feedback (realistic topology, phase 4)
 
 Each saturating edge (`Edge.saturation is not None` and at least one
 non-zero gain) contributes a logistic-shaped response to its downstream
@@ -1112,15 +1105,14 @@ saturation contribution alone cannot exceed the gain). End-to-end
 tests in `tests/test_topology_saturation.py` assert both invariants on
 the realized CSV columns.
 
-The deprecated `--topology-mode independent` alias never invokes
-`_compose_topology_saturation_specs`, so it remains the no-topology contrast
-path (pinned via `LEGACY_INDEPENDENT_ONE_DAY_HASHES` in
-`tests/test_scenarios.py` and `tests/test_topology_loadbalancer_gateway.py`).
-The no-flag default and explicit `--topology-mode realistic` now produce
-identical latency CSV bytes; that invariant is pinned by
-`tests/test_topology_saturation.py::test_realistic_mode_latency_csvs_byte_identical_to_default`.
+The no-topology contrast baseline for the saturation tests is the
+direct-natural fixture in `tests/conftest.py` (the independent alias
+and its `LEGACY_INDEPENDENT_ONE_DAY_HASHES` pins were removed at the
+phase-9 flag day, along with the explicit-flag byte-identity tests —
+the flag no longer parses, so realistic output is pinned solely by the
+locked default-run hashes).
 
-### LLM token-throttle (`--topology-mode realistic`, phase 5)
+### LLM token-throttle (realistic topology, phase 5)
 
 Phase 5 closes the v1 topology graph by promoting the
 phase-1 `apigateway → llm_analytics` placeholder into a real
@@ -1181,14 +1173,12 @@ catalog exposes — not the generic `error_rate`, which
   `llm_analytics.input_tokens_per_sec` in realistic mode;
 - realistic-mode mean lifts for `avg_llm_latency_ms`,
   `p95_llm_latency_ms` (under `--metrics-per-component 10`), and
-  `llm_api_error_rate` against the independent-mode baseline;
-- caps (latency non-negative, error rate `<= 1.0`);
+  `llm_api_error_rate` against the direct-natural baseline fixtures
+  (`natural_one_day_run` / `natural_full_metrics_one_day_run` in
+  `tests/conftest.py`);
+- caps (latency non-negative, error rate `<= 1.0`); and
 - LLM scenarios still fire under realistic mode (no anomaly cell
-  overrides are masked by the coupling); and
-- `llm_analytics.csv` byte-identity between the no-flag default and an
-  explicit `--topology-mode realistic` run (after phase 6 the
-  default is realistic; the deprecation alias's no-topology baseline
-  lives in `tests/test_topology_loadbalancer_gateway.py`).
+  overrides are masked by the coupling).
 
 `_validate_topology()` rejects, at import time: unknown source keys,
 non-`list` edge containers, non-`Edge` entries, edge targets outside

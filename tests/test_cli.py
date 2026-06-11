@@ -70,7 +70,7 @@ def test_help_lists_visible_surface_and_hides_advanced():
     # spellings by name, so probe flags that are never cross-referenced.)
     import re
     for hidden in ("--combine-only", "--validate-output", "--anomaly-count",
-                   "--topology-mode", "--inject-dst-artifact-day",
+                   "--inject-dst-artifact-day",
                    "--otel-logs-endpoint", "--otel-activity-log"):
         assert not re.search(rf"(?<![\w-]){re.escape(hidden)}(?![\w-])", out), \
             f"brief --help leaks hidden flag {hidden}"
@@ -94,7 +94,7 @@ def test_help_all_lists_every_flag_with_deprecation_notes():
                  "--otel-gauges-only",
                  "--otel-verbose", "--no-otel-verbose",
                  "--emit", "--otel-send", "--otel-endpoint",
-                 "--otel-auth-token", "--topology-mode",
+                 "--otel-auth-token",
                  "--inject-dst-artifact-day",
                  # The full alias + advanced sets (Copilot: substring
                  # coverage gaps weaken the two-tier help contract).

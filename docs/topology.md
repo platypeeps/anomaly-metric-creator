@@ -2,14 +2,11 @@
 
 The `TOPOLOGY` constant in `anomaly-metric-creator.py` declares the directed
 service-call graph alongside `COMPONENTS`. It is consulted by
-`--topology-mode realistic` — the default since phase 6 flag day
-— to thread upstream load through downstream baselines and to lift
-downstream latency / error columns via per-edge `SaturationParams`.
-`--topology-mode independent` is retained as a deprecation alias that
-skips the graph entirely (no coupling, no saturation) so the
-pre-flag-day baseline can be regenerated for byte-for-byte diffing;
-the alias emits a stderr `DeprecationWarning` on use and is scheduled
-for removal after phase 9.
+realistic topology — the default since the phase 6 flag day and the
+only mode since phase 9 removed the `--topology-mode independent`
+contrast alias — to thread upstream load through downstream baselines
+and to lift downstream latency / error columns via per-edge
+`SaturationParams`.
 
 The full prose description of each edge — fan-out share semantics,
 single-incoming-edge renormalization, callable weights, and per-edge
@@ -64,7 +61,7 @@ for the distinction.
 
 ## Per-instance routing dispatch (phase 8)
 
-Under `--topology-mode realistic` (default) with multi-instance
+Under realistic topology coupling with multi-instance
 fan-out — `--instances-per-component N>1` or a non-default
 `--instance-config` that declares named instances — the per-instance
 topology dispatch in `_compute_topology_arrays_per_instance` reshapes

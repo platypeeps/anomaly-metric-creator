@@ -353,26 +353,14 @@ def test_schema_records_dst_inject_day(amc, tmp_path):
 # Topology section (phase 7)
 # ------------------------------------------------------------------
 def test_schema_records_topology_mode_in_metadata(one_day_schema_run):
-    """``metadata.topology_mode`` echoes ``--topology-mode`` so the
-    validator can short-circuit the coupling check under
-    ``independent`` (which produces decoupled baselines by
-    construction)."""
+    """``metadata.topology_mode`` is always ``"realistic"`` since the
+    phase-9 flag day removed the ``--topology-mode`` CLI flag. The
+    field is kept so the validator can still short-circuit the
+    coupling check on older (or hand-edited) documents that carry
+    ``"independent"`` — which declared decoupled baselines by
+    construction."""
     doc = _load_schema(one_day_schema_run.out_dir)
     assert doc["metadata"]["topology_mode"] == "realistic"
-
-
-def test_schema_records_topology_mode_independent(amc, tmp_path):
-    out = tmp_path / "topology_independent"
-    run_capture(
-        amc, out, days=1,
-        interval_seconds=600,
-        extra_args=[
-            "--emit-selection", "metrics,schema",
-            "--topology-mode", "independent",
-        ],
-    )
-    doc = _load_schema(out)
-    assert doc["metadata"]["topology_mode"] == "independent"
 
 
 def test_schema_has_topology_block(one_day_schema_run):
