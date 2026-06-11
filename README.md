@@ -1,12 +1,12 @@
 # anomaly-metric-creator
 
 `anomaly-metric-creator.py` generates synthetic IoT-style metric logs for a SaaS stack
-with built-in anomalies. By default (`--emit-selection metrics,logs,traces`) it
+with built-in anomalies. By default (`--emit metrics,logs,traces`) it
 writes one CSV per component plus an `anomalies.csv` manifest that catalogues each
 injected anomaly whose span anchor row survives the `--drop-rate` packet-loss mask;
-runs that omit `metrics` (e.g. `--emit-selection logs,traces`) skip the per-component
+runs that omit `metrics` (e.g. `--emit logs,traces`) skip the per-component
 CSVs and delete `anomalies.csv` from `--output-dir`. See [Output files](#output-files)
-for the exact emit-selection and packet-loss gating. Output is deterministic for a
+for the exact `--emit` and packet-loss gating. Output is deterministic for a
 given `--seed`.
 
 By default the script spans **50,000 one-minute slots** over about 34.72 days for
@@ -38,8 +38,8 @@ Recent significant additions to the generator:
   and is scheduled for removal after phase 9. Under the new default,
   every `MetricSpec` column declared `dtype="int"` is cast via `np.rint` in
   `generate_component()` before derivations run, clearing all
-  fractional-integer `--validate-output` violations on the 1-day compatibility
-  output. The integer cast is intentionally tied to realistic mode only:
+  fractional-integer validator violations (the `validate` subcommand) on the
+  1-day compatibility output. The integer cast is intentionally tied to realistic mode only:
   the `--topology-mode independent` alias skips it (via
   `apply_dtype_int_cast=False`) so it remains a no-topology contrast path.
   All locked SHA-256 hashes in `tests/` were re-baselined under realistic
@@ -54,11 +54,11 @@ Recent significant additions to the generator:
   `apigateway → llm_analytics` (token-throttle reads as load-driven
   saturation). See [docs/topology.md](docs/topology.md) and the
   [Topology graph (v1)](#topology-graph-v1) section.
-- **Schema document + output validator** (`--emit-selection schema` /
-  `--validate-output PATH`) — `schema.json` captures run-level
-  parameters and per-metric metadata; `--validate-output` checks required files,
+- **Schema document + output validator** (`--emit schema` /
+  the `validate` subcommand) — `schema.json` captures run-level
+  parameters and per-metric metadata; `validate DIR` checks required files,
   row counts, timestamps, cell ranges and dtypes, and derived-metric consistency.
-- **Gauges file** (`--emit-selection gauges`) — long-form
+- **Gauges file** (`--emit gauges`) — long-form
   `gauges.csv` with one `(timestamp, component, metric, value)` row per data
   point, chronologically merged across components.
 - **Output directory hygiene** — `_pre_clean_output_dir` removes
@@ -101,14 +101,17 @@ python3 anomaly-metric-creator.py --duration-days 7
 python3 anomaly-metric-creator.py --duration-days 1 --interval-seconds 5
 
 # Generate logs and produce the unified joined CSV in one shot:
-python3 anomaly-metric-creator.py --combine
+python3 anomaly-metric-creator.py --emit metrics,logs,traces,combined
 
 # Skip generation; only build the unified CSV from an existing output dir:
-python3 anomaly-metric-creator.py --combine-only --output-dir iot_logs
+python3 anomaly-metric-creator.py combine iot_logs
+
+# Validate an existing output dir against its schema.json:
+python3 anomaly-metric-creator.py validate iot_logs
 
 # Emit only a subset of artifact types:
-python3 anomaly-metric-creator.py --emit-selection metrics,logs
-python3 anomaly-metric-creator.py --emit-selection traces
+python3 anomaly-metric-creator.py --emit metrics,logs
+python3 anomaly-metric-creator.py --emit traces
 
 # Emit only a subset of components (CSVs, anomalies.csv, reporting artifacts,
 # and OTEL streaming are all filtered to just these components):
@@ -148,91 +151,148 @@ python3 anomaly-metric-creator.py --metrics-per-component 3
 python3 anomaly-metric-creator.py --metrics-per-component 10
 
 # Stream anomaly events as OTLP signals while generating locally:
-# OTEL streaming is OFF by default; pass --otel-enabled to opt in.
+# OTEL streaming is OFF by default; pass --otel-send to opt in.
+# --otel-endpoint derives the per-signal URLs (BASE/v1/logs, /v1/metrics,
+# /v1/traces) for the selected signals.
 python3 anomaly-metric-creator.py \
-  --otel-enabled \
-  --otel-logs-endpoint http://localhost:4318/v1/logs \
-  --otel-metrics-endpoint http://localhost:4318/v1/metrics \
-  --otel-traces-endpoint http://localhost:4318/v1/traces \
+  --otel-send logs,metrics,traces \
+  --otel-endpoint http://localhost:4318 \
   --otel-stream-speedup 3600
 
-# Stream with signal-specific env controls (still requires --otel-enabled):
+# Stream with signal-specific env controls (still requires --otel-send):
 MEZMO_OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
 MEZMO_OTEL_LOGS_AUTH_TOKEN=secret \
-python3 anomaly-metric-creator.py --otel-enabled
+python3 anomaly-metric-creator.py --otel-send logs
 
 # Additionally stream per-row metric values as OTLP Gauge data points
-# (alongside the existing anomaly-counter stream):
+# (alongside the anomaly-counter/log/trace signal stream):
 python3 anomaly-metric-creator.py \
-  --otel-enabled \
-  --otel-emit-gauges \
-  --otel-metrics-endpoint http://localhost:4318/v1/metrics \
+  --otel-send logs,metrics,traces,gauges \
+  --otel-endpoint http://localhost:4318 \
   --otel-gauge-batch-seconds 60 \
   --otel-gauge-metric-prefix amc.
 
 # Stream only per-row Gauge data points, skipping anomaly-counter/log/trace
 # OTEL signals:
 python3 anomaly-metric-creator.py \
-  --otel-enabled \
-  --otel-gauges-only \
-  --otel-metrics-endpoint http://localhost:4318/v1/metrics \
+  --otel-send gauges \
+  --otel-endpoint http://localhost:4318 \
   --otel-stream-protocol json
 ```
 
 ### CLI flags
 
-| Flag                | Default     | Notes                                                              |
-| ------------------- | ----------- | ------------------------------------------------------------------ |
+The CLI is organized around three subcommands plus grouped flags. `generate`
+is the default — a bare invocation with no subcommand token runs the
+generation pipeline exactly as before:
+
+- `generate` — the default generation pipeline (implied when no subcommand
+  token is given).
+- `combine DIR [--components ...]` — skip generation; rebuild
+  `combined_metrics_unified.csv` from the per-component CSVs already in `DIR`.
+  Respects `--components` when set; otherwise combines every CSV in `DIR`.
+- `validate DIR [--warn]` — standalone validator: load `DIR/schema.json` and
+  check the artifacts in `DIR` against it (file presence, row counts,
+  timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds,
+  `counter`/`rate` non-negativity, derived-column consistency, and
+  `anomalies.csv` sort order). Hard-fails on the first violation (`exit 1`)
+  unless `--warn` is passed, which reports violations on stderr and exits `0`.
+  See [Output validation (the `validate` subcommand)](#output-validation-the-validate-subcommand).
+
+Help is two-tier: `-h` shows the common surface in the five groups below;
+`--help-all` additionally lists the advanced knobs and the deprecated aliases
+(see [Advanced flags and deprecated aliases](#advanced-flags-and-deprecated-aliases)).
+
+#### Common
+
+| Flag | Default | Notes |
+| ---- | ------- | ----- |
 | `--duration-days`   | `34.72222222222222` | Days to generate. The default combines with `--interval-seconds 60` to produce exactly 50,000 rows per component, matching the reference observability telemetry CSV shape. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2 and `jwks_rotation_chaos` at 3); see the [scenario catalog](#scenario-catalog) for per-scenario values. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
-| `--drop-rate`       | `0.0`       | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Default `0` preserves the full reference-shaped 50,000-row output; use a non-zero value to simulate packet loss. |
-| `--interval-seconds`| `60.0`      | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. Combinations of this flag with `--duration-days`, `--metrics-per-component`, and `--components` are validated against a preflight cell-count cap (200M cells total); see `--allow-huge-output`. |
-| `--emit-selection`  | `metrics,logs,traces` | Comma-separated artifact selection. Valid values are `metrics`, `logs`, `traces`, `gauges`, `schema`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv), and `schema` (opt-in) writes a declarative [`schema.json`](#output-schema-document-schemajson). The `gauges` token requires `metrics`; `schema` has no other requirements. |
-| `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `gpu_inference`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
+
+#### Anomaly selection
+
+| Flag | Default | Notes |
+| ---- | ------- | ----- |
 | `--scenarios`       | `all`       | Comma-separated allowlist of named scenario slugs (case-insensitive). Use `all` (default) to include every scenario in the `SCENARIOS` registry that passes the severity and duration gates. The `all` sentinel is mutually exclusive with explicit slugs (`all,foo` is rejected). Scenarios outside the active `--signal-level` severity hierarchy or whose `days_required` exceeds `--duration-days` are dropped with a stderr `WARNING: scenario <slug> requires …` message; scenarios whose `components_touched` is disjoint from `--components` are dropped silently. See the [scenario catalog](#scenario-catalog) for all known slugs and the composition order. |
 | `--exclude-scenarios` | _empty_   | Comma-separated denylist of scenario slugs to subtract from the resolved set (applied after `--scenarios`, before the severity/duration/components gates). Case-insensitive. Useful for `--exclude-scenarios jwks_rotation_chaos` to get every scenario except one; on overlap with `--scenarios`, exclusion wins. |
 | `--signal-level`    | `medium`    | Anomaly intensity level: `low`, `medium` (default), or `high`. Inclusion hierarchy: `low` only fires specs explicitly tagged `severity="low"` (today: a handful of benign Monday-morning baseline shifts) and intentionally has **no cascade fan-out** because benign baseline shifts do not realistically propagate as failures; `medium` adds the standard catalog plus its cascade fan-out (the default behavior); `high` additionally activates the high-pressure cross-component scenarios (regional failover storm, coordinated cache+DB meltdown, LLM provider outage, gateway DDoS saturation, storage layer pressure) and their cascades. |
-| `--anomaly-count`   | _unlimited_ | Optional cap on the total number of injected anomalies (primary specs + cascades) across the whole dataset. Sampling is deterministic for a given `--seed` and uses its own RNG stream so it doesn't perturb the column noise. Applied after `--signal-level` and `--components` filters. Out-of-range specs (e.g. multi-day cascades on a 1-day run) are excluded from the sampling pool. |
-| `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–10 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
-| `--instances-per-component` | `1` | Fan each component out to N identical instances (must be in `[1, 20]`). `N=1` (the default) emits today's byte-identical output with no dimension columns. `N>1` prepends `id,host,pod,az,region,tenant` columns to every per-component CSV header and writes N row blocks per component — one block per instance, in the stable `i0`/`pod-0`, `i1`/`pod-1`, … order. `host`/`az`/`region`/`tenant` are empty in v1 (use `--instance-config` to fill them in via a declarative file). All instances share the same RNG-drawn natural values and the same anomaly overrides in v1 unless a scenario spec narrows the targets via `instance_filter` (Phase 4). `anomalies.csv` records one row per `(timestamp, component, metric)` regardless of N. The long-form file writers (`combined_metrics_unified.csv`, `gauges.csv`) became dimension-aware in Phase 5; the OTEL streaming path (`--otel-enabled`, `--otel-emit-gauges`) became dimension-aware in Phase 6; and the schema/validator (`--emit-selection 'schema'`, `--validate-output`) became dimension-aware in Phase 8 (per-component `dimensions` blocks in `schema.json` plus long-form header checks). The only remaining gate is `--inject-dst-artifact-day > 0`, which is rejected because the DST splice produces non-monotonic timestamps the multi-instance row builder is not prepared for. Mutually exclusive with `--instance-config`. Multiplies the preflight cell-count cap inputs linearly with N. |
-| `--instance-config` | _off_ | Path to a YAML (`.yaml`/`.yml`) or JSON (`.json`) file declaring a per-component instance topology for repeatable non-uniform fan-outs (Phase 3). The top-level key `components` maps component names to lists of `Instance` field dicts (`id, host, pod, az, region, tenant`). Components not listed in the file fall back to the module-level `INSTANCES` registry (single anonymous `Instance()` per component) so the default per-component CSV shape is preserved. `parse_args` checks the flag-shape invariants (path resolves to a regular file via `Path.is_file()`, suffix in `{.yaml, .yml, .json}`, mutex with `--instances-per-component`); schema validation runs in `main()` via `_load_instance_config`, which raises a `ValueError` (caught and re-raised as `sys.exit`) on malformed YAML/JSON, unknown component, unknown `Instance` field, non-mapping top-level value, non-mapping `components` value, per-component value not a list, empty per-component list, non-dict instance entry, duplicate `id`, and per-component count exceeding `MAX_INSTANCES_PER_COMPONENT=20`. YAML support requires PyYAML — install with `pip install 'anomaly-metric-creator[yaml]'` or `pip install pyyaml`; JSON works without it. Triggers the same multi-instance code path as `--instances-per-component > 1`, so it inherits the same downstream-flag state: the long-form file writers (Phase 5), OTEL streaming (Phase 6), and schema/validator (Phase 8) are all dimension-aware, so dimensioned `--instance-config` runs work with `--combine`, `--combine-only`, `--emit-selection 'gauges'`/`'schema'`, `--validate-output`, and the OTEL flags without further configuration; only `--inject-dst-artifact-day > 0` remains rejected. Preflight cell-count cap uses `MAX_INSTANCES_PER_COMPONENT=20` as a conservative upper bound since the per-component instance count is not known until `main()` parses the config file. |
-| `--allow-huge-output` | _off_       | Bypass the preflight cell-count cap (200,000,000 metric cells across all components, timestamps, and instances). Without this flag, `parse_args` rejects combinations of `--interval-seconds`, `--duration-days`, `--metrics-per-component`, `--instances-per-component`, `--instance-config` (counted as `MAX_INSTANCES_PER_COMPONENT=20` per component as a conservative upper bound since the per-component count isn't known until the file is parsed in `main()`), and `--components` whose row × metric × component × instances product exceeds the cap, and the error message names the offending flags. Pass `--allow-huge-output` when the size is intentional (the actual run can still be truncated by other flags). |
-| `--combine`         | _off_       | After generation, also write `combined_metrics_unified.csv` into `--output-dir`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
-| `--combine-only`    | _off_       | Skip generation; only run the combine step against an existing `--output-dir`. Mutually exclusive with `--combine`. Respects `--components` when set; otherwise combines every CSV in `--output-dir`. |
-| `--validate-output` | _off_       | Standalone validator mode (mutually exclusive with `--combine` / `--combine-only`). Loads `PATH/schema.json` and checks the artifacts in `PATH` against it (file presence, row counts, timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds, `counter`/`rate` non-negativity, derived-column consistency, and `anomalies.csv` sort order). Hard-fails on first violation (`exit 1`) unless `--validate-warn` is also passed. See [Output validation (`--validate-output`)](#output-validation---validate-output). |
-| `--validate-warn`   | _off_       | Soft mode for `--validate-output`: report violations on stderr but exit `0`. A 1-day compatibility run is violation-free; longer runs that include the context-overflow scenario still surface the known `context_overflow_rate` bound overshoot (scenario-catalog re-tune deferred to phase 9), so `--validate-warn` is the right mode when piping multi-day output through CI until phase 9 lands. |
-| `--inject-dst-artifact-day` | `0` | 1-based day to inject a fall-DST artifact: the 02:00–02:59 wall-clock hour is duplicated, so the day's CSVs gain ~3,600/interval rows with non-monotonic timestamps. `0` disables. Generator quirk, not an anomaly — does not appear in `anomalies.csv`. |
-| `--topology-mode`   | `realistic`  | Topology-aware baseline coupling (default since phase 6 flag day). `realistic` (default) walks `args.components` in topological order against the `TOPOLOGY` graph and re-shapes downstream load-metric baselines to track their upstream sources. Phase 2 activated the `loadbalancer → apigateway` edge; phase 3 extended it to all front-half fan-out edges (`apigateway → authservice/cacheservice/database` and `cacheservice → database` callable weight); phase 4 added logistic-shaped saturation feedback that lifts downstream latency and error-rate columns as upstream load approaches each edge's `SaturationParams.midpoint`. `independent` is a deprecated no-topology contrast alias; it emits a stderr `DeprecationWarning` on use and is scheduled for removal after phase 9. Anomaly overrides on coupled columns still apply on top of the new baseline; the `--inject-dst-artifact-day` guard and the `gauges.csv` / DST mutual exclusion both still fire. See the [Topology graph](#topology-graph-v1) diagram below for the full graph. |
-| `--otel-enabled` / `--otel-disabled` | _off_ | Master switch for OTEL streaming. Default is off — configured endpoints are ignored at runtime unless `--otel-enabled` is passed. `--otel-disabled` forces it off and is mutually exclusive with `--otel-enabled`. Enabling without any configured endpoint is a usage error. |
-| `--otel-logs-endpoint` | `MEZMO_OTEL_LOGS_ENDPOINT` | Optional OTLP/HTTP logs endpoint. Anomaly events are replayed as `resourceLogs` when `--otel-enabled`. |
-| `--otel-logs-auth-token` | `MEZMO_OTEL_LOGS_AUTH_TOKEN` | Optional auth token for logs endpoint. |
-| `--otel-metrics-endpoint` | `MEZMO_OTEL_METRICS_ENDPOINT` | Optional OTLP/HTTP metrics endpoint. Anomaly events are replayed as `anomaly.count` sum metrics when `--otel-enabled`. When `--otel-emit-gauges` is also passed, the same endpoint additionally receives a Gauge stream of per-row metric values (see [Gauge metric streaming](#gauge-metric-streaming-otel-emit-gauges)). |
-| `--otel-metrics-auth-token` | `MEZMO_OTEL_METRICS_AUTH_TOKEN` | Optional auth token for metrics endpoint. Applies to both the counter and gauge streams. |
-| `--otel-emit-gauges` / `--otel-no-emit-gauges` | _off_ (env: `MEZMO_OTEL_EMIT_GAUGES`) | Opt-in second OTLP stream that posts per-row metric values from the per-component CSVs as Gauge data points to `--otel-metrics-endpoint`. Off by default; the CLI flag wins over the env var. Truthy env values: `1`, `true`, `yes`, `on` (case-insensitive). Requires `--otel-enabled`, `--otel-metrics-endpoint`, and `metrics` in `--emit-selection`. |
-| `--otel-gauges-only` | _off_ | Stream only the per-row Gauge data points to `--otel-metrics-endpoint`, skipping the anomaly log/metric/trace signal stream. Implies `--otel-emit-gauges`; requires `--otel-enabled`, `--otel-metrics-endpoint`, and `metrics` in `--emit-selection`. Useful for receivers that only accept OTLP Gauge payloads. |
-| `--otel-gauge-batch-seconds` | `60` | When `--otel-emit-gauges` is on, this many seconds of timeline coverage are coalesced into one OTLP request. Larger batches = fewer requests but bigger bodies; tune to your collector's body limit. Must be `> 0`. |
-| `--otel-gauge-metric-prefix` | _empty_ | Optional namespace prefix prepended to the OTLP metric name for each gauge data point (e.g. `amc.` produces `amc.cpu_util_pct`). |
-| `--otel-traces-endpoint` | `MEZMO_OTEL_TRACES_ENDPOINT` | Optional OTLP/HTTP traces endpoint. Anomaly events are replayed as span events when `--otel-enabled`. |
-| `--otel-traces-auth-token` | `MEZMO_OTEL_TRACES_AUTH_TOKEN` | Optional auth token for traces endpoint. |
-| `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
-| `--otel-stream-timeout-seconds` | `5.0` | HTTP timeout for each OTEL post attempt. |
-| `--otel-stream-max-events` | _all_ | Optional cap on streamed anomaly events for smoke-testing a receiver. |
-| `--otel-stream-auth-scheme` | `MEZMO_OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth scheme prefix used with the OTEL auth tokens. |
-| `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
-| `--otel-activity-log` | `./otel-activity.log` | File that records every OTEL streaming activity (`START`, `SEND`, `OK`, `RETRY`, `FAIL`, `END`) when `--otel-enabled` is set. HTTP `RETRY` / `FAIL` records include receiver `response_headers`, `cf_ray` when present, and the original JSON `request_body` for JSON requests. Only created when streaming actually runs. |
-| `--otel-verbose` / `--no-otel-verbose` | _off_ | When enabled, the activity log also captures the raw OTLP payload (`body`) on `SEND`, the request `content_type` and other request headers (auth values masked as `<scheme> ***`), the HTTP response `status` on success, and the exception `error_type` (plus HTTP `status` for `HTTPError`) on retry/failure. Useful for offline debugging of receiver behavior. |
 
-### Gauge metric streaming (`--otel-emit-gauges`)
+#### Dataset shape
+
+| Flag | Default | Notes |
+| ---- | ------- | ----- |
+| `--drop-rate`       | `0.0`       | Per-row probability of dropping the row entirely from the per-component CSV (no row is emitted for that timestamp). Default `0` preserves the full reference-shaped 50,000-row output; use a non-zero value to simulate packet loss. |
+| `--interval-seconds`| `60.0`      | Seconds between consecutive rows. Sampling-density knob — timeline coverage stays `duration_days * 86400`s and row count is `floor(total_seconds / interval)`. Must be `>= 0.001` (millisecond precision floor). Anomalies map to the nearest row via `round(time_offset / interval)`. Values ≥ 1.0 emit second-precision timestamps (`YYYY-MM-DD HH:MM:SS`); values < 1.0 emit millisecond-precision timestamps (`YYYY-MM-DD HH:MM:SS.SSS`) so adjacent sub-second rows remain unique. Combinations of this flag with `--duration-days`, `--metrics-per-component`, and `--components` are validated against a preflight cell-count cap (200M cells total); see `--allow-huge-output`. |
+| `--components`      | `all`       | Comma-separated component allowlist. Filters CSV emission, `anomalies.csv`, reporting artifacts, and OTEL streaming to only the named components. Use `all` (default) for every component. Allowed names: `apigateway`, `authservice`, `cacheservice`, `database`, `gpu_inference`, `identityprovider`, `llm_analytics`, `loadbalancer`, `mqservice`, `objectstore`, `observabilitypipeline`, `paymentservice`, `scheduler`, `vectorstore`. |
+| `--metrics-per-component` | _historic default per component_ | Optional cap on the metric columns emitted per component (must be in `[1, 10]`). Omit the flag to keep today's per-component count (4–10 metrics depending on component). When provided, every component emits the first `N` entries from its priority-ordered metric catalog (highest-value metrics first). Anomalies whose target metric is trimmed by the cap are filtered out before generation. |
+| `--instances-per-component` | `1` | Fan each component out to N identical instances (must be in `[1, 20]`). `N=1` (the default) emits today's byte-identical output with no dimension columns. `N>1` prepends `id,host,pod,az,region,tenant` columns to every per-component CSV header and writes N row blocks per component — one block per instance, in the stable `i0`/`pod-0`, `i1`/`pod-1`, … order. `host`/`az`/`region`/`tenant` are empty in v1 (use `--instance-config` to fill them in via a declarative file). All instances share the same RNG-drawn natural values and the same anomaly overrides in v1 unless a scenario spec narrows the targets via `instance_filter` (Phase 4). `anomalies.csv` records one row per `(timestamp, component, metric)` regardless of N. The long-form file writers (`combined_metrics_unified.csv`, `gauges.csv`) became dimension-aware in Phase 5; the OTEL streaming path (`--otel-send`) became dimension-aware in Phase 6; and the schema/validator (`--emit schema`, the `validate` subcommand) became dimension-aware in Phase 8 (per-component `dimensions` blocks in `schema.json` plus long-form header checks). The only remaining gate is `--inject-dst-artifact-day > 0`, which is rejected because the DST splice produces non-monotonic timestamps the multi-instance row builder is not prepared for. Mutually exclusive with `--instance-config`. Multiplies the preflight cell-count cap inputs linearly with N. |
+| `--instance-config` | _off_ | Path to a YAML (`.yaml`/`.yml`) or JSON (`.json`) file declaring a per-component instance topology for repeatable non-uniform fan-outs (Phase 3). The top-level key `components` maps component names to lists of `Instance` field dicts (`id, host, pod, az, region, tenant`). Components not listed in the file fall back to the module-level `INSTANCES` registry (single anonymous `Instance()` per component) so the default per-component CSV shape is preserved. `parse_args` checks the flag-shape invariants (path resolves to a regular file via `Path.is_file()`, suffix in `{.yaml, .yml, .json}`, mutex with `--instances-per-component`); schema validation runs in `main()` via `_load_instance_config`, which raises a `ValueError` (caught and re-raised as `sys.exit`) on malformed YAML/JSON, unknown component, unknown `Instance` field, non-mapping top-level value, non-mapping `components` value, per-component value not a list, empty per-component list, non-dict instance entry, duplicate `id`, and per-component count exceeding `MAX_INSTANCES_PER_COMPONENT=20`. YAML support requires PyYAML — install with `pip install 'anomaly-metric-creator[yaml]'` or `pip install pyyaml`; JSON works without it. Triggers the same multi-instance code path as `--instances-per-component > 1`, so it inherits the same downstream-flag state: the long-form file writers (Phase 5), OTEL streaming (Phase 6), and schema/validator (Phase 8) are all dimension-aware, so dimensioned `--instance-config` runs work with `--emit combined`/`gauges`/`schema`, the `combine` and `validate` subcommands, and `--otel-send` without further configuration; only `--inject-dst-artifact-day > 0` remains rejected. Preflight cell-count cap uses `MAX_INSTANCES_PER_COMPONENT=20` as a conservative upper bound since the per-component instance count is not known until `main()` parses the config file. |
+
+#### Artifacts
+
+| Flag | Default | Notes |
+| ---- | ------- | ----- |
+| `--emit` | `metrics,logs,traces` | Comma-separated artifact selection. Valid tokens are `metrics`, `logs`, `traces`, `gauges`, `schema`, `combined`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv), `schema` (opt-in) writes a declarative [`schema.json`](#output-schema-document-schemajson), and `combined` (opt-in) joins the per-component CSVs into `combined_metrics_unified.csv` after generation (respects `--components` when set; otherwise combines every CSV in `--output-dir`). The `gauges` and `combined` tokens require `metrics`; `schema` has no other requirements. |
+
+#### OTEL streaming
+
+| Flag | Default | Notes |
+| ---- | ------- | ----- |
+| `--otel-send` | _none_ | Comma-separated OTLP signals to stream: any subset of `logs`, `metrics`, `traces`, `gauges`, or `all`, or `none` (explicit off, overriding env defaults). Streaming is off by default, and the selection is authoritative — unselected signals do not stream even when env-var endpoints are configured. `logs` replays anomaly events as `resourceLogs`, `metrics` replays them as `anomaly.count` Sum data points, `traces` replays them as span events, and `gauges` streams every per-row metric value from the per-component CSVs as OTLP Gauge data points to the metrics endpoint (see [Gauge metric streaming](#gauge-metric-streaming---otel-send-gauges)). `--otel-send gauges` alone streams only the Gauge data points, skipping the anomaly log/metric/trace stream — useful for receivers that only accept OTLP Gauge payloads. The `gauges` signal requires `metrics` in `--emit`. Selecting a signal without a configured endpoint is a usage error. |
+| `--otel-endpoint` | _unset_ | Base OTLP/HTTP URL for every signal selected by `--otel-send`. Per-signal URLs are derived from it (`BASE/v1/logs`, `BASE/v1/metrics`, `BASE/v1/traces`; the gauge stream shares the metrics URL). Per-signal overrides remain available via the `MEZMO_OTEL_LOGS_ENDPOINT` / `MEZMO_OTEL_METRICS_ENDPOINT` / `MEZMO_OTEL_TRACES_ENDPOINT` env vars or the deprecated per-signal flags — an explicit per-signal flag wins over the derivation for that signal. |
+| `--otel-auth-token` | _unset_ | Auth token applied to every signal selected by `--otel-send`. Per-signal overrides remain available via the `MEZMO_OTEL_LOGS_AUTH_TOKEN` / `MEZMO_OTEL_METRICS_AUTH_TOKEN` / `MEZMO_OTEL_TRACES_AUTH_TOKEN` env vars or the deprecated per-signal flags. |
+| `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
+| `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
+
+#### Advanced flags and deprecated aliases
+
+`--help-all` lists everything `-h` hides: the advanced knobs and every
+deprecated alias, each annotated `[deprecated -> use X]`. The advanced knobs
+(semantics unchanged) are `--anomaly-count`, `--allow-huge-output`,
+`--inject-dst-artifact-day`, `--topology-mode`, and the OTEL transport tuning
+flags `--otel-gauge-batch-seconds`, `--otel-gauge-metric-prefix`,
+`--otel-stream-timeout-seconds`, `--otel-stream-max-events`,
+`--otel-stream-auth-scheme`, `--otel-activity-log`, and `--otel-verbose`.
+
+Every deprecated alias keeps working and emits one stderr line —
+`DEPRECATION: <flag> is deprecated; use <replacement>. The alias keeps
+working until the post-phase-9 CLI flag day.` Mixing a canonical flag with
+the aliases it replaces is a parse error.
+
+| Deprecated alias | Canonical replacement |
+| ---------------- | --------------------- |
+| `--emit-selection ARTIFACTS` | `--emit ARTIFACTS` |
+| `--combine` | `combined` token in `--emit` (e.g. `--emit metrics,logs,traces,combined`) |
+| `--combine-only` | `combine DIR` subcommand |
+| `--validate-output PATH` | `validate DIR` subcommand |
+| `--validate-warn` | `validate DIR --warn` |
+| `--otel-enabled` | `--otel-send SIGNALS` (selecting any signal enables streaming) |
+| `--otel-disabled` | `--otel-send none` |
+| `--otel-emit-gauges` | add `gauges` to `--otel-send` |
+| `--otel-no-emit-gauges` | omit `gauges` from `--otel-send` |
+| `--otel-gauges-only` | `--otel-send gauges` |
+| `--otel-logs-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/logs`; the `MEZMO_OTEL_LOGS_ENDPOINT` env var still overrides per signal) |
+| `--otel-logs-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_LOGS_AUTH_TOKEN` env var still overrides per signal) |
+| `--otel-metrics-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/metrics`; the `MEZMO_OTEL_METRICS_ENDPOINT` env var still overrides per signal) |
+| `--otel-metrics-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_METRICS_AUTH_TOKEN` env var still overrides per signal) |
+| `--otel-traces-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/traces`; the `MEZMO_OTEL_TRACES_ENDPOINT` env var still overrides per signal) |
+| `--otel-traces-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_TRACES_AUTH_TOKEN` env var still overrides per signal) |
+
+An explicit deprecated per-signal endpoint/auth flag still wins over the
+`--otel-endpoint` derivation for that signal.
+
+### Gauge metric streaming (`--otel-send gauges`)
 
 The default OTEL streaming path posts one `anomaly.count` Sum data point per
-injected anomaly. Set `--otel-emit-gauges` (or `MEZMO_OTEL_EMIT_GAUGES=1`) to
-additionally stream **every per-row metric value** from the per-component CSVs
-to `--otel-metrics-endpoint` as OTLP `Gauge` data points. The two streams run
-sequentially: anomaly counters first, then gauges, both against the same
-endpoint (and the same auth token / activity log). Set `--otel-gauges-only`
-when the receiver should get only the Gauge payloads; that mode implies gauge
-emission and skips the anomaly log/metric/trace stream entirely.
+injected anomaly. Add `gauges` to `--otel-send` (or set
+`MEZMO_OTEL_EMIT_GAUGES=1`) to additionally stream **every per-row metric
+value** from the per-component CSVs to the metrics endpoint as OTLP `Gauge`
+data points. The two streams run sequentially: anomaly counters first, then
+gauges, both against the same endpoint (and the same auth token / activity
+log). Pass `--otel-send gauges` alone when the receiver should get only the
+Gauge payloads; that mode skips the anomaly log/metric/trace stream entirely.
 
 Payload shape:
 
@@ -262,13 +322,13 @@ Batching, dropped rows, and pacing:
 - `--otel-stream-max-events` caps the total number of OTLP **requests** the
   gauge stream sends (mirroring its meaning for the counter stream); it
   does **not** cap individual data points.
-- **`--inject-dst-artifact-day` is incompatible with `--otel-emit-gauges`.**
+- **`--inject-dst-artifact-day` is incompatible with gauge streaming.**
   The DST artifact duplicates the 02:00–02:59 wall-clock hour inside each
   per-component CSV, producing non-monotonic timestamps that break the
   gauge streamer's chronological merge. The parser rejects the combination
   with a clear error — pass `--inject-dst-artifact-day 0` (the default) or
-  drop `--otel-emit-gauges`.
-- **`--combine` preserves DST-duplicated rows.**
+  drop `gauges` from `--otel-send`.
+- **The combine step (`--emit …,combined`) preserves DST-duplicated rows.**
   `--inject-dst-artifact-day` duplicates the 02:00–02:59 wall-clock hour
   inside each per-component CSV. The unified combined CSV preserves both
   copies — every row in the per-component CSVs appears in the unified
@@ -290,13 +350,13 @@ both the counter and the gauge records share one file with
 
 ### Gauge metric file (`gauges.csv`)
 
-The OTEL gauge stream (`--otel-emit-gauges`) requires an OTLP collector to
+The OTEL gauge stream (`--otel-send gauges`) requires an OTLP collector to
 consume the per-row metric values. The file peer is `gauges.csv`: opt in by
-adding `gauges` to `--emit-selection` (requires `metrics`) and a long-form
+adding `gauges` to `--emit` (requires `metrics`) and a long-form
 CSV is written alongside the per-component CSVs.
 
 ```
-python3 anomaly-metric-creator.py --emit-selection metrics,gauges
+python3 anomaly-metric-creator.py --emit metrics,gauges
 ```
 
 Schema (header row 1; columns locked):
@@ -340,9 +400,9 @@ cell-count cap (`PREFLIGHT_CELL_CAP`) bounds the wide form, so it transitively
 bounds `gauges.csv` size. At default knobs the 50,000-row run produces roughly
 4.25M data rows.
 
-`--combine-only` does **not** regenerate `gauges.csv`; it's a derived
+The `combine` subcommand does **not** regenerate `gauges.csv`; it's a derived
 artifact of a fresh generation run only. A pre-existing `gauges.csv` is left
-untouched on the combine-only path (mirrors `anomalies.csv`).
+untouched on the `combine` subcommand path (mirrors `anomalies.csv`).
 
 Consumer one-liners:
 
@@ -357,13 +417,13 @@ awk -F, 'NR==1 || $3=="cpu_util_pct"' gauges.csv > cpu_util_pct.csv
 
 ### Output schema document (`schema.json`)
 
-Opt in by adding `schema` to `--emit-selection` and a declarative
+Opt in by adding `schema` to `--emit` and a declarative
 `schema.json` is written alongside the rest of the artifacts. The
-document is the single source of truth `--validate-output` consumes to
+document is the single source of truth the `validate` subcommand consumes to
 check the run after the fact.
 
 ```
-python3 anomaly-metric-creator.py --emit-selection metrics,schema
+python3 anomaly-metric-creator.py --emit metrics,schema
 ```
 
 Top-level shape (`schema_version=2`, bumped in phase 7):
@@ -406,29 +466,29 @@ Top-level shape (`schema_version=2`, bumped in phase 7):
   `saturation` is either `null` or `{midpoint, steepness,
   latency_gain, error_gain}`. `correlation_threshold` is either a
   float or `null` (defaults to 0.85). Consumed by
-  `--validate-output`'s topology coupling check.
+  the `validate` subcommand's topology coupling check.
 
 Output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
 with trailing newline) and locked SHA-256 hashes at 1d and 7d live in
 `tests/test_schema_file.py`.
 
-`--combine-only` does **not** regenerate `schema.json` (mirrors the
+The `combine` subcommand does **not** regenerate `schema.json` (mirrors the
 `gauges.csv` invariant); rerun a normal generation to refresh it.
 
-### Output validation (`--validate-output`)
+### Output validation (the `validate` subcommand)
 
 Pair the schema document with the standalone validator to assert a
 run's artifacts are consistent with its declared shape:
 
 ```sh
 # Hard-fail mode: exits 1 on the first violation.
-python3 anomaly-metric-creator.py --validate-output iot_logs
+python3 anomaly-metric-creator.py validate iot_logs
 
 # Soft mode: violations go to stderr, exit code stays 0.
-python3 anomaly-metric-creator.py --validate-output iot_logs --validate-warn
+python3 anomaly-metric-creator.py validate iot_logs --warn
 ```
 
-The validator loads `PATH/schema.json` and runs:
+The validator loads `DIR/schema.json` and runs:
 
 - Every declared file is present on disk.
 - No undeclared files in the directory (the registry intent that
@@ -478,7 +538,7 @@ surface a known violation type — the scenario drives
 simulate context-window saturation, which exceeds the metric's
 declared `max_value=1`. Reconciling that scenario amplitude with the
 ratio bound is a scenario-catalog re-tune deferred to phase
-9. Pass `--validate-warn` to keep CI green on those multi-day runs until then.
+9. Pass `--warn` to keep CI green on those multi-day runs until then.
 
 ### Output files
 
@@ -499,9 +559,9 @@ Written to `--output-dir` (default `iot_logs/`):
 - `observabilitypipeline.csv`
 - `gpu_inference.csv`
 - `anomalies.csv` — written alongside the per-component CSVs whenever
-  `--emit-selection` includes `metrics` (the default); explicitly deleted
+  `--emit` includes `metrics` (the default); explicitly deleted
   from `--output-dir` on runs that omit `metrics` (e.g.
-  `--emit-selection logs,traces`). Manifest of injected anomalies whose
+  `--emit logs,traces`). Manifest of injected anomalies whose
   span anchor row (`span_idx == 0`) survives the packet-loss mask. Rows are
   sorted by `(span_start, component, metric)` so the manifest reads
   chronologically. Columns:  
@@ -547,21 +607,21 @@ Written to `--output-dir` (default `iot_logs/`):
     to a later timestamp.
 - `metric_report.log` — line-oriented report log aligned 1:1 with anomaly manifest rows via deterministic `event_id`.
 - `metric_traces.jsonl` — JSONL traces aligned 1:1 with anomaly manifest rows (`event_id`, `trace_id`, `span_id`, timestamp/component/metric context).
-- `gauges.csv` — long-form CSV with one row per `(timestamp, component, metric, value)` data point, written only when `--emit-selection` includes `gauges` (which itself requires `metrics`). See [Gauge metric file](#gauge-metric-file-gaugescsv).
-- `schema.json` — declarative per-metric and run-level schema, written only when `--emit-selection` includes `schema`. Consumed by `--validate-output`. See [Output schema document](#output-schema-document-schemajson).
-- `combined_metrics_unified.csv` — only when `--combine` / `--combine-only` is passed.
+- `gauges.csv` — long-form CSV with one row per `(timestamp, component, metric, value)` data point, written only when `--emit` includes `gauges` (which itself requires `metrics`). See [Gauge metric file](#gauge-metric-file-gaugescsv).
+- `schema.json` — declarative per-metric and run-level schema, written only when `--emit` includes `schema`. Consumed by the `validate` subcommand. See [Output schema document](#output-schema-document-schemajson).
+- `combined_metrics_unified.csv` — only when `--emit` includes `combined` or via the `combine` subcommand.
 
-If you omit `--emit-selection`, the default remains the full backward-compatible
+If you omit `--emit`, the default remains the full backward-compatible
 set: metrics, logs, and traces.
 
 Re-running into an existing `--output-dir` pre-cleans stale artifacts for any
 emit type or component this run will not regenerate (e.g. a metrics-only re-run
 deletes `metric_report.log` / `metric_traces.jsonl` from a prior `logs,traces`
 run, a `logs,traces` re-run deletes per-component CSVs and `anomalies.csv`,
-a re-run without `gauges` in `--emit-selection` deletes a prior `gauges.csv`,
+a re-run without `gauges` in `--emit` deletes a prior `gauges.csv`,
 and a narrower `--components` re-run deletes the dropped CSVs). Files unknown
 to this script — user notes or extra CSVs the combine step would otherwise
-autodiscover — are left alone. The `--combine-only` branch is exempt because it
+autodiscover — are left alone. The `combine` subcommand is exempt because it
 reads the existing per-component CSVs as inputs. `./otel-activity.log` lives
 outside `--output-dir` and is untouched by design.
 
@@ -650,11 +710,11 @@ of the edge set above.
 ## Application flow
 
 End-to-end execution of `main(argv=None)` covers three top-level modes:
-`--combine-only` (rebuild the unified CSV from existing per-component
-CSVs), `--validate-output PATH` (load `PATH/schema.json` and run every
-validator against the artifacts on disk), and the default generation
-pipeline. See [docs/application-flow.md](docs/application-flow.md) for a
-rendered mermaid diagram of the full pipeline and the emit-selection /
+the `combine DIR` subcommand (rebuild the unified CSV from existing
+per-component CSVs), the `validate DIR` subcommand (load `DIR/schema.json`
+and run every validator against the artifacts on disk), and the default
+`generate` pipeline. See [docs/application-flow.md](docs/application-flow.md) for a
+rendered mermaid diagram of the full pipeline and the `--emit` /
 validator gating notes.
 
 ## Failure modes / anomaly catalog

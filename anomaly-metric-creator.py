@@ -7498,11 +7498,318 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Deprecated flag spellings and their canonical replacements. Consumed in
+# two places: ``parse_args`` annotates each alias's --help-all entry and
+# emits one ``DEPRECATION:`` stderr line per alias actually used, and the
+# subcommand translators suppress the warning for internally generated
+# argv. Aliases remain fully functional until the post-phase-9 flag day.
+_DEPRECATED_FLAGS: dict[str, str] = {
+    "--emit-selection": "--emit",
+    "--combine": "--emit <artifacts>,combined",
+    "--combine-only": "the 'combine' subcommand",
+    "--validate-output": "the 'validate' subcommand",
+    "--validate-warn": "the 'validate' subcommand's --warn",
+    "--otel-enabled": "--otel-send logs,metrics,traces",
+    "--otel-disabled": "--otel-send none",
+    "--otel-emit-gauges": "--otel-send <signals>,gauges",
+    "--otel-no-emit-gauges": "--otel-send without 'gauges'",
+    "--otel-gauges-only": "--otel-send gauges",
+    "--otel-logs-endpoint": "--otel-endpoint",
+    "--otel-metrics-endpoint": "--otel-endpoint",
+    "--otel-traces-endpoint": "--otel-endpoint",
+    "--otel-logs-auth-token": "--otel-auth-token",
+    "--otel-metrics-auth-token": "--otel-auth-token",
+    "--otel-traces-auth-token": "--otel-auth-token",
+}
+
+# Flags hidden from the default ``-h`` (shown by ``--help-all``): the
+# deprecated aliases above plus the advanced / research knobs that the
+# common use cases never touch. Keyed by argparse ``dest``.
+_ADVANCED_DESTS: frozenset[str] = frozenset({
+    # research / power knobs
+    "anomaly_count", "allow_huge_output", "inject_dst_artifact_day",
+    "topology_mode",
+    # OTEL transport tuning (set-once-per-environment; env vars exist
+    # for protocol and auth scheme already)
+    "otel_gauge_batch_seconds", "otel_gauge_metric_prefix",
+    "otel_stream_timeout_seconds", "otel_stream_max_events",
+    "otel_stream_auth_scheme", "otel_activity_log", "otel_verbose",
+    # deprecated aliases
+    "emit_selection", "combine", "combine_only",
+    "validate_output", "validate_warn",
+    "otel_enabled", "otel_emit_gauges", "otel_gauges_only",
+    "otel_logs_endpoint", "otel_logs_auth_token",
+    "otel_metrics_endpoint", "otel_metrics_auth_token",
+    "otel_traces_endpoint", "otel_traces_auth_token",
+})
+
+
+def _flag_in_argv(argv: list[str], flag: str) -> bool:
+    """True when ``flag`` was explicitly passed (bare or ``=value`` form)."""
+    return any(tok == flag or tok.startswith(flag + "=") for tok in argv)
+
+
+def _parse_components_value(error, raw: str) -> set[str]:
+    """Parse and validate a ``--components`` CSV value ('all' or names).
+
+    ``error`` is an argparse ``parser.error``-style callable so both the
+    flat parser and the ``combine`` subcommand share one validation path.
+    """
+    raw_components = [item.strip().lower() for item in raw.split(",") if item.strip()]
+    if not raw_components:
+        error("--components must contain at least one component name (or 'all')")
+    if "all" in raw_components:
+        return set(COMPONENTS.keys())
+    selected_components = set(raw_components)
+    invalid_components = sorted(selected_components - set(COMPONENTS.keys()))
+    if invalid_components:
+        error("--components contains invalid value(s): "
+              f"{', '.join(invalid_components)}. "
+              f"Allowed: {', '.join(sorted(COMPONENTS.keys()))} or 'all'")
+    return selected_components
+
+
+def _reconcile_cli_surface(p, args, raw_argv):
+    """Map the canonical CLI surface onto the legacy argument namespace.
+
+    Everything downstream of ``parse_args`` (the validation gates and
+    ``main()``) consumes the historic names: the ``emit_selection``
+    string, the ``combine`` boolean, the ``otel_enabled`` /
+    ``otel_emit_gauges`` / ``otel_gauges_only`` toggles, and the
+    per-signal endpoint/token sextet. The canonical flags introduced by
+    the CLI consolidation (``--emit``, ``--otel-send``,
+    ``--otel-endpoint``, ``--otel-auth-token``) translate into those
+    names here — immediately after parsing and before any validation
+    gate — so every existing gate fires identically for both spellings.
+    Mixing a canonical flag with the aliases it replaces is rejected.
+
+    Also emits one ``DEPRECATION:`` stderr line per deprecated alias
+    present in ``raw_argv``. The ``combine`` / ``validate`` subcommands
+    never route through this function (they carry dedicated parsers), so
+    canonical invocations are structurally warning-free.
+    """
+    # ------------------------------------------------------------------
+    # --emit -> emit_selection (+ combine via the 'combined' token).
+    # ------------------------------------------------------------------
+    if args.emit is not None:
+        for alias in ("--emit-selection", "--combine"):
+            if _flag_in_argv(raw_argv, alias):
+                p.error(
+                    f"--emit and {alias} are mutually exclusive; use "
+                    f"--emit alone ({alias} is its deprecated spelling)"
+                )
+        tokens = {t.strip().lower() for t in args.emit.split(",") if t.strip()}
+        allowed = {"metrics", "logs", "traces", "gauges", "schema", "combined"}
+        invalid = sorted(tokens - allowed)
+        if invalid:
+            p.error("--emit contains invalid value(s): "
+                    f"{', '.join(invalid)}. "
+                    "Allowed: metrics,logs,traces,gauges,schema,combined")
+        if not tokens:
+            p.error("--emit must contain at least one of "
+                    "metrics,logs,traces,gauges,schema,combined")
+        if "combined" in tokens:
+            args.combine = True
+            tokens.discard("combined")
+            if not tokens:
+                p.error(
+                    "--emit 'combined' joins the per-component CSVs, so it "
+                    "requires the generated artifacts alongside it — "
+                    "include 'metrics' (e.g. --emit metrics,combined)"
+                )
+        args.emit_selection = ",".join(sorted(tokens))
+
+    # ------------------------------------------------------------------
+    # --otel-send -> otel_enabled / otel_emit_gauges / otel_gauges_only.
+    # ------------------------------------------------------------------
+    send_tokens = None
+    if args.otel_send is not None:
+        for alias in ("--otel-enabled", "--otel-disabled",
+                      "--otel-emit-gauges", "--otel-no-emit-gauges",
+                      "--otel-gauges-only"):
+            if _flag_in_argv(raw_argv, alias):
+                p.error(
+                    f"--otel-send and {alias} are mutually exclusive; use "
+                    f"--otel-send alone ({alias} is a deprecated toggle)"
+                )
+        send_tokens = {
+            t.strip().lower() for t in args.otel_send.split(",") if t.strip()
+        }
+        allowed = {"logs", "metrics", "traces", "gauges", "all", "none"}
+        invalid = sorted(send_tokens - allowed)
+        if invalid:
+            p.error("--otel-send contains invalid value(s): "
+                    f"{', '.join(invalid)}. "
+                    "Allowed: logs, metrics, traces, gauges, all, none")
+        if not send_tokens:
+            p.error("--otel-send must contain at least one of "
+                    "logs,metrics,traces,gauges (or 'all' / 'none')")
+        if "none" in send_tokens:
+            if send_tokens != {"none"}:
+                p.error("--otel-send 'none' cannot be combined with other "
+                        "signals")
+            # Explicit off: the canonical replacement for --otel-disabled,
+            # overriding any env-var endpoint defaults.
+            args.otel_enabled = False
+            args.otel_emit_gauges = False
+            args.otel_gauges_only = False
+            send_tokens = set()
+        else:
+            if "all" in send_tokens:
+                send_tokens = {"logs", "metrics", "traces", "gauges"}
+            args.otel_enabled = True
+            args.otel_emit_gauges = "gauges" in send_tokens
+            args.otel_gauges_only = send_tokens == {"gauges"}
+
+    # ------------------------------------------------------------------
+    # --otel-endpoint / --otel-auth-token -> the per-signal sextet.
+    # ------------------------------------------------------------------
+    if args.otel_endpoint is not None or args.otel_auth_token is not None:
+        if send_tokens is None and not args.otel_enabled:
+            flag = ("--otel-endpoint" if args.otel_endpoint is not None
+                    else "--otel-auth-token")
+            p.error(f"{flag} requires --otel-send "
+                    "(or the deprecated --otel-enabled)")
+    base = None
+    if args.otel_endpoint is not None:
+        if not args.otel_endpoint.startswith(("http://", "https://")):
+            p.error("--otel-endpoint must start with http:// or https://")
+        base = args.otel_endpoint.rstrip("/")
+    if send_tokens is not None or base is not None or args.otel_auth_token is not None:
+        if send_tokens is not None:
+            wanted = {s for s in ("logs", "metrics", "traces")
+                      if s in send_tokens}
+            if "gauges" in send_tokens:
+                # The gauge stream posts to the metrics endpoint.
+                wanted.add("metrics")
+        else:
+            # Canonical endpoint/token paired with the deprecated
+            # --otel-enabled toggle: derive every signal endpoint.
+            wanted = {"logs", "metrics", "traces"}
+        for sig in ("logs", "metrics", "traces"):
+            ep_flag = f"--otel-{sig}-endpoint"
+            tok_flag = f"--otel-{sig}-auth-token"
+            explicit_ep = _flag_in_argv(raw_argv, ep_flag)
+            if sig in wanted:
+                if base is not None and not explicit_ep:
+                    setattr(args, f"otel_{sig}_endpoint", f"{base}/v1/{sig}")
+                if (args.otel_auth_token is not None
+                        and not _flag_in_argv(raw_argv, tok_flag)):
+                    setattr(args, f"otel_{sig}_auth_token",
+                            args.otel_auth_token)
+            elif send_tokens is not None and not explicit_ep:
+                # --otel-send is authoritative for signal selection: an
+                # unselected signal does not stream even when an env-var
+                # endpoint default is exported in the shell.
+                setattr(args, f"otel_{sig}_endpoint", None)
+    if send_tokens:
+        if not any([args.otel_logs_endpoint, args.otel_metrics_endpoint,
+                    args.otel_traces_endpoint]):
+            p.error("--otel-send requires --otel-endpoint (or a per-signal "
+                    "endpoint via MEZMO_OTEL_*_ENDPOINT / the deprecated "
+                    "per-signal flags)")
+
+    # ------------------------------------------------------------------
+    # Deprecation notices: one line per alias actually used.
+    # ------------------------------------------------------------------
+    for flag, replacement in _DEPRECATED_FLAGS.items():
+        if _flag_in_argv(raw_argv, flag):
+            print(
+                f"DEPRECATION: {flag} is deprecated; use {replacement}. "
+                "The alias keeps working until the post-phase-9 CLI "
+                "flag day.",
+                file=sys.stderr,
+            )
+
+
 def parse_args(argv=None):
+    raw_argv = list(sys.argv[1:]) if argv is None else list(argv)
+    # ``--help-all`` rebuilds the help view with the advanced + deprecated
+    # flags un-hidden, then renders help. Handled before argparse so the
+    # brief parser never needs to know the flag exists as an action.
+    show_all = _flag_in_argv(raw_argv, "--help-all")
+    if show_all:
+        raw_argv = ["--help"]
+    argv = raw_argv
+
     p = argparse.ArgumentParser(
         description="Generate synthetic IoT metric logs with anomalies.",
+        epilog=(
+            "Subcommands: 'generate' (the default when no subcommand is "
+            "given), 'combine DIR' (join existing per-component CSVs into "
+            "combined_metrics_unified.csv), and 'validate DIR [--warn]' "
+            "(check artifacts against DIR/schema.json). This help shows "
+            "the common surface; run with --help-all to also list the "
+            "advanced knobs and deprecated flag aliases."
+        ),
     )
-    p.add_argument("--duration-days", type=float, default=DEFAULT_DURATION_DAYS,
+    g_common = p.add_argument_group("common")
+    g_anom = p.add_argument_group("anomaly selection")
+    g_shape = p.add_argument_group("dataset shape")
+    g_art = p.add_argument_group("artifacts")
+    g_otel = p.add_argument_group("OTEL streaming")
+    g_adv = p.add_argument_group(
+        "advanced & deprecated",
+        "Hidden from -h; shown here via --help-all. Deprecated aliases "
+        "remain functional and emit a DEPRECATION notice on stderr.",
+    )
+
+    g_art.add_argument(
+        "--emit",
+        type=str,
+        default=None,
+        metavar="ARTIFACTS",
+        help="Comma-separated artifact selection: metrics, logs, traces, "
+             "gauges, schema, combined (default: metrics,logs,traces). "
+             "'gauges' writes a long-form gauges.csv and requires "
+             "'metrics'; 'schema' writes a declarative schema.json "
+             "consumed by the validate subcommand; 'combined' "
+             "additionally joins the per-component CSVs into "
+             "combined_metrics_unified.csv after generation (requires "
+             "'metrics'). Replaces the deprecated --emit-selection + "
+             "--combine pair.",
+    )
+    g_otel.add_argument(
+        "--otel-send",
+        type=str,
+        default=None,
+        metavar="SIGNALS",
+        help="Enable OTLP/HTTP streaming and select what to send: a "
+             "comma-separated subset of logs, metrics, traces, gauges — "
+             "or 'all', or 'none' (explicitly off, overriding env "
+             "defaults). logs/metrics/traces replay anomaly events to the "
+             "matching signal endpoint; 'gauges' streams per-row metric "
+             "values as Gauge data points to the metrics endpoint "
+             "(requires the 'metrics' artifact). '--otel-send gauges' "
+             "alone skips the anomaly signal stream entirely. Replaces "
+             "the deprecated --otel-enabled/--otel-disabled/"
+             "--otel-emit-gauges/--otel-no-emit-gauges/--otel-gauges-only "
+             "toggle set.",
+    )
+    g_otel.add_argument(
+        "--otel-endpoint",
+        type=str,
+        default=None,
+        metavar="BASE_URL",
+        help="OTLP/HTTP base endpoint (e.g. http://localhost:4318). "
+             "Per-signal URLs are derived as BASE/v1/logs, BASE/v1/metrics, "
+             "BASE/v1/traces for the signals selected by --otel-send. "
+             "Per-signal overrides remain available via the "
+             "MEZMO_OTEL_*_ENDPOINT env vars or the deprecated per-signal "
+             "flags.",
+    )
+    g_otel.add_argument(
+        "--otel-auth-token",
+        type=str,
+        default=None,
+        metavar="TOKEN",
+        help="Auth token applied to every selected signal endpoint "
+             "(scheme via --otel-stream-auth-scheme, default Bearer). "
+             "Per-signal overrides remain available via the "
+             "MEZMO_OTEL_*_AUTH_TOKEN env vars or the deprecated "
+             "per-signal flags.",
+    )
+    g_common.add_argument("--duration-days", type=float, default=DEFAULT_DURATION_DAYS,
                    help=f"Number of days of metrics to generate "
                         f"(default: {DEFAULT_DURATION_DAYS!r}, "
                         f"which yields {DEFAULT_ROW_COUNT:,} rows at the "
@@ -7510,15 +7817,15 @@ def parse_args(argv=None):
                         "Each scenario's ``days_required`` is the minimum value at which "
                         "any of its specs become in range; the full multi-day catalog "
                         f"manifests at {max(s.days_required for s in SCENARIOS.values())}+.")
-    p.add_argument("--seed", type=int, default=DEFAULT_SEED,
+    g_common.add_argument("--seed", type=int, default=DEFAULT_SEED,
                    help=f"RNG seed for deterministic output (default: {DEFAULT_SEED}).")
-    p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
+    g_common.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
                    help=f"Directory to write CSV files into (default: {DEFAULT_OUTPUT_DIR}).")
-    p.add_argument("--drop-rate", type=float, default=DEFAULT_DROP_RATE,
+    g_common.add_argument("--drop-rate", type=float, default=DEFAULT_DROP_RATE,
                    help=f"Per-row probability of dropping the row entirely from the per-component CSV "
                         f"(no row is emitted for that timestamp). Simulated packet loss "
                         f"(default: {DEFAULT_DROP_RATE}).")
-    p.add_argument("--interval-seconds", type=float, default=DEFAULT_INTERVAL_SECONDS,
+    g_common.add_argument("--interval-seconds", type=float, default=DEFAULT_INTERVAL_SECONDS,
                    help=f"Seconds between consecutive emitted rows "
                         f"(default: {DEFAULT_INTERVAL_SECONDS}). Controls sampling "
                         f"density; timeline coverage stays --duration-days * 86400 "
@@ -7527,13 +7834,13 @@ def parse_args(argv=None):
                         f"Values >= 1.0 emit second-precision timestamps "
                         f"(YYYY-MM-DD HH:MM:SS); values < 1.0 emit millisecond-precision "
                         f"timestamps (YYYY-MM-DD HH:MM:SS.SSS) to keep adjacent rows unique.")
-    p.add_argument("--combine", action="store_true",
+    g_adv.add_argument("--combine", action="store_true",
                    help="After generating logs, also write a unified combined CSV "
                         "(combined_metrics_unified.csv) into --output-dir.")
-    p.add_argument("--combine-only", action="store_true",
+    g_adv.add_argument("--combine-only", action="store_true",
                    help="Skip generation; only run the combine step against an existing "
                         "--output-dir. Useful for re-running the join without regenerating.")
-    p.add_argument(
+    g_adv.add_argument(
         "--validate-output",
         type=Path,
         default=None,
@@ -7543,7 +7850,7 @@ def parse_args(argv=None):
              "and prints one line per violation. Mutually exclusive with --combine "
              "and --combine-only.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--validate-warn",
         action="store_true",
         default=False,
@@ -7551,7 +7858,7 @@ def parse_args(argv=None):
              "exit 0. Without this flag, --validate-output exits 1 on the first "
              "violation found across the run.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--emit-selection",
         type=str,
         default="metrics,logs,traces",
@@ -7562,7 +7869,7 @@ def parse_args(argv=None):
              "'schema' writes a declarative schema.json describing per-metric "
              "metadata and run-level parameters; consumed by --validate-output.",
     )
-    p.add_argument(
+    g_shape.add_argument(
         "--components",
         type=str,
         default="all",
@@ -7571,7 +7878,7 @@ def parse_args(argv=None):
              "'all' (default) for every component. Allowed names: "
              f"{', '.join(sorted(COMPONENTS.keys()))}.",
     )
-    p.add_argument(
+    g_anom.add_argument(
         "--scenarios",
         type=str,
         default="all",
@@ -7580,7 +7887,7 @@ def parse_args(argv=None):
              "Case-insensitive. Known slugs: "
              f"{', '.join(sorted(SCENARIOS.keys()))}.",
     )
-    p.add_argument(
+    g_anom.add_argument(
         "--exclude-scenarios",
         type=str,
         default="",
@@ -7588,7 +7895,7 @@ def parse_args(argv=None):
              "the resolved set (applied after --scenarios). Case-insensitive. "
              "Defaults to empty (no exclusion).",
     )
-    p.add_argument(
+    g_anom.add_argument(
         "--signal-level",
         type=str,
         default=DEFAULT_SIGNAL_LEVEL,
@@ -7597,7 +7904,7 @@ def parse_args(argv=None):
              "catalog (today's behavior); high additionally activates the "
              "high-pressure cross-component scenarios.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--anomaly-count",
         type=int,
         default=None,
@@ -7605,7 +7912,7 @@ def parse_args(argv=None):
              "cascades) injected across the whole dataset. Sampling is "
              "deterministic for a given --seed. Defaults to unlimited.",
     )
-    p.add_argument(
+    g_shape.add_argument(
         "--metrics-per-component",
         type=int,
         default=None,
@@ -7616,7 +7923,7 @@ def parse_args(argv=None):
              f"(highest-value first). Anomalies targeting metrics outside "
              f"the trimmed set are filtered out.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--allow-huge-output",
         action="store_true",
         default=False,
@@ -7628,7 +7935,7 @@ def parse_args(argv=None):
              f"--instances-per-component that would emit more cells than "
              f"the cap. Pass this flag when the size is intentional.",
     )
-    otel_toggle = p.add_mutually_exclusive_group()
+    otel_toggle = g_adv.add_mutually_exclusive_group()
     otel_toggle.add_argument(
         "--otel-enabled",
         dest="otel_enabled",
@@ -7643,7 +7950,7 @@ def parse_args(argv=None):
         help="Explicitly disable OTEL streaming (the default). Overrides --otel-enabled.",
     )
     p.set_defaults(otel_enabled=False)
-    gauge_toggle = p.add_mutually_exclusive_group()
+    gauge_toggle = g_adv.add_mutually_exclusive_group()
     gauge_toggle.add_argument(
         "--otel-emit-gauges",
         dest="otel_emit_gauges",
@@ -7673,7 +7980,7 @@ def parse_args(argv=None):
     )
     p.set_defaults(otel_emit_gauges=_env_bool("MEZMO_OTEL_EMIT_GAUGES", False))
     p.set_defaults(otel_gauges_only=False)
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-gauge-batch-seconds",
         type=int,
         default=60,
@@ -7682,7 +7989,7 @@ def parse_args(argv=None):
              "is on. Default: 60. Larger batches mean fewer HTTP requests but bigger "
              "bodies; tune for your OTLP collector body limit.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-gauge-metric-prefix",
         type=str,
         default="",
@@ -7690,7 +7997,7 @@ def parse_args(argv=None):
              "gauge data point (e.g. 'amc.' produces 'amc.cpu_util_pct'). Default: "
              "empty (use the raw MetricSpec.name).",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-logs-endpoint",
         type=str,
         default=os.environ.get("MEZMO_OTEL_LOGS_ENDPOINT"),
@@ -7698,14 +8005,14 @@ def parse_args(argv=None):
              "Streamed only when --otel-enabled is also passed. "
              "Env override: MEZMO_OTEL_LOGS_ENDPOINT.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-logs-auth-token",
         type=str,
         default=os.environ.get("MEZMO_OTEL_LOGS_AUTH_TOKEN"),
         help="Optional OTEL auth token for the logs endpoint. "
              "Env override: MEZMO_OTEL_LOGS_AUTH_TOKEN.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-metrics-endpoint",
         type=str,
         default=os.environ.get("MEZMO_OTEL_METRICS_ENDPOINT"),
@@ -7716,14 +8023,14 @@ def parse_args(argv=None):
              "per-row metric values. "
              "Env override: MEZMO_OTEL_METRICS_ENDPOINT.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-metrics-auth-token",
         type=str,
         default=os.environ.get("MEZMO_OTEL_METRICS_AUTH_TOKEN"),
         help="Optional OTEL auth token for the metrics endpoint. "
              "Env override: MEZMO_OTEL_METRICS_AUTH_TOKEN.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-traces-endpoint",
         type=str,
         default=os.environ.get("MEZMO_OTEL_TRACES_ENDPOINT"),
@@ -7731,27 +8038,27 @@ def parse_args(argv=None):
              "When set, anomaly events are replayed as traces to this endpoint. "
              "Env override: MEZMO_OTEL_TRACES_ENDPOINT.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-traces-auth-token",
         type=str,
         default=os.environ.get("MEZMO_OTEL_TRACES_AUTH_TOKEN"),
         help="Optional OTEL auth token for the traces endpoint. "
              "Env override: MEZMO_OTEL_TRACES_AUTH_TOKEN.",
     )
-    p.add_argument(
+    g_otel.add_argument(
         "--otel-stream-speedup",
         type=float,
         default=3600.0,
         help="Timeline replay speed multiplier for OTEL streaming (default: 3600). "
              "1.0 = real-time, 3600 = one hour of anomaly spacing per second.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-stream-timeout-seconds",
         type=float,
         default=5.0,
         help="HTTP timeout per OTEL streamed event in seconds (default: 5).",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-stream-max-events",
         type=int,
         default=None,
@@ -7762,21 +8069,21 @@ def parse_args(argv=None):
              "endpoint that 500s every request still trips the cap at N. Both streams "
              "honor the same flag independently in one run.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-stream-auth-scheme",
         type=str,
         default=os.environ.get("MEZMO_OTEL_STREAM_AUTH_SCHEME", DEFAULT_OTEL_STREAM_AUTH_SCHEME),
         help="Auth scheme prefix for OTEL auth token (default: Bearer). "
              "Env override: MEZMO_OTEL_STREAM_AUTH_SCHEME.",
     )
-    p.add_argument(
+    g_otel.add_argument(
         "--otel-stream-protocol",
         type=str,
         default=os.environ.get("MEZMO_OTEL_STREAM_PROTOCOL", "protobuf"),
         help="OTLP payload mode for stream endpoint: json or protobuf (default: protobuf). "
              "Env override: MEZMO_OTEL_STREAM_PROTOCOL.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-activity-log",
         type=Path,
         default=Path("otel-activity.log"),
@@ -7785,7 +8092,7 @@ def parse_args(argv=None):
              "is only created when streaming actually runs. "
              "Default: ./otel-activity.log in the current directory.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--otel-verbose",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -7793,12 +8100,12 @@ def parse_args(argv=None):
              "and exception types in the activity log for each SEND/OK/RETRY/FAIL "
              "record. Authorization header values are masked. Default: off.",
     )
-    p.add_argument("--inject-dst-artifact-day", type=int, default=0,
+    g_adv.add_argument("--inject-dst-artifact-day", type=int, default=0,
                    help="Inject a fall-DST artifact (duplicated 02:00–02:59 wall-clock hour) "
                         "on the given 1-based day of the run. 0 (default) disables. Generator "
                         "quirk, not an anomaly spec — does not appear in anomalies.csv. The "
                         "affected CSVs end up with 3,600/interval extra rows for that day.")
-    instance_source = p.add_mutually_exclusive_group()
+    instance_source = g_shape.add_mutually_exclusive_group()
     instance_source.add_argument(
         "--instances-per-component",
         type=int,
@@ -7824,7 +8131,7 @@ def parse_args(argv=None):
              "INSTANCES registry (today: a single anonymous Instance() per "
              "component). Mutually exclusive with --instances-per-component.",
     )
-    p.add_argument(
+    g_adv.add_argument(
         "--topology-mode",
         choices=["independent", "realistic"],
         default="realistic",
@@ -7837,7 +8144,29 @@ def parse_args(argv=None):
              "emits a stderr DeprecationWarning on use and is scheduled "
              "for removal after phase 9.",
     )
+    # Brief-help mode hides the advanced knobs and deprecated aliases;
+    # --help-all shows everything, annotating each deprecated alias with
+    # its canonical replacement. Walks the parser's actions once after
+    # construction so each flag is defined exactly once above.
+    deprecated_dests = {}
+    for action in p._actions:
+        for opt in action.option_strings:
+            if opt in _DEPRECATED_FLAGS:
+                deprecated_dests[opt] = action
+    if show_all:
+        for opt, action in deprecated_dests.items():
+            if action.help and not str(action.help).startswith("[deprecated"):
+                action.help = (
+                    f"[deprecated -> use {_DEPRECATED_FLAGS[opt]}] {action.help}"
+                )
+    else:
+        for action in p._actions:
+            if action.dest in _ADVANCED_DESTS:
+                action.help = argparse.SUPPRESS
+
     args = p.parse_args(argv)
+
+    _reconcile_cli_surface(p, args, raw_argv)
 
     # Phase 6: --topology-mode independent is a deprecation alias.
     # The default flipped to "realistic" in this PR; "independent" stays
@@ -7903,7 +8232,8 @@ def parse_args(argv=None):
     if not selected:
         p.error("--emit-selection must contain at least one of metrics,logs,traces,gauges,schema")
     if args.combine and "metrics" not in selected:
-        p.error("--combine requires --emit-selection to include metrics")
+        p.error("the 'combined' artifact / --combine requires "
+                "--emit-selection to include metrics (--emit metrics,combined)")
     # ``gauges`` is derived from the per-component CSVs written under
     # ``metrics`` (same input as the OTEL gauge stream). Without ``metrics``,
     # the per-component CSVs are not written this run, so we have nothing to
@@ -8061,19 +8391,7 @@ def parse_args(argv=None):
                     p.error(f"--otel-{signal}-auth-token must be non-empty when provided")
     args.emit_selection = selected
 
-    raw_components = [item.strip().lower() for item in args.components.split(",") if item.strip()]
-    if not raw_components:
-        p.error("--components must contain at least one component name (or 'all')")
-    if "all" in raw_components:
-        selected_components = set(COMPONENTS.keys())
-    else:
-        selected_components = set(raw_components)
-        invalid_components = sorted(selected_components - set(COMPONENTS.keys()))
-        if invalid_components:
-            p.error("--components contains invalid value(s): "
-                    f"{', '.join(invalid_components)}. "
-                    f"Allowed: {', '.join(sorted(COMPONENTS.keys()))} or 'all'")
-    args.components = selected_components
+    args.components = _parse_components_value(p.error, args.components)
 
     raw_scenarios = [item.strip().lower() for item in args.scenarios.split(",") if item.strip()]
     if not raw_scenarios:
@@ -11895,7 +12213,85 @@ def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combi
         (output_dir / _COMBINE_OUTPUT_FILENAME).unlink(missing_ok=True)
 
 
+_SUBCOMMANDS = ("generate", "combine", "validate")
+
+
+def _main_combine_subcommand(argv):
+    """``combine DIR [--components ...]`` — the canonical spelling of the
+    deprecated ``--combine-only`` mode: skip generation and join the
+    existing per-component CSVs in DIR into combined_metrics_unified.csv.
+    """
+    sp = argparse.ArgumentParser(
+        prog="anomaly-metric-creator.py combine",
+        description="Join existing per-component CSVs in DIR into "
+                    "combined_metrics_unified.csv (no generation).",
+    )
+    sp.add_argument("directory", type=Path,
+                    help="Directory holding the per-component CSVs of a "
+                         "prior run (a previous run's --output-dir).")
+    sp.add_argument("--components", type=str, default="all",
+                    help="Comma-separated allowlist of component CSVs to "
+                         "combine; 'all' (default) autodiscovers every "
+                         "*.csv in DIR.")
+    a = sp.parse_args(argv)
+    if not a.directory.is_dir():
+        sp.error(f"combine requires an existing directory; "
+                 f"{a.directory} does not exist")
+    selected = _parse_components_value(sp.error, a.components)
+    if selected == set(COMPONENTS.keys()):
+        combine_components = None
+    else:
+        combine_components = [name for name in COMPONENTS if name in selected]
+    combine_logs(a.directory, components=combine_components)
+
+
+def _main_validate_subcommand(argv):
+    """``validate DIR [--warn]`` — the canonical spelling of the deprecated
+    ``--validate-output`` mode: check the artifacts in DIR against
+    DIR/schema.json and exit 1 on violations (0 with --warn).
+    """
+    sp = argparse.ArgumentParser(
+        prog="anomaly-metric-creator.py validate",
+        description="Validate the artifacts in DIR against DIR/schema.json.",
+    )
+    sp.add_argument("directory", type=Path,
+                    help="Directory holding a prior run's artifacts, "
+                         "including the schema.json written via "
+                         "--emit ...,schema.")
+    sp.add_argument("--warn", action="store_true",
+                    help="Report violations on stderr but exit 0 (default: "
+                         "exit 1 on any violation).")
+    a = sp.parse_args(argv)
+    if not a.directory.is_dir():
+        sp.error(f"validate requires an existing directory; "
+                 f"{a.directory} does not exist")
+    violations = validate_output(a.directory)
+    for line in violations:
+        print(f"VALIDATION: {line}", file=sys.stderr)
+    if not violations:
+        print(f"validate: {a.directory} OK (no violations)")
+        return
+    if a.warn:
+        print(f"validate: {len(violations)} violation(s) in "
+              f"{a.directory} (--warn: returning 0)", file=sys.stderr)
+        return
+    raise SystemExit(1)
+
+
 def main(argv=None):
+    # Subcommand dispatch: 'generate' (the default when the first token is
+    # not a subcommand, preserving every historic invocation), 'combine',
+    # and 'validate'. Handled before argparse so the flat generate parser
+    # never sees the subcommand token.
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if argv and argv[0] in _SUBCOMMANDS:
+        sub, rest = argv[0], argv[1:]
+        if sub == "combine":
+            return _main_combine_subcommand(rest)
+        if sub == "validate":
+            return _main_validate_subcommand(rest)
+        argv = rest  # generate: strip the token, fall through.
+
     args = parse_args(argv)
 
     # Restrict the combine step to user-selected components when --components

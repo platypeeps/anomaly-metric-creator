@@ -28,8 +28,40 @@ def _invoke(*args, cwd=None, env=None):
     )
 
 
-def test_help_lists_every_flag():
+def test_help_lists_visible_surface_and_hides_advanced():
+    """The brief ``-h`` shows the common surface (grouped) and hides the
+    advanced knobs and deprecated aliases; ``--help-all`` lists
+    everything, annotating each deprecated alias with its canonical
+    replacement."""
     result = _invoke("--help")
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
+                 "--interval-seconds", "--emit", "--components",
+                 "--scenarios", "--exclude-scenarios", "--signal-level",
+                 "--metrics-per-component", "--instances-per-component",
+                 "--instance-config", "--otel-send", "--otel-endpoint",
+                 "--otel-auth-token", "--otel-stream-speedup",
+                 "--otel-stream-protocol"):
+        assert flag in out, f"--help missing flag {flag}"
+        after = out.split(flag, 1)[1]
+        assert any(c.isalpha() for c in after[:200]), f"{flag} has empty help text"
+    # Group headers structure the brief help.
+    for header in ("common:", "anomaly selection:", "dataset shape:",
+                   "artifacts:", "OTEL streaming:"):
+        assert header in out, f"--help missing group header {header!r}"
+    # Hidden flags must not surface as options in the brief view. (The
+    # canonical flags' help text cross-references a few deprecated
+    # spellings by name, so probe flags that are never cross-referenced.)
+    for hidden in ("--combine-only", "--validate-output", "--anomaly-count",
+                   "--topology-mode", "--inject-dst-artifact-day",
+                   "--otel-logs-endpoint", "--otel-activity-log"):
+        assert hidden not in out, f"brief --help leaks hidden flag {hidden}"
+    assert "--help-all" in out, "brief help must point at --help-all"
+
+
+def test_help_all_lists_every_flag_with_deprecation_notes():
+    result = _invoke("--help-all")
     assert result.returncode == 0, result.stderr
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
@@ -43,12 +75,17 @@ def test_help_lists_every_flag():
                  "--otel-traces-endpoint", "--otel-traces-auth-token",
                  "--otel-stream-auth-scheme",
                  "--otel-gauges-only",
-                 "--otel-verbose", "--no-otel-verbose"):
-        assert flag in out, f"--help missing flag {flag}"
-        # Argparse renders the help text on the line following the flag; require
-        # something non-trivial follows so the flag isn't just a bare token.
+                 "--otel-verbose", "--no-otel-verbose",
+                 "--emit", "--otel-send", "--otel-endpoint",
+                 "--otel-auth-token", "--topology-mode",
+                 "--inject-dst-artifact-day"):
+        assert flag in out, f"--help-all missing flag {flag}"
         after = out.split(flag, 1)[1]
         assert any(c.isalpha() for c in after[:200]), f"{flag} has empty help text"
+    assert "[deprecated -> use" in out, (
+        "--help-all must annotate deprecated aliases with their "
+        "canonical replacements"
+    )
 
 
 def test_missing_numpy_dependency_has_actionable_error(tmp_path):
