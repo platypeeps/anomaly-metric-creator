@@ -206,7 +206,9 @@ def _generate_natural_baseline(amc, out, *, metrics_per_component=None):
     (same MetricSpec model, same MT19937 generator, one shared RNG
     stream across components in ``COMPONENTS`` insertion order — the
     retired mode's draw model); only the absence of anomaly-override
-    and drop-rate draws shifts the absolute draw positions, which no
+    draws shifts the absolute draw positions (the drop-mask draw still
+    runs — ``generate_component`` draws it even at ``drop_rate=0.0`` —
+    exactly as a real run with the default drop rate would), which no
     statistical consumer observes.
     A header-only ``anomalies.csv`` is written so manifest-reading
     consumers see an empty manifest instead of a missing file."""
@@ -227,9 +229,12 @@ def _generate_natural_baseline(amc, out, *, metrics_per_component=None):
             base_dir=out, total_seconds=86400, drop_rate=0.0, interval=1.0,
             ts_array=ts_array, ts_strings=ts_strings, ctx=ctx,
         )
+    # Header order mirrors main()'s ``manifest_fieldnames`` exactly so
+    # consumers that pin the canonical column order read both manifests
+    # identically.
     (out / "anomalies.csv").write_text(
         "timestamp,component,metric,description,scenario_id,severity,"
-        "is_cascade,span_start,span_end,shape,event_id,parent_event_id\n",
+        "is_cascade,event_id,parent_event_id,span_start,span_end,shape\n",
         encoding="utf-8",
     )
     return out
