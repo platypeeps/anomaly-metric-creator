@@ -9,18 +9,20 @@ every validator against the artifacts on disk), and the default
 
 ```mermaid
 flowchart TD
-    start(["python anomaly-metric-creator.py …"]) --> parse["parse_args"]
-    parse --> mode{"mode?"}
+    start(["python anomaly-metric-creator.py …"]) --> mode{"subcommand token<br/>on argv[0]?<br/>(dispatched in main()<br/>before any parsing)"}
 
-    mode -- "combine DIR" --> combineonly["combine_logs<br/>(reads existing per-component CSVs)<br/>→ combined_metrics_unified.csv<br/>(wide or long layout — auto-detected<br/>from per-component CSV headers)"]
+    mode -- "combine DIR" --> combineparse["_main_combine_subcommand<br/>(dedicated parser)"]
+    combineparse --> combineonly["combine_logs<br/>(reads existing per-component CSVs)<br/>→ combined_metrics_unified.csv<br/>(wide or long layout — auto-detected<br/>from per-component CSV headers)"]
     combineonly --> finish([exit])
 
-    mode -- "validate DIR" --> validate["validate_output<br/>(load schema.json,<br/>run required/no-unknown/sorted/<br/>row-count/timestamp/cell/derivation/<br/>long-form-dimensions/topology-coupling/<br/>per-instance-coupling checks)"]
+    mode -- "validate DIR" --> validateparse["_main_validate_subcommand<br/>(dedicated parser)"]
+    validateparse --> validate["validate_output<br/>(load schema.json,<br/>run required/no-unknown/sorted/<br/>row-count/timestamp/cell/derivation/<br/>long-form-dimensions/topology-coupling/<br/>per-instance-coupling checks)"]
     validate -- "no violations" --> finish
     validate -- "violations + --warn" --> finish
     validate -- "violations (default)" --> failexit([exit 1])
 
-    mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit / --components)"]
+    mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> parse["parse_args<br/>+ _reconcile_cli_surface<br/>+ validation gates"]
+    parse --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit / --components)"]
     preclean --> ctx["RunContext(rng=np.random.RandomState(--seed))"]
     ctx --> instances{"instance map?"}
     instances -- "default (N=1, anonymous)" --> instdefault["ctx.instances =<br/>{name: [Instance()] for name in COMPONENTS}<br/>→ byte-identical legacy CSV (no dim prefix)"]
