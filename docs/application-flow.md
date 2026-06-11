@@ -33,9 +33,7 @@ flowchart TD
     specs --> cap["_apply_signal_level_and_count<br/>(severity filter + --anomaly-count sampling)"]
     cap --> ts["_build_timestamp_arrays(total_seconds,<br/>--interval-seconds)"]
 
-    ts --> torder{"--topology-mode?"}
-    torder -- "realistic (default)" --> realorder["_topology_generation_order<br/>(Kahn's algorithm, topological order)"]
-    torder -- "independent (deprecation alias)" --> indorder["walk components in<br/>COMPONENTS insertion order<br/>(no coupling, no saturation,<br/>no int-cast — byte-identical<br/>to pre-flag-day output;<br/>emits DeprecationWarning)"]
+    ts --> realorder["_topology_generation_order<br/>(Kahn's algorithm, topological order;<br/>realistic topology is the only mode<br/>since the phase-9 flag day)"]
 
     realorder --> dispatch{"per-component<br/>instance list?"}
     dispatch -- "single anonymous Instance()" --> shared["_compose_topology_coupled_specs<br/>+ _compose_topology_saturation_specs<br/>(shared lambda-baked path;<br/>byte-identical to legacy realistic mode)"]
@@ -43,7 +41,6 @@ flowchart TD
 
     shared --> gen["for each component: generate_component<br/>natural → anomaly overrides (per-instance under<br/>instance_filter) → dtype='int' rounded via np.rint<br/>(realistic mode only) → derivations →<br/>capture (shared + per-instance) →<br/>round → drop → write {component}.csv<br/>(wide CSV if anonymous, long CSV with<br/>id/host/pod/az/region/tenant prefix otherwise)"]
     perinst --> gen
-    indorder --> gen
 
     gen --> anomcsv["sort filtered_anomalies +<br/>write anomalies.csv<br/>(when 'metrics' in --emit-selection)"]
     anomcsv --> reports["write_reporting_artifacts<br/>→ metric_report.log, metric_traces.jsonl<br/>(when 'logs'/'traces' in --emit-selection)"]
@@ -73,8 +70,8 @@ flowchart TD
   validator dispatches per-component cell, derivation, and row-count
   checks against the wide or long CSV layout based on the schema's
   per-component `dimensions` block.
-- Topology coupling and saturation (the right branch of the
-  `--topology-mode` decision) re-shape downstream `MetricSpec`
+- Topology coupling and saturation (always on since the phase-9
+  flag day removed `--topology-mode`) re-shape downstream `MetricSpec`
   baselines from upstream load columns captured during generation.
   Under `--instances-per-component N>1` (or any dimensioned
   `--instance-config`), the per-instance dispatch routes each
@@ -196,11 +193,9 @@ Recent significant additions reflected in the diagram above:
   `auth_pod_failure` and `cache_az_isolation` partial-outage
   scenarios.
 - **Flag-day default flip + integer-cast bundle** (Phase 6) —
-  `--topology-mode realistic` is the default; `--topology-mode
-  independent` is a deprecation alias that emits a stderr
-  `DeprecationWarning` and skips both topology composition and the
-  `dtype="int"` `np.rint` cast (so its CSV bytes stay byte-for-byte
-  identical to the pre-flag-day baseline pinned by
-  `LEGACY_INDEPENDENT_ONE_DAY_HASHES`). All other locked SHA-256
-  hashes in `tests/` were re-baselined under realistic mode in that
-  PR.
+  `--topology-mode realistic` became the default, and the phase-9
+  flag day removed the `--topology-mode independent` contrast alias
+  entirely (realistic is the only mode; the flag no longer parses).
+  Every `dtype="int"` column is cast via `np.rint` before derivations
+  and the `topology_capture` snapshot. All locked SHA-256 hashes in
+  `tests/` target realistic output.

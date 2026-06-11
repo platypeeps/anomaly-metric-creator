@@ -15,16 +15,17 @@ These tests cover:
 * Default-output byte-for-byte regression — locked SHA-256 hashes for
   every per-component CSV and ``anomalies.csv`` from a default 1-day
   run at seed 42 and a 7-day run at seed 42. After phase 6
-  the default is ``--topology-mode realistic`` with the integer-cast
+  the default is realistic topology coupling with the integer-cast
   bundle on, so the constants below
   (``DEFAULT_ONE_DAY_HASHES`` / ``DEFAULT_SEVEN_DAY_HASHES`` /
   ``HIGH_SEVEN_DAY_CAPPED_HASHES``) capture realistic-mode bytes;
   the high-signal + ``--anomaly-count`` capped 7-day hashes were
   captured against the current registry-only sampling-pool ordering,
-  which this PR did not change. The current independent-mode no-topology
-  baseline is preserved in ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` and is
-  pinned by
-  ``tests/test_topology_loadbalancer_gateway.py::test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``.
+  which this PR did not change. The phase-9 flag day removed the
+  deprecated ``--topology-mode independent`` alias (and its
+  ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` byte lock); the no-topology
+  statistical baseline now comes from the direct-natural fixtures in
+  ``tests/conftest.py``.
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ SCENARIO_CASCADES_BY_SLUG = {
 
 # ------------------------------------------------------------------
 # SHA-256 hashes of per-component CSVs under the current default flags
-# (seed 42, ``--topology-mode realistic``, integer-cast bundle on).
+# (seed 42, realistic topology coupling, integer-cast bundle on).
 # Locking these protects every component output from accidental
 # RNG-order, spec-order, or topology-coupling drift.
 #
@@ -106,15 +107,12 @@ SCENARIO_CASCADES_BY_SLUG = {
 # in mq_jam) identified by the deviation regression test.
 #
 # 2026-05-19 (phase-6 flag day): re-baselined every entry here when
-# ``--topology-mode realistic`` became the default and ``dtype="int"``
-# columns started being rounded via ``np.rint`` before derivations. The
-# current independent-mode no-topology baseline lives in
-# ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` below and is pinned by
-# ``test_topology_mode_independent_matches_legacy_baseline_byte_for_byte``;
-# that table is re-locked for intentional scenario-byte changes while
-# still guarding the deprecation alias against accidental topology coupling.
-# When updating these hashes again, regenerate against the realistic default
-# rather than the independent alias.
+# realistic topology coupling became the default and ``dtype="int"``
+# columns started being rounded via ``np.rint`` before derivations.
+# The phase-9 flag day later removed the deprecated
+# ``--topology-mode independent`` alias along with its
+# ``LEGACY_INDEPENDENT_ONE_DAY_HASHES`` byte lock; realistic-mode
+# output is the only CLI output left to pin.
 #
 # 2026-05-27: re-locked the topology-coupled front-half component hashes
 # after adding the gpu_inference component. The new component joins the
@@ -167,30 +165,8 @@ DEFAULT_SEVEN_DAY_HASHES = {
     "vectorstore.csv": "43a05e9e2a35f9323e8823bb6ec1973bd230975131991149873cfd615a154762",
 }
 
-# Independent-mode baseline hashes captured with no topology coupling. Phase 6
-# retained ``--topology-mode independent`` as a deprecation alias; this block
-# is re-locked when intentional scenario-byte changes land, while still
-# pinning independent-mode output against accidental topology-coupling drift.
-LEGACY_INDEPENDENT_ONE_DAY_HASHES = {
-    "anomalies.csv": "954cc16cf814a78ea26b309ebb8223a44f7603884b7f9cf10ba7bd76de701615",
-    "apigateway.csv": "3e482088f1674d99a8ddad32ddb36a944e086af2442d4159a453763f1af24c69",
-    "authservice.csv": "39d86fe29bd2a4b575c758ad4dcfe8c947dc2d5047f7c5fc61211283c279fcc7",
-    "cacheservice.csv": "a139a6e02c778cde09cd3ca9ba0b397c00bb4d640784350f1ceae1b3e7927c41",
-    "database.csv": "9f14dd258645d8ed5db43421f5c494d1e3cccb865f2a86bc158f3a8a46119999",
-    "gpu_inference.csv": "44ea53d625bc46c862ba018863881469f0229f47cc3b89dda44307d204173258",
-    "identityprovider.csv": "9bc8018f07330bab2d1840cceac45acb04fe5673cfe5d55cc52d1d1ef9072f6f",
-    "llm_analytics.csv": "2f01c9f78d0d04bfa994ffbe0ff6de11f11d6dc2f37b46b7e9d335ab2ea745d3",
-    "loadbalancer.csv": "535e32c224c084b48850d122b42261bea7b41223322d39a17ad00d53bd992ed0",
-    "mqservice.csv": "d28631d14c47ec000fdcb57eddec599073a05086dd2395bfdcadddb649d399ad",
-    "objectstore.csv": "b9973618b15f6dad4f282892fba224ce0ac50a447f3f45ae3594910297f6f807",
-    "observabilitypipeline.csv": "1ba71b933c68974cb42d3e4f1746bee1a24705f32361b92b780decba2ad91d71",
-    "paymentservice.csv": "afc289f16ceb5f6f2a99c267fca289d3519fd1895839289eb36f3c164b3593a8",
-    "scheduler.csv": "46c0230dbd697658ec444a7e288d6371b9700c1e9a65cd29430a16afd6062bf2",
-    "vectorstore.csv": "9f9b51e3579c1759eefcf1b0d4de6608ef9c85ead9d186f37f51dfd611a963ce",
-}
-
 # SHA-256 hashes for ``--signal-level high --duration-days 7 --anomaly-count 100``
-# at seed 42 under the current defaults (``--topology-mode realistic``,
+# at seed 42 under the current defaults (realistic topology coupling,
 # integer-cast bundle on).
 #
 # 2026-05-19: re-locked anomalies.csv + apigateway.csv +

@@ -5,7 +5,7 @@ Phase 5 closes the v1 topology graph by promoting the
 into a real coupling:
 
 * The edge weight makes ``llm_analytics.input_tokens_per_sec`` track
-  ``apigateway.requests_per_sec`` under ``--topology-mode realistic``
+  ``apigateway.requests_per_sec`` under realistic topology coupling
   via the phase-3 constant-weight machinery in
   ``_compose_topology_coupled_specs``. The natural baseline
   (~25 000 tokens/s) is reproduced at natural apigateway load
@@ -37,16 +37,10 @@ Acceptance gates exercised here:
   llm_analytics.input_tokens_per_sec) >= 0.85 on the 1-day default
   seed.
 * Realistic-mode latency / error lift: latency and error means under
-  realistic mode exceed independent-mode means by a measurable margin.
+  realistic mode exceed the direct-natural baseline means (no
+  topology; the ``--topology-mode independent`` alias was removed at
+  the phase-9 flag day) by a measurable margin.
 * Caps: latency stays non-negative, error rate stays <= 1.0.
-* Default (now ``--topology-mode realistic`` since phase 6)
-  ``llm_analytics.csv`` bytes match an explicit ``--topology-mode
-  realistic`` run (the in-file ``test_realistic_mode_llm_analytics_
-  byte_identical_to_default`` asserts this). The deprecated
-  ``--topology-mode independent`` alias still reproduces the
-  pre-flag-day baseline byte-for-byte but is pinned in
-  ``tests/test_topology_loadbalancer_gateway.py`` against
-  ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 """
 from __future__ import annotations
 
@@ -55,7 +49,7 @@ from datetime import timedelta
 import numpy as np
 import pytest
 
-from conftest import _load_amc, read_component_rows, run_capture, sha256_path
+from conftest import _load_amc, read_component_rows
 
 
 # ------------------------------------------------------------------
@@ -97,7 +91,7 @@ def _aligned_columns(out_dir, *pairs):
 # non-high-severity scenario and add a window for every primary or
 # cascade spec whose target is either ``apigateway.requests_per_sec``
 # (the upstream of the LLM coupling) or one of the LLM columns the
-# topology pipeline rewrites under ``--topology-mode realistic`` —
+# topology pipeline rewrites under realistic topology coupling —
 # ``input_tokens_per_sec`` (rewritten by the coupling layer via
 # ``_TOPOLOGY_LOAD_METRICS["llm_analytics"]``), plus
 # ``avg_llm_latency_ms`` / ``p95_llm_latency_ms`` / ``llm_api_error_rate``
@@ -160,16 +154,16 @@ def _exclude_anomaly_rows(ts_list, *arrays):
 
 
 # ------------------------------------------------------------------
-# 1-day realistic + independent runs (shared across tests)
+# 1-day realistic + direct-natural baseline runs (shared across tests)
 #
 # Statistical tests consume the session-scoped ``one_day_run_a``
-# (default no-flag run; realistic mode is the argparse default since
-# the phase 6 flag day) and ``one_day_independent_run`` (same
-# args as the module-scoped duplicates this file used to carry).
-# Regenerating either here would be the PR #63 duplicate-fixture
-# antipattern from the "Test resource cost" checklist; the
-# explicit-flag byte-identity is pinned by
-# ``test_realistic_mode_llm_analytics_byte_identical_to_default``.
+# (default run; realistic coupling is the only mode since the phase-9
+# flag day removed the ``--topology-mode`` flag) and
+# ``natural_one_day_run`` (the direct-natural baseline:
+# ``generate_component`` invoked with the raw specs — no topology, no
+# saturation, no anomalies). Regenerating either here would be the
+# PR #63 duplicate-fixture antipattern from the "Test resource cost"
+# checklist.
 # ------------------------------------------------------------------
 
 
@@ -298,39 +292,6 @@ def test_llm_analytics_in_saturation_targets_registry(amc):
 
 
 # ------------------------------------------------------------------
-# Default (realistic) mode: byte-identical to explicit --topology-mode
-# realistic. After the phase 6 flag day the no-flag default and
-# the realistic alias must produce the same llm_analytics CSV bytes.
-# ------------------------------------------------------------------
-@pytest.mark.full_resolution
-def test_realistic_mode_llm_analytics_byte_identical_to_default(
-    amc, one_day_run_a, tmp_path,
-):
-    """Explicit ``--topology-mode realistic`` produces the same
-    ``llm_analytics.csv`` bytes as the no-flag default 1-day run
-    captured by the session-scoped fixture (after the phase 6 flag day).
-
-    The explicit-flag run is function-scoped (mirroring the equivalent
-    pins in ``test_topology_fanout.py`` / ``test_topology_saturation.py``)
-    because it is the only consumer that genuinely needs the flag spelled
-    out; every statistical test below reads the session-scoped default
-    run instead."""
-    explicit = run_capture(
-        amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
-        extra_args=["--topology-mode", "realistic"],
-    )
-    default_hash = sha256_path(one_day_run_a.out_dir / "llm_analytics.csv")
-    explicit_hash = sha256_path(explicit.out_dir / "llm_analytics.csv")
-    assert default_hash == explicit_hash, (
-        "llm_analytics.csv drifted between the default 1-day run and "
-        "an explicit --topology-mode realistic run; after the "
-        "phase 6 flag day the no-flag default and the realistic alias "
-        "must stay byte-identical"
-    )
-
-
-# ------------------------------------------------------------------
 # Realistic mode: RPS coupling tracks apigateway
 # ------------------------------------------------------------------
 def test_realistic_llm_token_throughput_tracks_apigateway(
@@ -365,41 +326,47 @@ def test_realistic_llm_token_throughput_tracks_apigateway(
     )
 
 
-def test_independent_mode_llm_token_throughput_uncoupled(
-    one_day_independent_run,
+def test_natural_baseline_llm_token_throughput_uncoupled(
+    natural_one_day_run,
 ):
-    """Sanity check: in independent mode ``input_tokens_per_sec`` is
-    driven by its own ``_llm_business_hours`` envelope and Gaussian
-    jitter, so the Pearson correlation against apigateway RPS is
-    comparatively low (well below the realistic threshold). Mirrors
-    the contrast test in test_topology_loadbalancer_gateway.py."""
+    """Sanity check: on the direct-natural baseline (no topology; the
+    independent alias was removed at the phase-9 flag day)
+    ``input_tokens_per_sec`` is driven by its own
+    ``_llm_business_hours`` envelope and Gaussian jitter, so the
+    Pearson correlation against apigateway RPS is comparatively low
+    (well below the realistic threshold). Mirrors the contrast test in
+    test_topology_loadbalancer_gateway.py. The shared
+    ``_exclude_anomaly_rows`` filter is kept for symmetry with the
+    realistic-side test even though the baseline fixture fires no
+    anomalies."""
     common, (api_rps, llm_tokens) = _aligned_columns(
-        one_day_independent_run.out_dir,
+        natural_one_day_run.out_dir,
         ("apigateway", "requests_per_sec"),
         ("llm_analytics", "input_tokens_per_sec"),
     )
     api_x, llm_x = _exclude_anomaly_rows(common, api_rps, llm_tokens)
     corr = float(np.corrcoef(api_x, llm_x)[0, 1])
     # apigateway requests_per_sec has no daily multiplier (constant
-    # base + jitter), so its independent-mode correlation with any
+    # base + jitter), so its natural-baseline correlation with any
     # business-hours-shaped LLM column is approximately zero. Use a
     # generous ceiling well below the realistic threshold.
     assert corr < 0.5, (
-        f"independent-mode Pearson(apigateway.requests_per_sec, "
+        f"natural-baseline Pearson(apigateway.requests_per_sec, "
         f"llm_analytics.input_tokens_per_sec)={corr:.4f} is unexpectedly "
         f"high; the realistic-mode correlation must be the discriminating "
-        f"signal between the two modes"
+        f"signal against the uncoupled baseline"
     )
 
 
 # ------------------------------------------------------------------
-# Realistic mode: saturation lifts latency / error vs independent
+# Realistic mode: saturation lifts latency / error vs natural baseline
 # ------------------------------------------------------------------
-def test_realistic_llm_latency_mean_elevated_vs_independent(
-    one_day_run_a, one_day_independent_run,
+def test_realistic_llm_latency_mean_elevated_vs_natural_baseline(
+    one_day_run_a, natural_one_day_run,
 ):
     """Saturation feedback must lift ``avg_llm_latency_ms`` above the
-    independent-mode mean. ``p95_llm_latency_ms`` is a supplemental
+    direct-natural baseline mean (no topology; the independent alias
+    was removed at the phase-9 flag day). ``p95_llm_latency_ms`` is a supplemental
     metric (zone 2 of llm_analytics' catalog) so it isn't emitted at
     the default ``--metrics-per-component``; covered separately by
     ``test_realistic_llm_supplemental_latency_lifted``. The expected
@@ -414,20 +381,20 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
     comfortably above the 5 ms noise floor used as the test threshold.
     """
     metric = "avg_llm_latency_ms"
-    indep_vals, indep_ts = _column_values(
-        one_day_independent_run.out_dir, "llm_analytics", metric
+    natural_vals, natural_ts = _column_values(
+        natural_one_day_run.out_dir, "llm_analytics", metric
     )
     real_vals, real_ts = _column_values(
         one_day_run_a.out_dir, "llm_analytics", metric
     )
     # Align on the common timestamps so anomaly exclusion is consistent.
-    common = sorted(set(indep_ts) & set(real_ts))
-    indep_lookup = dict(zip(indep_ts, indep_vals))
+    common = sorted(set(natural_ts) & set(real_ts))
+    natural_lookup = dict(zip(natural_ts, natural_vals))
     real_lookup = dict(zip(real_ts, real_vals))
-    indep_arr = np.array([indep_lookup[t] for t in common], dtype=np.float64)
+    natural_arr = np.array([natural_lookup[t] for t in common], dtype=np.float64)
     real_arr = np.array([real_lookup[t] for t in common], dtype=np.float64)
-    (indep_x, real_x) = _exclude_anomaly_rows(common, indep_arr, real_arr)
-    indep_mean = float(np.mean(indep_x))
+    (natural_x, real_x) = _exclude_anomaly_rows(common, natural_arr, real_arr)
+    natural_mean = float(np.mean(natural_x))
     real_mean = float(np.mean(real_x))
     # apigateway sits at utilization ≈ 1.05 at its natural baseline
     # (base 800 RPS / midpoint 760 RPS) with ±6% noise and no daily
@@ -437,42 +404,43 @@ def test_realistic_llm_latency_mean_elevated_vs_independent(
     # 850 * 0.55 * 0.5–0.6 ≈ 235–280 ms. We accept anything above 5 ms
     # to leave headroom for noise jitter and the same-day anomaly rows
     # that aren't fully scrubbed by the exclusion windows.
-    assert real_mean - indep_mean > 5.0, (
+    assert real_mean - natural_mean > 5.0, (
         f"realistic-mode llm_analytics.{metric} mean={real_mean:.2f} "
-        f"not elevated above independent-mode mean={indep_mean:.2f}; "
+        f"not elevated above natural-baseline mean={natural_mean:.2f}; "
         f"saturation feedback looks inert"
     )
 
 
-def test_realistic_llm_api_error_rate_mean_elevated_vs_independent(
-    one_day_run_a, one_day_independent_run,
+def test_realistic_llm_api_error_rate_mean_elevated_vs_natural_baseline(
+    one_day_run_a, natural_one_day_run,
 ):
     """Saturation adds a positive error offset proportional to the
     logistic, so the llm_api_error_rate mean must lift above the
-    independent baseline."""
-    indep_vals, indep_ts = _column_values(
-        one_day_independent_run.out_dir, "llm_analytics", "llm_api_error_rate"
+    direct-natural baseline (no topology; the independent alias was
+    removed at the phase-9 flag day)."""
+    natural_vals, natural_ts = _column_values(
+        natural_one_day_run.out_dir, "llm_analytics", "llm_api_error_rate"
     )
     real_vals, real_ts = _column_values(
         one_day_run_a.out_dir, "llm_analytics", "llm_api_error_rate"
     )
-    common = sorted(set(indep_ts) & set(real_ts))
-    indep_lookup = dict(zip(indep_ts, indep_vals))
+    common = sorted(set(natural_ts) & set(real_ts))
+    natural_lookup = dict(zip(natural_ts, natural_vals))
     real_lookup = dict(zip(real_ts, real_vals))
-    indep_arr = np.array([indep_lookup[t] for t in common], dtype=np.float64)
+    natural_arr = np.array([natural_lookup[t] for t in common], dtype=np.float64)
     real_arr = np.array([real_lookup[t] for t in common], dtype=np.float64)
-    (indep_x, real_x) = _exclude_anomaly_rows(common, indep_arr, real_arr)
-    indep_mean = float(np.mean(indep_x))
+    (natural_x, real_x) = _exclude_anomaly_rows(common, natural_arr, real_arr)
+    natural_mean = float(np.mean(natural_x))
     real_mean = float(np.mean(real_x))
     # error_gain = 0.015; with logistic mean around 0.4–0.5 on the
     # default day (see avg_llm_latency_ms test for the derivation) the
     # absolute lift is ~0.006–0.0075. Allow 1/10th of the error_gain
     # (well below the analytical expectation) as the lift floor.
     floor = 0.0015
-    assert real_mean - indep_mean > floor, (
+    assert real_mean - natural_mean > floor, (
         f"realistic-mode llm_analytics.llm_api_error_rate "
-        f"mean={real_mean:.5f} not elevated above independent-mode "
-        f"mean={indep_mean:.5f}; saturation error offset looks inert"
+        f"mean={real_mean:.5f} not elevated above natural-baseline "
+        f"mean={natural_mean:.5f}; saturation error offset looks inert"
     )
 
 
@@ -500,16 +468,14 @@ def test_realistic_llm_latency_never_negative(one_day_run_a):
 # ------------------------------------------------------------------
 # The supplemental-zone tests consume the session-scoped
 # ``one_day_full_metrics_run`` (``--metrics-per-component 10``;
-# realistic by default) and ``one_day_full_metrics_independent_run``
-# from ``conftest.py`` — same args as the module-scoped duplicates
-# this file used to carry, minus the redundant explicit
-# ``--topology-mode realistic`` (the argparse default; byte-identity
-# of flag-vs-default is pinned above on the default-metrics run).
+# realistic coupling, the only mode since the phase-9 flag day) and
+# ``natural_full_metrics_one_day_run`` (the direct-natural baseline at
+# the full catalog width) from ``conftest.py``.
 
 
 def test_realistic_llm_supplemental_p95_latency_lifted(
     one_day_full_metrics_run,
-    one_day_full_metrics_independent_run,
+    natural_full_metrics_one_day_run,
 ):
     """``p95_llm_latency_ms`` sits in llm_analytics' supplemental zone
     (zero-based index 8, beyond the default
@@ -518,17 +484,18 @@ def test_realistic_llm_supplemental_p95_latency_lifted(
     ``--metrics-per-component 9`` (``specs[:9]`` includes index 8),
     and the fixture above uses ``10`` to also pull in
     ``prompt_cache_hit_ratio`` for the full supplemental sweep.
-    Saturation feedback must lift its mean above the independent-mode
-    baseline."""
-    indep_vals, _ = _column_values(
-        one_day_full_metrics_independent_run.out_dir,
+    Saturation feedback must lift its mean above the direct-natural
+    baseline (no topology; the independent alias was removed at the
+    phase-9 flag day)."""
+    natural_vals, _ = _column_values(
+        natural_full_metrics_one_day_run.out_dir,
         "llm_analytics", "p95_llm_latency_ms",
     )
     real_vals, _ = _column_values(
         one_day_full_metrics_run.out_dir,
         "llm_analytics", "p95_llm_latency_ms",
     )
-    lift = float(np.mean(real_vals) - np.mean(indep_vals))
+    lift = float(np.mean(real_vals) - np.mean(natural_vals))
     assert lift > 5.0, (
         f"realistic-mode llm_analytics.p95_llm_latency_ms mean lift "
         f"({lift:.2f} ms) below 5 ms floor; saturation looks inert on "

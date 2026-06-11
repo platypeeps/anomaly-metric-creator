@@ -15,19 +15,14 @@ the front-half graph:
 
 These tests cover:
 
-* Default (``--topology-mode realistic`` since phase 6
-  flag day) byte-identical with an explicit ``--topology-mode
-  realistic`` run, so the no-flag default and the explicit alias stay
-  in lockstep on every coupled downstream CSV. The deprecated
-  ``--topology-mode independent`` alias's current no-topology baseline
-  is pinned in
-  ``tests/test_topology_loadbalancer_gateway.py`` against
-  ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``, not here.
 * Realistic-mode correlations between downstream load metrics and
   apigateway ``requests_per_sec`` (Pearson >= 0.9), and the cache
   miss-rate edge (Pearson >= 0.7 against ``miss_rate * gateway_rps``).
+  The no-topology contrast reads the direct-natural baseline fixture
+  (``natural_one_day_run``; the ``--topology-mode independent`` alias
+  was removed at the phase-9 flag day).
 * Topology generation order: cacheservice always runs before database
-  under ``--topology-mode realistic`` so the miss-ratio columns are
+  under realistic coupling so the miss-ratio columns are
   available when the database baseline is composed.
 * Synthetic cycle rejection by ``_validate_topology()`` (TOPOLOGY itself
   stays acyclic in v1).
@@ -44,7 +39,6 @@ from conftest import (
     read_manifest,
     registry_overlay,
     run_capture,
-    sha256_path,
 )
 
 
@@ -101,39 +95,6 @@ def _aligned_columns(out_dir, *pairs):
 
 
 # ------------------------------------------------------------------
-# Default realistic-mode byte equivalence: explicit --topology-mode
-# realistic must match the no-flag default byte-for-byte after the
-# phase 6 flag day. Pre-flag-day this was checked the other way
-# round (independent matched default); under realistic-mode default the
-# parity check moves to the realistic alias and the legacy-baseline
-# check lives in ``test_topology_loadbalancer_gateway``.
-# ------------------------------------------------------------------
-@pytest.mark.full_resolution
-def test_topology_fanout_realistic_matches_default_byte_for_byte(
-    amc, one_day_run_a, tmp_path
-):
-    """Explicit ``--topology-mode realistic`` matches the session
-    ``one_day_run_a`` byte-for-byte across every coupled downstream
-    CSV. Locks phase 6 to the invariant that realistic mode
-    is the default path and explicitly passing the flag is a no-op."""
-    explicit = run_capture(
-        amc, tmp_path / "explicit_realistic", days=1,
-        interval_seconds=1.0,  # match one_day_run_a's 1s cadence for byte identity
-        extra_args=["--topology-mode", "realistic"],
-    )
-    for filename in (
-        "loadbalancer.csv", "apigateway.csv", "authservice.csv",
-        "cacheservice.csv", "database.csv", "anomalies.csv",
-    ):
-        default_hash = sha256_path(one_day_run_a.out_dir / filename)
-        explicit_hash = sha256_path(explicit.out_dir / filename)
-        assert default_hash == explicit_hash, (
-            f"{filename} drifted between default run and "
-            f"--topology-mode realistic run"
-        )
-
-
-# ------------------------------------------------------------------
 # Generation order: cacheservice before database in realistic mode.
 # ------------------------------------------------------------------
 def test_topology_generation_order_cacheservice_before_database(amc):
@@ -166,12 +127,10 @@ def test_topology_generation_order_apigateway_before_fanout(amc):
 # Realistic mode: downstream load metrics track apigateway RPS.
 #
 # These tests consume the session-scoped ``one_day_run_a`` (default
-# no-flag run): realistic mode is the argparse default since the
-# phase 6 flag day, so an explicit ``--topology-mode realistic``
-# module fixture would regenerate a byte-identical 86,400-row dataset
-# (the PR #63 duplicate-fixture antipattern). The byte-identity of the
-# explicit flag vs. the default is pinned separately by
-# ``test_topology_fanout_realistic_matches_default_byte_for_byte`` above.
+# run; realistic coupling is the only mode since the phase-9 flag day
+# removed the ``--topology-mode`` flag). A module fixture here would
+# regenerate a byte-identical 86,400-row dataset (the PR #63
+# duplicate-fixture antipattern).
 # ------------------------------------------------------------------
 
 
@@ -259,26 +218,23 @@ def test_realistic_database_tracks_cache_miss_load(
 
 
 # ------------------------------------------------------------------
-# Independent-mode contrast: low correlation for non-root downstreams.
+# Direct-natural contrast: low correlation for non-root downstreams.
 # ------------------------------------------------------------------
-def test_independent_mode_authservice_correlation_is_low(amc, tmp_path):
-    """Sanity check: under ``independent`` mode the authservice
-    login_attempts column is a Gaussian around its own base 250 and
-    should not be tightly correlated with apigateway RPS."""
-    result = run_capture(
-        amc, tmp_path / "indep_auth", days=1,
-        extra_args=["--topology-mode", "independent"],
-    )
+def test_natural_baseline_authservice_correlation_is_low(natural_one_day_run):
+    """Sanity check: on the direct-natural baseline (no topology; the
+    independent alias was removed at the phase-9 flag day) the
+    authservice login_attempts column is a Gaussian around its own base
+    250 and should not be tightly correlated with apigateway RPS."""
     common, (api, auth) = _aligned_columns(
-        result.out_dir,
+        natural_one_day_run.out_dir,
         ("apigateway", "requests_per_sec"),
         ("authservice", "login_attempts"),
     )
     api_x, auth_x = _exclude_anomaly_rows(common, api, auth)
     corr = float(np.corrcoef(api_x, auth_x)[0, 1])
     assert corr < 0.5, (
-        f"independent-mode correlation {corr:.4f} unexpectedly high; "
-        f"the two columns should be independent Gaussians"
+        f"direct-natural baseline correlation {corr:.4f} unexpectedly high; "
+        f"the two columns should be uncoupled Gaussians"
     )
 
 
@@ -291,10 +247,7 @@ def test_realistic_db_stall_qps_override_survives_coupling(amc, tmp_path):
     top of the coupled baseline."""
     result = run_capture(
         amc, tmp_path / "phase3_db_anoms", days=1,
-        extra_args=[
-            "--topology-mode", "realistic",
-            "--scenarios", "db_stall",
-        ],
+        extra_args=["--scenarios", "db_stall"],
     )
     manifest = read_manifest(result.out_dir)
     qps_rows = [
@@ -305,7 +258,7 @@ def test_realistic_db_stall_qps_override_survives_coupling(amc, tmp_path):
     ]
     assert qps_rows, (
         "db_stall nightly batch entry missing from anomalies.csv "
-        "under --topology-mode realistic"
+        "under realistic topology coupling"
     )
 
     db_vals, db_ts = _column_values(result.out_dir, "database", "queries_per_sec")

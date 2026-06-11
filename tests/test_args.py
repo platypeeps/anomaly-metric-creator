@@ -788,3 +788,15 @@ def test_seed_out_of_numpy_range_rejected(amc, seed):
 def test_seed_boundary_values_accepted(amc, seed):
     args = amc.parse_args(["--seed", seed, "--output-dir", "test_out"])
     assert args.seed == int(seed)
+
+
+@pytest.mark.parametrize("value", ["realistic", "independent"])
+def test_topology_mode_flag_removed(amc, value):
+    """The phase-9 flag day removed ``--topology-mode`` entirely:
+    realistic coupling is the only generation mode, and the deprecated
+    ``independent`` no-topology alias no longer parses. Both former
+    values must now fail as unrecognized arguments."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--topology-mode", value, "--output-dir", "test_out",
+        ])

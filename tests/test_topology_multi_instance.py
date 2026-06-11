@@ -1,6 +1,7 @@
 """Phase 8: per-instance topology integration.
 
-Verifies that ``--topology-mode realistic`` under
+Verifies that realistic topology coupling (the only generation mode
+since the phase-9 flag day removed ``--topology-mode``) under
 ``--instances-per-component N > 1`` (or a non-default ``--instance-config``)
 runs the topology two-pass generation against each downstream instance's
 *matching* upstream instance set, so a slow upstream pod produces

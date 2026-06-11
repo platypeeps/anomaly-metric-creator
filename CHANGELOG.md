@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Removed
+
+- Phase-9 flag day, part 1: the deprecated `--topology-mode independent`
+  no-topology contrast alias is removed — the flag no longer parses and
+  realistic topology is the only generation mode. `generate_component`'s
+  `apply_dtype_int_cast` kwarg survives for programmatic callers, and the
+  validator still honors `schema.json` documents whose metadata records
+  `"independent"` (the writer now only ever emits `"realistic"`, keeping
+  schema bytes — and the locked schema hashes — unchanged). The test
+  suite's pure-natural statistical baseline (the 8-sigma band checks and
+  the realistic-vs-natural contrast tests) now comes from a direct
+  `generate_component` fixture in `tests/conftest.py` instead of an
+  independent-mode run; the `LEGACY_INDEPENDENT_ONE_DAY_HASHES` byte pins
+  retire with the alias. Two latent bugs in the shared `natural_band`
+  test helper surfaced during the migration and are fixed: the coarse
+  sampling grid stopped short of the final second (under-sampling a
+  monotonically trending additive like `database.disk_used_pct`), and
+  the band ignored the half-ULP of the 3-decimal CSV rounding.
+
 ### Fixed
 
 - Phase 9 scenario re-tune: `llm_weekend_batch` now saturates

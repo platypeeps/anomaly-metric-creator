@@ -33,19 +33,17 @@ Recent significant additions to the generator:
   occupancy, utilization, throughput, and tail latency cross bad thresholds
   together.
 - **Flag-day default flip + integer-cast bundle** (phase 6) —
-  `--topology-mode realistic` is now the default; `--topology-mode independent`
-  is retained as a deprecation alias that emits a stderr `DeprecationWarning`
-  and is scheduled for removal after phase 9. Under the new default,
-  every `MetricSpec` column declared `dtype="int"` is cast via `np.rint` in
-  `generate_component()` before derivations run, clearing all
-  fractional-integer validator violations (the `validate` subcommand) on the
-  1-day compatibility output. The integer cast is intentionally tied to realistic mode only:
-  the `--topology-mode independent` alias skips it (via
-  `apply_dtype_int_cast=False`) so it remains a no-topology contrast path.
-  All locked SHA-256 hashes in `tests/` were re-baselined under realistic
-  mode in this PR; the current independent-mode no-topology baseline is pinned
-  by `LEGACY_INDEPENDENT_ONE_DAY_HASHES`.
-- **Topology graph v1** (`--topology-mode realistic`, the default) —
+  `--topology-mode realistic` became the default, and at the phase-9
+  flag day the `--topology-mode independent` contrast alias was removed
+  entirely (the flag no longer parses; realistic is the only mode).
+  Every `MetricSpec` column declared `dtype="int"` is cast via `np.rint`
+  in `generate_component()` before derivations run, clearing all
+  fractional-integer validator violations (the `validate` subcommand) on
+  the 1-day compatibility output. All locked SHA-256 hashes in `tests/`
+  target realistic output; the pure-natural statistical baseline used by
+  the test suite is generated directly via `generate_component` (see
+  `tests/conftest.py`).
+- **Topology graph v1** (realistic topology coupling, always on) —
   declares a directed service-call graph (`TOPOLOGY`)
   and wires it into generation. Phase 2 couples downstream RPS baselines from
   upstream load columns; phase 3 extends coupling to all front-half fan-out
@@ -252,7 +250,7 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 `--help-all` lists everything `-h` hides: the advanced knobs and every
 deprecated alias, each annotated `[deprecated -> use X]`. The advanced knobs
 (semantics unchanged) are `--anomaly-count`, `--allow-huge-output`,
-`--inject-dst-artifact-day`, `--topology-mode`, and the OTEL transport tuning
+`--inject-dst-artifact-day`, and the OTEL transport tuning
 flags `--otel-gauge-batch-seconds`, `--otel-gauge-metric-prefix`,
 `--otel-stream-timeout-seconds`, `--otel-stream-max-events`,
 `--otel-stream-auth-scheme`, `--otel-activity-log`, and `--otel-verbose`.
@@ -438,8 +436,10 @@ Top-level shape (`schema_version=2`, bumped in phase 7):
   `rows_per_component`, `drop_rate`, `signal_level`,
   `metrics_per_component`, `anomaly_count`, `scenarios` (sorted active
   set), `exclude_scenarios`, `components`, `inject_dst_artifact_day`,
-  `emit_selection` (sorted), `combine`, `topology_mode` (`realistic`
-  or `independent`).
+  `emit_selection` (sorted), `combine`, `topology_mode` (always
+  `realistic` since the phase-9 flag day; the field is retained so the
+  validator keeps honoring documents from the historic `independent`
+  mode).
 - `files` — sorted list of artifact filenames the run wrote, derived
   from the same registry that drives `_pre_clean_output_dir` (per-
   component CSVs, `anomalies.csv`, `metric_report.log`,
@@ -660,10 +660,10 @@ reporting artifact for that run.
 ### Topology graph (v1)
 
 The `TOPOLOGY` constant declares the directed service-call graph alongside
-`COMPONENTS`. It is consulted by `--topology-mode realistic` (the default
-since phase 6 flag day; `independent` is now a deprecation alias —
-see the [CLI flags](#cli-flags) table) to thread upstream load through
-downstream baselines.
+`COMPONENTS`. It threads upstream load through downstream baselines on
+every run (realistic topology has been the default since the phase 6
+flag day and the only mode since phase 9 removed the `independent`
+contrast alias).
 
 - `loadbalancer → apigateway` — constant weight `1.0`. Couples
   `apigateway.requests_per_sec` to `loadbalancer.requests_per_sec`.

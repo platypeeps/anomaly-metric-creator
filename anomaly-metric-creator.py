@@ -194,9 +194,11 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 _VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
 
 # Vocabulary for ``MetricSpec.dtype``. ``int`` here means "values are
-# expected to be whole numbers"; under ``--topology-mode realistic``
-# (the default since the phase 6 flag day) ``generate_component`` rounds
-# int-typed columns via ``np.rint`` before derivations run, so the CSV
+# expected to be whole numbers"; ``generate_component`` rounds
+# int-typed columns via ``np.rint`` before derivations run (the
+# default since the phase 6 flag day; the phase-9 flag day removed the
+# last CLI opt-out, and programmatic callers can still opt out via
+# ``apply_dtype_int_cast=False``), so the CSV
 # cell is a whole-integer string. The validator surfaces any remaining
 # fractional values as schema violations.
 _VALID_DTYPES = frozenset({"float", "int"})
@@ -341,7 +343,7 @@ class Edge:
 
     ``correlation_threshold`` is the minimum Pearson correlation the phase-7 ``_validate_topology_coupling`` check requires between this
     edge's source canonical load metric and its target canonical load
-    metric under ``--topology-mode realistic``. ``None`` (the default)
+    metric under realistic topology coupling. ``None`` (the default)
     means "use the registry-level default
     ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD``". The field is read by the
     validator only and does not affect generation. Callable-weight edges
@@ -1162,9 +1164,9 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         dimension columns are emitted when ``len > 1`` or any instance
         has non-None dimension fields (the Phase 2 long-form CSV layout).
     apply_dtype_int_cast: if True (default), round columns with ``dtype="int"``
-        to whole numbers via ``np.rint`` before derivations. Pass False
-        for the deprecated independent mode so it keeps the no-topology
-        fractional-int contrast path.
+        to whole numbers via ``np.rint`` before derivations. ``main()``
+        always passes True; programmatic callers may pass False to keep
+        the pre-cast fractional contrast.
 
     Vectorized: natural-value math is one numpy op per metric; anomaly overrides
     are masked writes on the column arrays; packet loss is a single boolean mask
@@ -1369,7 +1371,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
 
     # phase 8: per-instance topology dispatch. When the caller
     # passes per-instance coupling / saturation arrays (under
-    # ``--topology-mode realistic`` with N>1 or a non-default
+    # realistic topology coupling with N>1 or a non-default
     # instance config), each instance K consumes its own arrays via
     # ``_natural_column``'s ``baseline_override`` / ``latency_factor``
     # / ``error_offset`` kwargs. Under symmetric upstream (no
@@ -1632,10 +1634,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # derived cell as drifting from the recomputed value. ``np.rint``
     # rounds half-to-even into floats, which is consistent with
     # ``_format_fixed3`` printing "1235.000" for an underlying float of
-    # ``1235.0``. ``apply_dtype_int_cast=False`` (passed by main() in the
-    # deprecated ``--topology-mode independent`` alias) skips the cast so
-    # the alias preserves the no-topology fractional-int contrast behavior;
-    # the validator still flags those columns as fractional in that mode.
+    # ``1235.0``. ``apply_dtype_int_cast=False`` skips the cast for
+    # programmatic callers that need the pre-cast fractional contrast;
+    # main() always passes ``True`` (the phase-9 flag day removed the
+    # ``--topology-mode independent`` alias that used to skip it).
     if apply_dtype_int_cast:
         for col_idx, spec in enumerate(specs):
             if spec.dtype == "int":
@@ -1676,9 +1678,9 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     # post-cast whole-integer values, which matches what the CSV emits
     # and what the validator's derivation recompute reads — the
     # downstream coupling signal therefore stays self-consistent with
-    # the on-disk row. ``None`` (the default for ``--topology-mode
-    # independent``, set by ``main()``) short-circuits so the deprecated
-    # alias sees zero topology work and remains the no-topology contrast path.
+    # the on-disk row. ``None`` short-circuits so direct callers that
+    # skip topology capture (e.g. the natural-baseline test fixtures)
+    # see zero topology work.
     if topology_capture is not None:
         entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
         if entry is not None:
@@ -2929,9 +2931,8 @@ _validate_metric_spec_schema_metadata()
 # rewrites downstream load-metric baselines from upstream RPS/token
 # columns) and ``_compose_topology_saturation_specs`` (phase 4/5:
 # lifts downstream latency/error specs via the logistic saturation
-# curve). Under the deprecated ``--topology-mode independent`` alias
-# the graph is not read, so output remains on the no-topology contrast
-# path; the alias is scheduled for removal after phase 9.
+# curve). The graph is always read: the phase-9 flag day removed the
+# ``--topology-mode independent`` no-topology contrast alias.
 #
 # v1 graph (per design):
 #   loadbalancer -> apigateway                   (constant weight 1.0)
@@ -3406,8 +3407,8 @@ _validate_topology()
 
 
 # Phase 2/3: standard deviation of the additive noise
-# injected on top of the coupled upstream signal in
-# ``--topology-mode realistic``. Kept small (5.0) relative to the typical
+# injected on top of the coupled upstream signal under realistic
+# topology coupling. Kept small (5.0) relative to the typical
 # coupling signal std (~15–1600 depending on component) so the Pearson
 # correlation between upstream and downstream stays well above every
 # gate that reads it — the 0.95 phase-2 acceptance threshold in
@@ -7538,7 +7539,6 @@ _DEPRECATED_FLAGS: dict[str, str] = {
 _ADVANCED_DESTS: frozenset[str] = frozenset({
     # research / power knobs
     "anomaly_count", "allow_huge_output", "inject_dst_artifact_day",
-    "topology_mode",
     # OTEL transport tuning (set-once-per-environment; env vars exist
     # for protocol and auth scheme already)
     "otel_gauge_batch_seconds", "otel_gauge_metric_prefix",
@@ -8194,19 +8194,6 @@ def parse_args(argv=None):
              "INSTANCES registry (today: a single anonymous Instance() per "
              "component). Mutually exclusive with --instances-per-component.",
     )
-    g_adv.add_argument(
-        "--topology-mode",
-        choices=["independent", "realistic"],
-        default="realistic",
-        help="Phase 6 flag-day: 'realistic' is now the default. "
-             "Routes downstream baseline generation through the TOPOLOGY "
-             "graph (upstream RPS * edge.weight + small noise; phase 4 "
-             "saturation feedback layers logistic latency/error responses "
-             "on top). 'independent' is a deprecated no-topology contrast "
-             "alias; it "
-             "emits a stderr DeprecationWarning on use and is scheduled "
-             "for removal after phase 9.",
-    )
     # Brief-help mode hides the advanced knobs and deprecated aliases;
     # --help-all shows everything, annotating each deprecated alias with
     # its canonical replacement. Walks the parser's actions once after
@@ -8235,21 +8222,6 @@ def parse_args(argv=None):
     args.otel_signal_selection = None
 
     _reconcile_cli_surface(p, args, raw_argv)
-
-    # Phase 6: --topology-mode independent is a deprecation alias.
-    # The default flipped to "realistic" in this PR; "independent" stays
-    # callable only as a no-topology contrast path. The alias is scheduled
-    # for removal after phase 9. Emit one stderr DeprecationWarning per
-    # invocation so users see it; tests can match the prefix.
-    if args.topology_mode == "independent":
-        print(
-            "DeprecationWarning: --topology-mode independent is deprecated. "
-            "The default flipped to 'realistic'; 'independent' is "
-            "retained only as a no-topology contrast path and will be "
-            "removed after phase 9. Drop the "
-            "flag or pass --topology-mode realistic.",
-            file=sys.stderr,
-        )
 
     if not math.isfinite(args.duration_days):
         p.error("--duration-days must be a finite number")
@@ -10479,7 +10451,7 @@ def write_schema_json(
       ``(-1, 1]`` (per-edge override) or ``null`` (fall back to
       ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD``). The validator reads
       this to run ``_validate_topology_coupling`` under
-      ``--topology-mode realistic``.
+      ``metadata.topology_mode == "realistic"``.
 
     ``instances_by_component`` is the live per-run instance map
     (``RunContext.instances``) restricted to the schema's components.
@@ -11358,9 +11330,9 @@ def _validate_topology_coupling(
 
     Skipped silently — returning an empty list — when:
 
-    - ``metadata.topology_mode != "realistic"`` (independent mode produces
-      decoupled baselines by construction, so there is no coupling to
-      check).
+    - ``metadata.topology_mode != "realistic"`` (documents produced under
+      the historic ``independent`` mode carry decoupled baselines by
+      construction, so there is no coupling to check).
     - The schema document has no ``topology`` section (older schema docs
       written before phase 7; the loader rejects unknown
       ``schema_version`` values outright, but defensive code paths can
@@ -12475,37 +12447,28 @@ def main(argv=None):
     ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
     n_rows = int(total_seconds // args.interval_seconds)
 
-    # Topology phase 2 / phase 6 flag day: under
-    # the default ``--topology-mode realistic`` we walk
+    # Topology phase 2 / phase 6 flag day: we walk
     # ``args.components`` in topological order (roots first) and stash
     # each generated component's load-metric columns so downstream
     # components can reshape their baseline via
     # ``_compose_topology_coupled_specs`` and layer saturation feedback
-    # via ``_compose_topology_saturation_specs``. Under the deprecated
-    # ``--topology-mode independent`` alias the order falls back to
-    # ``effective_specs`` iteration order (which is ``COMPONENTS``
-    # insertion order) and no capture/coupling runs — byte-identical to
-    # the pre-existing generation path and pinned by
-    # ``LEGACY_INDEPENDENT_ONE_DAY_HASHES``.
-    if args.topology_mode == "realistic":
-        active = set(args.components)
-        generation_order = [
-            name for name in _topology_generation_order(active)
-            if name in effective_specs
-        ]
-        upstream_arrays: dict[str, dict[str, np.ndarray]] | None = {}
-        # phase 8: parallel per-instance capture. Populated by
-        # ``generate_component`` whenever ``--instances-per-component
-        # N>1`` (or a non-default ``--instance-config``) makes the
-        # component dim-aware. Consumed by
-        # ``_compute_topology_arrays_per_instance`` so each downstream
-        # instance gets a "matching instance set" view of its upstream
-        # (see CLAUDE.md § Per-instance topology).
-        upstream_arrays_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = {}
-    else:
-        generation_order = [name for name in effective_specs if name in args.components]
-        upstream_arrays = None
-        upstream_arrays_by_instance = None
+    # via ``_compose_topology_saturation_specs``. (The deprecated
+    # ``--topology-mode independent`` no-topology contrast alias was
+    # removed at the phase-9 flag day; realistic is the only mode.)
+    active = set(args.components)
+    generation_order = [
+        name for name in _topology_generation_order(active)
+        if name in effective_specs
+    ]
+    upstream_arrays: dict[str, dict[str, np.ndarray]] = {}
+    # phase 8: parallel per-instance capture. Populated by
+    # ``generate_component`` whenever ``--instances-per-component
+    # N>1`` (or a non-default ``--instance-config``) makes the
+    # component dim-aware. Consumed by
+    # ``_compute_topology_arrays_per_instance`` so each downstream
+    # instance gets a "matching instance set" view of its upstream
+    # (see CLAUDE.md § Per-instance topology).
+    upstream_arrays_by_instance: dict[str, list[dict[str, np.ndarray]]] = {}
 
     for name in generation_order:
         specs = effective_specs[name]
@@ -12515,40 +12478,41 @@ def main(argv=None):
         n_inst_local = len(instances_for_component)
         is_anonymous_local = _is_anonymous_instance_list(instances_for_component)
 
-        if args.topology_mode == "realistic":
-            if n_inst_local > 1 or not is_anonymous_local:
-                # phase 8 — per-instance dispatch. Skip the
-                # spec-modifying composers; compute per-instance
-                # arrays directly. ``_compute_topology_arrays_per_instance``
-                # shares the ``_TOPOLOGY_COUPLE_NOISE_STD`` draw across
-                # instances so symmetric upstream produces byte-identical
-                # output to the shared lambda-baked path used by the
-                # N=1 anonymous branch below. ``generate_component``
-                # re-derives divergence from the returned arrays directly
-                # so the helper does not need to return a hint.
-                (
-                    coupling_per_instance,
-                    saturation_per_instance,
-                ) = _compute_topology_arrays_per_instance(
-                    name, specs, upstream_arrays,
-                    upstream_arrays_by_instance,
-                    instances_for_component, ctx.rng, n_rows,
-                )
-            else:
-                # N=1 anonymous — today's shared lambda-baked path.
-                # Byte-parity contract: the default
-                # ``--instances-per-component 1`` keeps this branch.
-                specs = _compose_topology_coupled_specs(
-                    name, specs, upstream_arrays, ctx.rng, n_rows
-                )
-                # Phase 4: saturation feedback. Layers logistic-shaped
-                # latency multipliers and error offsets on top of the coupled
-                # baseline so downstream latency/error metrics respond to
-                # upstream load. Composes on top of any existing multiplier /
-                # additive (e.g. ``_daily_sine``) so seasonal patterns survive.
-                specs = _compose_topology_saturation_specs(
-                    name, specs, upstream_arrays, n_rows
-                )
+        # Realistic is the only topology mode (phase-9 flag day
+        # removed the independent contrast alias).
+        if n_inst_local > 1 or not is_anonymous_local:
+            # phase 8 — per-instance dispatch. Skip the
+            # spec-modifying composers; compute per-instance
+            # arrays directly. ``_compute_topology_arrays_per_instance``
+            # shares the ``_TOPOLOGY_COUPLE_NOISE_STD`` draw across
+            # instances so symmetric upstream produces byte-identical
+            # output to the shared lambda-baked path used by the
+            # N=1 anonymous branch below. ``generate_component``
+            # re-derives divergence from the returned arrays directly
+            # so the helper does not need to return a hint.
+            (
+                coupling_per_instance,
+                saturation_per_instance,
+            ) = _compute_topology_arrays_per_instance(
+                name, specs, upstream_arrays,
+                upstream_arrays_by_instance,
+                instances_for_component, ctx.rng, n_rows,
+            )
+        else:
+            # N=1 anonymous — today's shared lambda-baked path.
+            # Byte-parity contract: the default
+            # ``--instances-per-component 1`` keeps this branch.
+            specs = _compose_topology_coupled_specs(
+                name, specs, upstream_arrays, ctx.rng, n_rows
+            )
+            # Phase 4: saturation feedback. Layers logistic-shaped
+            # latency multipliers and error offsets on top of the coupled
+            # baseline so downstream latency/error metrics respond to
+            # upstream load. Composes on top of any existing multiplier /
+            # additive (e.g. ``_daily_sine``) so seasonal patterns survive.
+            specs = _compose_topology_saturation_specs(
+                name, specs, upstream_arrays, n_rows
+            )
         generate_component(name, specs, component_anomalies[name],
                            base_dir=args.output_dir,
                            total_seconds=total_seconds,
@@ -12568,9 +12532,7 @@ def main(argv=None):
                            ),
                            coupling_arrays_per_instance=coupling_per_instance,
                            saturation_arrays_per_instance=saturation_per_instance,
-                           apply_dtype_int_cast=(
-                               args.topology_mode == "realistic"
-                           ))
+                           apply_dtype_int_cast=True)
 
     filtered_anomalies = [a for a in ctx.anomalies if a["component"] in args.components]
 
@@ -12674,12 +12636,14 @@ def main(argv=None):
             "inject_dst_artifact_day": args.inject_dst_artifact_day,
             "emit_selection": sorted(args.emit_selection),
             "combine": args.combine,
-            # phase 7: ``--topology-mode`` selects whether the
-            # phase-3 coupling and phase-4 saturation layers fire; the
+            # phase 7 (constant since the phase-9 flag day removed the
+            # independent alias): the field is retained so the validator
+            # can keep honoring documents produced under either historic
+            # mode; this writer only ever emits "realistic" now. The
             # validator's Pearson coupling check only runs under
-            # ``realistic`` because ``independent`` mode produces
-            # decoupled baselines by construction.
-            "topology_mode": args.topology_mode,
+            # ``realistic`` because the historic ``independent`` mode
+            # produced decoupled baselines by construction.
+            "topology_mode": "realistic",
         }
         write_schema_json(
             args.output_dir / "schema.json",

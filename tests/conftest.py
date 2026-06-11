@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -196,43 +197,72 @@ def one_day_full_metrics_run(amc, tmp_path_factory):
     )
 
 
-@pytest.fixture(scope="session")
-def one_day_independent_run(amc, tmp_path_factory):
-    """1-day run with ``--topology-mode independent`` so ``test_value_range_sanity``
-    can validate the natural-baseline statistical model (the 8σ band derived
-    from each MetricSpec's base/std/multiplier) without being thrown off by
-    realistic-mode topology coupling or saturation feedback. Pinning to the
-    deprecation alias is intentional: the natural-band invariant is a property
-    of the independent baseline model, which is the building block of both
-    modes; realistic-mode behavior is exercised by the topology-specific
-    tests (coupling correlation, saturation lift). Schedule this fixture's
-    retirement together with the alias removal after phase 9.
-    Explicit ``interval_seconds=1.0`` keeps the natural-band check on the
-    historic 86,400-row natural sample."""
-    out = tmp_path_factory.mktemp("one_day_independent")
-    return run_capture(
-        amc, out, days=1,
-        extra_args=["--topology-mode", "independent"],
-        interval_seconds=1.0,
+def _generate_natural_baseline(amc, out, *, metrics_per_component=None):
+    """Per-component natural-baseline CSVs: ``generate_component`` invoked
+    directly with the raw ``COMPONENTS`` specs — no topology coupling, no
+    saturation feedback, no anomalies. Replaces the retired
+    ``--topology-mode independent`` fixtures (phase-9 flag day) as the
+    pure-natural statistical baseline: same MetricSpec model, same
+    MT19937 generator, one shared RNG stream across components in
+    ``COMPONENTS`` insertion order — the retired mode's draw model.
+    Only the absence of anomaly-override draws shifts the absolute
+    draw positions (the drop-mask draw still runs —
+    ``generate_component`` draws it even at ``drop_rate=0.0`` —
+    exactly as a real run with the default drop rate would), which no
+    statistical consumer observes. One deliberate difference from the
+    retired alias: ``dtype="int"`` columns keep the default
+    ``np.rint`` cast (the alias skipped it), matching current on-disk
+    rounding — immaterial to the 8-sigma band and Pearson-contrast
+    consumers (a <=0.5 shift on integer-scale metrics).
+    A header-only ``anomalies.csv`` is written so manifest-reading
+    consumers see an empty manifest instead of a missing file."""
+    out.mkdir(parents=True, exist_ok=True)
+    ts_array, ts_strings = amc._build_timestamp_arrays(86400, 1.0)
+    # ONE shared RNG stream across components in COMPONENTS insertion
+    # order — mirroring the retired independent mode's draw model. A
+    # fresh per-component RandomState(42) would hand every component the
+    # *same* noise sequence, making cross-component columns perfectly
+    # correlated and silently breaking the low-correlation baseline
+    # assertions this fixture exists to serve.
+    ctx = amc.RunContext(rng=np.random.RandomState(42))
+    for name, specs in amc.COMPONENTS.items():
+        count = (metrics_per_component if metrics_per_component is not None
+                 else amc.DEFAULT_METRICS_PER_COMPONENT[name])
+        amc.generate_component(
+            name, list(specs[:count]), [],
+            base_dir=out, total_seconds=86400, drop_rate=0.0, interval=1.0,
+            ts_array=ts_array, ts_strings=ts_strings, ctx=ctx,
+        )
+    # Header order mirrors main()'s ``manifest_fieldnames`` exactly so
+    # consumers that pin the canonical column order read both manifests
+    # identically.
+    (out / "anomalies.csv").write_text(
+        "timestamp,component,metric,description,scenario_id,severity,"
+        "is_cascade,event_id,parent_event_id,span_start,span_end,shape\n",
+        encoding="utf-8",
     )
+    return out
 
 
 @pytest.fixture(scope="session")
-def one_day_full_metrics_independent_run(amc, tmp_path_factory):
-    """1-day run with ``--metrics-per-component 10 --topology-mode independent``
-    so ``test_value_range_sanity_full_catalog`` exercises every supplemental
-    metric column without being thrown off by topology coupling / saturation.
-    See the comment on ``one_day_independent_run`` for the rationale around
-    pinning to the deprecation alias. Explicit ``interval_seconds=1.0`` keeps
-    the value-range sanity sweep at full resolution."""
-    out = tmp_path_factory.mktemp("one_day_full_metrics_independent")
-    return run_capture(
-        amc,
-        out,
-        days=1,
-        extra_args=["--metrics-per-component", "10", "--topology-mode", "independent"],
-        interval_seconds=1.0,
+def natural_one_day_run(amc, tmp_path_factory):
+    """Pure-natural 1-day baseline at default per-component metric counts.
+    See ``_generate_natural_baseline`` for the contract."""
+    out = tmp_path_factory.mktemp("natural_one_day")
+    _generate_natural_baseline(amc, out)
+    return SimpleNamespace(out_dir=out, stderr="")
+
+
+@pytest.fixture(scope="session")
+def natural_full_metrics_one_day_run(amc, tmp_path_factory):
+    """Pure-natural 1-day baseline with every catalog metric (the
+    ``--metrics-per-component 10`` analogue). See
+    ``_generate_natural_baseline`` for the contract."""
+    out = tmp_path_factory.mktemp("natural_one_day_full_metrics")
+    _generate_natural_baseline(
+        amc, out, metrics_per_component=amc.MAX_METRICS_PER_COMPONENT
     )
+    return SimpleNamespace(out_dir=out, stderr="")
 
 
 @pytest.fixture(scope="session")
@@ -479,7 +509,15 @@ def natural_band(amc, spec, total_seconds, *, sigma_mult=8.0):
     """
     sample_count = min(240, total_seconds)
     step = max(1, total_seconds // sample_count)
+    # Include the final second explicitly: the coarse grid stops short of
+    # ``total_seconds - 1`` (e.g. range(0, 86400, 360) ends at 86040), so
+    # a monotonically growing additive (database.disk_used_pct trends at
+    # 2e-5/s) would otherwise exceed the sampled hi on the last rows — a
+    # latent under-sampling bug historically masked by the
+    # disk-exhaustion anomaly span overlaying exactly those rows.
     sample_seconds = list(range(0, total_seconds, step))
+    if sample_seconds[-1] != total_seconds - 1:
+        sample_seconds.append(total_seconds - 1)
 
     def _sample(fn, default):
         if fn is None:
@@ -493,8 +531,12 @@ def natural_band(amc, spec, total_seconds, *, sigma_mult=8.0):
     mults = _sample(spec.multiplier, 1.0)
     adds = _sample(spec.additive, 0.0)
     noise = sigma_mult * spec.std
-    lo = spec.base * min(mults) + min(adds) - noise
-    hi = spec.base * max(mults) + max(adds) + noise
+    # CSV cells are rounded to 3 decimals on disk, so an exact-bound
+    # value can round past the analytic limit (8 + 2e-5*86399 = 9.72798
+    # is written as 9.728). Pad by the half-ULP of the on-disk format.
+    csv_rounding = 0.0005
+    lo = spec.base * min(mults) + min(adds) - noise - csv_rounding
+    hi = spec.base * max(mults) + max(adds) + noise + csv_rounding
     if spec.clip_min is not None:
         lo = max(lo, spec.clip_min)
     return lo, hi

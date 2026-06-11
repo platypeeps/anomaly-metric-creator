@@ -1,6 +1,7 @@
 """Scenario deviation acceptance: every scenario row must produce a
-visibly anomalous metric value under ``--topology-mode realistic``
-(the default since the phase 6 flag day).
+visibly anomalous metric value under realistic topology coupling
+(the default since the phase 6 flag day, and the only mode since
+the phase-9 flag day removed ``--topology-mode``).
 
 The test compares two runs per scenario:
 

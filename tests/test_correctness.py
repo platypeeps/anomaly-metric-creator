@@ -260,34 +260,36 @@ def _assert_value_band_sanity(amc, run, emitted_count):
     assert not failures, f"Metrics outside 8σ natural band: {failures}"
 
 
-def test_value_range_sanity(amc, one_day_independent_run):
-    """Independent-mode metrics stay inside their 8σ natural band.
+def test_value_range_sanity(amc, natural_one_day_run):
+    """Natural-baseline metrics stay inside their 8σ band.
 
-    The natural band is derived from each MetricSpec's ``base``/``std``/
-    ``multiplier`` — it characterizes the independent Gaussian baseline.
-    After phase 6 the default mode is ``realistic``, which
-    intentionally drives downstream load-metric and latency baselines
-    outside that natural band via topology coupling and saturation
-    feedback. We therefore pin this band check to ``--topology-mode
-    independent`` (the deprecation alias whose retirement is scheduled
-    after phase 9); realistic-mode behavior is validated by the
-    dedicated coupling/saturation tests in ``tests/test_topology_*``."""
+    The band is derived from each MetricSpec's ``base``/``std``/
+    ``multiplier`` — it characterizes the pure Gaussian baseline that
+    is the building block of realistic-mode output. The default mode
+    intentionally drives downstream load/latency baselines outside the
+    natural band via coupling and saturation, so the check runs against
+    the direct-natural fixture (``generate_component`` with the raw
+    specs; the phase-9 flag day removed the ``--topology-mode
+    independent`` alias this test previously rode on). Realistic-mode
+    behavior is validated by the dedicated coupling/saturation tests in
+    ``tests/test_topology_*``."""
     _assert_value_band_sanity(
         amc,
-        one_day_independent_run,
+        natural_one_day_run,
         emitted_count=lambda c: DEFAULT_METRIC_COUNT[c],
     )
 
 
-def test_value_range_sanity_full_catalog(amc, one_day_full_metrics_independent_run):
-    """With --metrics-per-component 10 every supplemental metric is exercised
-    too. Without this gate, a regression in a supplemental MetricSpec's base /
-    std / multiplier would slip through the default-only check. Pinned to
-    ``--topology-mode independent`` for the same reason as
+def test_value_range_sanity_full_catalog(amc, natural_full_metrics_one_day_run):
+    """Every supplemental metric is exercised too (the
+    ``--metrics-per-component 10`` analogue). Without this gate, a
+    regression in a supplemental MetricSpec's base / std / multiplier
+    would slip through the default-only check. Runs against the
+    direct-natural baseline for the same reason as
     ``test_value_range_sanity`` above."""
     _assert_value_band_sanity(
         amc,
-        one_day_full_metrics_independent_run,
+        natural_full_metrics_one_day_run,
         emitted_count=lambda c: amc.MAX_METRICS_PER_COMPONENT,
     )
 
