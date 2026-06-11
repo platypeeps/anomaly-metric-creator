@@ -31,7 +31,7 @@ def test_default_interval_seconds_is_60(amc, tmp_path):
     run_capture(
         amc, tmp_path,
         days=1,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=["--emit", "metrics,schema"],
     )
     assert _schema_interval(tmp_path) == 60.0
 
@@ -42,7 +42,7 @@ def test_interval_seconds_none_uses_script_default(amc, tmp_path):
     run_capture(
         amc, tmp_path,
         days=1,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=["--emit", "metrics,schema"],
         interval_seconds=None,
     )
     assert _schema_interval(tmp_path) == 60.0
@@ -55,7 +55,7 @@ def test_interval_seconds_one_keeps_full_resolution(amc, tmp_path):
     run_capture(
         amc, tmp_path,
         days=1,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=["--emit", "metrics,schema"],
         interval_seconds=1.0,
     )
     assert _schema_interval(tmp_path) == 1.0
@@ -67,7 +67,7 @@ def test_interval_seconds_explicit_value_overrides_default(amc, tmp_path):
     run_capture(
         amc, tmp_path,
         days=1,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=["--emit", "metrics,schema"],
         interval_seconds=600,
     )
     assert _schema_interval(tmp_path) == 600.0

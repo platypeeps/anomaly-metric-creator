@@ -1,25 +1,28 @@
 # Application flow
 
 End-to-end execution of `main(argv=None)` in `anomaly-metric-creator.py`.
-The script has three top-level modes — `--combine-only` (rebuild the
-unified CSV from existing per-component CSVs), `--validate-output PATH`
-(load `PATH/schema.json` and run every validator against the artifacts
-on disk), and the default generation pipeline.
+The script has three top-level modes — the `combine DIR` subcommand
+(rebuild the unified CSV from existing per-component CSVs), the
+`validate DIR [--warn]` subcommand (load `DIR/schema.json` and run
+every validator against the artifacts on disk), and the default
+`generate` pipeline.
 
 ```mermaid
 flowchart TD
-    start(["python anomaly-metric-creator.py …"]) --> parse["parse_args"]
-    parse --> mode{"mode?"}
+    start(["python anomaly-metric-creator.py …"]) --> mode{"subcommand token<br/>on argv[0]?<br/>(dispatched in main()<br/>before any parsing)"}
 
-    mode -- "--combine-only" --> combineonly["combine_logs<br/>(reads existing per-component CSVs)<br/>→ combined_metrics_unified.csv<br/>(wide or long layout — auto-detected<br/>from per-component CSV headers)"]
+    mode -- "combine DIR" --> combineparse["_main_combine_subcommand<br/>(dedicated parser)"]
+    combineparse --> combineonly["combine_logs<br/>(reads existing per-component CSVs)<br/>→ combined_metrics_unified.csv<br/>(wide or long layout — auto-detected<br/>from per-component CSV headers)"]
     combineonly --> finish([exit])
 
-    mode -- "--validate-output PATH" --> validate["validate_output<br/>(load schema.json,<br/>run required/no-unknown/sorted/<br/>row-count/timestamp/cell/derivation/<br/>long-form-dimensions/topology-coupling/<br/>per-instance-coupling checks)"]
+    mode -- "validate DIR" --> validateparse["_main_validate_subcommand<br/>(dedicated parser)"]
+    validateparse --> validate["validate_output<br/>(load schema.json,<br/>run required/no-unknown/sorted/<br/>row-count/timestamp/cell/derivation/<br/>long-form-dimensions/topology-coupling/<br/>per-instance-coupling checks)"]
     validate -- "no violations" --> finish
-    validate -- "violations + --validate-warn" --> finish
+    validate -- "violations + --warn" --> finish
     validate -- "violations (default)" --> failexit([exit 1])
 
-    mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit-selection / --components / --combine)"]
+    mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> parse["parse_args<br/>+ _reconcile_cli_surface<br/>+ validation gates"]
+    parse --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit / --components)"]
     preclean --> ctx["RunContext(rng=np.random.RandomState(--seed))"]
     ctx --> instances{"instance map?"}
     instances -- "default (N=1, anonymous)" --> instdefault["ctx.instances =<br/>{name: [Instance()] for name in COMPONENTS}<br/>→ byte-identical legacy CSV (no dim prefix)"]
@@ -42,15 +45,15 @@ flowchart TD
     shared --> gen["for each component: generate_component<br/>natural → anomaly overrides (per-instance under<br/>instance_filter) → dtype='int' rounded via np.rint<br/>(realistic mode only) → derivations →<br/>capture (shared + per-instance) →<br/>round → drop → write {component}.csv<br/>(wide CSV if anonymous, long CSV with<br/>id/host/pod/az/region/tenant prefix otherwise)"]
     perinst --> gen
 
-    gen --> anomcsv["sort filtered_anomalies +<br/>write anomalies.csv<br/>(when 'metrics' in --emit-selection)"]
-    anomcsv --> reports["write_reporting_artifacts<br/>→ metric_report.log, metric_traces.jsonl<br/>(when 'logs'/'traces' in --emit-selection)"]
-    reports --> gauges["write_gauges_csv<br/>→ gauges.csv<br/>(4-col wide OR 10-col long layout,<br/>auto-detected from per-component CSV headers;<br/>when 'gauges' in --emit-selection)"]
-    gauges --> schema["write_schema_json<br/>→ schema.json (v2)<br/>metadata + components (with optional<br/>per-component dimensions block) +<br/>files + topology snapshot<br/>(when 'schema' in --emit-selection)"]
-    schema --> otelmode{"--otel-enabled<br/>+ which stream?"}
-    otelmode -- "default<br/>(signals + optional gauges)" --> otelfull["stream_otel_signals<br/>(anomaly counter/log/trace)<br/>→ stream_otel_gauges<br/>(when --otel-emit-gauges;<br/>shared otel-activity.log<br/>with RETRY/FAIL diagnostics:<br/>response headers, cf_ray,<br/>original JSON body)"]
-    otelmode -- "--otel-gauges-only" --> otelgaugesonly["stream_otel_gauges only<br/>(signal stream skipped;<br/>fresh otel-activity.log;<br/>implies --otel-emit-gauges +<br/>requires --otel-enabled,<br/>--otel-metrics-endpoint,<br/>'metrics' in --emit-selection)"]
-    otelmode -- "--otel-enabled off" --> otelskip["OTEL streams skipped"]
-    otelfull --> combine["combine_logs<br/>→ combined_metrics_unified.csv<br/>(wide OR long layout — same auto-detect<br/>as gauges.csv; when --combine)"]
+    gen --> anomcsv["sort filtered_anomalies +<br/>write anomalies.csv<br/>(when 'metrics' in --emit)"]
+    anomcsv --> reports["write_reporting_artifacts<br/>→ metric_report.log, metric_traces.jsonl<br/>(when 'logs'/'traces' in --emit)"]
+    reports --> gauges["write_gauges_csv<br/>→ gauges.csv<br/>(4-col wide OR 10-col long layout,<br/>auto-detected from per-component CSV headers;<br/>when 'gauges' in --emit)"]
+    gauges --> schema["write_schema_json<br/>→ schema.json (v2)<br/>metadata + components (with optional<br/>per-component dimensions block) +<br/>files + topology snapshot<br/>(when 'schema' in --emit)"]
+    schema --> otelmode{"--otel-send<br/>selection?"}
+    otelmode -- "signals<br/>(+ optional gauges)" --> otelfull["stream_otel_signals<br/>(anomaly counter/log/trace,<br/>filtered to the selected signals)<br/>→ stream_otel_gauges<br/>(when 'gauges' selected;<br/>shared otel-activity.log<br/>with RETRY/FAIL diagnostics:<br/>response headers, cf_ray,<br/>original JSON body)"]
+    otelmode -- "--otel-send gauges" --> otelgaugesonly["stream_otel_gauges only<br/>(signal stream skipped;<br/>fresh otel-activity.log;<br/>requires a metrics endpoint +<br/>'metrics' in --emit)"]
+    otelmode -- "unset / none" --> otelskip["OTEL streams skipped"]
+    otelfull --> combine["combine_logs<br/>→ combined_metrics_unified.csv<br/>(wide OR long layout — same auto-detect<br/>as gauges.csv; when 'combined' in --emit)"]
     otelgaugesonly --> combine
     otelskip --> combine
     combine --> summary["print 'Done -' summary line<br/>(only names artifacts actually written)"]
@@ -59,17 +62,17 @@ flowchart TD
 
 ## Notes
 
-- `--emit-selection` gates the four downstream writers
+- `--emit` gates the downstream writers
   (`anomalies.csv` is part of `metrics`; `metric_report.log` is
   `logs`; `metric_traces.jsonl` is `traces`; `gauges.csv` is `gauges`;
   `schema.json` is `schema`). Skipped writers are no-ops on this
   run, and `_pre_clean_output_dir` removes any matching artifact left
   over from a prior run.
-- `--validate-output` is mutually exclusive with `--combine` /
-  `--combine-only`; it short-circuits before any generation. The
-  validator dispatches per-component cell, derivation, and row-count
-  checks against the wide or long CSV layout based on the schema's
-  per-component `dimensions` block.
+- The `combine` and `validate` subcommands dispatch before the flat
+  parser and never run generation. The validator dispatches
+  per-component cell, derivation, and row-count checks against the
+  wide or long CSV layout based on the schema's per-component
+  `dimensions` block.
 - Topology coupling and saturation (always on since the phase-9
   flag day removed `--topology-mode`) re-shape downstream `MetricSpec`
   baselines from upstream load columns captured during generation.
@@ -91,13 +94,12 @@ flowchart TD
   dispatch propagates into `gauges.csv` (10-column long layout) and
   `combined_metrics_unified.csv` (the long writer dispatches when
   *any* per-component CSV is dimensioned).
-- `--otel-gauges-only` is a gauge-only streaming mode peer of
-  `--otel-emit-gauges`: it implies the gauge stream, skips
-  `stream_otel_signals()`, requires `--otel-enabled` +
-  `--otel-metrics-endpoint` + `metrics` in `--emit-selection`, and
-  starts a fresh `otel-activity.log` instead of appending to a stale
-  signal-stream run. The summary line prints
-  `OTEL signal stream skipped (--otel-gauges-only)` so it is
+- `--otel-send gauges` (alone) is the gauge-only streaming mode: it
+  skips `stream_otel_signals()`, requires a metrics endpoint (via
+  `--otel-endpoint` or `MEZMO_OTEL_METRICS_ENDPOINT`) and `metrics`
+  in `--emit`, and starts a fresh `otel-activity.log` instead of
+  appending to a stale signal-stream run. The summary line prints
+  `OTEL signal stream skipped (--otel-send gauges)` so it is
   obvious from the run output which path fired.
 - Default CLI shape matches the reference observability telemetry
   CSV: 50,000 rows at `--interval-seconds 60.0` (≈ 34.72 days),
@@ -128,7 +130,7 @@ Recent significant additions reflected in the diagram above:
   `--duration-days 1` / `--duration-days 7` still hit the locked
   1-day / 7-day fixture paths, but a no-flag invocation now lands
   on the reference-aligned 50,000-row shape.
-- **OTEL gauge-only streaming** (`--otel-gauges-only`) — the OTEL
+- **OTEL gauge-only streaming** (`--otel-send gauges`) — the OTEL
   step now forks on the gauge-only mode: signals (anomaly counter
   + logs + traces) are skipped, only the gauge stream fires, and
   `otel-activity.log` starts fresh instead of appending to a stale

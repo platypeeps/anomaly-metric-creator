@@ -411,7 +411,7 @@ def test_derivation_string_without_registry_entry_rejected(amc, monkeypatch):
     """A MetricSpec declaring a `derivation` string with no DERIVATIONS
     entry must fail at import-time validation — previously it surfaced
     only as a runtime KeyError from the strict _RECOMPUTERS lookup at
-    --validate-output time."""
+    ``validate`` subcommand time."""
     import dataclasses
     patched = dict(amc.COMPONENTS)
     specs = list(patched["apigateway"])
@@ -427,7 +427,7 @@ def test_derivation_string_without_registry_entry_rejected(amc, monkeypatch):
 def test_registry_entry_without_derivation_string_rejected(amc, monkeypatch):
     """The mirror drift: a DERIVATIONS metric whose MetricSpec declares
     no `derivation` string would be recomputed by the generator but
-    never checked by --validate-output (schema.json omits the
+    never checked by the validate subcommand (schema.json omits the
     derivation)."""
     patched = dict(amc.DERIVATIONS)
     recompute_fn, _metrics = patched["cacheservice"]

@@ -833,7 +833,7 @@ def test_sub_second_interval_unique_timestamps_and_lossless_combine(amc, tmp_pat
         out,
         days=1,
         drop_rate=0.0,
-        extra_args=["--combine"],
+        extra_args=["--emit", "metrics,logs,traces,combined"],
         interval_seconds=0.5,
     )
 
@@ -855,7 +855,7 @@ def test_sub_second_interval_unique_timestamps_and_lossless_combine(amc, tmp_pat
         component_row_counts.append(len(rows))
 
     combined = out / "combined_metrics_unified.csv"
-    assert combined.exists(), "--combine did not produce combined_metrics_unified.csv"
+    assert combined.exists(), "'combined' emission did not produce combined_metrics_unified.csv"
     with open(combined) as f:
         combined_rows = list(csv.DictReader(f))
     # With drop_rate=0.0 every component has the same row count, and the
@@ -938,8 +938,8 @@ def test_scenarios_all_matches_no_flag_byte_for_byte(amc, tmp_path, days):
         )
 
 
-def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
-    """Toggling --otel-emit-gauges on must not perturb any CSV byte.
+def test_otel_gauge_stream_does_not_change_csv_output(amc, tmp_path):
+    """Toggling the OTEL gauge stream on must not perturb any CSV byte.
 
     The gauge stream reads CSVs after they're written; flipping the flag adds
     network I/O but no value computation. Two runs against the same seed —
@@ -978,9 +978,8 @@ def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
     try:
         base = f"http://127.0.0.1:{server.server_port}"
         run_capture(amc, out_on, days=1, interval_seconds=600, extra_args=[
-            "--otel-enabled",
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-send", "metrics,gauges",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "21600",
@@ -999,7 +998,7 @@ def test_otel_emit_gauges_does_not_change_csv_output(amc, tmp_path):
         assert off_path.exists(), f"flag-off run missing {filename}"
         assert on_path.exists(), f"flag-on run missing {filename}"
         assert sha256_path(off_path) == sha256_path(on_path), (
-            f"{filename}: --otel-emit-gauges on/off CSV bytes diverged"
+            f"{filename}: gauge stream on/off CSV bytes diverged"
         )
 
 

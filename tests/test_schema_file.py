@@ -1,15 +1,15 @@
 """Tests for the declarative ``schema.json`` artifact.
 
 Covers:
-- ``--emit-selection`` accepts the new ``schema`` token, rejects bad combos.
+- ``--emit`` accepts the ``schema`` token, rejects bad combos.
 - The file is written only when opted in, absent by default.
 - Byte-determinism, locked SHA-256 golden hashes at 1d and 7d.
 - ``--components`` / ``--metrics-per-component`` filter passthrough.
 - Document structure: ``schema_version``, ``metadata``, ``files``,
   ``components`` block with per-MetricSpec metadata in column order.
 - ``_pre_clean_output_dir`` removes a stale ``schema.json`` when ``schema``
-  is dropped from the next run's emit-selection.
-- ``--combine-only`` does NOT regenerate ``schema.json``.
+  is dropped from the next run's --emit selection.
+- the ``combine`` subcommand does NOT regenerate ``schema.json``.
 """
 import json
 import subprocess
@@ -56,7 +56,7 @@ def one_day_schema_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("ver139_one_day_schema")
     return run_capture(
         amc, out, days=1, interval_seconds=1.0,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=["--emit", "metrics,schema"],
     )
 
 
@@ -66,7 +66,7 @@ def seven_day_schema_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("ver139_seven_day_schema")
     return run_capture(
         amc, out, days=7, interval_seconds=1.0,
-        extra_args=["--emit-selection", "metrics,schema"],
+        extra_args=["--emit", "metrics,schema"],
     )
 
 
@@ -77,29 +77,29 @@ def _load_schema(out_dir: Path) -> dict:
 # ------------------------------------------------------------------
 # parse_args validation
 # ------------------------------------------------------------------
-def test_emit_selection_accepts_schema_token(amc, tmp_path):
+def test_emit_accepts_schema_token(amc, tmp_path):
     args = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
-        "--emit-selection", "metrics,schema",
+        "--emit", "metrics,schema",
     ])
     assert "schema" in args.emit_selection
     assert "metrics" in args.emit_selection
 
 
-def test_emit_selection_schema_standalone_allowed(amc, tmp_path):
+def test_emit_schema_standalone_allowed(amc, tmp_path):
     """Unlike ``gauges``, ``schema`` does not require ``metrics`` — the
     metric metadata catalog is static and still useful documentation when
     no per-component CSVs are emitted."""
     args = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
-        "--emit-selection", "schema",
+        "--emit", "schema",
     ])
     assert "schema" in args.emit_selection
 
 
-def test_emit_selection_help_advertises_schema(amc):
+def test_emit_help_advertises_schema(amc):
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--help"],
         capture_output=True, text=True,
@@ -107,14 +107,14 @@ def test_emit_selection_help_advertises_schema(amc):
     assert "schema" in result.stdout
 
 
-def test_emit_selection_rejects_unknown_token_lists_schema(capsys, amc, tmp_path):
+def test_emit_rejects_unknown_token_lists_schema(capsys, amc, tmp_path):
     """The validator error message should advertise the new token alongside
     the existing ones so callers can discover ``schema`` from a typo."""
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--output-dir", str(tmp_path),
             "--duration-days", "1",
-            "--emit-selection", "metrics,bogus",
+            "--emit", "metrics,bogus",
         ])
     err = capsys.readouterr().err
     assert "schema" in err
@@ -125,12 +125,12 @@ def test_emit_selection_rejects_unknown_token_lists_schema(capsys, amc, tmp_path
 # ------------------------------------------------------------------
 def test_schema_json_written_when_opted_in(one_day_schema_run):
     path = one_day_schema_run.out_dir / "schema.json"
-    assert path.exists(), "schema.json must be written when 'schema' is in --emit-selection"
+    assert path.exists(), "schema.json must be written when 'schema' is in --emit"
 
 
 def test_schema_json_absent_by_default(one_day_run_a):
     assert not (one_day_run_a.out_dir / "schema.json").exists(), (
-        "default run must not write schema.json unless opted in via --emit-selection"
+        "default run must not write schema.json unless opted in via --emit"
     )
 
 
@@ -139,13 +139,13 @@ def test_schema_json_pre_clean_removes_stale(amc, tmp_path):
     delete the prior ``schema.json`` (mirrors gauges.csv pre-clean behavior)."""
     out = tmp_path / "pre_clean"
     run_capture(amc, out, days=1, interval_seconds=600,
-                extra_args=["--emit-selection", "metrics,schema"])
+                extra_args=["--emit", "metrics,schema"])
     assert (out / "schema.json").exists()
     run_capture(amc, out, days=1, interval_seconds=600,
-                extra_args=["--emit-selection", "metrics"])
+                extra_args=["--emit", "metrics"])
     assert not (out / "schema.json").exists(), (
         "_pre_clean_output_dir must remove schema.json when 'schema' is "
-        "dropped from --emit-selection"
+        "dropped from --emit"
     )
 
 
@@ -242,8 +242,8 @@ def test_schema_records_hit_ratio_derivation(one_day_schema_run):
 def test_schema_byte_deterministic_same_seed(amc, tmp_path):
     out_a = tmp_path / "a"
     out_b = tmp_path / "b"
-    run_capture(amc, out_a, days=1, extra_args=["--emit-selection", "metrics,schema"])
-    run_capture(amc, out_b, days=1, extra_args=["--emit-selection", "metrics,schema"])
+    run_capture(amc, out_a, days=1, extra_args=["--emit", "metrics,schema"])
+    run_capture(amc, out_b, days=1, extra_args=["--emit", "metrics,schema"])
     assert sha256_path(out_a / "schema.json") == sha256_path(out_b / "schema.json"), (
         "schema.json must be byte-identical across two identical runs"
     )
@@ -279,7 +279,7 @@ def test_schema_respects_components(amc, tmp_path):
         amc, out, days=1,
         interval_seconds=600,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", keep,
         ],
     )
@@ -297,7 +297,7 @@ def test_schema_respects_metrics_per_component(amc, tmp_path):
         amc, out, days=1,
         interval_seconds=600,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--metrics-per-component", "1",
         ],
     )
@@ -311,27 +311,26 @@ def test_schema_respects_metrics_per_component(amc, tmp_path):
     assert doc["metadata"]["metrics_per_component"] == 1
 
 
-def test_schema_combine_only_does_not_regenerate(amc, tmp_path):
-    """``--combine-only`` reads existing per-component CSVs and must NOT
-    rewrite ``schema.json``; the path returns before the pre-clean step
+def test_schema_combine_subcommand_does_not_regenerate(amc, tmp_path):
+    """The ``combine`` subcommand reads existing per-component CSVs and must NOT
+    rewrite ``schema.json``; the path never runs the pre-clean step
     (which would also rewrite it). Mirrors the gauges-file invariant."""
     out = tmp_path / "combine_only"
     # First run: generate schema.json.
     run_capture(amc, out, days=1, interval_seconds=600,
-                extra_args=["--emit-selection", "metrics,schema"])
+                extra_args=["--emit", "metrics,schema"])
     schema_path = out / "schema.json"
     original_bytes = schema_path.read_bytes()
-    # Now mutate the on-disk schema; --combine-only must leave it alone.
+    # Now mutate the on-disk schema; the combine subcommand must leave it alone.
     schema_path.write_bytes(b'{"sentinel": "untouched"}\n')
-    # Combine-only run.
-    run_capture(amc, out, days=1, interval_seconds=600,
-                extra_args=["--combine-only"])
+    # Combine subcommand run.
+    amc.main(["combine", str(out)])
     assert schema_path.read_bytes() == b'{"sentinel": "untouched"}\n', (
-        "--combine-only must not rewrite or pre-clean schema.json"
+        "the combine subcommand must not rewrite or pre-clean schema.json"
     )
     # And the original schema bytes are recoverable by re-running normally.
     run_capture(amc, out, days=1, interval_seconds=600,
-                extra_args=["--emit-selection", "metrics,schema"])
+                extra_args=["--emit", "metrics,schema"])
     assert schema_path.read_bytes() == original_bytes
 
 
@@ -343,7 +342,7 @@ def test_schema_records_dst_inject_day(amc, tmp_path):
     it so the validator can adjust its row-count expectation."""
     out = tmp_path / "dst"
     run_capture(amc, out, days=2, interval_seconds=600,
-                extra_args=["--emit-selection", "metrics,schema",
+                extra_args=["--emit", "metrics,schema",
                             "--inject-dst-artifact-day", "1"])
     doc = _load_schema(out)
     assert doc["metadata"]["inject_dst_artifact_day"] == 1
@@ -440,7 +439,7 @@ def test_schema_topology_omits_filtered_components(amc, tmp_path):
         amc, out, days=1,
         interval_seconds=600,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "loadbalancer,apigateway",
         ],
     )
@@ -489,7 +488,7 @@ SCHEMA_N3_SEVEN_DAY_HASH = (
 
 @pytest.fixture(scope="module")
 def one_day_schema_run_n3(n3_one_day_dataset_dir):
-    """N=3 1-day run with ``metrics,schema`` emit-selection so the
+    """N=3 1-day run with ``metrics,schema`` --emit selection so the
     schema's dim block fires on every component. Delegates to the
     session-scoped ``n3_one_day_dataset_dir`` in ``conftest.py``
     (identical args: days=1, 1s cadence, N=3, ``metrics,schema``)
@@ -497,7 +496,7 @@ def one_day_schema_run_n3(n3_one_day_dataset_dir):
     module — the PR #63 module-scoped-duplicate antipattern from the
     "Test resource cost" checklist. The locked
     ``SCHEMA_N3_ONE_DAY_HASH`` holds byte-identically because the
-    shared fixture uses the same emit-selection this module's fixture
+    shared fixture uses the same --emit selection this module's fixture
     used when the hash was locked."""
     return SimpleNamespace(out_dir=n3_one_day_dataset_dir)
 
@@ -508,7 +507,7 @@ def seven_day_schema_run_n3(n3_seven_day_dataset_dir):
     most expensive generation in the suite; see
     ``conftest.n3_seven_day_dataset_dir`` for the sharing rationale.
     ``SCHEMA_N3_SEVEN_DAY_HASH`` holds byte-identically (same args,
-    same ``metrics,schema`` emit-selection)."""
+    same ``metrics,schema`` --emit selection)."""
     return SimpleNamespace(out_dir=n3_seven_day_dataset_dir)
 
 
@@ -597,10 +596,10 @@ def test_schema_n3_byte_deterministic(amc, tmp_path):
     out_a = tmp_path / "a"
     out_b = tmp_path / "b"
     run_capture(amc, out_a, days=1, interval_seconds=600,
-                extra_args=["--emit-selection", "metrics,schema",
+                extra_args=["--emit", "metrics,schema",
                             "--instances-per-component", "3"])
     run_capture(amc, out_b, days=1, interval_seconds=600,
-                extra_args=["--emit-selection", "metrics,schema",
+                extra_args=["--emit", "metrics,schema",
                             "--instances-per-component", "3"])
     assert sha256_path(out_a / "schema.json") == sha256_path(out_b / "schema.json")
 
@@ -628,7 +627,7 @@ def test_schema_dimensions_from_instance_config_multiple_axes(amc, tmp_path):
         amc, out, days=1,
         interval_seconds=600,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--instance-config", str(cfg_path),
             "--components", "apigateway",
         ],
@@ -665,7 +664,7 @@ def test_schema_n3_omits_dimensions_for_unfanned_components(amc, tmp_path):
         amc, out, days=1,
         interval_seconds=600,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--instance-config", str(cfg_path),
             "--components", "apigateway,cacheservice",
         ],

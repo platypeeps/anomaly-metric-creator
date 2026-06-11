@@ -1,4 +1,4 @@
-"""Tests for the ``--validate-output PATH`` standalone validator.
+"""Tests for the ``validate DIR`` standalone validator subcommand.
 
 Each validator function is covered by a focused unit test (mutate the
 schema or a target CSV, run the function, assert the expected violation),
@@ -32,7 +32,7 @@ def schema_run(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "apigateway,cacheservice",
         ],
         interval_seconds=600,
@@ -44,7 +44,7 @@ def schema_run(amc, tmp_path):
 def one_day_schema_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("ver139_validator_one_day")
     return run_capture(
-        amc, out, days=1, extra_args=["--emit-selection", "metrics,schema"]
+        amc, out, days=1, extra_args=["--emit", "metrics,schema"]
     )
 
 
@@ -52,7 +52,7 @@ def one_day_schema_run(amc, tmp_path_factory):
 def seven_day_schema_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("ver139_validator_seven_day")
     return run_capture(
-        amc, out, days=7, extra_args=["--emit-selection", "metrics,schema"]
+        amc, out, days=7, extra_args=["--emit", "metrics,schema"]
     )
 
 
@@ -70,47 +70,38 @@ def _write_schema(out: Path, schema: dict) -> None:
 # ------------------------------------------------------------------
 # parse_args validation
 # ------------------------------------------------------------------
-def test_validate_output_requires_existing_dir(amc, capsys, tmp_path):
+def test_validate_subcommand_requires_existing_dir(amc, capsys, tmp_path):
     with pytest.raises(SystemExit):
-        amc.parse_args([
-            "--validate-output", str(tmp_path / "does_not_exist"),
+        amc.main([
+            "validate", str(tmp_path / "does_not_exist"),
         ])
     err = capsys.readouterr().err
-    assert "validate-output" in err
-    assert "directory" in err
+    assert "validate requires an existing directory" in err
+    assert "does not exist" in err
 
 
-def test_validate_output_mutex_with_combine(amc, capsys, tmp_path):
+def test_validate_subcommand_rejects_generate_flags(amc, capsys, tmp_path):
+    """The validate subcommand carries a dedicated parser: generate-side
+    flags (and the removed --combine alias) are structurally impossible
+    to mix in — they fail as unrecognized arguments."""
     out = tmp_path / "exists"
     out.mkdir()
+    for extra in (["--combine"], ["--emit", "metrics"]):
+        with pytest.raises(SystemExit):
+            amc.main(["validate", str(out), *extra])
+        err = capsys.readouterr().err
+        assert "unrecognized arguments" in err, extra
+
+
+def test_warn_flag_is_validate_subcommand_only(amc, capsys, tmp_path):
+    """``--warn`` belongs to the validate subcommand; the generate parser
+    does not know it."""
     with pytest.raises(SystemExit):
         amc.parse_args([
-            "--validate-output", str(out),
-            "--combine",
+            "--warn",
         ])
     err = capsys.readouterr().err
-    assert "validate-output" in err and "combine" in err
-
-
-def test_validate_output_mutex_with_combine_only(amc, capsys, tmp_path):
-    out = tmp_path / "exists"
-    out.mkdir()
-    with pytest.raises(SystemExit):
-        amc.parse_args([
-            "--validate-output", str(out),
-            "--combine-only",
-        ])
-    err = capsys.readouterr().err
-    assert "validate-output" in err and "combine" in err
-
-
-def test_validate_warn_requires_validate_output(amc, capsys, tmp_path):
-    with pytest.raises(SystemExit):
-        amc.parse_args([
-            "--validate-warn",
-        ])
-    err = capsys.readouterr().err
-    assert "validate-warn" in err and "validate-output" in err
+    assert "unrecognized arguments" in err
 
 
 # ------------------------------------------------------------------
@@ -228,7 +219,7 @@ def test_row_count_dst_splice_extra_allowed(amc, tmp_path):
     than flag them as over-emission."""
     out = tmp_path / "dst"
     run_capture(amc, out, days=2, interval_seconds=600, extra_args=[
-        "--emit-selection", "metrics,schema",
+        "--emit", "metrics,schema",
         "--inject-dst-artifact-day", "1",
         "--components", "apigateway",
     ])
@@ -523,12 +514,12 @@ def test_validate_output_returns_violation_list(amc, schema_run):
     assert isinstance(violations, list)
 
 
-def test_validate_output_cli_exits_nonzero_on_violation(amc, tmp_path, capsys):
+def test_validate_subcommand_exits_nonzero_on_violation(amc, tmp_path, capsys):
     """End-to-end: a run with an injected bad cell must exit 1 under
-    ``--validate-output`` in default (hard-fail) mode."""
+    the ``validate`` subcommand in default (hard-fail) mode."""
     out = tmp_path / "bad"
     run_capture(amc, out, days=1, interval_seconds=600, extra_args=[
-        "--emit-selection", "metrics,schema",
+        "--emit", "metrics,schema",
         "--components", "apigateway",
     ])
     # Inject a bogus cpu_util_pct cell to force a violation.
@@ -542,19 +533,19 @@ def test_validate_output_cli_exits_nonzero_on_violation(amc, tmp_path, capsys):
     csv_path.write_text("\n".join(rows) + "\n")
 
     with pytest.raises(SystemExit) as exc_info:
-        amc.main(["--validate-output", str(out)])
+        amc.main(["validate", str(out)])
     assert exc_info.value.code == 1
     err = capsys.readouterr().err
     assert "cpu_util_pct" in err
 
 
-def test_validate_output_cli_warn_mode_exits_zero(amc, tmp_path, capsys):
-    """``--validate-warn`` downgrades violations to a non-fatal report and
+def test_validate_subcommand_warn_mode_exits_zero(amc, tmp_path, capsys):
+    """``validate DIR --warn`` downgrades violations to a non-fatal report and
     exits 0 (so CI can run the validator informationally without breaking
     the build during the topology-aware re-baseline window)."""
     out = tmp_path / "warn"
     run_capture(amc, out, days=1, interval_seconds=600, extra_args=[
-        "--emit-selection", "metrics,schema",
+        "--emit", "metrics,schema",
         "--components", "apigateway",
     ])
     csv_path = out / "apigateway.csv"
@@ -566,13 +557,13 @@ def test_validate_output_cli_warn_mode_exits_zero(amc, tmp_path, capsys):
     rows[1] = ",".join(parts)
     csv_path.write_text("\n".join(rows) + "\n")
 
-    amc.main(["--validate-output", str(out), "--validate-warn"])
+    amc.main(["validate", str(out), "--warn"])
     err = capsys.readouterr().err
     assert "cpu_util_pct" in err
-    assert "validate-warn" in err
+    assert "--warn" in err
 
 
-def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
+def test_validate_subcommand_clean_directory_exits_zero(amc, tmp_path, capsys):
     """A directory whose contents match its schema produces no violations
     and the CLI exits 0 with an OK message on stdout. Uses a controlled
     one-component run so we can construct a case with no fractional-int
@@ -580,7 +571,7 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
     massage active_connections to an exact int."""
     out = tmp_path / "clean"
     run_capture(amc, out, days=1, interval_seconds=600, extra_args=[
-        "--emit-selection", "metrics,schema",
+        "--emit", "metrics,schema",
         "--components", "vectorstore",
     ])
     # vectorstore has no dtype="int" violations at the top-5 default
@@ -592,7 +583,7 @@ def test_validate_output_cli_clean_directory_exits_zero(amc, tmp_path, capsys):
     assert violations == [], (
         f"vectorstore default emission should validate clean; got: {violations}"
     )
-    amc.main(["--validate-output", str(out)])
+    amc.main(["validate", str(out)])
     cap = capsys.readouterr()
     assert "OK" in cap.out
 
@@ -733,7 +724,7 @@ def test_topology_coupling_skipped_under_independent_mode(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "loadbalancer,apigateway",
         ],
     )
@@ -773,7 +764,7 @@ def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "loadbalancer,apigateway",
         ],
     )
@@ -832,7 +823,7 @@ def test_topology_coupling_flags_random_downstream(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "apigateway,database",
         ],
     )
@@ -877,7 +868,7 @@ def test_topology_coupling_flags_non_finite_values(
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "apigateway,database",
         ],
     )
@@ -928,7 +919,7 @@ def test_topology_coupling_skips_callable_weight_edges(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "apigateway,cacheservice,database",
         ],
     )
@@ -980,7 +971,7 @@ def test_topology_coupling_per_edge_threshold_override(amc, tmp_path,
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "loadbalancer,apigateway",
         ],
     )
@@ -1015,7 +1006,7 @@ def test_topology_coupling_per_edge_threshold_override(amc, tmp_path,
 
 def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
     """End-to-end CLI: mutate the downstream so it decouples from
-    upstream, then run ``--validate-output`` and confirm a non-zero
+    upstream, then run the ``validate`` subcommand and confirm a non-zero
     exit and a violation line in stderr naming the broken edge.
 
     60s interval keeps the end-to-end run cheap — the coupling
@@ -1025,7 +1016,7 @@ def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--components", "loadbalancer,apigateway",
         ],
     )
@@ -1041,7 +1032,7 @@ def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
     csv_path.write_text("\n".join(new_rows) + "\n")
 
     with pytest.raises(SystemExit) as exc_info:
-        amc.main(["--validate-output", str(out)])
+        amc.main(["validate", str(out)])
     assert exc_info.value.code == 1
     err = capsys.readouterr().err
     assert "loadbalancer->apigateway" in err
@@ -1437,10 +1428,9 @@ def schema_run_n3(amc, tmp_path):
         amc, out, days=1,
         interval_seconds=600,
         extra_args=[
-            "--emit-selection", "metrics,schema,gauges",
+            "--emit", "metrics,schema,gauges,combined",
             "--components", "apigateway,cacheservice",
             "--instances-per-component", "3",
-            "--combine",
         ],
     )
     return out
@@ -1454,7 +1444,7 @@ def one_day_run_n3(amc, tmp_path_factory):
     return run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
             "--instances-per-component", "3",
         ],
     )
@@ -1630,10 +1620,10 @@ def test_validate_long_form_dimensions_noop_without_dimensions(amc, schema_run):
     assert amc._validate_long_form_dimensions(schema_run, schema) == []
 
 
-def test_validate_output_cli_clean_on_fresh_n3_run(amc, one_day_run_n3, capsys):
+def test_validate_subcommand_clean_on_fresh_n3_run(amc, one_day_run_n3, capsys):
     """End-to-end: a fresh 1-day ``--instances-per-component 3`` run
-    must validate clean under ``--validate-output``."""
-    amc.main(["--validate-output", str(one_day_run_n3.out_dir)])
+    must validate clean under the ``validate`` subcommand."""
+    amc.main(["validate", str(one_day_run_n3.out_dir)])
     cap = capsys.readouterr()
     assert "OK" in cap.out
 
@@ -1679,55 +1669,37 @@ def test_validate_component_derivations_flags_drift_under_n3(amc, schema_run_n3)
 # ------------------------------------------------------------------
 # parse_args gate lift (phase 8)
 # ------------------------------------------------------------------
-def test_validate_output_compatible_with_instances_per_component(
+def test_schema_emit_compatible_with_instances_per_component(
     amc, tmp_path,
 ):
-    """Phase 8 lifts the ``--instances-per-component > 1`` +
-    ``--validate-output`` gate. The parser must now accept the
-    combination rather than rejecting it with the Phase 8 stub
-    message."""
-    out = tmp_path / "exists"
-    out.mkdir()
-    args = amc.parse_args([
-        "--validate-output", str(out),
-        "--instances-per-component", "3",
-    ])
-    assert args.validate_output == out
-    assert args.instances_per_component == 3
-
-
-def test_schema_emit_selection_compatible_with_instances_per_component(
-    amc, tmp_path,
-):
-    """Companion gate lift: ``--emit-selection 'schema'`` was rejected
-    under N>1 by the same Phase 8 stub. The dim-aware
+    """Phase 8 gate lift: ``--emit ...,schema`` was rejected
+    under N>1 by the Phase 8 stub. The dim-aware
     ``write_schema_json`` makes it well-defined now."""
     args = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
-        "--emit-selection", "metrics,schema",
+        "--emit", "metrics,schema",
         "--instances-per-component", "3",
     ])
     assert args.instances_per_component == 3
     assert "schema" in args.emit_selection
 
 
-def test_n2_plus_otel_emit_gauges_allowed(amc, tmp_path):
+def test_n2_plus_otel_gauge_stream_allowed(amc, tmp_path):
     """Phase 6 wired the OTEL streamer's dimension attributes,
-    so ``--instances-per-component > 1`` + ``--otel-emit-gauges`` is
-    permitted at parse time. ``stream_otel_gauges`` reads the dimension
-    columns off each per-component CSV and emits every non-empty
-    ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string attribute on the
-    OTLP gauge data point. After Phase 8 lifts the
+    so ``--instances-per-component > 1`` + a gauge-selecting
+    ``--otel-send`` is permitted at parse time. ``stream_otel_gauges``
+    reads the dimension columns off each per-component CSV and emits
+    every non-empty ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string
+    attribute on the OTLP gauge data point. After Phase 8 lifts the
     schema/validator guards there is no remaining multi-instance gate
     on this combination."""
     args = amc.parse_args([
         "--output-dir", str(tmp_path / "gen"),
         "--duration-days", "1",
         "--instances-per-component", "3",
-        "--otel-enabled",
-        "--otel-metrics-endpoint", "https://example.invalid/v1/metrics",
-        "--otel-emit-gauges",
+        "--otel-send", "metrics,gauges",
+        "--otel-endpoint", "https://example.invalid",
     ])
     assert args.instances_per_component == 3
     assert args.otel_enabled is True

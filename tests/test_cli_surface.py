@@ -1,20 +1,24 @@
-"""Canonical CLI surface (the consolidation flag-set) and its aliases.
+"""Canonical CLI surface (the post-flag-day consolidated flag-set).
 
-Covers the consolidated surface introduced by the CLI streamline:
+Covers the consolidated surface introduced by the CLI streamline and
+finalized at the post-phase-9 flag day:
 
-- ``--emit`` (with the ``combined`` token) replacing ``--emit-selection``
-  + ``--combine``;
-- the ``combine`` / ``validate`` subcommands replacing ``--combine-only``
-  / ``--validate-output [--validate-warn]``;
-- ``--otel-send`` replacing the five OTEL toggles, and ``--otel-endpoint``
-  / ``--otel-auth-token`` replacing the per-signal sextet;
-- one ``DEPRECATION:`` stderr line per deprecated alias used;
-- mixing a canonical flag with the aliases it replaces is rejected.
+- ``--emit`` (with the ``combined`` token) — the only artifact selector
+  (the ``--emit-selection`` / ``--combine`` aliases were removed);
+- the ``combine`` / ``validate`` subcommands — the only combine/validate
+  entry points (``--combine-only`` / ``--validate-output`` removed);
+- ``--otel-send`` + ``--otel-endpoint`` / ``--otel-auth-token`` — the
+  only OTEL surface (the five toggles and the per-signal sextet
+  removed);
+- removed alias spellings fail argparse as unrecognized arguments (the
+  per-flag matrix lives in ``tests/test_args.py``); the canonical
+  surface never emits ``DEPRECATION:`` noise (the notice mechanism is
+  gone from the script entirely).
 
-Byte-equivalence between the canonical and deprecated spellings is pinned
-at the cheap 600s interval — the spellings reconcile onto the same
-argument namespace before any generation runs, so full-resolution runs
-would prove nothing extra.
+Byte-equivalence pins run at the cheap 600s interval — the compared
+entry points (inline ``--emit ...,combined`` emission vs. the post-hoc
+``combine`` subcommand) drive the same combine writer over the same
+generated inputs, so full-resolution runs would prove nothing extra.
 """
 
 import contextlib
@@ -57,10 +61,9 @@ def _parse_error(amc, argv):
 # ---------------------------------------------------------------------------
 
 
-def test_emit_equivalent_to_emit_selection(amc):
+def test_emit_canonical_parse(amc):
     canonical, w = _parse(amc, ["--emit", "metrics,logs", "--output-dir", "x"])
-    legacy, _ = _parse(amc, ["--emit-selection", "metrics,logs", "--output-dir", "x"])
-    assert canonical.emit_selection == legacy.emit_selection == {"metrics", "logs"}
+    assert canonical.emit_selection == {"metrics", "logs"}
     assert "DEPRECATION" not in w, "canonical flag must not warn"
 
 
@@ -70,17 +73,19 @@ def test_emit_combined_token_sets_combine(amc):
     assert args.emit_selection == {"metrics"}
 
 
-def test_emit_combined_byte_identical_to_combine_flag(amc, tmp_path):
-    """--emit metrics,logs,traces,combined produces byte-identical output
-    to the deprecated --combine flag (same default emit selection)."""
-    out_new = tmp_path / "new"
-    out_old = tmp_path / "old"
-    run_capture(amc, out_new, days=1,
-                extra_args=["--emit", "metrics,logs,traces,combined"])
-    run_capture(amc, out_old, days=1, extra_args=["--combine"])
+def test_emit_combined_byte_identical_to_combine_subcommand(amc, tmp_path):
+    """--emit metrics,combined produces a combined_metrics_unified.csv
+    byte-identical to generating with --emit metrics and running the
+    ``combine`` subcommand over the output directory afterwards."""
+    out_inline = tmp_path / "inline"
+    out_post = tmp_path / "post"
+    run_capture(amc, out_inline, days=1,
+                extra_args=["--emit", "metrics,combined"])
+    run_capture(amc, out_post, days=1, extra_args=["--emit", "metrics"])
+    amc.main(["combine", str(out_post)])
     for name in ("combined_metrics_unified.csv", "apigateway.csv",
                  "anomalies.csv"):
-        assert sha256_path(out_new / name) == sha256_path(out_old / name), name
+        assert sha256_path(out_inline / name) == sha256_path(out_post / name), name
 
 
 @pytest.mark.parametrize("bad", [
@@ -88,9 +93,12 @@ def test_emit_combined_byte_identical_to_combine_flag(amc, tmp_path):
     ["--emit", "metrics", "--emit-selection", "logs"],
     ["--emit", "metrics", "--emit-selection=logs"],
 ])
-def test_emit_mixing_with_aliases_rejected(amc, bad):
+def test_emit_mixed_with_removed_aliases_is_unrecognized(amc, bad):
+    """The flag day removed the aliases outright, so the historic
+    canonical/alias mixing gate is gone too — mixing now fails argparse
+    as a plain unrecognized argument."""
     err = _parse_error(amc, bad + ["--output-dir", "x"])
-    assert "mutually exclusive" in err
+    assert "unrecognized arguments" in err
 
 
 def test_emit_combined_alone_rejected(amc):
@@ -106,20 +114,6 @@ def test_emit_invalid_token_rejected(amc):
 # ---------------------------------------------------------------------------
 # combine / validate subcommands
 # ---------------------------------------------------------------------------
-
-
-def test_combine_subcommand_equivalent_to_combine_only(amc, tmp_path):
-    src_dir = tmp_path / "run"
-    run_capture(amc, src_dir, days=1, extra_args=["--emit", "metrics"])
-    via_sub = tmp_path / "via_sub"
-    via_flag = tmp_path / "via_flag"
-    import shutil
-    shutil.copytree(src_dir, via_sub)
-    shutil.copytree(src_dir, via_flag)
-    amc.main(["combine", str(via_sub)])
-    amc.main(["--combine-only", "--output-dir", str(via_flag)])
-    assert sha256_path(via_sub / "combined_metrics_unified.csv") == \
-        sha256_path(via_flag / "combined_metrics_unified.csv")
 
 
 def test_combine_subcommand_rejects_missing_directory(amc):
@@ -220,27 +214,12 @@ def test_otel_send_none_is_explicit_off(amc, monkeypatch):
     assert not args.otel_enabled
 
 
-def test_otel_send_equivalent_to_legacy_toggles(amc):
-    canonical, _ = _parse(amc, [
-        "--otel-send", "logs,metrics,traces,gauges",
-        "--otel-endpoint", "http://h:4318", "--output-dir", "x",
-    ])
-    legacy, _ = _parse(amc, [
-        "--otel-enabled", "--otel-emit-gauges",
-        "--otel-logs-endpoint", "http://h:4318/v1/logs",
-        "--otel-metrics-endpoint", "http://h:4318/v1/metrics",
-        "--otel-traces-endpoint", "http://h:4318/v1/traces",
-        "--output-dir", "x",
-    ])
-    for attr in ("otel_enabled", "otel_emit_gauges", "otel_gauges_only",
-                 "otel_logs_endpoint", "otel_metrics_endpoint",
-                 "otel_traces_endpoint"):
-        assert getattr(canonical, attr) == getattr(legacy, attr), attr
-
-
 @pytest.mark.parametrize("bad,needle", [
-    (["--otel-send", "logs", "--otel-enabled"], "mutually exclusive"),
-    (["--otel-send", "none", "--otel-gauges-only"], "mutually exclusive"),
+    # Removed alias toggles mixed into a canonical invocation fail as
+    # plain unrecognized arguments (the mixing gate died with the
+    # aliases at the flag day).
+    (["--otel-send", "logs", "--otel-enabled"], "unrecognized arguments"),
+    (["--otel-send", "none", "--otel-gauges-only"], "unrecognized arguments"),
     (["--otel-send", "logs"], "--otel-endpoint"),
     (["--otel-endpoint", "http://h:1"], "--otel-send"),
     (["--otel-auth-token", "t"], "--otel-send"),
@@ -253,37 +232,9 @@ def test_otel_canonical_gates(amc, bad, needle):
     assert needle in err, err
 
 
-def test_otel_per_signal_flag_overrides_derived_endpoint(amc):
-    """An explicit per-signal flag wins over the --otel-endpoint
-    derivation for that signal (the documented escape hatch)."""
-    args, _ = _parse(amc, [
-        "--otel-send", "logs,metrics",
-        "--otel-endpoint", "http://base:4318",
-        "--otel-logs-endpoint", "http://special:9999/custom/logs",
-        "--output-dir", "x",
-    ])
-    assert args.otel_logs_endpoint == "http://special:9999/custom/logs"
-    assert args.otel_metrics_endpoint == "http://base:4318/v1/metrics"
-
-
 # ---------------------------------------------------------------------------
-# Deprecation notices
+# Deprecation machinery removal
 # ---------------------------------------------------------------------------
-
-
-def test_each_used_alias_warns_exactly_once(amc):
-    _, w = _parse(amc, [
-        "--emit-selection", "metrics",
-        "--combine",
-        "--otel-enabled",
-        "--otel-logs-endpoint", "http://h:1/v1/logs",
-        "--output-dir", "x",
-    ])
-    assert w.count("DEPRECATION: --emit-selection ") == 1
-    assert w.count("DEPRECATION: --combine ") == 1
-    assert w.count("DEPRECATION: --otel-enabled ") == 1
-    assert w.count("DEPRECATION: --otel-logs-endpoint ") == 1
-    assert w.count("DEPRECATION:") == 4
 
 
 def test_canonical_surface_never_warns(amc, tmp_path):
@@ -296,9 +247,23 @@ def test_canonical_surface_never_warns(amc, tmp_path):
     assert "DEPRECATION" not in w
 
 
+def test_deprecation_notice_mechanism_fully_removed(amc):
+    """The flag day removed the DEPRECATION stderr-notice machinery
+    wholesale: the literal never appears in the script source, the
+    alias->replacement map is gone, and _reconcile_cli_surface no
+    longer takes the raw-argv scan parameter."""
+    import inspect
+
+    assert "DEPRECATION" not in SCRIPT_PATH.read_text(encoding="utf-8")
+    assert not hasattr(amc, "_DEPRECATED_FLAGS")
+    params = inspect.signature(amc._reconcile_cli_surface).parameters
+    assert list(params) == ["p", "args"]
+
+
 def test_subcommands_do_not_warn(amc, tmp_path, capsys):
-    """The combine/validate subcommands reuse alias plumbing internally;
-    canonical invocations must not surface DEPRECATION noise."""
+    """Canonical subcommand invocations are structurally free of
+    deprecation noise — they carry dedicated parsers and never route
+    through parse_args."""
     out = tmp_path / "run"
     run_capture(amc, out, days=1, extra_args=["--emit", "metrics,schema"])
     buf = io.StringIO()
@@ -306,15 +271,6 @@ def test_subcommands_do_not_warn(amc, tmp_path, capsys):
         amc.main(["validate", str(out)])
         amc.main(["combine", str(out)])
     assert "DEPRECATION" not in buf.getvalue()
-
-
-def test_deprecation_prefix_distinct_from_scenario_warnings(amc):
-    """Scenario-drop diagnostics use the 'WARNING: scenario' prefix; the
-    alias notices deliberately use 'DEPRECATION:' so stderr filters on
-    either prefix cannot cross-match."""
-    _, w = _parse(amc, ["--combine", "--output-dir", "x"])
-    assert "DEPRECATION:" in w
-    assert "WARNING:" not in w
 
 
 # ---------------------------------------------------------------------------
@@ -354,51 +310,32 @@ def test_subcommand_directory_errors_distinguish_missing_from_file(amc, tmp_path
         assert "does not exist" in buf.getvalue(), (sub, buf.getvalue())
 
 
-def test_otel_send_rejects_endpoint_flag_for_unselected_signal(amc):
-    """--otel-send is authoritative: an explicit per-signal endpoint flag
-    for a signal the selection omits is a contradiction and must be a
-    parse error — silently honoring it would leak the signal past the
-    selection, silently clearing it would ignore an explicit flag
-    (Copilot review on PR #101)."""
-    err = _parse_error(amc, [
-        "--otel-send", "gauges",
-        "--otel-endpoint", "http://h:4318",
-        "--otel-logs-endpoint", "http://legacy:1/v1/logs",
-        "--output-dir", "x",
-    ])
-    assert "does not include 'logs'" in err
-    # Env-var defaults for unselected signals are still cleared silently
-    # (covered by test_otel_send_gauges_only_mapping); only the explicit
-    # flag is the contradiction.
-
-
-def test_otel_send_none_tolerates_per_signal_endpoint_flags(amc):
-    """'none' is the explicit-off escape hatch and must tolerate inert
-    per-signal endpoint flags exactly like its deprecated twin
-    --otel-disabled does (main() keys streaming on otel_enabled, so the
-    endpoints never fire). The unselected-signal rejection applies only
-    to non-empty selections."""
-    args, _ = _parse(amc, [
-        "--otel-send", "none",
-        "--otel-logs-endpoint", "http://legacy:1/v1/logs",
-        "--output-dir", "x",
-    ])
-    assert not args.otel_enabled
-
-    legacy, _ = _parse(amc, [
-        "--otel-disabled",
-        "--otel-logs-endpoint", "http://legacy:1/v1/logs",
-        "--output-dir", "x",
-    ])
-    assert args.otel_enabled == legacy.otel_enabled
+def test_otel_send_clears_env_endpoint_and_token_for_unselected_signal(
+        amc, monkeypatch):
+    """--otel-send is authoritative: env-var endpoint AND auth-token
+    defaults for unselected signals are cleared, so a
+    configured-but-unselected signal cannot leak into the stream and a
+    dangling credential is not carried in the namespace (matching the
+    stricter clearing of the 'none' branch)."""
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_ENDPOINT", "http://env:1/v1/logs")
+    monkeypatch.setenv("MEZMO_OTEL_LOGS_AUTH_TOKEN", "logs-token")
+    monkeypatch.setenv("MEZMO_OTEL_METRICS_ENDPOINT", "http://env:1/v1/metrics")
+    monkeypatch.setenv("MEZMO_OTEL_METRICS_AUTH_TOKEN", "metrics-token")
+    args, _ = _parse(amc, ["--otel-send", "logs", "--output-dir", "x"])
+    assert args.otel_logs_endpoint == "http://env:1/v1/logs"
+    assert args.otel_logs_auth_token == "logs-token"
+    assert args.otel_metrics_endpoint is None
+    assert args.otel_metrics_auth_token is None
+    assert args.otel_traces_endpoint is None
+    assert args.otel_traces_auth_token is None
 
 
 def test_abbreviated_flags_rejected(amc):
-    """allow_abbrev is off: prefix-abbreviated aliases (--emit-sel,
-    --otel-en) would bypass the canonical/alias mixing checks and the
-    deprecation notices, which scan raw argv for exact spellings."""
+    """allow_abbrev is off: prefix-abbreviated spellings (--emit-sel,
+    --otel-en) must fail rather than silently match a canonical flag
+    (--otel-en would otherwise abbreviate --otel-endpoint)."""
     for argv in (["--emit-sel", "metrics"],
-                 ["--otel-en", "--otel-logs-endpoint", "http://h:1/v1/logs"]):
+                 ["--otel-en", "http://h:1"]):
         _parse_error(amc, argv + ["--output-dir", "x"])
 
 
@@ -430,35 +367,26 @@ def test_otel_send_none_with_endpoint_stays_off_without_derivation(amc):
 
 
 def test_otel_endpoint_precedence_ladder(amc, monkeypatch):
-    """Per-signal precedence is explicit-CLI-first (Copilot round 3
-    surfaced the doc/code mismatch; the code's ladder is the intended
-    one): explicit per-signal flag > --otel-endpoint derivation >
-    MEZMO_OTEL_* env var. An explicitly typed base must never be
-    silently hijacked by a stale shell export, and the env var supplies
-    the default when no base is given."""
+    """Per-signal precedence after the flag day (the per-signal flags
+    are gone, so the historic 3-rung ladder is now 2 rungs):
+    --otel-endpoint derivation > MEZMO_OTEL_* env var. An explicitly
+    typed base must never be silently hijacked by a stale shell export,
+    and the env var supplies the default when no base is given."""
     monkeypatch.setenv("MEZMO_OTEL_LOGS_ENDPOINT", "http://envhost:9/custom/logs")
     monkeypatch.setenv("MEZMO_OTEL_LOGS_AUTH_TOKEN", "env-token")
 
-    # Rung 3: env var supplies the default when no base is given.
+    # Rung 2: env var supplies the default when no base is given.
     args, _ = _parse(amc, ["--otel-send", "logs", "--output-dir", "x"])
     assert args.otel_logs_endpoint == "http://envhost:9/custom/logs"
     assert args.otel_logs_auth_token == "env-token"
 
-    # Rung 2: an explicitly typed base beats the env var.
+    # Rung 1: an explicitly typed base (and token) beats the env var.
     args, _ = _parse(amc, ["--otel-send", "logs",
                            "--otel-endpoint", "http://cli:4318",
                            "--otel-auth-token", "cli-token",
                            "--output-dir", "x"])
     assert args.otel_logs_endpoint == "http://cli:4318/v1/logs"
     assert args.otel_logs_auth_token == "cli-token"
-
-    # Rung 1: an explicit per-signal flag beats the base derivation.
-    args, w = _parse(amc, ["--otel-send", "logs",
-                           "--otel-endpoint", "http://cli:4318",
-                           "--otel-logs-endpoint", "http://special:1/x/logs",
-                           "--output-dir", "x"])
-    assert args.otel_logs_endpoint == "http://special:1/x/logs"
-    assert "DEPRECATION: --otel-logs-endpoint" in w
 
 
 def test_emit_gauges_without_metrics_uses_canonical_wording(amc):

@@ -187,7 +187,7 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 # Per-metric schema. One MetricSpec per CSV column per component.
 # ------------------------------------------------------------------
 # Vocabulary for ``MetricSpec.semantic_type``. Drives both the ``schema.json``
-# emitter and the ``--validate-output`` checks (e.g. ``counter`` / ``rate``
+# emitter and the ``validate`` subcommand's checks (e.g. ``counter`` / ``rate``
 # columns must be non-negative). Values map onto the OTLP semantic instrument
 # kinds the generator uses elsewhere (``stream_otel_signals`` Sum data points
 # for counters, ``stream_otel_gauges`` Gauge data points for gauges).
@@ -215,7 +215,7 @@ class MetricSpec:
     Schema fields (``unit``, ``semantic_type``, ``min_value``, ``max_value``,
     ``dtype``, ``derivation``) are declarative metadata only — they do not
     affect generation. They flow into ``schema.json`` and the
-    ``--validate-output`` checks. Defaults preserve existing behavior for
+    ``validate`` subcommand's checks. Defaults preserve existing behavior for
     catalog entries that have not been backfilled yet (the generator still
     emits the same bytes whether or not these fields are populated).
     """
@@ -1806,7 +1806,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     if emit_metrics:
         # Rounding and fixed-3 string formatting exist only to produce
         # the CSV bytes, so they run inside the emit guard: a run whose
-        # ``--emit-selection`` omits ``metrics`` previously paid the
+        # ``--emit`` omits ``metrics`` previously paid the
         # full formatting cost (historically ~80% of generation
         # runtime, per the comment below) and threw the result away.
         # Safe to skip when not emitting: the ``topology_capture``
@@ -3753,7 +3753,7 @@ def _validate_topology_metric_registries() -> None:
     ``--components`` subsets) — but they also swallowed registry typos,
     so a new edge with a misspelled metric would pass import, generate
     fully decoupled output, and surface only at the opt-in
-    ``--validate-output`` Pearson check. This validator fails the typo
+    ``validate`` subcommand's Pearson check. This validator fails the typo
     at import time instead. Checks:
 
     * every ``_TOPOLOGY_LOAD_METRICS`` key is a ``COMPONENTS`` key, and
@@ -6917,7 +6917,7 @@ def _validate_derivations_registry() -> None:
     # MetricSpec that declares a ``derivation`` string without a
     # matching DERIVATIONS entry would emit a schema.json claiming a
     # derivation the generator never recomputes, and the failure would
-    # surface only at ``--validate-output`` time as a runtime KeyError
+    # surface only at ``validate``-subcommand time as a runtime KeyError
     # from the strict ``_RECOMPUTERS[...]`` lookup instead of a clear
     # import-time error here. A DERIVATIONS metric whose MetricSpec
     # does NOT declare a ``derivation`` string is the mirror drift: the
@@ -6931,7 +6931,7 @@ def _validate_derivations_registry() -> None:
             raise ValueError(
                 f"COMPONENTS[{component!r}] metrics {unregistered} declare "
                 "a `derivation` string but have no DERIVATIONS entry; the "
-                "generator would never recompute them and --validate-output "
+                "generator would never recompute them and the validate subcommand "
                 "would fail with a KeyError. Add the DERIVATIONS (and "
                 "_RECOMPUTERS) entries in lockstep."
             )
@@ -6941,7 +6941,7 @@ def _validate_derivations_registry() -> None:
                 f"DERIVATIONS[{component!r}] recomputes metrics "
                 f"{undeclared} whose MetricSpec declares no `derivation` "
                 "string; schema.json would omit the derivation and "
-                "--validate-output would silently skip the check. Declare "
+                "the validate subcommand would silently skip the check. Declare "
                 "`derivation=` on the MetricSpec."
             )
 
@@ -7490,52 +7490,15 @@ def _apply_scenarios(component_anomalies: dict, cascade_registry: dict,
 # ------------------------------------------------------------------
 # CLI + entry point
 # ------------------------------------------------------------------
-def _env_bool(name: str, default: bool = False) -> bool:
-    """Parse a boolean env var with three-valued contract:
 
-    - missing, empty, or whitespace-only → returns ``default``
-    - truthy (``1``/``true``/``yes``/``on``, case-insensitive) → returns ``True``
-    - any other non-empty value (``0``/``false``/``no``/``off``/garbage) → returns ``False``
-
-    The empty/missing path honors ``default`` so ``MEZMO_FOO=""`` with
-    ``default=True`` does not silently flip to ``False``; explicit falsy
-    values always win over ``default`` so opt-out env vars behave as
-    expected without surprise."""
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-# Deprecated flag spellings and their canonical replacements. Consumed in
-# two places: ``parse_args`` annotates each alias's --help-all entry, and
-# ``_reconcile_cli_surface`` emits one ``DEPRECATION:`` stderr line per
-# alias actually used. The combine/validate subcommands carry dedicated
-# parsers and never route through ``parse_args``, so canonical
-# invocations are structurally warning-free. Aliases remain fully
-# functional until the post-phase-9 flag day.
-_DEPRECATED_FLAGS: dict[str, str] = {
-    "--emit-selection": "--emit",
-    "--combine": "--emit <artifacts>,combined",
-    "--combine-only": "the 'combine' subcommand",
-    "--validate-output": "the 'validate' subcommand",
-    "--validate-warn": "the 'validate' subcommand's --warn",
-    "--otel-enabled": "--otel-send logs,metrics,traces",
-    "--otel-disabled": "--otel-send none",
-    "--otel-emit-gauges": "--otel-send <signals>,gauges",
-    "--otel-no-emit-gauges": "--otel-send without 'gauges'",
-    "--otel-gauges-only": "--otel-send gauges",
-    "--otel-logs-endpoint": "--otel-endpoint",
-    "--otel-metrics-endpoint": "--otel-endpoint",
-    "--otel-traces-endpoint": "--otel-endpoint",
-    "--otel-logs-auth-token": "--otel-auth-token",
-    "--otel-metrics-auth-token": "--otel-auth-token",
-    "--otel-traces-auth-token": "--otel-auth-token",
-}
 
 # Flags hidden from the default ``-h`` (shown by ``--help-all``): the
-# deprecated aliases above plus the advanced / research knobs that the
-# common use cases never touch. Keyed by argparse ``dest``.
+# advanced / research knobs that the common use cases never touch.
+# Keyed by argparse ``dest``. (The 16 deprecated alias flags that used
+# to live here were removed at the post-phase-9 CLI flag day; the
+# historic dests they wrote — ``emit_selection``, ``combine``, the
+# OTEL toggle/endpoint sextet — survive as the internal namespace
+# populated by ``p.set_defaults`` + ``_reconcile_cli_surface``.)
 _ADVANCED_DESTS: frozenset[str] = frozenset({
     # research / power knobs
     "anomaly_count", "allow_huge_output", "inject_dst_artifact_day",
@@ -7544,13 +7507,6 @@ _ADVANCED_DESTS: frozenset[str] = frozenset({
     "otel_gauge_batch_seconds", "otel_gauge_metric_prefix",
     "otel_stream_timeout_seconds", "otel_stream_max_events",
     "otel_stream_auth_scheme", "otel_activity_log", "otel_verbose",
-    # deprecated aliases
-    "emit_selection", "combine", "combine_only",
-    "validate_output", "validate_warn",
-    "otel_enabled", "otel_emit_gauges", "otel_gauges_only",
-    "otel_logs_endpoint", "otel_logs_auth_token",
-    "otel_metrics_endpoint", "otel_metrics_auth_token",
-    "otel_traces_endpoint", "otel_traces_auth_token",
 })
 
 
@@ -7579,8 +7535,8 @@ def _parse_components_value(error, raw: str) -> set[str]:
     return selected_components
 
 
-def _reconcile_cli_surface(p, args, raw_argv):
-    """Map the canonical CLI surface onto the legacy argument namespace.
+def _reconcile_cli_surface(p, args):
+    """Map the canonical CLI surface onto the internal argument namespace.
 
     Everything downstream of ``parse_args`` consumes the historic
     names: ``emit_selection`` (written here in its raw comma-separated
@@ -7588,28 +7544,18 @@ def _reconcile_cli_surface(p, args, raw_argv):
     and replace it with the final ``set``), the ``combine`` boolean,
     the ``otel_enabled`` /
     ``otel_emit_gauges`` / ``otel_gauges_only`` toggles, and the
-    per-signal endpoint/token sextet. The canonical flags introduced by
-    the CLI consolidation (``--emit``, ``--otel-send``,
-    ``--otel-endpoint``, ``--otel-auth-token``) translate into those
-    names here — immediately after parsing and before any validation
-    gate — so every existing gate fires identically for both spellings.
-    Mixing a canonical flag with the aliases it replaces is rejected.
-
-    Also emits one ``DEPRECATION:`` stderr line per deprecated alias
-    present in ``raw_argv``. The ``combine`` / ``validate`` subcommands
-    never route through this function (they carry dedicated parsers), so
-    canonical invocations are structurally warning-free.
+    per-signal endpoint/token sextet. Since the post-phase-9 CLI flag
+    day removed the deprecated alias flags, the canonical flags
+    (``--emit``, ``--otel-send``, ``--otel-endpoint``,
+    ``--otel-auth-token``) are the only writers besides the
+    ``p.set_defaults`` baselines and the ``MEZMO_OTEL_*`` env vars;
+    this function translates them — immediately after parsing and
+    before any validation gate — so every gate consumes one namespace.
     """
     # ------------------------------------------------------------------
     # --emit -> emit_selection (+ combine via the 'combined' token).
     # ------------------------------------------------------------------
     if args.emit is not None:
-        for alias in ("--emit-selection", "--combine"):
-            if _flag_in_argv(raw_argv, alias):
-                p.error(
-                    f"--emit and {alias} are mutually exclusive; use "
-                    f"--emit alone ({alias} is its deprecated spelling)"
-                )
         tokens = {t.strip().lower() for t in args.emit.split(",") if t.strip()}
         allowed = {"metrics", "logs", "traces", "gauges", "schema", "combined"}
         invalid = sorted(tokens - allowed)
@@ -7629,10 +7575,10 @@ def _reconcile_cli_surface(p, args, raw_argv):
                     "requires the generated artifacts alongside it — "
                     "include 'metrics' (e.g. --emit metrics,combined)"
                 )
-        # Canonical-worded twin of the legacy emit-selection gate below,
-        # so a --emit user never sees an error naming the deprecated
-        # spelling. (gauges.csv derives from the per-component CSVs that
-        # only 'metrics' writes.)
+        # Early twin of the post-reconcile gate below, so the error
+        # points at the exact --emit value the user typed. (gauges.csv
+        # derives from the per-component CSVs that only 'metrics'
+        # writes.)
         if "gauges" in tokens and "metrics" not in tokens:
             p.error("--emit 'gauges' requires 'metrics' in the selection "
                     "(gauges.csv derives from the per-component CSVs)")
@@ -7643,14 +7589,6 @@ def _reconcile_cli_surface(p, args, raw_argv):
     # ------------------------------------------------------------------
     send_tokens = None
     if args.otel_send is not None:
-        for alias in ("--otel-enabled", "--otel-disabled",
-                      "--otel-emit-gauges", "--otel-no-emit-gauges",
-                      "--otel-gauges-only"):
-            if _flag_in_argv(raw_argv, alias):
-                p.error(
-                    f"--otel-send and {alias} are mutually exclusive; use "
-                    f"--otel-send alone ({alias} is a deprecated toggle)"
-                )
         send_tokens = {
             t.strip().lower() for t in args.otel_send.split(",") if t.strip()
         }
@@ -7667,12 +7605,7 @@ def _reconcile_cli_surface(p, args, raw_argv):
             if send_tokens != {"none"}:
                 p.error("--otel-send 'none' cannot be combined with other "
                         "signals")
-            # Explicit off: the canonical replacement for --otel-disabled,
-            # overriding any env-var endpoint defaults. Like
-            # --otel-disabled, 'none' tolerates per-signal endpoint flags
-            # — main() keys streaming on otel_enabled, so the endpoints
-            # are inert; the unselected-signal rejection below applies
-            # only to non-empty selections.
+            # Explicit off, overriding any env-var endpoint defaults.
             args.otel_enabled = False
             args.otel_emit_gauges = False
             args.otel_gauges_only = False
@@ -7680,13 +7613,9 @@ def _reconcile_cli_surface(p, args, raw_argv):
             # be truly off — leaving them would route the values into the
             # endpoint-shape validation below, so a malformed shell
             # export could fail a run the user explicitly disabled.
-            # Explicitly passed per-signal flags are kept (inert at
-            # runtime, but explicit input still deserves validation).
             for _sig in ("logs", "metrics", "traces"):
-                if not _flag_in_argv(raw_argv, f"--otel-{_sig}-endpoint"):
-                    setattr(args, f"otel_{_sig}_endpoint", None)
-                if not _flag_in_argv(raw_argv, f"--otel-{_sig}-auth-token"):
-                    setattr(args, f"otel_{_sig}_auth_token", None)
+                setattr(args, f"otel_{_sig}_endpoint", None)
+                setattr(args, f"otel_{_sig}_auth_token", None)
             send_tokens = set()
         else:
             if "all" in send_tokens:
@@ -7698,20 +7627,17 @@ def _reconcile_cli_surface(p, args, raw_argv):
             # main() filters stream_otel_signals' endpoint dict by this
             # so that e.g. --otel-send logs,gauges derives the metrics
             # ENDPOINT (the gauge stream posts there) without leaking
-            # the anomaly-count metrics SIGNAL. None (the default, set
-            # in parse_args for the legacy toggle path) means
-            # "no filtering — every configured endpoint streams".
+            # the anomaly-count metrics SIGNAL.
             args.otel_signal_selection = frozenset(send_tokens - {"gauges"})
 
     # ------------------------------------------------------------------
     # --otel-endpoint / --otel-auth-token -> the per-signal sextet.
     # ------------------------------------------------------------------
     if args.otel_endpoint is not None or args.otel_auth_token is not None:
-        if send_tokens is None and not args.otel_enabled:
+        if send_tokens is None:
             flag = ("--otel-endpoint" if args.otel_endpoint is not None
                     else "--otel-auth-token")
-            p.error(f"{flag} requires --otel-send "
-                    "(or the deprecated --otel-enabled)")
+            p.error(f"{flag} requires --otel-send")
     base = None
     if args.otel_endpoint is not None:
         if not args.otel_endpoint.startswith(("http://", "https://")):
@@ -7724,65 +7650,39 @@ def _reconcile_cli_surface(p, args, raw_argv):
         if "gauges" in send_tokens:
             # The gauge stream posts to the metrics endpoint.
             wanted.add("metrics")
-    elif send_tokens is None and (base is not None
-                                  or args.otel_auth_token is not None):
-        # Canonical endpoint/token paired with the deprecated
-        # --otel-enabled toggle: derive every signal endpoint.
-        # (--otel-send none skips derivation entirely — streaming is
-        # off, so there is nothing to derive for.)
-        wanted = {"logs", "metrics", "traces"}
     if wanted is not None:
         for sig in ("logs", "metrics", "traces"):
-            ep_flag = f"--otel-{sig}-endpoint"
-            tok_flag = f"--otel-{sig}-auth-token"
-            explicit_ep = _flag_in_argv(raw_argv, ep_flag)
             if sig in wanted:
-                if base is not None and not explicit_ep:
+                # An explicitly typed --otel-endpoint base beats the
+                # MEZMO_OTEL_*_ENDPOINT env-var default (a stale shell
+                # export must not silently hijack typed input); the env
+                # var supplies the per-signal value when no base is
+                # given. Same ladder for the token.
+                if base is not None:
                     setattr(args, f"otel_{sig}_endpoint", f"{base}/v1/{sig}")
-                if (args.otel_auth_token is not None
-                        and not _flag_in_argv(raw_argv, tok_flag)):
+                if args.otel_auth_token is not None:
                     setattr(args, f"otel_{sig}_auth_token",
                             args.otel_auth_token)
-            elif send_tokens:
-                # --otel-send is authoritative for signal selection. An
-                # explicit per-signal endpoint flag for an unselected
-                # signal is a contradiction — main() streams whatever has
-                # an endpoint, so silently honoring the flag would leak
-                # the signal past the selection, and silently clearing it
-                # would ignore an explicit flag. Reject instead.
-                if explicit_ep:
-                    p.error(
-                        f"--otel-send does not include '{sig}' but "
-                        f"{ep_flag} was passed; add '{sig}' to "
-                        f"--otel-send or drop the endpoint flag"
-                    )
-                # Env-var endpoint defaults for unselected signals are
-                # cleared so the selection stays authoritative.
+            else:
+                # --otel-send is authoritative for signal selection:
+                # env-var endpoint AND token defaults for unselected
+                # signals are cleared so a configured-but-unselected
+                # signal cannot leak into the stream and a dangling
+                # credential is not carried in the namespace (matching
+                # the stricter clearing the 'none' branch does).
                 setattr(args, f"otel_{sig}_endpoint", None)
+                setattr(args, f"otel_{sig}_auth_token", None)
     if send_tokens:
         if not any([args.otel_logs_endpoint, args.otel_metrics_endpoint,
                     args.otel_traces_endpoint]):
             p.error("--otel-send requires --otel-endpoint (or a per-signal "
-                    "endpoint via MEZMO_OTEL_*_ENDPOINT / the deprecated "
-                    "per-signal flags)")
-
-    # ------------------------------------------------------------------
-    # Deprecation notices: one line per alias actually used.
-    # ------------------------------------------------------------------
-    for flag, replacement in _DEPRECATED_FLAGS.items():
-        if _flag_in_argv(raw_argv, flag):
-            print(
-                f"DEPRECATION: {flag} is deprecated; use {replacement}. "
-                "The alias keeps working until the post-phase-9 CLI "
-                "flag day.",
-                file=sys.stderr,
-            )
+                    "endpoint via MEZMO_OTEL_*_ENDPOINT)")
 
 
 def parse_args(argv=None):
     raw_argv = list(sys.argv[1:]) if argv is None else list(argv)
-    # ``--help-all`` rebuilds the help view with the advanced + deprecated
-    # flags un-hidden, then renders help. Handled before argparse so the
+    # ``--help-all`` rebuilds the help view with the advanced flags
+    # un-hidden, then renders help. Handled before argparse so the
     # brief parser never needs to know the flag exists as an action.
     show_all = _flag_in_argv(raw_argv, "--help-all")
     if show_all:
@@ -7801,7 +7701,7 @@ def parse_args(argv=None):
             "combined_metrics_unified.csv), and 'validate DIR [--warn]' "
             "(check artifacts against DIR/schema.json). This help shows "
             "the common surface; run with --help-all to also list the "
-            "advanced knobs and deprecated flag aliases."
+            "advanced knobs."
         ),
     )
     g_common = p.add_argument_group("common")
@@ -7810,9 +7710,8 @@ def parse_args(argv=None):
     g_art = p.add_argument_group("artifacts")
     g_otel = p.add_argument_group("OTEL streaming")
     g_adv = p.add_argument_group(
-        "advanced & deprecated",
-        "Hidden from -h; shown here via --help-all. Deprecated aliases "
-        "remain functional and emit a DEPRECATION notice on stderr.",
+        "advanced",
+        "Hidden from -h; shown here via --help-all.",
     )
 
     g_art.add_argument(
@@ -7827,8 +7726,7 @@ def parse_args(argv=None):
              "consumed by the validate subcommand; 'combined' "
              "additionally joins the per-component CSVs into "
              "combined_metrics_unified.csv after generation (requires "
-             "'metrics'). Replaces the deprecated --emit-selection + "
-             "--combine pair.",
+             "'metrics').",
     )
     g_otel.add_argument(
         "--otel-send",
@@ -7842,10 +7740,7 @@ def parse_args(argv=None):
              "matching signal endpoint; 'gauges' streams per-row metric "
              "values as Gauge data points to the metrics endpoint "
              "(requires the 'metrics' artifact). '--otel-send gauges' "
-             "alone skips the anomaly signal stream entirely. Replaces "
-             "the deprecated --otel-enabled/--otel-disabled/"
-             "--otel-emit-gauges/--otel-no-emit-gauges/--otel-gauges-only "
-             "toggle set.",
+             "alone skips the anomaly signal stream entirely.",
     )
     g_otel.add_argument(
         "--otel-endpoint",
@@ -7855,10 +7750,8 @@ def parse_args(argv=None):
         help="OTLP/HTTP base endpoint (e.g. http://localhost:4318). "
              "Per-signal URLs are derived as BASE/v1/logs, BASE/v1/metrics, "
              "BASE/v1/traces for the signals selected by --otel-send. "
-             "Per-signal precedence: a deprecated per-signal flag beats "
-             "this derivation, which beats the MEZMO_OTEL_*_ENDPOINT env "
-             "vars (they supply per-signal defaults when no base is "
-             "given).",
+             "This derivation beats the MEZMO_OTEL_*_ENDPOINT env vars "
+             "(they supply per-signal defaults when no base is given).",
     )
     g_otel.add_argument(
         "--otel-auth-token",
@@ -7867,10 +7760,9 @@ def parse_args(argv=None):
         metavar="TOKEN",
         help="Auth token applied to every selected signal endpoint "
              "(scheme via --otel-stream-auth-scheme, default Bearer). "
-             "Per-signal precedence: a deprecated per-signal flag beats "
-             "this token, which beats the MEZMO_OTEL_*_AUTH_TOKEN env "
-             "vars (they supply per-signal defaults when this flag is "
-             "not given).",
+             "This token beats the MEZMO_OTEL_*_AUTH_TOKEN env vars "
+             "(they supply per-signal defaults when this flag is not "
+             "given).",
     )
     g_common.add_argument("--duration-days", type=float, default=DEFAULT_DURATION_DAYS,
                    help=f"Number of days of metrics to generate "
@@ -7897,41 +7789,13 @@ def parse_args(argv=None):
                         f"Values >= 1.0 emit second-precision timestamps "
                         f"(YYYY-MM-DD HH:MM:SS); values < 1.0 emit millisecond-precision "
                         f"timestamps (YYYY-MM-DD HH:MM:SS.SSS) to keep adjacent rows unique.")
-    g_adv.add_argument("--combine", action="store_true",
-                   help="After generating logs, also write a unified combined CSV "
-                        "(combined_metrics_unified.csv) into --output-dir.")
-    g_adv.add_argument("--combine-only", action="store_true",
-                   help="Skip generation; only run the combine step against an existing "
-                        "--output-dir. Useful for re-running the join without regenerating.")
-    g_adv.add_argument(
-        "--validate-output",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="Standalone mode: skip generation and validate the artifacts in "
-             "PATH against PATH/schema.json. Exits 1 (or 0 with --validate-warn) "
-             "and prints one line per violation. Mutually exclusive with --combine "
-             "and --combine-only.",
-    )
-    g_adv.add_argument(
-        "--validate-warn",
-        action="store_true",
-        default=False,
-        help="Soft mode for --validate-output: report violations on stderr but "
-             "exit 0. Without this flag, --validate-output reports every "
-             "violation found and exits 1 if there are any.",
-    )
-    g_adv.add_argument(
-        "--emit-selection",
-        type=str,
-        default="metrics,logs,traces",
-        help="Comma-separated artifact selection: metrics, logs, traces, "
-             "gauges, schema (default: metrics,logs,traces). 'gauges' writes "
-             "a long-form gauges.csv (timestamp,component,metric,value) "
-             "alongside the per-component CSVs and requires 'metrics'. "
-             "'schema' writes a declarative schema.json describing per-metric "
-             "metadata and run-level parameters; consumed by --validate-output.",
-    )
+    # Internal namespace baselines for the dests the canonical flags
+    # translate onto via _reconcile_cli_surface. The flags that used to
+    # write these directly (--combine, --emit-selection) were removed at
+    # the post-phase-9 CLI flag day; the dests survive because every
+    # downstream gate and main() consumer reads them.
+    p.set_defaults(combine=False)
+    p.set_defaults(emit_selection="metrics,logs,traces")
     g_shape.add_argument(
         "--components",
         type=str,
@@ -7998,58 +7862,21 @@ def parse_args(argv=None):
              f"--instances-per-component that would emit more cells than "
              f"the cap. Pass this flag when the size is intentional.",
     )
-    otel_toggle = g_adv.add_mutually_exclusive_group()
-    otel_toggle.add_argument(
-        "--otel-enabled",
-        dest="otel_enabled",
-        action="store_true",
-        help="Enable streaming anomaly events to the configured OTLP/HTTP endpoints. "
-             "Default: off. When off, configured endpoints are ignored at runtime.",
-    )
-    otel_toggle.add_argument(
-        "--otel-disabled",
-        dest="otel_enabled",
-        action="store_false",
-        help="Explicitly disable OTEL streaming (the default). Overrides --otel-enabled.",
-    )
+    # OTEL streaming state: --otel-send is the only writer (the five
+    # toggle aliases were removed at the CLI flag day, and the
+    # MEZMO_OTEL_EMIT_GAUGES env default went with them — once the
+    # selection became the only enable path it was authoritative over
+    # the env var, which therefore could never take effect).
     p.set_defaults(otel_enabled=False)
-    gauge_toggle = g_adv.add_mutually_exclusive_group()
-    gauge_toggle.add_argument(
-        "--otel-emit-gauges",
-        dest="otel_emit_gauges",
-        action="store_true",
-        help="Emit a second OTLP stream of per-row metric values as Gauge data points "
-             "to --otel-metrics-endpoint, in addition to the existing anomaly-counter "
-             "stream. Off by default. Requires --otel-enabled, --otel-metrics-endpoint, "
-             "and 'metrics' in --emit-selection. "
-             "Env override: MEZMO_OTEL_EMIT_GAUGES (truthy = 1/true/yes/on).",
-    )
-    gauge_toggle.add_argument(
-        "--otel-no-emit-gauges",
-        dest="otel_emit_gauges",
-        action="store_false",
-        help="Explicitly disable the gauge stream (the default). Overrides "
-             "--otel-emit-gauges and the MEZMO_OTEL_EMIT_GAUGES env var.",
-    )
-    gauge_toggle.add_argument(
-        "--otel-gauges-only",
-        dest="otel_gauges_only",
-        action="store_true",
-        help="Stream only per-row metric values as OTLP Gauge data points to "
-             "--otel-metrics-endpoint, skipping the anomaly log/metric/trace "
-             "signal stream. Implies --otel-emit-gauges and requires "
-             "--otel-enabled, --otel-metrics-endpoint, and 'metrics' in "
-             "--emit-selection.",
-    )
-    p.set_defaults(otel_emit_gauges=_env_bool("MEZMO_OTEL_EMIT_GAUGES", False))
+    p.set_defaults(otel_emit_gauges=False)
     p.set_defaults(otel_gauges_only=False)
     g_adv.add_argument(
         "--otel-gauge-batch-seconds",
         type=int,
         default=60,
         help="Number of consecutive timestamp ticks (in seconds of timeline coverage, "
-             "not wall-clock) coalesced into one OTLP request when --otel-emit-gauges "
-             "is on. Default: 60. Larger batches mean fewer HTTP requests but bigger "
+             "not wall-clock) coalesced into one OTLP request when the gauge stream "
+             "is selected (--otel-send with 'gauges'). Default: 60. Larger batches mean fewer HTTP requests but bigger "
              "bodies; tune for your OTLP collector body limit.",
     )
     g_adv.add_argument(
@@ -8060,53 +7887,18 @@ def parse_args(argv=None):
              "gauge data point (e.g. 'amc.' produces 'amc.cpu_util_pct'). Default: "
              "empty (use the raw MetricSpec.name).",
     )
-    g_adv.add_argument(
-        "--otel-logs-endpoint",
-        type=str,
-        default=os.environ.get("MEZMO_OTEL_LOGS_ENDPOINT"),
-        help="Optional OTLP/HTTP logs endpoint (for example http://localhost:4318/v1/logs). "
-             "Streamed only when --otel-enabled is also passed. "
-             "Env override: MEZMO_OTEL_LOGS_ENDPOINT.",
-    )
-    g_adv.add_argument(
-        "--otel-logs-auth-token",
-        type=str,
-        default=os.environ.get("MEZMO_OTEL_LOGS_AUTH_TOKEN"),
-        help="Optional OTEL auth token for the logs endpoint. "
-             "Env override: MEZMO_OTEL_LOGS_AUTH_TOKEN.",
-    )
-    g_adv.add_argument(
-        "--otel-metrics-endpoint",
-        type=str,
-        default=os.environ.get("MEZMO_OTEL_METRICS_ENDPOINT"),
-        help="Optional OTLP/HTTP metrics endpoint (for example http://localhost:4318/v1/metrics). "
-             "Without --otel-emit-gauges this endpoint receives only the "
-             "anomaly-counter stream (one Sum data point per anomaly event); "
-             "with --otel-emit-gauges it additionally receives a Gauge stream of "
-             "per-row metric values. "
-             "Env override: MEZMO_OTEL_METRICS_ENDPOINT.",
-    )
-    g_adv.add_argument(
-        "--otel-metrics-auth-token",
-        type=str,
-        default=os.environ.get("MEZMO_OTEL_METRICS_AUTH_TOKEN"),
-        help="Optional OTEL auth token for the metrics endpoint. "
-             "Env override: MEZMO_OTEL_METRICS_AUTH_TOKEN.",
-    )
-    g_adv.add_argument(
-        "--otel-traces-endpoint",
-        type=str,
-        default=os.environ.get("MEZMO_OTEL_TRACES_ENDPOINT"),
-        help="Optional OTLP/HTTP traces endpoint (for example http://localhost:4318/v1/traces). "
-             "When set, anomaly events are replayed as traces to this endpoint. "
-             "Env override: MEZMO_OTEL_TRACES_ENDPOINT.",
-    )
-    g_adv.add_argument(
-        "--otel-traces-auth-token",
-        type=str,
-        default=os.environ.get("MEZMO_OTEL_TRACES_AUTH_TOKEN"),
-        help="Optional OTEL auth token for the traces endpoint. "
-             "Env override: MEZMO_OTEL_TRACES_AUTH_TOKEN.",
+    # Per-signal endpoint/token internal namespace. The six per-signal
+    # flags were removed at the CLI flag day; the MEZMO_OTEL_* env vars
+    # remain the per-signal override mechanism (an explicitly typed
+    # --otel-endpoint base beats them for the selected signals — see
+    # _reconcile_cli_surface).
+    p.set_defaults(
+        otel_logs_endpoint=os.environ.get("MEZMO_OTEL_LOGS_ENDPOINT"),
+        otel_logs_auth_token=os.environ.get("MEZMO_OTEL_LOGS_AUTH_TOKEN"),
+        otel_metrics_endpoint=os.environ.get("MEZMO_OTEL_METRICS_ENDPOINT"),
+        otel_metrics_auth_token=os.environ.get("MEZMO_OTEL_METRICS_AUTH_TOKEN"),
+        otel_traces_endpoint=os.environ.get("MEZMO_OTEL_TRACES_ENDPOINT"),
+        otel_traces_auth_token=os.environ.get("MEZMO_OTEL_TRACES_AUTH_TOKEN"),
     )
     g_otel.add_argument(
         "--otel-stream-speedup",
@@ -8127,7 +7919,7 @@ def parse_args(argv=None):
         default=None,
         help="Optional cap on streamed HTTP attempt count (default: all). For the "
              "anomaly-counter stream this caps the number of anomaly events sent. "
-             "For the gauge stream (``--otel-emit-gauges``) it caps the number of "
+             "For the gauge stream (--otel-send with 'gauges') it caps the number of "
              "OTLP request *attempts* (not data points and not successes) — a broken "
              "endpoint that 500s every request still trips the cap at N. Both streams "
              "honor the same flag independently in one run.",
@@ -8151,7 +7943,7 @@ def parse_args(argv=None):
         type=Path,
         default=Path("otel-activity.log"),
         help="Path to the OTEL streaming activity log file. Records one line per "
-             "send attempt, retry, and failure when --otel-enabled is set. The file "
+             "send attempt, retry, and failure when OTEL streaming is on. The file "
              "is only created when streaming actually runs. "
              "Default: ./otel-activity.log in the current directory.",
     )
@@ -8194,34 +7986,23 @@ def parse_args(argv=None):
              "INSTANCES registry (today: a single anonymous Instance() per "
              "component). Mutually exclusive with --instances-per-component.",
     )
-    # Brief-help mode hides the advanced knobs and deprecated aliases;
-    # --help-all shows everything, annotating each deprecated alias with
-    # its canonical replacement. Walks the parser's actions once after
-    # construction so each flag is defined exactly once above.
-    deprecated_dests = {}
-    for action in p._actions:
-        for opt in action.option_strings:
-            if opt in _DEPRECATED_FLAGS:
-                deprecated_dests[opt] = action
-    if show_all:
-        for opt, action in deprecated_dests.items():
-            if action.help and not str(action.help).startswith("[deprecated"):
-                action.help = (
-                    f"[deprecated -> use {_DEPRECATED_FLAGS[opt]}] {action.help}"
-                )
-    else:
+    # Brief-help mode hides the advanced knobs; --help-all shows
+    # everything. Walks the parser's actions once after construction so
+    # each flag is defined exactly once above.
+    if not show_all:
         for action in p._actions:
             if action.dest in _ADVANCED_DESTS:
                 action.help = argparse.SUPPRESS
 
     args = p.parse_args(argv)
 
-    # Default: no signal filtering (legacy toggle semantics — every
-    # configured endpoint streams). _reconcile_cli_surface overrides
-    # this with the --otel-send selection when given.
+    # Default: no signal filtering (every configured endpoint streams;
+    # only reachable for programmatic namespaces — flag-level streaming
+    # always routes through --otel-send). _reconcile_cli_surface
+    # overrides this with the --otel-send selection when given.
     args.otel_signal_selection = None
 
-    _reconcile_cli_surface(p, args, raw_argv)
+    _reconcile_cli_surface(p, args)
 
     if not math.isfinite(args.duration_days):
         p.error("--duration-days must be a finite number")
@@ -8247,45 +8028,35 @@ def parse_args(argv=None):
     # rows in the combine step (the original failure mode).
     if args.interval_seconds < 0.001:
         p.error("--interval-seconds must be >= 0.001 (ms-precision floor)")
-    if args.combine and args.combine_only:
-        p.error("--combine and --combine-only are mutually exclusive")
-    if args.validate_output is not None:
-        if args.combine or args.combine_only:
-            p.error("--validate-output is mutually exclusive with "
-                    "--combine and --combine-only")
-        if not args.validate_output.is_dir():
-            p.error(f"--validate-output PATH must be an existing directory; "
-                    f"{args.validate_output} is not")
-    elif args.validate_warn:
-        p.error("--validate-warn requires --validate-output")
     if args.inject_dst_artifact_day < 0:
         p.error("--inject-dst-artifact-day must be >= 0 (0 disables)")
     if args.inject_dst_artifact_day > args.duration_days:
         p.error(f"--inject-dst-artifact-day {args.inject_dst_artifact_day} "
                 f"is outside the configured --duration-days {args.duration_days}")
+    # Re-parse the reconciled emit_selection string into the final set.
+    # The token vocabulary was already gated when --emit was given; this
+    # pass re-checks it so a programmatic namespace (or a future default
+    # change) cannot smuggle an unknown token past the gates.
     selected = {item.strip().lower() for item in args.emit_selection.split(",") if item.strip()}
     allowed = {"metrics", "logs", "traces", "gauges", "schema"}
     invalid = sorted(selected - allowed)
     if invalid:
-        p.error("--emit-selection contains invalid value(s): "
-                f"{', '.join(invalid)}. Allowed: metrics,logs,traces,gauges,schema")
+        p.error("--emit contains invalid value(s): "
+                f"{', '.join(invalid)}. "
+                "Allowed: metrics,logs,traces,gauges,schema "
+                "(plus 'combined', consumed at --emit parse time)")
     if not selected:
-        p.error("--emit-selection must contain at least one of metrics,logs,traces,gauges,schema")
+        p.error("--emit must contain at least one of "
+                "metrics,logs,traces,gauges,schema")
     if args.combine and "metrics" not in selected:
-        p.error("the 'combined' artifact / --combine requires "
-                "--emit-selection to include metrics (--emit metrics,combined)")
+        p.error("--emit 'combined' requires 'metrics' in the selection "
+                "(e.g. --emit metrics,combined)")
     # ``gauges`` is derived from the per-component CSVs written under
     # ``metrics`` (same input as the OTEL gauge stream). Without ``metrics``,
     # the per-component CSVs are not written this run, so we have nothing to
     # derive ``gauges.csv`` from. Reject up-front with a clear message.
     if "gauges" in selected and "metrics" not in selected:
-        p.error("--emit-selection 'gauges' requires --emit-selection to include 'metrics'")
-    if args.otel_enabled and not any([
-        args.otel_logs_endpoint, args.otel_metrics_endpoint, args.otel_traces_endpoint
-    ]):
-        p.error("--otel-enabled requires at least one of --otel-logs-endpoint, "
-                "--otel-metrics-endpoint, or --otel-traces-endpoint to be set "
-                "(via flag or env var).")
+        p.error("--emit 'gauges' requires 'metrics' in the selection")
     if args.otel_gauges_only:
         args.otel_emit_gauges = True
     if args.otel_emit_gauges:
@@ -8293,16 +8064,17 @@ def parse_args(argv=None):
             gauge_flag = ("--otel-send gauges" if args.otel_gauges_only
                           else "--otel-send with 'gauges'")
         else:
-            gauge_flag = ("--otel-gauges-only" if args.otel_gauges_only
-                          else "--otel-emit-gauges")
+            # No flag or env var writes otel_emit_gauges anymore; only a
+            # programmatic namespace can reach this branch.
+            gauge_flag = "the gauge stream (otel_emit_gauges)"
         if not args.otel_enabled:
-            p.error(f"{gauge_flag} requires --otel-enabled")
+            p.error(f"{gauge_flag} requires --otel-send to enable streaming")
         if not args.otel_metrics_endpoint:
-            p.error(f"{gauge_flag} requires --otel-metrics-endpoint to be set "
-                    "(via flag or MEZMO_OTEL_METRICS_ENDPOINT)")
+            p.error(f"{gauge_flag} requires a metrics endpoint "
+                    "(via --otel-endpoint or MEZMO_OTEL_METRICS_ENDPOINT)")
         if "metrics" not in selected:
-            p.error(f"{gauge_flag} requires --emit-selection to include 'metrics'")
-    # Both gauge paths (``--otel-emit-gauges`` and ``--emit-selection gauges``)
+            p.error(f"{gauge_flag} requires --emit to include 'metrics'")
+    # Both gauge paths (``--otel-send ...,gauges`` and ``--emit ...,gauges``)
     # feed per-component CSVs into ``heapq.merge``, which requires each input
     # iterator to be sorted by the timestamp key.
     # ``--inject-dst-artifact-day`` deliberately duplicates the 02:00–02:59
@@ -8316,12 +8088,11 @@ def parse_args(argv=None):
     ):
         flags = []
         if args.otel_gauges_only:
-            flags.append("--otel-gauges-only")
+            flags.append("--otel-send gauges")
         elif args.otel_emit_gauges:
-            flags.append("--otel-emit-gauges")
+            flags.append("--otel-send with 'gauges'")
         if "gauges" in selected:
-            flags.append("--emit 'gauges'" if args.emit is not None
-                         else "--emit-selection 'gauges'")
+            flags.append("--emit 'gauges'")
         p.error(
             f"{' / '.join(flags)} is incompatible with --inject-dst-artifact-day "
             "(the DST artifact produces non-monotonic CSV timestamps that break "
@@ -8331,7 +8102,7 @@ def parse_args(argv=None):
     # Validate ``--instances-per-component`` range *before* any N>1 gating
     # so an out-of-range value (e.g. 0 or 999) surfaces the range error
     # rather than masquerading as an incompatibility error when the user
-    # also passed --combine, --validate-output, or another gated flag.
+    # also passed --emit combined or another gated flag.
     if (
         args.instances_per_component < 1
         or args.instances_per_component > MAX_INSTANCES_PER_COMPONENT
@@ -8390,13 +8161,13 @@ def parse_args(argv=None):
     #   per-component CSVs carry the ``id, host, pod, az, region,
     #   tenant`` prefix; the historic 4-column / wide layouts stay
     #   byte-identical when the prefix is absent.
-    # - OTEL streaming (``--otel-enabled`` / ``--otel-emit-gauges``):
+    # - OTEL streaming (``--otel-send``):
     #   wired in Phase 6. ``stream_otel_gauges`` and
     #   ``stream_otel_signals`` lift the dimension columns off each
     #   row and surface them as string attributes on every OTLP data
     #   point.
-    # - Schema/validator (``--emit-selection schema`` /
-    #   ``--validate-output``): wired in Phase 8.
+    # - Schema/validator (``--emit ...,schema`` /
+    #   the ``validate`` subcommand): wired in Phase 8.
     #   ``schema.json`` declares a per-component ``dimensions`` block
     #   when the run is dim-aware and the validator's
     #   ``_validate_component_cells`` / ``_validate_component_row_count``
@@ -8432,9 +8203,13 @@ def parse_args(argv=None):
         for signal, endpoint, token in endpoints:
             if endpoint:
                 if not endpoint.startswith(("http://", "https://")):
-                    p.error(f"--otel-{signal}-endpoint must start with http:// or https://")
+                    p.error(f"the {signal} OTLP endpoint must start with "
+                            "http:// or https:// (check --otel-endpoint or "
+                            f"MEZMO_OTEL_{signal.upper()}_ENDPOINT)")
                 if token and not token.strip():
-                    p.error(f"--otel-{signal}-auth-token must be non-empty when provided")
+                    p.error(f"the {signal} OTLP auth token must be non-empty "
+                            "when provided (check --otel-auth-token or "
+                            f"MEZMO_OTEL_{signal.upper()}_AUTH_TOKEN)")
     args.emit_selection = selected
 
     args.components = _parse_components_value(p.error, args.components)
@@ -8497,65 +8272,60 @@ def parse_args(argv=None):
     # output is gated by ``emit_metrics`` but the matrix work runs
     # unconditionally for every component in ``args.components`` — so the
     # cap must apply on every code path that reaches ``generate_component``,
-    # including ``--emit-selection logs`` / ``--emit-selection traces``
+    # including ``--emit logs`` / ``--emit traces``
     # runs where no per-component CSV is written. Skipping the cap when
     # ``"metrics" not in args.emit_selection`` would invite OOMs without
-    # saving any allocation or compute.
+    # saving any allocation or compute. (The ``combine`` subcommand never
+    # routes through ``parse_args``, so the combine-over-a-huge-dataset
+    # path is structurally exempt.)
     #
-    # ``--combine-only`` is the one exception: ``main()`` calls
-    # ``combine_logs()`` and returns before reaching ``generate_component``,
-    # so no per-cell work happens. Skipping the cap on that path lets a
-    # user re-run ``--combine-only`` over a dataset originally generated
-    # with ``--allow-huge-output`` without having to repeat the bypass flag
-    # every time.
-    if not args.combine_only:
-        # Mirror the generator's row-count derivation byte-for-byte. main()
-        # computes ``total_seconds = SECONDS_PER_DAY * args.duration_days``
-        # and ``n_rows = int(total_seconds // args.interval_seconds)``; use
-        # the same two expressions here so the preflight estimate cannot
-        # diverge from the row count actually emitted by generate_component.
-        total_seconds = SECONDS_PER_DAY * args.duration_days
-        rows_per_component = int(total_seconds // args.interval_seconds)
-        if args.metrics_per_component is None:
-            total_metrics = sum(
-                DEFAULT_METRICS_PER_COMPONENT[c] for c in args.components
-            )
-        else:
-            total_metrics = sum(
-                min(args.metrics_per_component, len(COMPONENTS[c]))
-                for c in args.components
-            )
-        # Multiply by n_instances per component (Phase 2/3). For
-        # --instances-per-component: uniform N across all components.
-        # For --instance-config: the per-component count is not yet parsed
-        # here (that happens in main()), so use the max declared count
-        # (MAX_INSTANCES_PER_COMPONENT) as a conservative upper bound.
-        # Both flags are mutually exclusive so only one branch fires.
-        if args.instance_config is not None:
-            n_instances_factor = MAX_INSTANCES_PER_COMPONENT  # conservative
-        else:
-            n_instances_factor = args.instances_per_component
-        estimated_cells = rows_per_component * total_metrics * n_instances_factor
-        if estimated_cells > PREFLIGHT_CELL_CAP and not args.allow_huge_output:
-            instance_clause = (
-                f"x --instance-config (≤{MAX_INSTANCES_PER_COMPONENT} instances/component) "
-                if args.instance_config is not None
-                else f"x --instances-per-component {args.instances_per_component} "
-            )
-            p.error(
-                f"preflight cell-count cap exceeded: "
-                f"--interval-seconds {args.interval_seconds} "
-                f"x --duration-days {args.duration_days} "
-                f"x --components ({len(args.components)} selected) "
-                f"x --metrics-per-component "
-                f"{args.metrics_per_component if args.metrics_per_component is not None else 'default'} "
-                f"{instance_clause}"
-                f"would emit ~{estimated_cells:,} metric cells "
-                f"(cap: {PREFLIGHT_CELL_CAP:,}). "
-                f"Raise --interval-seconds, lower --duration-days, lower "
-                f"--metrics-per-component, narrow --components, reduce instances, "
-                f"or pass --allow-huge-output to bypass."
-            )
+    # Mirror the generator's row-count derivation byte-for-byte. main()
+    # computes ``total_seconds = SECONDS_PER_DAY * args.duration_days``
+    # and ``n_rows = int(total_seconds // args.interval_seconds)``; use
+    # the same two expressions here so the preflight estimate cannot
+    # diverge from the row count actually emitted by generate_component.
+    total_seconds = SECONDS_PER_DAY * args.duration_days
+    rows_per_component = int(total_seconds // args.interval_seconds)
+    if args.metrics_per_component is None:
+        total_metrics = sum(
+            DEFAULT_METRICS_PER_COMPONENT[c] for c in args.components
+        )
+    else:
+        total_metrics = sum(
+            min(args.metrics_per_component, len(COMPONENTS[c]))
+            for c in args.components
+        )
+    # Multiply by n_instances per component (Phase 2/3). For
+    # --instances-per-component: uniform N across all components.
+    # For --instance-config: the per-component count is not yet parsed
+    # here (that happens in main()), so use the max declared count
+    # (MAX_INSTANCES_PER_COMPONENT) as a conservative upper bound.
+    # Both flags are mutually exclusive so only one branch fires.
+    if args.instance_config is not None:
+        n_instances_factor = MAX_INSTANCES_PER_COMPONENT  # conservative
+    else:
+        n_instances_factor = args.instances_per_component
+    estimated_cells = rows_per_component * total_metrics * n_instances_factor
+    if estimated_cells > PREFLIGHT_CELL_CAP and not args.allow_huge_output:
+        instance_clause = (
+            f"x --instance-config (≤{MAX_INSTANCES_PER_COMPONENT} instances/component) "
+            if args.instance_config is not None
+            else f"x --instances-per-component {args.instances_per_component} "
+        )
+        p.error(
+            f"preflight cell-count cap exceeded: "
+            f"--interval-seconds {args.interval_seconds} "
+            f"x --duration-days {args.duration_days} "
+            f"x --components ({len(args.components)} selected) "
+            f"x --metrics-per-component "
+            f"{args.metrics_per_component if args.metrics_per_component is not None else 'default'} "
+            f"{instance_clause}"
+            f"would emit ~{estimated_cells:,} metric cells "
+            f"(cap: {PREFLIGHT_CELL_CAP:,}). "
+            f"Raise --interval-seconds, lower --duration-days, lower "
+            f"--metrics-per-component, narrow --components, reduce instances, "
+            f"or pass --allow-huge-output to bypass."
+        )
 
     return args
 
@@ -8566,7 +8336,7 @@ def parse_args(argv=None):
 # ------------------------------------------------------------------
 _NON_COMPONENT_FILES = {"anomalies.csv", "gauges.csv"}
 
-# Filenames written into --output-dir for each --emit-selection item.
+# Filenames written into --output-dir for each --emit item.
 # Per-component CSVs are derived from args.components, not listed here.
 # Consumed by _pre_clean_output_dir() and by the end-of-run summary line.
 _EMIT_ARTIFACT_FILES = {
@@ -8576,8 +8346,8 @@ _EMIT_ARTIFACT_FILES = {
     "gauges": ("gauges.csv",),
     "schema": ("schema.json",),
 }
-# Written only when --combine is set (which itself requires "metrics" in
-# --emit-selection). Tracked separately so the pre-clean and summary can
+# Written only when the 'combined' artifact is selected (which itself
+# requires "metrics" in --emit). Tracked separately so the pre-clean and summary can
 # treat it as its own slot.
 _COMBINE_OUTPUT_FILENAME = "combined_metrics_unified.csv"
 
@@ -10257,7 +10027,7 @@ def write_gauges_csv(
 #
 # Version 2 (phase 7): adds a top-level ``topology`` section
 # carrying the directed coupling graph (source -> edge[]) so
-# ``--validate-output`` can run the realistic-mode Pearson coupling
+# the ``validate`` subcommand can run the realistic-mode Pearson coupling
 # check against the snapshot of edges the run was supposed to honor.
 SCHEMA_DOCUMENT_VERSION = 2
 
@@ -10421,7 +10191,7 @@ def write_schema_json(
 ) -> None:
     """Write a declarative ``schema.json`` describing the current run's artifacts.
 
-    The document is the single source of truth ``--validate-output`` consumes
+    The document is the single source of truth the ``validate`` subcommand consumes
     to check the run after the fact. It captures five slices of information:
 
     - ``schema_version`` — integer schema-document version (see
@@ -10499,7 +10269,7 @@ def write_schema_json(
 
 
 # ------------------------------------------------------------------
-# Output validator (--validate-output)
+# Output validator (the `validate` subcommand)
 # ------------------------------------------------------------------
 # Floating-point tolerance for derived-column checks. CSV cells are written
 # at 3-decimal precision (see ``np.round(values, 3)`` in
@@ -10528,8 +10298,9 @@ def _load_schema_document(schema_path: Path) -> dict:
     """
     if not schema_path.exists():
         raise ValueError(
-            f"--validate-output requires {schema_path}; "
-            "regenerate the run with --emit-selection schema"
+            f"validate requires {schema_path}; "
+            "regenerate the run with 'schema' included in --emit "
+            "(e.g. --emit metrics,schema)"
         )
     try:
         document = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -11168,7 +10939,7 @@ def _read_anomaly_exclusion_windows(
     targeted column is one of the two columns the per-edge correlation
     reads. Cascade rows have ``span_start == span_end`` so they get a
     2*pad point exclusion. Returns an empty list when the manifest is
-    missing — a run with ``metrics`` opted out of ``--emit-selection``
+    missing — a run with ``metrics`` opted out of ``--emit``
     won't have one.
 
     The ``component`` / ``metric`` fields are carried in the tuple so
@@ -11922,8 +11693,8 @@ def validate_output(output_dir: Path) -> list[str]:
 
     Returns the list of violation messages (empty when the directory is
     fully consistent with its ``schema.json``). The CLI layer
-    (``--validate-output``) prints the list, decides the exit code based on
-    ``--validate-warn``, and is the only caller that touches ``sys.exit``.
+    (the ``validate`` subcommand) prints the list, decides the exit code based on
+    ``--warn``, and is the only caller that touches ``sys.exit``.
     """
     schema_path = output_dir / "schema.json"
     schema = _load_schema_document(schema_path)
@@ -12215,7 +11986,7 @@ def _collect_emitted_filenames(*, emit_selection, components, combine):
     ``_COMBINE_OUTPUT_FILENAME`` for the combine output, and one
     ``{component}.csv`` per allowlisted component when ``metrics`` is selected.
 
-    Used by ``write_schema_json`` and ``--validate-output`` to keep the
+    Used by ``write_schema_json`` and the ``validate`` subcommand to keep the
     expected-file-set check anchored to one definition.
     """
     files: set[str] = set()
@@ -12236,12 +12007,12 @@ def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combi
     Called right after --output-dir is created. Idempotent on missing files.
     Files unknown to this script (e.g. user notes, the synthetic-extra-component
     CSV the test fixture relies on for combine autodiscovery) are left alone.
-    Not called in the --combine-only branch; that path reads existing
+    Not called by the ``combine`` subcommand; that path reads existing
     per-component CSVs as inputs.
     """
     metrics_on = "metrics" in emit_selection
     # Per-component CSVs: drop any that this run will not (re)write — either
-    # because metrics was dropped from --emit-selection or because the
+    # because metrics was dropped from --emit or because the
     # component is no longer in --components.
     for component in COMPONENTS:
         if metrics_on and component in selected_components:
@@ -12253,7 +12024,7 @@ def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combi
             continue
         for filename in files:
             (output_dir / filename).unlink(missing_ok=True)
-    # combined_metrics_unified.csv: only --combine writes it. Drop stale
+    # combined_metrics_unified.csv: only the 'combined' artifact writes it. Drop stale
     # output otherwise so it can't masquerade as this run's result.
     if not combine:
         (output_dir / _COMBINE_OUTPUT_FILENAME).unlink(missing_ok=True)
@@ -12263,8 +12034,7 @@ _SUBCOMMANDS = ("generate", "combine", "validate")
 
 
 def _main_combine_subcommand(argv):
-    """``combine DIR [--components ...]`` — the canonical spelling of the
-    deprecated ``--combine-only`` mode: skip generation and join the
+    """``combine DIR [--components ...]``: skip generation and join the
     existing per-component CSVs in DIR into combined_metrics_unified.csv.
     """
     sp = argparse.ArgumentParser(
@@ -12295,8 +12065,7 @@ def _main_combine_subcommand(argv):
 
 
 def _main_validate_subcommand(argv):
-    """``validate DIR [--warn]`` — the canonical spelling of the deprecated
-    ``--validate-output`` mode: check the artifacts in DIR against
+    """``validate DIR [--warn]``: check the artifacts in DIR against
     DIR/schema.json and exit 1 on violations (0 with --warn).
     """
     sp = argparse.ArgumentParser(
@@ -12354,34 +12123,6 @@ def main(argv=None):
         combine_components = None
     else:
         combine_components = [name for name in COMPONENTS if name in args.components]
-
-    if args.combine_only:
-        if not args.output_dir.is_dir():
-            raise SystemExit(f"--combine-only requires an existing --output-dir; "
-                             f"{args.output_dir} does not exist")
-        combine_logs(args.output_dir, components=combine_components)
-        return
-
-    if args.validate_output is not None:
-        # Standalone validator mode. Doesn't pre-clean (we're reading the
-        # directory as input), doesn't run generation, doesn't touch combine
-        # — it loads PATH/schema.json and runs every check the validator
-        # knows about against the artifacts on disk.
-        violations = validate_output(args.validate_output)
-        for line in violations:
-            print(f"VALIDATION: {line}", file=sys.stderr)
-        if not violations:
-            print(f"--validate-output: {args.validate_output} OK "
-                  "(no violations)")
-            return
-        # Soft mode reports and exits 0; default exits 1 so CI / pre-merge
-        # gates can rely on the non-zero status.
-        if args.validate_warn:
-            print(f"--validate-output: {len(violations)} violation(s) in "
-                  f"{args.validate_output} (--validate-warn: returning 0)",
-                  file=sys.stderr)
-            return
-        raise SystemExit(1)
 
     total_seconds = SECONDS_PER_DAY * args.duration_days
     args.output_dir.mkdir(exist_ok=True, parents=True)
@@ -12704,7 +12445,7 @@ def main(argv=None):
     gauge_requests_sent = 0
     if otel_active and args.otel_emit_gauges:
         # Gauge stream normally appends after the anomaly-counter stream so both
-        # passes share one log. In --otel-gauges-only mode there is no prior
+        # passes share one log. In gauges-only mode (--otel-send gauges) there is no prior
         # signal pass, so the gauge stream starts a fresh log instead.
         gauge_auth = auth_headers.get("metrics") if otel_active else None
         component_csv_paths = {
@@ -12746,14 +12487,14 @@ def main(argv=None):
     if otel_active:
         active = [f"{s} -> {u}" for s, u in endpoints.items() if u]
         if args.otel_gauges_only:
-            print("   OTEL signal stream skipped (--otel-gauges-only)")
+            print("   OTEL signal stream skipped (--otel-send gauges)")
         else:
             print(f"   OTEL signals streamed: {streamed_events} to {', '.join(active)}")
         if args.otel_emit_gauges:
             print(f"   OTEL gauge requests streamed: {gauge_requests_sent} to "
                   f"metrics -> {args.otel_metrics_endpoint}")
     elif any(endpoints.values()):
-        print("   OTEL streaming disabled (pass --otel-enabled to send to configured endpoints)")
+        print("   OTEL streaming disabled (pass --otel-send to stream to configured endpoints)")
 
 
 if __name__ == "__main__":

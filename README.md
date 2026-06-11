@@ -199,8 +199,8 @@ generation pipeline exactly as before:
   See [Output validation (the `validate` subcommand)](#output-validation-the-validate-subcommand).
 
 Help is two-tier: `-h` shows the common surface in the five groups below;
-`--help-all` additionally lists the advanced knobs and the deprecated aliases
-(see [Advanced flags and deprecated aliases](#advanced-flags-and-deprecated-aliases)).
+`--help-all` additionally lists the advanced knobs
+(see [Advanced flags](#advanced-flags)).
 
 #### Common
 
@@ -240,57 +240,37 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 | Flag | Default | Notes |
 | ---- | ------- | ----- |
 | `--otel-send` | _none_ | Comma-separated OTLP signals to stream: any subset of `logs`, `metrics`, `traces`, `gauges`, or `all`, or `none` (explicit off, overriding env defaults). Streaming is off by default, and the selection is authoritative — unselected signals do not stream even when env-var endpoints are configured. `logs` replays anomaly events as `resourceLogs`, `metrics` replays them as `anomaly.count` Sum data points, `traces` replays them as span events, and `gauges` streams every per-row metric value from the per-component CSVs as OTLP Gauge data points to the metrics endpoint (see [Gauge metric streaming](#gauge-metric-streaming---otel-send-gauges)). `--otel-send gauges` alone streams only the Gauge data points, skipping the anomaly log/metric/trace stream — useful for receivers that only accept OTLP Gauge payloads. The `gauges` signal requires `metrics` in `--emit`. Selecting a signal without a configured endpoint is a usage error. |
-| `--otel-endpoint` | _unset_ | Base OTLP/HTTP URL for every signal selected by `--otel-send`. Per-signal URLs are derived from it (`BASE/v1/logs`, `BASE/v1/metrics`, `BASE/v1/traces`; the gauge stream shares the metrics URL). Per-signal precedence is explicit-CLI-first: a deprecated per-signal flag wins over the derivation, the derivation wins over the `MEZMO_OTEL_LOGS_ENDPOINT` / `MEZMO_OTEL_METRICS_ENDPOINT` / `MEZMO_OTEL_TRACES_ENDPOINT` env vars (an explicitly typed base is never silently hijacked by a stale shell export), and the env vars supply the per-signal defaults when no base is given. |
-| `--otel-auth-token` | _unset_ | Auth token applied to every signal selected by `--otel-send`. Same per-signal precedence as `--otel-endpoint`: deprecated per-signal flag > this token > the `MEZMO_OTEL_LOGS_AUTH_TOKEN` / `MEZMO_OTEL_METRICS_AUTH_TOKEN` / `MEZMO_OTEL_TRACES_AUTH_TOKEN` env vars (which supply the defaults when this flag is not given). |
+| `--otel-endpoint` | _unset_ | Base OTLP/HTTP URL for every signal selected by `--otel-send`. Per-signal URLs are derived from it (`BASE/v1/logs`, `BASE/v1/metrics`, `BASE/v1/traces`; the gauge stream shares the metrics URL). The derivation wins over the `MEZMO_OTEL_LOGS_ENDPOINT` / `MEZMO_OTEL_METRICS_ENDPOINT` / `MEZMO_OTEL_TRACES_ENDPOINT` env vars (an explicitly typed base is never silently hijacked by a stale shell export); the env vars supply the per-signal defaults when no base is given. |
+| `--otel-auth-token` | _unset_ | Auth token applied to every signal selected by `--otel-send`. Same precedence as `--otel-endpoint`: this token beats the `MEZMO_OTEL_LOGS_AUTH_TOKEN` / `MEZMO_OTEL_METRICS_AUTH_TOKEN` / `MEZMO_OTEL_TRACES_AUTH_TOKEN` env vars (which supply the defaults when this flag is not given). |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
 
-#### Advanced flags and deprecated aliases
+#### Advanced flags
 
-`--help-all` lists everything `-h` hides: the advanced knobs and every
-deprecated alias, each annotated `[deprecated -> use X]`. The advanced knobs
-(semantics unchanged) are `--anomaly-count`, `--allow-huge-output`,
+`--help-all` lists everything `-h` hides. The advanced knobs are
+`--anomaly-count`, `--allow-huge-output`,
 `--inject-dst-artifact-day`, and the OTEL transport tuning
 flags `--otel-gauge-batch-seconds`, `--otel-gauge-metric-prefix`,
 `--otel-stream-timeout-seconds`, `--otel-stream-max-events`,
 `--otel-stream-auth-scheme`, `--otel-activity-log`, and `--otel-verbose`.
 
-Every deprecated alias keeps working and emits one stderr line —
-`DEPRECATION: <flag> is deprecated; use <replacement>. The alias keeps
-working until the post-phase-9 CLI flag day.` Mixing a canonical flag with
-the aliases it replaces is a parse error.
-
-| Deprecated alias | Canonical replacement |
-| ---------------- | --------------------- |
-| `--emit-selection ARTIFACTS` | `--emit ARTIFACTS` |
-| `--combine` | `combined` token in `--emit` (e.g. `--emit metrics,logs,traces,combined`) |
-| `--combine-only` | `combine DIR` subcommand |
-| `--validate-output PATH` | `validate DIR` subcommand |
-| `--validate-warn` | `validate DIR --warn` |
-| `--otel-enabled` | `--otel-send SIGNALS` (selecting any signal enables streaming) |
-| `--otel-disabled` | `--otel-send none` |
-| `--otel-emit-gauges` | add `gauges` to `--otel-send` |
-| `--otel-no-emit-gauges` | omit `gauges` from `--otel-send` |
-| `--otel-gauges-only` | `--otel-send gauges` |
-| `--otel-logs-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/logs`; the `MEZMO_OTEL_LOGS_ENDPOINT` env var supplies the default when no base is given) |
-| `--otel-logs-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_LOGS_AUTH_TOKEN` env var supplies the default when no token flag is given) |
-| `--otel-metrics-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/metrics`; the `MEZMO_OTEL_METRICS_ENDPOINT` env var supplies the default when no base is given) |
-| `--otel-metrics-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_METRICS_AUTH_TOKEN` env var supplies the default when no token flag is given) |
-| `--otel-traces-endpoint URL` | `--otel-endpoint BASE_URL` (derives `BASE/v1/traces`; the `MEZMO_OTEL_TRACES_ENDPOINT` env var supplies the default when no base is given) |
-| `--otel-traces-auth-token TOKEN` | `--otel-auth-token TOKEN` (the `MEZMO_OTEL_TRACES_AUTH_TOKEN` env var supplies the default when no token flag is given) |
-
-An explicit deprecated per-signal endpoint/auth flag still wins over the
-`--otel-endpoint` derivation for that signal.
+The 16 deprecated alias flags from the CLI consolidation
+(`--emit-selection`, `--combine`, `--combine-only`, `--validate-output`,
+`--validate-warn`, the five OTEL toggles, and the six per-signal
+endpoint/token flags) were removed at the post-phase-9 CLI flag day and
+no longer parse. Their canonical replacements are the surface documented
+above: `--emit` (with the `combined` token), the `combine` and `validate`
+subcommands, `--otel-send`, `--otel-endpoint`, and `--otel-auth-token`;
+per-signal endpoint/token overrides remain available via the
+`MEZMO_OTEL_*` env vars.
 
 ### Gauge metric streaming (`--otel-send gauges`)
 
 The default OTEL streaming path posts one `anomaly.count` Sum data point per
 injected anomaly. Add `gauges` to `--otel-send` to additionally stream
 **every per-row metric value** from the per-component CSVs to the metrics
-endpoint as OTLP `Gauge` data points. (`MEZMO_OTEL_EMIT_GAUGES=1` enables
-the same stream on the deprecated toggle path only — `--otel-send` is
-authoritative, so under the canonical surface the env var has no effect
-unless `gauges` is selected.) The two streams run sequentially: anomaly counters first, then
+endpoint as OTLP `Gauge` data points. The two streams run
+sequentially: anomaly counters first, then
 gauges, both against the same endpoint (and the same auth token / activity
 log). Pass `--otel-send gauges` alone when the receiver should get only the
 Gauge payloads; that mode skips the anomaly log/metric/trace stream entirely.
