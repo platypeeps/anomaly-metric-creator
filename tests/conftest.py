@@ -202,14 +202,18 @@ def _generate_natural_baseline(amc, out, *, metrics_per_component=None):
     directly with the raw ``COMPONENTS`` specs — no topology coupling, no
     saturation feedback, no anomalies. Replaces the retired
     ``--topology-mode independent`` fixtures (phase-9 flag day) as the
-    pure-natural statistical baseline: the distribution is identical
-    (same MetricSpec model, same MT19937 generator, one shared RNG
-    stream across components in ``COMPONENTS`` insertion order — the
-    retired mode's draw model); only the absence of anomaly-override
-    draws shifts the absolute draw positions (the drop-mask draw still
-    runs — ``generate_component`` draws it even at ``drop_rate=0.0`` —
+    pure-natural statistical baseline: same MetricSpec model, same
+    MT19937 generator, one shared RNG stream across components in
+    ``COMPONENTS`` insertion order — the retired mode's draw model.
+    Only the absence of anomaly-override draws shifts the absolute
+    draw positions (the drop-mask draw still runs —
+    ``generate_component`` draws it even at ``drop_rate=0.0`` —
     exactly as a real run with the default drop rate would), which no
-    statistical consumer observes.
+    statistical consumer observes. One deliberate difference from the
+    retired alias: ``dtype="int"`` columns keep the default
+    ``np.rint`` cast (the alias skipped it), matching current on-disk
+    rounding — immaterial to the 8-sigma band and Pearson-contrast
+    consumers (a <=0.5 shift on integer-scale metrics).
     A header-only ``anomalies.csv`` is written so manifest-reading
     consumers see an empty manifest instead of a missing file."""
     out.mkdir(parents=True, exist_ok=True)

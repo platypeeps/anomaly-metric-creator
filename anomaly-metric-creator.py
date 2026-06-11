@@ -195,9 +195,10 @@ _VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
 
 # Vocabulary for ``MetricSpec.dtype``. ``int`` here means "values are
 # expected to be whole numbers"; ``generate_component`` rounds
-# int-typed columns via ``np.rint`` before derivations run (``main()``
-# always enables the cast since the phase 6 flag day; programmatic
-# callers can opt out via ``apply_dtype_int_cast=False``), so the CSV
+# int-typed columns via ``np.rint`` before derivations run (the
+# default since the phase 6 flag day; the phase-9 flag day removed the
+# last CLI opt-out, and programmatic callers can still opt out via
+# ``apply_dtype_int_cast=False``), so the CSV
 # cell is a whole-integer string. The validator surfaces any remaining
 # fractional values as schema violations.
 _VALID_DTYPES = frozenset({"float", "int"})
