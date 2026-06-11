@@ -292,17 +292,17 @@ def _decode_gauge_requests(received, protocol="json"):
 
 
 def test_stream_otel_gauges_off_by_default_no_gauge_requests(tmp_path):
-    """Without --otel-emit-gauges the metrics endpoint must only receive the
-    existing anomaly-counter stream — never a gauge data point."""
+    """Without 'gauges' in --otel-send the metrics endpoint must only receive
+    the existing anomaly-counter stream — never a gauge data point."""
     server, thread, base = _start_mock()
     try:
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "600",
             "--components", "authservice,cacheservice",
-            "--otel-enabled",
+            "--otel-send", "metrics",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "5",
@@ -313,13 +313,13 @@ def test_stream_otel_gauges_off_by_default_no_gauge_requests(tmp_path):
         _stop_mock(server, thread)
 
     assert _decode_gauge_requests(server.received) == [], \
-        "expected zero gauge requests when --otel-emit-gauges is off"
+        "expected zero gauge requests when 'gauges' is not selected"
     # The counter stream did fire (each anomaly emits one /v1/metrics POST).
     assert any(r[0] == "/v1/metrics" for r in server.received)
 
 
 def test_stream_otel_gauges_only_skips_anomaly_counter_requests(tmp_path):
-    """--otel-gauges-only sends gauge batches without the anomaly counter stream."""
+    """--otel-send gauges (alone) sends gauge batches without the anomaly counter stream."""
     server, thread, base = _start_mock()
     try:
         result = _invoke(
@@ -327,10 +327,9 @@ def test_stream_otel_gauges_only_skips_anomaly_counter_requests(tmp_path):
             "--interval-seconds", "3600",
             "--drop-rate", "0",
             "--components", "authservice",
-            "--otel-enabled",
+            "--otel-send", "gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-gauges-only",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "2",
@@ -342,13 +341,13 @@ def test_stream_otel_gauges_only_skips_anomaly_counter_requests(tmp_path):
         _stop_mock(server, thread)
 
     gauge_requests = _decode_gauge_requests(server.received)
-    assert gauge_requests, "expected gauge requests in --otel-gauges-only mode"
+    assert gauge_requests, "expected gauge requests in --otel-send gauges mode"
     assert len(gauge_requests) == len(server.received), (
         "expected every OTEL metrics POST to be a gauge payload; "
         f"saw {len(gauge_requests)} gauge request(s) out of "
         f"{len(server.received)} total request(s)"
     )
-    assert "OTEL signal stream skipped (--otel-gauges-only)" in result.stdout
+    assert "OTEL signal stream skipped (--otel-send gauges)" in result.stdout
 
 
 def test_stream_otel_gauges_batches_by_seconds(tmp_path):
@@ -362,10 +361,9 @@ def test_stream_otel_gauges_batches_by_seconds(tmp_path):
             "--interval-seconds", "600",
             "--drop-rate", "0",
             "--components", "authservice,cacheservice",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "21600",
@@ -399,10 +397,9 @@ def test_stream_otel_gauges_skips_dropped_rows(tmp_path):
             "--drop-rate", "0.5",
             "--seed", "123",
             "--components", "authservice",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "86400",
@@ -442,10 +439,9 @@ def test_stream_otel_gauges_json_and_protobuf_parity_e2e(tmp_path):
                 "--drop-rate", "0",
                 "--seed", "7",
                 "--components", "authservice",
-                "--otel-enabled",
+                "--otel-send", "metrics,gauges",
                 "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-                "--otel-emit-gauges",
-                "--otel-metrics-endpoint", f"{base}/v1/metrics",
+                "--otel-endpoint", base,
                 "--otel-stream-protocol", protocol,
                 "--otel-stream-speedup", "1000000",
                 "--otel-gauge-batch-seconds", "86400",
@@ -481,10 +477,9 @@ def test_stream_otel_gauges_respects_max_events_cap(tmp_path):
             "--interval-seconds", "600",
             "--drop-rate", "0",
             "--components", "authservice,cacheservice",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "2",
@@ -511,9 +506,8 @@ def test_stream_otel_gauges_activity_log_records_batches(tmp_path):
             "--interval-seconds", "600",
             "--drop-rate", "0",
             "--components", "authservice",
-            "--otel-enabled",
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-send", "metrics,gauges",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "21600",
@@ -544,11 +538,10 @@ def test_stream_otel_gauges_metric_prefix_applied(tmp_path):
             "--interval-seconds", "1800",
             "--drop-rate", "0",
             "--components", "authservice",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
             "--otel-gauge-metric-prefix", "amc.",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "86400",
@@ -589,10 +582,9 @@ def test_stream_otel_gauges_does_not_change_csv_output(tmp_path):
             "--duration-days", "1",
             "--interval-seconds", "600",
             "--seed", "42",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "21600",
@@ -605,7 +597,7 @@ def test_stream_otel_gauges_does_not_change_csv_output(tmp_path):
     for component_csv in sorted(without_dir.glob("*.csv")):
         rel = component_csv.name
         assert filecmp.cmp(component_csv, with_dir / rel, shallow=False), (
-            f"{rel} bytes differ with --otel-emit-gauges on vs off"
+            f"{rel} bytes differ with the gauge stream on vs off"
         )
 
 
@@ -619,10 +611,9 @@ def test_stream_otel_gauges_with_protobuf_default(tmp_path):
             "--interval-seconds", "1800",
             "--drop-rate", "0",
             "--components", "authservice",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "86400",
             "--output-dir", str(tmp_path / "default_proto"),
@@ -664,11 +655,10 @@ def test_stream_otel_gauges_with_auth_header(tmp_path, monkeypatch):
             "--interval-seconds", "1800",
             "--drop-rate", "0",
             "--components", "authservice",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
-            "--otel-metrics-auth-token", "secret-gauge-token",
+            "--otel-endpoint", base,
+            "--otel-auth-token", "secret-gauge-token",
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "86400",
@@ -1102,10 +1092,9 @@ def test_stream_otel_gauges_emits_pod_attribute_with_instances(tmp_path):
             "--drop-rate", "0",
             "--components", "authservice",
             "--instances-per-component", "3",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "86400",
@@ -1163,10 +1152,9 @@ def test_stream_otel_gauges_dimensionless_csv_byte_identical_to_pre_phase6(tmp_p
             "--interval-seconds", "3600",
             "--drop-rate", "0",
             "--components", "authservice",
-            "--otel-enabled",
+            "--otel-send", "metrics,gauges",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", f"{base}/v1/metrics",
+            "--otel-endpoint", base,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-gauge-batch-seconds", "86400",

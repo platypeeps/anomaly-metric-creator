@@ -36,64 +36,57 @@ making changes.
 `if __name__ == "__main__"`. Importing the module does not trigger generation, which
 keeps tests and ad-hoc reuse of `generate_component()` cheap.
 
-### CLI surface (canonical flags, subcommands, deprecated aliases)
+### CLI surface (canonical flags, subcommands)
 
-The CLI was consolidated around the common use cases. Canonical
-surface:
+The CLI was consolidated around the common use cases; the 16
+deprecated alias flags from that consolidation were removed at the
+post-phase-9 CLI flag day and no longer parse. Canonical surface:
 
 - **Subcommands** (dispatched in `main()` before argparse on
   `argv[0]`): `generate` (the default when no subcommand token is
   given — every historic bare invocation is unchanged), `combine DIR
-  [--components ...]` (replaces `--combine-only`), and `validate DIR
-  [--warn]` (replaces `--validate-output PATH [--validate-warn]`).
+  [--components ...]`, and `validate DIR [--warn]`.
   The subcommands carry dedicated parsers
   (`_main_combine_subcommand` / `_main_validate_subcommand`) and never
-  route through `parse_args`, so canonical invocations are
-  structurally free of deprecation noise.
-- **`--emit ARTIFACTS`** replaces `--emit-selection` + `--combine`:
-  tokens `metrics, logs, traces, gauges, schema, combined` (default
-  `metrics,logs,traces`). `combined` sets the legacy `args.combine`
+  route through `parse_args`.
+- **`--emit ARTIFACTS`**: tokens
+  `metrics, logs, traces, gauges, schema, combined` (default
+  `metrics,logs,traces`). `combined` sets the internal `args.combine`
   and requires `metrics`.
-- **`--otel-send SIGNALS`** replaces the five OTEL toggles
-  (`--otel-enabled`/`--otel-disabled`/`--otel-emit-gauges`/
-  `--otel-no-emit-gauges`/`--otel-gauges-only`): a subset of
+- **`--otel-send SIGNALS`**: a subset of
   `logs, metrics, traces, gauges`, or `all`, or `none` (explicit off,
   overriding env-var endpoint defaults). `--otel-send gauges` alone is
-  the old gauges-only mode. The selection is authoritative —
+  the gauges-only mode. The selection is authoritative —
   unselected signals get their endpoint forced to `None` even when an
-  env var exports one.
-- **`--otel-endpoint BASE` / `--otel-auth-token TOKEN`** replace the
-  per-signal sextet: per-signal URLs derive as `BASE/v1/<signal>` for
+  env var exports one. The `MEZMO_OTEL_EMIT_GAUGES` env var survives
+  as a gauge-stream default but requires `--otel-send` (and is
+  overridden by any explicit selection).
+- **`--otel-endpoint BASE` / `--otel-auth-token TOKEN`**: per-signal
+  URLs derive as `BASE/v1/<signal>` for
   the selected signals (gauges posts to the metrics endpoint) and the
-  token fans out to every selected signal. Per-signal precedence is
-  explicit-CLI-first: an explicit per-signal *flag* beats the
-  derivation, the derivation beats a `MEZMO_OTEL_*` env var (an
+  token fans out to every selected signal. Precedence: the derivation
+  beats a `MEZMO_OTEL_*` env var (an
   explicitly typed base must not be silently hijacked by a stale
-  shell export), and the env var supplies the per-signal default
-  when no base is given.
+  shell export); the env var supplies the per-signal default
+  when no base is given. The per-signal flags are gone — the env vars
+  are the only per-signal override mechanism.
 - **Two-tier help**: `-h` renders five argument groups (common /
   anomaly selection / dataset shape / artifacts / OTEL streaming);
   `--help-all` un-hides the advanced knobs (`--anomaly-count`,
   `--allow-huge-output`, `--inject-dst-artifact-day`,
-  the OTEL transport tuning flags) and the
-  deprecated aliases, annotating each alias with
-  `[deprecated -> use X]`. Hiding is a post-construction pass over
-  `p._actions` keyed by `_ADVANCED_DESTS`; the alias->replacement map
-  is `_DEPRECATED_FLAGS`.
+  the OTEL transport tuning flags). Hiding is a post-construction
+  pass over `p._actions` keyed by `_ADVANCED_DESTS`.
 
-Reconciliation lives in `_reconcile_cli_surface`, called immediately
-after `p.parse_args` and *before* every validation gate: the canonical
-flags translate onto the historic argument-namespace names
-(`emit_selection`, `combine`, `otel_enabled`, the per-signal
+Reconciliation lives in `_reconcile_cli_surface(p, args)`, called
+immediately after `p.parse_args` and *before* every validation gate:
+the canonical flags translate onto the historic argument-namespace
+names (`emit_selection`, `combine`, `otel_enabled`, the per-signal
 endpoints, ...) so all downstream gates and `main()` consume one
-namespace regardless of spelling. Mixing a canonical flag with the
-aliases it replaces is a parse error; each alias used emits exactly
-one `DEPRECATION:` stderr line (prefix deliberately distinct from the
-`WARNING:` scenario diagnostics so stderr filters cannot cross-match).
-Aliases are scheduled for removal at a post-phase-9 flag day. When
-adding a new flag, place it in the right group, add it to
-`_ADVANCED_DESTS` if it is not a common-use-case flag, and extend
-`tests/test_cli_surface.py`.
+namespace. Those internal dests are seeded by `p.set_defaults`
+(per-signal endpoints/tokens read the `MEZMO_OTEL_*` env vars there)
+now that no flag writes them directly. When adding a new flag, place
+it in the right group, add it to `_ADVANCED_DESTS` if it is not a
+common-use-case flag, and extend `tests/test_cli_surface.py`.
 
 ### Output directory hygiene
 
@@ -102,9 +95,10 @@ and before any generation runs. The helper consumes the `_EMIT_ARTIFACT_FILES`
 registry (plus the `_COMBINE_OUTPUT_FILENAME` slot) and deletes any file from
 a prior run into the same directory that this run will not regenerate:
 per-component CSVs for components no longer in `--components` or when
-`metrics` is dropped from `--emit-selection`, `anomalies.csv` /
+`metrics` is dropped from `--emit`, `anomalies.csv` /
 `metric_report.log` / `metric_traces.jsonl` / `gauges.csv` for emit types
-not selected, and `combined_metrics_unified.csv` when `--combine` is off.
+not selected, and `combined_metrics_unified.csv` when `combined` is not
+selected.
 Idempotent on missing files; files unknown to this script (user notes, the
 synthetic-extra-component CSV used by the combine autodiscovery fixture) are
 left alone.
@@ -112,14 +106,16 @@ left alone.
 The end-of-run `Done - …` summary line is built from the same `args.emit_selection`
 + `args.combine` inputs, so it names exactly the artifacts written this run.
 
-Do **not** call `_pre_clean_output_dir()` from the `--combine-only` branch — that
-path reads existing per-component CSVs as inputs and pre-cleaning them would
-remove the combine inputs. The early `return` in the `--combine-only` branch
-already keeps it out of the cleanup path. `./otel-activity.log` lives outside
+Do **not** call `_pre_clean_output_dir()` from the `combine` subcommand —
+that path reads existing per-component CSVs as inputs and pre-cleaning them
+would remove the combine inputs. The subcommand's dedicated parser
+(`_main_combine_subcommand`) never reaches the generation pipeline, which
+keeps it out of the cleanup path structurally. `./otel-activity.log` lives outside
 `--output-dir` and must stay outside the registry. It is a per-run log,
 not append-only across runs: `stream_otel_signals` opens it with mode
 `"w"` (truncating the previous run's records), the gauge pass of the
-same run appends to it, and `--otel-gauges-only` starts it fresh.
+same run appends to it, and gauges-only streaming (`--otel-send
+gauges`) starts it fresh.
 The file is also listed in the repo `.gitignore` so a stray run from inside a
 clone never commits OTLP transport diagnostics. PR #83 widened the HTTP-error
 diagnostics inside `_http_error_activity_fields` to dump every response
@@ -155,8 +151,8 @@ autodiscovered (excluding the anomalies manifest and the long-form
 `gauges.csv` via `_NON_COMPONENT_FILES`, and prior combine outputs via
 a separate `combined_metrics_` filename-prefix check inside
 `discover_components` — the constant does not cover all three).
-`main()` threads `--components` into both call sites (`--combine` and
-`--combine-only`) so the combine output honors the same allowlist as
+`main()` threads `--components` into both call sites (the `combined`
+emit token and the `combine` subcommand) so the combine output honors the same allowlist as
 generation, `anomalies.csv`, reporting artifacts, and OTEL streaming.
 The default `--components all` keeps autodiscovery active, which
 preserves the synthetic-extra-component path used by the existing test
@@ -209,7 +205,7 @@ emitted_files, instances_by_component=None)` writes a declarative
 `schema.json` alongside the rest of the artifacts. It is opt-in via
 `schema` in `--emit` (parallel to `metrics`, `logs`, `traces`,
 `gauges`) and is the single source of truth the `validate` subcommand
-(alias `--validate-output`) consumes.
+consumes.
 
 The document carries five slices of information:
 
@@ -273,9 +269,9 @@ The document carries five slices of information:
 
 The output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
 with trailing newline). Locked SHA-256 golden hashes at 1d and 7d live
-in `tests/test_schema_file.py` and were re-locked at the phase 7 schema-version bump. The `--combine-only` branch does not
-regenerate `schema.json` (it returns before pre-clean), matching the
-`gauges.csv` invariant.
+in `tests/test_schema_file.py` and were re-locked at the phase 7 schema-version bump. The `combine` subcommand does not
+regenerate `schema.json` (it never enters the generation pipeline),
+matching the `gauges.csv` invariant.
 
 ### Multi-instance fan-out (`--instances-per-component`)
 
@@ -323,15 +319,15 @@ Every phase of the multi-instance plan has shipped:
 (Phase 4), dimension-aware `gauges.csv` /
 `combined_metrics_unified.csv` writers (Phase 5), OTLP data point
 attributes (Phase 6), and the schema.json `dimensions` block +
-dim-aware `--validate-output` (Phase 8 — see the schema-document and
+dim-aware output validation (Phase 8 — see the schema-document and
 validator sections of this file). After Phase 6, `stream_otel_gauges`
 and `stream_otel_signals` lift every non-empty
 `_INSTANCE_DIMENSION_COLUMNS` cell off each row and surface it as a
 string attribute on every OTLP data point (metric datapoint
-attributes, not OTEL resource attributes), so `--otel-enabled`,
-`--otel-emit-gauges`, and the gauge-only streaming mode
-(`--otel-gauges-only`) are no longer gated against N>1. After
-Phase 8, `--emit-selection 'schema'` and `--validate-output` work
+attributes, not OTEL resource attributes), so the OTEL signal
+stream, the gauge stream, and the gauge-only streaming mode
+(all selected via `--otel-send`) are no longer gated against N>1. After
+Phase 8, `--emit ...,schema` and the `validate` subcommand work
 under `--instances-per-component > 1` too — no parse-time
 multi-instance gate remains except the DST one
 (`--inject-dst-artifact-day > 0`). `generate_component()`
@@ -514,7 +510,7 @@ aligned rows per pod pair.
 ### MetricSpec schema metadata
 
 `MetricSpec` carries six optional declarative fields that flow into
-`schema.json` and `--validate-output`: `unit`, `semantic_type`,
+`schema.json` and the `validate` subcommand: `unit`, `semantic_type`,
 `min_value`, `max_value`, `dtype` (default `"float"`), `derivation`.
 Five of the six are metadata-only and do not affect generation —
 they exist only so the validator can range-check, dtype-check, and
@@ -550,11 +546,10 @@ scenario-catalog issue tracked for phase 9 re-tune — it is
 *not* the integer-cast bundle's scope and is intentionally left in
 place.
 
-### Output validator (the `validate` subcommand / `--validate-output`)
+### Output validator (the `validate` subcommand)
 
-`validate PATH` (canonical; `--validate-output PATH` is the deprecated
-alias) runs the validator in a standalone mode (peer of the `combine`
-subcommand) that loads `PATH/schema.json` and runs every check
+`validate PATH` runs the validator in a standalone mode (peer of the
+`combine` subcommand) that loads `PATH/schema.json` and runs every check
 the validator knows about against the artifacts in `PATH`:
 
 - `_validate_required_files_present` — every declared file is on disk.
@@ -644,8 +639,9 @@ the validator knows about against the artifacts in `PATH`:
   any single instance's value, so the N=1 path is byte-identical.
 
 CLI semantics: default mode hard-fails (`exit 1` on any violation);
-`--warn` (alias `--validate-warn`) downgrades to a stderr report and
-`exit 0`. Mutually exclusive with combine (flag or subcommand).
+`--warn` downgrades to a stderr report and
+`exit 0`. Structurally exclusive with the `combine` subcommand (one
+subcommand token dispatches per invocation).
 
 ### Gauge metric file (`gauges.csv`)
 
@@ -709,15 +705,15 @@ same data points — the difference only matters for hand-edited CSVs.
 Both gauge paths are mutually exclusive with `--inject-dst-artifact-day > 0`
 (the DST splice produces non-monotonic CSV timestamps that break
 `heapq.merge`); the parser rejects the combination for both
-`--otel-emit-gauges` / `--otel-gauges-only` and
-`--emit-selection gauges` up front. `--otel-gauges-only` is a CLI mode
+`--otel-send` selections including `gauges` and
+`--emit ...,gauges` up front. `--otel-send gauges` (alone) is a CLI mode
 that implies the OTEL gauge stream but skips `stream_otel_signals()`,
 so receivers that only accept Gauge payloads do not see the anomaly
 counter/log/trace stream first.
 
 `gauges.csv` is opt-in via `gauges` in `--emit` (which the
 parser enforces alongside `metrics`); the `combine` subcommand /
-`--combine-only` does not
+the `combine` subcommand does not
 regenerate it. The end-of-run `Done -` summary additionally prints
 `Gauge rows written: N to gauges.csv` so a CI run records how many
 data points landed in the file. Locked SHA-256 golden hashes at 1d and
@@ -1214,7 +1210,7 @@ edge's target must have a `_TOPOLOGY_SATURATION_TARGETS` entry. The
 runtime consumers keep their soft fallbacks (which exist to tolerate
 `--metrics-per-component` trims and `--components` subsets), but a
 registry typo now fails at import instead of silently generating
-decoupled output that only the opt-in `--validate-output` Pearson
+decoupled output that only the opt-in `validate` Pearson
 check would catch.
 
 Mirror these invariants in `tests/test_topology_registry.py` when
@@ -1629,8 +1625,8 @@ This checklist maps to 13 recurring patterns identified across past PR reviews (
 - PR title implies a class of fix (e.g. "add `clip_min` to non-negative metrics") → grep for all instances and confirm coverage.
 
 **Mode / flag combinations**
-- List every other CLI flag, env var, and `--emit-selection` token that interacts with the new flag. Gate invalid combinations in `parse_args` with a clear message, or add a test.
-- New `parse_args` checks must not spuriously reject `--combine-only` or non-default `--emit-selection` invocations.
+- List every other CLI flag, env var, and `--emit` token that interacts with the new flag. Gate invalid combinations in `parse_args` with a clear message, or add a test.
+- New `parse_args` checks must not spuriously reject the `combine`/`validate` subcommands or non-default `--emit` invocations.
 
 **Test path determinism**
 - Every new code path has a test whose input deterministically exercises that path (no reliance on "the default seed happens to do X").

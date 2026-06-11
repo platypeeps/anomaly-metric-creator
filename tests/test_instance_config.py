@@ -513,16 +513,18 @@ def test_pyyaml_import_error_message(amc, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# --combine-only is allowed when --instance-config is set (post-Phase 5)
+# combined emission is allowed when --instance-config is set (post-Phase 5)
 # ---------------------------------------------------------------------------
 
-def test_instance_config_combine_only_allowed(amc, tmp_path):
-    """--combine-only + --instance-config is permitted at parse time.
+def test_instance_config_combined_emission_allowed(amc, tmp_path):
+    """``--emit ...,combined`` + ``--instance-config`` is permitted at
+    parse time.
 
     Phase 5 made the combine writer dimension-aware (long-form
     dispatch when per-component CSVs carry the dimension prefix), so the
     shared ``_multi_instance`` gate no longer rejects this combination.
-    Mirrors the ``--instances-per-component > 1 + --combine-only`` lift.
+    Mirrors the ``--instances-per-component > 1`` + combined-emission
+    lift.
     """
     cfg = _write_yaml(tmp_path, """
 components:
@@ -533,9 +535,9 @@ components:
     out.mkdir()
     args = _parse(amc, [
         "--instance-config", str(cfg),
-        "--combine-only",
+        "--emit", "metrics,combined",
     ], out)
-    assert args.combine_only is True
+    assert args.combine is True
     assert args.instance_config == cfg
 
 

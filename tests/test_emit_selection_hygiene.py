@@ -1,5 +1,5 @@
 """Output directory hygiene: pre-clean stale artifacts when re-running into
-the same --output-dir with a different --emit-selection or --components."""
+the same --output-dir with a different --emit selection or --components."""
 from conftest import run_capture
 
 
@@ -11,11 +11,11 @@ def _run(amc, out_dir, *, extra_args):
 
 
 def test_metrics_only_after_full_run_clears_logs_and_traces(amc, tmp_path):
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics,logs,traces"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics,logs,traces"])
     assert (tmp_path / "metric_report.log").exists()
     assert (tmp_path / "metric_traces.jsonl").exists()
 
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics"])
     assert not (tmp_path / "metric_report.log").exists()
     assert not (tmp_path / "metric_traces.jsonl").exists()
     assert (tmp_path / "anomalies.csv").exists()
@@ -25,13 +25,13 @@ def test_metrics_only_after_full_run_clears_logs_and_traces(amc, tmp_path):
 
 
 def test_logs_traces_after_metrics_run_clears_component_csvs(amc, tmp_path):
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics"])
     # Sanity: component CSVs and manifest exist after the metrics run.
     assert (tmp_path / "anomalies.csv").exists()
     for component in amc.COMPONENTS:
         assert (tmp_path / f"{component}.csv").exists()
 
-    _run(amc, tmp_path, extra_args=["--emit-selection", "logs,traces"])
+    _run(amc, tmp_path, extra_args=["--emit", "logs,traces"])
     for component in amc.COMPONENTS:
         assert not (tmp_path / f"{component}.csv").exists(), (
             f"stale {component}.csv survived the logs,traces re-run"
@@ -46,14 +46,14 @@ def test_narrowed_components_clears_dropped_csvs(amc, tmp_path):
     keep = pair[0]
     drop = pair[1]
     _run(amc, tmp_path, extra_args=[
-        "--emit-selection", "metrics",
+        "--emit", "metrics",
         "--components", ",".join(pair),
     ])
     assert (tmp_path / f"{keep}.csv").exists()
     assert (tmp_path / f"{drop}.csv").exists()
 
     _run(amc, tmp_path, extra_args=[
-        "--emit-selection", "metrics",
+        "--emit", "metrics",
         "--components", keep,
     ])
     assert (tmp_path / f"{keep}.csv").exists()
@@ -63,18 +63,18 @@ def test_narrowed_components_clears_dropped_csvs(amc, tmp_path):
 
 
 def test_drop_combine_clears_unified(amc, tmp_path):
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics", "--combine"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics,combined"])
     assert (tmp_path / "combined_metrics_unified.csv").exists()
 
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics"])
     assert not (tmp_path / "combined_metrics_unified.csv").exists(), (
-        "combined_metrics_unified.csv from a prior --combine run should be "
-        "pre-cleaned when --combine is not set on the next run"
+        "combined_metrics_unified.csv from a prior 'combined' run should be "
+        "pre-cleaned when 'combined' is not selected on the next run"
     )
 
 
 def test_status_line_only_names_emitted_artifacts(amc, tmp_path, capsys):
-    _run(amc, tmp_path, extra_args=["--emit-selection", "logs,traces"])
+    _run(amc, tmp_path, extra_args=["--emit", "logs,traces"])
     captured = capsys.readouterr()
     done_lines = [
         line for line in captured.out.splitlines() if line.startswith("Done -")
@@ -88,7 +88,7 @@ def test_status_line_only_names_emitted_artifacts(amc, tmp_path, capsys):
 
     other = tmp_path / "metrics_only"
     other.mkdir()
-    _run(amc, other, extra_args=["--emit-selection", "metrics"])
+    _run(amc, other, extra_args=["--emit", "metrics"])
     captured = capsys.readouterr()
     done_lines = [
         line for line in captured.out.splitlines() if line.startswith("Done -")
@@ -101,11 +101,11 @@ def test_status_line_only_names_emitted_artifacts(amc, tmp_path, capsys):
 
 
 def test_logs_only_after_full_run_clears_traces_and_component_csvs(amc, tmp_path):
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics,logs,traces"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics,logs,traces"])
     assert (tmp_path / "metric_report.log").exists()
     assert (tmp_path / "metric_traces.jsonl").exists()
 
-    _run(amc, tmp_path, extra_args=["--emit-selection", "logs"])
+    _run(amc, tmp_path, extra_args=["--emit", "logs"])
     assert (tmp_path / "metric_report.log").exists()
     assert not (tmp_path / "metric_traces.jsonl").exists(), (
         "logs-only re-run should drop the prior metric_traces.jsonl"
@@ -118,11 +118,11 @@ def test_logs_only_after_full_run_clears_traces_and_component_csvs(amc, tmp_path
 
 
 def test_traces_only_after_full_run_clears_logs_and_component_csvs(amc, tmp_path):
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics,logs,traces"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics,logs,traces"])
     assert (tmp_path / "metric_report.log").exists()
     assert (tmp_path / "metric_traces.jsonl").exists()
 
-    _run(amc, tmp_path, extra_args=["--emit-selection", "traces"])
+    _run(amc, tmp_path, extra_args=["--emit", "traces"])
     assert (tmp_path / "metric_traces.jsonl").exists()
     assert not (tmp_path / "metric_report.log").exists(), (
         "traces-only re-run should drop the prior metric_report.log"
@@ -135,11 +135,11 @@ def test_traces_only_after_full_run_clears_logs_and_component_csvs(amc, tmp_path
 
 
 def test_pre_clean_leaves_unknown_files_alone(amc, tmp_path):
-    _run(amc, tmp_path, extra_args=["--emit-selection", "metrics"])
+    _run(amc, tmp_path, extra_args=["--emit", "metrics"])
     sentinel = tmp_path / "user_notes.txt"
     sentinel.write_text("user-provided extra file; do not delete")
 
-    _run(amc, tmp_path, extra_args=["--emit-selection", "logs,traces"])
+    _run(amc, tmp_path, extra_args=["--emit", "logs,traces"])
     assert sentinel.exists(), (
         "pre-clean should leave user-provided files in --output-dir alone"
     )
@@ -151,7 +151,7 @@ def test_no_metric_formatting_work_when_metrics_not_emitted(amc, tmp_path, monke
     entirely — the formatted buffers exist only to produce CSV bytes, and
     the formatting historically dominated generation runtime (~80% per
     the comment in ``generate_component``). Before the hoist, a
-    ``--emit-selection logs`` run paid the full cost and threw the
+    ``--emit logs`` run paid the full cost and threw the
     result away.
     """
     import numpy as np

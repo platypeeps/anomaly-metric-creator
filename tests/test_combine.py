@@ -93,9 +93,9 @@ def test_unified_row_count_matches_timestamp_union(amc, combined_dir, one_day_ru
     )
 
 
-def test_combine_only_cli_produces_unified_csv(amc, one_day_run_a, tmp_path):
-    """End-to-end ``--combine-only`` CLI run produces the unified file against
-    an existing --output-dir without re-generating component CSVs.
+def test_combine_subcommand_produces_unified_csv(amc, one_day_run_a, tmp_path):
+    """End-to-end ``combine DIR`` subcommand run produces the unified file
+    against an existing run directory without re-generating component CSVs.
     """
     staged = tmp_path / "iot_logs"
     staged.mkdir()
@@ -108,9 +108,9 @@ def test_combine_only_cli_produces_unified_csv(amc, one_day_run_a, tmp_path):
     combined = staged / "combined_metrics_unified.csv"
     assert not combined.exists()
 
-    amc.main(["--combine-only", "--output-dir", str(staged)])
+    amc.main(["combine", str(staged)])
 
-    assert combined.exists(), "combine-only did not write the unified CSV"
+    assert combined.exists(), "combine subcommand did not write the unified CSV"
     with open(combined) as f:
         reader = csv.DictReader(f)
         rows = list(reader)
@@ -122,7 +122,7 @@ def test_combine_only_cli_produces_unified_csv(amc, one_day_run_a, tmp_path):
     # No regeneration: source component files must not have been rewritten.
     for name, mtime in component_mtimes_before.items():
         assert (staged / name).stat().st_mtime_ns == mtime, (
-            f"--combine-only rewrote source file {name}"
+            f"the combine subcommand rewrote source file {name}"
         )
 
 
@@ -139,7 +139,7 @@ def _run_combine_subprocess(out_dir, *extra_args):
          "--seed", "42",
          "--duration-days", "1",
          "--interval-seconds", "60",
-         "--combine",
+         "--emit", "metrics,logs,traces,combined",
          "--output-dir", str(out_dir),
          *extra_args],
         capture_output=True,
@@ -155,10 +155,10 @@ def _read_unified_fieldnames(path):
 
 
 def test_combine_with_metrics_per_component_full_catalog(amc, tmp_path):
-    """``--combine --metrics-per-component 10`` includes every supplemental
+    """``--emit ...,combined --metrics-per-component 10`` includes every supplemental
     metric column in the unified CSV, in COMPONENTS-declared order.
 
-    Guards regressions where ``--combine`` drops the supplemental tail or
+    Guards regressions where the combine step drops the supplemental tail or
     reorders trimmed schemas — the existing default-only combine tests don't
     cover either case because they only see the historic per-component count.
     """
@@ -179,7 +179,7 @@ def test_combine_with_metrics_per_component_full_catalog(amc, tmp_path):
 
 
 def test_combine_with_metrics_per_component_trims_unified_columns(amc, tmp_path):
-    """``--combine --metrics-per-component 3`` produces a unified CSV whose
+    """``--emit ...,combined --metrics-per-component 3`` produces a unified CSV whose
     per-component column set is exactly the first 3 schema metrics, with no
     leftover columns from the historic default catalog."""
     out = tmp_path / "iot_logs"
@@ -197,8 +197,8 @@ def test_combine_with_metrics_per_component_trims_unified_columns(amc, tmp_path)
         )
 
 
-def test_combine_only_components_filters_unified_columns(amc, one_day_run_a, tmp_path):
-    """``--combine-only --components authservice,database`` writes a unified CSV
+def test_combine_subcommand_components_filters_unified_columns(amc, one_day_run_a, tmp_path):
+    """``combine DIR --components authservice,database`` writes a unified CSV
     whose columns are exactly ``timestamp`` plus every ``authservice_*`` and
     ``database_*`` column — no other component prefixes leak in even though
     the staged --output-dir holds CSVs for every component."""
@@ -208,13 +208,12 @@ def test_combine_only_components_filters_unified_columns(amc, one_day_run_a, tmp
         shutil.copy2(src, staged / src.name)
 
     amc.main([
-        "--combine-only",
-        "--output-dir", str(staged),
+        "combine", str(staged),
         "--components", "authservice,database",
     ])
 
     unified = staged / "combined_metrics_unified.csv"
-    assert unified.exists(), "--combine-only did not write the unified CSV"
+    assert unified.exists(), "the combine subcommand did not write the unified CSV"
     fieldnames = _read_unified_fieldnames(unified)
 
     auth_specs = amc.COMPONENTS["authservice"]
@@ -231,7 +230,7 @@ def test_combine_only_components_filters_unified_columns(amc, one_day_run_a, tmp
 
 
 def test_combine_with_components_filters_unified_columns(amc, tmp_path):
-    """``--combine --components authservice,database`` writes a unified CSV
+    """``--emit ...,combined --components authservice,database`` writes a unified CSV
     containing only those two components' columns, even if a leftover
     component CSV from a previous run is sitting in --output-dir.
     """
@@ -258,9 +257,9 @@ def test_combine_with_components_filters_unified_columns(amc, tmp_path):
     assert fieldnames[0] == "timestamp"
 
 
-def test_combine_only_components_missing_csv_errors(amc, one_day_run_a, tmp_path):
-    """``--combine-only --components a,b`` errors clearly when one of the
-    requested component CSVs is missing from --output-dir, naming the
+def test_combine_subcommand_components_missing_csv_errors(amc, one_day_run_a, tmp_path):
+    """``combine DIR --components a,b`` errors clearly when one of the
+    requested component CSVs is missing from DIR, naming the
     missing file."""
     staged = tmp_path / "iot_logs"
     staged.mkdir()
@@ -270,8 +269,7 @@ def test_combine_only_components_missing_csv_errors(amc, one_day_run_a, tmp_path
 
     with pytest.raises(SystemExit) as excinfo:
         amc.main([
-            "--combine-only",
-            "--output-dir", str(staged),
+            "combine", str(staged),
             "--components", "authservice,database",
         ])
     message = str(excinfo.value)
@@ -281,7 +279,7 @@ def test_combine_only_components_missing_csv_errors(amc, one_day_run_a, tmp_path
 
 
 def test_combine_with_dst_artifact_preserves_all_rows(amc, tmp_path):
-    """--combine + --inject-dst-artifact-day must NOT silently drop rows.
+    """'combined' emission + --inject-dst-artifact-day must NOT silently drop rows.
 
     DST fall-back duplicates the 02:00–02:59 wall-clock hour in each
     per-component CSV. The unified output must include both copies.
@@ -293,7 +291,7 @@ def test_combine_with_dst_artifact_preserves_all_rows(amc, tmp_path):
         days=1,
         drop_rate=0,
         extra_args=[
-            "--combine",
+            "--emit", "metrics,logs,traces,combined",
             "--inject-dst-artifact-day", "1",
         ],
         interval_seconds=600,
@@ -340,7 +338,7 @@ def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
     occurrence-keyed combine — every row has occurrence 0 and the sort
     key (timestamp, 0) collapses to timestamp-only ordering."""
     out_dir = tmp_path / "no_dst_combine"
-    run_capture(amc, out_dir, days=1, extra_args=["--combine"])
+    run_capture(amc, out_dir, days=1, extra_args=["--emit", "metrics,logs,traces,combined"])
     unified = out_dir / "combined_metrics_unified.csv"
     assert unified.exists()
 
@@ -388,7 +386,7 @@ def n3_one_day_combine_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
     The hardlinked entries appear as normal files to every reader
     in this module, and ``combine_logs``'s autodiscovery (the
     ``components=None`` call below) walks them in sorted order — the
-    same input the original ``--combine`` invocation produced. The
+    same input the original combined-emission invocation produced. The
     new ``combined_metrics_unified.csv`` writes into this module's
     temp dir; the shared dataset is read-only as far as this fixture
     is concerned. Hardlinks require the temp dir on the same
@@ -402,7 +400,7 @@ def n3_one_day_combine_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
 
 
 def test_n3_combined_has_long_form_header(n3_one_day_combine_run):
-    """With ``--instances-per-component 3 --combine`` the unified CSV
+    """With ``--instances-per-component 3 --emit ...,combined`` the unified CSV
     switches from the wide layout to the long
     ``timestamp,component,id,host,pod,az,region,tenant,metric,value``
     layout. The wide layout cannot represent N instances per metric

@@ -1,15 +1,15 @@
 """Tests for the long-form ``gauges.csv`` file artifact.
 
 Covers:
-- ``--emit-selection`` accepts the new ``gauges`` token and rejects bad combos.
+- ``--emit`` accepts the ``gauges`` token and rejects bad combos.
 - The file is written only when opted in, and absent by default.
 - Header, byte-determinism, locked SHA-256 golden hashes at 1d and 7d.
 - ``--components`` / ``--metrics-per-component`` filter passthrough.
 - Chronological ordering and parity with ``_iter_component_rows`` (the same
   source the OTEL gauge stream consumes).
 - ``_pre_clean_output_dir`` removes a stale ``gauges.csv`` when ``gauges`` is
-  dropped from the next run's emit-selection.
-- ``--combine-only`` does NOT regenerate ``gauges.csv``.
+  dropped from the next run's --emit selection.
+- the ``combine`` subcommand does NOT regenerate ``gauges.csv``.
 """
 import csv
 import os
@@ -51,7 +51,7 @@ def one_day_gauges_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("ver138_one_day_gauges")
     return run_capture(
         amc, out, days=1,
-        extra_args=["--emit-selection", "metrics,gauges"],
+        extra_args=["--emit", "metrics,gauges"],
         interval_seconds=1.0,
     )
 
@@ -62,7 +62,7 @@ def seven_day_gauges_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("ver138_seven_day_gauges")
     return run_capture(
         amc, out, days=7,
-        extra_args=["--emit-selection", "metrics,gauges"],
+        extra_args=["--emit", "metrics,gauges"],
         interval_seconds=1.0,
     )
 
@@ -74,7 +74,7 @@ def test_emit_selection_accepts_gauges_token(amc, tmp_path):
     args = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
-        "--emit-selection", "metrics,gauges",
+        "--emit", "metrics,gauges",
     ])
     assert "gauges" in args.emit_selection
     assert "metrics" in args.emit_selection
@@ -85,7 +85,7 @@ def test_emit_selection_gauges_requires_metrics(capsys, amc, tmp_path):
         amc.parse_args([
             "--output-dir", str(tmp_path),
             "--duration-days", "1",
-            "--emit-selection", "gauges",
+            "--emit", "gauges",
         ])
     err = capsys.readouterr().err
     assert "gauges" in err and "metrics" in err
@@ -98,7 +98,7 @@ def test_emit_selection_gauges_with_logs_traces_still_requires_metrics(
         amc.parse_args([
             "--output-dir", str(tmp_path),
             "--duration-days", "1",
-            "--emit-selection", "gauges,logs,traces",
+            "--emit", "gauges,logs,traces",
         ])
     err = capsys.readouterr().err
     assert "gauges" in err and "metrics" in err
@@ -109,7 +109,7 @@ def test_emit_selection_rejects_unknown_token(capsys, amc, tmp_path):
         amc.parse_args([
             "--output-dir", str(tmp_path),
             "--duration-days", "1",
-            "--emit-selection", "metrics,bogus",
+            "--emit", "metrics,bogus",
         ])
     err = capsys.readouterr().err
     # Existing message lists valid tokens; assert ``gauges`` is now in it so
@@ -137,7 +137,7 @@ def test_emit_selection_gauges_rejects_dst_artifact_combo(amc, capsys, tmp_path)
         amc.parse_args([
             "--output-dir", str(tmp_path),
             "--duration-days", "2",
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
             "--inject-dst-artifact-day", "1",
         ])
     err = capsys.readouterr().err
@@ -146,11 +146,11 @@ def test_emit_selection_gauges_rejects_dst_artifact_combo(amc, capsys, tmp_path)
 
 def test_emit_selection_gauges_allows_dst_artifact_zero(amc, tmp_path):
     """``--inject-dst-artifact-day 0`` (the default, off) must coexist freely
-    with ``--emit-selection gauges``."""
+    with ``--emit gauges``."""
     args = amc.parse_args([
         "--output-dir", str(tmp_path),
         "--duration-days", "1",
-        "--emit-selection", "metrics,gauges",
+        "--emit", "metrics,gauges",
         "--inject-dst-artifact-day", "0",
     ])
     assert "gauges" in args.emit_selection
@@ -162,13 +162,13 @@ def test_emit_selection_gauges_allows_dst_artifact_zero(amc, tmp_path):
 # ------------------------------------------------------------------
 def test_gauges_csv_written_when_opted_in(one_day_gauges_run):
     path = one_day_gauges_run.out_dir / "gauges.csv"
-    assert path.exists(), "gauges.csv must be written when 'gauges' is in --emit-selection"
+    assert path.exists(), "gauges.csv must be written when 'gauges' is in --emit"
 
 
 def test_gauges_csv_absent_by_default(one_day_run_a):
-    # one_day_run_a uses the default --emit-selection (metrics,logs,traces).
+    # one_day_run_a uses the default --emit selection (metrics,logs,traces).
     assert not (one_day_run_a.out_dir / "gauges.csv").exists(), (
-        "default run must not write gauges.csv unless opted in via --emit-selection"
+        "default run must not write gauges.csv unless opted in via --emit"
     )
 
 
@@ -183,8 +183,8 @@ def test_gauges_csv_header_locked(one_day_gauges_run):
 def test_gauges_csv_byte_deterministic_same_seed(amc, tmp_path):
     out_a = tmp_path / "a"
     out_b = tmp_path / "b"
-    run_capture(amc, out_a, days=1, extra_args=["--emit-selection", "metrics,gauges"])
-    run_capture(amc, out_b, days=1, extra_args=["--emit-selection", "metrics,gauges"])
+    run_capture(amc, out_a, days=1, extra_args=["--emit", "metrics,gauges"])
+    run_capture(amc, out_b, days=1, extra_args=["--emit", "metrics,gauges"])
     assert sha256_path(out_a / "gauges.csv") == sha256_path(out_b / "gauges.csv")
 
 
@@ -223,7 +223,7 @@ def test_gauges_csv_respects_components(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
             "--components", keep,
         ],
     )
@@ -242,13 +242,13 @@ def test_gauges_csv_respects_metrics_per_component(amc, tmp_path):
     run_capture(
         amc, out_full, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
         ],
     )
     run_capture(
         amc, out_trim, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
             "--metrics-per-component", "1",
         ],
     )
@@ -335,7 +335,7 @@ def test_pre_clean_removes_stale_gauges_csv(amc, tmp_path):
     run_capture(
         amc, tmp_path, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
         ],
     )
     assert (tmp_path / "gauges.csv").exists()
@@ -343,12 +343,12 @@ def test_pre_clean_removes_stale_gauges_csv(amc, tmp_path):
     run_capture(
         amc, tmp_path, days=1,
         extra_args=[
-            "--emit-selection", "metrics",
+            "--emit", "metrics",
         ],
     )
     assert not (tmp_path / "gauges.csv").exists(), (
         "_pre_clean_output_dir must remove gauges.csv when gauges is dropped "
-        "from --emit-selection on a re-run"
+        "from --emit on a re-run"
     )
 
 
@@ -356,56 +356,54 @@ def test_pre_clean_removes_stale_gauges_csv_on_logs_only_rerun(amc, tmp_path):
     run_capture(
         amc, tmp_path, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
         ],
     )
     assert (tmp_path / "gauges.csv").exists()
     run_capture(
         amc, tmp_path, days=1,
         extra_args=[
-            "--emit-selection", "logs,traces",
+            "--emit", "logs,traces",
         ],
     )
     assert not (tmp_path / "gauges.csv").exists()
 
 
-def test_combine_only_does_not_regenerate_gauges_csv(amc, tmp_path):
-    # Seed the directory with a metrics-only run so combine-only has inputs;
-    # gauges.csv is absent by design at this point.
+def test_combine_subcommand_does_not_regenerate_gauges_csv(amc, tmp_path):
+    # Seed the directory with a metrics-only run so the combine subcommand
+    # has inputs; gauges.csv is absent by design at this point.
     run_capture(
         amc, tmp_path, days=1,
         extra_args=[
-            "--emit-selection", "metrics",
+            "--emit", "metrics",
         ],
     )
     assert not (tmp_path / "gauges.csv").exists()
-    # combine-only is the explicit exception to the pre-clean path; it must
-    # not regenerate gauges.csv even when 'gauges' would be in --emit-selection.
-    # Run it via subprocess so SystemExit / sys.argv parsing don't interfere
-    # with the in-process amc fixture.
+    # The combine subcommand is the explicit exception to the pre-clean
+    # path; it must not regenerate gauges.csv even when 'gauges' would be
+    # in the --emit selection. Run it via subprocess so SystemExit /
+    # sys.argv parsing don't interfere with the in-process amc fixture.
     result = subprocess.run(
         [
             sys.executable, str(SCRIPT_PATH),
-            "--output-dir", str(tmp_path),
-            "--duration-days", "1",
-            "--combine-only",
+            "combine", str(tmp_path),
         ],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "gauges.csv").exists(), (
-        "--combine-only must not generate gauges.csv (it's a derived artifact "
-        "of a fresh generation run only)"
+        "the combine subcommand must not generate gauges.csv (it's a derived "
+        "artifact of a fresh generation run only)"
     )
 
 
-def test_combine_only_preserves_existing_gauges_csv(amc, tmp_path):
-    # If a previous run wrote gauges.csv into --output-dir, combine-only must
-    # leave it alone (mirrors anomalies.csv behavior on combine-only).
+def test_combine_subcommand_preserves_existing_gauges_csv(amc, tmp_path):
+    # If a previous run wrote gauges.csv into the run directory, the combine
+    # subcommand must leave it alone (mirrors anomalies.csv behavior).
     run_capture(
         amc, tmp_path, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
         ],
     )
     gauges_path = tmp_path / "gauges.csv"
@@ -413,9 +411,7 @@ def test_combine_only_preserves_existing_gauges_csv(amc, tmp_path):
     result = subprocess.run(
         [
             sys.executable, str(SCRIPT_PATH),
-            "--output-dir", str(tmp_path),
-            "--duration-days", "1",
-            "--combine-only",
+            "combine", str(tmp_path),
         ],
         capture_output=True, text=True,
     )
@@ -428,7 +424,7 @@ def test_done_summary_names_gauges_csv(amc, tmp_path, capsys):
     run_capture(
         amc, tmp_path, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
         ],
     )
     captured = capsys.readouterr()
@@ -746,7 +742,7 @@ def test_n3_gauges_csv_with_metrics_per_component_trim(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
             "--instances-per-component", "3",
             "--metrics-per-component", "1",
         ],
@@ -934,7 +930,7 @@ def test_ensure_long_form_fd_capacity_raises_systemexit_when_hard_limit_too_low(
 
 
 # ------------------------------------------------------------------
-# Coverage gaps — sub-second interval, tie-break order, --combine,
+# Coverage gaps — sub-second interval, tie-break order, combined emission,
 # --drop-rate parity.
 # ------------------------------------------------------------------
 def test_gauges_csv_sub_second_interval(amc, tmp_path):
@@ -949,7 +945,7 @@ def test_gauges_csv_sub_second_interval(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
             "--components", list(amc.COMPONENTS)[0],
             "--metrics-per-component", "1",
         ],
@@ -986,7 +982,7 @@ def test_gauges_csv_tie_break_follows_sorted_component_order(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
         ],
     )
     rows = _read_rows(out / "gauges.csv")
@@ -1017,7 +1013,7 @@ def test_gauges_csv_drop_rate_skips_dropped_rows(amc, tmp_path):
         amc, out, days=1,
         drop_rate=0.5,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
             "--components", component,
             "--metrics-per-component", "1",
         ],
@@ -1053,8 +1049,8 @@ def test_gauges_csv_drop_rate_skips_dropped_rows(amc, tmp_path):
     )
 
 
-def test_gauges_csv_works_with_combine_flag(amc, tmp_path):
-    """``--combine`` and ``--emit-selection gauges`` together: both
+def test_gauges_csv_works_with_combined_token(amc, tmp_path):
+    """``combined`` and ``gauges`` together in ``--emit``: both
     artifacts must be written, and the combine autodiscovery must NOT
     treat ``gauges.csv`` as a per-component CSV (the ``_NON_COMPONENT_FILES``
     guard, validated at set-membership level by
@@ -1064,14 +1060,13 @@ def test_gauges_csv_works_with_combine_flag(amc, tmp_path):
     run_capture(
         amc, out, days=1,
         extra_args=[
-            "--emit-selection", "metrics,gauges",
-            "--combine",
+            "--emit", "metrics,gauges,combined",
         ],
     )
     gauges_path = out / "gauges.csv"
     combined_path = out / "combined_metrics_unified.csv"
     assert gauges_path.exists(), "gauges.csv must exist when 'gauges' is emitted"
-    assert combined_path.exists(), "combined_metrics_unified.csv must exist when --combine is set"
+    assert combined_path.exists(), "combined_metrics_unified.csv must exist when 'combined' is selected"
     # Read the combined CSV header. ``combine_logs`` uses a wide
     # ``timestamp + <component>_<metric>...`` schema; if gauges.csv had
     # leaked into autodiscovery we'd see ``gauges_component``,
@@ -1086,6 +1081,6 @@ def test_gauges_csv_works_with_combine_flag(amc, tmp_path):
     ]
     assert not leaked, (
         f"combined_metrics_unified.csv contains leaked gauges.csv columns "
-        f"{leaked}: --combine autodiscovery must filter gauges.csv via "
+        f"{leaked}: combine autodiscovery must filter gauges.csv via "
         "_NON_COMPONENT_FILES"
     )

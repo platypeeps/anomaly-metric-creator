@@ -98,7 +98,7 @@ def n3_1d(n3_one_day_dataset_dir):
     generation pass runs once for the whole suite instead of once per
     test file. Every consumer in this module only reads per-component
     CSVs or ``anomalies.csv``; the shared fixture's
-    ``--emit-selection metrics`` is exactly that set."""
+    ``--emit metrics,schema`` covers that set."""
     return n3_one_day_dataset_dir
 
 
@@ -109,8 +109,8 @@ def n3_7d(n3_seven_day_dataset_dir):
     the single most expensive generation in the suite (~9 GB at 1s
     resolution) — so it runs at most once per worker instead of once
     per consuming module. The shared fixture's
-    ``--emit-selection metrics,schema`` does not move the per-component
-    CSV hashes (CSV bytes are independent of ``--emit-selection``;
+    ``--emit metrics,schema`` does not move the per-component
+    CSV hashes (CSV bytes are independent of the ``--emit`` selection;
     the writers consume no RNG)."""
     return n3_seven_day_dataset_dir
 
@@ -271,26 +271,26 @@ def test_instances_per_component_range_error_precedes_gating(amc, tmp_path):
     range error, not the incompatibility error.
 
     Without explicit ordering the user would see "incompatible with
-    --validate-output" for ``--instances-per-component 999
-    --validate-output ...`` and waste time looking for a Phase 8 fix
-    when the real problem is the invalid N. The range check is run
-    *before* every N>1 gate in ``parse_args``. After phase 5
-    lifted the ``--combine`` / ``--combine-only`` / ``--emit-selection
-    gauges`` gates, ``--validate-output`` (Phase 8) is the canonical
-    still-gated flag to exercise this precedence invariant against.
+    --inject-dst-artifact-day" for ``--instances-per-component 999
+    --inject-dst-artifact-day 1`` and waste time on the wrong fix when
+    the real problem is the invalid N. The range check is run *before*
+    every N>1 gate in ``parse_args``. After the phase 5–8 gate lifts
+    (and the CLI flag day removing ``--validate-output``), the DST
+    splice guard is the only remaining N>1 gate to exercise this
+    precedence invariant against.
     """
     over = str(amc.MAX_INSTANCES_PER_COMPONENT + 1)
     result = _invoke(
         ["--instances-per-component", over,
-         "--validate-output", str(tmp_path),
+         "--inject-dst-artifact-day", "1",
          "--duration-days", "1"],
         expect_fail=True,
     )
     stderr_low = result.stderr.lower()
     assert "must be in [1," in stderr_low
-    # The Phase 8 incompatibility message must not fire — the range
+    # The DST incompatibility message must not fire — the range
     # error takes precedence and exits before the gate is reached.
-    assert "incompatible with --validate-output" not in stderr_low
+    assert "incompatible with --inject-dst-artifact-day" not in stderr_low
 
 
 # ---------------------------------------------------------------------------
@@ -498,11 +498,11 @@ def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
 
     The baseline ``n3_1d`` is the session-scoped
     ``n3_one_day_dataset_dir``, which uses
-    ``--emit-selection metrics``. The second run mirrors that selection
+    ``--emit metrics,schema``. The second run emits ``metrics`` only,
     so the two outputs are comparable on the artifacts the per-component
     CSV hashes cover, and the second run avoids re-emitting the
     ~1.3 GB of logs/traces artifacts neither side compares against.
-    Per-component CSV bytes are independent of ``--emit-selection``
+    Per-component CSV bytes are independent of the ``--emit`` selection
     (the metric columns are written under any selection that includes
     ``metrics``), so this trims disk without changing the test's
     invariant.
@@ -510,7 +510,7 @@ def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
     out2 = tmp_path_factory.mktemp("inst_n3_1d_v2")
     _run(amc, out2, days=1, extra_args=[
         "--instances-per-component", "3",
-        "--emit-selection", "metrics",
+        "--emit", "metrics",
     ])
     for name in amc.COMPONENTS:
         fname = f"{name}.csv"
@@ -533,7 +533,7 @@ def test_n3_7d_hashes_stable(amc, tmp_path_factory):
     session fixture, and full-resolution stability by
     ``test_n3_1d_hashes_stable`` at 1 day.
     """
-    extra = ["--instances-per-component", "3", "--emit-selection", "metrics"]
+    extra = ["--instances-per-component", "3", "--emit", "metrics"]
     out1 = tmp_path_factory.mktemp("inst_n3_7d_stab_a")
     _run(amc, out1, days=7, extra_args=extra, interval_seconds=60.0)
     out2 = tmp_path_factory.mktemp("inst_n3_7d_stab_b")
@@ -569,14 +569,14 @@ def test_instances_n1_with_dst_allowed(tmp_path):
 #
 # After phase 5 the file-form long-form writers
 # (``combined_metrics_unified.csv`` and ``gauges.csv``) are dimension-
-# aware: ``--instances-per-component > 1`` paired with ``--combine`` /
-# ``--combine-only`` / ``--emit-selection gauges`` is now permitted and
-# dispatches to the long-form layout. Phase 6 then made the
-# OTEL streamer dimension-aware, so ``--otel-enabled`` /
-# ``--otel-emit-gauges`` are also accepted under multi-instance runs.
+# aware: ``--instances-per-component > 1`` paired with ``--emit
+# ...,combined`` / the ``combine`` subcommand / ``--emit ...,gauges``
+# is now permitted and dispatches to the long-form layout. Phase 6
+# then made the OTEL streamer dimension-aware, so ``--otel-send`` (with
+# or without ``gauges``) is also accepted under multi-instance runs.
 # Phase 8 (this branch) closes the loop: ``schema.json``
-# declares a per-component ``dimensions`` block and
-# ``--validate-output`` walks the long-form headers end-to-end, so
+# declares a per-component ``dimensions`` block and the ``validate``
+# subcommand walks the long-form headers end-to-end, so
 # every downstream-flag combination above is now permitted at parse
 # time. The only remaining multi-instance gate is the DST splice
 # (``--inject-dst-artifact-day > 0``). After the long-form
@@ -588,12 +588,14 @@ def test_instances_n1_with_dst_allowed(tmp_path):
 
 
 def test_n2_plus_combine_allowed(tmp_path):
-    """Phase 5: ``--instances-per-component > 1`` + ``--combine``
-    is now permitted. The combine writer dispatches to a long-form
-    layout when the per-component CSVs carry the dimension prefix.
+    """Phase 5: ``--instances-per-component > 1`` + ``--emit
+    ...,combined`` is now permitted. The combine writer dispatches to a
+    long-form layout when the per-component CSVs carry the dimension
+    prefix.
     """
     _invoke(
-        ["--instances-per-component", "2", "--combine",
+        ["--instances-per-component", "2",
+         "--emit", "metrics,logs,traces,combined",
          "--components", "apigateway",
          "--output-dir", str(tmp_path), "--duration-days", "1",
          "--interval-seconds", "60"],
@@ -602,9 +604,9 @@ def test_n2_plus_combine_allowed(tmp_path):
     assert (tmp_path / "combined_metrics_unified.csv").exists()
 
 
-def test_n2_plus_combine_only_allowed(tmp_path):
-    """Phase 5: ``--instances-per-component > 1`` + ``--combine-only``
-    is now permitted. A staged multi-instance directory is combined
+def test_n2_plus_combine_subcommand_allowed(tmp_path):
+    """Phase 5: an N>1 staged directory + the ``combine`` subcommand
+    is permitted. The staged multi-instance directory is combined
     into a long-form unified CSV."""
     # Seed a single-component dimensioned directory first.
     _invoke(
@@ -614,13 +616,11 @@ def test_n2_plus_combine_only_allowed(tmp_path):
          "--interval-seconds", "60"],
         expect_fail=False,
     )
-    # combine_only over the staged dimensioned per-component CSV must
-    # succeed and write the long-form unified CSV.
+    # The combine subcommand over the staged dimensioned per-component
+    # CSV must succeed and write the long-form unified CSV.
     _invoke(
-        ["--instances-per-component", "2", "--combine-only",
-         "--components", "apigateway",
-         "--output-dir", str(tmp_path), "--duration-days", "1",
-         "--interval-seconds", "60"],
+        ["combine", str(tmp_path),
+         "--components", "apigateway"],
         expect_fail=False,
     )
     unified = tmp_path / "combined_metrics_unified.csv"
@@ -633,14 +633,14 @@ def test_n2_plus_combine_only_allowed(tmp_path):
 
 def test_n2_plus_emit_gauges_allowed(tmp_path):
     """Phase 5: ``--instances-per-component > 1`` +
-    ``--emit-selection gauges`` is now permitted. The file-form gauge
+    ``--emit ...,gauges`` is now permitted. The file-form gauge
     writer emits the 10-column long form with the dimension prefix
     instead of the 4-column ``timestamp,component,metric,value`` shape.
     """
     _invoke(
         ["--instances-per-component", "2",
          "--components", "apigateway",
-         "--emit-selection", "metrics,gauges",
+         "--emit", "metrics,gauges",
          "--output-dir", str(tmp_path), "--duration-days", "1",
          "--interval-seconds", "60"],
         expect_fail=False,
@@ -657,10 +657,10 @@ def test_n2_plus_emit_gauges_allowed(tmp_path):
 
 
 def test_n2_plus_emit_schema_allowed(amc, tmp_path):
-    """``--instances-per-component > 1`` + ``--emit-selection schema`` is allowed
+    """``--instances-per-component > 1`` + ``--emit ...,schema`` is allowed
     after Phase 8. ``write_schema_json`` declares a per-component
     ``dimensions`` block on every dim-aware component, and
-    ``--validate-output`` (when also enabled) honors it via
+    the ``validate`` subcommand honors it via
     ``_validate_component_cells`` / ``_validate_component_row_count`` /
     ``_validate_long_form_dimensions``. Exercises ``parse_args`` directly
     to pin the gate lift, regardless of whether a downstream schema write
@@ -668,31 +668,15 @@ def test_n2_plus_emit_schema_allowed(amc, tmp_path):
     """
     args = amc.parse_args([
         "--instances-per-component", "2",
-        "--emit-selection", "metrics,schema",
+        "--emit", "metrics,schema",
         "--output-dir", str(tmp_path), "--duration-days", "1",
     ])
     assert args.instances_per_component == 2
     assert "schema" in args.emit_selection
 
 
-def test_n2_plus_validate_output_allowed(amc, tmp_path):
-    """``--instances-per-component > 1`` + ``--validate-output`` is allowed
-    after Phase 8. The validator reads the per-component
-    ``dimensions`` block from ``schema.json`` and walks the long-form
-    headers end-to-end, so the previous parse-time gate is no longer
-    needed.
-    """
-    args = amc.parse_args([
-        "--instances-per-component", "2",
-        "--validate-output", str(tmp_path),
-        "--duration-days", "1",
-    ])
-    assert args.instances_per_component == 2
-    assert args.validate_output == tmp_path
-
-
-def test_n2_plus_otel_enabled_allowed(amc, tmp_path):
-    """``--instances-per-component > 1`` + ``--otel-enabled`` is allowed
+def test_n2_plus_otel_send_allowed(amc, tmp_path):
+    """``--instances-per-component > 1`` + ``--otel-send`` is allowed
     after Phase 6 wired the OTEL streamer's dimension attributes.
 
     The parse-time gate that used to reject this combination was lifted
@@ -703,26 +687,25 @@ def test_n2_plus_otel_enabled_allowed(amc, tmp_path):
     """
     args = amc.parse_args([
         "--instances-per-component", "2",
-        "--otel-enabled",
-        "--otel-metrics-endpoint", "http://localhost:4318",
+        "--otel-send", "metrics",
+        "--otel-endpoint", "http://localhost:4318",
         "--output-dir", str(tmp_path), "--duration-days", "1",
     ])
     assert args.instances_per_component == 2
     assert args.otel_enabled is True
 
 
-def test_n2_plus_otel_emit_gauges_allowed(amc, tmp_path):
-    """``--instances-per-component > 1`` + ``--otel-emit-gauges`` is allowed
-    after Phase 6. ``stream_otel_gauges`` reads the dimension
-    columns off the per-component CSV and surfaces each non-empty
-    ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string attribute on every
-    OTLP gauge data point.
+def test_n2_plus_otel_gauge_stream_allowed(amc, tmp_path):
+    """``--instances-per-component > 1`` + a gauge-selecting
+    ``--otel-send`` is allowed after Phase 6. ``stream_otel_gauges``
+    reads the dimension columns off the per-component CSV and surfaces
+    each non-empty ``_INSTANCE_DIMENSION_COLUMNS`` cell as a string
+    attribute on every OTLP gauge data point.
     """
     args = amc.parse_args([
         "--instances-per-component", "2",
-        "--otel-enabled",
-        "--otel-emit-gauges",
-        "--otel-metrics-endpoint", "http://localhost:4318",
+        "--otel-send", "metrics,gauges",
+        "--otel-endpoint", "http://localhost:4318",
         "--output-dir", str(tmp_path), "--duration-days", "1",
     ])
     assert args.instances_per_component == 2
@@ -742,8 +725,7 @@ def test_n1_with_combine_gauges_schema_allowed(tmp_path):
     _invoke(
         ["--instances-per-component", "1",
          "--components", "apigateway",
-         "--combine",
-         "--emit-selection", "metrics,gauges,schema",
+         "--emit", "metrics,gauges,schema,combined",
          "--output-dir", str(tmp_path), "--duration-days", "1"],
         expect_fail=False,
     )
@@ -789,18 +771,18 @@ def test_generate_component_raises_on_dst_plus_non_anonymous_instances(
 
 
 # ---------------------------------------------------------------------------
-# --combine-only bypass: a user can generate per-component CSVs with N>1
-# (rejected if combined in the same run by the parse_args gate above), then
-# re-invoke --combine-only against the same directory. ``combine_logs``
-# now inspects the header of each per-component CSV and refuses to combine
-# any CSV that carries dimension columns (id/host/pod/az/region/tenant).
+# combine-subcommand bypass: a user can generate per-component CSVs with
+# N>1, then re-invoke ``combine DIR`` against the same directory.
+# ``combine_logs`` inspects the header of each per-component CSV and
+# dispatches to the long-form layout when it carries dimension columns
+# (id/host/pod/az/region/tenant).
 # ---------------------------------------------------------------------------
 
 
-def test_combine_only_long_form_against_multi_instance_per_component_csv(
+def test_combine_subcommand_long_form_against_multi_instance_per_component_csv(
     amc, tmp_path,
 ):
-    """Phase 5: ``--combine-only`` against an N>1 directory
+    """Phase 5: the ``combine`` subcommand against an N>1 directory
     succeeds and writes the long-form unified CSV.
 
     Previously the parse-time + combine-time guards refused this
@@ -821,16 +803,14 @@ def test_combine_only_long_form_against_multi_instance_per_component_csv(
         header = fh.readline().rstrip("\n")
     assert header.startswith("timestamp,id,host,pod,az,region,tenant,")
 
-    # Phase 2: --combine-only against the multi-instance dir succeeds
-    # and emits the long-form unified CSV (instead of the historic wide
-    # layout, which couldn't represent dimensions). The default
-    # ``instances_per_component=1`` on the combine-only invocation is
-    # fine — the per-component CSV's own header is the source of truth
-    # for the layout dispatch.
+    # Phase 2: the combine subcommand against the multi-instance dir
+    # succeeds and emits the long-form unified CSV (instead of the
+    # historic wide layout, which couldn't represent dimensions). The
+    # per-component CSV's own header is the source of truth for the
+    # layout dispatch.
     _invoke(
-        ["--combine-only",
-         "--components", "apigateway",
-         "--output-dir", str(tmp_path)],
+        ["combine", str(tmp_path),
+         "--components", "apigateway"],
         expect_fail=False,
     )
     unified = tmp_path / "combined_metrics_unified.csv"
@@ -864,9 +844,9 @@ def test_combine_logs_accepts_single_instance_csv_with_overlapping_metric_name(
         "2025-01-01 00:00:00,42,3.14\n"
         "2025-01-01 00:00:01,43,2.71\n"
     )
-    # combine_logs is the choke point both --combine and --combine-only
-    # share, so calling it directly exercises the dispatcher without
-    # spinning up a subprocess.
+    # combine_logs is the choke point both the 'combined' emit token and
+    # the combine subcommand share, so calling it directly exercises the
+    # dispatcher without spinning up a subprocess.
     amc.combine_logs(tmp_path, components=["synthetic_component"])
     combined = tmp_path / "combined_metrics_unified.csv"
     assert combined.exists()

@@ -4,6 +4,24 @@
 
 ### Removed
 
+- Phase-9 flag day, part 2 (CLI): the 16 deprecated alias flags from the
+  CLI consolidation are removed and no longer parse — `--emit-selection`,
+  `--combine`, `--combine-only`, `--validate-output`, `--validate-warn`,
+  the five OTEL toggles (`--otel-enabled`, `--otel-disabled`,
+  `--otel-emit-gauges`, `--otel-no-emit-gauges`, `--otel-gauges-only`),
+  and the six per-signal endpoint/token flags. The canonical surface is
+  the only surface: `--emit` (with the `combined` token), the `combine`
+  and `validate` subcommands, `--otel-send`, `--otel-endpoint`, and
+  `--otel-auth-token`. Per-signal endpoint/token overrides remain
+  available via the `MEZMO_OTEL_*` env vars (which an explicitly typed
+  `--otel-endpoint` base still beats for selected signals), and
+  `MEZMO_OTEL_EMIT_GAUGES` survives as a gauge-stream default that now
+  requires `--otel-send`. The `DEPRECATION:` stderr notice mechanism,
+  the `_DEPRECATED_FLAGS` registry, and the canonical/alias mixing
+  gates are gone; `--help-all` lists only the advanced knobs. Default
+  output bytes are unchanged (the default invocation never used an
+  alias).
+
 - Phase-9 flag day, part 1: the deprecated `--topology-mode independent`
   no-topology contrast alias is removed — the flag no longer parses and
   realistic topology is the only generation mode. `generate_component`'s
@@ -37,21 +55,14 @@
     over env-var endpoint defaults.
   - `--otel-endpoint BASE` + `--otel-auth-token` replace the per-signal
     endpoint/token sextet, deriving `BASE/v1/<signal>` URLs for the
-    selected signals (explicit per-signal flags beat the derivation,
-    which beats the per-signal env vars; the env vars supply defaults
-    when no base is given).
+    selected signals (the derivation beats the per-signal env vars; the
+    env vars supply defaults when no base is given).
   - Two-tier help: `-h` shows the grouped common surface; `--help-all`
-    additionally lists the advanced knobs and the deprecated aliases,
-    each annotated with its canonical replacement.
-
-### Deprecated
-
-- All 16 replaced flag spellings (`--emit-selection`, `--combine`,
-  `--combine-only`, `--validate-output`, `--validate-warn`, the five OTEL
-  toggles, and the six per-signal endpoint/token flags) keep working but
-  emit one `DEPRECATION:` stderr line each; mixing a canonical flag with
-  the aliases it replaces is a parse error. Removal is scheduled for a
-  post-phase-9 CLI flag day.
+    additionally lists the advanced knobs.
+  - The 16 replaced flag spellings briefly survived as deprecated
+    aliases behind `DEPRECATION:` stderr notices, then were removed in
+    the same release cycle at the CLI flag day (see the Removed entry
+    above) — no released version ever shipped the aliases.
 
 ## 0.2.0 - 2026-06-10
 

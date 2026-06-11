@@ -187,7 +187,7 @@ def test_realistic_rejects_dst_with_gauges_emit(amc, tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         amc.parse_args([
             "--inject-dst-artifact-day", "1",
-            "--emit-selection", "metrics,gauges",
+            "--emit", "metrics,gauges",
             "--output-dir", str(tmp_path / "rejected"),
         ])
 

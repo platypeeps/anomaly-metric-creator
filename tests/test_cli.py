@@ -31,9 +31,10 @@ def _invoke(*args, cwd=None, env=None):
 def _assert_flag_listed(out: str, flag: str) -> None:
     """Assert ``flag`` appears as a full option token in help output.
 
-    Plain substring matching false-positives on prefix flags (``--emit``
-    is a substring of ``--emit-selection``; ``--otel-verbose`` of
-    ``--no-otel-verbose``), so anchor on token boundaries: the flag must
+    Plain substring matching false-positives on prefix flags
+    (``--otel-endpoint`` is a substring of an ``--otel-endpoint``-prefixed
+    spelling; ``--otel-verbose`` of ``--no-otel-verbose``), so anchor on
+    token boundaries: the flag must
     be followed by whitespace, ``,``, ``=``, ``]``, or end-of-string,
     and not be preceded by more flag characters.
     """
@@ -47,9 +48,9 @@ def _assert_flag_listed(out: str, flag: str) -> None:
 
 def test_help_lists_visible_surface_and_hides_advanced():
     """The brief ``-h`` shows the common surface (grouped) and hides the
-    advanced knobs and deprecated aliases; ``--help-all`` lists
-    everything, annotating each deprecated alias with its canonical
-    replacement."""
+    advanced knobs; ``--help-all`` lists everything (the deprecated
+    aliases were removed at the CLI flag day, so neither view mentions
+    them)."""
     result = _invoke("--help")
     assert result.returncode == 0, result.stderr
     out = result.stdout
@@ -66,49 +67,58 @@ def test_help_lists_visible_surface_and_hides_advanced():
                    "artifacts:", "OTEL streaming:"):
         assert header in out, f"--help missing group header {header!r}"
     # Hidden flags must not surface as options in the brief view. (The
-    # canonical flags' help text cross-references a few deprecated
-    # spellings by name, so probe flags that are never cross-referenced.)
+    # visible --otel-auth-token help cross-references
+    # --otel-stream-auth-scheme by name, so probe flags that are never
+    # cross-referenced.)
     import re
-    for hidden in ("--combine-only", "--validate-output", "--anomaly-count",
+    for hidden in ("--anomaly-count", "--allow-huge-output",
                    "--inject-dst-artifact-day",
-                   "--otel-logs-endpoint", "--otel-activity-log"):
+                   "--otel-gauge-metric-prefix", "--otel-activity-log"):
         assert not re.search(rf"(?<![\w-]){re.escape(hidden)}(?![\w-])", out), \
             f"brief --help leaks hidden flag {hidden}"
     assert "--help-all" in out, "brief help must point at --help-all"
 
 
-def test_help_all_lists_every_flag_with_deprecation_notes():
+def test_help_all_lists_every_flag_without_deprecated_aliases():
     result = _invoke("--help-all")
     assert result.returncode == 0, result.stderr
     out = result.stdout
     for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
-                 "--interval-seconds", "--emit-selection", "--components",
+                 "--interval-seconds", "--components",
                  "--scenarios", "--exclude-scenarios",
                  "--signal-level", "--anomaly-count",
                  "--metrics-per-component",
-                 "--otel-enabled", "--otel-disabled",
-                 "--otel-logs-endpoint", "--otel-logs-auth-token",
-                 "--otel-metrics-endpoint", "--otel-metrics-auth-token",
-                 "--otel-traces-endpoint", "--otel-traces-auth-token",
                  "--otel-stream-auth-scheme",
-                 "--otel-gauges-only",
                  "--otel-verbose", "--no-otel-verbose",
                  "--emit", "--otel-send", "--otel-endpoint",
                  "--otel-auth-token",
                  "--inject-dst-artifact-day",
-                 # The full alias + advanced sets (Copilot: substring
-                 # coverage gaps weaken the two-tier help contract).
-                 "--combine", "--combine-only", "--validate-output",
-                 "--validate-warn", "--allow-huge-output",
-                 "--otel-emit-gauges", "--otel-no-emit-gauges",
+                 "--allow-huge-output",
                  "--otel-gauge-batch-seconds", "--otel-gauge-metric-prefix",
                  "--otel-stream-timeout-seconds", "--otel-stream-max-events",
                  "--otel-activity-log"):
         _assert_flag_listed(out, flag)
-    assert "[deprecated -> use" in out, (
-        "--help-all must annotate deprecated aliases with their "
-        "canonical replacements"
+    # The 16 deprecated aliases were removed at the CLI flag day: none of
+    # them may appear in the full help, and the deprecation annotation
+    # machinery is gone with them. (MEZMO_OTEL_*_ENDPOINT env vars are
+    # still documented, so probe the flag spellings with token anchors.)
+    import re
+    for removed in ("--emit-selection", "--combine", "--combine-only",
+                    "--validate-output", "--validate-warn",
+                    "--otel-enabled", "--otel-disabled",
+                    "--otel-emit-gauges", "--otel-no-emit-gauges",
+                    "--otel-gauges-only",
+                    "--otel-logs-endpoint", "--otel-logs-auth-token",
+                    "--otel-metrics-endpoint", "--otel-metrics-auth-token",
+                    "--otel-traces-endpoint", "--otel-traces-auth-token"):
+        assert not re.search(rf"(?<![\w-]){re.escape(removed)}(?![\w-])", out), \
+            f"--help-all still lists removed alias {removed}"
+    assert "[deprecated -> use" not in out, (
+        "--help-all must no longer carry deprecation annotations"
     )
+    # The advanced group lost its '& deprecated' suffix at the flag day.
+    assert "advanced:" in out
+    assert "deprecated" not in out.lower()
 
 
 def test_missing_numpy_dependency_has_actionable_error(tmp_path):
@@ -199,9 +209,9 @@ def test_cross_process_determinism(tmp_path):
 
 
 def test_invalid_emit_selection_fails(tmp_path):
-    result = _invoke("--emit-selection", "metrics,invalid", "--output-dir", str(tmp_path))
-    assert result.returncode != 0, "expected non-zero exit for invalid --emit-selection"
-    assert "emit-selection" in (result.stderr + result.stdout)
+    result = _invoke("--emit", "metrics,invalid", "--output-dir", str(tmp_path))
+    assert result.returncode != 0, "expected non-zero exit for invalid --emit"
+    assert "--emit" in (result.stderr + result.stdout)
 
 
 def test_emit_selection_logs_and_traces_only(tmp_path):
@@ -209,7 +219,7 @@ def test_emit_selection_logs_and_traces_only(tmp_path):
     result = _invoke(
         "--duration-days", "1",
         "--interval-seconds", "60",
-        "--emit-selection", "logs,traces",
+        "--emit", "logs,traces",
         "--output-dir", str(out),
     )
     assert result.returncode == 0, result.stderr
@@ -225,7 +235,7 @@ def test_emit_selection_metrics_only(tmp_path):
     result = _invoke(
         "--duration-days", "1",
         "--interval-seconds", "60",
-        "--emit-selection", "metrics",
+        "--emit", "metrics",
         "--output-dir", str(out),
     )
     assert result.returncode == 0, result.stderr
@@ -321,9 +331,9 @@ def test_components_filter_limits_otel_stream(tmp_path):
             "--duration-days", "1",
             "--interval-seconds", "60",
             "--components", "authservice",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-logs-endpoint", f"{base_url}/v1/logs",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--output-dir", str(tmp_path / "otel_components"),
@@ -549,26 +559,27 @@ def test_anomaly_count_still_warns_for_out_of_range_specs(tmp_path):
 def test_combine_requires_metrics_selection(tmp_path):
     out = tmp_path / "combine_no_metrics"
     result = _invoke(
-        "--combine",
-        "--emit-selection", "logs,traces",
+        "--emit", "logs,traces,combined",
         "--output-dir", str(out),
     )
-    assert result.returncode != 0, "expected non-zero exit when --combine excludes metrics"
+    assert result.returncode != 0, \
+        "expected non-zero exit when 'combined' is selected without 'metrics'"
     assert "combine" in (result.stderr + result.stdout)
 
 
 def test_invalid_otel_logs_endpoint_scheme_fails(tmp_path):
+    env = {**os.environ, "MEZMO_OTEL_LOGS_ENDPOINT": "localhost:4318/v1/logs"}
     result = _invoke(
-        "--otel-logs-endpoint", "localhost:4318/v1/logs",
+        "--otel-send", "logs",
         "--output-dir", str(tmp_path),
+        env=env,
     )
     assert result.returncode != 0, "expected non-zero exit for invalid otel endpoint scheme"
-    assert "otel-logs-endpoint" in (result.stderr + result.stdout)
+    assert "MEZMO_OTEL_LOGS_ENDPOINT" in (result.stderr + result.stdout)
 
 
 def test_invalid_otel_stream_speedup_fails(tmp_path):
     result = _invoke(
-        "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
         "--otel-stream-speedup", "0",
         "--output-dir", str(tmp_path),
     )
@@ -578,7 +589,6 @@ def test_invalid_otel_stream_speedup_fails(tmp_path):
 
 def test_invalid_otel_stream_protocol_fails(tmp_path):
     result = _invoke(
-        "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
         "--otel-stream-protocol", "xml",
         "--output-dir", str(tmp_path),
     )
@@ -608,11 +618,9 @@ def test_otel_stream_posts_events_to_endpoints(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs,metrics,traces",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-logs-endpoint", f"{base_url}/v1/logs",
-            "--otel-metrics-endpoint", f"{base_url}/v1/metrics",
-            "--otel-traces-endpoint", f"{base_url}/v1/traces",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -631,7 +639,7 @@ def test_otel_stream_posts_events_to_endpoints(tmp_path):
 
 
 def test_otel_stream_disabled_by_default_makes_no_requests(tmp_path):
-    """Endpoint configured but --otel-enabled omitted: no POSTs should occur."""
+    """Endpoint configured via env but --otel-send omitted: no POSTs should occur."""
     received = []
 
     class _Handler(BaseHTTPRequestHandler):
@@ -651,9 +659,10 @@ def test_otel_stream_disabled_by_default_makes_no_requests(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-logs-endpoint", f"{base_url}/v1/logs",
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_disabled_default"),
+            env={**os.environ,
+                 "MEZMO_OTEL_LOGS_ENDPOINT": f"{base_url}/v1/logs"},
         )
         assert result.returncode == 0, result.stderr
     finally:
@@ -665,7 +674,7 @@ def test_otel_stream_disabled_by_default_makes_no_requests(tmp_path):
 
 
 def test_otel_stream_explicit_disabled_makes_no_requests(tmp_path):
-    """--otel-disabled with endpoint configured: no POSTs should occur."""
+    """--otel-send none with an env-configured endpoint: no POSTs should occur."""
     received = []
 
     class _Handler(BaseHTTPRequestHandler):
@@ -685,10 +694,11 @@ def test_otel_stream_explicit_disabled_makes_no_requests(tmp_path):
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-disabled",
-            "--otel-logs-endpoint", f"{base_url}/v1/logs",
+            "--otel-send", "none",
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_disabled_explicit"),
+            env={**os.environ,
+                 "MEZMO_OTEL_LOGS_ENDPOINT": f"{base_url}/v1/logs"},
         )
         assert result.returncode == 0, result.stderr
     finally:
@@ -699,14 +709,14 @@ def test_otel_stream_explicit_disabled_makes_no_requests(tmp_path):
     assert received == [], f"expected no streamed events when disabled, got {received}"
 
 
-def test_otel_enabled_without_endpoints_fails(tmp_path):
-    """--otel-enabled with no configured endpoint should be a usage error."""
+def test_otel_send_without_endpoints_fails(tmp_path):
+    """--otel-send with no configured endpoint should be a usage error."""
     result = _invoke(
-        "--otel-enabled",
+        "--otel-send", "logs",
         "--output-dir", str(tmp_path / "stream_enabled_no_endpoints"),
     )
-    assert result.returncode != 0, "expected non-zero exit for --otel-enabled with no endpoints"
-    assert "otel-enabled" in (result.stderr + result.stdout)
+    assert result.returncode != 0, "expected non-zero exit for --otel-send with no endpoints"
+    assert "--otel-endpoint" in (result.stderr + result.stdout)
 
 
 def test_otel_stream_warns_and_continues_on_receiver_failure(tmp_path):
@@ -725,13 +735,13 @@ def test_otel_stream_warns_and_continues_on_receiver_failure(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-logs-endpoint", endpoint,
+            "--otel-endpoint", base_url,
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_fail_run"),
@@ -763,13 +773,13 @@ def test_otel_stream_uses_env_based_auth_token(tmp_path, monkeypatch):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-logs-endpoint", endpoint,
+            "--otel-endpoint", base_url,
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_auth_run"),
         )
@@ -798,14 +808,14 @@ def test_otel_stream_uses_explicit_auth_token_and_scheme(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-logs-endpoint", endpoint,
-            "--otel-logs-auth-token", "direct-token",
+            "--otel-endpoint", base_url,
+            "--otel-auth-token", "direct-token",
             "--otel-stream-auth-scheme", "ApiKey",
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_direct_auth_run"),
@@ -842,7 +852,7 @@ def test_otel_stream_uses_env_controls_for_endpoint_and_auth(tmp_path, monkeypat
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_env_auth_run"),
@@ -872,13 +882,13 @@ def test_otel_stream_protobuf_sets_content_type(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-logs-endpoint", endpoint,
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "protobuf",
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_proto_run"),
@@ -915,12 +925,12 @@ def test_otel_activity_log_default_path_in_cwd(tmp_path):
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-send", "logs",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -958,12 +968,12 @@ def test_otel_activity_log_custom_path(tmp_path):
     thread.start()
     log_target = tmp_path / "nested" / "custom.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-send", "logs",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -997,12 +1007,12 @@ def test_otel_activity_log_records_failure(tmp_path):
     thread.start()
     log_target = tmp_path / "fail.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-send", "logs",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -1120,7 +1130,7 @@ def test_otel_http_error_activity_log_includes_response_headers(
 
 
 def test_otel_activity_log_not_created_when_streaming_disabled(tmp_path):
-    """No activity log when --otel-enabled is not passed (no streaming runs)."""
+    """No activity log when --otel-send is not passed (no streaming runs)."""
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     result = _invoke(
@@ -1149,12 +1159,12 @@ def test_otel_activity_log_records_send_per_attempt(tmp_path):
     thread.start()
     log_target = tmp_path / "attempts.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-send", "logs",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -1198,12 +1208,12 @@ def test_otel_activity_log_values_with_spaces_are_quoted(tmp_path):
     thread.start()
     log_target = tmp_path / "quoted.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-send", "logs",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -1252,13 +1262,13 @@ def test_otel_stream_default_protocol_is_protobuf(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-activity-log", str(tmp_path / "otel-activity.log"),
-            "--otel-logs-endpoint", endpoint,
+            "--otel-endpoint", base_url,
             "--otel-stream-max-events", "1",
             "--output-dir", str(tmp_path / "stream_default_proto_run"),
         )
@@ -1300,12 +1310,12 @@ def test_otel_verbose_off_by_default_omits_body_and_headers(tmp_path):
     thread.start()
     log_target = tmp_path / "non_verbose.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-send", "logs",
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -1341,13 +1351,13 @@ def test_otel_verbose_includes_raw_body_in_send(tmp_path):
     thread.start()
     log_target = tmp_path / "verbose.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-verbose",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -1388,13 +1398,13 @@ def test_otel_verbose_includes_response_status_on_ok(tmp_path):
     thread.start()
     log_target = tmp_path / "ok_status.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-verbose",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -1434,13 +1444,13 @@ def test_otel_verbose_includes_error_type_on_fail(tmp_path):
     thread.start()
     log_target = tmp_path / "fail_verbose.log"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-verbose",
-            "--otel-logs-endpoint", endpoint,
+            "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",
@@ -1489,14 +1499,14 @@ def test_otel_verbose_masks_auth_token(tmp_path):
     log_target = tmp_path / "auth_verbose.log"
     secret_token = "supersecrettoken123"
     try:
-        endpoint = f"http://127.0.0.1:{server.server_port}/v1/logs"
+        base_url = f"http://127.0.0.1:{server.server_port}"
         result = _invoke(
             "--duration-days", "1",
             "--interval-seconds", "60",
-            "--otel-enabled",
+            "--otel-send", "logs",
             "--otel-verbose",
-            "--otel-logs-endpoint", endpoint,
-            "--otel-logs-auth-token", secret_token,
+            "--otel-endpoint", base_url,
+            "--otel-auth-token", secret_token,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
             "--otel-stream-max-events", "1",

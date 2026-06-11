@@ -79,40 +79,46 @@ def test_parse_args_interval_seconds_accepts_millisecond_floor(amc):
     assert args.interval_seconds == 0.001
 
 def test_parse_args_emit_selection(amc):
-    args = amc.parse_args(["--emit-selection", "metrics,logs", "--output-dir", "test_out"])
+    args = amc.parse_args(["--emit", "metrics,logs", "--output-dir", "test_out"])
     assert args.emit_selection == {"metrics", "logs"}
 
 def test_parse_args_invalid_emit_selection(amc):
     with pytest.raises(SystemExit):
-        amc.parse_args(["--emit-selection", "invalid", "--output-dir", "test_out"])
+        amc.parse_args(["--emit", "invalid", "--output-dir", "test_out"])
 
 
-def test_parse_args_otel_enabled_default_off(amc):
+def test_parse_args_otel_streaming_default_off(amc):
     args = amc.parse_args(["--output-dir", "test_out"])
     assert args.otel_enabled is False
 
 
-def test_parse_args_otel_enabled_explicit_on(amc):
+def test_parse_args_otel_send_explicit_on(amc):
     args = amc.parse_args([
-        "--otel-enabled",
-        "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+        "--otel-send", "logs",
+        "--otel-endpoint", "http://localhost:4318",
         "--output-dir", "test_out",
     ])
     assert args.otel_enabled is True
+    assert args.otel_logs_endpoint == "http://localhost:4318/v1/logs"
 
 
-def test_parse_args_otel_disabled_explicit_off(amc):
+def test_parse_args_otel_send_none_explicit_off(amc, monkeypatch):
+    """``--otel-send none`` is explicitly off and clears env-provided
+    per-signal endpoint defaults (the selection is authoritative)."""
+    monkeypatch.setenv(
+        "MEZMO_OTEL_LOGS_ENDPOINT", "http://localhost:4318/v1/logs"
+    )
     args = amc.parse_args([
-        "--otel-disabled",
-        "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+        "--otel-send", "none",
         "--output-dir", "test_out",
     ])
     assert args.otel_enabled is False
+    assert args.otel_logs_endpoint is None
 
 
-def test_parse_args_otel_enabled_without_any_endpoint_fails(amc):
+def test_parse_args_otel_send_without_any_endpoint_fails(amc):
     with pytest.raises(SystemExit):
-        amc.parse_args(["--otel-enabled", "--output-dir", "test_out"])
+        amc.parse_args(["--otel-send", "logs", "--output-dir", "test_out"])
 
 
 def test_parse_args_otel_activity_log_default(amc):
@@ -171,12 +177,11 @@ def test_parse_args_otel_stream_protocol_cli_overrides_env_var(amc, monkeypatch)
 
 
 def test_parse_args_otel_stream_protocol_invalid_env_var_fails(amc, monkeypatch):
+    # The protocol check runs unconditionally, so the invalid env value
+    # is rejected even without any endpoint configured.
     monkeypatch.setenv("MEZMO_OTEL_STREAM_PROTOCOL", "xml")
     with pytest.raises(SystemExit):
-        amc.parse_args([
-            "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
-            "--output-dir", "test_out",
-        ])
+        amc.parse_args(["--output-dir", "test_out"])
 
 
 def test_parse_args_components_default_is_all(amc):
@@ -373,7 +378,7 @@ def test_parse_args_exclude_scenarios_invalid_name_fails(amc):
 
 
 # ------------------------------------------------------------------
-# --otel-emit-gauges / --otel-gauge-*
+# --otel-send gauge selection / MEZMO_OTEL_EMIT_GAUGES / --otel-gauge-*
 # ------------------------------------------------------------------
 def test_otel_emit_gauges_defaults_false(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
@@ -389,17 +394,17 @@ def test_otel_emit_gauges_defaults_false(amc, monkeypatch):
     ("0", False), ("false", False), ("", False),
     ("no", False), ("off", False), ("nonsense", False),
 ])
-def test_otel_emit_gauges_env_truthy_matrix(amc, monkeypatch, value, expected):
+def test_otel_emit_gauges_env_truthy_matrix(amc, monkeypatch, capsys, value, expected):
+    """MEZMO_OTEL_EMIT_GAUGES sets the gauge-stream default, but without
+    an ``--otel-send`` selection there is no streaming to attach it to —
+    a truthy value is rejected with an error naming ``--otel-send``;
+    falsy values parse cleanly with the gauge stream off."""
     monkeypatch.setenv("MEZMO_OTEL_EMIT_GAUGES", value)
     if expected:
-        # Truthy env value requires the rest of the gauge prerequisites to be
-        # set, otherwise parse_args refuses. Provide them inline.
-        args = amc.parse_args([
-            "--otel-enabled",
-            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
-            "--output-dir", "test_out",
-        ])
-        assert args.otel_emit_gauges is True
+        with pytest.raises(SystemExit):
+            amc.parse_args(["--output-dir", "test_out"])
+        err = capsys.readouterr().err
+        assert "MEZMO_OTEL_EMIT_GAUGES requires --otel-send" in err
     else:
         args = amc.parse_args(["--output-dir", "test_out"])
         assert args.otel_emit_gauges is False
@@ -411,91 +416,72 @@ def test_otel_emit_gauges_env_missing_defaults_false(amc, monkeypatch):
     assert args.otel_emit_gauges is False
 
 
-def test_otel_emit_gauges_cli_overrides_env(amc, monkeypatch):
-    """--otel-no-emit-gauges on the CLI must beat a truthy env var."""
+def test_otel_send_selection_overrides_env_gauge_default(amc, monkeypatch):
+    """A non-gauge ``--otel-send`` selection on the CLI must beat a truthy
+    MEZMO_OTEL_EMIT_GAUGES env var (the selection is authoritative)."""
     monkeypatch.setenv("MEZMO_OTEL_EMIT_GAUGES", "1")
     args = amc.parse_args([
-        "--otel-no-emit-gauges",
+        "--otel-send", "logs",
+        "--otel-endpoint", "http://localhost:4318",
         "--output-dir", "test_out",
     ])
     assert args.otel_emit_gauges is False
 
 
-def test_otel_gauges_only_implies_emit_gauges(amc, monkeypatch):
+def test_otel_send_gauges_alone_implies_gauges_only(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     args = amc.parse_args([
-        "--otel-enabled",
-        "--otel-gauges-only",
-        "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+        "--otel-send", "gauges",
+        "--otel-endpoint", "http://localhost:4318",
         "--output-dir", "test_out",
     ])
     assert args.otel_gauges_only is True
     assert args.otel_emit_gauges is True
+    # The gauge stream posts to the metrics endpoint.
+    assert args.otel_metrics_endpoint == "http://localhost:4318/v1/metrics"
 
 
-def test_otel_gauges_only_requires_otel_enabled(amc, monkeypatch):
+def test_otel_send_gauges_alone_without_endpoint_fails(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
-            "--otel-gauges-only",
-            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--otel-send", "gauges",
             "--output-dir", "test_out",
         ])
 
 
-def test_otel_gauges_only_requires_metrics_endpoint(amc, monkeypatch):
+def test_otel_send_gauges_requires_metrics_endpoint(amc, monkeypatch):
+    """``--otel-send logs,gauges`` with only a logs endpoint configured
+    (via env) must fail: the gauge stream posts to the metrics endpoint."""
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
+    monkeypatch.setenv(
+        "MEZMO_OTEL_LOGS_ENDPOINT", "http://localhost:4318/v1/logs"
+    )
     with pytest.raises(SystemExit):
         amc.parse_args([
-            "--otel-enabled",
-            "--otel-gauges-only",
-            "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
+            "--otel-send", "logs,gauges",
             "--output-dir", "test_out",
         ])
 
 
-def test_otel_gauges_only_requires_metrics_in_emit_selection(amc, monkeypatch):
+def test_otel_send_gauges_only_requires_metrics_in_emit_selection(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
-            "--otel-enabled",
-            "--otel-gauges-only",
-            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
-            "--emit-selection", "logs,traces",
+            "--otel-send", "gauges",
+            "--otel-endpoint", "http://localhost:4318",
+            "--emit", "logs,traces",
             "--output-dir", "test_out",
         ])
 
 
-def test_otel_emit_gauges_requires_otel_enabled(amc, monkeypatch):
+def test_otel_send_with_gauges_requires_metrics_in_emit_selection(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
-            "--output-dir", "test_out",
-        ])
-
-
-def test_otel_emit_gauges_requires_metrics_endpoint(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
-    with pytest.raises(SystemExit):
-        amc.parse_args([
-            "--otel-enabled",
-            "--otel-emit-gauges",
-            # Only logs endpoint provided, no metrics endpoint.
-            "--otel-logs-endpoint", "http://localhost:4318/v1/logs",
-            "--output-dir", "test_out",
-        ])
-
-
-def test_otel_emit_gauges_requires_metrics_in_emit_selection(amc, monkeypatch):
-    monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
-    with pytest.raises(SystemExit):
-        amc.parse_args([
-            "--otel-enabled",
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
-            "--emit-selection", "logs,traces",
+            "--otel-send", "logs,gauges",
+            "--otel-endpoint", "http://localhost:4318",
+            "--emit", "logs,traces",
             "--output-dir", "test_out",
         ])
 
@@ -522,41 +508,38 @@ def test_otel_gauge_metric_prefix_custom(amc):
     assert args.otel_gauge_metric_prefix == "amc."
 
 
-def test_otel_emit_gauges_rejects_dst_artifact_combo(amc, monkeypatch):
+def test_otel_send_with_gauges_rejects_dst_artifact_combo(amc, monkeypatch):
     """The DST artifact splice (``_splice_dst_artifact``) makes per-component
     CSV timestamps non-monotonic, which breaks ``heapq.merge`` inside
     ``stream_otel_gauges``. Reject the combination at parse time."""
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
-            "--otel-enabled",
-            "--otel-emit-gauges",
-            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--otel-send", "metrics,gauges",
+            "--otel-endpoint", "http://localhost:4318",
             "--inject-dst-artifact-day", "1",
             "--output-dir", "test_out",
         ])
 
 
-def test_otel_gauges_only_rejects_dst_artifact_combo(amc, monkeypatch):
+def test_otel_send_gauges_only_rejects_dst_artifact_combo(amc, monkeypatch):
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     with pytest.raises(SystemExit):
         amc.parse_args([
-            "--otel-enabled",
-            "--otel-gauges-only",
-            "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+            "--otel-send", "gauges",
+            "--otel-endpoint", "http://localhost:4318",
             "--inject-dst-artifact-day", "1",
             "--output-dir", "test_out",
         ])
 
 
-def test_otel_emit_gauges_allows_dst_artifact_zero(amc, monkeypatch):
+def test_otel_send_with_gauges_allows_dst_artifact_zero(amc, monkeypatch):
     """``--inject-dst-artifact-day 0`` (the default, off) must coexist freely
-    with ``--otel-emit-gauges``."""
+    with a gauge-selecting ``--otel-send``."""
     monkeypatch.delenv("MEZMO_OTEL_EMIT_GAUGES", raising=False)
     args = amc.parse_args([
-        "--otel-enabled",
-        "--otel-emit-gauges",
-        "--otel-metrics-endpoint", "http://localhost:4318/v1/metrics",
+        "--otel-send", "metrics,gauges",
+        "--otel-endpoint", "http://localhost:4318",
         "--inject-dst-artifact-day", "0",
         "--output-dir", "test_out",
     ])
@@ -707,20 +690,19 @@ def test_preflight_error_message_names_relevant_flags(amc, capsys):
     assert "--allow-huge-output" in err
 
 
-def test_preflight_skipped_for_combine_only(amc):
-    """``--combine-only`` reads an existing dataset and never emits new
-    metric cells, so the preflight cap must not apply. A user who
-    originally generated with ``--allow-huge-output --interval-seconds
-    0.001`` should be able to re-run the combine step over the same
-    dataset without remembering to pass the bypass flag again."""
-    args = amc.parse_args([
-        "--combine-only",
-        "--interval-seconds", "0.001",
-        "--output-dir", "test_out",
-    ])
-    assert args.combine_only is True
-    assert args.interval_seconds == 0.001
-    assert args.allow_huge_output is False
+def test_preflight_skipped_for_combine_subcommand(amc, tmp_path):
+    """The ``combine`` subcommand reads an existing dataset and never
+    emits new metric cells, so the preflight cap must not apply: it
+    never routes through ``parse_args`` (and accepts none of the cap's
+    input flags), so a dataset originally generated with
+    ``--allow-huge-output --interval-seconds 0.001`` can be re-combined
+    without the bypass flag."""
+    csv_path = tmp_path / "authservice.csv"
+    csv_path.write_text(
+        "timestamp,login_attempts\n2024-01-01 00:00:00,1.0\n"
+    )
+    amc.main(["combine", str(tmp_path), "--components", "authservice"])
+    assert (tmp_path / "combined_metrics_unified.csv").is_file()
 
 
 def test_preflight_row_count_matches_generator_derivation(amc):
@@ -800,3 +782,33 @@ def test_topology_mode_flag_removed(amc, value):
         amc.parse_args([
             "--topology-mode", value, "--output-dir", "test_out",
         ])
+
+
+@pytest.mark.parametrize("flag_args", [
+    ["--emit-selection", "metrics"],
+    ["--combine"],
+    ["--combine-only"],
+    ["--validate-output", "some_dir"],
+    ["--validate-warn"],
+    ["--otel-enabled"],
+    ["--otel-disabled"],
+    ["--otel-emit-gauges"],
+    ["--otel-no-emit-gauges"],
+    ["--otel-gauges-only"],
+    ["--otel-logs-endpoint", "http://localhost:4318/v1/logs"],
+    ["--otel-metrics-endpoint", "http://localhost:4318/v1/metrics"],
+    ["--otel-traces-endpoint", "http://localhost:4318/v1/traces"],
+    ["--otel-logs-auth-token", "tok"],
+    ["--otel-metrics-auth-token", "tok"],
+    ["--otel-traces-auth-token", "tok"],
+], ids=lambda a: a[0])
+def test_deprecated_alias_flags_removed(amc, capsys, flag_args):
+    """The post-phase-9 CLI flag day removed the 16 deprecated alias
+    flags; every former spelling must now fail argparse as an
+    unrecognized argument (canonical replacements: --emit, the combine
+    and validate subcommands, --otel-send, --otel-endpoint,
+    --otel-auth-token)."""
+    with pytest.raises(SystemExit):
+        amc.parse_args([*flag_args, "--output-dir", "test_out"])
+    err = capsys.readouterr().err
+    assert "unrecognized arguments" in err

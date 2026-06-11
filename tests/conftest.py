@@ -116,7 +116,7 @@ _OTEL_ENV_VARS = (
 def _isolate_otel_env_session():
     # Argparse defaults for OTEL endpoints/tokens read from MEZMO_OTEL_* env
     # vars at parse time, so a developer shell with those exported (or a CI
-    # runner with them in the job env) makes --otel-enabled look valid even
+    # runner with them in the job env) makes an --otel-send selection look valid even
     # without explicit endpoint flags. Strip them at session start so every
     # session-scoped fixture (one_day_run_a, seven_day_run, ...) sees a clean
     # slate before its first parse_args call, and so subprocess _invoke()
@@ -185,8 +185,8 @@ def seven_day_run(amc, tmp_path_factory):
 def one_day_full_metrics_run(amc, tmp_path_factory):
     """1-day run with --metrics-per-component 10 so ``test_value_range_sanity_full_catalog``
     can exercise every supplemental metric column. Shares ``run_capture`` so default
-    and full-metric runs go through one execution path. ``--combine`` coverage for
-    the new flag lives in ``tests/test_combine.py`` and uses its own subprocess
+    and full-metric runs go through one execution path. ``--emit ...,combined`` coverage
+    lives in ``tests/test_combine.py`` and uses its own subprocess
     fixtures rather than this in-process run. Explicit ``interval_seconds=1.0``
     keeps the full-catalog value-range assertions on the 86,400-row sweep."""
     out = tmp_path_factory.mktemp("one_day_full_metrics")
@@ -274,10 +274,10 @@ def n3_one_day_dataset_dir(amc, tmp_path_factory):
     the locked SHA-256 golden hashes hold byte-identically with no
     second generation pass.
 
-    ``--emit-selection metrics,schema`` keeps the dataset narrow:
+    ``--emit metrics,schema`` keeps the dataset narrow:
     per-component CSVs + ``anomalies.csv`` + ``schema.json``, no
     logs / traces artifacts that no consumer reads. Per-component CSV
-    bytes are independent of ``--emit-selection`` (the writers consume
+    bytes are independent of the ``--emit`` selection (the writers consume
     no RNG), so the locked ``N3_ONE_DAY_HASHES`` are unaffected by the
     ``schema`` token; the ``schema.json`` bytes match the locked
     ``SCHEMA_N3_ONE_DAY_HASH`` because that hash was locked under the
@@ -292,7 +292,7 @@ def n3_one_day_dataset_dir(amc, tmp_path_factory):
         amc, out, days=1,
         extra_args=[
             "--instances-per-component", "3",
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
         ],
         interval_seconds=1.0,
     ).out_dir
@@ -311,9 +311,9 @@ def n3_seven_day_dataset_dir(amc, tmp_path_factory):
     must never be duplicated in a module-scoped fixture — the suite
     previously ran three independent copies of it across two modules
     (the PR #67 antipattern from the "Test resource cost" checklist).
-    ``--emit-selection metrics,schema`` trims the logs / traces
+    ``--emit metrics,schema`` trims the logs / traces
     artifacts no consumer reads; per-component CSV bytes are
-    independent of ``--emit-selection`` so ``N3_SEVEN_DAY_HASHES``
+    independent of the ``--emit`` selection so ``N3_SEVEN_DAY_HASHES``
     are unaffected, and ``SCHEMA_N3_SEVEN_DAY_HASH`` was locked under
     the same ``metrics,schema`` selection. Explicit
     ``interval_seconds=1.0`` preserves the full-resolution locks."""
@@ -322,7 +322,7 @@ def n3_seven_day_dataset_dir(amc, tmp_path_factory):
         amc, out, days=7,
         extra_args=[
             "--instances-per-component", "3",
-            "--emit-selection", "metrics,schema",
+            "--emit", "metrics,schema",
         ],
         interval_seconds=1.0,
     ).out_dir
