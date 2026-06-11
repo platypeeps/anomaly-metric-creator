@@ -7699,10 +7699,21 @@ def _reconcile_cli_surface(p, args, raw_argv):
                         and not _flag_in_argv(raw_argv, tok_flag)):
                     setattr(args, f"otel_{sig}_auth_token",
                             args.otel_auth_token)
-            elif send_tokens is not None and not explicit_ep:
-                # --otel-send is authoritative for signal selection: an
-                # unselected signal does not stream even when an env-var
-                # endpoint default is exported in the shell.
+            elif send_tokens is not None:
+                # --otel-send is authoritative for signal selection. An
+                # explicit per-signal endpoint flag for an unselected
+                # signal is a contradiction — main() streams whatever has
+                # an endpoint, so silently honoring the flag would leak
+                # the signal past the selection, and silently clearing it
+                # would ignore an explicit flag. Reject instead.
+                if explicit_ep:
+                    p.error(
+                        f"--otel-send does not include '{sig}' but "
+                        f"{ep_flag} was passed; add '{sig}' to "
+                        f"--otel-send or drop the endpoint flag"
+                    )
+                # Env-var endpoint defaults for unselected signals are
+                # cleared so the selection stays authoritative.
                 setattr(args, f"otel_{sig}_endpoint", None)
     if send_tokens:
         if not any([args.otel_logs_endpoint, args.otel_metrics_endpoint,
@@ -7857,8 +7868,8 @@ def parse_args(argv=None):
         action="store_true",
         default=False,
         help="Soft mode for --validate-output: report violations on stderr but "
-             "exit 0. Without this flag, --validate-output exits 1 on the first "
-             "violation found across the run.",
+             "exit 0. Without this flag, --validate-output reports every "
+             "violation found and exits 1 if there are any.",
     )
     g_adv.add_argument(
         "--emit-selection",

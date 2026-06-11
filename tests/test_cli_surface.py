@@ -352,3 +352,21 @@ def test_subcommand_directory_errors_distinguish_missing_from_file(amc, tmp_path
             with pytest.raises(SystemExit):
                 amc.main([sub, str(tmp_path / "missing")])
         assert "does not exist" in buf.getvalue(), (sub, buf.getvalue())
+
+
+def test_otel_send_rejects_endpoint_flag_for_unselected_signal(amc):
+    """--otel-send is authoritative: an explicit per-signal endpoint flag
+    for a signal the selection omits is a contradiction and must be a
+    parse error — silently honoring it would leak the signal past the
+    selection, silently clearing it would ignore an explicit flag
+    (Copilot review on PR #101)."""
+    err = _parse_error(amc, [
+        "--otel-send", "gauges",
+        "--otel-endpoint", "http://h:4318",
+        "--otel-logs-endpoint", "http://legacy:1/v1/logs",
+        "--output-dir", "x",
+    ])
+    assert "does not include 'logs'" in err
+    # Env-var defaults for unselected signals are still cleared silently
+    # (covered by test_otel_send_gauges_only_mapping); only the explicit
+    # flag is the contradiction.

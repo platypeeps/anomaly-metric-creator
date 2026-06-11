@@ -204,7 +204,8 @@ slot unchanged.
 emitted_files, instances_by_component=None)` writes a declarative
 `schema.json` alongside the rest of the artifacts. It is opt-in via
 `schema` in `--emit` (parallel to `metrics`, `logs`, `traces`,
-`gauges`) and is the single source of truth `--validate-output` consumes.
+`gauges`) and is the single source of truth the `validate` subcommand
+(alias `--validate-output`) consumes.
 
 The document carries five slices of information:
 

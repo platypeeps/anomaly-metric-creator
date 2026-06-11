@@ -195,8 +195,9 @@ generation pipeline exactly as before:
   check the artifacts in `DIR` against it (file presence, row counts,
   timestamp coverage, declared `min_value`/`max_value`/`dtype` bounds,
   `counter`/`rate` non-negativity, derived-column consistency, and
-  `anomalies.csv` sort order). Hard-fails on the first violation (`exit 1`)
-  unless `--warn` is passed, which reports violations on stderr and exits `0`.
+  `anomalies.csv` sort order). Reports every violation found and exits `1`
+  if there are any, unless `--warn` is passed, which reports them on stderr
+  and exits `0`.
   See [Output validation (the `validate` subcommand)](#output-validation-the-validate-subcommand).
 
 Help is two-tier: `-h` shows the common surface in the five groups below;
@@ -286,10 +287,12 @@ An explicit deprecated per-signal endpoint/auth flag still wins over the
 ### Gauge metric streaming (`--otel-send gauges`)
 
 The default OTEL streaming path posts one `anomaly.count` Sum data point per
-injected anomaly. Add `gauges` to `--otel-send` (or set
-`MEZMO_OTEL_EMIT_GAUGES=1`) to additionally stream **every per-row metric
-value** from the per-component CSVs to the metrics endpoint as OTLP `Gauge`
-data points. The two streams run sequentially: anomaly counters first, then
+injected anomaly. Add `gauges` to `--otel-send` to additionally stream
+**every per-row metric value** from the per-component CSVs to the metrics
+endpoint as OTLP `Gauge` data points. (`MEZMO_OTEL_EMIT_GAUGES=1` enables
+the same stream on the deprecated toggle path only — `--otel-send` is
+authoritative, so under the canonical surface the env var has no effect
+unless `gauges` is selected.) The two streams run sequentially: anomaly counters first, then
 gauges, both against the same endpoint (and the same auth token / activity
 log). Pass `--otel-send gauges` alone when the receiver should get only the
 Gauge payloads; that mode skips the anomaly log/metric/trace stream entirely.
@@ -481,7 +484,7 @@ Pair the schema document with the standalone validator to assert a
 run's artifacts are consistent with its declared shape:
 
 ```sh
-# Hard-fail mode: exits 1 on the first violation.
+# Hard-fail mode: reports every violation and exits 1 if there are any.
 python3 anomaly-metric-creator.py validate iot_logs
 
 # Soft mode: violations go to stderr, exit code stays 0.
