@@ -102,6 +102,7 @@ def test_interval_seconds_equals_form_in_extra_args_raises(amc, tmp_path):
         )
 
 
+@pytest.mark.full_resolution
 def test_full_resolution_marker_is_registered(pytestconfig):
     """The ``full_resolution`` marker is registered in pyproject.toml so
     ``pytest --strict-markers`` runs (and lint hooks) treat the marker as

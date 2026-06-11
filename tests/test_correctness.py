@@ -720,25 +720,11 @@ def test_multiplier_scales_jitter_variance(amc):
 # ------------------------------------------------------------------
 @pytest.fixture(scope="session")
 def one_day_interval5_run(amc, tmp_path_factory):
-    """1-day run at --interval-seconds 5 (17,280 rows per component)."""
+    """1-day run at --interval-seconds 5 (17,280 rows per component).
+    Routed through the canonical ``run_capture`` driver instead of a
+    hand-rolled ``main()`` wrapper (same args, same return shape)."""
     out = tmp_path_factory.mktemp("one_day_interval5")
-    import io
-    import sys as _sys
-    args = [
-        "--seed", "42",
-        "--duration-days", "1",
-        "--interval-seconds", "5",
-        "--output-dir", str(out),
-    ]
-    stderr_buf = io.StringIO()
-    real_stderr = _sys.stderr
-    _sys.stderr = stderr_buf
-    try:
-        amc.main(args)
-    finally:
-        _sys.stderr = real_stderr
-    from types import SimpleNamespace
-    return SimpleNamespace(out_dir=out, stderr=stderr_buf.getvalue())
+    return run_capture(amc, out, days=1, interval_seconds=5)
 
 
 def test_interval_seconds_row_count(amc, one_day_interval5_run):

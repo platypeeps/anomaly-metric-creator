@@ -302,6 +302,7 @@ def test_llm_analytics_in_saturation_targets_registry(amc):
 # realistic. After the phase 6 flag day the no-flag default and
 # the realistic alias must produce the same llm_analytics CSV bytes.
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_realistic_mode_llm_analytics_byte_identical_to_default(
     amc, one_day_run_a, tmp_path,
 ):

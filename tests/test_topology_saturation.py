@@ -40,7 +40,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from conftest import read_component_rows, run_capture, sha256_path
+from conftest import (
+    read_component_rows,
+    registry_overlay,
+    run_capture,
+    sha256_path,
+)
 
 
 # ------------------------------------------------------------------
@@ -293,40 +298,29 @@ def test_compose_saturation_specs_composes_with_existing_multiplier(amc):
         additive=base_additive,
     )
 
-    # Monkeypatch the registries via direct dict access (no monkeypatch fixture
-    # needed; we restore inside the test).
-    saved_targets = amc._TOPOLOGY_SATURATION_TARGETS.copy()
-    saved_topology = dict(amc.TOPOLOGY)
-    try:
-        amc._TOPOLOGY_SATURATION_TARGETS["synthcomp"] = (
-            ("latency_ms",), ("error_rate",),
+    # ``registry_overlay`` rebinds the registries to patched copies for
+    # the duration of the block — the originals are never mutated.
+    with registry_overlay(
+        amc,
+        _TOPOLOGY_SATURATION_TARGETS={
+            "synthcomp": (("latency_ms",), ("error_rate",)),
+        },
+        TOPOLOGY={
+            "synthup": [amc.Edge(target="synthcomp", weight=1.0, saturation=sat)]
+        },
+        _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ())},
+    ):
+        upstream_arrays = {"synthup": {"synthload": load}}
+        out = amc._compose_topology_saturation_specs(
+            "synthcomp", [fake_spec, err_spec], upstream_arrays, n_rows=n_rows,
         )
-        amc.TOPOLOGY["synthup"] = [
-            amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
-        ]
-        # Ensure the helper picks the right load metric for "synthup".
-        saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
-        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ())
-        try:
-            upstream_arrays = {"synthup": {"synthload": load}}
-            out = amc._compose_topology_saturation_specs(
-                "synthcomp", [fake_spec, err_spec], upstream_arrays, n_rows=n_rows,
-            )
-            by_name = {s.name: s for s in out}
-            # Composition: base_multiplier(=2.0) * (1 + 0.4 * 0.5) = 2.4
-            ts = np.zeros(n_rows, dtype="datetime64[s]")
-            elapsed = np.arange(n_rows, dtype=np.float64)
-            assert np.allclose(by_name["latency_ms"].multiplier(ts, elapsed), 2.4)
-            # base_additive(=0.05) + 0.01 * 0.5 = 0.055
-            assert np.allclose(by_name["error_rate"].additive(ts, elapsed), 0.055)
-        finally:
-            amc._TOPOLOGY_LOAD_METRICS.clear()
-            amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)
-    finally:
-        amc._TOPOLOGY_SATURATION_TARGETS.clear()
-        amc._TOPOLOGY_SATURATION_TARGETS.update(saved_targets)
-        amc.TOPOLOGY.clear()
-        amc.TOPOLOGY.update(saved_topology)
+        by_name = {s.name: s for s in out}
+        # Composition: base_multiplier(=2.0) * (1 + 0.4 * 0.5) = 2.4
+        ts = np.zeros(n_rows, dtype="datetime64[s]")
+        elapsed = np.arange(n_rows, dtype=np.float64)
+        assert np.allclose(by_name["latency_ms"].multiplier(ts, elapsed), 2.4)
+        # base_additive(=0.05) + 0.01 * 0.5 = 0.055
+        assert np.allclose(by_name["error_rate"].additive(ts, elapsed), 0.055)
 
 
 def test_compose_saturation_specs_zero_gain_edges_skipped(amc):
@@ -342,17 +336,16 @@ def test_compose_saturation_specs_zero_gain_edges_skipped(amc):
         latency_gain=0.0, error_gain=0.0,
     )
 
-    saved_targets = amc._TOPOLOGY_SATURATION_TARGETS.copy()
-    saved_topology = dict(amc.TOPOLOGY)
-    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
-    try:
-        amc._TOPOLOGY_SATURATION_TARGETS["synthcomp"] = (
-            ("latency_ms",), ("error_rate",),
-        )
-        amc.TOPOLOGY["synthup"] = [
-            amc.Edge(target="synthcomp", weight=1.0, saturation=zero_sat)
-        ]
-        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ())
+    with registry_overlay(
+        amc,
+        _TOPOLOGY_SATURATION_TARGETS={"synthcomp": (
+                ("latency_ms",), ("error_rate",),
+            )},
+        TOPOLOGY={"synthup": [
+                amc.Edge(target="synthcomp", weight=1.0, saturation=zero_sat)
+            ]},
+        _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ())},
+    ):
 
         specs = [
             amc.MetricSpec(name="latency_ms", base=100.0, std=0.0),
@@ -365,13 +358,6 @@ def test_compose_saturation_specs_zero_gain_edges_skipped(amc):
         # Zero-gain edge contributes nothing, so the specs come back
         # untouched by identity.
         assert all(a is b for a, b in zip(out, specs))
-    finally:
-        amc._TOPOLOGY_SATURATION_TARGETS.clear()
-        amc._TOPOLOGY_SATURATION_TARGETS.update(saved_targets)
-        amc.TOPOLOGY.clear()
-        amc.TOPOLOGY.update(saved_topology)
-        amc._TOPOLOGY_LOAD_METRICS.clear()
-        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)
 
 
 # ------------------------------------------------------------------
@@ -467,6 +453,7 @@ def test_topology_saturation_params_in_planned_ranges(amc):
 # no-topology baseline check lives in
 # ``test_topology_loadbalancer_gateway``.
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_realistic_mode_latency_csvs_byte_identical_to_default(
     amc, one_day_run_a, tmp_path
 ):
@@ -690,17 +677,16 @@ def test_saturation_overlap_target_composes_both_effects(amc):
         latency_gain=0.5, error_gain=0.02,
     )
 
-    saved_targets = amc._TOPOLOGY_SATURATION_TARGETS.copy()
-    saved_topology = dict(amc.TOPOLOGY)
-    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
-    try:
-        amc._TOPOLOGY_SATURATION_TARGETS["synthcomp"] = (
-            ("overlap_ms",), ("overlap_ms",),
-        )
-        amc.TOPOLOGY["synthup"] = [
-            amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
-        ]
-        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ())
+    with registry_overlay(
+        amc,
+        _TOPOLOGY_SATURATION_TARGETS={"synthcomp": (
+                ("overlap_ms",), ("overlap_ms",),
+            )},
+        TOPOLOGY={"synthup": [
+                amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
+            ]},
+        _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ())},
+    ):
 
         specs = [amc.MetricSpec(name="overlap_ms", base=100.0, std=0.0)]
         out = amc._compose_topology_saturation_specs(
@@ -721,13 +707,6 @@ def test_saturation_overlap_target_composes_both_effects(amc):
             "overlap target lost its error offset"
         )
         assert np.allclose(composed.additive(ts, elapsed), expected_err)
-    finally:
-        amc._TOPOLOGY_SATURATION_TARGETS.clear()
-        amc._TOPOLOGY_SATURATION_TARGETS.update(saved_targets)
-        amc.TOPOLOGY.clear()
-        amc.TOPOLOGY.update(saved_topology)
-        amc._TOPOLOGY_LOAD_METRICS.clear()
-        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)
 
 
 def test_saturation_driver_requires_canonical_column(amc):
@@ -746,17 +725,16 @@ def test_saturation_driver_requires_canonical_column(amc):
         latency_gain=0.5, error_gain=0.02,
     )
 
-    saved_targets = amc._TOPOLOGY_SATURATION_TARGETS.copy()
-    saved_topology = dict(amc.TOPOLOGY)
-    saved_load_metrics = amc._TOPOLOGY_LOAD_METRICS.copy()
-    try:
-        amc._TOPOLOGY_SATURATION_TARGETS["synthcomp"] = (
-            ("latency_ms",), ("err_rate",),
-        )
-        amc.TOPOLOGY["synthup"] = [
-            amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
-        ]
-        amc._TOPOLOGY_LOAD_METRICS["synthup"] = ("synthload", ("synthextra",))
+    with registry_overlay(
+        amc,
+        _TOPOLOGY_SATURATION_TARGETS={"synthcomp": (
+                ("latency_ms",), ("err_rate",),
+            )},
+        TOPOLOGY={"synthup": [
+                amc.Edge(target="synthcomp", weight=1.0, saturation=sat)
+            ]},
+        _TOPOLOGY_LOAD_METRICS={"synthup": ("synthload", ("synthextra",))},
+    ):
 
         specs = [
             amc.MetricSpec(name="latency_ms", base=100.0, std=0.0),
@@ -784,10 +762,3 @@ def test_saturation_driver_requires_canonical_column(amc):
         assert out[0] is not specs[0], (
             "canonical-driven edge must rewrite the latency spec"
         )
-    finally:
-        amc._TOPOLOGY_SATURATION_TARGETS.clear()
-        amc._TOPOLOGY_SATURATION_TARGETS.update(saved_targets)
-        amc.TOPOLOGY.clear()
-        amc.TOPOLOGY.update(saved_topology)
-        amc._TOPOLOGY_LOAD_METRICS.clear()
-        amc._TOPOLOGY_LOAD_METRICS.update(saved_load_metrics)

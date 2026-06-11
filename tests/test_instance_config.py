@@ -11,12 +11,13 @@ Uses the session-scoped ``amc`` fixture from ``conftest.py`` so the module
 is loaded once for the whole suite (full script load is non-trivial).
 """
 
-import io
 import json
 import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import run_capture
 
 
 # ---------------------------------------------------------------------------
@@ -32,19 +33,16 @@ def _parse(amc, extra_args, tmp_path):
     return args
 
 
-def _run(amc, out_dir, extra_args, *, days=1, seed=42):
-    args = [
-        "--seed", str(seed),
-        "--duration-days", str(days),
-        "--output-dir", str(out_dir),
-    ] + list(extra_args)
-    buf = io.StringIO()
-    real = sys.stderr
-    sys.stderr = buf
-    try:
-        amc.main(args)
-    finally:
-        sys.stderr = real
+def _run(amc, out_dir, extra_args, *, days=1, seed=42, interval_seconds=None):
+    """Thin wrapper over the canonical ``conftest.run_capture`` driver.
+    Defaults to the script's own interval (``interval_seconds=None``;
+    this file's tests assert on instance fan-out shape, not row
+    density); the row-count test opts into an explicit interval via
+    the kwarg — ``run_capture`` rejects the flag in ``extra_args``."""
+    run_capture(
+        amc, out_dir, days=days, seed=seed,
+        extra_args=list(extra_args), interval_seconds=interval_seconds,
+    )
     return out_dir
 
 
@@ -128,6 +126,7 @@ components:
     assert "database" not in result
 
 
+@pytest.mark.full_resolution
 def test_partial_config_run_produces_correct_output(amc, tmp_path):
     """End-to-end: listed component gets dimension columns; unlisted stays dimensionless."""
     cfg = _write_yaml(tmp_path, """
@@ -144,8 +143,8 @@ components:
     # amc.SECONDS_PER_DAY rather than hard-coding 86400.
     _run(amc, out, ["--instance-config", str(cfg),
                     "--components", "authservice,loadbalancer",
-                    "--interval-seconds", "1",
-                    "--drop-rate", "0"])
+                    "--drop-rate", "0"],
+         interval_seconds=1)
 
     # authservice: should have dimension columns + exactly 2× rows.
     # Stream the row count rather than reading the whole file (~172,800

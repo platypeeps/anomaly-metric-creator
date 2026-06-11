@@ -108,6 +108,7 @@ def test_topology_mode_default_no_deprecation_warning(amc, capsys):
 # no-flag default byte-for-byte for apigateway, loadbalancer, and
 # the anomalies manifest.
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_topology_mode_realistic_matches_default_byte_for_byte(
     amc, one_day_run_a, tmp_path
 ):
@@ -130,6 +131,7 @@ def test_topology_mode_realistic_matches_default_byte_for_byte(
 # current no-topology baseline. This guards the deprecated alias from
 # accidentally re-enabling realistic coupling before removal.
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
     amc, tmp_path
 ):
@@ -151,6 +153,7 @@ def test_topology_mode_independent_matches_legacy_baseline_byte_for_byte(
 # ------------------------------------------------------------------
 # Realistic mode: apigateway.requests_per_sec tracks loadbalancer.requests_per_sec
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_topology_mode_realistic_apigateway_tracks_loadbalancer(amc, tmp_path):
     # 1-day run with no anomalies so the correlation reflects only the
     # baseline coupling. ``--scenarios`` requires a real slug — exclude

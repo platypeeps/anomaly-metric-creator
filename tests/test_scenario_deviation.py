@@ -31,9 +31,7 @@ floor. The test prevents the same class of silent no-op from reappearing
 when later phases re-tune saturation parameters or add new edges.
 """
 
-import contextlib
 import csv
-import io
 import json
 import shutil
 from pathlib import Path
@@ -41,16 +39,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from conftest import run_capture
+
 
 def _run_scenario(amc, out_dir: Path, *, scenario: str, days: int,
                   signal_level: str, exclude: bool,
                   extra_args: list[str] | None = None) -> None:
-    """Drive ``amc.main`` for one scenario run into ``out_dir``.
-
-    Uses ``contextlib.redirect_stderr`` to scope the stderr capture to the
-    ``amc.main`` call, which is safer than globally reassigning
-    ``sys.stderr`` (the global swap is not thread-safe and can swallow
-    output from concurrent loggers).
+    """Drive one scenario run into ``out_dir`` via the canonical
+    ``conftest.run_capture`` driver (which now owns the
+    ``redirect_stderr``-scoped capture this helper pioneered).
 
     Explicitly sets ``--drop-rate 0`` so that active and baseline runs
     have perfectly aligned row counts (no stochastic packet loss to
@@ -58,21 +55,15 @@ def _run_scenario(amc, out_dir: Path, *, scenario: str, days: int,
     """
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    argv = [
-        "--seed", "42",
-        "--duration-days", str(days),
-        "--drop-rate", "0",
-        "--output-dir", str(out_dir),
-        "--scenarios", scenario,
-        "--signal-level", signal_level,
-    ]
+    scenario_args = ["--scenarios", scenario, "--signal-level", signal_level]
     if extra_args:
-        argv += list(extra_args)
+        scenario_args += list(extra_args)
     if exclude:
-        argv += ["--exclude-scenarios", scenario]
-    stderr_buf = io.StringIO()
-    with contextlib.redirect_stderr(stderr_buf):
-        amc.main(argv)
+        scenario_args += ["--exclude-scenarios", scenario]
+    run_capture(
+        amc, out_dir, days=days, drop_rate=0,
+        extra_args=scenario_args,
+    )
 
 
 def _load_component_column(out_dir: Path, component: str, metric: str):
