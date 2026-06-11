@@ -8312,7 +8312,8 @@ def parse_args(argv=None):
         elif args.otel_emit_gauges:
             flags.append("--otel-emit-gauges")
         if "gauges" in selected:
-            flags.append("--emit-selection 'gauges'")
+            flags.append("--emit 'gauges'" if args.emit is not None
+                         else "--emit-selection 'gauges'")
         p.error(
             f"{' / '.join(flags)} is incompatible with --inject-dst-artifact-day "
             "(the DST artifact produces non-monotonic CSV timestamps that break "

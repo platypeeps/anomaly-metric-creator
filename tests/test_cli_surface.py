@@ -467,3 +467,16 @@ def test_emit_gauges_without_metrics_uses_canonical_wording(amc):
     err = _parse_error(amc, ["--emit", "gauges,logs", "--output-dir", "x"])
     assert "--emit 'gauges' requires 'metrics'" in err
     assert "--emit-selection" not in err
+
+
+def test_dst_gauges_gate_uses_canonical_wording_for_emit(amc):
+    """The DST x gauges incompatibility gate names the spelling the user
+    typed: --emit users see --emit 'gauges', not the deprecated alias."""
+    err = _parse_error(amc, [
+        "--emit", "metrics,gauges",
+        "--inject-dst-artifact-day", "1",
+        "--duration-days", "1",
+        "--output-dir", "x",
+    ])
+    assert "--emit 'gauges'" in err
+    assert "--emit-selection" not in err
