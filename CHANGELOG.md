@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+- Phase 9 scenario re-tune: `llm_weekend_batch` now saturates
+  `llm_analytics.context_overflow_rate` toward 0.97 — inside the metric's
+  declared `max_value=1` — instead of the historic 8.5 that made every
+  default 7-day `validate` run report an `above_max` violation. The span
+  stays 3.2–6.7 sigma above the 0.3 natural baseline, so the
+  context-window saturation pattern remains clearly detectable, and both
+  default runs are now violation-free (pinned by empty expected-violation
+  sets in `tests/test_validate_output.py`). Affected 7-day golden hashes
+  (`llm_analytics.csv`, `gauges.csv`, the combined CSV, and the N=3
+  variants) were re-locked; `anomalies.csv` and every other component are
+  byte-identical (the generator draws the same RNG sequence).
+
 ### Added
 
 - Consolidated the CLI around the common use cases (41 flat flags -> ~18
