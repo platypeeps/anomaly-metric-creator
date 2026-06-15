@@ -150,4 +150,39 @@ Recent significant additions reflected in the diagrams above:
   realistic-mode saturation noise floor were lifted by >3σ.
   `tests/test_scenario_deviation.py` is the regression guard:
   every recorded `anomalies.csv` row must deviate >1σ from a
-  scenario-excluded baseline.
+  scenario-excluded baseline. A residual hold-over from this
+  pass — the `llm_weekend_batch` scenario's
+  `context_overflow_rate` generator firing at 8.5 outside its
+  declared `max_value=1` bound — was re-tuned in PR #102 to
+  saturate toward 0.97 while staying 3.2–6.7σ above the 0.3
+  natural baseline, so the validator's range check now passes on
+  the default 50,000-row run.
+- **Topology registry validation at import time** (PR #97) —
+  `_validate_topology_metric_registries()` now runs alongside
+  `_validate_topology()` at import time and rejects every drift
+  between `TOPOLOGY`, `_TOPOLOGY_LOAD_METRICS`, and
+  `_TOPOLOGY_SATURATION_TARGETS`: every registry key must be a
+  `COMPONENTS` key, every named metric must exist in the
+  component's full catalog, every constant-weight or saturating
+  edge source must have a `_TOPOLOGY_LOAD_METRICS` entry, every
+  constant-weight edge target must have one, and every saturating
+  edge target must have a `_TOPOLOGY_SATURATION_TARGETS` entry. A
+  typo in a registry now fails at import rather than silently
+  generating decoupled output that only the opt-in `validate`
+  Pearson check would catch.
+- **Canonical-only topology units** (PR #98) — the
+  constant-weight composer reads the *upstream's canonical* load
+  metric (from `_TOPOLOGY_LOAD_METRICS[source]`) as the
+  contribution source, never an arbitrary captured column.
+  Callable-weight signals receive every captured upstream column
+  through the per-edge `Edge.signal` callable but the
+  contribution itself is computed in the downstream's canonical
+  unit; the supplementary captures exist to feed signal
+  computation (e.g. cache-miss ratio from `cache_hits` /
+  `cache_misses`), not as additional contribution channels.
+  `_validate_topology` enforces the constant↔callable pairing
+  (constant weight forbids `signal`; callable weight requires one)
+  and probes every `Edge.signal` at import time with a
+  captured-column dict built from `_TOPOLOGY_LOAD_METRICS[source]`
+  so a mis-shaped signal fails at import rather than corrupting
+  the vectorized column write.

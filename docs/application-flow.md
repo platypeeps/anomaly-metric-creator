@@ -21,7 +21,7 @@ flowchart TD
     validate -- "violations + --warn" --> finish
     validate -- "violations (default)" --> failexit([exit 1])
 
-    mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> parse["parse_args<br/>+ _reconcile_cli_surface<br/>+ validation gates"]
+    mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> parse["parse_args<br/>(canonical surface: --emit,<br/>--otel-send, --otel-endpoint,<br/>--otel-auth-token; -h shows 5 groups,<br/>--help-all unhides _ADVANCED_DESTS)<br/>+ _reconcile_cli_surface<br/>(canonical flags → internal namespace<br/>via set_defaults + MEZMO_OTEL_* env vars)<br/>+ validation gates"]
     parse --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit / --components)"]
     preclean --> ctx["RunContext(rng=np.random.RandomState(--seed))"]
     ctx --> instances{"instance map?"}
@@ -110,6 +110,42 @@ flowchart TD
 
 Recent significant additions reflected in the diagram above:
 
+- **CLI consolidation around common use cases** (PR #101) — the
+  flat parser shrank from 41 visible flags to ~18 visible in five
+  argument groups (common / anomaly selection / dataset shape /
+  artifacts / OTEL streaming). The artifact and OTEL controls
+  collapsed into the canonical surface: `--emit ARTIFACTS` (tokens
+  `metrics, logs, traces, gauges, schema, combined`) replaces the
+  per-artifact toggles, `--otel-send SIGNALS` (a subset of
+  `logs, metrics, traces, gauges` plus `all` / `none`) replaces the
+  per-signal OTEL toggles, and `--otel-endpoint BASE` /
+  `--otel-auth-token TOKEN` derive per-signal URLs as
+  `BASE/v1/<signal>`. Two-tier help (`-h` vs `--help-all`) hides
+  the advanced research / transport-tuning knobs listed in
+  `_ADVANCED_DESTS`. The `generate` / `combine` / `validate`
+  subcommand split dispatches on `argv[0]` before argparse so
+  every historic bare invocation still routes through the
+  `generate` parser unchanged. `_reconcile_cli_surface(p, args)`
+  runs immediately after `p.parse_args` and translates the
+  canonical flags onto the historic internal namespace
+  (`emit_selection`, `combine`, `otel_enabled`, the per-signal
+  endpoint/token sextet) so every downstream gate consumes one
+  namespace.
+- **Phase-9 flag day — 16 deprecated CLI alias flags removed**
+  (PR #104) — the deprecated per-artifact / per-signal alias flags
+  that survived PR #101 as backwards-compatible writers were removed
+  outright at the post-phase-9 flag day. The historic internal
+  destinations (`emit_selection`, `combine`, `otel_enabled`, the
+  per-signal endpoint/token sextet) survive because they are now
+  populated entirely by `p.set_defaults` plus the `MEZMO_OTEL_*`
+  environment variables that seed per-signal defaults. The
+  `MEZMO_OTEL_EMIT_GAUGES` env default was also retired in the
+  same change — `--otel-send` is the only enable path for gauges,
+  so the env-var fallback would never have taken effect once the
+  selection became authoritative. `--topology-mode independent`
+  (the no-coupling contrast alias) was removed in PR #103 the day
+  before, so realistic topology is the only generation order
+  `_topology_generation_order` produces.
 - **`gpu_inference` reference-shaped component** — the catalog now
   carries a 10-metric `gpu_inference` entry whose default CSV
   columns mirror the reference observability telemetry shape
