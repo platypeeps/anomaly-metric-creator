@@ -1935,12 +1935,14 @@ run in CI):
 
 - `.github/workflows/ci.yml` — the `test` job runs the pytest suite (and
   the ruff-lockstep guard above) on every PR and on pushes to `main`, via
-  `uv`. It runs **serially (`-n 0`)**, overriding the repo's `-n 4`
-  default: the heavy N=3 / 7-day dataset fixtures OOM-kill the 2-core /
-  7 GB standard runner when generated across parallel xdist workers (a
-  `-n 2` run died after 32 min). Serial keeps peak RSS bounded at the cost
-  of a ~20–25 min run; a 16 GB larger runner could restore `-n 4`. A
-  60-minute `timeout-minutes` guards against a hang.
+  `uv`. It runs on the **`ubuntu-latest-m` 16 GB larger runner** with the
+  repo's default parallel config (pyproject addopts `-n 4 --dist loadfile`),
+  ~5-8 min. The 7 GB standard runner couldn't hold the heavy N=3 / 7-day
+  fixtures across xdist workers — a `-n 2` run OOM-died after 32 min — so the
+  suite ran serially (`-n 0`, ~24 min) there until the org configured the
+  larger runner; resizing it below 8 GB RAM means restoring `-n 0`. Larger
+  runners are billed per-minute (no included-minute allowance), so a
+  30-minute `timeout-minutes` caps a hang.
 - `.github/workflows/dependabot-auto-merge.yml` — enables GitHub
   auto-merge (squash) on Dependabot **patch + minor** PRs via
   `dependabot/fetch-metadata`; majors stay manual. The merge waits on the
