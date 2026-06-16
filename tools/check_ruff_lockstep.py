@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Assert the ruff version is in lockstep across its two pins.
 
-ruff is pinned in two places that must agree, per the contract in
-CLAUDE.md ("Pinned exactly: must match ``rev: vX.Y.Z`` in
-``.pre-commit-config.yaml``"):
+ruff is pinned in two places that must agree. The contract is stated in
+the inline comments on the pins themselves — ``pyproject.toml`` ("Pinned
+exactly: must match ``rev: vX.Y.Z`` … Bump both lines together") and
+``.pre-commit-config.yaml`` ("``rev`` must match the ``ruff==X.Y.Z``
+pin") — and summarized in CLAUDE.md's "Ruff version lockstep lint"
+section:
 
 * ``pyproject.toml`` — ``ruff==X.Y.Z`` in the ``dev`` optional-dependency
   group. Drives the local ``.venv`` ruff and any ``ruff check``.
@@ -154,8 +157,8 @@ def check(pyproject: Path, precommit: Path) -> tuple[bool, str]:
     return False, (
         f"ruff version drift: {pyproject.name} pins 'ruff=={pin}' but "
         f"{precommit.name} pins the {_RUFF_PRECOMMIT_REPO} hook at "
-        f"'rev: {rev}'. Bump both to the same version "
-        "(CLAUDE.md: 'Pinned exactly: must match rev')."
+        f"'rev: {rev}'. Bump both pins to the same version: 'ruff==' in "
+        f"{pyproject.name} and the ruff-pre-commit 'rev' in {precommit.name}."
     )
 
 

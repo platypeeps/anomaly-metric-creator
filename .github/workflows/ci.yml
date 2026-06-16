@@ -26,6 +26,10 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
+        # enable-cache uses the Actions cache service, which authenticates
+        # with the runtime token (ACTIONS_RUNTIME_TOKEN) — independent of the
+        # `permissions:` block above. The job's `contents: read` therefore
+        # does not disable or break dependency caching.
         with:
           enable-cache: true
 
