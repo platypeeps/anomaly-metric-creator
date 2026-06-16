@@ -1900,6 +1900,63 @@ so the two layers compose: pre-commit catches the common-case
 plain `git push` and the hand-rolled hook catches the refspec
 edge cases.
 
+### Ruff version lockstep lint
+
+`ruff` is pinned in two places that must agree: the exact `ruff==X.Y.Z`
+entry in `pyproject.toml`'s `dev` extra (drives the local `.venv` ruff
+and any `ruff check`) and `rev: vX.Y.Z` on the `astral-sh/ruff-pre-commit`
+hook in `.pre-commit-config.yaml` (drives the pre-commit ruff). The
+contract is stated in the inline comments on both pins ("Pinned exactly:
+must match `rev` … Bump both lines together").
+
+Dependabot's `increase` strategy used to keep the two in step by bumping
+the `ruff==` pin in the same window the `pre-commit` ecosystem bumped the
+`rev`. Under `versioning-strategy: lockfile-only` (chosen so Dependabot
+stops creeping the `>=` floors) it no longer touches the exact `ruff==`
+pin — bumping an `==` constraint needs a manifest change, which
+`lockfile-only` skips — while the `pre-commit` ecosystem keeps advancing
+the `rev`. The two can therefore drift, and with Dependabot auto-merge
+enabled a lone `rev` bump could merge while `pyproject.toml` stays stale.
+
+`tools/check_ruff_lockstep.py` closes that gap. It reads the `ruff==` pin
+(`tomllib`) and the ruff-pre-commit `rev` (a targeted, dependency-free
+line scan), normalizes a leading `v`, and exits `0` in-step / `1` on
+drift / `2` on a structural error (missing pin, missing ruff-pre-commit
+block, missing `rev`). It runs as a step in the CI `test` job before the
+suite, so drift fails the required check until both pins are bumped
+together. Acceptance tests live in `tests/test_ruff_lockstep_lint.py`;
+the script is stdlib-only so it behaves identically in CI, a pre-commit
+hook, or standalone.
+
+### Continuous integration and Dependabot auto-merge
+
+Merges are gated on GitHub Actions (the local pre-commit hooks do **not**
+run in CI):
+
+- `.github/workflows/ci.yml` — the `test` job runs the pytest suite (and
+  the ruff-lockstep guard above) on every PR and on pushes to `main`, via
+  `uv`. It runs **serially (`-n 0`)**, overriding the repo's `-n 4`
+  default: the heavy N=3 / 7-day dataset fixtures OOM-kill the 2-core /
+  7 GB standard runner when generated across parallel xdist workers (a
+  `-n 2` run died after 32 min). Serial keeps peak RSS bounded at the cost
+  of a ~20–25 min run; a 16 GB larger runner could restore `-n 4`. A
+  60-minute `timeout-minutes` guards against a hang.
+- `.github/workflows/dependabot-auto-merge.yml` — enables GitHub
+  auto-merge (squash) on Dependabot **patch + minor** PRs via
+  `dependabot/fetch-metadata`; majors stay manual. The merge waits on the
+  required checks, so a bump that breaks `test`, the lockstep guard, or
+  Socket never lands. Needs repo `allow_auto_merge` plus branch protection
+  requiring those checks.
+- `.github/workflows/socket.yml` — a Socket supply-chain scan run as a
+  sidecar `socket` check (`socketcli`), flagging risky dependency
+  *changes* (install scripts, new capabilities, typosquats, compromised
+  releases) that Dependabot's CVE scanning misses. It no-ops to success
+  until the `SOCKET_SECURITY_API_KEY` repo secret is set, so it never
+  blocks before Socket is configured.
+
+The `github-actions` Dependabot ecosystem keeps these workflows' action
+pins current.
+
 ## Tests
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
