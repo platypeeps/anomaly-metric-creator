@@ -16,7 +16,7 @@ yaml = [
   "pyyaml>=6.0",
 ]
 dev = [
-  "pytest>=8.0",
+  "pytest>=9.1.0",
   "pytest-xdist>=3.5",
   "numpy>=1.26",
   "opentelemetry-proto>=1.25.0",
