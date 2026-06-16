@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded in-progress runs on the same ref to save Actions minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    # Guard against a hang/thrash burning the full 6h default (a -n 2 run
+    # OOM-thrashed for 32 min before the runner was killed). Serial -n 0
+    # below should finish well inside this.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (dev extra)
+        run: uv sync --extra dev
+
+      # Fail before the long suite if ruff's two pins have drifted
+      # (pyproject `ruff==` vs the pre-commit `rev:`). lockfile-only
+      # (PR #115) stopped Dependabot bumping the exact `ruff==` pin, so
+      # only the pre-commit `rev` advances now — this guard turns that
+      # drift into a red `test` check instead of a silent skew.
+      - name: Check ruff version lockstep
+        run: uv run --no-sync python tools/check_ruff_lockstep.py
+
+      # Serial (-n 0) overrides the repo default of -n 4 (pyproject addopts).
+      # The suite generates heavy N=3 / 7-day datasets; running even 2 xdist
+      # workers in parallel spikes peak RSS past the 7 GB standard runner and
+      # OOM-kills it (a -n 2 run died after 32 min). CLAUDE.md calls for -n 0
+      # on <8 GB CI — one test at a time keeps RSS bounded. Trade-off:
+      # ~20-40 min vs ~5 min parallel, i.e. reliability over speed for the
+      # required gate. A 16 GB larger runner could restore -n 4.
+      - name: Run test suite
+        run: uv run --no-sync pytest -n 0
