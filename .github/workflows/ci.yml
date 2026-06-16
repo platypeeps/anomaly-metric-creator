@@ -17,6 +17,10 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    # Guard against a hang/thrash burning the full 6h default (a -n 2 run
+    # OOM-thrashed for 32 min before the runner was killed). Serial -n 0
+    # below should finish well inside this.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
@@ -36,9 +40,12 @@ jobs:
       - name: Check ruff version lockstep
         run: uv run --no-sync python tools/check_ruff_lockstep.py
 
-      # -n 2 overrides the repo default of -n 4 (pyproject addopts): the
-      # standard 2-core / 7 GB GitHub-hosted runner can't hold the ~1.3 GB
-      # N=3 fixture across 4 workers (CLAUDE.md flags -n tuning on <8 GB CI).
-      # Two workers match the core count and keep peak RSS within the runner.
+      # Serial (-n 0) overrides the repo default of -n 4 (pyproject addopts).
+      # The suite generates heavy N=3 / 7-day datasets; running even 2 xdist
+      # workers in parallel spikes peak RSS past the 7 GB standard runner and
+      # OOM-kills it (a -n 2 run died after 32 min). CLAUDE.md calls for -n 0
+      # on <8 GB CI — one test at a time keeps RSS bounded. Trade-off:
+      # ~20-40 min vs ~5 min parallel, i.e. reliability over speed for the
+      # required gate. A 16 GB larger runner could restore -n 4.
       - name: Run test suite
-        run: uv run --no-sync pytest -n 2
+        run: uv run --no-sync pytest -n 0
