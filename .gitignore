@@ -11,6 +11,5 @@ otel-activity.log
 .venv
 .pytest_cache
 *.egg-info
-uv.lock
 
 .worktrees
