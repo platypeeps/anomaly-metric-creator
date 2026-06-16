@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded in-progress runs on the same ref to save Actions minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+
+      # -n 2 overrides the repo default of -n 4 (pyproject addopts): the
+      # standard 2-core / 7 GB GitHub-hosted runner can't hold the ~1.3 GB
+      # N=3 fixture across 4 workers (CLAUDE.md flags -n tuning on <8 GB CI).
+      # Two workers match the core count and keep peak RSS within the runner.
+      - name: Run test suite
+        run: uv run --extra dev pytest -n 2

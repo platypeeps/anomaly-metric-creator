@@ -39,10 +39,14 @@ updates:
     commit-message:
       prefix: "chore(pre-commit)"
 
-  # GitHub Actions — uncomment once you add .github/workflows/*.
-  # - package-ecosystem: "github-actions"
-  #   directory: "/"
-  #   schedule:
-  #     interval: "weekly"
-  #   commit-message:
-  #     prefix: "ci(deps)"
+  # GitHub Actions — keep the workflow action pins (checkout, setup-uv,
+  # fetch-metadata) fresh now that .github/workflows/ exists.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Denver"
+    commit-message:
+      prefix: "ci(deps)"
