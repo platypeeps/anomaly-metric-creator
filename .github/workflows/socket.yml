@@ -61,7 +61,9 @@ jobs:
 
       - name: Install Socket CLI
         if: steps.key.outputs.present == 'true'
-        run: pip install --upgrade socketsecurity
+        # `python -m pip` (not bare `pip`) guarantees the install targets the
+        # interpreter actions/setup-python just selected, regardless of PATH.
+        run: python -m pip install --upgrade socketsecurity
 
       - name: Run Socket scan
         if: steps.key.outputs.present == 'true'
