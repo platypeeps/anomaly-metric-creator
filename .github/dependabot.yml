@@ -11,9 +11,16 @@ updates:
       time: "06:00"
       timezone: "America/Denver"
     open-pull-requests-limit: 5
+    # Update uv.lock to the new resolved versions but leave pyproject.toml's
+    # loose `>=` floors alone — the committed lock is the pinned-version
+    # source of truth, while the manifest stays broadly compatible. Without
+    # this the uv ecosystem defaults to `increase`, which creeps the floors
+    # on every release (e.g. numpy >=1.26 -> >=2.4.6).
+    versioning-strategy: "lockfile-only"
+    # prefix only — adding `include: "scope"` here doubles the conventional
+    # scope into `chore(deps)(deps):`, since the prefix already carries it.
     commit-message:
       prefix: "chore(deps)"
-      include: "scope"
     groups:
       # All non-major bumps land in ONE weekly PR; majors stay individual
       # so they get a focused review.
