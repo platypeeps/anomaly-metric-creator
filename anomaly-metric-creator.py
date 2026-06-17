@@ -7524,14 +7524,19 @@ def _parse_components_value(error, raw: str) -> set[str]:
     raw_components = [item.strip().lower() for item in raw.split(",") if item.strip()]
     if not raw_components:
         error("--components must contain at least one component name (or 'all')")
-    if "all" in raw_components:
-        return set(COMPONENTS.keys())
     selected_components = set(raw_components)
     invalid_components = sorted(selected_components - set(COMPONENTS.keys()))
+    if invalid_components and "all" in invalid_components:
+        invalid_components.remove("all")
     if invalid_components:
         error("--components contains invalid value(s): "
               f"{', '.join(invalid_components)}. "
               f"Allowed: {', '.join(sorted(COMPONENTS.keys()))} or 'all'")
+    if "all" in selected_components:
+        if len(selected_components) > 1:
+            error("--components 'all' cannot be combined with explicit "
+                  "component names")
+        return set(COMPONENTS.keys())
     return selected_components
 
 
@@ -8442,14 +8447,14 @@ def combine_logs_unified(components, input_dir, output_file=None):
         print(f"File size: {size_mb:.2f} MB")
         return total_rows, size_mb
 
-    data_by_timestamp = {}
     component_metrics = {}
+    row_streams = []
+    nonmonotonic_components = []
 
     for component in components:
         input_path = input_dir / f"{component}.csv"
         print(f"Loading {component}.csv...")
 
-        seen_in_component = {}
         with open(input_path, "r", encoding="utf-8") as infile:
             reader = csv.DictReader(infile)
             # The any-dimensioned dispatch above already routed the long-
@@ -8483,14 +8488,31 @@ def combine_logs_unified(components, input_dir, output_file=None):
             metric_names = [f for f in reader.fieldnames if f != "timestamp"]
             component_metrics[component] = metric_names
 
-            for row in reader:
-                timestamp = row["timestamp"]
-                # DST fall-back duplicates the 02:00–02:59 wall-clock hour;
-                # the occurrence index keeps both copies (non-DST rows always 0).
-                occurrence = seen_in_component.get(timestamp, 0)
-                seen_in_component[timestamp] = occurrence + 1
-                bucket = data_by_timestamp.setdefault((timestamp, occurrence), {})
-                bucket[component] = {metric: row[metric] for metric in metric_names}
+        def _iter_component_rows(
+            component_name: str = component,
+            path: Path = input_path,
+            metrics: list[str] = metric_names,
+        ):
+            seen_in_component = {}
+            with open(path, "r", encoding="utf-8", newline="") as infile:
+                reader = csv.DictReader(infile)
+                for row in reader:
+                    timestamp = row["timestamp"]
+                    # DST fall-back duplicates the 02:00-02:59 wall-clock hour;
+                    # the occurrence index keeps both copies (non-DST rows
+                    # always 0) without materializing the full component file.
+                    occurrence = seen_in_component.get(timestamp, 0)
+                    seen_in_component[timestamp] = occurrence + 1
+                    yield (
+                        timestamp,
+                        occurrence,
+                        component_name,
+                        {metric: row[metric] for metric in metrics},
+                    )
+
+        row_streams.append(_iter_component_rows())
+        if not _wide_component_rows_are_monotonic(input_path):
+            nonmonotonic_components.append(component)
 
     fieldnames = ["timestamp"]
     for component in components:
@@ -8499,10 +8521,110 @@ def combine_logs_unified(components, input_dir, output_file=None):
 
     print(f"Total columns: {len(fieldnames)} (1 timestamp + {len(fieldnames) - 1} metrics)")
 
+    if nonmonotonic_components:
+        print(
+            "Non-monotonic timestamp stream detected for "
+            f"{', '.join(nonmonotonic_components)}; using sorted wide merge."
+        )
+        total_rows = _write_combined_wide_materialized(
+            components, input_dir, output_file, component_metrics, fieldnames,
+        )
+        size_mb = os.path.getsize(output_file) / (1024 * 1024)
+        print(f"\nUnified format file created: {output_file}")
+        print(f"Total rows: {total_rows:,}")
+        print(f"File size: {size_mb:.2f} MB")
+        return total_rows, size_mb
+
     with open(output_file, "w", encoding="utf-8", newline="") as outfile:
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
         writer.writeheader()
 
+        total_rows = 0
+        current_key = None
+        current_components = {}
+
+        def _flush_current_bucket() -> None:
+            nonlocal total_rows
+            if current_key is None:
+                return
+            timestamp, _occurrence = current_key
+            row = {"timestamp": timestamp}
+            for component in components:
+                component_row = current_components.get(component, {})
+                for metric in component_metrics[component]:
+                    row[f"{component}_{metric}"] = component_row.get(metric, "")
+            writer.writerow(row)
+            total_rows += 1
+
+        for timestamp, occurrence, component, row_values in heapq.merge(*row_streams):
+            bucket_key = (timestamp, occurrence)
+            if current_key is None:
+                current_key = bucket_key
+            elif bucket_key != current_key:
+                _flush_current_bucket()
+                current_key = bucket_key
+                current_components = {}
+            current_components[component] = row_values
+
+        _flush_current_bucket()
+
+    size_mb = os.path.getsize(output_file) / (1024 * 1024)
+    print(f"\nUnified format file created: {output_file}")
+    print(f"Total rows: {total_rows:,}")
+    print(f"File size: {size_mb:.2f} MB")
+    return total_rows, size_mb
+
+
+def _wide_component_rows_are_monotonic(input_path: Path) -> bool:
+    """Return false when a wide component CSV's timestamp keys move backward."""
+    seen_in_component = {}
+    previous_key = None
+    with open(input_path, "r", encoding="utf-8", newline="") as infile:
+        reader = csv.DictReader(infile)
+        for row in reader:
+            timestamp = row["timestamp"]
+            occurrence = seen_in_component.get(timestamp, 0)
+            seen_in_component[timestamp] = occurrence + 1
+            key = (timestamp, occurrence)
+            if previous_key is not None and key < previous_key:
+                return False
+            previous_key = key
+    return True
+
+
+def _write_combined_wide_materialized(
+    components: list[str],
+    input_dir: Path,
+    output_file: Path,
+    component_metrics: dict[str, list[str]],
+    fieldnames: list[str],
+) -> int:
+    """Write the wide combined CSV when inputs require an explicit sort.
+
+    Normal dimensionless runs stream through ``heapq.merge`` above. DST
+    artifact injection intentionally moves timestamps backward within each
+    component file, so those rare runs need the historical materialized sort to
+    preserve duplicate wall-clock hours exactly.
+    """
+    data_by_timestamp = {}
+    for component in components:
+        input_path = input_dir / f"{component}.csv"
+        seen_in_component = {}
+        with open(input_path, "r", encoding="utf-8", newline="") as infile:
+            reader = csv.DictReader(infile)
+            metric_names = component_metrics[component]
+            for row in reader:
+                timestamp = row["timestamp"]
+                occurrence = seen_in_component.get(timestamp, 0)
+                seen_in_component[timestamp] = occurrence + 1
+                bucket = data_by_timestamp.setdefault((timestamp, occurrence), {})
+                bucket[component] = {
+                    metric: row[metric] for metric in metric_names
+                }
+
+    with open(output_file, "w", encoding="utf-8", newline="") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
         for bucket_key in sorted(data_by_timestamp.keys()):
             timestamp, _occurrence = bucket_key
             row = {"timestamp": timestamp}
@@ -8511,13 +8633,7 @@ def combine_logs_unified(components, input_dir, output_file=None):
                 for metric in component_metrics[component]:
                     row[f"{component}_{metric}"] = component_row.get(metric, "")
             writer.writerow(row)
-
-    total_rows = len(data_by_timestamp)
-    size_mb = os.path.getsize(output_file) / (1024 * 1024)
-    print(f"\nUnified format file created: {output_file}")
-    print(f"Total rows: {total_rows:,}")
-    print(f"File size: {size_mb:.2f} MB")
-    return total_rows, size_mb
+    return len(data_by_timestamp)
 
 
 def _write_combined_long_form(
@@ -10287,14 +10403,182 @@ _VALIDATE_DERIVATION_TOLERANCE = 0.01
 _VALIDATE_INT_TOLERANCE = 5e-4
 
 
+def _json_path(parent: str, child: str | int) -> str:
+    """Return a compact dotted path for schema-shape diagnostics."""
+    if isinstance(child, int):
+        return f"{parent}[{child}]"
+    if parent == "$":
+        return f"$.{child}"
+    return f"{parent}.{child}"
+
+
+def _schema_shape_error(schema_path: Path, path: str, message: str) -> ValueError:
+    return ValueError(f"{schema_path}: schema shape error at {path}: {message}")
+
+
+def _require_schema_mapping(schema_path: Path, value, path: str) -> dict:
+    if not isinstance(value, dict):
+        raise _schema_shape_error(schema_path, path, "expected object")
+    return value
+
+
+def _require_schema_list(schema_path: Path, value, path: str) -> list:
+    if not isinstance(value, list):
+        raise _schema_shape_error(schema_path, path, "expected list")
+    return value
+
+
+def _require_schema_string(schema_path: Path, value, path: str) -> str:
+    if not isinstance(value, str):
+        raise _schema_shape_error(schema_path, path, "expected string")
+    return value
+
+
+def _require_schema_number(schema_path: Path, value, path: str) -> int | float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise _schema_shape_error(schema_path, path, "expected finite number")
+    if not math.isfinite(value):
+        raise _schema_shape_error(schema_path, path, "expected finite number")
+    return value
+
+
+def _validate_string_list_schema_shape(
+    schema_path: Path, value, path: str
+) -> list[str]:
+    items = _require_schema_list(schema_path, value, path)
+    for index, item in enumerate(items):
+        _require_schema_string(schema_path, item, _json_path(path, index))
+    return items
+
+
+def _validate_schema_document_shape(schema_path: Path, document) -> dict:
+    """Validate the structural contract consumed by ``validate DIR``.
+
+    The downstream validators trust ``schema.json`` as their declarative input
+    and intentionally index hot-path fields directly. Keep malformed or
+    hand-edited schema documents from escaping as raw ``KeyError`` /
+    ``TypeError`` tracebacks by checking the minimum shape at load time.
+    """
+    document = _require_schema_mapping(schema_path, document, "$")
+    metadata = _require_schema_mapping(
+        schema_path, document.get("metadata"), "$.metadata"
+    )
+    _validate_string_list_schema_shape(
+        schema_path, metadata.get("components"), "$.metadata.components"
+    )
+    _validate_string_list_schema_shape(
+        schema_path, metadata.get("emit_selection"), "$.metadata.emit_selection"
+    )
+    _require_schema_number(
+        schema_path, metadata.get("rows_per_component"),
+        "$.metadata.rows_per_component",
+    )
+    interval_seconds = _require_schema_number(
+        schema_path, metadata.get("interval_seconds"),
+        "$.metadata.interval_seconds",
+    )
+    if interval_seconds <= 0:
+        raise _schema_shape_error(
+            schema_path, "$.metadata.interval_seconds",
+            "expected positive number",
+        )
+    total_seconds = _require_schema_number(
+        schema_path, metadata.get("total_seconds"), "$.metadata.total_seconds"
+    )
+    if total_seconds <= 0:
+        raise _schema_shape_error(
+            schema_path, "$.metadata.total_seconds", "expected positive number"
+        )
+    _require_schema_string(schema_path, metadata.get("start"), "$.metadata.start")
+    drop_rate = _require_schema_number(
+        schema_path, metadata.get("drop_rate"), "$.metadata.drop_rate"
+    )
+    if not 0 <= drop_rate <= 1:
+        raise _schema_shape_error(
+            schema_path, "$.metadata.drop_rate", "expected value in [0, 1]"
+        )
+    _require_schema_number(
+        schema_path, metadata.get("inject_dst_artifact_day"),
+        "$.metadata.inject_dst_artifact_day",
+    )
+
+    _validate_string_list_schema_shape(schema_path, document.get("files"), "$.files")
+    components_payload = _require_schema_mapping(
+        schema_path, document.get("components"), "$.components"
+    )
+
+    for component in metadata["components"]:
+        payload_path = _json_path("$.components", component)
+        if component not in components_payload:
+            raise _schema_shape_error(
+                schema_path, payload_path,
+                "component listed in metadata.components is missing",
+            )
+        payload = _require_schema_mapping(
+            schema_path, components_payload[component], payload_path
+        )
+        _require_schema_string(
+            schema_path, payload.get("csv_filename"),
+            _json_path(payload_path, "csv_filename"),
+        )
+        metrics = _require_schema_list(
+            schema_path, payload.get("metrics"), _json_path(payload_path, "metrics")
+        )
+        for index, metric in enumerate(metrics):
+            metric_path = _json_path(_json_path(payload_path, "metrics"), index)
+            metric = _require_schema_mapping(schema_path, metric, metric_path)
+            _require_schema_string(
+                schema_path, metric.get("name"), _json_path(metric_path, "name")
+            )
+            dtype = _require_schema_string(
+                schema_path, metric.get("dtype"), _json_path(metric_path, "dtype")
+            )
+            if dtype not in {"float", "int"}:
+                raise _schema_shape_error(
+                    schema_path, _json_path(metric_path, "dtype"),
+                    "expected 'float' or 'int'",
+                )
+            for bound in ("min_value", "max_value"):
+                raw_bound = metric.get(bound)
+                if raw_bound is not None:
+                    _require_schema_number(
+                        schema_path, raw_bound, _json_path(metric_path, bound)
+                    )
+            for string_field in ("unit", "semantic_type", "derivation"):
+                raw_value = metric.get(string_field)
+                if raw_value is not None:
+                    _require_schema_string(
+                        schema_path, raw_value, _json_path(metric_path, string_field)
+                    )
+        dimensions = payload.get("dimensions")
+        if dimensions is not None:
+            dimensions_path = _json_path(payload_path, "dimensions")
+            dimensions = _require_schema_mapping(schema_path, dimensions, dimensions_path)
+            cardinality = _require_schema_number(
+                schema_path, dimensions.get("cardinality"),
+                _json_path(dimensions_path, "cardinality"),
+            )
+            if not isinstance(cardinality, int) or cardinality <= 0:
+                raise _schema_shape_error(
+                    schema_path, _json_path(dimensions_path, "cardinality"),
+                    "expected positive integer",
+                )
+            _validate_string_list_schema_shape(
+                schema_path, dimensions.get("axes"),
+                _json_path(dimensions_path, "axes"),
+            )
+    return document
+
+
 def _load_schema_document(schema_path: Path) -> dict:
     """Load and version-check a ``schema.json`` document.
 
     Raises ``ValueError`` if the file is missing, malformed JSON, or written
-    by a schema-document version this build cannot validate. The validator
-    intentionally rejects unknown versions outright rather than silently
-    skipping unfamiliar fields — a stale schema would produce false-positive
-    or false-negative results.
+    by a schema-document version this build cannot validate, or if required
+    structural fields are missing/mistyped. The validator intentionally
+    rejects unknown versions outright rather than silently skipping unfamiliar
+    fields — a stale schema would produce false-positive or false-negative
+    results.
     """
     if not schema_path.exists():
         raise ValueError(
@@ -10306,6 +10590,7 @@ def _load_schema_document(schema_path: Path) -> dict:
         document = json.loads(schema_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ValueError(f"{schema_path} is not valid JSON: {e}") from e
+    document = _require_schema_mapping(schema_path, document, "$")
     version = document.get("schema_version")
     if version != SCHEMA_DOCUMENT_VERSION:
         raise ValueError(
@@ -10313,7 +10598,7 @@ def _load_schema_document(schema_path: Path) -> dict:
             f"this build only validates schema_version="
             f"{SCHEMA_DOCUMENT_VERSION}"
         )
-    return document
+    return _validate_schema_document_shape(schema_path, document)
 
 
 def _validate_required_files_present(output_dir: Path, schema: dict) -> list[str]:
@@ -12086,7 +12371,10 @@ def _main_validate_subcommand(argv):
                      f"{a.directory} exists but is not one")
         sp.error(f"validate requires an existing directory; "
                  f"{a.directory} does not exist")
-    violations = validate_output(a.directory)
+    try:
+        violations = validate_output(a.directory)
+    except ValueError as exc:
+        sp.error(str(exc))
     for line in violations:
         print(f"VALIDATION: {line}", file=sys.stderr)
     if not violations:

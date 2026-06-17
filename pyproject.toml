@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "anomaly-metric-creator"
 version = "0.3.0"
@@ -8,6 +12,16 @@ dependencies = [
   "opentelemetry-proto>=1.25.0",
   "protobuf>=5.27.0",
 ]
+
+[project.scripts]
+amc = "anomaly_metric_creator.cli:main"
+anomaly-metric-creator = "anomaly_metric_creator.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.optional-dependencies]
 # Optional runtime extra: enables YAML --instance-config files
@@ -31,6 +45,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 # `-n 4 --dist loadfile` parallelizes the suite across 4 worker processes
 # and keeps every test from a given file on a single worker. The N=3
 # fixture (`n3_one_day_dataset_dir`) alone is ~1.3 GB and is lazily

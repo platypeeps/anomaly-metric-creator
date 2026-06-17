@@ -126,6 +126,56 @@ def test_load_schema_rejects_unknown_version(amc, tmp_path):
         amc._load_schema_document(p)
 
 
+def test_load_schema_rejects_missing_metadata(amc, tmp_path):
+    p = tmp_path / "schema.json"
+    p.write_text(
+        json.dumps({"schema_version": amc.SCHEMA_DOCUMENT_VERSION}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"schema shape error at \$.metadata"):
+        amc._load_schema_document(p)
+
+
+def test_load_schema_rejects_component_missing_payload(amc, tmp_path):
+    p = tmp_path / "schema.json"
+    p.write_text(
+        json.dumps({
+            "schema_version": amc.SCHEMA_DOCUMENT_VERSION,
+            "metadata": {
+                "components": ["apigateway"],
+                "emit_selection": ["metrics", "schema"],
+                "rows_per_component": 1,
+                "interval_seconds": 60.0,
+                "total_seconds": 60.0,
+                "start": amc.START.isoformat(),
+                "drop_rate": 0.0,
+                "inject_dst_artifact_day": 0,
+            },
+            "files": ["apigateway.csv", "anomalies.csv", "schema.json"],
+            "components": {},
+        }),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"\$.components.apigateway"):
+        amc._load_schema_document(p)
+
+
+def test_validate_subcommand_reports_malformed_schema_without_traceback(
+    amc, capsys, tmp_path
+):
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "schema.json").write_text(
+        json.dumps({"schema_version": amc.SCHEMA_DOCUMENT_VERSION}),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit):
+        amc.main(["validate", str(out)])
+    err = capsys.readouterr().err
+    assert "schema shape error" in err
+    assert "Traceback" not in err
+
+
 # ------------------------------------------------------------------
 # Required files / unknown files
 # ------------------------------------------------------------------

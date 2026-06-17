@@ -231,6 +231,22 @@ def test_parse_args_components_all_keyword(amc):
     assert args.components == set(amc.COMPONENTS.keys())
 
 
+def test_parse_args_components_all_with_explicit_name_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--components", "all,authservice",
+            "--output-dir", "test_out",
+        ])
+
+
+def test_parse_args_components_all_with_invalid_name_fails(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--components", "all,not_a_component",
+            "--output-dir", "test_out",
+        ])
+
+
 def test_parse_args_signal_level_default_medium(amc):
     args = amc.parse_args(["--output-dir", "test_out"])
     assert args.signal_level == "medium"

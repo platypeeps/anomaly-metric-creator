@@ -2021,28 +2021,32 @@ pins current.
 
 ### Workflow pip lint
 
-`tools/check_workflow_pip.py` forbids bare `pip install` in
+`tools/check_workflow_pip.py` forbids bare or unpinned `pip install` in
 `.github/workflows/*.yml`: after `actions/setup-python` runs, a bare `pip`
 can resolve to a different interpreter than the one just selected, so the
 install lands in the wrong environment. The robust form is
-`python -m pip install` (`uv pip install` is also accepted). PR #118 shipped
-a bare `pip install` in `socket.yml`; this lint — the one cleanly-mechanical
-pattern surfaced by the all-PR review sweep (the higher-recurrence patterns
-like doc-drift and the heavy-read test-resource rule are size/context-
-dependent and live as checklist prose, not lints) — catches it structurally
-instead of relying on Copilot to flag it on each new workflow.
+`python -m pip install PACKAGE==VERSION` (`uv pip install PACKAGE==VERSION`
+is also accepted), with direct third-party installs exactly pinned so
+workflow tooling is reproducible. PR #118 shipped a bare `pip install` in
+`socket.yml`; this lint — the one cleanly-mechanical pattern surfaced by the
+all-PR review sweep (the higher-recurrence patterns like doc-drift and the
+heavy-read test-resource rule are size/context-dependent and live as
+checklist prose, not lints) — catches it structurally instead of relying on
+Copilot to flag it on each new workflow.
 
 Wired as the `workflow-pip` pre-commit hook
 (`files: ^\.github/workflows/.*\.ya?ml$`, `pass_filenames: true`) and usable
 standalone: `tools/check_workflow_pip.py .github/workflows/ci.yml`.
-Detection skips `python -m pip`, `uv pip`, and `pipx`; a line mixing a good
-and a bare invocation is still flagged (the scan finds the bare occurrence
-past the excluded one). Exempt a line with a trailing `# pip-lint: allow`
+Detection accepts `python -m pip`, combined short module flags such as
+`python -Im pip`, `uv pip`, and `pipx`; a line mixing a good and a bare
+invocation is still flagged (the scan finds the bare occurrence past the
+excluded one). Non-bare installs reject `--upgrade` / `-U` and package specs
+without `==`. Exempt a line with a trailing `# pip-lint: allow`
 (trailing-only, like the role-name lint marker — `path.exists()` is checked
 before the read so a bad path is exit `2`, not a violation). Exit codes:
-`0` clean / `1` at least one bare `pip install` / `2` argument or I/O error.
-Acceptance tests live in `tests/test_workflow_pip_lint.py`; the script is
-stdlib-only.
+`0` clean / `1` at least one bare or unpinned `pip install` / `2` argument or
+I/O error. Acceptance tests live in `tests/test_workflow_pip_lint.py`; the
+script is stdlib-only.
 
 ## Tests
 

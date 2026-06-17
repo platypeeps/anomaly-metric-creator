@@ -63,7 +63,7 @@ jobs:
         if: steps.key.outputs.present == 'true'
         # `python -m pip` (not bare `pip`) guarantees the install targets the
         # interpreter actions/setup-python just selected, regardless of PATH.
-        run: python -m pip install --upgrade socketsecurity
+        run: python -m pip install socketsecurity==2.1.0
 
       - name: Run Socket scan
         if: steps.key.outputs.present == 'true'

@@ -90,17 +90,20 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
+Editable installs expose both `amc` and `anomaly-metric-creator` console
+scripts. The source file remains directly runnable for checkout-local workflows.
+
 ## Usage
 
 ```bash
 # Default: 50,000 rows per component at a 60s cadence
-python3 anomaly-metric-creator.py
+amc
 
 # Full week (10,080 rows per component at the default 60s cadence). Each multi-day scenario activates at
 # its own `days_required` (e.g. llm_viral_surge_day2 at 2 days, cache_leak_restart
 # at 2 days, jwks_rotation_chaos at 3 days, llm_second_viral at 7 days).
 # The default 50,000-row window also includes the longer GPU inference pattern.
-python3 anomaly-metric-creator.py --duration-days 7
+amc --duration-days 7
 
 # Finer sampling: one row every 5 seconds (17,280 rows per component for 1 day).
 python3 anomaly-metric-creator.py --duration-days 1 --interval-seconds 5
@@ -240,7 +243,7 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 
 | Flag | Default | Notes |
 | ---- | ------- | ----- |
-| `--emit` | `metrics,logs,traces` | Comma-separated artifact selection. Valid tokens are `metrics`, `logs`, `traces`, `gauges`, `schema`, `combined`; any combination is allowed. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv), `schema` (opt-in) writes a declarative [`schema.json`](#output-schema-document-schemajson), and `combined` (opt-in) joins the per-component CSVs into `combined_metrics_unified.csv` after generation (respects `--components` when set; otherwise combines every CSV in `--output-dir`). The `gauges` and `combined` tokens require `metrics`; `schema` has no other requirements. |
+| `--emit` | `metrics,logs,traces` | Comma-separated artifact selection. Valid tokens are `metrics`, `logs`, `traces`, `gauges`, `schema`, `combined`; combinations are allowed subject to the dependency rules below. `metrics` writes the per-component CSVs and `anomalies.csv`, `logs` writes `metric_report.log`, `traces` writes `metric_traces.jsonl`, `gauges` (opt-in) writes the long-form [`gauges.csv`](#gauge-metric-file-gaugescsv), `schema` (opt-in) writes a declarative [`schema.json`](#output-schema-document-schemajson), and `combined` (opt-in) joins the per-component CSVs into `combined_metrics_unified.csv` after generation (respects `--components` when set; otherwise combines every CSV in `--output-dir`). The `gauges` and `combined` tokens require `metrics`; `schema` has no other requirements. |
 
 #### OTEL streaming
 
