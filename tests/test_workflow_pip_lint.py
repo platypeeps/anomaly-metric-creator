@@ -58,6 +58,19 @@ def test_python_m_pip_passes(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_combined_python_flags_pass(tmp_path: Path) -> None:
+    # `python -Im pip` (isolated mode + module, combined short flags) still
+    # targets the selected interpreter — must not be flagged (Copilot, #124).
+    result = _run(_wf(tmp_path, "python -Im pip install requests"))
+    assert result.returncode == 0, result.stderr
+
+
+def test_extra_whitespace_after_m_passes(tmp_path: Path) -> None:
+    # Extra spaces between `-m` and `pip` must not break the exemption.
+    result = _run(_wf(tmp_path, "python -m  pip install requests"))
+    assert result.returncode == 0, result.stderr
+
+
 def test_uv_pip_passes(tmp_path: Path) -> None:
     result = _run(_wf(tmp_path, "uv pip install pytest"))
     assert result.returncode == 0, result.stderr

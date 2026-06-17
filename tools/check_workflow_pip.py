@@ -19,11 +19,13 @@ A line with a trailing ``# pip-lint: allow`` is exempt (the check is
 ``line.rstrip().endswith(...)``, so a mid-line occurrence inside a string
 literal does not exempt the line).
 
-Detection: ``pip install`` / ``pip3 install`` not immediately preceded by
-``-m `` (``python -m pip``) or ``uv `` (``uv pip``). ``pipx install`` is not
-matched. A line that mixes a good and a bad invocation
-(``python -m pip … && pip install …``) is still flagged, because the scan
-finds the *bare* occurrence past the excluded one.
+Detection: a ``pip``/``pip3`` ``install`` invocation whose immediately
+preceding whitespace-delimited token is neither ``uv`` (``uv pip``) nor a
+single-dash short-flag group ending in ``m`` (``-m``, or combined forms like
+``-Im``, with any spacing after) is bare. Long ``--flags``, ``pipx``, and
+other tokens do not exempt it. A line mixing a good and a bare invocation
+(``python -m pip … && pip install …``) is still flagged — each ``pip
+install`` occurrence is checked independently.
 
 Exit codes:
 
@@ -40,11 +42,19 @@ import re
 import sys
 from pathlib import Path
 
-# ``pip``/``pip3`` + ``install`` not preceded by ``-m `` (python -m pip) or
-# ``uv `` (uv pip). Both exclusion prefixes are 3 chars wide, so the
-# fixed-width negative lookbehinds are legal. ``pipx install`` does not match
-# because ``\s+`` cannot consume the ``x``.
-_BARE_PIP = re.compile(r"(?<!-m )(?<!uv )\bpip3?\s+install")
+# A ``pip``/``pip3`` ``install`` invocation. The token immediately before
+# ``pip`` decides whether the call is bare (see ``_NON_BARE_PREFIX``).
+# ``pipx install`` does not match: ``[ \t]+`` cannot consume the ``x``.
+_PIP_INSTALL = re.compile(r"\bpip3?\b[ \t]+install\b")
+
+# The text preceding ``pip`` is non-bare when its last whitespace-delimited
+# token is ``uv`` (``uv pip``) or a single-dash short-flag group ending in
+# ``m`` (``python -m pip``; combined forms like ``-Im``; any spacing after).
+# Long ``--flags`` do not match (the inner ``-`` is not ``\w``), so a genuine
+# bare ``pip`` is still caught. Token-based rather than a fixed-width
+# lookbehind so combined ``-m`` flags and extra whitespace are handled
+# robustly (Copilot, PR #124).
+_NON_BARE_PREFIX = re.compile(r"(?:^|\s)(?:uv|-[A-Za-z0-9]*m)[ \t]*$")
 
 _ALLOW_MARKER = "# pip-lint: allow"
 
@@ -58,12 +68,15 @@ def _check_file(path: Path) -> list[str]:
     for lineno, line in enumerate(text.splitlines(), start=1):
         if line.rstrip().endswith(_ALLOW_MARKER):
             continue
-        if _BARE_PIP.search(line):
+        for match in _PIP_INSTALL.finditer(line):
+            if _NON_BARE_PREFIX.search(line[: match.start()]):
+                continue  # python -m pip / -Im pip / uv pip → fine
             violations.append(
                 f"{path}:{lineno}: bare 'pip install' — use "
                 "'python -m pip install' (or 'uv pip install') so the install "
                 "targets the interpreter actions/setup-python selected."
             )
+            break  # one diagnostic per line is enough
     return violations
 
 
