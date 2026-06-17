@@ -33,7 +33,7 @@ Exit codes:
 * ``1`` — at least one bare ``pip install``; one diagnostic per hit plus a
   one-line policy footer to stderr.
 * ``2`` — argument or I/O error: no paths given, a path that does not exist,
-  or an unreadable file.
+  or a file that cannot be read or UTF-8-decoded.
 """
 
 from __future__ import annotations
@@ -61,8 +61,8 @@ _ALLOW_MARKER = "# pip-lint: allow"
 
 def _check_file(path: Path) -> list[str]:
     """Return one diagnostic line per bare-``pip install`` hit in ``path``.
-    Raises ``OSError`` (re-raised by ``main`` as exit 2) if the file cannot
-    be read."""
+    Raises ``OSError`` or ``UnicodeError`` (both re-raised by ``main`` as
+    exit 2) if the file cannot be read or UTF-8-decoded."""
     violations: list[str] = []
     text = path.read_text(encoding="utf-8")
     for lineno, line in enumerate(text.splitlines(), start=1):
@@ -95,7 +95,10 @@ def main(argv: list[str]) -> int:
             return 2
         try:
             violations.extend(_check_file(path))
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
+            # UnicodeDecodeError (a UnicodeError/ValueError, not OSError) on a
+            # non-UTF-8 file must honor the exit-2 contract, not traceback
+            # (Copilot, PR #124).
             print(
                 f"check_workflow_pip: cannot read {path}: {exc}", file=sys.stderr
             )

@@ -115,6 +115,15 @@ def test_missing_path_exits_two(tmp_path: Path) -> None:
     assert result.returncode == 2
 
 
+def test_non_utf8_file_exits_two(tmp_path: Path) -> None:
+    # A decode failure on a non-UTF-8 file must honor the exit-2 contract,
+    # not escape as a traceback (Copilot, #124).
+    bad = tmp_path / "bad.yml"
+    bad.write_bytes(b"\xff\xfe run: pip install x\n")
+    result = _run(str(bad))
+    assert result.returncode == 2
+
+
 def test_real_repo_workflows_clean() -> None:
     # Regression guard on the live workflow files: they must already use
     # `python -m pip` / `uv`, so the lint passes today and only the
