@@ -9,7 +9,7 @@
 ## Pre-PR checklist
 
 <!--
-Mirrors the 13 bold headings in CLAUDE.md's "Pre-PR checklist (required before
+Mirrors the 14 bold headings in CLAUDE.md's "Pre-PR checklist (required before
 marking a PR ready for review)" section. See CLAUDE.md for the guidance bullets
 under each heading — they describe what to verify; they are not additional
 checklist entries. For each item below: tick the box once you have confirmed it,
@@ -29,3 +29,4 @@ or replace the box line with "N/A — _reason_".
 - [ ] Test resource cost
 - [ ] Cross-platform test guards
 - [ ] Default-behavior changes
+- [ ] CI / workflow / dependency hygiene
