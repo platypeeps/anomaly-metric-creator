@@ -127,8 +127,10 @@ def test_non_utf8_file_exits_two(tmp_path: Path) -> None:
 def test_real_repo_workflows_clean() -> None:
     # Regression guard on the live workflow files: they must already use
     # `python -m pip` / `uv`, so the lint passes today and only the
-    # introduction of a bare `pip install` makes it fail.
-    workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+    # introduction of a bare `pip install` makes it fail. Glob both `.yml`
+    # and `.yaml` to match the hook's `*.ya?ml` scope (Copilot, #124).
+    wf_dir = REPO_ROOT / ".github" / "workflows"
+    workflows = sorted([*wf_dir.glob("*.yml"), *wf_dir.glob("*.yaml")])
     assert workflows, "expected at least one workflow file to guard"
     result = _run(*(str(w) for w in workflows))
     assert result.returncode == 0, result.stderr
