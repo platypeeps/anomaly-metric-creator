@@ -1600,7 +1600,9 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to 13 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, plus two more added later). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 13 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — the headings below. When a heading is renamed, added, or removed here, update the template in the same diff so the two stay in lockstep.
+This checklist maps to 14 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, two more added later, and one — **CI / workflow / dependency hygiene** — from a full sweep of all ~750 Copilot review comments through PR #122). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 14 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — the headings below. When a heading is renamed, added, or removed here, update the template in the same diff so the two stay in lockstep.
+
+When a recurring issue is *mechanical* (a greppable shape), prefer turning it into a `tools/check_*.py` lint over adding a prose bullet here: the `ruff-lockstep` / `role-name-leaks` / `branch-name` lints reliably stop their patterns, whereas prose rules in this file have not (the test-resource-cost rules recurred across several PRs after being documented). The sweep's top finding was that **doc/comment-vs-code drift is the single most-flagged pattern (~30% of all review comments)** — so the Doc / docstring sync heading below is the highest-leverage one to actually run, not skim.
 
 **Scope & description**
 - PR description names every behavior change in the diff — RNG model, registries, module-level state, default-output bytes, public-helper signatures, CLI/env semantics, doc surface. If the diff is broader than the description, either split the PR or update the description.
@@ -1608,23 +1610,32 @@ This checklist maps to 13 recurring patterns identified across past PR reviews (
 
 **Validators and schema checks**
 - For every field a new validator inspects, enumerate non-canonical inputs: `None`, `NaN`, `±inf`, negative, `bool` (a subtype of `int`), empty string, unhashable, wrong container type.
+- Type-check *before* a membership test or a numeric op, so the validator's own `ValueError` fires instead of a raw exception from deeper in: `x in VALID_SET` raises `TypeError` when `x` is an unhashable list/dict — gate with `isinstance(x, str)` first; `math.isfinite(x)` raises `OverflowError` on an arbitrarily large `int` at import time — guard or skip the float path for non-float numerics.
+- `schema.json` (and any `--instance-config` or other hand-editable input read back at runtime) is **untrusted**: every field the *reader* consumes needs the same type + finiteness guards as the writer-side check, not just the writer. A `NaN`/`±inf` that a JSON loader happily parses silently defeats range and zero-variance checks downstream (`np.std` returns `NaN`; every comparison against it is `False`).
 - Every *branch* of a discriminator is validated: callable **and** constant `Edge.weight`; cascade **and** primary specs; step **and** span paths; `*args` **and** fixed-arity callables.
 - Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, etc.) raise on unknown keys; never return `None` or fall through silently. If a caller genuinely needs to tolerate misses, the *caller* opts in via `try/except KeyError` — the table itself stays strict. Concrete antipatterns to grep for before review:
   - `table.get(key)` on a dispatch table — returns `None` on miss instead of raising. Use `table[key]` so a typo or registry drift fails loudly. The fix replaced `_RECOMPUTERS.get(component)` with `_RECOMPUTERS[component]` for exactly this reason.
   - A dispatcher *function* (e.g. `_recompute_cacheservice`) that returns a sentinel — `None`, an empty string, or a "soft violation" message — for an unrecognized metric or component instead of raising `KeyError`. The caller cannot distinguish "metric is fine" from "I have no recomputer for this metric"; both look like success. Replace the soft-violation return with `raise KeyError(...)`.
   - A dispatcher branch that silently falls through to a `return` at the bottom of the function when no `if`/`elif` matched. Add an explicit `raise KeyError(...)` instead.
 
-**Doc / docstring sync**
+**Doc / docstring sync** — the single most-flagged pattern in the whole review history; grep the changed *behavior*, not just the symbol name.
 - Every changed function with a docstring has its docstring updated in this diff.
 - Grep every changed symbol name against CLAUDE.md and README.md and update prose that describes it.
 - If a public helper was removed or repurposed, CLAUDE.md prose is updated in the same diff.
+- When you change a default, a precedence rule, a count, an edge list, or a dispatch order, grep for the *old value/word* across the docstring, in-file section headers, CLI `--help`/help strings, `README.md`, `docs/*.md`, **and** CLAUDE.md. A behavior change fans out across all of them, not only the file you edited (e.g. flipping `--topology-mode` to `realistic` left `docs/topology.md` stale; moving subcommand dispatch before `parse_args` left the `docs/application-flow.md` mermaid wrong).
+- Magnitude/percentage values baked into description strings (a scenario's `(35% errors)`, a docstring's `350 rows`) must match the generator they describe.
+- Count words drift silently as a list grows — "four slices", "three modes", "8 specs". Re-count after adding or removing an item.
+- A new `tools/check_*.py` (or any file) whose docstring was copy-pasted from a sibling must have its mode/call counts and examples re-verified line-by-line (PR #92 inherited "three modes / three calls" from `check_branch_name`'s docstring while having two modes and four `gh` calls).
+- After any bulk find/replace or scrub of internal references, re-read every touched docstring for orphaned grammar — Copilot files each fragment as its own comment, so one scrub burns a whole review cycle (PR #80).
 
 **Single source of truth**
 - No hand-rolled emit→filename, metric→component, or component→derivation maps alongside a canonical registry. Every consumer reads from `_EMIT_ARTIFACT_FILES`, `COMPONENTS`, `DERIVATIONS`, etc.
 - `_COMBINE_OUTPUT_FILENAME` is used by the actual combine writer, not only the cleanup/summary path.
+- The `Instance` dimension fields have multiple drift sites — the validator's `_valid_instance_fields` set and the `Instance(**{...})` constructor kwargs in `_load_instance_config` — both must derive from `_INSTANCE_DIMENSION_COLUMNS`, never a hand-listed copy (#64). Same for any "canonical first entry" *positional* convention (a `break`-after-first over `_TOPOLOGY_LOAD_METRICS`): make the convention explicit, not implicit in iteration order (#47).
 
 **Completeness**
 - PR title implies a class of fix (e.g. "add `clip_min` to non-negative metrics") → grep for all instances and confirm coverage.
+- When a change adds a *second* code path for the same data — wide vs long-form CSV, anonymous vs named-instance, 4-col vs 10-col gauges, the topology lambda-baked vs per-instance path — list every transform, guard, default, and splice the original path applies and confirm each is re-applied on the new path. Recurring misses: `_splice_dst_artifact` dropped on the long-form writer (#63); a `header[0] == "timestamp"` check missing from the dim-detection predicate (#67); an eagerly-evaluated `config_map.get(name, list(INSTANCES[name]))` default that crashed the unconfigured branch (#64).
 
 **Mode / flag combinations**
 - List every other CLI flag, env var, and `--emit` token that interacts with the new flag. Gate invalid combinations in `parse_args` with a clear message, or add a test.
@@ -1640,10 +1651,14 @@ This checklist maps to 13 recurring patterns identified across past PR reviews (
   - `assert expected & actual == expected` and `assert actual.issuperset(expected)` — collapse to `∅ == ∅` / `actual ⊇ ∅`, both always true.
   - Three of four vacuous-test bugs on PR #50 had this exact shape: a registry filter (`if metric.dtype == "int"`, `if "ratio" in name`, etc.) excluded every candidate under the default catalog, so `expected` was empty, so the assertion ran on nothing. The non-empty guard catches the filter regression at test time instead of letting the test silently rot.
   - When the test legitimately needs `expected` to be empty for some inputs (rare), assert that *condition* explicitly and gate the membership check behind it, so a future registry change that makes `expected` accidentally empty under *different* inputs still trips the guard.
+- Pair every "negative" assertion (the dropped scenario's output is *absent*) with a positive one (a *retained* scenario's output survives) — otherwise an over-filter regression that drops everything passes. For a dropped scenario, also assert its *cascade* specs are absent, not just its primary descriptions (cascade leakage went undetected on #13/#16). A file-existence assertion must additionally read ≥1 data row, not just `assert path.exists()`.
+- String matching that must be exact uses anchored regex or full-token equality, never bare `in`/substring: version-pin parsing (a `ruff==0.15.17` regex must end-anchor or a `; python_version<…` marker suffix slips through, #117), flag-presence tests (`assert "--emit" in out` false-positives once `--emit-selection` exists, #101/#104), and trailing-marker escape hatches (`# allow` matched mid-line fires inside string literals, #89).
+- Avoid tautological boolean assertions: `assert A or B` where `B` is unconditionally true (e.g. `or ("pod" in violations[0])`) always passes (#68). A "negative" test must also assert the run reached the intended code path (e.g. assert exit `0`, and that the fixture actually contains the thing being skipped) so it can't pass for the wrong reason.
 
 **Performance in hot paths**
-- No per-row re-parsing of strings or re-computation of constants that could be hoisted above the loop.
-- No broad `try/except` in a per-row loop where the body has side effects such as RNG draws.
+- No per-row re-parsing of strings or re-computation of constants that could be hoisted above the loop. A timestamp re-`strptime`d once per data point (per row × metric) is a real hotspot at gauge-stream scale (#30).
+- No broad `try/except` in a per-row loop where the body has side effects such as RNG draws. Resolve a generator's arity (the `try/except TypeError` arg-count probe) once per spec, not once per row — repeating it per row both wastes work and can duplicate RNG draws (#37).
+- Per-`(component, instance)` loops multiply cost by N: hoist per-component file scans/parses above the instance loop, and don't re-open the same CSV from the start for each instance block (#67).
 
 **Action order in user-facing output**
 - The end-of-run `Done - … written to …` summary line only names artifacts the run actually wrote, and is printed only after every writer it names has completed successfully.
@@ -1667,6 +1682,13 @@ This checklist maps to 13 recurring patterns identified across past PR reviews (
   collection time), route through `conftest._load_amc()` (memoized) or
   annotate the `spec_from_file_location` call line with
   `# amc-load: allow`.
+- An in-process `main()` call must not leave mutated module/session-scoped
+  state (a filtered `cascading_anomalies` registry, `MEZMO_OTEL_*` env vars)
+  visible to later tests — the default `pytest-xdist` parallel mode turns
+  leaked global state into an order-dependent flake. Use the `RunContext`
+  path or a subprocess, or clean up; an autouse env-isolation fixture must
+  out-scope (session, not function) the session fixtures it protects, or it
+  runs *after* they already called `parse_args()` (#17).
 
 **Test resource cost**
 - Fixtures generating full 1-day, 7-day, or `--instances-per-component N > 1` (N=3 and larger) datasets must reuse the session-scoped fixtures already declared in `tests/conftest.py` rather than redefine module-scoped duplicates. A `module`-scoped fixture that runs `main()` end-to-end will re-execute the generator once per test file and multiply suite wall-time and peak RSS by the number of duplicating files (PR #67 had three separate ~1.3 GB N=3 dataset fixtures; PR #63 module-scoped fixtures duplicated session-scoped runs from conftest).
@@ -1680,6 +1702,15 @@ This checklist maps to 13 recurring patterns identified across past PR reviews (
 
 **Default-behavior changes**
 - If a default parameter value or fallback path changes (e.g. unseeded `RandomState`, required arg replacing optional), the PR description names it and tests cover both old and new caller shapes.
+- Production-code determinism regressions are as load-bearing as test ones: a `set` iterated to build output-ordered rows (use `sorted()`), an *unseeded* `RandomState` fallback when `rng` is omitted, an `id()`-based spec identity, or float `datetime.timestamp()*1e9` (use integer `timedelta` arithmetic) all break the documented seed-determinism guarantee (#9/#19/#37).
+
+**CI / workflow / dependency hygiene** — the repo recently gained GitHub Actions, Dependabot, and Socket; none of the headings above cover workflow YAML or packaging, and this was the single largest *uncovered* cluster in the sweep (~40 comments).
+- Pin third-party GitHub Actions and in-workflow `pip install`s to exact versions — SHA-pin actions where practical, and pin security tooling (`socketsecurity`) so a scan is reproducible and not itself a supply-chain vector. Use `python -m pip`, not bare `pip`, after `actions/setup-python` so the install targets the selected interpreter.
+- A job's `permissions:` block grants exactly the scopes its steps need, no more: a step that comments/pushes needs `contents` / `pull-requests: write`; the Actions cache does **not** need an `actions` scope (it authenticates with the runtime token, so `contents: read` is sufficient — a recurring Copilot false positive, see below). Gate secret-bearing triggers on actor/permission, and remember a `pull_request` from a fork gets no secrets (the job silently skips).
+- Two-place version pins (`ruff==` in `pyproject.toml` ↔ `rev:` in `.pre-commit-config.yaml`) must be lint-enforced in lockstep (`check_ruff_lockstep.py`); a Dependabot bump must not silently raise a *declared* `>=` floor in `pyproject.toml` (use `versioning-strategy: lockfile-only`); and the Dependabot `package-ecosystem` must match a lockfile that actually exists (`uv` needs a committed `uv.lock`).
+- Docs that tell users to run a tool ensure it is in the `dev` extra; `addopts` plugin flags (`-n`) require a matching `required_plugins = [...]`; workflow shell snippets must not assume runner-image tools (`jq`) without installing them and must handle the real JSON payload shape; inline workflow comments must be factually correct about Actions semantics.
+- A new `tools/check_*.py` lint honors the `0`/`1`/`2` exit-code contract in its own docstring: wrap `json.loads`, file reads, and `gh` subprocess calls so a decode/IO failure exits `2` (structural) — not a traceback, and not `1` (which means "violation"); check `path.exists()` *before* skip-rules; parse `gh api --paginate` page-by-page (it can emit multiple concatenated JSON documents); use anchored/full-token matching for markers and pins.
+- Keep `.github/copilot-instructions.md` and `.github/PULL_REQUEST_TEMPLATE.md` in lockstep with the registry contracts and checklist headings they mirror — a stale reviewer-instructions file makes Copilot flag correct code as buggy (#44).
 
 ### Reviewer-before-ready gate
 
@@ -1687,6 +1718,35 @@ PRs open as **draft** and walk the pre-PR checklist above before draft
 status is removed. The pre-PR checklist is the structural backstop —
 caught-in-draft issues are fixed before Copilot's first review, not
 after.
+
+### Known Copilot false-positives (verify, don't reflexively fix)
+
+The maintainer accepted ~98% of Copilot's flags across 122 PRs, so the
+default is to treat a flag as actionable. The few *recurring* exceptions —
+worth recognizing so they don't cost a cycle of re-litigation:
+
+- **Cumulative-diff re-flagging.** Copilot reviews the PR's *cumulative*
+  diff, so it re-flags an issue you already fixed in a later commit of the
+  same PR. Verify against current `HEAD` before "fixing" it again (#80).
+- **Triplicated drift.** The same stale sentence flagged from three nearby
+  hunks is one defect, not three — fix once (#14/#20/#27).
+- **`contents: read` "breaks" the `setup-uv` / Actions cache.** False. The
+  cache authenticates with the runtime token (`ACTIONS_RUNTIME_TOKEN`),
+  independent of the `GITHUB_TOKEN` `permissions:` block, so caching works
+  fine under `contents: read` (#117).
+- **"Secrets can be referenced in a step-level `if:`."** False — they
+  cannot, at job *or* step level (GitHub docs / actions/runner#520). Mapping
+  the secret to `env` and gating on a derived step output is required, not a
+  workaround to remove (#118).
+- **"Skip the preflight cell-cap when `--emit` excludes `metrics`."** False
+  — `generate_component()` still allocates the full array and runs the
+  pipeline regardless of emit selection; only the final write is gated, so
+  the OOM the cap prevents still happens. Only the `combine`/`validate`
+  subcommands (which `return` before generation) are safe skips (#35).
+
+Verification rule: for any version-sensitive claim about a tool's semantics
+(Actions, uv, Dependabot, pytest), confirm against current docs before
+accepting — Copilot's confident-but-wrong claims cluster there.
 
 ### External-comment role-name lint
 
