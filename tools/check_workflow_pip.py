@@ -168,6 +168,17 @@ def _check_file(path: Path) -> list[str]:
                     f"exact pin: {', '.join(bad_pin)}"
                 )
                 continue
+            # `"==" in pkg` accepts a wildcard like `pkg==2.*`, which is not a
+            # reproducible exact version. Reject any version containing `*`
+            # (Copilot, PR #125).
+            wildcard = [pkg for pkg in packages if "*" in pkg.split("==", 1)[1]]
+            if wildcard:
+                violations.append(
+                    f"{path}:{lineno}: pip install package(s) use a wildcard "
+                    f"version, not a reproducible '==X.Y.Z' exact pin: "
+                    f"{', '.join(wildcard)}"
+                )
+                continue
     return violations
 
 

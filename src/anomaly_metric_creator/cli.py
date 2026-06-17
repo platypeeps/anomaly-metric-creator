@@ -21,6 +21,17 @@ def _load_legacy_module() -> ModuleType:
         return _LEGACY_MODULE
 
     script_path = Path(__file__).resolve().parents[2] / "anomaly-metric-creator.py"
+    if not script_path.is_file():
+        # The package bridges to the repo's single-file script; running spec /
+        # exec on a missing path raises FileNotFoundError mid-load. Fail
+        # predictably instead: the console scripts only work from a source
+        # checkout or editable install, not a built wheel/sdist that does not
+        # ship anomaly-metric-creator.py.
+        raise RuntimeError(
+            f"legacy CLI module not found at {script_path}; the 'amc' / "
+            "'anomaly-metric-creator' console scripts require a source checkout "
+            "or editable install (the wheel does not package the legacy script)."
+        )
     spec = importlib.util.spec_from_file_location(
         "anomaly_metric_creator._legacy", script_path
     )

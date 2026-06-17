@@ -84,6 +84,14 @@ def test_python_m_pip_unpinned_package_rejected(tmp_path: Path) -> None:
     assert "exact '==' pin" in result.stderr
 
 
+def test_python_m_pip_wildcard_pin_rejected(tmp_path: Path) -> None:
+    # `==2.*` contains `==` but is a wildcard, not a reproducible exact pin
+    # — must be rejected (Copilot, #125).
+    result = _run(_wf(tmp_path, "python -m pip install socketsecurity==2.*"))
+    assert result.returncode == 1
+    assert "wildcard" in result.stderr
+
+
 def test_python_m_pip_upgrade_rejected(tmp_path: Path) -> None:
     result = _run(_wf(tmp_path, "python -m pip install --upgrade socketsecurity"))
     assert result.returncode == 1

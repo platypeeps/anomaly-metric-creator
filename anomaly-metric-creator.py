@@ -8493,16 +8493,23 @@ def combine_logs_unified(components, input_dir, output_file=None):
             path: Path = input_path,
             metrics: list[str] = metric_names,
         ):
-            seen_in_component = {}
+            previous_timestamp = None
+            occurrence = 0
             with open(path, "r", encoding="utf-8", newline="") as infile:
                 reader = csv.DictReader(infile)
                 for row in reader:
                     timestamp = row["timestamp"]
-                    # DST fall-back duplicates the 02:00-02:59 wall-clock hour;
-                    # the occurrence index keeps both copies (non-DST rows
-                    # always 0) without materializing the full component file.
-                    occurrence = seen_in_component.get(timestamp, 0)
-                    seen_in_component[timestamp] = occurrence + 1
+                    # This generator only feeds the monotonic ``heapq.merge``
+                    # path, so any duplicate timestamps (the DST fall-back
+                    # 02:00-02:59 wall-clock hour) arrive consecutively. Track
+                    # only the previous timestamp + a running occurrence index
+                    # (non-DST rows always 0) instead of a full per-timestamp
+                    # dict, keeping the stream O(1) in memory.
+                    if timestamp == previous_timestamp:
+                        occurrence += 1
+                    else:
+                        occurrence = 0
+                        previous_timestamp = timestamp
                     yield (
                         timestamp,
                         occurrence,
@@ -8576,15 +8583,28 @@ def combine_logs_unified(components, input_dir, output_file=None):
 
 
 def _wide_component_rows_are_monotonic(input_path: Path) -> bool:
-    """Return false when a wide component CSV's timestamp keys move backward."""
-    seen_in_component = {}
+    """Return false when a wide component CSV's timestamp keys move backward.
+
+    Duplicate timestamps (the DST fall-back wall-clock hour) are only valid
+    when consecutive, so the occurrence index is tracked with a running
+    counter against the previous timestamp rather than a full per-timestamp
+    dict — keeping the scan O(1) in memory. A non-consecutive duplicate
+    necessarily implies an earlier strictly-backward timestamp step, which
+    this loop already reports as non-monotonic before the occurrence value
+    could diverge from the dict-based count.
+    """
     previous_key = None
+    previous_timestamp = None
+    occurrence = 0
     with open(input_path, "r", encoding="utf-8", newline="") as infile:
         reader = csv.DictReader(infile)
         for row in reader:
             timestamp = row["timestamp"]
-            occurrence = seen_in_component.get(timestamp, 0)
-            seen_in_component[timestamp] = occurrence + 1
+            if timestamp == previous_timestamp:
+                occurrence += 1
+            else:
+                occurrence = 0
+                previous_timestamp = timestamp
             key = (timestamp, occurrence)
             if previous_key is not None and key < previous_key:
                 return False
@@ -10469,10 +10489,15 @@ def _validate_schema_document_shape(schema_path: Path, document) -> dict:
     _validate_string_list_schema_shape(
         schema_path, metadata.get("emit_selection"), "$.metadata.emit_selection"
     )
-    _require_schema_number(
+    rows_per_component = _require_schema_number(
         schema_path, metadata.get("rows_per_component"),
         "$.metadata.rows_per_component",
     )
+    if not isinstance(rows_per_component, int) or rows_per_component <= 0:
+        raise _schema_shape_error(
+            schema_path, "$.metadata.rows_per_component",
+            "expected positive integer",
+        )
     interval_seconds = _require_schema_number(
         schema_path, metadata.get("interval_seconds"),
         "$.metadata.interval_seconds",
@@ -10497,10 +10522,15 @@ def _validate_schema_document_shape(schema_path: Path, document) -> dict:
         raise _schema_shape_error(
             schema_path, "$.metadata.drop_rate", "expected value in [0, 1]"
         )
-    _require_schema_number(
+    inject_dst_artifact_day = _require_schema_number(
         schema_path, metadata.get("inject_dst_artifact_day"),
         "$.metadata.inject_dst_artifact_day",
     )
+    if not isinstance(inject_dst_artifact_day, int) or inject_dst_artifact_day < 0:
+        raise _schema_shape_error(
+            schema_path, "$.metadata.inject_dst_artifact_day",
+            "expected non-negative integer",
+        )
 
     _validate_string_list_schema_shape(schema_path, document.get("files"), "$.files")
     components_payload = _require_schema_mapping(
