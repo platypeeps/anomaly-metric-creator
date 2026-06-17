@@ -131,7 +131,10 @@ def _check_file(path: Path) -> list[str]:
         if not _PIP_INSTALL_LINE.search(line):
             continue
         try:
-            tokens = shlex.split(line, comments=False, posix=True)
+            # comments=True so a trailing shell comment (`pip install x==1  #
+            # note`) or a comment-only line mentioning pip is not tokenized as
+            # extra package args / a bare call (Copilot, PR #125).
+            tokens = shlex.split(line, comments=True, posix=True)
         except ValueError as exc:
             violations.append(f"{path}:{lineno}: cannot parse shell line: {exc}")
             continue

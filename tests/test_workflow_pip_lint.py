@@ -92,6 +92,19 @@ def test_python_m_pip_wildcard_pin_rejected(tmp_path: Path) -> None:
     assert "wildcard" in result.stderr
 
 
+def test_pinned_install_with_trailing_comment_passes(tmp_path: Path) -> None:
+    # A trailing shell comment must not be tokenized as extra "package" args
+    # and falsely flagged as unpinned (Copilot, #125).
+    result = _run(_wf(tmp_path, "python -m pip install requests==2.32.5  # pinned"))
+    assert result.returncode == 0, result.stderr
+
+
+def test_comment_only_pip_mention_passes(tmp_path: Path) -> None:
+    # A comment that merely mentions "pip install" is not a real invocation.
+    result = _run(_wf(tmp_path, "echo done  # later: pip install something"))
+    assert result.returncode == 0, result.stderr
+
+
 def test_python_m_pip_upgrade_rejected(tmp_path: Path) -> None:
     result = _run(_wf(tmp_path, "python -m pip install --upgrade socketsecurity"))
     assert result.returncode == 1
