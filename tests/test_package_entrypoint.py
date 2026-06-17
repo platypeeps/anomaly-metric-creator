@@ -8,6 +8,7 @@ from anomaly_metric_creator import cli
 def test_package_entrypoint_loads_legacy_main() -> None:
     legacy = cli._load_legacy_module()
     assert callable(legacy.main)
+    assert legacy.__name__ == "anomaly_metric_creator.legacy"
 
 
 def test_package_entrypoint_memoizes_legacy_module() -> None:

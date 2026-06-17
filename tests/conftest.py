@@ -12,6 +12,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "anomaly-metric-creator.py"
+MODULE_PATH = REPO_ROOT / "src" / "anomaly_metric_creator" / "legacy.py"
 
 
 _AMC_MODULE_CACHE = None
@@ -23,7 +24,9 @@ def _load_amc():
     # of paying for two full ``exec_module`` builds of the registry.
     global _AMC_MODULE_CACHE
     if _AMC_MODULE_CACHE is None:
-        spec = importlib.util.spec_from_file_location("anomaly_metric_creator", SCRIPT_PATH)
+        spec = importlib.util.spec_from_file_location(
+            "anomaly_metric_creator_legacy", MODULE_PATH
+        )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         _AMC_MODULE_CACHE = module
