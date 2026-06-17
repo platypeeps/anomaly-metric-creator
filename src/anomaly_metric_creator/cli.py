@@ -8,18 +8,20 @@ incrementally moving cohesive areas into package modules.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 from pathlib import Path
 from types import ModuleType
 
-_LEGACY_MODULE: ModuleType | None = None
 
-
+@functools.cache
 def _load_legacy_module() -> ModuleType:
-    global _LEGACY_MODULE
-    if _LEGACY_MODULE is not None:
-        return _LEGACY_MODULE
+    """Load and memoize the legacy single-file script as a module.
 
+    ``functools.cache`` is the singleton: the ~600 KB script is exec'd once
+    and the resulting module is returned on every subsequent call. A raised
+    ``RuntimeError`` (missing script) is not cached, so a later call retries.
+    """
     script_path = Path(__file__).resolve().parents[2] / "anomaly-metric-creator.py"
     if not script_path.is_file():
         # The package bridges to the repo's single-file script; running spec /
@@ -39,7 +41,6 @@ def _load_legacy_module() -> ModuleType:
         raise RuntimeError(f"cannot load legacy CLI module from {script_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    _LEGACY_MODULE = module
     return module
 
 
