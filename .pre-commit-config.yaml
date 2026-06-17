@@ -76,3 +76,16 @@ repos:
         stages: [pre-push]
         always_run: true
         pass_filenames: false
+      # Forbid bare `pip install` in GitHub Actions workflows. After
+      # `actions/setup-python`, a bare `pip` can resolve to a different
+      # interpreter than the one just selected, so the install lands in the
+      # wrong environment — use `python -m pip install` (`uv pip install` is
+      # also fine). PR #118 shipped a bare `pip install` in socket.yml; this
+      # catches the pattern structurally. Exempt a line with a trailing
+      # `# pip-lint: allow`. See CLAUDE.md "Workflow pip lint".
+      - id: workflow-pip
+        name: forbid bare 'pip install' in workflows
+        entry: python tools/check_workflow_pip.py
+        language: python
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: true

@@ -1,0 +1,112 @@
+"""Acceptance tests for `tools/check_workflow_pip.py`.
+
+The lint forbids bare `pip install` in GitHub Actions workflows (the robust
+form is `python -m pip install`, which targets the interpreter
+`actions/setup-python` selected). `uv pip install` is also allowed. PR #118
+shipped a bare `pip install` in `socket.yml`; this guard catches the pattern
+structurally.
+
+Pin the behaviors the script promises in its docstring:
+
+- `python -m pip install` and `uv pip install` pass (exit 0);
+- bare `pip install` and `pip3 install` are rejected (exit 1) with a
+  diagnostic naming the line;
+- `pipx install` is not matched (different tool);
+- a line mixing a good and a bare invocation is still flagged;
+- a trailing `# pip-lint: allow` exempts the line;
+- exit codes 0 clean / 1 violation / 2 argument-or-IO error (no args,
+  missing path);
+- the repo's own `.github/workflows/*.yml` are clean (regression guard on
+  the live files).
+
+Mirrors the layout of `tests/test_branch_name_lint.py` and the other
+`*_lint.py` guardrail tests.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = REPO_ROOT / "tools" / "check_workflow_pip.py"
+
+
+def _run(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _wf(tmp_path: Path, run_line: str) -> str:
+    """Write a minimal one-step workflow whose run command is `run_line`."""
+    path = tmp_path / "wf.yml"
+    path.write_text(
+        "name: t\non: [push]\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        f"      - run: {run_line}\n",
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_python_m_pip_passes(tmp_path: Path) -> None:
+    result = _run(_wf(tmp_path, "python -m pip install --upgrade socketsecurity"))
+    assert result.returncode == 0, result.stderr
+
+
+def test_uv_pip_passes(tmp_path: Path) -> None:
+    result = _run(_wf(tmp_path, "uv pip install pytest"))
+    assert result.returncode == 0, result.stderr
+
+
+def test_bare_pip_rejected(tmp_path: Path) -> None:
+    wf = _wf(tmp_path, "pip install requests")
+    result = _run(wf)
+    assert result.returncode == 1
+    assert "bare 'pip install'" in result.stderr
+    assert "wf.yml" in result.stderr
+
+
+def test_pip3_rejected(tmp_path: Path) -> None:
+    result = _run(_wf(tmp_path, "pip3 install requests"))
+    assert result.returncode == 1
+
+
+def test_pipx_not_matched(tmp_path: Path) -> None:
+    result = _run(_wf(tmp_path, "pipx install ruff"))
+    assert result.returncode == 0, result.stderr
+
+
+def test_mixed_line_still_flagged(tmp_path: Path) -> None:
+    # A good invocation earlier on the line must not mask a bare one later.
+    result = _run(_wf(tmp_path, "python -m pip install -U pip && pip install x"))
+    assert result.returncode == 1
+
+
+def test_allow_marker_exempts(tmp_path: Path) -> None:
+    result = _run(_wf(tmp_path, "pip install legacy-thing  # pip-lint: allow"))
+    assert result.returncode == 0, result.stderr
+
+
+def test_no_args_exits_two() -> None:
+    result = _run()
+    assert result.returncode == 2
+
+
+def test_missing_path_exits_two(tmp_path: Path) -> None:
+    result = _run(str(tmp_path / "does-not-exist.yml"))
+    assert result.returncode == 2
+
+
+def test_real_repo_workflows_clean() -> None:
+    # Regression guard on the live workflow files: they must already use
+    # `python -m pip` / `uv`, so the lint passes today and only the
+    # introduction of a bare `pip install` makes it fail.
+    workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+    assert workflows, "expected at least one workflow file to guard"
+    result = _run(*(str(w) for w in workflows))
+    assert result.returncode == 0, result.stderr
