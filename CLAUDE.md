@@ -1,8 +1,14 @@
 # CLAUDE.md
 
-Agent guide for `anomaly-metric-creator.py`. User-facing usage, install, CLI reference,
-output files, and the anomaly catalog live in [README.md](README.md). Read it first
-if you need to run the script or understand the failure modes it injects.
+Agent guide for the anomaly metric creator. The canonical implementation is
+`src/anomaly_metric_creator/legacy.py`; the top-level `anomaly-metric-creator.py` is a
+thin compatibility shim that re-exports it and runs `main()`, and the installed `amc` /
+`anomaly-metric-creator` console scripts dispatch through `anomaly_metric_creator.cli`.
+Edit `legacy.py` for any behavior change — the shim and `cli.py` are wiring only, so
+`python anomaly-metric-creator.py …`, a `pip install .` console script, and the test
+suite all drive the same code. User-facing usage, install, CLI reference, output files,
+and the anomaly catalog live in [README.md](README.md). Read it first if you need to run
+the script or understand the failure modes it injects.
 
 ## Architecture
 
@@ -1517,10 +1523,10 @@ Once the slot exists, the column flows through `_natural_column()` and
 
 ### Adding new components
 
-A new component needs two lockstep entries in `anomaly-metric-creator.py` and two
-in `tests/conftest.py`:
+A new component needs two lockstep entries in `src/anomaly_metric_creator/legacy.py`
+and two in `tests/conftest.py`:
 
-In `anomaly-metric-creator.py`:
+In `src/anomaly_metric_creator/legacy.py`:
 
 1. `COMPONENTS[name]` — ordered `MetricSpec` list (up to `MAX_METRICS_PER_COMPONENT`).
 2. `DEFAULT_METRICS_PER_COMPONENT[name]` — how many metrics the new component
@@ -1670,8 +1676,9 @@ When a recurring issue is *mechanical* (a greppable shape), prefer turning it in
   `.venv/bin/pre-commit run --all-files` or `.venv/bin/ruff check tests/`
   locally if the commit hook is not installed.
 - New test files reuse the session-scoped `amc` fixture from
-  `tests/conftest.py` and do not re-import `anomaly-metric-creator.py`
-  via `importlib.util.spec_from_file_location(...)`. The
+  `tests/conftest.py` and do not re-import the implementation module
+  (`src/anomaly_metric_creator/legacy.py`) via
+  `importlib.util.spec_from_file_location(...)`. The
   `amc-no-direct-spec-load` pre-commit hook
   (`tools/check_amc_module_load.py`) catches this structurally — PR #63
   and PR #64 each shipped a module-scoped `amc` fixture that re-built

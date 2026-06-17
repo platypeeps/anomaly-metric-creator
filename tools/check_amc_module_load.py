@@ -2,14 +2,15 @@
 """Forbid duplicate amc module loads in tests/.
 
 `tests/conftest.py:_load_amc()` is the single canonical entry point for
-loading `anomaly-metric-creator.py` as an importable module. Other test
+loading the implementation module (`src/anomaly_metric_creator/legacy.py`)
+as an importable module. Other test
 files MUST consume the session-scoped `amc` fixture rather than re-issue
 `importlib.util.spec_from_file_location(...).exec_module(...)`. The
 duplicate exec_module pays the full registry-validation cost again.
 
 This lint catches the duplication pattern an earlier engineering
 review surfaced on PR #63 and PR #64, where new test files re-imported
-``anomaly-metric-creator.py`` instead of consuming the shared fixture.
+the implementation module instead of consuming the shared fixture.
 
 The check walks each file's AST and flags any *call* whose target is
 the identifier `spec_from_file_location`. Patterns caught:
