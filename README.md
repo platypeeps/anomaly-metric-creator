@@ -91,7 +91,9 @@ python3 -m venv .venv
 ```
 
 Editable installs expose both `amc` and `anomaly-metric-creator` console
-scripts. The source file remains directly runnable for checkout-local workflows.
+scripts. The examples below use `amc`; from a source checkout without installing,
+substitute `python3 anomaly-metric-creator.py` for `amc` in any command — both
+drive the same CLI.
 
 ## Usage
 
@@ -106,40 +108,40 @@ amc
 amc --duration-days 7
 
 # Finer sampling: one row every 5 seconds (17,280 rows per component for 1 day).
-python3 anomaly-metric-creator.py --duration-days 1 --interval-seconds 5
+amc --duration-days 1 --interval-seconds 5
 
 # Generate logs and produce the unified joined CSV in one shot:
-python3 anomaly-metric-creator.py --emit metrics,logs,traces,combined
+amc --emit metrics,logs,traces,combined
 
 # Skip generation; only build the unified CSV from an existing output dir:
-python3 anomaly-metric-creator.py combine iot_logs
+amc combine iot_logs
 
 # Validate an existing output dir against its schema.json:
-python3 anomaly-metric-creator.py validate iot_logs
+amc validate iot_logs
 
 # Emit only a subset of artifact types:
-python3 anomaly-metric-creator.py --emit metrics,logs
-python3 anomaly-metric-creator.py --emit traces
+amc --emit metrics,logs
+amc --emit traces
 
 # Emit only a subset of components (CSVs, anomalies.csv, reporting artifacts,
 # and OTEL streaming are all filtered to just these components):
-python3 anomaly-metric-creator.py --components authservice,database
+amc --components authservice,database
 
 # Pick the signal intensity level: low (only benign baseline shifts),
 # medium (default — today's full catalog), or high (additionally activates
 # the high-pressure cross-component scenarios):
-python3 anomaly-metric-creator.py --signal-level high
+amc --signal-level high
 
 # Run only the coordinated cache+DB meltdown scenario at high signal level:
-python3 anomaly-metric-creator.py --signal-level high --scenarios cache_db_meltdown
+amc --signal-level high --scenarios cache_db_meltdown
 
 # Run all scenarios except LLM-related ones and the Monday baseline:
-python3 anomaly-metric-creator.py --exclude-scenarios llm_viral_surge_day2,llm_enterprise_onboarding,llm_rate_limit_fallout,llm_weekend_batch,llm_second_viral,llm_provider_outage,monday_baseline
+amc --exclude-scenarios llm_viral_surge_day2,llm_enterprise_onboarding,llm_rate_limit_fallout,llm_weekend_batch,llm_second_viral,llm_provider_outage,monday_baseline
 
 # Run the full default catalog at 7 days but drop the JWKS rotation scenario
 # (handy when you want every other multi-day scenario without re-typing the
 # full slug list):
-python3 anomaly-metric-creator.py --duration-days 7 --exclude-scenarios jwks_rotation_chaos
+amc --duration-days 7 --exclude-scenarios jwks_rotation_chaos
 
 # Selector composition order: --scenarios (allowlist) → --exclude-scenarios
 # (denylist, wins on overlap) → --signal-level (severity gate) →
@@ -150,19 +152,19 @@ python3 anomaly-metric-creator.py --duration-days 7 --exclude-scenarios jwks_rot
 # Cap the total anomaly count across the whole dataset (deterministic for a
 # given --seed). Useful for keeping noisy test datasets small or sweeping
 # across anomaly density:
-python3 anomaly-metric-creator.py --anomaly-count 25
+amc --anomaly-count 25
 
 # Cap the metric columns emitted per component (1..10). Each component emits
 # the first N of its priority-ordered catalog. Omit the flag to keep the
 # historic default per-component count:
-python3 anomaly-metric-creator.py --metrics-per-component 3
-python3 anomaly-metric-creator.py --metrics-per-component 10
+amc --metrics-per-component 3
+amc --metrics-per-component 10
 
 # Stream anomaly events as OTLP signals while generating locally:
 # OTEL streaming is OFF by default; pass --otel-send to opt in.
 # --otel-endpoint derives the per-signal URLs (BASE/v1/logs, /v1/metrics,
 # /v1/traces) for the selected signals.
-python3 anomaly-metric-creator.py \
+amc \
   --otel-send logs,metrics,traces \
   --otel-endpoint http://localhost:4318 \
   --otel-stream-speedup 3600
@@ -170,11 +172,11 @@ python3 anomaly-metric-creator.py \
 # Stream with signal-specific env controls (still requires --otel-send):
 MEZMO_OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
 MEZMO_OTEL_LOGS_AUTH_TOKEN=secret \
-python3 anomaly-metric-creator.py --otel-send logs
+amc --otel-send logs
 
 # Additionally stream per-row metric values as OTLP Gauge data points
 # (alongside the anomaly-counter/log/trace signal stream):
-python3 anomaly-metric-creator.py \
+amc \
   --otel-send logs,metrics,traces,gauges \
   --otel-endpoint http://localhost:4318 \
   --otel-gauge-batch-seconds 60 \
@@ -182,7 +184,7 @@ python3 anomaly-metric-creator.py \
 
 # Stream only per-row Gauge data points, skipping anomaly-counter/log/trace
 # OTEL signals:
-python3 anomaly-metric-creator.py \
+amc \
   --otel-send gauges \
   --otel-endpoint http://localhost:4318 \
   --otel-stream-protocol json
@@ -347,7 +349,7 @@ adding `gauges` to `--emit` (requires `metrics`) and a long-form
 CSV is written alongside the per-component CSVs.
 
 ```
-python3 anomaly-metric-creator.py --emit metrics,gauges
+amc --emit metrics,gauges
 ```
 
 Schema (header row 1; columns locked):
@@ -414,7 +416,7 @@ document is the single source of truth the `validate` subcommand consumes to
 check the run after the fact.
 
 ```
-python3 anomaly-metric-creator.py --emit metrics,schema
+amc --emit metrics,schema
 ```
 
 Top-level shape (`schema_version=2`, bumped in phase 7):
@@ -475,10 +477,10 @@ run's artifacts are consistent with its declared shape:
 
 ```sh
 # Hard-fail mode: reports every violation and exits 1 if there are any.
-python3 anomaly-metric-creator.py validate iot_logs
+amc validate iot_logs
 
 # Soft mode: violations go to stderr, exit code stays 0.
-python3 anomaly-metric-creator.py validate iot_logs --warn
+amc validate iot_logs --warn
 ```
 
 The validator loads `DIR/schema.json` and runs:
