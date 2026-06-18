@@ -8374,11 +8374,22 @@ def discover_components(input_dir):
     return components
 
 
-def combine_logs_unified(components, input_dir, output_file=None):
+def combine_logs_unified(
+    components,
+    input_dir,
+    output_file=None,
+    *,
+    assume_monotonic_wide_components=None,
+):
     """Join the per-component CSVs in ``input_dir`` into a single unified CSV.
 
     ``output_file`` defaults to ``input_dir/combined_metrics_unified.csv``.
-    Returns ``(total_rows, size_mb)``.
+    Returns ``(total_rows, size_mb)``. ``assume_monotonic_wide_components``
+    is an optional allowlist for trusted, freshly-generated wide CSVs whose
+    rows are known to be timestamp-monotonic, letting the normal non-DST
+    generation path avoid a second full-file scan. Components not in that set
+    still take the conservative scan so hand-staged/autodiscovered CSVs keep
+    the same safety behavior as direct ``combine`` calls.
 
     Layout is chosen by header inspection of the per-component CSVs:
 
@@ -8450,6 +8461,11 @@ def combine_logs_unified(components, input_dir, output_file=None):
     component_metrics = {}
     row_streams = []
     nonmonotonic_components = []
+    trusted_monotonic_components = (
+        set(assume_monotonic_wide_components)
+        if assume_monotonic_wide_components is not None
+        else None
+    )
 
     for component in components:
         input_path = input_dir / f"{component}.csv"
@@ -8518,7 +8534,10 @@ def combine_logs_unified(components, input_dir, output_file=None):
                     )
 
         row_streams.append(_iter_component_rows())
-        if not _wide_component_rows_are_monotonic(input_path):
+        if (
+            trusted_monotonic_components is None
+            or component not in trusted_monotonic_components
+        ) and not _wide_component_rows_are_monotonic(input_path):
             nonmonotonic_components.append(component)
 
     fieldnames = ["timestamp"]
@@ -8749,7 +8768,7 @@ def _write_combined_long_form(
     return rows_written
 
 
-def combine_logs(input_dir, components=None):
+def combine_logs(input_dir, components=None, *, assume_monotonic_wide_components=None):
     """Write the unified combined CSV from per-component CSVs in ``input_dir``.
 
     When ``components`` is ``None``, the combine step autodiscovers every
@@ -8789,7 +8808,11 @@ def combine_logs(input_dir, components=None):
                 f"missing component CSVs in {input_dir}: "
                 f"{', '.join(missing)}"
             )
-    return combine_logs_unified(components, input_dir)
+    return combine_logs_unified(
+        components,
+        input_dir,
+        assume_monotonic_wide_components=assume_monotonic_wide_components,
+    )
 
 
 def _anomaly_event_id(entry: dict) -> str:
@@ -12786,7 +12809,21 @@ def main(argv=None):
         )
 
     if args.combine:
-        combine_logs(args.output_dir, components=combine_components)
+        # Freshly-generated, non-DST component CSVs are emitted in chronological
+        # order, so the wide combine writer can skip its defensive monotonic
+        # pre-scan for those known components. Autodiscovered extra CSVs (when
+        # ``combine_components`` is None) are not in this allowlist and still
+        # get scanned before the streaming merge is trusted.
+        assume_monotonic_wide_components = (
+            set(args.components)
+            if args.inject_dst_artifact_day == 0
+            else None
+        )
+        combine_logs(
+            args.output_dir,
+            components=combine_components,
+            assume_monotonic_wide_components=assume_monotonic_wide_components,
+        )
 
     written = []
     if "metrics" in args.emit_selection:
