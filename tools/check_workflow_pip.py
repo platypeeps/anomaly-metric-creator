@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Forbid bare ``pip install`` in GitHub Actions workflows.
+"""Forbid bare or unpinned ``pip install`` in GitHub Actions workflows.
 
 After ``actions/setup-python`` runs, a bare ``pip`` can resolve to a
 different interpreter than the one just selected (PATH ordering), so the
 install can land in the wrong environment. The robust form is
 ``python -m pip install``, which always targets the selected interpreter;
-``uv pip install`` (uv-managed) is also fine. PR #118 shipped a bare
-``pip install`` in ``socket.yml``; this lint catches the pattern
+``uv pip install`` (uv-managed) is also fine. Direct third-party installs
+must use exact ``==`` pins so CI tooling is reproducible. PR #118 shipped a
+bare ``pip install`` in ``socket.yml``; this lint catches the pattern
 structurally instead of relying on Copilot to flag it on each new workflow.
 
 Invoked by the ``workflow-pip`` pre-commit hook with the staged
@@ -19,19 +20,20 @@ A line with a trailing ``# pip-lint: allow`` is exempt (the check is
 ``line.rstrip().endswith(...)``, so a mid-line occurrence inside a string
 literal does not exempt the line).
 
-Detection: a ``pip``/``pip3`` ``install`` invocation whose immediately
-preceding whitespace-delimited token is neither ``uv`` (``uv pip``) nor a
-single-dash short-flag group ending in ``m`` (``-m``, or combined forms like
-``-Im``, with any spacing after) is bare. Long ``--flags``, ``pipx``, and
-other tokens do not exempt it. A line mixing a good and a bare invocation
-(``python -m pip … && pip install …``) is still flagged — each ``pip
-install`` occurrence is checked independently.
+Detection: each shell-tokenized ``pip``/``pip3`` ``install`` invocation whose
+immediately preceding token is neither ``uv`` (``uv pip``) nor a single-dash
+short-flag group ending in ``m`` (``-m``, or combined forms like ``-Im``) is
+bare. Long ``--flags``, ``pipx``, and other tokens do not exempt it. A line
+mixing a good and a bare invocation (``python -m pip … && pip install …``) is
+still flagged — each ``pip install`` occurrence is checked independently.
+For non-bare installs, direct package arguments must contain an exact ``==``
+pin, and ``--upgrade`` / ``-U`` is rejected because it defeats reproducibility.
 
 Exit codes:
 
-* ``0`` — no bare ``pip install`` in any checked file.
-* ``1`` — at least one bare ``pip install``; one diagnostic per hit plus a
-  one-line policy footer to stderr.
+* ``0`` — no bare or unpinned ``pip install`` in any checked file.
+* ``1`` — at least one bare or unpinned ``pip install``; one diagnostic per
+  hit plus a one-line policy footer to stderr.
 * ``2`` — argument or I/O error: no paths given, a path that does not exist,
   or a file that cannot be read or UTF-8-decoded.
 """
@@ -39,28 +41,86 @@ Exit codes:
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from pathlib import Path
 
-# A ``pip``/``pip3`` ``install`` invocation. The token immediately before
-# ``pip`` decides whether the call is bare (see ``_NON_BARE_PREFIX``).
-# ``pipx install`` does not match: ``[ \t]+`` cannot consume the ``x``.
-_PIP_INSTALL = re.compile(r"\bpip3?\b[ \t]+install\b")
-
-# The text preceding ``pip`` is non-bare when its last whitespace-delimited
-# token is ``uv`` (``uv pip``) or a single-dash short-flag group ending in
-# ``m`` (``python -m pip``; combined forms like ``-Im``; any spacing after).
-# Long ``--flags`` do not match (the inner ``-`` is not ``\w``), so a genuine
-# bare ``pip`` is still caught. Token-based rather than a fixed-width
-# lookbehind so combined ``-m`` flags and extra whitespace are handled
-# robustly (Copilot, PR #124).
-_NON_BARE_PREFIX = re.compile(r"(?:^|\s)(?:uv|-[A-Za-z0-9]*m)[ \t]*$")
+_PYTHON_MODULE_FLAG = re.compile(r"^-[A-Za-z0-9]*m$")
+_PIP_INSTALL_LINE = re.compile(r"\bpip3?\b\s+install\b")
 
 _ALLOW_MARKER = "# pip-lint: allow"
+_COMMAND_SEPARATORS = {"&&", "||", ";", "|"}
+_UPGRADE_FLAGS = {"--upgrade", "-U"}
+_OPTIONS_WITH_VALUE = {
+    "-c", "--constraint",
+    "-e", "--editable",
+    "-f", "--find-links",
+    "-i", "--index-url",
+    "-r", "--requirement",
+    "-t", "--target",
+    "--abi",
+    "--config-settings",
+    "--extra-index-url",
+    "--implementation",
+    "--platform",
+    "--prefix",
+    "--python",
+    "--python-version",
+    "--root",
+    "--src",
+    "--trusted-host",
+    "--upgrade-strategy",
+}
+
+
+def _is_non_bare_pip(tokens: list[str], pip_index: int) -> bool:
+    if pip_index == 0:
+        return False
+    previous = tokens[pip_index - 1]
+    return previous == "uv" or bool(_PYTHON_MODULE_FLAG.fullmatch(previous))
+
+
+def _direct_install_args(tokens: list[str], install_index: int) -> list[str]:
+    args = []
+    for token in tokens[install_index + 1:]:
+        if token in _COMMAND_SEPARATORS:
+            break
+        args.append(token)
+    return args
+
+
+def _package_args(install_args: list[str]) -> tuple[list[str], bool]:
+    packages = []
+    has_upgrade = False
+    skip_next = False
+    for token in install_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in _UPGRADE_FLAGS:
+            has_upgrade = True
+            continue
+        if token in _OPTIONS_WITH_VALUE:
+            skip_next = True
+            continue
+        if any(token.startswith(option + "=") for option in _OPTIONS_WITH_VALUE):
+            continue
+        if token.startswith("-"):
+            continue
+        # Local paths are not third-party dependencies; their reproducibility is
+        # governed by the checked-out tree rather than a package-index resolver.
+        if (
+            token == "."
+            or token.startswith(("./", "../", "/"))
+            or token.endswith(".whl")
+        ):
+            continue
+        packages.append(token)
+    return packages, has_upgrade
 
 
 def _check_file(path: Path) -> list[str]:
-    """Return one diagnostic line per bare-``pip install`` hit in ``path``.
+    """Return one diagnostic line per workflow ``pip install`` hit in ``path``.
     Raises ``OSError`` or ``UnicodeError`` (both re-raised by ``main`` as
     exit 2) if the file cannot be read or UTF-8-decoded."""
     violations: list[str] = []
@@ -68,15 +128,60 @@ def _check_file(path: Path) -> list[str]:
     for lineno, line in enumerate(text.splitlines(), start=1):
         if line.rstrip().endswith(_ALLOW_MARKER):
             continue
-        for match in _PIP_INSTALL.finditer(line):
-            if _NON_BARE_PREFIX.search(line[: match.start()]):
-                continue  # python -m pip / -Im pip / uv pip → fine
-            violations.append(
-                f"{path}:{lineno}: bare 'pip install' — use "
-                "'python -m pip install' (or 'uv pip install') so the install "
-                "targets the interpreter actions/setup-python selected."
-            )
-            break  # one diagnostic per line is enough
+        if not _PIP_INSTALL_LINE.search(line):
+            continue
+        try:
+            # comments=True so a trailing shell comment (`pip install x==1  #
+            # note`) or a comment-only line mentioning pip is not tokenized as
+            # extra package args / a bare call (Copilot, PR #125).
+            tokens = shlex.split(line, comments=True, posix=True)
+        except ValueError as exc:
+            violations.append(f"{path}:{lineno}: cannot parse shell line: {exc}")
+            continue
+        for index, token in enumerate(tokens[:-1]):
+            if token not in {"pip", "pip3"} or tokens[index + 1] != "install":
+                continue
+            if not _is_non_bare_pip(tokens, index):
+                violations.append(
+                    f"{path}:{lineno}: bare 'pip install' — use "
+                    "'python -m pip install' (or 'uv pip install') so the "
+                    "install targets the interpreter actions/setup-python "
+                    "selected."
+                )
+                continue
+            install_args = _direct_install_args(tokens, index + 1)
+            packages, has_upgrade = _package_args(install_args)
+            if has_upgrade:
+                violations.append(
+                    f"{path}:{lineno}: pip install uses --upgrade/-U; pin "
+                    "workflow dependencies exactly instead."
+                )
+                continue
+            unpinned = [pkg for pkg in packages if "==" not in pkg]
+            if unpinned:
+                violations.append(
+                    f"{path}:{lineno}: pip install package(s) lack an exact "
+                    f"'==' pin: {', '.join(unpinned)}"
+                )
+                continue
+            bad_pin = [pkg for pkg in packages if pkg.endswith("==")]
+            if bad_pin:
+                violations.append(
+                    f"{path}:{lineno}: pip install package(s) have an empty "
+                    f"exact pin: {', '.join(bad_pin)}"
+                )
+                continue
+            # `"==" in pkg` accepts a wildcard like `pkg==2.*`, which is not a
+            # reproducible exact version. Reject any version containing `*`
+            # (Copilot, PR #125).
+            wildcard = [pkg for pkg in packages if "*" in pkg.split("==", 1)[1]]
+            if wildcard:
+                violations.append(
+                    f"{path}:{lineno}: pip install package(s) use a wildcard "
+                    f"version, not a reproducible '==X.Y.Z' exact pin: "
+                    f"{', '.join(wildcard)}"
+                )
+                continue
     return violations
 
 
@@ -106,9 +211,10 @@ def main(argv: list[str]) -> int:
     if violations:
         print("\n".join(violations), file=sys.stderr)
         print(
-            "\nUse 'python -m pip install' (or 'uv pip install') in workflows, "
-            "not bare 'pip' — see CLAUDE.md 'Pre-PR checklist > CI / workflow / "
-            "dependency hygiene'. Exempt a line with a trailing "
+            "\nUse 'python -m pip install PACKAGE==VERSION' (or "
+            "'uv pip install PACKAGE==VERSION') in workflows, not bare or "
+            "unpinned 'pip' — see CLAUDE.md 'Pre-PR checklist > CI / "
+            "workflow / dependency hygiene'. Exempt a line with a trailing "
             "'# pip-lint: allow'.",
             file=sys.stderr,
         )

@@ -1,8 +1,14 @@
 # CLAUDE.md
 
-Agent guide for `anomaly-metric-creator.py`. User-facing usage, install, CLI reference,
-output files, and the anomaly catalog live in [README.md](README.md). Read it first
-if you need to run the script or understand the failure modes it injects.
+Agent guide for the anomaly metric creator. The canonical implementation is
+`src/anomaly_metric_creator/legacy.py`; the top-level `anomaly-metric-creator.py` is a
+thin compatibility shim that re-exports it and runs `main()`, and the installed `amc` /
+`anomaly-metric-creator` console scripts dispatch through `anomaly_metric_creator.cli`.
+Edit `legacy.py` for any behavior change — the shim and `cli.py` are wiring only, so
+`python anomaly-metric-creator.py …`, a `pip install .` console script, and the test
+suite all drive the same code. User-facing usage, install, CLI reference, output files,
+and the anomaly catalog live in [README.md](README.md). Read it first if you need to run
+the script or understand the failure modes it injects.
 
 ## Architecture
 
@@ -1517,10 +1523,10 @@ Once the slot exists, the column flows through `_natural_column()` and
 
 ### Adding new components
 
-A new component needs two lockstep entries in `anomaly-metric-creator.py` and two
-in `tests/conftest.py`:
+A new component needs two lockstep entries in `src/anomaly_metric_creator/legacy.py`
+and two in `tests/conftest.py`:
 
-In `anomaly-metric-creator.py`:
+In `src/anomaly_metric_creator/legacy.py`:
 
 1. `COMPONENTS[name]` — ordered `MetricSpec` list (up to `MAX_METRICS_PER_COMPONENT`).
 2. `DEFAULT_METRICS_PER_COMPONENT[name]` — how many metrics the new component
@@ -1670,8 +1676,9 @@ When a recurring issue is *mechanical* (a greppable shape), prefer turning it in
   `.venv/bin/pre-commit run --all-files` or `.venv/bin/ruff check tests/`
   locally if the commit hook is not installed.
 - New test files reuse the session-scoped `amc` fixture from
-  `tests/conftest.py` and do not re-import `anomaly-metric-creator.py`
-  via `importlib.util.spec_from_file_location(...)`. The
+  `tests/conftest.py` and do not re-import the implementation module
+  (`src/anomaly_metric_creator/legacy.py`) via
+  `importlib.util.spec_from_file_location(...)`. The
   `amc-no-direct-spec-load` pre-commit hook
   (`tools/check_amc_module_load.py`) catches this structurally — PR #63
   and PR #64 each shipped a module-scoped `amc` fixture that re-built
@@ -2021,28 +2028,32 @@ pins current.
 
 ### Workflow pip lint
 
-`tools/check_workflow_pip.py` forbids bare `pip install` in
+`tools/check_workflow_pip.py` forbids bare or unpinned `pip install` in
 `.github/workflows/*.yml`: after `actions/setup-python` runs, a bare `pip`
 can resolve to a different interpreter than the one just selected, so the
 install lands in the wrong environment. The robust form is
-`python -m pip install` (`uv pip install` is also accepted). PR #118 shipped
-a bare `pip install` in `socket.yml`; this lint — the one cleanly-mechanical
-pattern surfaced by the all-PR review sweep (the higher-recurrence patterns
-like doc-drift and the heavy-read test-resource rule are size/context-
-dependent and live as checklist prose, not lints) — catches it structurally
-instead of relying on Copilot to flag it on each new workflow.
+`python -m pip install PACKAGE==VERSION` (`uv pip install PACKAGE==VERSION`
+is also accepted), with direct third-party installs exactly pinned so
+workflow tooling is reproducible. PR #118 shipped a bare `pip install` in
+`socket.yml`; this lint — the one cleanly-mechanical pattern surfaced by the
+all-PR review sweep (the higher-recurrence patterns like doc-drift and the
+heavy-read test-resource rule are size/context-dependent and live as
+checklist prose, not lints) — catches it structurally instead of relying on
+Copilot to flag it on each new workflow.
 
 Wired as the `workflow-pip` pre-commit hook
 (`files: ^\.github/workflows/.*\.ya?ml$`, `pass_filenames: true`) and usable
 standalone: `tools/check_workflow_pip.py .github/workflows/ci.yml`.
-Detection skips `python -m pip`, `uv pip`, and `pipx`; a line mixing a good
-and a bare invocation is still flagged (the scan finds the bare occurrence
-past the excluded one). Exempt a line with a trailing `# pip-lint: allow`
+Detection accepts `python -m pip`, combined short module flags such as
+`python -Im pip`, `uv pip`, and `pipx`; a line mixing a good and a bare
+invocation is still flagged (the scan finds the bare occurrence past the
+excluded one). Non-bare installs reject `--upgrade` / `-U` and package specs
+without `==`. Exempt a line with a trailing `# pip-lint: allow`
 (trailing-only, like the role-name lint marker — `path.exists()` is checked
 before the read so a bad path is exit `2`, not a violation). Exit codes:
-`0` clean / `1` at least one bare `pip install` / `2` argument or I/O error.
-Acceptance tests live in `tests/test_workflow_pip_lint.py`; the script is
-stdlib-only.
+`0` clean / `1` at least one bare or unpinned `pip install` / `2` argument or
+I/O error. Acceptance tests live in `tests/test_workflow_pip_lint.py`; the
+script is stdlib-only.
 
 ## Tests
 

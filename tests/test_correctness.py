@@ -13,7 +13,7 @@ import pytest
 from conftest import (
     COMPONENTS,
     DEFAULT_METRIC_COUNT,
-    SCRIPT_PATH,
+    MODULE_PATH,
     count_blank_lines,
     count_lines,
     declared_specs,
@@ -521,7 +521,7 @@ def test_duplicate_anomaly_specs_raise(tmp_path):
     test that runs after it. The fresh module copy is the isolation
     boundary, so the lint exempts the load. See
     ``tools/check_amc_module_load.py`` for the lint."""
-    spec = importlib.util.spec_from_file_location("amc_dup", SCRIPT_PATH)  # amc-load: allow
+    spec = importlib.util.spec_from_file_location("amc_dup", MODULE_PATH)  # amc-load: allow
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     # Inject a duplicate by patching _apply_scenarios to append an extra spec
@@ -546,7 +546,7 @@ def test_unknown_primary_anomaly_metric_raises(tmp_path):
     A fresh module copy isolates the ``_apply_scenarios`` monkey-patch
     from the session-scoped ``amc`` fixture. The lint exempts
     the load (``tools/check_amc_module_load.py``)."""
-    spec = importlib.util.spec_from_file_location("amc_unknown_primary", SCRIPT_PATH)  # amc-load: allow
+    spec = importlib.util.spec_from_file_location("amc_unknown_primary", MODULE_PATH)  # amc-load: allow
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     # Inject a typo primary via _apply_scenarios patch
@@ -572,7 +572,7 @@ def test_unknown_cascade_metric_raises(tmp_path):
     registry walk, mirroring how register_cascade was tested previously.
     A fresh module copy keeps the monkey-patch from leaking into the
     session-scoped ``amc`` fixture; the lint exempts the load."""
-    spec = importlib.util.spec_from_file_location("amc_unknown_cascade", SCRIPT_PATH)  # amc-load: allow
+    spec = importlib.util.spec_from_file_location("amc_unknown_cascade", MODULE_PATH)  # amc-load: allow
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     original_apply = m._apply_scenarios

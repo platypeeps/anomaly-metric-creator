@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-from conftest import COMPONENTS, SCRIPT_PATH
+from conftest import COMPONENTS, MODULE_PATH
 
 
 def test_determinism_byte_identical(one_day_run_a, one_day_run_b):
@@ -25,7 +25,7 @@ def test_import_does_not_run_generation(tmp_path):
     """Importing the module in a fresh interpreter must not trigger main()."""
     script = (
         "import importlib.util, os\n"
-        "spec = importlib.util.spec_from_file_location('amc', os.environ['SCRIPT_PATH'])\n"
+        "spec = importlib.util.spec_from_file_location('amc', os.environ['MODULE_PATH'])\n"
         "m = importlib.util.module_from_spec(spec)\n"
         "spec.loader.exec_module(m)\n"
         "assert hasattr(m, 'RunContext'), 'RunContext not defined after import'\n"
@@ -35,7 +35,7 @@ def test_import_does_not_run_generation(tmp_path):
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=tmp_path,
-        env={**os.environ, "SCRIPT_PATH": str(SCRIPT_PATH)},
+        env={**os.environ, "MODULE_PATH": str(MODULE_PATH)},
         capture_output=True,
         text=True,
     )
