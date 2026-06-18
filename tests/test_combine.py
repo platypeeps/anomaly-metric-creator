@@ -5,6 +5,7 @@ row preservation, and the synthetic-extra-component case.
 import csv
 import os
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -351,6 +352,77 @@ def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
     assert len(timestamps) == len(set(timestamps)), (
         "non-DST combine should produce no duplicate timestamps"
     )
+
+
+def test_generated_non_dst_combined_skips_known_component_prescan(
+    amc, tmp_path, monkeypatch,
+):
+    """Freshly-generated non-DST CSVs are already chronological, so combined
+    emission should avoid the extra full-file monotonic pre-scan for those
+    known component files.
+    """
+    scanned = []
+
+    def fail_if_prescanned(path):
+        scanned.append(Path(path).name)
+        raise AssertionError(
+            f"unexpected monotonic pre-scan for generated file {path}"
+        )
+
+    monkeypatch.setattr(amc, "_wide_component_rows_are_monotonic", fail_if_prescanned)
+    out_dir = tmp_path / "generated_fast_combine"
+
+    run_capture(
+        amc,
+        out_dir,
+        days=1,
+        drop_rate=0,
+        interval_seconds=3600,
+        extra_args=[
+            "--emit", "metrics,combined",
+            "--components", "authservice,database",
+        ],
+    )
+
+    assert not scanned
+    assert (out_dir / "combined_metrics_unified.csv").exists()
+
+
+def test_combine_subcommand_prescans_external_wide_inputs(
+    amc, tmp_path, monkeypatch,
+):
+    """The external ``combine DIR`` path cannot assume staged CSV ordering,
+    so it keeps the defensive monotonic scan before using the streaming merge.
+    """
+    staged = tmp_path / "external_combine"
+    staged.mkdir()
+    (staged / "authservice.csv").write_text(
+        "timestamp,requests\n"
+        "2026-03-10 00:00:00,1\n"
+        "2026-03-10 00:01:00,2\n",
+        encoding="utf-8",
+    )
+    (staged / "database.csv").write_text(
+        "timestamp,queries\n"
+        "2026-03-10 00:00:00,3\n"
+        "2026-03-10 00:01:00,4\n",
+        encoding="utf-8",
+    )
+    scanned = []
+
+    def record_prescan(path):
+        scanned.append(Path(path).name)
+        return True
+
+    monkeypatch.setattr(amc, "_wide_component_rows_are_monotonic", record_prescan)
+
+    amc.main([
+        "combine", str(staged),
+        "--components", "authservice,database",
+    ])
+
+    assert set(scanned) == {"authservice.csv", "database.csv"}
+    assert (staged / "combined_metrics_unified.csv").exists()
 
 
 # ---------------------------------------------------------------------------

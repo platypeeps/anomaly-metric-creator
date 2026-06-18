@@ -4,12 +4,16 @@ applyTo: '**'
 
 # Copilot review instructions for anomaly-metric-creator
 
-This is a single-file Python project (`anomaly-metric-creator.py`) plus a tests
-suite in `tests/`. `CLAUDE.md` is the authoritative architecture and review
-guide; `README.md` documents the user-facing surface. Read the relevant
-sections from both before reviewing a change — do not produce overview-only
-or generic Python feedback. If a change touches behavior that `CLAUDE.md`
-already specifies, the review should be grounded in those specifics.
+This is a packaged Python project whose canonical implementation lives in
+`src/anomaly_metric_creator/legacy.py`. The top-level
+`anomaly-metric-creator.py` file is a thin compatibility shim, and the
+installed `amc` / `anomaly-metric-creator` console scripts dispatch through
+`anomaly_metric_creator.cli`. `CLAUDE.md` is the authoritative architecture
+and review guide; `README.md` documents the user-facing surface. Read the
+relevant sections from both before reviewing a change — do not produce
+overview-only or generic Python feedback. If a change touches behavior that
+`CLAUDE.md` already specifies, the review should be grounded in those
+specifics.
 
 ## Where to look first by diff shape
 
@@ -163,8 +167,10 @@ confirmed but the diff does not support:
 
 - Generic Python style nits that ruff/black would catch (ruff runs in
   `.pre-commit-config.yaml`).
-- Suggesting `__init__.py` / package layout changes — the script is
-  intentionally a single file imported via `importlib`.
+- Asking for a package layout from scratch — the package already exists.
+  Useful follow-up feedback should name a concrete behavior split or facade
+  that preserves shim / console-script parity, not broad reshuffling for its
+  own sake.
 - Suggesting that `anomalies` / `cascading_anomalies` move back to
   module level — they were intentionally removed in favor of
   `RunContext`.

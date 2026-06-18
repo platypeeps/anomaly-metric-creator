@@ -9,6 +9,9 @@ Edit `legacy.py` for any behavior change — the shim and `cli.py` are wiring on
 suite all drive the same code. User-facing usage, install, CLI reference, output files,
 and the anomaly catalog live in [README.md](README.md). Read it first if you need to run
 the script or understand the failure modes it injects.
+Small package facade modules (`combine.py`, `models.py`, `otel.py`,
+`scenarios.py`, `schema.py`) re-export focused surfaces from `legacy.py`; they
+are import-stability points for future splits, not parallel behavior copies.
 
 ## Architecture
 
@@ -170,6 +173,13 @@ ignores it for layout purposes and sorts components alphabetically for
 the equal-timestamp tie-break (the row's `component` cell carries the
 identity, so column order is not the ordering surface). See the
 **Layout (phase 5)** subsection below for the dispatch detail.
+For freshly generated, non-DST wide CSVs, `main()` passes
+`assume_monotonic_wide_components=set(args.components)` so the combine writer
+does not spend a second full pass proving monotonicity for files it just
+emitted. This is only a trusted allowlist: extra autodiscovered CSVs and all
+external `combine DIR` invocations still run `_wide_component_rows_are_monotonic`
+before using the streaming `heapq.merge` path. The measurement harness is
+`tools/benchmark_combine.py`.
 
 **Layout (phase 5).** `combine_logs_unified(components, input_dir, …)`
 inspects every per-component CSV's header via `_scan_component_csv_headers`
@@ -336,7 +346,7 @@ stream, the gauge stream, and the gauge-only streaming mode
 (all selected via `--otel-send`) are no longer gated against N>1. After
 Phase 8, `--emit ...,schema` and the `validate` subcommand work
 under `--instances-per-component > 1` too — no parse-time
-multi-instance gate remains except the DST one
+multi-instance gate remains except the intentional DST one
 (`--inject-dst-artifact-day > 0`). `generate_component()`
 mirrors the DST guard inside the helper as well — passing a
 non-anonymous instance list together with `dst_inject_day > 0`
@@ -710,14 +720,16 @@ depends on Python's `str(float)` repr), whereas `stream_otel_gauges`
 `generate_component` only writes finite floats, so both paths emit the
 same data points — the difference only matters for hand-edited CSVs.
 
-Both gauge paths are mutually exclusive with `--inject-dst-artifact-day > 0`
-(the DST splice produces non-monotonic CSV timestamps that break
-`heapq.merge`); the parser rejects the combination for both
+Both gauge paths are intentionally mutually exclusive with
+`--inject-dst-artifact-day > 0` (the DST splice produces non-monotonic CSV
+timestamps that break `heapq.merge`); the parser rejects the combination for both
 `--otel-send` selections including `gauges` and
 `--emit ...,gauges` up front. `--otel-send gauges` (alone) is a CLI mode
 that implies the OTEL gauge stream but skips `stream_otel_signals()`,
 so receivers that only accept Gauge payloads do not see the anomaly
-counter/log/trace stream first.
+counter/log/trace stream first. Supporting DST here would require a new
+non-monotonic timestamp batching model; do not remove the parser gate as a
+local "compatibility" fix.
 
 `gauges.csv` is opt-in via `gauges` in `--emit` (which the
 parser enforces alongside `metrics`); the `combine` subcommand /
