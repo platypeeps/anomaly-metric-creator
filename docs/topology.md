@@ -30,8 +30,15 @@ flowchart TD
     api -- "1.0 (phase 5)<br/>sat(760,6,0.55,0.015)" --> llm
     cache -- "callable:<br/>miss_ratio × db_base" --> db
 
-    subgraph standalone["standalone components<br/>(no topology edges)"]
+    subgraph standalone["standalone components<br/>(in COMPONENTS, no TOPOLOGY edges)"]
         gpu["gpu_inference<br/>(throughput_tps,<br/>latency_p99_ms, …)"]
+        mq["mqservice<br/>(pending_messages)"]
+        obj["objectstore<br/>(get_latency_ms)"]
+        vec["vectorstore<br/>(ann_query_latency_ms)"]
+        sched["scheduler<br/>(jobs_running)"]
+        pay["paymentservice<br/>(txn_per_sec)"]
+        idp["identityprovider<br/>(token_issuance_per_sec)"]
+        obspipe["observabilitypipeline<br/>(metrics_ingested_per_sec)"]
     end
 ```
 
@@ -47,17 +54,32 @@ and carries no saturation in v1. See the
 [per-edge bullet list](../README.md#topology-graph-v1) in the README
 for the parameter rationale and bounds.
 
-The `gpu_inference` component is in `COMPONENTS` but has **no
-entry in `TOPOLOGY`** (no incoming or outgoing edges). It is
-driven entirely by its natural-column draws plus the
-`gpu_inference_fragmentation` scenario's correlated stress signals
-— no coupling, no saturation feedback. The
-`gpu_inference_fragmentation` scenario does declare a multi-component
-blast radius via `components_touched=("gpu_inference",
-"llm_analytics")`, but that is a scenario-level cascade (handled
-through `cascade_specs`), not a `TOPOLOGY` edge — see the
+Only six of the fourteen `COMPONENTS` participate in the directed
+service-call graph above. The other **eight are standalone** — they
+appear in `COMPONENTS` but have **no entry in `TOPOLOGY`** (no incoming
+or outgoing edges), so they are driven entirely by their natural-column
+draws plus any scenario overrides, with no upstream coupling or
+saturation feedback: `gpu_inference`, `mqservice`, `objectstore`,
+`vectorstore`, `scheduler`, `paymentservice`, `identityprovider`, and
+`observabilitypipeline` (rendered in the `standalone components`
+subgraph above). The seven non-GPU standalone components are the
+Tier 3 catalog additions; `gpu_inference` is the reference-shaped
+10-metric component added later.
+
+`gpu_inference` is the most recently added of the eight and is driven
+by the `gpu_inference_fragmentation` scenario's correlated stress
+signals on top of its natural draws. That scenario declares a
+multi-component blast radius via
+`components_touched=("gpu_inference", "llm_analytics")`, but that is a
+scenario-level cascade (handled through `cascade_specs`), **not** a
+`TOPOLOGY` edge — see the
 [scenarios vs. topology overlap note in CLAUDE.md](../CLAUDE.md#topology-graph)
-for the distinction.
+for the distinction. The same cascade-vs-topology distinction applies
+to the other standalone components: several carry scenarios
+(`mq_jam` on `mqservice`, `payment_5xx` on `paymentservice`,
+`vectorstore_pressure` on `vectorstore`, `storage_layer_pressure` on
+`objectstore`, …) whose blast radius is expressed through
+`cascade_specs`, never through `TOPOLOGY` edges.
 
 ## Per-instance routing dispatch (phase 8)
 
@@ -95,6 +117,19 @@ per-component instance list is named or fanned out.
 
 Recent significant additions reflected in the diagrams above:
 
+- **Standalone-component subgraph now enumerates all eight** — the
+  `standalone components` subgraph previously surfaced only
+  `gpu_inference`, which read as if it were the sole component outside
+  `TOPOLOGY`. The catalog actually holds **fourteen components**: six
+  participate in the directed coupling graph (`loadbalancer`,
+  `apigateway`, `authservice`, `cacheservice`, `database`,
+  `llm_analytics`) and eight are standalone (`gpu_inference` plus the
+  Tier 3 additions `mqservice`, `objectstore`, `vectorstore`,
+  `scheduler`, `paymentservice`, `identityprovider`,
+  `observabilitypipeline`). The subgraph and prose now list the full
+  standalone set so the diagram matches `COMPONENTS`. No edges changed —
+  these components have always been driven by natural draws plus
+  scenario overrides, never by `TOPOLOGY` coupling.
 - **`gpu_inference` is standalone** — the new reference-shaped
   `gpu_inference` component sits in `COMPONENTS` but is
   intentionally absent from `TOPOLOGY`. Its 10 default metrics
