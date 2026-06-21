@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  test-matrix:
     name: test (py${{ matrix.python-version }})
     strategy:
       fail-fast: false
@@ -71,3 +71,20 @@ jobs:
       # to avoid the OOM.
       - name: Run test suite
         run: uv run --no-sync pytest
+
+  test:
+    name: test
+    needs: test-matrix
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      # Branch protection requires a stable `test` context. Keep the
+      # version-specific jobs above for visibility, then fail this aggregate
+      # unless every matrix leg completed successfully.
+      - name: Check test matrix result
+        run: |
+          if [ "${{ needs.test-matrix.result }}" != "success" ]; then
+            echo "test-matrix result: ${{ needs.test-matrix.result }}"
+            exit 1
+          fi
+          echo "test-matrix result: ${{ needs.test-matrix.result }}"
