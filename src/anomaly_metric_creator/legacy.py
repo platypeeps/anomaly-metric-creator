@@ -9525,15 +9525,14 @@ def stream_otel_signals(
         return 0
 
     log_file = None
-    if activity_log_path is not None:
-        activity_log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_file = open(activity_log_path, "w", encoding="utf-8")
-
-    active_signals = ",".join(s for s, u in endpoints.items() if u) or "(none)"
-
     prev_dt = None
     sent = 0
     try:
+        if activity_log_path is not None:
+            activity_log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_file = open(activity_log_path, "w", encoding="utf-8")
+
+        active_signals = ",".join(s for s, u in endpoints.items() if u) or "(none)"
         _write_activity(
             log_file,
             "START",
@@ -12083,13 +12082,6 @@ def stream_otel_gauges(
         return 0
 
     log_file = None
-    if activity_log_path is not None:
-        activity_log_path.parent.mkdir(parents=True, exist_ok=True)
-        # Append so a prior stream_otel_signals run's records are preserved.
-        # Gauge-only CLI mode passes ``append_activity_log=False`` because
-        # there is no signal pass creating a fresh log for this run.
-        mode = "a" if append_activity_log else "w"
-        log_file = open(activity_log_path, mode, encoding="utf-8")
 
     def _keyed_iter(component: str, csv_path: Path):
         for ts, comp, values, dimensions in _iter_component_rows(component, csv_path):
@@ -12250,6 +12242,14 @@ def stream_otel_gauges(
         return True
 
     try:
+        if activity_log_path is not None:
+            activity_log_path.parent.mkdir(parents=True, exist_ok=True)
+            # Append so a prior stream_otel_signals run's records are preserved.
+            # Gauge-only CLI mode passes ``append_activity_log=False`` because
+            # there is no signal pass creating a fresh log for this run.
+            mode = "a" if append_activity_log else "w"
+            log_file = open(activity_log_path, mode, encoding="utf-8")
+
         _write_activity(
             log_file,
             "START",
