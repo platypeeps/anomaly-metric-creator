@@ -45,7 +45,7 @@ jobs:
 
       - name: Smoke installed console scripts
         run: |
-          uv venv .ci-package-smoke
+          uv venv --python ${{ matrix.python-version }} .ci-package-smoke
           uv pip install --python .ci-package-smoke/bin/python .
           .ci-package-smoke/bin/amc --help > /dev/null
           .ci-package-smoke/bin/anomaly-metric-creator --help > /dev/null
