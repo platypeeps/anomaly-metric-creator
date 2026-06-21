@@ -14,8 +14,12 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: test
+  test-matrix:
+    name: test (py${{ matrix.python-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     # 16 GB GitHub-hosted larger runner (org-configured label). Holds the
     # heavy N=3 / 7-day fixtures across xdist workers, unlike the 7 GB
     # standard runner that OOM-killed the parallel suite.
@@ -37,11 +41,11 @@ jobs:
           enable-cache: true
 
       - name: Sync dependencies (dev extra)
-        run: uv sync --extra dev
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
 
       - name: Smoke installed console scripts
         run: |
-          uv venv .ci-package-smoke
+          uv venv --python ${{ matrix.python-version }} .ci-package-smoke
           uv pip install --python .ci-package-smoke/bin/python .
           .ci-package-smoke/bin/amc --help > /dev/null
           .ci-package-smoke/bin/anomaly-metric-creator --help > /dev/null
@@ -54,6 +58,12 @@ jobs:
       - name: Check ruff version lockstep
         run: uv run --no-sync python tools/check_ruff_lockstep.py
 
+      # Lint tests/ for unused imports (F401). The pre-commit hook covers
+      # this at commit time, but contributors who skip `pre-commit install`
+      # would otherwise bypass the check entirely.
+      - name: Lint tests (ruff F401)
+        run: uv run --no-sync ruff check tests/
+
       # No -n override: the 16 GB runner runs the repo's default parallel
       # config (pyproject addopts `-n 4 --dist loadfile`), ~5-8 min vs the
       # ~24 min serial run the 7 GB standard runner needed. If the runner is
@@ -61,3 +71,20 @@ jobs:
       # to avoid the OOM.
       - name: Run test suite
         run: uv run --no-sync pytest
+
+  test:
+    name: test
+    needs: test-matrix
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      # Branch protection requires a stable `test` context. Keep the
+      # version-specific jobs above for visibility, then fail this aggregate
+      # unless every matrix leg completed successfully.
+      - name: Check test matrix result
+        run: |
+          if [ "${{ needs.test-matrix.result }}" != "success" ]; then
+            echo "test-matrix result: ${{ needs.test-matrix.result }}"
+            exit 1
+          fi
+          echo "test-matrix result: ${{ needs.test-matrix.result }}"

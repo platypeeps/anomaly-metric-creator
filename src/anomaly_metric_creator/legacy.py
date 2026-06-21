@@ -363,7 +363,7 @@ class Edge:
 # ------------------------------------------------------------------
 def _const_generator(value: float):
     """Return a generator callable that emits ``value`` for every row."""
-    return lambda _ts, _idx, _value=value: _value
+    return lambda _ts, _col, _value=value: _value
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -9525,23 +9525,22 @@ def stream_otel_signals(
         return 0
 
     log_file = None
-    if activity_log_path is not None:
-        activity_log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_file = open(activity_log_path, "w", encoding="utf-8")
-
-    active_signals = ",".join(s for s, u in endpoints.items() if u) or "(none)"
-    _write_activity(
-        log_file,
-        "START",
-        signals=active_signals,
-        events=len(sorted_rows),
-        protocol=protocol,
-        speedup=speedup,
-    )
-
     prev_dt = None
     sent = 0
     try:
+        if activity_log_path is not None:
+            activity_log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_file = open(activity_log_path, "w", encoding="utf-8")
+
+        active_signals = ",".join(s for s, u in endpoints.items() if u) or "(none)"
+        _write_activity(
+            log_file,
+            "START",
+            signals=active_signals,
+            events=len(sorted_rows),
+            protocol=protocol,
+            speedup=speedup,
+        )
         for row in sorted_rows:
             cur_dt = _parse_csv_timestamp(row["timestamp"])
             if prev_dt is not None:
@@ -9605,14 +9604,6 @@ def stream_otel_signals(
                     try:
                         with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                             response_status = response.status
-                            if response.status >= 400:
-                                raise urllib.error.HTTPError(
-                                    endpoint,
-                                    response.status,
-                                    response.reason,
-                                    response.headers,
-                                    None,
-                                )
                         ok_fields: dict = {}
                         if verbose:
                             ok_fields["status"] = response_status
@@ -12091,23 +12082,6 @@ def stream_otel_gauges(
         return 0
 
     log_file = None
-    if activity_log_path is not None:
-        activity_log_path.parent.mkdir(parents=True, exist_ok=True)
-        # Append so a prior stream_otel_signals run's records are preserved.
-        # Gauge-only CLI mode passes ``append_activity_log=False`` because
-        # there is no signal pass creating a fresh log for this run.
-        mode = "a" if append_activity_log else "w"
-        log_file = open(activity_log_path, mode, encoding="utf-8")
-
-    _write_activity(
-        log_file,
-        "START",
-        signal="metrics_gauge",
-        components=",".join(sorted(component_csv_paths.keys())),
-        batch_seconds=batch_seconds,
-        protocol=protocol,
-        speedup=speedup,
-    )
 
     def _keyed_iter(component: str, csv_path: Path):
         for ts, comp, values, dimensions in _iter_component_rows(component, csv_path):
@@ -12197,11 +12171,6 @@ def stream_otel_gauges(
             try:
                 with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                     response_status = response.status
-                    if response.status >= 400:
-                        raise urllib.error.HTTPError(
-                            endpoint, response.status, response.reason,
-                            response.headers, None,
-                        )
                 ok_fields: dict = {}
                 if verbose:
                     ok_fields["status"] = response_status
@@ -12273,6 +12242,23 @@ def stream_otel_gauges(
         return True
 
     try:
+        if activity_log_path is not None:
+            activity_log_path.parent.mkdir(parents=True, exist_ok=True)
+            # Append so a prior stream_otel_signals run's records are preserved.
+            # Gauge-only CLI mode passes ``append_activity_log=False`` because
+            # there is no signal pass creating a fresh log for this run.
+            mode = "a" if append_activity_log else "w"
+            log_file = open(activity_log_path, mode, encoding="utf-8")
+
+        _write_activity(
+            log_file,
+            "START",
+            signal="metrics_gauge",
+            components=",".join(sorted(component_csv_paths.keys())),
+            batch_seconds=batch_seconds,
+            protocol=protocol,
+            speedup=speedup,
+        )
         for dt, ts, comp, values, dimensions in heapq.merge(
             *iters, key=lambda item: item[0]
         ):
