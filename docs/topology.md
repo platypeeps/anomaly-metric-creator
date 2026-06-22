@@ -62,12 +62,11 @@ draws plus any scenario overrides, with no upstream coupling or
 saturation feedback: `gpu_inference`, `mqservice`, `objectstore`,
 `vectorstore`, `scheduler`, `paymentservice`, `identityprovider`, and
 `observabilitypipeline` (rendered in the `standalone components`
-subgraph above). The seven non-GPU standalone components are the
-Tier 3 catalog additions; `gpu_inference` is the reference-shaped
-10-metric component added later.
+subgraph above). Together, these entries cover every component that
+exists outside the directed coupling graph.
 
-`gpu_inference` is the most recently added of the eight and is driven
-by the `gpu_inference_fragmentation` scenario's correlated stress
+`gpu_inference` is standalone and driven by the
+`gpu_inference_fragmentation` scenario's correlated stress
 signals on top of its natural draws. That scenario declares a
 multi-component blast radius via
 `components_touched=("gpu_inference", "llm_analytics")`, but that is a
@@ -123,16 +122,16 @@ Recent significant additions reflected in the diagrams above:
   `TOPOLOGY`. The catalog actually holds **fourteen components**: six
   participate in the directed coupling graph (`loadbalancer`,
   `apigateway`, `authservice`, `cacheservice`, `database`,
-  `llm_analytics`) and eight are standalone (`gpu_inference` plus the
-  Tier 3 additions `mqservice`, `objectstore`, `vectorstore`,
-  `scheduler`, `paymentservice`, `identityprovider`,
+  `llm_analytics`) and eight are standalone (`gpu_inference`,
+  `mqservice`, `objectstore`, `vectorstore`, `scheduler`,
+  `paymentservice`, `identityprovider`, and
   `observabilitypipeline`). The subgraph and prose now list the full
   standalone set so the diagram matches `COMPONENTS`. No edges changed —
   these components have always been driven by natural draws plus
   scenario overrides, never by `TOPOLOGY` coupling.
-- **`gpu_inference` is standalone** — the new reference-shaped
-  `gpu_inference` component sits in `COMPONENTS` but is
-  intentionally absent from `TOPOLOGY`. Its 10 default metrics
+- **`gpu_inference` is standalone** — the reference-shaped
+  `gpu_inference` component sits in `COMPONENTS` but is intentionally
+  absent from `TOPOLOGY`. Its 10 default metrics
   (batch size, model size, GPU memory pressure, KV cache usage,
   memory fragmentation, GPU utilization, throughput, p50/p99
   latency, failure label) are driven by natural draws plus the
