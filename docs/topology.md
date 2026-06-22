@@ -56,19 +56,17 @@ for the parameter rationale and bounds.
 
 Only six of the fourteen `COMPONENTS` participate in the directed
 service-call graph above. The other **eight are standalone** — they
-appear in `COMPONENTS` but have **no entry in `TOPOLOGY`** (no incoming
-or outgoing edges), so they are driven entirely by their natural-column
-draws plus any scenario overrides, with no upstream coupling or
-saturation feedback: `gpu_inference`, `mqservice`, `objectstore`,
-`vectorstore`, `scheduler`, `paymentservice`, `identityprovider`, and
-`observabilitypipeline` (rendered in the `standalone components`
-subgraph above). Together, these entries cover every component that
-exists outside the directed coupling graph.
+appear in `COMPONENTS` but have **no `TOPOLOGY` edges** (neither as a
+source key nor as an `Edge.target`), so they are driven entirely by
+their natural-column draws plus any scenario overrides, with no
+upstream coupling or saturation feedback: `gpu_inference`, `mqservice`,
+`objectstore`, `vectorstore`, `scheduler`, `paymentservice`,
+`identityprovider`, and `observabilitypipeline` (rendered in the
+`standalone components` subgraph above).
 
-`gpu_inference` is standalone and driven by the
-`gpu_inference_fragmentation` scenario's correlated stress
-signals on top of its natural draws. That scenario declares a
-multi-component blast radius via
+`gpu_inference` is driven by the `gpu_inference_fragmentation`
+scenario's correlated stress signals on top of its natural draws.
+That scenario declares a multi-component blast radius via
 `components_touched=("gpu_inference", "llm_analytics")`, but that is a
 scenario-level cascade (handled through `cascade_specs`), **not** a
 `TOPOLOGY` edge — see the
@@ -124,14 +122,14 @@ Recent significant additions reflected in the diagrams above:
   `apigateway`, `authservice`, `cacheservice`, `database`,
   `llm_analytics`) and eight are standalone (`gpu_inference`,
   `mqservice`, `objectstore`, `vectorstore`, `scheduler`,
-  `paymentservice`, `identityprovider`, and
-  `observabilitypipeline`). The subgraph and prose now list the full
-  standalone set so the diagram matches `COMPONENTS`. No edges changed —
-  these components have always been driven by natural draws plus
-  scenario overrides, never by `TOPOLOGY` coupling.
+  `paymentservice`, `identityprovider`, `observabilitypipeline`). The
+  subgraph and prose now list the full standalone set so the diagram
+  matches `COMPONENTS`. No edges changed — these components have always
+  been driven by natural draws plus scenario overrides, never by
+  `TOPOLOGY` coupling.
 - **`gpu_inference` is standalone** — the reference-shaped
-  `gpu_inference` component sits in `COMPONENTS` but is intentionally
-  absent from `TOPOLOGY`. Its 10 default metrics
+  `gpu_inference` component sits in `COMPONENTS` but is
+  intentionally absent from `TOPOLOGY`. Its 10 default metrics
   (batch size, model size, GPU memory pressure, KV cache usage,
   memory fragmentation, GPU utilization, throughput, p50/p99
   latency, failure label) are driven by natural draws plus the
