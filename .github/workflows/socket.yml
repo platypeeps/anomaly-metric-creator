@@ -47,7 +47,7 @@ jobs:
 
       - name: Checkout
         if: steps.key.outputs.present == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Socket diffs the PR head against its base; depth 2 covers the
           # single-commit case without a full-history fetch.
