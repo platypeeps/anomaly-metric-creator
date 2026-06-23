@@ -252,6 +252,12 @@ def test_expanded_kubectl_and_helm_command_coverage(amc, tmp_path):
     exec_result = server.run_command(state, command="kubectl exec -n saas-prod apigateway-0 -- env")
     assert "SERVICE_NAME=apigateway" in exec_result["result"]["stdout"]
 
+    follow_logs = server.run_command(state, command="kubectl logs -f apigateway-0 -n saas-prod")
+    assert follow_logs["result"]["support_status"] == "supported"
+    assert follow_logs["result"]["matched_rule_id"] == "kubectl.logs.pod"
+    assert "apigateway" in follow_logs["result"]["stdout"]
+    assert "expected pod name" not in follow_logs["result"]["stderr"]
+
     helm_all = server.run_command(state, command="helm get all simulated-saas -n saas-prod")
     assert "COMPUTED VALUES" in helm_all["result"]["stdout"]
     assert "MANIFEST" in helm_all["result"]["stdout"]
@@ -318,6 +324,12 @@ def test_mutating_commands_update_simulated_state(amc, tmp_path):
     )
     assert "STATUS: deployed" in install["result"]["stdout"]
     assert "feature.debug: true" in server.run_command(
+        state,
+        command="helm get values simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+
+    server.run_command(state, command="helm uninstall simulated-saas -n saas-prod")
+    assert "feature.debug" not in server.run_command(
         state,
         command="helm get values simulated-saas -n saas-prod",
     )["result"]["stdout"]
@@ -608,6 +620,24 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
 
         configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
         assert any(item["metadata"]["name"] == "debug-flags" for item in configmaps["items"])
+
+        pvc_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/persistentvolumeclaims",
+            data=json.dumps({
+                "metadata": {"name": "scratch"},
+                "spec": {
+                    "accessModes": [123, "ReadWriteMany"],
+                    "resources": {"requests": {"storage": "2Gi"}},
+                },
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(pvc_request, timeout=5) as response:
+            pvc = json.loads(response.read().decode("utf-8"))
+        assert pvc["kind"] == "PersistentVolumeClaim"
+        assert pvc["spec"]["accessModes"] == ["123,ReadWriteMany"]
+        assert pvc["status"]["accessModes"] == ["123,ReadWriteMany"]
 
         delete_configmap = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/configmaps/debug-flags",

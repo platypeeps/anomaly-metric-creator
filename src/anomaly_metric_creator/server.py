@@ -1558,6 +1558,8 @@ class SimulationMutations:
         with self.lock:
             self.release.revisions = [dict(item) for item in revisions]
             self.release.uninstalled = uninstalled
+            if uninstalled:
+                self.release.values.clear()
             self.release.updated_at = _format_dt(now)
             self.version += 1
 
@@ -1740,7 +1742,7 @@ _MODELED_FLAGS = {
     "-o", "--output",
     "-l", "--selector",
     "-c", "--container",
-    "--tail", "--since",
+    "--tail", "--since", "--follow",
     "--previous", "-p",
     "--wide", "--show-labels",
     "--field-selector", "--sort-by", "--for", "--timeout",
@@ -1984,6 +1986,20 @@ def _parse_kubectl(
         return ParsedCommand(raw, argv, "kubectl", verb, "", "", namespace, flags, tuple(positionals))
     if verb == "events":
         return ParsedCommand(raw, argv, "kubectl", "get", "events", "", namespace, flags, tuple(positionals))
+    if verb == "logs":
+        target = positionals[1] if len(positionals) > 1 else ""
+        follow_value = flags.get("-f")
+        if "-f" in flags:
+            flags["--follow"] = True
+            if not target and isinstance(follow_value, str) and follow_value:
+                target = follow_value
+        resource_kind, resource_name = _split_resource_token(target, default_kind="pods")
+        if not resource_name:
+            resource_kind, resource_name = "pods", target
+        return ParsedCommand(
+            raw, argv, "kubectl", verb,
+            resource_kind, resource_name, namespace, flags, tuple(positionals)
+        )
     if verb == "auth":
         subverb = positionals[1] if len(positionals) > 1 else ""
         resource_kind = _normalize_kind(positionals[3]) if len(positionals) > 3 else ""
@@ -2041,13 +2057,7 @@ def _parse_kubectl(
             raw, argv, "kubectl", verb,
             resource_kind, resource_name, namespace, flags, tuple(positionals)
         )
-    if verb == "logs":
-        target = positionals[1] if len(positionals) > 1 else ""
-        if "/" in target:
-            resource_kind, resource_name = _split_resource_token(target, default_kind="pods")
-        else:
-            resource_kind, resource_name = "pods", target
-    elif len(positionals) > 1:
+    if len(positionals) > 1:
         resource_kind, resource_name = _split_resource_token(positionals[1])
         if not resource_name and len(positionals) > 2:
             resource_name = positionals[2]
@@ -3341,12 +3351,15 @@ def _generic_resource_row(
         return {"name": name, "schedule": schedule, "suspend": "False", "active": 0, "last_schedule": "<none>", "age": "0s"}
     if kind == "pvc":
         requests = spec.get("resources", {}).get("requests", {}) if isinstance(spec.get("resources"), dict) else {}
+        access_modes = spec.get("accessModes", ["RWO"])
+        if not isinstance(access_modes, list):
+            access_modes = ["RWO"]
         return {
             "name": name,
             "status": "Bound",
             "volume": f"pvc-{name}",
             "capacity": str(requests.get("storage", "1Gi")),
-            "access_modes": ",".join(spec.get("accessModes", ["RWO"])),
+            "access_modes": ",".join(str(mode) for mode in access_modes),
             "storageclass": str(spec.get("storageClassName", "gp3")),
             "age": "0s",
             "used_pct": 1,
