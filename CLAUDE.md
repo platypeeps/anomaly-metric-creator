@@ -2021,13 +2021,29 @@ run in CI):
   `uv`. Pushes to `main` run on the **`ubuntu-latest-m` 16 GB larger
   runner** with the repo's default parallel config (pyproject addopts `-n 4
   --dist loadfile`), ~5-8 min. Pull requests intentionally use the standard
-  `ubuntu-latest` runner with `pytest -n 0`: the larger-runner label can sit
-  queued with `runner_id=0` before any steps start, which wedges branch
-  protection even though the suite itself is healthy. The 7 GB standard
-  runner couldn't hold the heavy N=3 / 7-day fixtures across xdist workers —
-  a `-n 2` run OOM-died after 32 min — so the PR fallback stays serial
-  (~24 min historically). The workflow timeout is 45 minutes to cover the
-  serial PR path while still capping hangs.
+  `ubuntu-latest` runner: the larger-runner label can sit queued with
+  `runner_id=0` before any steps start, which wedges branch protection even
+  though the suite itself is healthy. The 7 GB standard runner couldn't hold
+  the heavy N=3 / 7-day fixtures across xdist workers — a full `-n 2` run
+  OOM-died after 32 min — so the PR run **splits** the suite by the `heavy`
+  marker instead of running everything serially:
+  `pytest -n 0 -m heavy` runs the GB-scale 7-day / N=3 fixture tests serially
+  (low-RAM), then `pytest -n 2 --dist loadfile -m "not heavy"` runs the light
+  remainder under real xdist. This keeps the parallel worker-distribution /
+  global-state ordering path — the one main's push run uses, and the one
+  CLAUDE.md warns turns leaked global state into order-dependent flakes —
+  exercised at the PR gate, so an xdist-only regression fails the gate rather
+  than passing serially and only flaking post-merge on the main push. The
+  `heavy` marker is auto-applied in `tests/conftest.py`
+  (`pytest_collection_modifyitems` over `_HEAVY_SESSION_FIXTURES`), so the
+  partition tracks the fixture set with no per-test annotation to drift; the
+  `-m heavy` step runs first so a broken marker collects zero tests and fails
+  fast (pytest exit 5) instead of letting the GB fixtures fall into the
+  parallel step and OOM. The light subset under `-n 2` stays within 7 GB
+  because it excludes exactly the GB-scale fixtures whose concurrent
+  generation caused the original OOM (the full serial suite, a strict
+  superset, already fits the runner). The workflow timeout is 45 minutes to
+  cover the heavy-serial + light-parallel PR path while still capping hangs.
 - `.github/workflows/dependabot-auto-merge.yml` — enables GitHub
   auto-merge (squash) on Dependabot **patch + minor** PRs via
   `dependabot/fetch-metadata`; majors stay manual. The merge waits on the
@@ -2124,6 +2140,18 @@ Override on the command line for narrow or wide hosts:
 `-n 1` is not a true serial run — xdist still spawns one worker subprocess,
 which breaks interactive debuggers like `pdb`. Use `-n 0` instead when you
 need in-process execution.
+
+The `heavy` marker partitions the suite for the 7 GB PR runner (see
+"Continuous integration" above). It is **auto-applied** — never hand-write
+`@pytest.mark.heavy` — by `pytest_collection_modifyitems` in
+`tests/conftest.py`, which marks any collected test whose fixture closure
+(`item.fixturenames`) intersects `_HEAVY_SESSION_FIXTURES` (the GB-scale
+`seven_day_run` / `n3_one_day_dataset_dir` / `n3_seven_day_dataset_dir`).
+Add a new GB-scale fixture to that frozenset — do not list test files in the
+workflow. `pytest -m heavy` (serial) and `pytest -m "not heavy"` (xdist
+`-n 2`) partition the full suite; the decision is unit-tested in
+`tests/test_heavy_marker.py` via the pure `_item_is_heavy(fixturenames)`
+helper.
 
 Tests must remain order-independent and file-isolated for the default
 parallel mode to stay sound. Two existing properties of the suite make this
