@@ -1148,8 +1148,8 @@ def test_span_end_walks_back_when_nominal_end_row_is_dropped(amc, tmp_path):
     span's nominal end row, so a revert of the walk-back
     fix to ``end_idx = end_idx_nominal`` would silently pass
     ``test_manifest_sorted_and_cascade_parents_resolve``. Re-run at
-    ``--drop-rate 0.7 --signal-level high``: many shaped spans survive
-    (anchor row retained), and per-span the nominal end is dropped with
+    ``--drop-rate 0.7 --signal-level high``: many shaped spans retain
+    at least one row, and per-span the nominal end is dropped with
     70% probability, so a regression would (a) emit a ``span_end``
     timestamp absent from the component CSV (caught by the membership
     invariant) and (b) leave no span with ``span_end < nominal_end``

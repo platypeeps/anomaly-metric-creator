@@ -110,8 +110,8 @@ per-component CSVs for components no longer in `--components` or when
 not selected, and `combined_metrics_unified.csv` when `combined` is not
 selected.
 Idempotent on missing files; files unknown to this script (user notes, the
-synthetic-extra-component CSV used by the combine autodiscovery fixture) are
-left alone.
+synthetic-extra-component CSV used by the standalone combine autodiscovery
+fixture) are left alone.
 
 The end-of-run `Done - …` summary line is built from the same `args.emit_selection`
 + `args.combine` inputs, so it names exactly the artifacts written this run.
@@ -161,24 +161,28 @@ autodiscovered (excluding the anomalies manifest and the long-form
 `gauges.csv` via `_NON_COMPONENT_FILES`, and prior combine outputs via
 a separate `combined_metrics_` filename-prefix check inside
 `discover_components` — the constant does not cover all three).
-`main()` threads `--components` into both call sites (the `combined`
-emit token and the `combine` subcommand) so the combine output honors the same allowlist as
-generation, `anomalies.csv`, reporting artifacts, and OTEL streaming.
-The default `--components all` keeps autodiscovery active, which
-preserves the synthetic-extra-component path used by the existing test
-fixture. The output ordering contract differs across the two
-dispatched layouts: the wide layout uses the caller-supplied
+`main()` always passes the selected known component list to the generated
+`combined` artifact, including the default `--components all`, so stale or
+foreign CSVs left in `--output-dir` cannot be folded into artifacts for the
+current run. For default `--components all`, that explicit allowlist is sorted
+the same way `discover_components` sorts a clean generated directory, preserving
+byte-parity with a later standalone combine when no extra CSVs are staged;
+narrowed component selections keep the `COMPONENTS` declaration order. The
+`combine DIR` subcommand is the autodiscovery path: its default `--components
+all` maps to `components=None`, preserving the synthetic-extra-component
+fixture and other hand-staged combine inputs. The output ordering contract
+differs across the two dispatched layouts: the wide layout uses the caller-supplied
 `components` order verbatim for the column sequence; the long layout
 ignores it for layout purposes and sorts components alphabetically for
 the equal-timestamp tie-break (the row's `component` cell carries the
 identity, so column order is not the ordering surface). See the
 **Layout (phase 5)** subsection below for the dispatch detail.
 For freshly generated, non-DST wide CSVs, `main()` passes
-`assume_monotonic_wide_components=set(args.components)` so the combine writer
-does not spend a second full pass proving monotonicity for files it just
-emitted. This is only a trusted allowlist: extra autodiscovered CSVs and all
-external `combine DIR` invocations still run `_wide_component_rows_are_monotonic`
-before using the streaming `heapq.merge` path. The measurement harness is
+`assume_monotonic_wide_components=set(combine_components)` so the combine
+writer does not spend a second full pass proving monotonicity for files it just
+emitted. This is only a trusted allowlist for generated combines; external
+`combine DIR` invocations still run `_wide_component_rows_are_monotonic` before
+using the streaming `heapq.merge` path. The measurement harness is
 `tools/benchmark_combine.py`.
 
 **Layout (phase 5).** `combine_logs_unified(components, input_dir, …)`
@@ -212,8 +216,8 @@ and dispatches one of two layouts:
 
 Both layouts share the same `_COMBINE_OUTPUT_FILENAME`
 (`combined_metrics_unified.csv`); the filename does not change with the
-layout. The N=1 default keeps the pre-clean / summary / autodiscovery
-slot unchanged.
+layout. The N=1 default keeps the pre-clean and summary slot unchanged, while
+autodiscovery stays scoped to standalone `combine DIR`.
 
 ### Output schema document (`schema.json`)
 

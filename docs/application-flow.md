@@ -42,7 +42,7 @@ flowchart TD
     dispatch -- "single anonymous Instance()" --> shared["_compose_topology_coupled_specs<br/>+ _compose_topology_saturation_specs<br/>(shared lambda-baked path;<br/>byte-identical to legacy realistic mode)"]
     dispatch -- "N > 1 OR any dimensioned" --> perinst["_compute_topology_arrays_per_instance<br/>(1:1 matched cardinalities OR<br/>uniform fan-out averaging;<br/>shared RNG noise across instances)"]
 
-    shared --> gen["for each component: generate_component<br/>natural → anomaly overrides (per-instance under<br/>instance_filter) → dtype='int' rounded via np.rint<br/>(realistic mode only) → derivations →<br/>capture (shared + per-instance) →<br/>round → drop → write {component}.csv<br/>(wide CSV if anonymous, long CSV with<br/>id/host/pod/az/region/tenant prefix otherwise)"]
+    shared --> gen["for each component: generate_component<br/>natural → anomaly overrides (per-instance under<br/>instance_filter) → dtype='int' rounded via np.rint → derivations →<br/>capture (shared + per-instance) →<br/>round → drop → write {component}.csv<br/>(wide CSV if anonymous, long CSV with<br/>id/host/pod/az/region/tenant prefix otherwise)"]
     perinst --> gen
 
     gen --> anomcsv["sort filtered_anomalies +<br/>write anomalies.csv<br/>(when 'metrics' in --emit)"]
@@ -50,7 +50,7 @@ flowchart TD
     reports --> gauges["write_gauges_csv<br/>→ gauges.csv<br/>(4-col wide OR 10-col long layout,<br/>auto-detected from per-component CSV headers;<br/>when 'gauges' in --emit)"]
     gauges --> schema["write_schema_json<br/>→ schema.json (v2)<br/>metadata + components (with optional<br/>per-component dimensions block) +<br/>files + topology snapshot<br/>(when 'schema' in --emit)"]
     schema --> otelmode{"--otel-send<br/>selection?"}
-    otelmode -- "signals<br/>(+ optional gauges)" --> otelfull["stream_otel_signals<br/>(anomaly counter/log/trace,<br/>filtered to the selected signals)<br/>→ stream_otel_gauges<br/>(when 'gauges' selected;<br/>shared otel-activity.log<br/>with RETRY/FAIL diagnostics:<br/>response headers, cf_ray,<br/>original JSON body)"]
+    otelmode -- "signals<br/>(+ optional gauges)" --> otelfull["stream_otel_signals<br/>(anomaly counter/log/trace,<br/>filtered to the selected signals)<br/>→ stream_otel_gauges<br/>(when 'gauges' selected;<br/>shared otel-activity.log<br/>with RETRY/FAIL diagnostics:<br/>response headers, cf_ray,<br/>request_body when --otel-verbose)"]
     otelmode -- "--otel-send gauges" --> otelgaugesonly["stream_otel_gauges only<br/>(signal stream skipped;<br/>fresh otel-activity.log;<br/>requires a metrics endpoint +<br/>'metrics' in --emit)"]
     otelmode -- "unset / none" --> otelskip["OTEL streams skipped"]
     otelfull --> combine["combine_logs<br/>→ combined_metrics_unified.csv<br/>(wide OR long layout — same auto-detect<br/>as gauges.csv; when 'combined' in --emit)"]
@@ -171,9 +171,9 @@ Recent significant additions reflected in the diagram above:
   + logs + traces) are skipped, only the gauge stream fires, and
   `otel-activity.log` starts fresh instead of appending to a stale
   signal-stream run. RETRY / FAIL records in the activity log carry
-  response headers, `cf_ray` when present, and the original JSON
-  body for JSON OTEL requests so HTTP failures are diagnosable
-  without re-running.
+  response headers, `cf_ray` when present, and, when `--otel-verbose`
+  is set, the original JSON body for JSON OTEL requests so HTTP
+  failures are diagnosable without re-running.
 - **Detector-visible scenario signals** — gradual cache, database,
   and LLM capacity scenarios now use correlated span-stress
   generators across related metrics (coherent multivariate
