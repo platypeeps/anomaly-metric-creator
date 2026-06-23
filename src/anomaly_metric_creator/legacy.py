@@ -12439,8 +12439,8 @@ def _main_serve_subcommand(argv):
 def main(argv=None):
     # Subcommand dispatch: 'generate' (the default when the first token is
     # not a subcommand, preserving every historic invocation), 'combine',
-    # and 'validate'. Handled before argparse so the flat generate parser
-    # never sees the subcommand token.
+    # 'validate', and 'serve'. Handled before argparse so the flat generate
+    # parser never sees the subcommand token.
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     if argv and argv[0] in _SUBCOMMANDS:
         sub, rest = argv[0], argv[1:]

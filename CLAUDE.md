@@ -141,7 +141,7 @@ stdout/stderr, fingerprint, matched rule, support status, command family, and
 active scenario.
 
 The same server also exposes a real-client Kubernetes API facade so stock
-`kubectl` and Helm 3 can point at `/v1/kubeconfig`. Keep this facade in
+`kubectl` and Helm 4 can point at `/v1/kubeconfig`. Keep this facade in
 `server.py` and backed by `resource_snapshot()` rather than creating a second
 resource model. The compatibility surface includes Kubernetes discovery
 (`/version`, `/api`, `/apis`), core resources, `apps/v1`, `autoscaling/v2`,
@@ -149,10 +149,12 @@ resource model. The compatibility surface includes Kubernetes discovery
 `metrics.k8s.io/v1beta1`, and `authorization.k8s.io/v1` self-subject access
 reviews. `kubectl get` uses server-side `meta.k8s.io/v1` Table responses when
 the client asks for them, including category support for `kubectl get all`.
-Helm compatibility is provided through default Helm 3/4 `helm.sh/release.v1`
-Secret objects with double-base64 gzip release payloads. Every real-client
-request should be recorded as command family `kubernetes-api` so unsupported
-client paths remain visible in `/v1/debug/search`.
+Helm compatibility is provided through Helm-shaped `helm.sh/release.v1` Secret
+objects with double-base64 gzip JSON release payloads, which are smoke-tested
+with Helm 4. Do not describe these payloads as native Helm 3 protobuf releases
+unless the storage encoder is changed to emit Helm's protobuf release object.
+Every real-client request should be recorded as command family `kubernetes-api`
+so unsupported client paths remain visible in `/v1/debug/search`.
 
 Security/ops boundary: loopback binds may run unauthenticated for local
 workshops, but non-loopback `--host` values require `--auth-token` unless the

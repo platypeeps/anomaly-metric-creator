@@ -349,9 +349,10 @@ Supported command families in server mode:
 Every anomaly scenario in the generator has a Kubernetes/Helm ops profile.
 Those profiles drive pod/deployment health, events, logs, rollout notes,
 `helm status`, `helm history`, `helm get notes`, and the Helm release Secret
-payloads returned to real Helm clients.
+payloads exposed through the Helm-shaped Secret API.
 
-Real client compatibility is also available through the Kubernetes API facade:
+Real `kubectl` and Helm 4 client compatibility is also available through the
+Kubernetes API facade:
 
 ```bash
 curl -s http://127.0.0.1:8088/v1/kubeconfig > /tmp/amc.kubeconfig
@@ -385,10 +386,13 @@ output, core resources (`pods`, `services`, `endpoints`, `events`, `pvc`,
 jobs/cronjobs, `discovery.k8s.io/v1` endpoint slices, `autoscaling/v2` HPA,
 `networking.k8s.io/v1` ingress, `metrics.k8s.io/v1beta1` pod/node metrics,
 and `authorization.k8s.io/v1` self-subject access reviews. Helm compatibility
-uses the default Helm Secret storage shape used by Helm 3/4
-(`helm.sh/release.v1` Secrets named
-`sh.helm.release.v1.simulated-saas.vN`) so list/status/history/get can decode
-scenario-appropriate release state through the same fake API server.
+uses Helm-shaped Secret storage objects (`helm.sh/release.v1` Secrets named
+`sh.helm.release.v1.simulated-saas.vN`) with a double-base64 gzip JSON release
+payload, so Helm 4 list/status/history/get commands and the simulator debug
+tools can decode scenario-appropriate release state through the same fake API
+server. The payload is intentionally simulator JSON rather than Helm 3's native
+protobuf release object, which keeps the generated state inspectable while
+preserving the real-client API paths the simulator needs to observe.
 Every real-client API call is recorded as command family `kubernetes-api`, so
 unsupported client paths appear in the debug search/backlog just like custom
 command API calls. Mutating Kubernetes methods are rejected with a read-only

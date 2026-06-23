@@ -502,10 +502,25 @@ def test_real_helm_storage_secrets_and_kubeconfig(amc, tmp_path):
         httpd.server_close()
 
 
-def test_real_helm_binary_smoke_when_available(amc, tmp_path):
+def test_real_helm4_binary_smoke_when_available(amc, tmp_path):
     helm = shutil.which("helm")
     if helm is None:
         pytest.skip("helm binary is not installed")
+
+    version = subprocess.run(
+        [helm, "version", "--template", "{{ .Version }}"],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if version.returncode != 0:
+        pytest.skip("helm version could not be determined")
+    if not version.stdout.strip().startswith("v4."):
+        pytest.skip(
+            "real Helm smoke requires Helm 4; Helm 3 expects protobuf "
+            "release Secret payloads"
+        )
 
     state = _build_state(
         amc,
