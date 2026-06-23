@@ -124,6 +124,14 @@ amc combine iot_logs
 # Validate an existing output dir against its schema.json:
 amc validate iot_logs
 
+# Run as an incident simulator server with a debug UI and Kubernetes/Helm
+# command API. Unrecognized serve options are parsed as normal generate flags:
+amc serve \
+  --port 8088 \
+  --duration-days 2 \
+  --scenarios db_disk_exhaustion \
+  --otel-send none
+
 # Emit only a subset of artifact types:
 amc --emit metrics,logs
 amc --emit traces
@@ -197,7 +205,7 @@ amc \
 
 ### CLI flags
 
-The CLI is organized around three subcommands plus grouped flags. `generate`
+The CLI is organized around four subcommands plus grouped flags. `generate`
 is the default — a bare invocation with no subcommand token runs the
 generation pipeline exactly as before:
 
@@ -215,6 +223,12 @@ generation pipeline exactly as before:
   if there are any, unless `--warn` is passed, which reports them on stderr
   and exits `0`.
   See [Output validation (the `validate` subcommand)](#output-validation-the-validate-subcommand).
+- `serve [server flags] [generate flags...]` — generate (unless
+  `--no-generate` is passed), start a stdlib HTTP server, stream OTEL in a
+  background thread when `--otel-send` is enabled, and answer simulated
+  `kubectl` / `helm` commands from the active scenario state. Open
+  `/debug` for the live command trace, unsupported-command explorer,
+  synthetic resource view, and scenario profile state.
 
 Help is two-tier: `-h` shows the common surface in the five groups below;
 `--help-all` additionally lists the advanced knobs
@@ -262,6 +276,138 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 | `--otel-auth-token` | _unset_ | Auth token applied to every signal selected by `--otel-send`. Same precedence as `--otel-endpoint`: this token beats the `MEZMO_OTEL_LOGS_AUTH_TOKEN` / `MEZMO_OTEL_METRICS_AUTH_TOKEN` / `MEZMO_OTEL_TRACES_AUTH_TOKEN` env vars (which supply the defaults when this flag is not given). |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
+
+#### Server mode (`serve`)
+
+`serve` accepts its own HTTP/debug flags and forwards every unrecognized flag
+through the normal generation parser, so the scenario, component, instance,
+artifact, and OTEL knobs above all work unchanged:
+
+```bash
+amc serve \
+  --host 127.0.0.1 \
+  --port 8088 \
+  --namespace saas-prod \
+  --duration-days 3 \
+  --scenarios cache_leak_restart \
+  --components apigateway,cacheservice,database,mqservice
+```
+
+Server flags:
+
+| Flag | Default | Notes |
+| ---- | ------- | ----- |
+| `--host` | `127.0.0.1` | HTTP bind host. |
+| `--port` | `8088` | HTTP bind port; use `0` for an ephemeral test port. |
+| `--namespace` | `saas-prod` | Namespace rendered by simulated Kubernetes/Helm responses. |
+| `--debug-ring-size` | `500` | In-memory command trace ring size. |
+| `--persist-command-log` | _off_ | Optional JSONL file for command traces. |
+| `--persist-command-db` | _off_ | Optional SQLite file for durable command traces and search. |
+| `--auth-token` | _off_ | Optional bearer token required for HTTP API, debug data, command, and Kubernetes API requests. Embedded into `GET /v1/kubeconfig` when enabled. |
+| `--max-request-body-bytes` | `1048576` | Maximum accepted HTTP request body size. Oversized app requests return `413`; oversized Kubernetes API requests return a Kubernetes `Status`. |
+| `--allow-remote-without-auth` | _off_ | Explicit lab-only override that permits non-loopback `--host` values without `--auth-token`. |
+| `--no-generate` | _off_ | Use existing artifacts in `--output-dir` instead of generating before serving. |
+
+By default the server binds loopback. Binding a non-loopback host such as
+`0.0.0.0` requires `--auth-token` unless
+`--allow-remote-without-auth` is passed explicitly. Health probes
+(`/healthz` and `/readyz`) and the static debug console shell (`/debug` and
+`/`) remain unauthenticated; every JSON/debug data endpoint and the Kubernetes
+facade require `Authorization: Bearer TOKEN` when a token is configured. The
+debug console prompts for that bearer token and stores it in browser
+`localStorage`; `/debug?token=TOKEN` can also bootstrap the browser session.
+
+Primary endpoints:
+
+| Endpoint | Purpose |
+| -------- | ------- |
+| `GET /debug` | Browser debug console shell. Data requests still use bearer auth when configured. |
+| `GET /v1/kubeconfig` | Kubeconfig that points stock `kubectl` and `helm` clients at this simulator. |
+| `POST /v1/commands` | Execute a simulated command. Body accepts `{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`. |
+| `GET /version`, `/api`, `/apis/...` | Kubernetes-compatible discovery, resource, log, metrics, and Helm release Secret APIs for real clients. |
+| `GET /v1/state` | Current synthetic clock, active scenarios, OTEL status, active anomaly spans, and trace counts. |
+| `GET /v1/debug/commands` | Recent command traces. |
+| `GET /v1/debug/search` | Search command traces by `q`, `status`, `family`, `scenario`, `limit`, and `offset`; uses SQLite when `--persist-command-db` is configured. |
+| `GET /v1/debug/unsupported` | Unsupported / partial command fingerprints grouped by count, examples, and guessed intent. |
+| `GET /v1/debug/resources` | Synthetic pods, deployments, services, HPA, PVC, nodes, events, ingress, and Helm release state. |
+| `GET /v1/logs/stream` | SSE replay of `metric_report.log` lines for the generated run. |
+| `POST /v1/time/pause`, `/resume`, `/seek` | Simulation clock controls (`seek` expects `{"timestamp": "YYYY-MM-DD HH:MM:SS"}`). |
+
+Supported command families in server mode:
+
+- `kubectl version|api-versions|api-resources|cluster-info`
+- `kubectl config current-context|view`
+- `kubectl auth can-i`
+- `kubectl get all|namespaces|pods|configmaps|secrets|deployments|replicasets|daemonsets|services|endpoints|endpointslices|events|hpa|jobs|cronjobs|serviceaccounts|nodes|pvc|statefulsets|ingress`
+- `kubectl describe` for the same synthetic resources where a description is useful
+- `kubectl logs POD`
+- `kubectl top pods|nodes`
+- `kubectl rollout status|history deployment/NAME`
+- `kubectl wait`, `exec`, and `port-forward` with simulated, non-mutating responses
+- `helm version|env|list|status|history|test|template`
+- `helm get values|manifest|notes|all|hooks`
+- `helm upgrade|rollback|uninstall` with read-only simulator responses
+
+Every anomaly scenario in the generator has a Kubernetes/Helm ops profile.
+Those profiles drive pod/deployment health, events, logs, rollout notes,
+`helm status`, `helm history`, `helm get notes`, and the Helm release Secret
+payloads exposed through the Helm-shaped Secret API.
+
+Real `kubectl` and Helm 4 client compatibility is also available through the
+Kubernetes API facade:
+
+```bash
+curl -s http://127.0.0.1:8088/v1/kubeconfig > /tmp/amc.kubeconfig
+
+KUBECONFIG=/tmp/amc.kubeconfig kubectl get pods -n saas-prod
+KUBECONFIG=/tmp/amc.kubeconfig kubectl get all -n saas-prod
+KUBECONFIG=/tmp/amc.kubeconfig kubectl api-resources
+KUBECONFIG=/tmp/amc.kubeconfig kubectl logs cacheservice-0 -n saas-prod
+KUBECONFIG=/tmp/amc.kubeconfig kubectl top pods -n saas-prod
+KUBECONFIG=/tmp/amc.kubeconfig kubectl auth can-i get pods -n saas-prod
+
+KUBECONFIG=/tmp/amc.kubeconfig helm list -n saas-prod
+KUBECONFIG=/tmp/amc.kubeconfig helm status simulated-saas -n saas-prod
+KUBECONFIG=/tmp/amc.kubeconfig helm history simulated-saas -n saas-prod
+```
+
+With `--auth-token`, fetch the kubeconfig with the same bearer token; the
+generated user entry includes that token so subsequent `kubectl` and `helm`
+requests authenticate automatically:
+
+```bash
+curl -H 'Authorization: Bearer dev-token' \
+  -s http://127.0.0.1:8088/v1/kubeconfig > /tmp/amc.kubeconfig
+```
+
+The compatibility facade implements enough Kubernetes discovery for normal
+client negotiation, server-side Table responses for familiar `kubectl get`
+output, core resources (`pods`, `services`, `endpoints`, `events`, `pvc`,
+`configmaps`, `secrets`, `serviceaccounts`, `nodes`), `apps/v1` workloads
+(`deployments`, `replicasets`, `daemonsets`, `statefulsets`), `batch/v1`
+jobs/cronjobs, `discovery.k8s.io/v1` endpoint slices, `autoscaling/v2` HPA,
+`networking.k8s.io/v1` ingress, `metrics.k8s.io/v1beta1` pod/node metrics,
+and `authorization.k8s.io/v1` self-subject access reviews. Helm compatibility
+uses Helm-shaped Secret storage objects (`helm.sh/release.v1` Secrets named
+`sh.helm.release.v1.simulated-saas.vN`) with a double-base64 gzip JSON release
+payload, so Helm 4 list/status/history/get commands and the simulator debug
+tools can decode scenario-appropriate release state through the same fake API
+server. The payload is intentionally simulator JSON rather than Helm 3's native
+protobuf release object, which keeps the generated state inspectable while
+preserving the real-client API paths the simulator needs to observe.
+Every real-client API call is recorded as command family `kubernetes-api`, so
+unsupported client paths appear in the debug search/backlog just like custom
+command API calls. Mutating Kubernetes methods are rejected with a read-only
+`405` Kubernetes `Status` and are still traced, which makes accidental
+`delete`, `patch`, or `apply` attempts visible in the debug backlog without
+mutating simulator state.
+
+Unsupported requests are intentionally captured rather than discarded. The
+debug UI groups them by normalized fingerprint, keeps raw examples and parsed
+flags, and reports the active scenario set so new command support can be added
+from observed operator behavior. Add `--persist-command-db PATH` when you want
+that trace history to survive restarts and power the debug console search over
+raw commands, outputs, fingerprints, statuses, families, and active scenarios.
 
 #### Advanced flags
 

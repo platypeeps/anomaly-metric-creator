@@ -54,10 +54,15 @@ post-phase-9 CLI flag day and no longer parse. Canonical surface:
 - **Subcommands** (dispatched in `main()` before argparse on
   `argv[0]`): `generate` (the default when no subcommand token is
   given — every historic bare invocation is unchanged), `combine DIR
-  [--components ...]`, and `validate DIR [--warn]`.
+  [--components ...]`, `validate DIR [--warn]`, and
+  `serve [server flags] [generate flags...]`.
   The subcommands carry dedicated parsers
-  (`_main_combine_subcommand` / `_main_validate_subcommand`) and never
-  route through `parse_args`.
+  (`_main_combine_subcommand` / `_main_validate_subcommand` /
+  `_main_serve_subcommand`). `combine` and `validate` never route
+  through `parse_args`; `serve` has a small server-flag parser and
+  forwards unrecognized flags to `parse_args` so the normal generation
+  surface (`--scenarios`, `--components`, `--otel-send`, etc.) stays
+  authoritative.
 - **`--emit ARTIFACTS`**: tokens
   `metrics, logs, traces, gauges, schema, combined` (default
   `metrics,logs,traces`). `combined` sets the internal `args.combine`
@@ -97,6 +102,101 @@ namespace. Those internal dests are seeded by `p.set_defaults`
 now that no flag writes them directly. When adding a new flag, place
 it in the right group, add it to `_ADVANCED_DESTS` if it is not a
 common-use-case flag, and extend `tests/test_cli_surface.py`.
+
+### Server mode and ops command simulation
+
+`src/anomaly_metric_creator/server.py` owns the stdlib HTTP server behind
+`amc serve`. Keep it out of `legacy.py` except for the dispatch hook:
+server mode is a runtime facade over the generator, not a second copy of
+generation behavior.
+
+Lifecycle:
+
+1. `_main_serve_subcommand()` imports `server.serve_main()` lazily and
+   passes the already-loaded legacy module.
+2. `serve_main()` parses server-only flags first (`--host`, `--port`,
+   `--namespace`, `--debug-ring-size`, `--persist-command-log`,
+   `--persist-command-db`, `--auth-token`,
+   `--max-request-body-bytes`, `--allow-remote-without-auth`,
+   `--no-generate`), then parses all remaining
+   flags with `parse_args`.
+3. Unless `--no-generate` is set, it runs the normal generator once with
+   `--otel-send none` appended so one-shot generation does not block on
+   OTEL before the HTTP listener starts.
+4. It builds a `SimulationState` from the parsed args, generated
+   `anomalies.csv`, `SCENARIOS`, and the simulated clock.
+5. If the original args selected OTEL streaming, the server starts a daemon
+   thread that calls the existing `stream_otel_signals()` /
+   `stream_otel_gauges()` helpers.
+
+The command simulator never shells out. `POST /v1/commands` accepts either
+`{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`;
+`parse_command()` uses `shlex` plus a small flag parser, and
+`render_command()` returns deterministic stdout/stderr/exit-code triples.
+Every call is recorded as a `CommandTrace` in a thread-safe ring buffer, with
+optional JSONL persistence via `--persist-command-log` and optional SQLite
+persistence via `--persist-command-db`. The SQLite store reloads recent traces
+on restart, keeps durable counts, and backs filtered search by raw command,
+stdout/stderr, fingerprint, matched rule, support status, command family, and
+active scenario.
+
+The same server also exposes a real-client Kubernetes API facade so stock
+`kubectl` and Helm 4 can point at `/v1/kubeconfig`. Keep this facade in
+`server.py` and backed by `resource_snapshot()` rather than creating a second
+resource model. The compatibility surface includes Kubernetes discovery
+(`/version`, `/api`, `/apis`), core resources, `apps/v1`, `autoscaling/v2`,
+`batch/v1`, `discovery.k8s.io/v1`, `networking.k8s.io/v1`,
+`metrics.k8s.io/v1beta1`, and `authorization.k8s.io/v1` self-subject access
+reviews. `kubectl get` uses server-side `meta.k8s.io/v1` Table responses when
+the client asks for them, including category support for `kubectl get all`.
+Helm compatibility is provided through Helm-shaped `helm.sh/release.v1` Secret
+objects with double-base64 gzip JSON release payloads, which are smoke-tested
+with Helm 4. Do not describe these payloads as native Helm 3 protobuf releases
+unless the storage encoder is changed to emit Helm's protobuf release object.
+Every real-client request should be recorded as command family `kubernetes-api`
+so unsupported client paths remain visible in `/v1/debug/search`.
+
+Security/ops boundary: loopback binds may run unauthenticated for local
+workshops, but non-loopback `--host` values require `--auth-token` unless the
+operator explicitly passes `--allow-remote-without-auth`. When token auth is
+enabled, every endpoint except `/healthz`, `/readyz`, and the static debug
+console shell (`/` and `/debug`) requires `Authorization: Bearer TOKEN`, and
+`/v1/kubeconfig` embeds that token for real `kubectl`/Helm clients. The debug
+console must attach that bearer token to its JSON/API fetches, either from the
+browser prompt/localStorage flow or a `/debug?token=TOKEN` bootstrap. Request
+bodies are capped by
+`--max-request-body-bytes`; app endpoints return `413` JSON and Kubernetes API
+endpoints return a Kubernetes `Status`. Mutating Kubernetes HTTP methods are
+read-only rejected with `405` and still traced as unsupported
+`kubernetes-api` calls.
+
+The command API should stay aligned with that same snapshot-backed surface:
+when adding a new Kubernetes resource family, update `_KIND_ALIASES`,
+`_SNAPSHOT_KINDS`, `resource_snapshot()`, `_render_get()`,
+`_render_describe()` when useful, `_k8s_api_resource_list()`,
+`_k8s_objects_for_resource()`, and table/object helpers in one pass. Keep
+mutating-looking commands (`helm upgrade`, `kubectl exec`, etc.) non-mutating
+unless server state mutation is explicitly designed and tested.
+
+Scenario-specific Kubernetes/Helm behavior lives in
+`OPS_SCENARIO_PROFILES`, keyed by `Scenario.id`. `validate_ops_profiles()`
+checks exact coverage of the `SCENARIOS` registry, verifies that every profile
+and per-component impact references known components, and fails when an
+affected component has no impact. These profiles feed `kubectl get/describe`,
+pod logs, rollout output, `helm status`, `helm history`, `helm get notes`, and
+the Helm release Secret payloads. When adding a scenario, update this profile
+registry in the same change and add focused coverage in `tests/test_server.py`;
+do not mutate the frozen `Scenario` dataclass for command/UI-only state unless
+the generator itself needs the field.
+
+The debug UI is served from `GET /debug` as inline HTML/CSS/JS to avoid a
+frontend build chain. Its static shell is intentionally accessible when bearer
+auth is enabled, but it must send `Authorization` on data requests. It polls
+`/v1/state`, `/v1/debug/commands`, `/v1/debug/search`,
+`/v1/debug/unsupported`, and `/v1/debug/resources`.
+Unsupported or partial commands are grouped by normalized fingerprint so real
+operator/tool calls outside the currently supported subset become a backlog for
+future command renderers.
 
 ### Output directory hygiene
 

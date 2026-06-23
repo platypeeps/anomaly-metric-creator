@@ -7703,10 +7703,11 @@ def parse_args(argv=None):
         epilog=(
             "Subcommands: 'generate' (the default when no subcommand is "
             "given), 'combine DIR' (join existing per-component CSVs into "
-            "combined_metrics_unified.csv), and 'validate DIR [--warn]' "
-            "(check artifacts against DIR/schema.json). This help shows "
-            "the common surface; run with --help-all to also list the "
-            "advanced knobs."
+            "combined_metrics_unified.csv), 'validate DIR [--warn]' "
+            "(check artifacts against DIR/schema.json), and 'serve' "
+            "(start the Kubernetes/Helm simulator server). This help "
+            "shows the common surface; run with --help-all to also list "
+            "the advanced knobs."
         ),
     )
     g_common = p.add_argument_group("common")
@@ -12354,7 +12355,7 @@ def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combi
         (output_dir / _COMBINE_OUTPUT_FILENAME).unlink(missing_ok=True)
 
 
-_SUBCOMMANDS = ("generate", "combine", "validate")
+_SUBCOMMANDS = ("generate", "combine", "validate", "serve")
 
 
 def _main_combine_subcommand(argv):
@@ -12426,11 +12427,20 @@ def _main_validate_subcommand(argv):
     raise SystemExit(1)
 
 
+def _main_serve_subcommand(argv):
+    """``serve [server flags] [generate flags...]``: run the simulator as an
+    HTTP server with Kubernetes/Helm command responses and debug APIs.
+    """
+    from .server import serve_main
+
+    return serve_main(argv, legacy_module=sys.modules[__name__])
+
+
 def main(argv=None):
     # Subcommand dispatch: 'generate' (the default when the first token is
     # not a subcommand, preserving every historic invocation), 'combine',
-    # and 'validate'. Handled before argparse so the flat generate parser
-    # never sees the subcommand token.
+    # 'validate', and 'serve'. Handled before argparse so the flat generate
+    # parser never sees the subcommand token.
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     if argv and argv[0] in _SUBCOMMANDS:
         sub, rest = argv[0], argv[1:]
@@ -12438,6 +12448,8 @@ def main(argv=None):
             return _main_combine_subcommand(rest)
         if sub == "validate":
             return _main_validate_subcommand(rest)
+        if sub == "serve":
+            return _main_serve_subcommand(rest)
         argv = rest  # generate: strip the token, fall through.
 
     args = parse_args(argv)
