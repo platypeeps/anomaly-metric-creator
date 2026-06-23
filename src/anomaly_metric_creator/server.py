@@ -3980,7 +3980,6 @@ def _k8s_resource_meta(group: str, version: str, resource: str) -> dict[str, str
         "events": "Event",
         "persistentvolumeclaims": "PersistentVolumeClaim",
         "serviceaccounts": "ServiceAccount",
-        "secrets": "Secret",
         "deployments": "Deployment",
         "replicasets": "ReplicaSet",
         "daemonsets": "DaemonSet",
@@ -5331,9 +5330,17 @@ def make_handler(
                     limit = _query_int(query, "limit", 100)
                     self._send_json(200, {"items": state.traces.list(limit=limit)})
                 elif path.startswith("/v1/debug/commands/"):
-                    trace_id = int(path.rsplit("/", 1)[1])
+                    raw_trace_id = path.rsplit("/", 1)[1]
+                    try:
+                        trace_id = int(raw_trace_id)
+                    except ValueError:
+                        self._send_json(400, {"error": "trace id must be an integer"})
+                        return
                     item = state.traces.get(trace_id)
-                    self._send_json(200, item if item is not None else {"error": "not found"})
+                    if item is None:
+                        self._send_json(404, {"error": "not found"})
+                        return
+                    self._send_json(200, item)
                 elif path == "/v1/debug/unsupported":
                     self._send_json(200, {"items": state.traces.unsupported_summary()})
                 elif path == "/v1/debug/search":

@@ -262,6 +262,21 @@ def test_debug_http_api_records_commands(amc, tmp_path):
             commands = json.loads(response.read().decode("utf-8"))
         assert commands["items"][0]["raw_input"] == "kubectl get pods -n saas-prod"
 
+        with urllib.request.urlopen(
+            base_url + f"/v1/debug/commands/{commands['items'][0]['id']}",
+            timeout=5,
+        ) as response:
+            command_detail = json.loads(response.read().decode("utf-8"))
+        assert command_detail["raw_input"] == "kubectl get pods -n saas-prod"
+
+        for path, expected_status in (
+            ("/v1/debug/commands/not-an-int", 400),
+            ("/v1/debug/commands/999999", 404),
+        ):
+            with pytest.raises(urllib.error.HTTPError) as excinfo:
+                urllib.request.urlopen(base_url + path, timeout=5)
+            assert excinfo.value.code == expected_status
+
         search_url = base_url + "/v1/debug/search?q=cacheservice&status=supported"
         with urllib.request.urlopen(search_url, timeout=5) as response:
             search = json.loads(response.read().decode("utf-8"))
