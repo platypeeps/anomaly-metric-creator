@@ -224,7 +224,7 @@ def test_expanded_kubectl_and_helm_command_coverage(amc, tmp_path):
     )
     assert "condition met" in wait["result"]["stdout"]
 
-    exec_result = server.run_command(state, command="kubectl exec apigateway-0 -- env -n saas-prod")
+    exec_result = server.run_command(state, command="kubectl exec -n saas-prod apigateway-0 -- env")
     assert "SERVICE_NAME=apigateway" in exec_result["result"]["stdout"]
 
     helm_all = server.run_command(state, command="helm get all simulated-saas -n saas-prod")
