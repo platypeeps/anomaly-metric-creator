@@ -1385,76 +1385,6 @@ def _trace_matches_search(
 
 
 @dataclass
-class SimulationState:
-    legacy: Any
-    args: Any
-    output_dir: Path
-    namespace: str
-    active_scenarios: tuple[str, ...]
-    components: tuple[str, ...]
-    anomaly_rows: list[dict[str, str]]
-    clock: SimulationClock
-    traces: CommandTraceStore
-    mutations: "SimulationMutations" = field(default_factory=lambda: SimulationMutations())
-    generation: "ContinuousGenerationStatus" = field(default_factory=lambda: ContinuousGenerationStatus())
-    otel_status: dict[str, Any] = field(default_factory=dict)
-
-    def profiles(self) -> list[OpsScenarioProfile]:
-        profiles: list[OpsScenarioProfile] = []
-        for scenario_id in self.active_scenarios:
-            profile = OPS_SCENARIO_PROFILES.get(scenario_id)
-            if profile is not None:
-                profiles.append(profile)
-        return profiles
-
-    def summary(self) -> dict[str, Any]:
-        return {
-            "namespace": self.namespace,
-            "output_dir": str(self.output_dir),
-            "clock": self.clock.to_dict(),
-            "active_scenarios": list(self.active_scenarios),
-            "components": list(self.components),
-            "anomaly_count": len(self.generated_rows()),
-            "command_trace_count": self.traces.count(),
-            "unsupported_group_count": len(self.traces.unsupported_summary()),
-            "otel": self.otel_status,
-            "generation": self.generation.to_dict(),
-            "mutations": self.mutations.summary(),
-            "profiles": [
-                {
-                    "scenario_id": profile.scenario_id,
-                    "summary": profile.summary,
-                    "affected_components": list(profile.affected_components),
-                }
-                for profile in self.profiles()
-            ],
-            "active_anomalies": self.active_anomalies(limit=20),
-        }
-
-    def active_anomalies(self, limit: int = 50) -> list[dict[str, str]]:
-        now = self.clock.now()
-        matches: list[dict[str, str]] = []
-        for row in self.generated_rows():
-            start = _parse_optional_timestamp(row.get("span_start") or row.get("timestamp"))
-            end = _parse_optional_timestamp(row.get("span_end") or row.get("timestamp"))
-            if start is None or end is None:
-                continue
-            if start <= now <= end:
-                matches.append(row)
-                if len(matches) >= limit:
-                    break
-        return matches
-
-    def generated_rows(self) -> list[dict[str, str]]:
-        with self.generation.lock:
-            return list(self.anomaly_rows)
-
-    def replace_generated_rows(self, rows: list[dict[str, str]]) -> None:
-        with self.generation.lock:
-            self.anomaly_rows = rows
-
-
-@dataclass
 class WorkloadMutation:
     replicas: int | None = None
     deployment_status: str = ""
@@ -1664,6 +1594,76 @@ class ContinuousGenerationStatus:
                 "last_anomaly_count": self.last_anomaly_count,
                 "last_seed": self.last_seed,
             }
+
+
+@dataclass
+class SimulationState:
+    legacy: Any
+    args: Any
+    output_dir: Path
+    namespace: str
+    active_scenarios: tuple[str, ...]
+    components: tuple[str, ...]
+    anomaly_rows: list[dict[str, str]]
+    clock: SimulationClock
+    traces: CommandTraceStore
+    mutations: SimulationMutations = field(default_factory=SimulationMutations)
+    generation: ContinuousGenerationStatus = field(default_factory=ContinuousGenerationStatus)
+    otel_status: dict[str, Any] = field(default_factory=dict)
+
+    def profiles(self) -> list[OpsScenarioProfile]:
+        profiles: list[OpsScenarioProfile] = []
+        for scenario_id in self.active_scenarios:
+            profile = OPS_SCENARIO_PROFILES.get(scenario_id)
+            if profile is not None:
+                profiles.append(profile)
+        return profiles
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "namespace": self.namespace,
+            "output_dir": str(self.output_dir),
+            "clock": self.clock.to_dict(),
+            "active_scenarios": list(self.active_scenarios),
+            "components": list(self.components),
+            "anomaly_count": len(self.generated_rows()),
+            "command_trace_count": self.traces.count(),
+            "unsupported_group_count": len(self.traces.unsupported_summary()),
+            "otel": self.otel_status,
+            "generation": self.generation.to_dict(),
+            "mutations": self.mutations.summary(),
+            "profiles": [
+                {
+                    "scenario_id": profile.scenario_id,
+                    "summary": profile.summary,
+                    "affected_components": list(profile.affected_components),
+                }
+                for profile in self.profiles()
+            ],
+            "active_anomalies": self.active_anomalies(limit=20),
+        }
+
+    def active_anomalies(self, limit: int = 50) -> list[dict[str, str]]:
+        now = self.clock.now()
+        matches: list[dict[str, str]] = []
+        for row in self.generated_rows():
+            start = _parse_optional_timestamp(row.get("span_start") or row.get("timestamp"))
+            end = _parse_optional_timestamp(row.get("span_end") or row.get("timestamp"))
+            if start is None or end is None:
+                continue
+            if start <= now <= end:
+                matches.append(row)
+                if len(matches) >= limit:
+                    break
+        return matches
+
+    def generated_rows(self) -> list[dict[str, str]]:
+        with self.generation.lock:
+            return list(self.anomaly_rows)
+
+    def replace_generated_rows(self, rows: list[dict[str, str]]) -> None:
+        with self.generation.lock:
+            self.anomaly_rows = rows
 
 
 def build_state(
@@ -3286,7 +3286,6 @@ def _generic_resource_row(
     payload: dict[str, Any],
     parsed: ParsedCommand | None = None,
 ) -> dict[str, Any]:
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     string_data = payload.get("stringData") if isinstance(payload.get("stringData"), dict) else {}
