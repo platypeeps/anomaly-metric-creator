@@ -2034,6 +2034,13 @@ run in CI):
   required checks, so a bump that breaks `test`, the lockstep guard, or
   Socket never lands. Needs repo `allow_auto_merge` plus branch protection
   requiring those checks.
+- `.github/workflows/codeql.yml` — explicit CodeQL analysis for both
+  `python` and `actions`. Branch protection requires the GitHub Advanced
+  Security app's aggregate `CodeQL` check; relying only on default setup can
+  leave a PR stuck at "Expected — Waiting for status to be reported" when the
+  dynamic run uploads only an `Analyze (python)` result and never emits the
+  aggregate context. Keep the workflow name and real CodeQL upload path in
+  place rather than replacing it with a synthetic status.
 - `.github/workflows/socket.yml` — a Socket supply-chain scan run as a
   sidecar `socket` check (`socketcli`), flagging risky dependency
   *changes* (install scripts, new capabilities, typosquats, compromised
