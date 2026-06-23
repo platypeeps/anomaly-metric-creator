@@ -1395,6 +1395,8 @@ class SimulationState:
     anomaly_rows: list[dict[str, str]]
     clock: SimulationClock
     traces: CommandTraceStore
+    mutations: "SimulationMutations" = field(default_factory=lambda: SimulationMutations())
+    generation: "ContinuousGenerationStatus" = field(default_factory=lambda: ContinuousGenerationStatus())
     otel_status: dict[str, Any] = field(default_factory=dict)
 
     def profiles(self) -> list[OpsScenarioProfile]:
@@ -1412,10 +1414,12 @@ class SimulationState:
             "clock": self.clock.to_dict(),
             "active_scenarios": list(self.active_scenarios),
             "components": list(self.components),
-            "anomaly_count": len(self.anomaly_rows),
+            "anomaly_count": len(self.generated_rows()),
             "command_trace_count": self.traces.count(),
             "unsupported_group_count": len(self.traces.unsupported_summary()),
             "otel": self.otel_status,
+            "generation": self.generation.to_dict(),
+            "mutations": self.mutations.summary(),
             "profiles": [
                 {
                     "scenario_id": profile.scenario_id,
@@ -1430,7 +1434,7 @@ class SimulationState:
     def active_anomalies(self, limit: int = 50) -> list[dict[str, str]]:
         now = self.clock.now()
         matches: list[dict[str, str]] = []
-        for row in self.anomaly_rows:
+        for row in self.generated_rows():
             start = _parse_optional_timestamp(row.get("span_start") or row.get("timestamp"))
             end = _parse_optional_timestamp(row.get("span_end") or row.get("timestamp"))
             if start is None or end is None:
@@ -1440,6 +1444,226 @@ class SimulationState:
                 if len(matches) >= limit:
                     break
         return matches
+
+    def generated_rows(self) -> list[dict[str, str]]:
+        with self.generation.lock:
+            return list(self.anomaly_rows)
+
+    def replace_generated_rows(self, rows: list[dict[str, str]]) -> None:
+        with self.generation.lock:
+            self.anomaly_rows = rows
+
+
+@dataclass
+class WorkloadMutation:
+    replicas: int | None = None
+    deployment_status: str = ""
+    pod_status: str = ""
+    ready_replicas: int | None = None
+    restarts_delta: int = 0
+    deleted: bool = False
+    updated_at: str = ""
+
+
+@dataclass
+class HelmReleaseMutation:
+    revisions: list[dict[str, Any]] | None = None
+    uninstalled: bool = False
+    values: dict[str, str] = field(default_factory=dict)
+    updated_at: str = ""
+
+
+@dataclass
+class SimulationMutations:
+    """Thread-safe in-memory overlay for mutating simulator operations."""
+
+    workloads: dict[str, WorkloadMutation] = field(default_factory=dict)
+    deleted_pods: set[str] = field(default_factory=set)
+    deleted_resources: dict[str, set[str]] = field(default_factory=dict)
+    created_resources: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    extra_events: list[dict[str, str]] = field(default_factory=list)
+    release: HelmReleaseMutation = field(default_factory=HelmReleaseMutation)
+    version: int = 0
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+    def summary(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "version": self.version,
+                "workloads": {
+                    name: {
+                        "replicas": mutation.replicas,
+                        "deployment_status": mutation.deployment_status,
+                        "pod_status": mutation.pod_status,
+                        "ready_replicas": mutation.ready_replicas,
+                        "restarts_delta": mutation.restarts_delta,
+                        "deleted": mutation.deleted,
+                        "updated_at": mutation.updated_at,
+                    }
+                    for name, mutation in sorted(self.workloads.items())
+                },
+                "deleted_pods": sorted(self.deleted_pods),
+                "deleted_resources": {
+                    kind: sorted(names)
+                    for kind, names in sorted(self.deleted_resources.items())
+                    if names
+                },
+                "created_resources": {
+                    kind: sorted(items)
+                    for kind, items in sorted(self.created_resources.items())
+                    if items
+                },
+                "extra_event_count": len(self.extra_events),
+                "release": {
+                    "uninstalled": self.release.uninstalled,
+                    "revision_count": len(self.release.revisions or []),
+                    "values": dict(sorted(self.release.values.items())),
+                    "updated_at": self.release.updated_at,
+                },
+            }
+
+    def record_event(self, event_type: str, reason: str, obj: str, message: str, now: _dt.datetime) -> None:
+        with self.lock:
+            self.extra_events.append({
+                "last_seen": _format_dt(now),
+                "type": event_type,
+                "reason": reason,
+                "object": obj,
+                "message": message,
+            })
+            self.version += 1
+
+    def set_workload(
+        self,
+        component: str,
+        *,
+        now: _dt.datetime,
+        replicas: int | None = None,
+        deployment_status: str = "",
+        pod_status: str = "",
+        ready_replicas: int | None = None,
+        restarts_delta: int = 0,
+        deleted: bool | None = None,
+    ) -> WorkloadMutation:
+        with self.lock:
+            mutation = self.workloads.setdefault(component, WorkloadMutation())
+            if replicas is not None:
+                mutation.replicas = max(0, replicas)
+            if deployment_status:
+                mutation.deployment_status = deployment_status
+            if pod_status:
+                mutation.pod_status = pod_status
+            if ready_replicas is not None:
+                mutation.ready_replicas = max(0, ready_replicas)
+            if restarts_delta:
+                mutation.restarts_delta += restarts_delta
+            if deleted is not None:
+                mutation.deleted = deleted
+            mutation.updated_at = _format_dt(now)
+            self.version += 1
+            return mutation
+
+    def delete_pod(self, pod_name: str, *, now: _dt.datetime) -> None:
+        component = _component_from_pod_name(pod_name)
+        with self.lock:
+            self.deleted_pods.add(pod_name)
+        self.set_workload(
+            component,
+            now=now,
+            deployment_status="Restarting",
+            pod_status="Running",
+            restarts_delta=1,
+        )
+        self.record_event(
+            "Normal",
+            "Killing",
+            f"pod/{pod_name}",
+            f"pod {pod_name} deleted; controller recreated replacement pod",
+            now,
+        )
+
+    def put_resource(self, kind: str, name: str, row: dict[str, Any], *, now: _dt.datetime) -> None:
+        with self.lock:
+            self.created_resources.setdefault(kind, {})[name] = dict(row)
+            self.deleted_resources.setdefault(kind, set()).discard(name)
+            self.version += 1
+        self.record_event(
+            "Normal",
+            "Configured",
+            f"{_resource_prefix(kind)}/{name}",
+            f"{_resource_prefix(kind)} {name} configured in simulator state",
+            now,
+        )
+
+    def delete_resource(self, kind: str, name: str, *, now: _dt.datetime) -> None:
+        with self.lock:
+            self.created_resources.setdefault(kind, {}).pop(name, None)
+            self.deleted_resources.setdefault(kind, set()).add(name)
+            self.version += 1
+        self.record_event(
+            "Normal",
+            "Deleted",
+            f"{_resource_prefix(kind)}/{name}",
+            f"{_resource_prefix(kind)} {name} deleted from simulator state",
+            now,
+        )
+
+    def reset(self) -> None:
+        with self.lock:
+            self.workloads.clear()
+            self.deleted_pods.clear()
+            self.deleted_resources.clear()
+            self.created_resources.clear()
+            self.extra_events.clear()
+            self.release = HelmReleaseMutation()
+            self.version += 1
+
+    def current_revisions(self, base: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        with self.lock:
+            if self.release.revisions is None:
+                return [dict(item) for item in base]
+            return [dict(item) for item in self.release.revisions]
+
+    def set_revisions(self, revisions: list[dict[str, Any]], *, now: _dt.datetime, uninstalled: bool = False) -> None:
+        with self.lock:
+            self.release.revisions = [dict(item) for item in revisions]
+            self.release.uninstalled = uninstalled
+            self.release.updated_at = _format_dt(now)
+            self.version += 1
+
+    def set_release_values(self, values: dict[str, str], *, now: _dt.datetime) -> None:
+        with self.lock:
+            self.release.values.update(values)
+            self.release.updated_at = _format_dt(now)
+            self.version += 1
+
+
+@dataclass
+class ContinuousGenerationStatus:
+    enabled: bool = False
+    interval_seconds: float = 0.0
+    thread: str = "disabled"
+    generation_count: int = 0
+    last_started_at: str = ""
+    last_completed_at: str = ""
+    last_error: str = ""
+    last_anomaly_count: int = 0
+    last_seed: int | None = None
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+    def to_dict(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "enabled": self.enabled,
+                "interval_seconds": self.interval_seconds,
+                "thread": self.thread,
+                "generation_count": self.generation_count,
+                "last_started_at": self.last_started_at,
+                "last_completed_at": self.last_completed_at,
+                "last_error": self.last_error,
+                "last_anomaly_count": self.last_anomaly_count,
+                "last_seed": self.last_seed,
+            }
 
 
 def build_state(
@@ -1492,10 +1716,12 @@ def load_anomaly_rows(path: Path) -> list[dict[str, str]]:
 _VALUE_FLAGS = {
     "-n", "--namespace", "-o", "--output", "-l", "--selector",
     "--context", "--kubeconfig", "-c", "--container", "--tail", "--since",
-    "--field-selector", "--sort-by", "--for", "--timeout",
+    "--field-selector", "--sort-by", "--for", "--timeout", "--replicas",
+    "-f", "--filename", "--from-literal", "--from-file", "--image", "--schedule",
+    "--set", "--set-string", "--values",
 }
 _BOOL_FLAGS = {
-    "-A", "--all-namespaces", "--previous", "-p", "--follow", "-f",
+    "-A", "--all-namespaces", "--previous", "-p", "--follow",
     "--watch", "-w", "--wide", "--show-labels", "--dry-run", "--install",
     "--atomic", "--debug", "--all", "--short", "--",
 }
@@ -1518,6 +1744,8 @@ _MODELED_FLAGS = {
     "--previous", "-p",
     "--wide", "--show-labels",
     "--field-selector", "--sort-by", "--for", "--timeout",
+    "--replicas", "-f", "--filename", "--from-literal", "--from-file",
+    "--image", "--schedule", "--set", "--set-string", "--values",
     "--dry-run", "--install", "--atomic", "--debug", "--all", "--short", "--",
 }
 _KIND_ALIASES = {
@@ -1777,6 +2005,26 @@ def _parse_kubectl(
             raw, argv, "kubectl", f"rollout {subverb}".strip(),
             resource_kind, resource_name, namespace, flags, tuple(positionals)
         )
+    if verb in {"delete", "scale"}:
+        target = positionals[1] if len(positionals) > 1 else ""
+        resource_kind, resource_name = _split_resource_token(target)
+        if not resource_name and len(positionals) > 2:
+            resource_name = positionals[2]
+        return ParsedCommand(
+            raw, argv, "kubectl", verb,
+            resource_kind, resource_name, namespace, flags, tuple(positionals)
+        )
+    if verb == "create":
+        resource_kind = _normalize_kind(positionals[1]) if len(positionals) > 1 else ""
+        resource_name = positionals[2] if len(positionals) > 2 else ""
+        return ParsedCommand(
+            raw, argv, "kubectl", verb, resource_kind, resource_name,
+            namespace, flags, tuple(positionals)
+        )
+    if verb == "apply":
+        return ParsedCommand(
+            raw, argv, "kubectl", verb, "manifest", "", namespace, flags, tuple(positionals)
+        )
     if verb == "wait":
         target = positionals[1] if len(positionals) > 1 else ""
         resource_kind, resource_name = _split_resource_token(target)
@@ -1829,7 +2077,7 @@ def _parse_helm(
     if verb == "get":
         resource_kind = positionals[1] if len(positionals) > 1 else ""
         resource_name = positionals[2] if len(positionals) > 2 else ""
-    elif verb in {"test", "upgrade", "rollback", "uninstall"}:
+    elif verb in {"test", "upgrade", "rollback", "uninstall", "install"}:
         resource_kind = verb
         resource_name = positionals[1] if len(positionals) > 1 else ""
     elif len(positionals) > 1:
@@ -1938,6 +2186,18 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
                 0, _render_rollout_history(state, parsed), "", "supported", "kubectl.rollout.history"
             )
         return _unsupported(parsed, "kubectl rollout history")
+    if parsed.verb == "rollout restart":
+        if kind in {"deployments", "deployment", "deploy"} or parsed.resource_name:
+            return CommandResult(
+                0, _render_rollout_restart(state, parsed), "", "supported", "kubectl.rollout.restart"
+            )
+        return _unsupported(parsed, "kubectl rollout restart")
+    if parsed.verb == "scale":
+        return CommandResult(0, _render_scale(state, parsed), "", "supported", "kubectl.scale")
+    if parsed.verb == "delete":
+        return CommandResult(0, _render_delete(state, parsed), "", "supported", "kubectl.delete")
+    if parsed.verb in {"apply", "create"}:
+        return CommandResult(0, _render_apply(state, parsed), "", "supported", f"kubectl.{parsed.verb}")
     if parsed.verb == "wait":
         return CommandResult(0, _render_wait(state, parsed), "", "supported", "kubectl.wait")
     if parsed.verb == "exec":
@@ -1971,14 +2231,30 @@ def _render_helm(state: SimulationState, parsed: ParsedCommand) -> CommandResult
         return _unsupported(parsed, f"helm get {parsed.resource_kind or '<missing-kind>'}")
     if parsed.verb == "test":
         return CommandResult(0, _render_helm_test(state), "", "supported", "helm.test")
+    if parsed.verb == "install":
+        return CommandResult(0, _render_helm_install(state, parsed), "", "supported", "helm.install")
     if parsed.verb == "upgrade":
         return CommandResult(0, _render_helm_upgrade(state, parsed), "", "supported", "helm.upgrade")
     if parsed.verb == "rollback":
         return CommandResult(0, _render_helm_rollback(state, parsed), "", "supported", "helm.rollback")
     if parsed.verb == "uninstall":
+        release = parsed.resource_name or DEFAULT_RELEASE
+        now = state.clock.now()
+        revisions = [
+            {**revision, "status": "uninstalled" if revision["status"] == "deployed" else revision["status"]}
+            for revision in _helm_release_revisions(state)
+        ]
+        state.mutations.set_revisions(revisions, now=now, uninstalled=True)
+        state.mutations.record_event(
+            "Normal",
+            "HelmUninstall",
+            f"release/{release}",
+            f"release {release} uninstalled from simulator state",
+            now,
+        )
         return CommandResult(
             0,
-            f"release \"{parsed.resource_name or DEFAULT_RELEASE}\" would be uninstalled (simulator is read-only)\n",
+            f"release \"{release}\" uninstalled\n",
             "",
             "supported",
             "helm.uninstall",
@@ -2041,7 +2317,16 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
         },
     ])
 
+    with state.mutations.lock:
+        deleted_components = {
+            name for name, mutation in state.mutations.workloads.items()
+            if mutation.deleted
+        }
+        deleted_pods = set(state.mutations.deleted_pods)
+
     for component in state.components:
+        if component in deleted_components:
+            continue
         health = _component_health(state, component)
         replicas = _replica_count(state, component)
         ready_replicas = min(replicas, health["ready_replicas"])
@@ -2095,6 +2380,8 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
         endpoint_ips: list[str] = []
         for index in range(replicas):
             pod_name = _pod_name(component, index)
+            if pod_name in deleted_pods:
+                continue
             pod_ip = _stable_pod_ip(pod_name)
             endpoint_ips.append(pod_ip)
             pods.append({
@@ -2174,7 +2461,7 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
             "ports": "80,443",
             "age": "7d",
         })
-    return {
+    snapshot = {
         "namespaces": [{"name": state.namespace, "status": "Active", "age": "30d"}],
         "pods": pods,
         "configmaps": configmaps,
@@ -2205,6 +2492,33 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
         "events": _event_rows(state),
         "helm_releases": [_helm_release(state)],
     }
+    _apply_mutation_rows(state, snapshot)
+    return snapshot
+
+
+def _apply_mutation_rows(state: SimulationState, snapshot: dict[str, list[dict[str, Any]]]) -> None:
+    with state.mutations.lock:
+        deleted = {
+            kind: set(names)
+            for kind, names in state.mutations.deleted_resources.items()
+        }
+        created = {
+            kind: {name: dict(row) for name, row in rows.items()}
+            for kind, rows in state.mutations.created_resources.items()
+        }
+    for kind, rows in snapshot.items():
+        if kind in {"events", "helm_releases"}:
+            continue
+        deleted_names = deleted.get(kind, set())
+        if deleted_names:
+            snapshot[kind] = [row for row in rows if row.get("name") not in deleted_names]
+        if kind in created:
+            existing = {str(row.get("name")): index for index, row in enumerate(snapshot[kind])}
+            for name, row in created[kind].items():
+                if name in existing:
+                    snapshot[kind][existing[name]] = row
+                else:
+                    snapshot[kind].append(row)
 
 
 def _render_get(state: SimulationState, kind: str, parsed: ParsedCommand) -> str:
@@ -2820,6 +3134,269 @@ def _render_rollout_history(state: SimulationState, parsed: ParsedCommand) -> st
     return f"deployment.apps/{component}\n" + _table(["REVISION", "CHANGE-CAUSE", "DESCRIPTION"], rows)
 
 
+def _render_rollout_restart(state: SimulationState, parsed: ParsedCommand) -> str:
+    component = parsed.resource_name or "apigateway"
+    if component.startswith("deployment/"):
+        component = component.split("/", 1)[1]
+    now = state.clock.now()
+    state.mutations.set_workload(
+        component,
+        now=now,
+        deployment_status="Restarting",
+        pod_status="Running",
+        restarts_delta=1,
+    )
+    state.mutations.record_event(
+        "Normal",
+        "RolloutRestart",
+        f"deployment/{component}",
+        f"deployment {component} restarted by simulator command",
+        now,
+    )
+    return f"deployment.apps/{component} restarted\n"
+
+
+def _render_scale(state: SimulationState, parsed: ParsedCommand) -> str:
+    if parsed.resource_kind not in {"deployments", "deployment", "deploy", ""}:
+        return f"{parsed.resource_kind.rstrip('s')}/{parsed.resource_name} scaled\n"
+    component = parsed.resource_name or "apigateway"
+    replicas = _parsed_replicas(parsed)
+    now = state.clock.now()
+    state.mutations.set_workload(
+        component,
+        now=now,
+        replicas=replicas,
+        ready_replicas=replicas,
+        deployment_status="Healthy" if replicas else "ScaledToZero",
+        pod_status="Running",
+    )
+    state.mutations.record_event(
+        "Normal",
+        "ScalingReplicaSet",
+        f"deployment/{component}",
+        f"scaled deployment {component} to {replicas} replicas",
+        now,
+    )
+    return f"deployment.apps/{component} scaled\n"
+
+
+def _render_delete(state: SimulationState, parsed: ParsedCommand) -> str:
+    kind = parsed.resource_kind
+    name = parsed.resource_name
+    now = state.clock.now()
+    if kind in {"pods", "pod"} and name:
+        state.mutations.delete_pod(name, now=now)
+        return f"pod \"{name}\" deleted\n"
+    if kind in {"deployments", "deployment", "deploy"} and name:
+        state.mutations.set_workload(
+            name,
+            now=now,
+            replicas=0,
+            ready_replicas=0,
+            deployment_status="Deleted",
+            pod_status="Terminating",
+            deleted=True,
+        )
+        state.mutations.record_event(
+            "Normal",
+            "Deleted",
+            f"deployment/{name}",
+            f"deployment {name} deleted from simulator state",
+            now,
+        )
+        return f"deployment.apps \"{name}\" deleted\n"
+    snapshot_kind = _mutation_snapshot_kind(kind)
+    if snapshot_kind and name:
+        state.mutations.delete_resource(snapshot_kind, name, now=now)
+    return f"{kind.rstrip('s') or 'resource'} \"{name}\" deleted\n"
+
+
+def _render_apply(state: SimulationState, parsed: ParsedCommand) -> str:
+    filename = parsed.flags.get("-f") or parsed.flags.get("--filename") or "manifest"
+    now = state.clock.now()
+    kind = parsed.resource_kind
+    name = parsed.resource_name
+    if parsed.verb == "apply":
+        kind, name = _resource_from_manifest_name(str(filename))
+    snapshot_kind = _mutation_snapshot_kind(kind)
+    if snapshot_kind and name:
+        state.mutations.put_resource(
+            snapshot_kind,
+            name,
+            _generic_resource_row(state, snapshot_kind, name, payload={}, parsed=parsed),
+            now=now,
+        )
+    else:
+        state.mutations.record_event(
+            "Normal",
+            "Applied",
+            "manifest/simulated",
+            f"{parsed.verb} accepted {filename}; simulator state reconciled",
+            now,
+        )
+    action = "configured" if parsed.verb == "apply" else "created"
+    target = f"{_resource_prefix(snapshot_kind)}/{name}" if snapshot_kind and name else str(filename)
+    return f"{target} {action}\n"
+
+
+def _resource_from_manifest_name(filename: str) -> tuple[str, str]:
+    stem = Path(filename).name
+    for suffix in (".yaml", ".yml", ".json"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+    tokens = [token for token in stem.replace("_", "-").split("-") if token]
+    aliases = {
+        "configmap": "configmaps",
+        "cm": "configmaps",
+        "secret": "secrets",
+        "service": "services",
+        "svc": "services",
+        "deployment": "deployments",
+        "deploy": "deployments",
+        "job": "jobs",
+        "cronjob": "cronjobs",
+        "ingress": "ingress",
+        "hpa": "hpa",
+        "serviceaccount": "serviceaccounts",
+    }
+    if tokens and tokens[0] in aliases and len(tokens) > 1:
+        return aliases[tokens[0]], "-".join(tokens[1:])
+    if tokens and tokens[-1] in aliases and len(tokens) > 1:
+        return aliases[tokens[-1]], "-".join(tokens[:-1])
+    return "configmaps", stem or "simulated-manifest"
+
+
+def _mutation_snapshot_kind(kind: str) -> str:
+    normalized = _normalize_kind(kind)
+    aliases = {
+        "horizontalpodautoscalers": "hpa",
+        "persistentvolumeclaims": "pvc",
+        "ingresses": "ingress",
+        "manifest": "configmaps",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in _SNAPSHOT_KINDS else ""
+
+
+def _generic_resource_row(
+    state: SimulationState,
+    kind: str,
+    name: str,
+    *,
+    payload: dict[str, Any],
+    parsed: ParsedCommand | None = None,
+) -> dict[str, Any]:
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    string_data = payload.get("stringData") if isinstance(payload.get("stringData"), dict) else {}
+    if kind == "configmaps":
+        keys = {str(key): str(value) for key, value in data.items()} or _configmap_keys_from_flags(parsed)
+        return {"name": name, "data": len(keys), "age": "0s", "keys": keys or {"simulated": "true"}}
+    if kind == "secrets":
+        secret_data = {str(key): str(value) for key, value in {**data, **string_data}.items()}
+        return {"name": name, "type": payload.get("type", "Opaque"), "data": len(secret_data) or 1, "age": "0s"}
+    if kind == "services":
+        service_type = str(spec.get("type") or "ClusterIP")
+        ports = spec.get("ports") if isinstance(spec.get("ports"), list) else []
+        port = ports[0].get("port", 8080) if ports and isinstance(ports[0], dict) else 8080
+        return {
+            "name": name,
+            "type": service_type,
+            "cluster_ip": str(spec.get("clusterIP") or _stable_cluster_ip(name)),
+            "external_ip": "<none>",
+            "ports": f"{port}/TCP",
+            "age": "0s",
+        }
+    if kind == "deployments":
+        replicas = _payload_replicas(payload) or 1
+        return {
+            "name": name,
+            "ready": f"{replicas}/{replicas}",
+            "up_to_date": replicas,
+            "available": replicas,
+            "age": "0s",
+            "status": "Healthy",
+        }
+    if kind == "serviceaccounts":
+        return {"name": name, "secrets": len(payload.get("secrets", [])), "age": "0s"}
+    if kind == "hpa":
+        min_replicas = int(spec.get("minReplicas", 1) or 1)
+        max_replicas = int(spec.get("maxReplicas", 8) or 8)
+        target = spec.get("scaleTargetRef") if isinstance(spec.get("scaleTargetRef"), dict) else {}
+        target_name = str(target.get("name") or name)
+        return {
+            "name": name,
+            "reference": f"{target.get('kind', 'Deployment')}/{target_name}",
+            "targets": "0%/80%",
+            "minpods": min_replicas,
+            "maxpods": max_replicas,
+            "replicas": min_replicas,
+            "age": "0s",
+        }
+    if kind == "jobs":
+        completions = int(spec.get("completions", 1) or 1)
+        return {"name": name, "completions": f"0/{completions}", "duration": "0s", "age": "0s"}
+    if kind == "cronjobs":
+        schedule = str(spec.get("schedule") or (parsed.flags.get("--schedule") if parsed else "") or "* * * * *")
+        return {"name": name, "schedule": schedule, "suspend": "False", "active": 0, "last_schedule": "<none>", "age": "0s"}
+    if kind == "pvc":
+        requests = spec.get("resources", {}).get("requests", {}) if isinstance(spec.get("resources"), dict) else {}
+        return {
+            "name": name,
+            "status": "Bound",
+            "volume": f"pvc-{name}",
+            "capacity": str(requests.get("storage", "1Gi")),
+            "access_modes": ",".join(spec.get("accessModes", ["RWO"])),
+            "storageclass": str(spec.get("storageClassName", "gp3")),
+            "age": "0s",
+            "used_pct": 1,
+        }
+    if kind == "statefulsets":
+        replicas = _payload_replicas(payload) or 1
+        return {"name": name, "ready": f"{replicas}/{replicas}", "age": "0s"}
+    if kind == "daemonsets":
+        nodes = _node_rows(state)
+        return {
+            "name": name,
+            "desired": len(nodes),
+            "current": len(nodes),
+            "ready": len(nodes),
+            "up_to_date": len(nodes),
+            "available": len(nodes),
+            "node_selector": "kubernetes.io/os=linux",
+            "age": "0s",
+        }
+    if kind == "ingress":
+        rules = spec.get("rules") if isinstance(spec.get("rules"), list) else []
+        host = rules[0].get("host") if rules and isinstance(rules[0], dict) else f"{name}.simulated-saas.local"
+        return {"name": name, "class": spec.get("ingressClassName", "nginx"), "hosts": host, "address": "10.0.0.20", "ports": "80,443", "age": "0s"}
+    return {"name": name, "age": "0s"}
+
+
+def _configmap_keys_from_flags(parsed: ParsedCommand | None) -> dict[str, str]:
+    if parsed is None:
+        return {}
+    literal = parsed.flags.get("--from-literal")
+    if isinstance(literal, str) and literal:
+        key, _, value = literal.partition("=")
+        return {key or "literal": value or "true"}
+    return {}
+
+
+def _parsed_replicas(parsed: ParsedCommand) -> int:
+    value = parsed.flags.get("--replicas")
+    if value is None:
+        for token in parsed.positionals:
+            if token.startswith("--replicas="):
+                value = token.split("=", 1)[1]
+                break
+    try:
+        return max(0, int(str(value)))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _render_wait(state: SimulationState, parsed: ParsedCommand) -> str:
     component = parsed.resource_name or "apigateway"
     health = _component_health(state, component)
@@ -2858,6 +3435,12 @@ def _render_port_forward(parsed: ParsedCommand) -> str:
 
 
 def _render_helm_list(state: SimulationState) -> str:
+    with state.mutations.lock:
+        if state.mutations.release.uninstalled:
+            return _table(
+                ["NAME", "NAMESPACE", "REVISION", "UPDATED", "STATUS", "CHART", "APP VERSION"],
+                [],
+            )
     release = _helm_release(state)
     return _table(["NAME", "NAMESPACE", "REVISION", "UPDATED", "STATUS", "CHART", "APP VERSION"], [[
         release["name"], release["namespace"], str(release["revision"]),
@@ -2878,22 +3461,21 @@ def _render_helm_status(state: SimulationState) -> str:
 
 
 def _render_helm_history(state: SimulationState) -> str:
-    rows = [
-        ["1", "2026-03-01 00:00:00", "superseded", DEFAULT_CHART, "Install complete"],
-        ["2", "2026-03-08 00:00:00", "deployed", DEFAULT_CHART, "Baseline config"],
-    ]
-    if "deploy_bad_canary_rollback" in state.active_scenarios:
-        rows.extend([
-            ["3", _format_dt(state.clock.now()), "failed", DEFAULT_CHART, "Canary readiness failed"],
-            ["4", _format_dt(state.clock.now()), "deployed", DEFAULT_CHART, "Rollback to revision 2"],
-        ])
-    elif state.profiles():
+    rows = []
+    for revision in _helm_release_revisions(state):
+        version = int(revision["version"])
+        if version == 1:
+            updated = "2026-03-01 00:00:00"
+        elif version == 2:
+            updated = "2026-03-08 00:00:00"
+        else:
+            updated = _format_dt(state.clock.now())
         rows.append([
-            "3",
-            _format_dt(state.clock.now()),
-            "deployed",
+            str(version),
+            updated,
+            str(revision["status"]),
             DEFAULT_CHART,
-            _helm_current_description(state),
+            str(revision["description"]),
         ])
     return _table(["REVISION", "UPDATED", "STATUS", "CHART", "DESCRIPTION"], rows)
 
@@ -2911,12 +3493,19 @@ def _render_helm_env() -> str:
 
 def _render_helm_get(state: SimulationState, kind: str) -> str:
     if kind == "values":
+        with state.mutations.lock:
+            values = dict(state.mutations.release.values)
+        value_lines = "".join(
+            f"{key}: {value}\n"
+            for key, value in sorted(values.items())
+        )
         return (
             "replicaCount: 3\n"
             f"namespace: {state.namespace}\n"
             "observability:\n"
             "  otel: true\n"
             f"scenarios: {json.dumps(list(state.active_scenarios))}\n"
+            + value_lines
         )
     if kind == "manifest":
         deployments = "\n".join(
@@ -2946,24 +3535,112 @@ def _render_helm_test(state: SimulationState) -> str:
     return _table(["NAME", "STATUS", "LAST RUN"], rows)
 
 
+def _render_helm_install(state: SimulationState, parsed: ParsedCommand) -> str:
+    release = parsed.resource_name or DEFAULT_RELEASE
+    now = state.clock.now()
+    values = _helm_value_overrides(parsed)
+    revisions = [{
+        "version": 1,
+        "status": "deployed",
+        "description": f"Install applied to {release}",
+    }]
+    state.mutations.set_revisions(revisions, now=now, uninstalled=False)
+    if values:
+        state.mutations.set_release_values(values, now=now)
+    state.mutations.record_event(
+        "Normal",
+        "HelmInstall",
+        f"release/{release}",
+        f"release {release} installed by simulator command",
+        now,
+    )
+    return (
+        f"NAME: {release}\n"
+        f"LAST DEPLOYED: {_format_dt(now)}\n"
+        f"NAMESPACE: {state.namespace}\n"
+        "STATUS: deployed\n"
+        "REVISION: 1\n"
+        "NOTE: simulator release state installed.\n"
+    )
+
+
 def _render_helm_upgrade(state: SimulationState, parsed: ParsedCommand) -> str:
     release = parsed.resource_name or DEFAULT_RELEASE
     mode = "dry run" if "--dry-run" in parsed.flags else "simulated"
+    current = _helm_release_revisions(state)
+    if "--dry-run" not in parsed.flags:
+        now = state.clock.now()
+        values = _helm_value_overrides(parsed)
+        revisions = [
+            {**revision, "status": "superseded" if revision["status"] == "deployed" else revision["status"]}
+            for revision in current
+        ]
+        revisions.append({
+            "version": int(revisions[-1]["version"]) + 1 if revisions else 1,
+            "status": "deployed",
+            "description": f"Upgrade applied to {release}",
+        })
+        state.mutations.set_revisions(revisions, now=now, uninstalled=False)
+        if values:
+            state.mutations.set_release_values(values, now=now)
+        state.mutations.record_event(
+            "Normal",
+            "HelmUpgrade",
+            f"release/{release}",
+            f"release {release} upgraded by simulator command",
+            now,
+        )
     return (
         f"Release \"{release}\" has been upgraded ({mode}).\n"
         f"NAMESPACE: {state.namespace}\n"
         f"STATUS: {_helm_release(state)['status']}\n"
-        "NOTE: simulator does not mutate release state from command API calls.\n"
+        "NOTE: simulator release state updated.\n"
     )
+
+
+def _helm_value_overrides(parsed: ParsedCommand) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for flag in ("--set", "--set-string"):
+        raw = parsed.flags.get(flag)
+        if isinstance(raw, str):
+            for item in raw.split(","):
+                key, _, value = item.partition("=")
+                if key:
+                    values[key] = value or "true"
+    values_file = parsed.flags.get("--values")
+    if values_file is None:
+        values_file = parsed.flags.get("-f")
+    if isinstance(values_file, str) and values_file:
+        values["values_file"] = values_file
+    return values
 
 
 def _render_helm_rollback(state: SimulationState, parsed: ParsedCommand) -> str:
     release = parsed.resource_name or DEFAULT_RELEASE
     revision = parsed.positionals[2] if len(parsed.positionals) > 2 else "previous"
+    now = state.clock.now()
+    current = _helm_release_revisions(state)
+    revisions = [
+        {**item, "status": "superseded" if item["status"] == "deployed" else item["status"]}
+        for item in current
+    ]
+    revisions.append({
+        "version": int(revisions[-1]["version"]) + 1 if revisions else 1,
+        "status": "deployed",
+        "description": f"Rollback to revision {revision}",
+    })
+    state.mutations.set_revisions(revisions, now=now, uninstalled=False)
+    state.mutations.record_event(
+        "Normal",
+        "HelmRollback",
+        f"release/{release}",
+        f"release {release} rolled back to revision {revision}",
+        now,
+    )
     return (
         f"Rollback was a success for release \"{release}\" to revision {revision}.\n"
         f"NAMESPACE: {state.namespace}\n"
-        "NOTE: simulator reports rollback intent without mutating release state.\n"
+        "NOTE: simulator release state updated.\n"
     )
 
 
@@ -3076,6 +3753,25 @@ def _component_health(state: SimulationState, component: str) -> dict[str, Any]:
     scenarios = _component_scenarios(state, component)
     if scenarios and not impacts:
         health.update({"deployment_status": "ScenarioInfluenced", "cpu_pct": 55, "cpu_m": 550})
+    with state.mutations.lock:
+        mutation = state.mutations.workloads.get(component)
+        if mutation is not None:
+            if mutation.deployment_status:
+                health["deployment_status"] = mutation.deployment_status
+            if mutation.pod_status:
+                health["pod_status"] = mutation.pod_status
+            if mutation.ready_replicas is not None:
+                health["ready_replicas"] = mutation.ready_replicas
+            if mutation.restarts_delta:
+                health["restarts"] += mutation.restarts_delta
+            if mutation.deleted:
+                health.update({
+                    "deployment_status": "Deleted",
+                    "pod_status": "Terminating",
+                    "ready_replicas": 0,
+                    "ready": "0/1",
+                })
+    health["ready_replicas"] = max(0, min(replicas, health["ready_replicas"]))
     return health
 
 
@@ -3153,6 +3849,14 @@ def _component_events(state: SimulationState, component: str) -> list[str]:
             events.extend(profile.events)
     if not events:
         events.append(f"Normal Healthy {component} probes passing")
+    with state.mutations.lock:
+        for event in state.mutations.extra_events:
+            obj = event.get("object", "")
+            if obj.endswith(f"/{component}") or obj.startswith(f"pod/{component}-"):
+                events.append(
+                    f"{event.get('type', 'Normal')} {event.get('reason', 'Mutation')} "
+                    f"{event.get('message', '')}".strip()
+                )
     return events
 
 
@@ -3189,6 +3893,8 @@ def _event_rows(state: SimulationState) -> list[dict[str, str]]:
             "object": "deployment/simulated-saas",
             "message": "all simulated workloads are healthy",
         })
+    with state.mutations.lock:
+        rows.extend(dict(event) for event in state.mutations.extra_events)
     return rows
 
 
@@ -3265,6 +3971,10 @@ def _helm_current_description(state: SimulationState) -> str:
 
 
 def _replica_count(state: SimulationState, component: str) -> int:
+    with state.mutations.lock:
+        mutation = state.mutations.workloads.get(component)
+        if mutation is not None and mutation.replicas is not None:
+            return mutation.replicas
     if getattr(state.args, "instances_per_component", 1) > 1:
         return int(state.args.instances_per_component)
     if component in {"apigateway", "authservice", "cacheservice"}:
@@ -3283,6 +3993,13 @@ def _component_from_name(name: str, components: tuple[str, ...]) -> str:
         if name == component or name.startswith(component + "-"):
             return component
     return name.split("-", 1)[0] if name else ""
+
+
+def _component_from_pod_name(name: str) -> str:
+    if not name:
+        return ""
+    prefix, _, suffix = name.rpartition("-")
+    return prefix if suffix.isdigit() else name.split("-", 1)[0]
 
 
 def _stable_cluster_ip(component: str) -> str:
@@ -3509,6 +4226,7 @@ def kubernetes_api_response(
 
 
 def kubernetes_api_post_response(
+    state: SimulationState,
     path: str,
     payload: dict[str, Any],
 ) -> KubernetesApiResponse | None:
@@ -3533,9 +4251,225 @@ def kubernetes_api_post_response(
             "supported",
             "k8s.authorization.selfsubjectaccessreviews.create",
         )
+    return kubernetes_api_mutating_response(state, "POST", path, payload)
+
+
+def kubernetes_api_mutating_response(
+    state: SimulationState,
+    method: str,
+    path: str,
+    payload: dict[str, Any],
+) -> KubernetesApiResponse:
+    target = _k8s_mutation_target(path)
+    if target is None:
+        return _k8s_status_response(
+            *_k8s_read_only_status_args(method, path),
+        )
+    resource = target["resource"]
+    name = target["name"]
+    subresource = target["subresource"]
+    now = state.clock.now()
+    if method in {"PATCH", "PUT"} and resource == "deployments" and name:
+        replicas = _payload_replicas(payload)
+        if replicas is not None:
+            state.mutations.set_workload(
+                name,
+                now=now,
+                replicas=replicas,
+                ready_replicas=replicas,
+                deployment_status="Healthy" if replicas else "ScaledToZero",
+                pod_status="Running",
+            )
+            reason = "ScalingReplicaSet" if subresource == "scale" else "Patched"
+            state.mutations.record_event(
+                "Normal",
+                reason,
+                f"deployment/{name}",
+                f"{method.lower()} set deployment {name} replicas to {replicas}",
+                now,
+            )
+        deployment = _find_named(resource_snapshot(state)["deployments"], name)
+        if deployment is None:
+            return _k8s_status_response(
+                404,
+                f"deployments {name!r} not found",
+                "NotFound",
+                "supported",
+                "k8s.apps.deployments.mutate.not_found",
+            )
+        body = _k8s_scale(state, deployment) if subresource == "scale" else _k8s_deployment(state, deployment)
+        return _k8s_json_response(body, f"k8s.apps.deployments.{method.lower()}")
+    snapshot_kind = _mutation_snapshot_kind(resource)
+    if method in {"PATCH", "PUT"} and snapshot_kind and name:
+        state.mutations.put_resource(
+            snapshot_kind,
+            name,
+            _generic_resource_row(state, snapshot_kind, name, payload=payload),
+            now=now,
+        )
+        body = _k8s_mutated_object(state, target, snapshot_kind, name)
+        if body is not None:
+            return _k8s_json_response(body, f"k8s.{resource}.{method.lower()}")
+        return _k8s_status_response(
+            200,
+            f"{resource} {name!r} configured by simulator",
+            "Configured",
+            "supported",
+            f"k8s.{resource}.{method.lower()}",
+        )
+    if method == "DELETE" and resource == "pods" and name:
+        state.mutations.delete_pod(name, now=now)
+        return _k8s_status_response(
+            200,
+            f"pods {name!r} deleted",
+            "Deleted",
+            "supported",
+            "k8s.core.pods.delete",
+        )
+    if method == "DELETE" and resource == "deployments" and name:
+        state.mutations.set_workload(
+            name,
+            now=now,
+            replicas=0,
+            ready_replicas=0,
+            deployment_status="Deleted",
+            pod_status="Terminating",
+            deleted=True,
+        )
+        state.mutations.record_event(
+            "Normal",
+            "Deleted",
+            f"deployment/{name}",
+            f"deployment {name} deleted from simulator state",
+            now,
+        )
+        return _k8s_status_response(
+            200,
+            f"deployments {name!r} deleted",
+            "Deleted",
+            "supported",
+            "k8s.apps.deployments.delete",
+        )
+    if method == "DELETE" and snapshot_kind and name:
+        state.mutations.delete_resource(snapshot_kind, name, now=now)
+        return _k8s_status_response(
+            200,
+            f"{resource} {name!r} deleted",
+            "Deleted",
+            "supported",
+            f"k8s.{resource}.delete",
+        )
+    if method == "POST":
+        name = (
+            name
+            or str(payload.get("metadata", {}).get("name", ""))
+            or f"simulated-{resource.rstrip('s')}"
+        )
+        if snapshot_kind:
+            state.mutations.put_resource(
+                snapshot_kind,
+                name,
+                _generic_resource_row(state, snapshot_kind, name, payload=payload),
+                now=now,
+            )
+            body = _k8s_mutated_object(state, target, snapshot_kind, name)
+            if body is not None:
+                return KubernetesApiResponse(
+                    201,
+                    body,
+                    "application/json; charset=utf-8",
+                    "supported",
+                    f"k8s.{resource}.create",
+                )
+        state.mutations.record_event(
+            "Normal",
+            "Created",
+            f"{resource}/{name}",
+            f"accepted create request for {resource}",
+            now,
+        )
+        return _k8s_status_response(
+            201,
+            f"{resource} create accepted by simulator",
+            "Created",
+            "partial",
+            f"k8s.{resource}.create.partial",
+        )
     return _k8s_status_response(
-        *_k8s_read_only_status_args("POST", path),
+        *_k8s_read_only_status_args(method, path),
     )
+
+
+def _k8s_mutation_target(path: str) -> dict[str, str] | None:
+    parts = [part for part in path.strip("/").split("/") if part]
+    if parts[:3] == ["api", "v1", "namespaces"] and len(parts) >= 5:
+        return {
+            "group": "",
+            "version": "v1",
+            "namespace": parts[3],
+            "resource": parts[4],
+            "name": parts[5] if len(parts) >= 6 else "",
+            "subresource": parts[6] if len(parts) >= 7 else "",
+        }
+    if parts and parts[0] == "apis" and len(parts) >= 6 and parts[3] == "namespaces":
+        return {
+            "group": parts[1],
+            "version": parts[2],
+            "namespace": parts[4],
+            "resource": parts[5],
+            "name": parts[6] if len(parts) >= 7 else "",
+            "subresource": parts[7] if len(parts) >= 8 else "",
+        }
+    return None
+
+
+def _k8s_mutated_object(
+    state: SimulationState,
+    target: dict[str, str],
+    snapshot_kind: str,
+    name: str,
+) -> dict[str, Any] | None:
+    resource = target["resource"]
+    group = target["group"]
+    objects = _k8s_objects_for_resource(state, group, resource)
+    if objects is None and snapshot_kind == "hpa":
+        objects = _k8s_objects_for_resource(state, "autoscaling", "horizontalpodautoscalers")
+    if objects is None and snapshot_kind == "ingress":
+        objects = _k8s_objects_for_resource(state, "networking.k8s.io", "ingresses")
+    if objects is None and snapshot_kind == "pvc":
+        objects = _k8s_objects_for_resource(state, "", "persistentvolumeclaims")
+    if objects is None:
+        return None
+    for obj in objects:
+        if obj.get("metadata", {}).get("name") == name:
+            return obj
+    return None
+
+
+def _payload_replicas(payload: dict[str, Any]) -> int | None:
+    spec = payload.get("spec")
+    if isinstance(spec, dict) and "replicas" in spec:
+        try:
+            return max(0, int(spec["replicas"]))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _k8s_scale(state: SimulationState, deployment: dict[str, Any]) -> dict[str, Any]:
+    replicas = int(str(deployment["ready"]).split("/", 1)[1])
+    ready = int(str(deployment["ready"]).split("/", 1)[0])
+    return {
+        "apiVersion": "autoscaling/v1",
+        "kind": "Scale",
+        "metadata": _k8s_metadata(state, deployment["name"], namespace=state.namespace),
+        "spec": {"replicas": replicas},
+        "status": {
+            "replicas": replicas,
+            "selector": f"app.kubernetes.io/name={deployment['name']}",
+            "readyReplicas": ready,
+        },
+    }
 
 
 def render_kubeconfig(
@@ -3672,10 +4606,10 @@ def _k8s_read_only_response(method: str, path: str) -> KubernetesApiResponse:
 def _k8s_read_only_status_args(method: str, path: str) -> tuple[int, str, str, str, str]:
     return (
         405,
-        f"{method} {path} is rejected because the simulator Kubernetes API is read-only",
+        f"{method} {path} is not supported by the simulator Kubernetes mutation facade",
         "MethodNotAllowed",
         "unsupported",
-        "k8s.method.read_only",
+        "k8s.method.unsupported",
     )
 
 
@@ -3748,6 +4682,18 @@ def _k8s_group_resource_response(
         namespace = parts[4]
         resource = parts[5]
         name = parts[6] if len(parts) >= 7 else ""
+        subresource = parts[7] if len(parts) >= 8 else ""
+        if group == "apps" and resource == "deployments" and name and subresource == "scale":
+            deployment = _find_named(resource_snapshot(state)["deployments"], name)
+            if deployment is None:
+                return _k8s_status_response(
+                    404,
+                    f"{resource} {name!r} not found",
+                    "NotFound",
+                    "supported",
+                    "k8s.apps.get.scale.not_found",
+                )
+            return _k8s_json_response(_k8s_scale(state, deployment), "k8s.apps.get.scale")
         return _k8s_resource_response(
             state, group, version, namespace, resource, name, query, as_table
         )
@@ -3816,7 +4762,7 @@ def _k8s_api_resource_list(group: str, version: str) -> dict[str, Any]:
         "": [
             ("namespaces", "Namespace", False, ["get", "list"]),
             ("nodes", "Node", False, ["get", "list"]),
-            ("pods", "Pod", True, ["get", "list"]),
+            ("pods", "Pod", True, ["get", "list", "delete"]),
             ("pods/log", "Pod", True, ["get"]),
             ("configmaps", "ConfigMap", True, ["get", "list"]),
             ("secrets", "Secret", True, ["get", "list"]),
@@ -3828,7 +4774,8 @@ def _k8s_api_resource_list(group: str, version: str) -> dict[str, Any]:
             ("serviceaccounts", "ServiceAccount", True, ["get", "list"]),
         ],
         "apps": [
-            ("deployments", "Deployment", True, ["get", "list"]),
+            ("deployments", "Deployment", True, ["get", "list", "patch", "update", "delete"]),
+            ("deployments/scale", "Scale", True, ["get", "patch", "update"]),
             ("replicasets", "ReplicaSet", True, ["get", "list"]),
             ("daemonsets", "DaemonSet", True, ["get", "list"]),
             ("statefulsets", "StatefulSet", True, ["get", "list"]),
@@ -4481,7 +5428,12 @@ def _k8s_objects_for_resource(
     if resource == "persistentvolumeclaims":
         return [_k8s_pvc(state, pvc) for pvc in snapshot["pvc"]]
     if resource == "secrets":
-        return _helm_secret_objects(state)
+        generic_secrets = [
+            _k8s_secret(state, secret)
+            for secret in snapshot["secrets"]
+            if secret.get("type") != "helm.sh/release.v1"
+        ]
+        return [*_helm_secret_objects(state), *generic_secrets]
     if resource == "deployments" and group == "apps":
         return [_k8s_deployment(state, deployment) for deployment in snapshot["deployments"]]
     if resource == "replicasets" and group == "apps":
@@ -4562,6 +5514,17 @@ def _k8s_configmap(state: SimulationState, configmap: dict[str, Any]) -> dict[st
         "kind": "ConfigMap",
         "metadata": _k8s_metadata(state, configmap["name"], namespace=state.namespace),
         "data": configmap["keys"],
+    }
+
+
+def _k8s_secret(state: SimulationState, secret: dict[str, Any]) -> dict[str, Any]:
+    data_count = int(secret.get("data", 0) or 0)
+    return {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": _k8s_metadata(state, secret["name"], namespace=state.namespace),
+        "type": secret.get("type", "Opaque"),
+        "data": {f"key{index}": "c2ltdWxhdGVk" for index in range(max(1, data_count))},
     }
 
 
@@ -4925,7 +5888,7 @@ def _helm_release_revisions(state: SimulationState) -> list[dict[str, Any]]:
             {"version": 2, "status": "superseded", "description": "Baseline config"},
             {"version": 3, "status": "deployed", "description": _helm_current_description(state)},
         ]
-    return base
+    return state.mutations.current_revisions(base)
 
 
 def _helm_secret_object(state: SimulationState, revision: dict[str, Any]) -> dict[str, Any]:
@@ -5324,7 +6287,7 @@ def make_handler(
                     self._send_json(200, _scenario_payload(state))
                 elif path == "/v1/anomalies":
                     limit = _query_int(query, "limit", 100)
-                    self._send_json(200, {"items": state.anomaly_rows[:limit]})
+                    self._send_json(200, {"items": state.generated_rows()[:limit]})
                 elif path == "/v1/debug/resources":
                     self._send_json(200, resource_snapshot(state))
                 elif path == "/v1/debug/commands":
@@ -5383,7 +6346,7 @@ def make_handler(
                             "k8s.body.too_large",
                         )
                     else:
-                        api_response = kubernetes_api_post_response(path, payload)
+                        api_response = kubernetes_api_post_response(state, path, payload)
                     record_kubernetes_api_call(
                         state,
                         method="POST",
@@ -5412,6 +6375,9 @@ def make_handler(
                 elif path == "/v1/time/seek":
                     timestamp = str(payload.get("timestamp", ""))
                     self._send_json(200, {"clock": {"simulated_time": _format_dt(state.clock.seek(timestamp))}})
+                elif path == "/v1/mutations/reset":
+                    state.mutations.reset()
+                    self._send_json(200, {"mutations": state.mutations.summary()})
                 else:
                     self._send_json(404, {"error": "not found"})
             except RequestBodyTooLarge as exc:
@@ -5439,7 +6405,21 @@ def make_handler(
                 return
             if path == "/version" or path.startswith(("/api", "/apis")):
                 api_started = time.perf_counter()
-                api_response = _k8s_read_only_response(method, path)
+                try:
+                    payload = (
+                        _read_optional_json_body(self, security.max_body_bytes)
+                        if method in {"PUT", "PATCH"} else {}
+                    )
+                except RequestBodyTooLarge as exc:
+                    api_response = _k8s_status_response(
+                        413,
+                        str(exc),
+                        "RequestEntityTooLarge",
+                        "unsupported",
+                        "k8s.body.too_large",
+                    )
+                else:
+                    api_response = kubernetes_api_mutating_response(state, method, path, payload)
                 record_kubernetes_api_call(
                     state,
                     method=method,
@@ -5573,18 +6553,42 @@ def make_handler(
             self.send_header("x-content-type-options", "nosniff")
             self.send_header("referrer-policy", "no-referrer")
             self.end_headers()
+            last_generation = -1
+            last_signature: tuple[int, int] | None = None
+            for _ in range(300):
+                generation = state.generation.generation_count
+                signature = _log_file_signature(state.output_dir / "metric_report.log")
+                if generation != last_generation or signature != last_signature:
+                    payload = json.dumps({
+                        "generation_count": generation,
+                        "last_seed": state.generation.last_seed,
+                    })
+                    self.wfile.write(f"event: generation\ndata: {payload}\n\n".encode("utf-8"))
+                    self._send_log_file()
+                    self.wfile.flush()
+                    last_generation = generation
+                    last_signature = signature
+                time.sleep(1.0)
+
+        def _send_log_file(self) -> None:
             log_path = state.output_dir / "metric_report.log"
-            if log_path.exists():
-                with open(log_path, encoding="utf-8") as f:
-                    for line in f:
-                        payload = json.dumps({"line": line.rstrip("\n")})
-                        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
-            else:
+            if not log_path.exists():
                 payload = json.dumps({"line": "metric_report.log is not present for this run"})
                 self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
-            self.wfile.flush()
+                return
+            with open(log_path, encoding="utf-8") as f:
+                for line in f:
+                    payload = json.dumps({"line": line.rstrip("\n")})
+                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
 
     return _Handler
+
+
+def _log_file_signature(path: Path) -> tuple[int, int] | None:
+    with contextlib.suppress(OSError):
+        stat = path.stat()
+        return stat.st_mtime_ns, stat.st_size
+    return None
 
 
 def _query_int(query: dict[str, list[str]], name: str, default: int) -> int:
@@ -5602,17 +6606,90 @@ def _scenario_payload(state: SimulationState) -> dict[str, Any]:
     return {
         "active": list(state.active_scenarios),
         "known": [
-            {
-                "id": slug,
-                "name": scenario.name,
-                "severity": scenario.severity,
-                "days_required": scenario.days_required,
-                "components_touched": list(scenario.components_touched),
-                "ops_profile": slug in OPS_SCENARIO_PROFILES,
-            }
+            _scenario_detail_payload(state, slug, scenario)
             for slug, scenario in state.legacy.SCENARIOS.items()
         ],
     }
+
+
+def _scenario_detail_payload(state: SimulationState, slug: str, scenario: Any) -> dict[str, Any]:
+    profile = OPS_SCENARIO_PROFILES.get(slug)
+    return {
+        "id": slug,
+        "name": scenario.name,
+        "severity": scenario.severity,
+        "days_required": scenario.days_required,
+        "category": scenario.category,
+        "active": slug in state.active_scenarios,
+        "components_touched": list(scenario.components_touched),
+        "primary_specs": [
+            _scenario_spec_payload(component, spec)
+            for component, spec in scenario.primary_specs
+        ],
+        "cascade_specs": [
+            _scenario_spec_payload(component, spec)
+            for component, spec in scenario.cascade_specs
+        ],
+        "ops_profile": profile is not None,
+        "ops_profile_detail": _ops_profile_payload(profile) if profile is not None else None,
+    }
+
+
+def _scenario_spec_payload(component: str, spec: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "component": component,
+        "metric": str(spec.get("metric", "")),
+        "description": str(spec.get("description", "")),
+        "time_offset_seconds": spec.get("time_offset"),
+        "duration_seconds": spec.get("duration_seconds"),
+        "shape": spec.get("shape"),
+        "severity": spec.get("severity", ""),
+    }
+    shape_params = spec.get("shape_params")
+    if shape_params is not None:
+        payload["shape_params"] = _json_safe_payload(shape_params)
+    instance_filter = spec.get("instance_filter")
+    if instance_filter is not None:
+        payload["instance_filter"] = _json_safe_payload(instance_filter)
+    return payload
+
+
+def _ops_profile_payload(profile: OpsScenarioProfile) -> dict[str, Any]:
+    return {
+        "summary": profile.summary,
+        "affected_components": list(profile.affected_components),
+        "events": list(profile.events),
+        "logs": list(profile.logs),
+        "helm_notes": profile.helm_notes,
+        "rollout_note": profile.rollout_note,
+        "impacts": [
+            {
+                "component": impact.component,
+                "deployment_status": impact.deployment_status,
+                "pod_status": impact.pod_status,
+                "ready": impact.ready,
+                "ready_replicas": impact.ready_replicas,
+                "ready_replicas_delta": impact.ready_replicas_delta,
+                "restarts": impact.restarts,
+                "cpu_pct": impact.cpu_pct,
+                "cpu_m": impact.cpu_m,
+                "memory_mi": impact.memory_mi,
+                "memory_pct": impact.memory_pct,
+                "pvc_used_pct": impact.pvc_used_pct,
+            }
+            for impact in profile.impacts
+        ],
+    }
+
+
+def _json_safe_payload(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe_payload(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_payload(item) for item in value]
+    return str(value)
 
 
 DEBUG_HTML = r"""<!doctype html>
@@ -5719,6 +6796,37 @@ DEBUG_HTML = r"""<!doctype html>
     .supported { color: var(--ok); border-color: #9dd7b8; background: #eefaf3; }
     .partial { color: var(--warn); border-color: #e8c68e; background: #fff8eb; }
     .unsupported { color: var(--bad); border-color: #efaaa3; background: #fff1f0; }
+    tr.selected td { background: #eef5fb; }
+    #commands tr, #searchResults tr, #scenarios tr, #profiles tr { cursor: pointer; }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 0 12px 12px;
+    }
+    .detail-grid table, .scenario-detail table { font-size: 12px; }
+    .detail-grid th, .scenario-detail th { width: 42%; }
+    .scenario-shell { padding: 12px; }
+    .scenario-detail {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+    .scenario-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .scenario-head h3 { margin: 0; font-size: 15px; letter-spacing: 0; }
+    .scenario-head .muted { font-size: 12px; }
+    .scenario-section-title {
+      margin: 12px 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
     .cmdbar {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -5774,13 +6882,33 @@ DEBUG_HTML = r"""<!doctype html>
   <main>
     <div class="stack">
       <section>
-        <div class="bar"><h2>State</h2><span id="otel" class="muted"></span></div>
+        <div class="bar">
+          <h2>State</h2>
+          <span id="otel" class="muted"></span>
+          <button type="button" id="resetMutations">Reset</button>
+        </div>
         <div class="metrics">
           <div class="metric"><div class="label">Scenarios</div><div class="value" id="scenarioCount">0</div></div>
           <div class="metric"><div class="label">Anomalies</div><div class="value" id="anomalyCount">0</div></div>
           <div class="metric"><div class="label">Commands</div><div class="value" id="commandCount">0</div></div>
           <div class="metric"><div class="label">Unsupported</div><div class="value" id="unsupportedCount">0</div></div>
+          <div class="metric"><div class="label">Generations</div><div class="value" id="generationCount">0</div></div>
+          <div class="metric"><div class="label">Mutations</div><div class="value" id="mutationVersion">0</div></div>
         </div>
+        <div class="detail-grid">
+          <table>
+            <thead><tr><th colspan="2">Runtime</th></tr></thead>
+            <tbody id="runtimeDetails"></tbody>
+          </table>
+          <table>
+            <thead><tr><th colspan="2">Mutable State</th></tr></thead>
+            <tbody id="mutationDetails"></tbody>
+          </table>
+        </div>
+        <table>
+          <thead><tr><th>Workload Overlay</th><th style="width:95px">Replicas</th><th style="width:130px">Status</th><th style="width:170px">Updated</th></tr></thead>
+          <tbody id="workloadMutations"></tbody>
+        </table>
       </section>
       <section>
         <div class="bar"><h2>Command Trace</h2><span class="muted" id="lastRefresh"></span></div>
@@ -5841,6 +6969,16 @@ DEBUG_HTML = r"""<!doctype html>
         </table>
       </section>
       <section>
+        <div class="bar"><h2>Scenario Catalog</h2><span class="muted" id="scenarioCatalogCount">0 scenarios</span></div>
+        <div class="scenario-shell">
+          <table>
+            <thead><tr><th>Scenario</th><th style="width:88px">Severity</th><th style="width:110px">Days</th></tr></thead>
+            <tbody id="scenarios"></tbody>
+          </table>
+          <div class="scenario-detail" id="scenarioDetail"></div>
+        </div>
+      </section>
+      <section>
         <div class="bar"><h2>Recent Events</h2><span class="muted">cluster</span></div>
         <table>
           <thead><tr><th>Reason</th><th>Object</th><th>Message</th></tr></thead>
@@ -5856,6 +6994,8 @@ DEBUG_HTML = r"""<!doctype html>
     }[ch]));
     const AUTH_STORAGE_KEY = "amc.debug.authToken";
     let authPromptDismissed = false;
+    let scenarioCatalog = {active: [], known: []};
+    let selectedScenarioId = "";
     function bootstrapAuthToken() {
       const params = new URLSearchParams(window.location.search);
       const token = params.get("token") || params.get("auth_token");
@@ -5907,6 +7047,32 @@ DEBUG_HTML = r"""<!doctype html>
     function statusClass(status) {
       return status === "supported" ? "supported" : status === "partial" ? "partial" : "unsupported";
     }
+    function severityClass(severity) {
+      return severity === "high" ? "unsupported" : severity === "medium" ? "partial" : "supported";
+    }
+    function valueOrDash(value) {
+      return value === undefined || value === null || value === "" ? "-" : value;
+    }
+    function renderKeyValues(targetId, rows) {
+      $(targetId).innerHTML = rows.map(([key, value]) => `
+        <tr><th>${esc(key)}</th><td>${esc(valueOrDash(value))}</td></tr>
+      `).join("");
+    }
+    function formatSeconds(seconds) {
+      if (seconds === undefined || seconds === null || seconds === "") return "-";
+      const value = Number(seconds);
+      if (!Number.isFinite(value)) return String(seconds);
+      if (value >= 3600) return `${Math.round((value / 3600) * 10) / 10}h`;
+      if (value >= 60) return `${Math.round((value / 60) * 10) / 10}m`;
+      return `${value}s`;
+    }
+    function formatOffset(seconds) {
+      return formatSeconds(seconds);
+    }
+    function selectScenario(id) {
+      selectedScenarioId = id;
+      renderScenarioCatalog(scenarioCatalog);
+    }
     function renderCommands(items) {
       $("commands").innerHTML = items.map((item) => `
         <tr data-id="${item.id}">
@@ -5924,14 +7090,56 @@ DEBUG_HTML = r"""<!doctype html>
     }
     function renderState(state) {
       $("clock").textContent = `${state.clock.simulated_time} @ ${state.clock.speedup}x`;
-      $("otel").textContent = state.otel.enabled ? `OTEL ${state.otel.thread}` : "OTEL off";
+      const otelText = state.otel.enabled ? `OTEL ${state.otel.thread}` : "OTEL off";
+      const generationText = state.generation.enabled
+        ? `generation ${state.generation.thread}`
+        : "generation off";
+      $("otel").textContent = `${otelText} - ${generationText}`;
       $("scenarioCount").textContent = state.active_scenarios.length;
       $("anomalyCount").textContent = state.anomaly_count;
       $("commandCount").textContent = state.command_trace_count;
       $("unsupportedCount").textContent = state.unsupported_group_count;
+      $("generationCount").textContent = state.generation.generation_count;
+      $("mutationVersion").textContent = state.mutations.version;
+      const release = state.mutations.release || {};
+      renderKeyValues("runtimeDetails", [
+        ["Generation", `${state.generation.enabled ? "on" : "off"} / ${state.generation.thread}`],
+        ["Interval", state.generation.enabled ? `${state.generation.interval_seconds}s` : "-"],
+        ["Last seed", state.generation.last_seed],
+        ["Last generated", state.generation.last_completed_at],
+        ["Generation error", state.generation.last_error],
+        ["OTEL", state.otel.enabled ? state.otel.thread : "off"],
+        ["OTEL batches", state.otel.stream_batches],
+        ["Last OTEL", state.otel.last_completed_at],
+      ]);
+      renderKeyValues("mutationDetails", [
+        ["Version", state.mutations.version],
+        ["Workloads", Object.keys(state.mutations.workloads || {}).length],
+        ["Deleted pods", (state.mutations.deleted_pods || []).join(", ")],
+        ["Created resources", Object.values(state.mutations.created_resources || {}).reduce((total, items) => total + items.length, 0)],
+        ["Deleted resources", Object.values(state.mutations.deleted_resources || {}).reduce((total, items) => total + items.length, 0)],
+        ["Extra events", state.mutations.extra_event_count],
+        ["Release", release.uninstalled ? "uninstalled" : `${release.revision_count || 0} revisions`],
+        ["Release updated", release.updated_at],
+      ]);
+      renderWorkloadMutations(state.mutations.workloads || {});
       $("profiles").innerHTML = state.profiles.map((item) => `
-        <tr><td>${esc(item.scenario_id)}</td><td>${esc(item.summary)}</td></tr>
+        <tr data-id="${esc(item.scenario_id)}"><td>${esc(item.scenario_id)}</td><td>${esc(item.summary)}</td></tr>
       `).join("");
+      document.querySelectorAll("#profiles tr").forEach((row) => {
+        row.addEventListener("click", () => selectScenario(row.dataset.id));
+      });
+    }
+    function renderWorkloadMutations(workloads) {
+      const entries = Object.entries(workloads).sort(([left], [right]) => left.localeCompare(right));
+      $("workloadMutations").innerHTML = entries.length ? entries.map(([name, mutation]) => `
+        <tr>
+          <td>${esc(name)}</td>
+          <td>${esc(valueOrDash(mutation.replicas))}</td>
+          <td>${esc(valueOrDash(mutation.deployment_status || mutation.pod_status))}</td>
+          <td>${esc(valueOrDash(mutation.updated_at))}</td>
+        </tr>
+      `).join("") : `<tr><td colspan="4" class="muted">none</td></tr>`;
     }
     function renderResources(resources) {
       $("pods").innerHTML = resources.pods.map((pod) => `
@@ -5966,6 +7174,112 @@ DEBUG_HTML = r"""<!doctype html>
         });
       });
     }
+    function renderScenarioCatalog(payload) {
+      scenarioCatalog = payload;
+      const known = payload.known || [];
+      const active = new Set(payload.active || []);
+      $("scenarioCatalogCount").textContent = `${known.length} scenario${known.length === 1 ? "" : "s"}`;
+      if (!selectedScenarioId || !known.some((item) => item.id === selectedScenarioId)) {
+        selectedScenarioId = known.find((item) => active.has(item.id))?.id || known[0]?.id || "";
+      }
+      $("scenarios").innerHTML = known.map((item) => `
+        <tr data-id="${esc(item.id)}" class="${item.id === selectedScenarioId ? "selected" : ""}">
+          <td>
+            <strong>${esc(item.id)}</strong>
+            <div class="muted">${esc(item.name)}</div>
+            <div class="muted">${esc((item.components_touched || []).join(", "))}</div>
+          </td>
+          <td>
+            <span class="status ${severityClass(item.severity)}">${esc(item.severity)}</span>
+            ${active.has(item.id) ? `<div class="muted">active</div>` : ""}
+          </td>
+          <td>${esc(item.days_required)}</td>
+        </tr>
+      `).join("");
+      document.querySelectorAll("#scenarios tr").forEach((row) => {
+        row.addEventListener("click", () => selectScenario(row.dataset.id));
+      });
+      renderScenarioDetail(known.find((item) => item.id === selectedScenarioId));
+    }
+    function renderSpecRows(specs) {
+      if (!specs.length) return `<tr><td colspan="4" class="muted">none</td></tr>`;
+      return specs.map((spec) => `
+        <tr>
+          <td>${esc(spec.component)}<div class="muted">${esc(spec.metric)}</div></td>
+          <td>${esc(spec.description)}</td>
+          <td>${esc(formatOffset(spec.time_offset_seconds))}</td>
+          <td>${esc(formatSeconds(spec.duration_seconds))}</td>
+        </tr>
+      `).join("");
+    }
+    function renderStringRows(items) {
+      if (!items.length) return `<tr><td class="muted">none</td></tr>`;
+      return items.map((item) => `<tr><td>${esc(item)}</td></tr>`).join("");
+    }
+    function renderImpactRows(impacts) {
+      if (!impacts.length) return `<tr><td colspan="4" class="muted">none</td></tr>`;
+      return impacts.map((impact) => `
+        <tr>
+          <td>${esc(impact.component)}</td>
+          <td>${esc(impact.deployment_status)}</td>
+          <td>${esc(impact.pod_status)}</td>
+          <td>${esc(valueOrDash(impact.ready || impact.ready_replicas || impact.ready_replicas_delta))}</td>
+        </tr>
+      `).join("");
+    }
+    function renderScenarioDetail(item) {
+      if (!item) {
+        $("scenarioDetail").innerHTML = `<div class="muted">none</div>`;
+        return;
+      }
+      const profile = item.ops_profile_detail || {};
+      $("scenarioDetail").innerHTML = `
+        <div class="scenario-head">
+          <div>
+            <h3>${esc(item.name)}</h3>
+            <div class="muted">${esc(item.id)} - ${esc(item.category)} - ${esc((item.components_touched || []).join(", "))}</div>
+          </div>
+          <span class="status ${severityClass(item.severity)}">${esc(item.severity)}</span>
+        </div>
+        <div class="detail-grid">
+          <table>
+            <tbody>
+              <tr><th>Days required</th><td>${esc(item.days_required)}</td></tr>
+              <tr><th>Primary signals</th><td>${esc((item.primary_specs || []).length)}</td></tr>
+              <tr><th>Cascade signals</th><td>${esc((item.cascade_specs || []).length)}</td></tr>
+              <tr><th>Ops profile</th><td>${profile.summary ? "yes" : "no"}</td></tr>
+            </tbody>
+          </table>
+          <table>
+            <tbody>
+              <tr><th>Operator summary</th><td>${esc(valueOrDash(profile.summary))}</td></tr>
+              <tr><th>Affected</th><td>${esc((profile.affected_components || []).join(", "))}</td></tr>
+              <tr><th>Rollout note</th><td>${esc(valueOrDash(profile.rollout_note))}</td></tr>
+              <tr><th>Helm notes</th><td>${esc(valueOrDash(profile.helm_notes))}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="scenario-section-title">Primary Signals</div>
+        <table>
+          <thead><tr><th>Component / Metric</th><th>Description</th><th style="width:80px">Offset</th><th style="width:90px">Duration</th></tr></thead>
+          <tbody>${renderSpecRows(item.primary_specs || [])}</tbody>
+        </table>
+        <div class="scenario-section-title">Cascade Signals</div>
+        <table>
+          <thead><tr><th>Component / Metric</th><th>Description</th><th style="width:80px">Offset</th><th style="width:90px">Duration</th></tr></thead>
+          <tbody>${renderSpecRows(item.cascade_specs || [])}</tbody>
+        </table>
+        <div class="scenario-section-title">Ops Events</div>
+        <table><tbody>${renderStringRows(profile.events || [])}</tbody></table>
+        <div class="scenario-section-title">Ops Logs</div>
+        <table><tbody>${renderStringRows(profile.logs || [])}</tbody></table>
+        <div class="scenario-section-title">Kubernetes Impacts</div>
+        <table>
+          <thead><tr><th>Component</th><th>Status</th><th>Pod</th><th>Ready</th></tr></thead>
+          <tbody>${renderImpactRows(profile.impacts || [])}</tbody>
+        </table>
+      `;
+    }
     async function runSearch() {
       const params = new URLSearchParams();
       if ($("searchInput").value) params.set("q", $("searchInput").value);
@@ -5977,16 +7291,18 @@ DEBUG_HTML = r"""<!doctype html>
     }
     async function refresh() {
       try {
-        const [state, commands, unsupported, resources] = await Promise.all([
+        const [state, commands, unsupported, resources, scenarios] = await Promise.all([
           getJSON("/v1/state"),
           getJSON("/v1/debug/commands?limit=80"),
           getJSON("/v1/debug/unsupported"),
-          getJSON("/v1/debug/resources")
+          getJSON("/v1/debug/resources"),
+          getJSON("/v1/scenarios")
         ]);
         renderState(state);
         renderCommands(commands.items);
         renderUnsupported(unsupported);
         renderResources(resources);
+        renderScenarioCatalog(scenarios);
         await runSearch();
         $("lastRefresh").textContent = new Date().toLocaleTimeString();
       } catch (error) {
@@ -6002,6 +7318,11 @@ DEBUG_HTML = r"""<!doctype html>
     $("searchForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       await runSearch();
+    });
+    $("resetMutations").addEventListener("click", async () => {
+      const result = await postJSON("/v1/mutations/reset", {});
+      $("details").textContent = JSON.stringify(result, null, 2);
+      await refresh();
     });
     bootstrapAuthToken();
     refresh();
@@ -6033,6 +7354,8 @@ def _build_serve_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-request-body-bytes", type=int, default=DEFAULT_MAX_BODY_BYTES, help=f"Maximum accepted HTTP request body size (default: {DEFAULT_MAX_BODY_BYTES}).")
     parser.add_argument("--allow-remote-without-auth", action="store_true", help="Allow non-loopback binds without --auth-token for isolated lab use.")
     parser.add_argument("--no-generate", action="store_true", help="Use existing artifacts in --output-dir instead of generating before serving.")
+    parser.add_argument("--continuous-generate", action="store_true", help="Continuously regenerate artifacts while the server runs.")
+    parser.add_argument("--continuous-generate-interval-seconds", type=float, default=60.0, help="Seconds between continuous generation passes (default: 60).")
     return parser
 
 
@@ -6058,6 +7381,8 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         parser.error("--port must be in [0, 65535]")
     if serve_args.max_request_body_bytes < 1:
         parser.error("--max-request-body-bytes must be >= 1")
+    if serve_args.continuous_generate_interval_seconds <= 0:
+        parser.error("--continuous-generate-interval-seconds must be > 0")
     if (
         not _is_loopback_bind_host(serve_args.host)
         and not serve_args.auth_token
@@ -6082,7 +7407,15 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         persist_command_log=serve_args.persist_command_log,
         persist_command_db=serve_args.persist_command_db,
     )
-    _start_otel_background(state)
+    generation_stop = _start_continuous_generation(
+        state,
+        generate_argv,
+        enabled=serve_args.continuous_generate,
+        interval_seconds=serve_args.continuous_generate_interval_seconds,
+        stream_otel=bool(getattr(args, "otel_enabled", False)),
+    )
+    if not serve_args.continuous_generate:
+        _start_otel_background(state)
 
     security = ServerSecurityConfig(
         auth_token=serve_args.auth_token,
@@ -6106,15 +7439,86 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
     except KeyboardInterrupt:
         print("\nAMC simulator server stopping", file=sys.stderr)
     finally:
+        if generation_stop is not None:
+            generation_stop.set()
         httpd.server_close()
 
 
 def _generation_argv_without_otel(generate_argv: list[str]) -> list[str]:
-    # Server mode starts OTEL streaming in a background thread after the HTTP
-    # listener is ready. The generation pass still writes metrics/logs/traces,
-    # but this override prevents the legacy one-shot main() from streaming and
-    # exiting before the server starts.
+    # Server mode owns OTEL streaming separately from one-shot artifact
+    # generation. The generation pass still writes metrics/logs/traces, but
+    # this override prevents legacy main() from streaming and blocking server
+    # startup or the continuous generation loop.
     return [*generate_argv, "--otel-send", "none"]
+
+
+def _start_continuous_generation(
+    state: SimulationState,
+    generate_argv: list[str],
+    *,
+    enabled: bool,
+    interval_seconds: float,
+    stream_otel: bool = False,
+) -> threading.Event | None:
+    with state.generation.lock:
+        state.generation.enabled = enabled
+        state.generation.interval_seconds = interval_seconds
+        state.generation.thread = "not_started" if enabled else "disabled"
+        state.generation.last_anomaly_count = len(state.anomaly_rows)
+    if not enabled:
+        return None
+    if stream_otel:
+        state.otel_status["thread"] = "waiting"
+        state.otel_status["continuous"] = True
+
+    stop_event = threading.Event()
+
+    def _run() -> None:
+        with state.generation.lock:
+            state.generation.thread = "running"
+        if stream_otel:
+            _stream_current_otel_once(state, idle_thread_state="waiting")
+        while not stop_event.wait(interval_seconds):
+            _run_continuous_generation_once(state, generate_argv, stream_otel=stream_otel)
+        with state.generation.lock:
+            state.generation.thread = "stopped"
+        if stream_otel:
+            state.otel_status["thread"] = "stopped"
+
+    thread = threading.Thread(target=_run, name="amc-continuous-generation", daemon=True)
+    thread.start()
+    return stop_event
+
+
+def _run_continuous_generation_once(
+    state: SimulationState,
+    generate_argv: list[str],
+    *,
+    stream_otel: bool = False,
+) -> None:
+    with state.generation.lock:
+        next_count = state.generation.generation_count + 1
+        seed = int(getattr(state.args, "seed", 42)) + next_count
+        state.generation.thread = "running"
+        state.generation.last_started_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        state.generation.last_seed = seed
+        state.generation.last_error = ""
+    run_argv = [*_generation_argv_without_otel(generate_argv), "--seed", str(seed)]
+    try:
+        state.legacy.main(run_argv)
+        rows = load_anomaly_rows(state.output_dir / "anomalies.csv")
+        state.replace_generated_rows(rows)
+    except Exception as exc:  # pragma: no cover - defensive background boundary
+        with state.generation.lock:
+            state.generation.last_error = str(exc)
+            state.generation.thread = "failed"
+        return
+    with state.generation.lock:
+        state.generation.generation_count = next_count
+        state.generation.last_completed_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        state.generation.last_anomaly_count = len(rows)
+    if stream_otel:
+        _stream_current_otel_once(state, idle_thread_state="waiting")
 
 
 def _start_otel_background(state: SimulationState) -> None:
@@ -6124,16 +7528,27 @@ def _start_otel_background(state: SimulationState) -> None:
         return
 
     def _run() -> None:
-        state.otel_status["thread"] = "running"
-        try:
-            _run_otel_streams(state)
-            state.otel_status["thread"] = "completed"
-        except Exception as exc:  # pragma: no cover - defensive thread boundary
-            state.otel_status["thread"] = "failed"
-            state.otel_status["error"] = str(exc)
+        _stream_current_otel_once(state, idle_thread_state="completed")
 
     thread = threading.Thread(target=_run, name="amc-otel-stream", daemon=True)
     thread.start()
+
+
+def _stream_current_otel_once(state: SimulationState, *, idle_thread_state: str) -> None:
+    if not getattr(state.args, "otel_enabled", False):
+        state.otel_status["thread"] = "disabled"
+        return
+    state.otel_status["thread"] = "running"
+    state.otel_status["last_started_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    try:
+        _run_otel_streams(state)
+    except Exception as exc:  # pragma: no cover - defensive thread boundary
+        state.otel_status["thread"] = "failed"
+        state.otel_status["error"] = str(exc)
+        return
+    state.otel_status["thread"] = idle_thread_state
+    state.otel_status["last_completed_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    state.otel_status["stream_batches"] = int(state.otel_status.get("stream_batches", 0)) + 1
 
 
 def _run_otel_streams(state: SimulationState) -> None:
@@ -6161,7 +7576,7 @@ def _run_otel_streams(state: SimulationState) -> None:
     if not args.otel_gauges_only and any(signal_endpoints.values()):
         sent = legacy.stream_otel_signals(
             signal_endpoints,
-            state.anomaly_rows,
+            state.generated_rows(),
             speedup=args.otel_stream_speedup,
             timeout_seconds=args.otel_stream_timeout_seconds,
             max_events=args.otel_stream_max_events,
