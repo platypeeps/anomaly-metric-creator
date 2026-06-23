@@ -124,9 +124,13 @@ def test_every_scenario_has_kubernetes_and_helm_ops_surface(amc, tmp_path):
         primary = profile.affected_components[0]
         resources = server.resource_snapshot(state)
         deployment = next(
-            item for item in resources["deployments"]
-            if item["name"] == primary
+            (
+                item for item in resources["deployments"]
+                if item["name"] == primary
+            ),
+            None,
         )
+        assert deployment is not None, scenario_id
         assert deployment["status"] != "Healthy", scenario_id
 
         events = server.run_command(state, command="kubectl get events -n saas-prod")
@@ -370,6 +374,30 @@ def test_request_body_limit_and_mutating_k8s_rejection_are_traced(amc, tmp_path)
         assert search["total"] == 1
         assert search["items"][0]["support_status"] == "unsupported"
         assert search["items"][0]["matched_rule_id"] == "k8s.method.read_only"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    httpd, base_url = server.start_test_server(state)
+    try:
+        def fail_command(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(server, "run_command", fail_command)
+        request = urllib.request.Request(
+            base_url + "/v1/commands",
+            data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(request, timeout=5)
+        assert excinfo.value.code == 500
+        body = json.loads(excinfo.value.read().decode("utf-8"))
+        assert body["error"] == "boom"
     finally:
         httpd.shutdown()
         httpd.server_close()

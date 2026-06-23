@@ -77,7 +77,8 @@ def test_help_lists_visible_surface_and_hides_advanced():
         assert not re.search(rf"(?<![\w-]){re.escape(hidden)}(?![\w-])", out), \
             f"brief --help leaks hidden flag {hidden}"
     assert "--help-all" in out, "brief help must point at --help-all"
-    assert "serve" in out, "brief help must mention the serve subcommand"
+    assert re.search(r"(?<![\w-])serve(?![\w-])", out), \
+        "brief help must mention the serve subcommand"
 
 
 def test_help_all_lists_every_flag_without_deprecated_aliases():

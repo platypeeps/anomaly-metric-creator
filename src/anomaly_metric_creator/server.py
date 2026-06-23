@@ -5416,8 +5416,10 @@ def make_handler(
                     self._send_json(404, {"error": "not found"})
             except RequestBodyTooLarge as exc:
                 self._send_json(413, {"error": str(exc)})
-            except Exception as exc:
+            except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
+            except Exception as exc:
+                self._send_json(500, {"error": str(exc)})
 
         def do_PUT(self) -> None:
             self._handle_mutating_method("PUT")
