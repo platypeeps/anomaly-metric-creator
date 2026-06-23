@@ -159,9 +159,12 @@ so unsupported client paths remain visible in `/v1/debug/search`.
 Security/ops boundary: loopback binds may run unauthenticated for local
 workshops, but non-loopback `--host` values require `--auth-token` unless the
 operator explicitly passes `--allow-remote-without-auth`. When token auth is
-enabled, every endpoint except `/healthz` and `/readyz` requires
-`Authorization: Bearer TOKEN`, and `/v1/kubeconfig` embeds that token for real
-`kubectl`/Helm clients. Request bodies are capped by
+enabled, every endpoint except `/healthz`, `/readyz`, and the static debug
+console shell (`/` and `/debug`) requires `Authorization: Bearer TOKEN`, and
+`/v1/kubeconfig` embeds that token for real `kubectl`/Helm clients. The debug
+console must attach that bearer token to its JSON/API fetches, either from the
+browser prompt/localStorage flow or a `/debug?token=TOKEN` bootstrap. Request
+bodies are capped by
 `--max-request-body-bytes`; app endpoints return `413` JSON and Kubernetes API
 endpoints return a Kubernetes `Status`. Mutating Kubernetes HTTP methods are
 read-only rejected with `405` and still traced as unsupported
@@ -187,8 +190,10 @@ do not mutate the frozen `Scenario` dataclass for command/UI-only state unless
 the generator itself needs the field.
 
 The debug UI is served from `GET /debug` as inline HTML/CSS/JS to avoid a
-frontend build chain. It polls `/v1/state`, `/v1/debug/commands`,
-`/v1/debug/search`, `/v1/debug/unsupported`, and `/v1/debug/resources`.
+frontend build chain. Its static shell is intentionally accessible when bearer
+auth is enabled, but it must send `Authorization` on data requests. It polls
+`/v1/state`, `/v1/debug/commands`, `/v1/debug/search`,
+`/v1/debug/unsupported`, and `/v1/debug/resources`.
 Unsupported or partial commands are grouped by normalized fingerprint so real
 operator/tool calls outside the currently supported subset become a backlog for
 future command renderers.

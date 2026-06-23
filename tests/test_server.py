@@ -307,6 +307,13 @@ def test_server_auth_token_protects_debug_api_and_embeds_kubeconfig(amc, tmp_pat
             assert response.read().decode("utf-8") == "ok\n"
             assert response.headers["x-content-type-options"] == "nosniff"
 
+        for shell_path in ("/", "/debug"):
+            with urllib.request.urlopen(base_url + shell_path, timeout=5) as response:
+                html = response.read().decode("utf-8")
+            assert "AMC Debug Console" in html
+            assert "amc.debug.authToken" in html
+            assert "authorization: `Bearer ${token}`" in html
+
         headers = {"authorization": "Bearer test-token"}
         request = urllib.request.Request(base_url + "/v1/kubeconfig", headers=headers)
         with urllib.request.urlopen(request, timeout=5) as response:

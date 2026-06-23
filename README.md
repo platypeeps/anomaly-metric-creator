@@ -303,7 +303,7 @@ Server flags:
 | `--debug-ring-size` | `500` | In-memory command trace ring size. |
 | `--persist-command-log` | _off_ | Optional JSONL file for command traces. |
 | `--persist-command-db` | _off_ | Optional SQLite file for durable command traces and search. |
-| `--auth-token` | _off_ | Optional bearer token required for HTTP, debug, command, and Kubernetes API requests. Embedded into `GET /v1/kubeconfig` when enabled. |
+| `--auth-token` | _off_ | Optional bearer token required for HTTP API, debug data, command, and Kubernetes API requests. Embedded into `GET /v1/kubeconfig` when enabled. |
 | `--max-request-body-bytes` | `1048576` | Maximum accepted HTTP request body size. Oversized app requests return `413`; oversized Kubernetes API requests return a Kubernetes `Status`. |
 | `--allow-remote-without-auth` | _off_ | Explicit lab-only override that permits non-loopback `--host` values without `--auth-token`. |
 | `--no-generate` | _off_ | Use existing artifacts in `--output-dir` instead of generating before serving. |
@@ -311,15 +311,17 @@ Server flags:
 By default the server binds loopback. Binding a non-loopback host such as
 `0.0.0.0` requires `--auth-token` unless
 `--allow-remote-without-auth` is passed explicitly. Health probes
-(`/healthz` and `/readyz`) remain unauthenticated; every other endpoint,
-including the Kubernetes facade and debug APIs, requires
-`Authorization: Bearer TOKEN` when a token is configured.
+(`/healthz` and `/readyz`) and the static debug console shell (`/debug` and
+`/`) remain unauthenticated; every JSON/debug data endpoint and the Kubernetes
+facade require `Authorization: Bearer TOKEN` when a token is configured. The
+debug console prompts for that bearer token and stores it in browser
+`localStorage`; `/debug?token=TOKEN` can also bootstrap the browser session.
 
 Primary endpoints:
 
 | Endpoint | Purpose |
 | -------- | ------- |
-| `GET /debug` | Browser debug console. |
+| `GET /debug` | Browser debug console shell. Data requests still use bearer auth when configured. |
 | `GET /v1/kubeconfig` | Kubeconfig that points stock `kubectl` and `helm` clients at this simulator. |
 | `POST /v1/commands` | Execute a simulated command. Body accepts `{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`. |
 | `GET /version`, `/api`, `/apis/...` | Kubernetes-compatible discovery, resource, log, metrics, and Helm release Secret APIs for real clients. |

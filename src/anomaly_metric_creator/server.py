@@ -5282,6 +5282,9 @@ def make_handler(
                 if path == "/readyz":
                     self._send_json(200, {"ready": True})
                     return
+                if path == "/" or path == "/debug":
+                    self._send_html(200, DEBUG_HTML)
+                    return
                 if not self._is_authorized():
                     self._send_unauthorized(path)
                     return
@@ -5306,9 +5309,7 @@ def make_handler(
                     )
                     self._send_kubernetes_api_response(api_response)
                     return
-                if path == "/" or path == "/debug":
-                    self._send_html(200, DEBUG_HTML)
-                elif path == "/v1/kubeconfig":
+                if path == "/v1/kubeconfig":
                     self._send_text(
                         200,
                         render_kubeconfig(
@@ -5851,12 +5852,50 @@ DEBUG_HTML = r"""<!doctype html>
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     }[ch]));
+    const AUTH_STORAGE_KEY = "amc.debug.authToken";
+    let authPromptDismissed = false;
+    function bootstrapAuthToken() {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get("token") || params.get("auth_token");
+      if (!token) return;
+      window.localStorage.setItem(AUTH_STORAGE_KEY, token);
+      params.delete("token");
+      params.delete("auth_token");
+      const query = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`
+      );
+    }
+    async function request(url, options = {}, retryAuth = true) {
+      const token = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      const res = await fetch(url, {
+        ...options,
+        headers: token
+          ? {...(options.headers || {}), authorization: `Bearer ${token}`}
+          : (options.headers || {})
+      });
+      if (res.status === 401 && retryAuth) {
+        const currentToken = window.localStorage.getItem(AUTH_STORAGE_KEY);
+        if (currentToken && currentToken !== token) return await request(url, options, false);
+        if (authPromptDismissed) throw new Error(`${res.status} ${res.statusText}`);
+        const token = window.prompt("Bearer token");
+        if (token) {
+          window.localStorage.setItem(AUTH_STORAGE_KEY, token);
+          return await request(url, options, false);
+        }
+        authPromptDismissed = true;
+      }
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res;
+    }
     async function getJSON(url) {
-      const res = await fetch(url);
+      const res = await request(url);
       return await res.json();
     }
     async function postJSON(url, body) {
-      const res = await fetch(url, {
+      const res = await request(url, {
         method: "POST",
         headers: {"content-type": "application/json"},
         body: JSON.stringify(body)
@@ -5935,18 +5974,22 @@ DEBUG_HTML = r"""<!doctype html>
       renderSearch(payload);
     }
     async function refresh() {
-      const [state, commands, unsupported, resources] = await Promise.all([
-        getJSON("/v1/state"),
-        getJSON("/v1/debug/commands?limit=80"),
-        getJSON("/v1/debug/unsupported"),
-        getJSON("/v1/debug/resources")
-      ]);
-      renderState(state);
-      renderCommands(commands.items);
-      renderUnsupported(unsupported);
-      renderResources(resources);
-      await runSearch();
-      $("lastRefresh").textContent = new Date().toLocaleTimeString();
+      try {
+        const [state, commands, unsupported, resources] = await Promise.all([
+          getJSON("/v1/state"),
+          getJSON("/v1/debug/commands?limit=80"),
+          getJSON("/v1/debug/unsupported"),
+          getJSON("/v1/debug/resources")
+        ]);
+        renderState(state);
+        renderCommands(commands.items);
+        renderUnsupported(unsupported);
+        renderResources(resources);
+        await runSearch();
+        $("lastRefresh").textContent = new Date().toLocaleTimeString();
+      } catch (error) {
+        $("details").textContent = String(error);
+      }
     }
     $("commandForm").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -5958,6 +6001,7 @@ DEBUG_HTML = r"""<!doctype html>
       event.preventDefault();
       await runSearch();
     });
+    bootstrapAuthToken();
     refresh();
     setInterval(refresh, 1500);
   </script>
