@@ -1628,7 +1628,7 @@ class SimulationState:
             "clock": self.clock.to_dict(),
             "active_scenarios": list(self.active_scenarios),
             "components": list(self.components),
-            "anomaly_count": len(self.generated_rows()),
+            "anomaly_count": self.generated_row_count(),
             "command_trace_count": self.traces.count(),
             "unsupported_group_count": len(self.traces.unsupported_summary()),
             "otel": self.otel_status,
@@ -1662,6 +1662,10 @@ class SimulationState:
     def generated_rows(self) -> list[dict[str, str]]:
         with self.generation.lock:
             return list(self.anomaly_rows)
+
+    def generated_row_count(self) -> int:
+        with self.generation.lock:
+            return len(self.anomaly_rows)
 
     def replace_generated_rows(self, rows: list[dict[str, str]]) -> None:
         with self.generation.lock:
@@ -6424,7 +6428,7 @@ def make_handler(
                 api_started = time.perf_counter()
                 try:
                     payload = (
-                        _read_optional_json_body(self, security.max_body_bytes)
+                        _read_json_body(self, security.max_body_bytes)
                         if method in {"PUT", "PATCH"} else {}
                     )
                 except RequestBodyTooLarge as exc:
@@ -6434,6 +6438,14 @@ def make_handler(
                         "RequestEntityTooLarge",
                         "unsupported",
                         "k8s.body.too_large",
+                    )
+                except ValueError as exc:
+                    api_response = _k8s_status_response(
+                        400,
+                        str(exc),
+                        "BadRequest",
+                        "unsupported",
+                        "k8s.body.invalid",
                     )
                 else:
                     api_response = kubernetes_api_mutating_response(state, method, path, payload)

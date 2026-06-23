@@ -621,6 +621,34 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
         assert any(item["metadata"]["name"] == "debug-flags" for item in configmaps["items"])
 
+        malformed_patch = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps/debug-flags",
+            data=b"{not-json",
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(malformed_patch, timeout=5)
+        assert excinfo.value.code == 400
+        error_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert error_status["kind"] == "Status"
+        assert error_status["reason"] == "BadRequest"
+        assert "invalid JSON body" in error_status["message"]
+
+        list_patch = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps/debug-flags",
+            data=b"[]",
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(list_patch, timeout=5)
+        assert excinfo.value.code == 400
+        error_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert error_status["kind"] == "Status"
+        assert error_status["reason"] == "BadRequest"
+        assert error_status["message"] == "JSON body must be an object"
+
         pvc_request = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/persistentvolumeclaims",
             data=json.dumps({
@@ -648,6 +676,19 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         assert deleted_configmap["reason"] == "Deleted"
         configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
         assert all(item["metadata"]["name"] != "debug-flags" for item in configmaps["items"])
+
+
+def test_state_summary_counts_anomalies_without_copying_rows(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    expected_count = len(state.anomaly_rows)
+
+    def fail_generated_rows():
+        raise AssertionError("summary should not copy anomaly rows to count them")
+
+    monkeypatch.setattr(state, "generated_rows", fail_generated_rows)
+    monkeypatch.setattr(state, "active_anomalies", lambda limit=20: [])
+
+    assert state.summary()["anomaly_count"] == expected_count
 
 
 def test_continuous_generation_refreshes_state(amc, tmp_path, monkeypatch):
