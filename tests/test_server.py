@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import gzip
 import json
 import os
@@ -11,6 +12,8 @@ import urllib.request
 import pytest
 
 from anomaly_metric_creator import server
+
+REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
 
 def _build_state(
@@ -47,6 +50,21 @@ def _get_json_with_headers(url, headers):
 
 def _pod_name(component):
     return "database-0" if component == "database" else f"{component}-0"
+
+
+@contextlib.contextmanager
+def _running_test_server(state, *, security=None):
+    httpd, base_url = server.start_test_server(state, security=security)
+    try:
+        yield base_url
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def _require_real_client_smoke_opt_in():
+    if os.environ.get(REAL_CLIENT_SMOKE_ENV) != "1":
+        pytest.skip(f"set {REAL_CLIENT_SMOKE_ENV}=1 to run real client smoke tests")
 
 
 def test_kubectl_responses_reflect_db_disk_exhaustion(amc, tmp_path):
@@ -134,8 +152,15 @@ def test_every_scenario_has_kubernetes_and_helm_ops_surface(amc, tmp_path):
         assert deployment["status"] != "Healthy", scenario_id
 
         events = server.run_command(state, command="kubectl get events -n saas-prod")
-        first_reason = profile.events[0].split(" ", 2)[1]
-        assert first_reason in events["result"]["stdout"], scenario_id
+        expected_event = next(
+            (
+                item for item in resources["events"]
+                if item["object"] == f"pod/{_pod_name(primary)}"
+            ),
+            None,
+        )
+        assert expected_event is not None, scenario_id
+        assert expected_event["message"] in events["result"]["stdout"], scenario_id
 
         logs = server.run_command(
             state,
@@ -249,8 +274,7 @@ def test_command_trace_sqlite_persistence_and_search(amc, tmp_path):
 
 def test_debug_http_api_records_commands(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
-    httpd, base_url = server.start_test_server(state)
-    try:
+    with _running_test_server(state) as base_url:
         request = urllib.request.Request(
             base_url + "/v1/commands",
             data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
@@ -292,16 +316,12 @@ def test_debug_http_api_records_commands(amc, tmp_path):
         assert "AMC Debug Console" in html
         assert "Search" in html
         assert "Unsupported Explorer" in html
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 def test_server_auth_token_protects_debug_api_and_embeds_kubeconfig(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     security = server.ServerSecurityConfig(auth_token="test-token")
-    httpd, base_url = server.start_test_server(state, security=security)
-    try:
+    with _running_test_server(state, security=security) as base_url:
         with pytest.raises(urllib.error.HTTPError) as excinfo:
             urllib.request.urlopen(base_url + "/v1/state", timeout=5)
         assert excinfo.value.code == 401
@@ -337,16 +357,12 @@ def test_server_auth_token_protects_debug_api_and_embeds_kubeconfig(amc, tmp_pat
 
         version = _get_json_with_headers(base_url + "/version", headers)
         assert version["gitVersion"] == "v1.29.4-amc"
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 def test_request_body_limit_and_mutating_k8s_rejection_are_traced(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     security = server.ServerSecurityConfig(max_body_bytes=16)
-    httpd, base_url = server.start_test_server(state, security=security)
-    try:
+    with _running_test_server(state, security=security) as base_url:
         too_large = urllib.request.Request(
             base_url + "/v1/commands",
             data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
@@ -374,15 +390,11 @@ def test_request_body_limit_and_mutating_k8s_rejection_are_traced(amc, tmp_path)
         assert search["total"] == 1
         assert search["items"][0]["support_status"] == "unsupported"
         assert search["items"][0]["matched_rule_id"] == "k8s.method.read_only"
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
-    httpd, base_url = server.start_test_server(state)
-    try:
+    with _running_test_server(state) as base_url:
         def fail_command(*args, **kwargs):
             raise RuntimeError("boom")
 
@@ -398,15 +410,11 @@ def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypat
         assert excinfo.value.code == 500
         body = json.loads(excinfo.value.read().decode("utf-8"))
         assert body["error"] == "boom"
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
-    httpd, base_url = server.start_test_server(state)
-    try:
+    with _running_test_server(state) as base_url:
         version = _get_json(base_url + "/version")
         assert version["gitVersion"] == "v1.29.4-amc"
 
@@ -481,9 +489,6 @@ def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
         search = _get_json(base_url + "/v1/debug/search?" + query)
         assert search["total"] == 1
         assert search["items"][0]["matched_rule_id"].endswith(".create")
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 def test_real_helm_storage_secrets_and_kubeconfig(amc, tmp_path):
@@ -494,8 +499,7 @@ def test_real_helm_storage_secrets_and_kubeconfig(amc, tmp_path):
         signal_level="high",
         days=1,
     )
-    httpd, base_url = server.start_test_server(state)
-    try:
+    with _running_test_server(state) as base_url:
         with urllib.request.urlopen(base_url + "/v1/kubeconfig", timeout=5) as response:
             kubeconfig = response.read().decode("utf-8")
         assert f"server: {base_url}" in kubeconfig
@@ -532,12 +536,10 @@ def test_real_helm_storage_secrets_and_kubeconfig(amc, tmp_path):
             + secret["metadata"]["name"]
         )
         assert single["metadata"]["name"] == secret["metadata"]["name"]
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 def test_real_helm4_binary_smoke_when_available(amc, tmp_path):
+    _require_real_client_smoke_opt_in()
     helm = shutil.which("helm")
     if helm is None:
         pytest.skip("helm binary is not installed")
@@ -564,8 +566,7 @@ def test_real_helm4_binary_smoke_when_available(amc, tmp_path):
         signal_level="high",
         days=1,
     )
-    httpd, base_url = server.start_test_server(state)
-    try:
+    with _running_test_server(state) as base_url:
         kubeconfig = tmp_path / "helm.kubeconfig"
         kubeconfig.write_text(server.render_kubeconfig(base_url), encoding="utf-8")
         env = os.environ.copy()
@@ -590,19 +591,16 @@ def test_real_helm4_binary_smoke_when_available(amc, tmp_path):
         values = run_helm(["get", "values", "simulated-saas"])
         assert "deploy_bad_canary_rollback" in values
         assert "kind: Deployment" in run_helm(["get", "manifest", "simulated-saas"])
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 def test_real_kubectl_binary_smoke_when_available(amc, tmp_path):
+    _require_real_client_smoke_opt_in()
     kubectl = shutil.which("kubectl")
     if kubectl is None:
         pytest.skip("kubectl binary is not installed")
 
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
-    httpd, base_url = server.start_test_server(state)
-    try:
+    with _running_test_server(state) as base_url:
         kubeconfig = tmp_path / "kubectl.kubeconfig"
         kubeconfig.write_text(server.render_kubeconfig(base_url), encoding="utf-8")
         env = os.environ.copy()
@@ -633,6 +631,3 @@ def test_real_kubectl_binary_smoke_when_available(amc, tmp_path):
         assert "scheduler-backfill" in run_kubectl(["get", "jobs", "-n", "saas-prod"])
         assert "cacheservice-slice" in run_kubectl(["get", "endpointslices", "-n", "saas-prod"])
         assert "yes" in run_kubectl(["auth", "can-i", "get", "pods", "-n", "saas-prod"])
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
