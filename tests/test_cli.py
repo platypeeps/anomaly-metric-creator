@@ -77,6 +77,7 @@ def test_help_lists_visible_surface_and_hides_advanced():
         assert not re.search(rf"(?<![\w-]){re.escape(hidden)}(?![\w-])", out), \
             f"brief --help leaks hidden flag {hidden}"
     assert "--help-all" in out, "brief help must point at --help-all"
+    assert "serve" in out, "brief help must mention the serve subcommand"
 
 
 def test_help_all_lists_every_flag_without_deprecated_aliases():
@@ -119,6 +120,33 @@ def test_help_all_lists_every_flag_without_deprecated_aliases():
     # The advanced group lost its '& deprecated' suffix at the flag day.
     assert "advanced:" in out
     assert "deprecated" not in out.lower()
+
+
+def test_serve_help_lists_server_flags_without_generation():
+    result = _invoke("serve", "--help")
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    for flag in (
+        "--host",
+        "--port",
+        "--namespace",
+        "--debug-ring-size",
+        "--persist-command-log",
+        "--persist-command-db",
+        "--auth-token",
+        "--max-request-body-bytes",
+        "--allow-remote-without-auth",
+        "--no-generate",
+    ):
+        _assert_flag_listed(out, flag)
+    assert "Kubernetes/Helm" in out
+
+
+def test_serve_rejects_remote_bind_without_auth_or_explicit_override():
+    result = _invoke("serve", "--host", "0.0.0.0", "--no-generate")
+    assert result.returncode != 0
+    assert "--auth-token" in result.stderr
+    assert "--allow-remote-without-auth" in result.stderr
 
 
 def test_missing_numpy_dependency_has_actionable_error(tmp_path):
