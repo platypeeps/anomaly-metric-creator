@@ -3305,7 +3305,9 @@ def _generic_resource_row(
     string_data = payload.get("stringData") if isinstance(payload.get("stringData"), dict) else {}
     if kind == "configmaps":
         keys = {str(key): str(value) for key, value in data.items()} or _configmap_keys_from_flags(parsed)
-        return {"name": name, "data": len(keys), "age": "0s", "keys": keys or {"simulated": "true"}}
+        if not keys:
+            keys = {"simulated": "true"}
+        return {"name": name, "data": len(keys), "age": "0s", "keys": keys}
     if kind == "secrets":
         secret_data = {str(key): str(value) for key, value in {**data, **string_data}.items()}
         return {"name": name, "type": payload.get("type", "Opaque"), "data": len(secret_data) or 1, "age": "0s"}
@@ -3322,14 +3324,16 @@ def _generic_resource_row(
             "age": "0s",
         }
     if kind == "deployments":
-        replicas = _payload_replicas(payload) or 1
+        replicas = _payload_replicas(payload)
+        if replicas is None:
+            replicas = 1
         return {
             "name": name,
             "ready": f"{replicas}/{replicas}",
             "up_to_date": replicas,
             "available": replicas,
             "age": "0s",
-            "status": "Healthy",
+            "status": "Healthy" if replicas else "ScaledToZero",
         }
     if kind == "serviceaccounts":
         return {"name": name, "secrets": len(payload.get("secrets", [])), "age": "0s"}
@@ -3369,7 +3373,9 @@ def _generic_resource_row(
             "used_pct": 1,
         }
     if kind == "statefulsets":
-        replicas = _payload_replicas(payload) or 1
+        replicas = _payload_replicas(payload)
+        if replicas is None:
+            replicas = 1
         return {"name": name, "ready": f"{replicas}/{replicas}", "age": "0s"}
     if kind == "daemonsets":
         nodes = _node_rows(state)

@@ -621,6 +621,64 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
         assert any(item["metadata"]["name"] == "debug-flags" for item in configmaps["items"])
 
+        empty_configmap_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps",
+            data=json.dumps({"metadata": {"name": "empty-config"}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(empty_configmap_request, timeout=5) as response:
+            empty_configmap = json.loads(response.read().decode("utf-8"))
+        assert empty_configmap["data"] == {"simulated": "true"}
+        configmaps_output = server.run_command(
+            state,
+            command="kubectl get configmaps -n saas-prod",
+        )["result"]["stdout"]
+        empty_config_row = next(line for line in configmaps_output.splitlines() if line.startswith("empty-config"))
+        assert empty_config_row.split()[1] == "1"
+
+        zero_deployment_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments",
+            data=json.dumps({
+                "metadata": {"name": "scaled-down-worker"},
+                "spec": {"replicas": 0},
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(zero_deployment_request, timeout=5) as response:
+            zero_deployment = json.loads(response.read().decode("utf-8"))
+        assert zero_deployment["spec"]["replicas"] == 0
+        assert zero_deployment["status"]["replicas"] == 0
+        assert zero_deployment["status"]["readyReplicas"] == 0
+        deployments_output = server.run_command(
+            state,
+            command="kubectl get deployments -n saas-prod",
+        )["result"]["stdout"]
+        worker_row = next(line for line in deployments_output.splitlines() if line.startswith("scaled-down-worker"))
+        assert worker_row.split()[1] == "0/0"
+
+        zero_statefulset_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/statefulsets",
+            data=json.dumps({
+                "metadata": {"name": "scaled-down-cache"},
+                "spec": {"replicas": 0},
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(zero_statefulset_request, timeout=5) as response:
+            zero_statefulset = json.loads(response.read().decode("utf-8"))
+        assert zero_statefulset["spec"]["replicas"] == 0
+        assert zero_statefulset["status"]["replicas"] == 0
+        assert zero_statefulset["status"]["readyReplicas"] == 0
+        statefulsets_output = server.run_command(
+            state,
+            command="kubectl get statefulsets -n saas-prod",
+        )["result"]["stdout"]
+        cache_row = next(line for line in statefulsets_output.splitlines() if line.startswith("scaled-down-cache"))
+        assert cache_row.split()[1] == "0/0"
+
         malformed_patch = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/configmaps/debug-flags",
             data=b"{not-json",
