@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import datetime as _dt
 import gzip
 import json
 import os
@@ -103,6 +104,30 @@ def test_helm_and_rollout_responses_reflect_bad_canary(amc, tmp_path):
     )
     assert rollout["result"]["exit_code"] == 0
     assert "rolled back" in rollout["result"]["stdout"]
+
+
+def test_helm_history_uses_single_synthetic_timestamp_per_response(amc, tmp_path):
+    state = _build_state(
+        amc,
+        tmp_path,
+        scenarios="deploy_bad_canary_rollback",
+        signal_level="high",
+        days=1,
+    )
+
+    class _ChangingClock:
+        calls = 0
+
+        def now(self):
+            self.calls += 1
+            return _dt.datetime(2026, 4, 1, 12, 0, self.calls)
+
+    clock = _ChangingClock()
+    state.clock = clock
+    history = server._render_helm_history(state)
+
+    assert clock.calls == 1
+    assert history.count("2026-04-01 12:00:01") == 2
 
 
 def test_unsupported_commands_are_grouped_for_debugging(amc, tmp_path):
@@ -536,6 +561,20 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         assert deployment["spec"]["replicas"] == 5
         assert deployment["status"]["readyReplicas"] == 5
 
+        bool_scale_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway/scale",
+            data=json.dumps({"spec": {"replicas": False}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with urllib.request.urlopen(bool_scale_request, timeout=5) as response:
+            bool_scale = json.loads(response.read().decode("utf-8"))
+        assert bool_scale["spec"]["replicas"] == 5
+        deployment = _get_json(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway"
+        )
+        assert deployment["spec"]["replicas"] == 5
+
         delete_request = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/pods/apigateway-0",
             method="DELETE",
@@ -549,8 +588,8 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
 
         query = urllib.parse.urlencode({"family": "kubernetes-api", "q": "PATCH"})
         search = _get_json(base_url + "/v1/debug/search?" + query)
-        assert search["total"] == 1
-        assert search["items"][0]["support_status"] == "supported"
+        assert search["total"] == 2
+        assert all(item["support_status"] == "supported" for item in search["items"])
 
         configmap_request = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/configmaps",
@@ -652,11 +691,33 @@ def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
         assert version["gitVersion"] == "v1.29.4-amc"
 
         resources = _get_json(base_url + "/api/v1")
+        core_resources = {item["name"]: set(item["verbs"]) for item in resources["resources"]}
         assert {"pods", "secrets", "configmaps", "serviceaccounts"} <= {
             item["name"] for item in resources["resources"]
         }
+        for name in ("configmaps", "secrets", "services", "persistentvolumeclaims", "serviceaccounts"):
+            assert {"create", "delete", "patch", "update"} <= core_resources[name]
+        assert "delete" in core_resources["pods"]
+
+        apps = _get_json(base_url + "/apis/apps/v1")
+        apps_resources = {item["name"]: set(item["verbs"]) for item in apps["resources"]}
+        for name in ("deployments", "daemonsets", "statefulsets"):
+            assert {"create", "delete", "patch", "update"} <= apps_resources[name]
+
+        autoscaling = _get_json(base_url + "/apis/autoscaling/v2")
+        hpa_resources = {item["name"]: set(item["verbs"]) for item in autoscaling["resources"]}
+        assert {"create", "delete", "patch", "update"} <= hpa_resources["horizontalpodautoscalers"]
+
         batch = _get_json(base_url + "/apis/batch/v1")
         assert {"jobs", "cronjobs"} <= {item["name"] for item in batch["resources"]}
+        batch_resources = {item["name"]: set(item["verbs"]) for item in batch["resources"]}
+        for name in ("jobs", "cronjobs"):
+            assert {"create", "delete", "patch", "update"} <= batch_resources[name]
+
+        networking = _get_json(base_url + "/apis/networking.k8s.io/v1")
+        ingress_resources = {item["name"]: set(item["verbs"]) for item in networking["resources"]}
+        assert {"create", "delete", "patch", "update"} <= ingress_resources["ingresses"]
+
         discovery = _get_json(base_url + "/apis/discovery.k8s.io/v1")
         assert {"endpointslices"} <= {item["name"] for item in discovery["resources"]}
 

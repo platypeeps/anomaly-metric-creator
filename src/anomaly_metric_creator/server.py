@@ -3461,6 +3461,7 @@ def _render_helm_status(state: SimulationState) -> str:
 
 def _render_helm_history(state: SimulationState) -> str:
     rows = []
+    now = state.clock.now()
     for revision in _helm_release_revisions(state):
         version = int(revision["version"])
         if version == 1:
@@ -3468,7 +3469,7 @@ def _render_helm_history(state: SimulationState) -> str:
         elif version == 2:
             updated = "2026-03-08 00:00:00"
         else:
-            updated = _format_dt(state.clock.now())
+            updated = _format_dt(now)
         rows.append([
             str(version),
             updated,
@@ -4448,6 +4449,8 @@ def _k8s_mutated_object(
 def _payload_replicas(payload: dict[str, Any]) -> int | None:
     spec = payload.get("spec")
     if isinstance(spec, dict) and "replicas" in spec:
+        if isinstance(spec["replicas"], bool):
+            return None
         try:
             return max(0, int(spec["replicas"]))
         except (TypeError, ValueError):
@@ -4757,47 +4760,49 @@ def _k8s_core_resource_response(
 
 
 def _k8s_api_resource_list(group: str, version: str) -> dict[str, Any]:
+    read_verbs = ["get", "list"]
+    mutate_verbs = ["create", "delete", "get", "list", "patch", "update"]
     resources_by_group = {
         "": [
-            ("namespaces", "Namespace", False, ["get", "list"]),
-            ("nodes", "Node", False, ["get", "list"]),
+            ("namespaces", "Namespace", False, read_verbs),
+            ("nodes", "Node", False, read_verbs),
             ("pods", "Pod", True, ["get", "list", "delete"]),
             ("pods/log", "Pod", True, ["get"]),
-            ("configmaps", "ConfigMap", True, ["get", "list"]),
-            ("secrets", "Secret", True, ["get", "list"]),
-            ("replicationcontrollers", "ReplicationController", True, ["get", "list"]),
-            ("services", "Service", True, ["get", "list"]),
-            ("endpoints", "Endpoints", True, ["get", "list"]),
-            ("events", "Event", True, ["get", "list"]),
-            ("persistentvolumeclaims", "PersistentVolumeClaim", True, ["get", "list"]),
-            ("serviceaccounts", "ServiceAccount", True, ["get", "list"]),
+            ("configmaps", "ConfigMap", True, mutate_verbs),
+            ("secrets", "Secret", True, mutate_verbs),
+            ("replicationcontrollers", "ReplicationController", True, read_verbs),
+            ("services", "Service", True, mutate_verbs),
+            ("endpoints", "Endpoints", True, read_verbs),
+            ("events", "Event", True, read_verbs),
+            ("persistentvolumeclaims", "PersistentVolumeClaim", True, mutate_verbs),
+            ("serviceaccounts", "ServiceAccount", True, mutate_verbs),
         ],
         "apps": [
-            ("deployments", "Deployment", True, ["get", "list", "patch", "update", "delete"]),
+            ("deployments", "Deployment", True, mutate_verbs),
             ("deployments/scale", "Scale", True, ["get", "patch", "update"]),
-            ("replicasets", "ReplicaSet", True, ["get", "list"]),
-            ("daemonsets", "DaemonSet", True, ["get", "list"]),
-            ("statefulsets", "StatefulSet", True, ["get", "list"]),
+            ("replicasets", "ReplicaSet", True, read_verbs),
+            ("daemonsets", "DaemonSet", True, mutate_verbs),
+            ("statefulsets", "StatefulSet", True, mutate_verbs),
         ],
         "autoscaling": [
-            ("horizontalpodautoscalers", "HorizontalPodAutoscaler", True, ["get", "list"]),
+            ("horizontalpodautoscalers", "HorizontalPodAutoscaler", True, mutate_verbs),
         ],
         "authorization.k8s.io": [
             ("selfsubjectaccessreviews", "SelfSubjectAccessReview", False, ["create"]),
         ],
         "batch": [
-            ("jobs", "Job", True, ["get", "list"]),
-            ("cronjobs", "CronJob", True, ["get", "list"]),
+            ("jobs", "Job", True, mutate_verbs),
+            ("cronjobs", "CronJob", True, mutate_verbs),
         ],
         "discovery.k8s.io": [
-            ("endpointslices", "EndpointSlice", True, ["get", "list"]),
+            ("endpointslices", "EndpointSlice", True, read_verbs),
         ],
         "networking.k8s.io": [
-            ("ingresses", "Ingress", True, ["get", "list"]),
+            ("ingresses", "Ingress", True, mutate_verbs),
         ],
         "metrics.k8s.io": [
-            ("nodes", "NodeMetrics", False, ["get", "list"]),
-            ("pods", "PodMetrics", True, ["get", "list"]),
+            ("nodes", "NodeMetrics", False, read_verbs),
+            ("pods", "PodMetrics", True, read_verbs),
         ],
     }
     group_version = version if not group else f"{group}/{version}"
@@ -6540,10 +6545,28 @@ def make_handler(
                 version = state.traces.version
                 if version != last_version:
                     payload = json.dumps({"version": version})
-                    self.wfile.write(f"event: commands\ndata: {payload}\n\n".encode("utf-8"))
-                    self.wfile.flush()
+                    if not self._write_event_stream(
+                        f"event: commands\ndata: {payload}\n\n".encode("utf-8")
+                    ):
+                        return
+                    if not self._flush_event_stream():
+                        return
                     last_version = version
                 time.sleep(1.0)
+
+        def _write_event_stream(self, payload: bytes) -> bool:
+            try:
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                return False
+            return True
+
+        def _flush_event_stream(self) -> bool:
+            try:
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                return False
+            return True
 
         def _send_log_stream(self) -> None:
             self.send_response(200)
@@ -6555,30 +6578,38 @@ def make_handler(
             last_generation = -1
             last_signature: tuple[int, int] | None = None
             for _ in range(300):
-                generation = state.generation.generation_count
+                with state.generation.lock:
+                    generation = state.generation.generation_count
+                    last_seed = state.generation.last_seed
                 signature = _log_file_signature(state.output_dir / "metric_report.log")
                 if generation != last_generation or signature != last_signature:
                     payload = json.dumps({
                         "generation_count": generation,
-                        "last_seed": state.generation.last_seed,
+                        "last_seed": last_seed,
                     })
-                    self.wfile.write(f"event: generation\ndata: {payload}\n\n".encode("utf-8"))
-                    self._send_log_file()
-                    self.wfile.flush()
+                    if not self._write_event_stream(
+                        f"event: generation\ndata: {payload}\n\n".encode("utf-8")
+                    ):
+                        return
+                    if not self._send_log_file():
+                        return
+                    if not self._flush_event_stream():
+                        return
                     last_generation = generation
                     last_signature = signature
                 time.sleep(1.0)
 
-        def _send_log_file(self) -> None:
+        def _send_log_file(self) -> bool:
             log_path = state.output_dir / "metric_report.log"
             if not log_path.exists():
                 payload = json.dumps({"line": "metric_report.log is not present for this run"})
-                self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
-                return
+                return self._write_event_stream(f"data: {payload}\n\n".encode("utf-8"))
             with open(log_path, encoding="utf-8") as f:
                 for line in f:
                     payload = json.dumps({"line": line.rstrip("\n")})
-                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    if not self._write_event_stream(f"data: {payload}\n\n".encode("utf-8")):
+                        return False
+            return True
 
     return _Handler
 
