@@ -110,8 +110,8 @@ per-component CSVs for components no longer in `--components` or when
 not selected, and `combined_metrics_unified.csv` when `combined` is not
 selected.
 Idempotent on missing files; files unknown to this script (user notes, the
-synthetic-extra-component CSV used by the combine autodiscovery fixture) are
-left alone.
+synthetic-extra-component CSV used by the standalone combine autodiscovery
+fixture) are left alone.
 
 The end-of-run `Done - …` summary line is built from the same `args.emit_selection`
 + `args.combine` inputs, so it names exactly the artifacts written this run.
@@ -161,24 +161,28 @@ autodiscovered (excluding the anomalies manifest and the long-form
 `gauges.csv` via `_NON_COMPONENT_FILES`, and prior combine outputs via
 a separate `combined_metrics_` filename-prefix check inside
 `discover_components` — the constant does not cover all three).
-`main()` threads `--components` into both call sites (the `combined`
-emit token and the `combine` subcommand) so the combine output honors the same allowlist as
-generation, `anomalies.csv`, reporting artifacts, and OTEL streaming.
-The default `--components all` keeps autodiscovery active, which
-preserves the synthetic-extra-component path used by the existing test
-fixture. The output ordering contract differs across the two
-dispatched layouts: the wide layout uses the caller-supplied
+`main()` always passes the selected known component list to the generated
+`combined` artifact, including the default `--components all`, so stale or
+foreign CSVs left in `--output-dir` cannot be folded into artifacts for the
+current run. For default `--components all`, that explicit allowlist is sorted
+the same way `discover_components` sorts a clean generated directory, preserving
+byte-parity with a later standalone combine when no extra CSVs are staged;
+narrowed component selections keep the `COMPONENTS` declaration order. The
+`combine DIR` subcommand is the autodiscovery path: its default `--components
+all` maps to `components=None`, preserving the synthetic-extra-component
+fixture and other hand-staged combine inputs. The output ordering contract
+differs across the two dispatched layouts: the wide layout uses the caller-supplied
 `components` order verbatim for the column sequence; the long layout
 ignores it for layout purposes and sorts components alphabetically for
 the equal-timestamp tie-break (the row's `component` cell carries the
 identity, so column order is not the ordering surface). See the
 **Layout (phase 5)** subsection below for the dispatch detail.
 For freshly generated, non-DST wide CSVs, `main()` passes
-`assume_monotonic_wide_components=set(args.components)` so the combine writer
-does not spend a second full pass proving monotonicity for files it just
-emitted. This is only a trusted allowlist: extra autodiscovered CSVs and all
-external `combine DIR` invocations still run `_wide_component_rows_are_monotonic`
-before using the streaming `heapq.merge` path. The measurement harness is
+`assume_monotonic_wide_components=set(combine_components)` so the combine
+writer does not spend a second full pass proving monotonicity for files it just
+emitted. This is only a trusted allowlist for generated combines; external
+`combine DIR` invocations still run `_wide_component_rows_are_monotonic` before
+using the streaming `heapq.merge` path. The measurement harness is
 `tools/benchmark_combine.py`.
 
 **Layout (phase 5).** `combine_logs_unified(components, input_dir, …)`
@@ -212,8 +216,8 @@ and dispatches one of two layouts:
 
 Both layouts share the same `_COMBINE_OUTPUT_FILENAME`
 (`combined_metrics_unified.csv`); the filename does not change with the
-layout. The N=1 default keeps the pre-clean / summary / autodiscovery
-slot unchanged.
+layout. The N=1 default keeps the pre-clean and summary slot unchanged, while
+autodiscovery stays scoped to standalone `combine DIR`.
 
 ### Output schema document (`schema.json`)
 
@@ -2014,20 +2018,29 @@ run in CI):
 
 - `.github/workflows/ci.yml` — the `test` job runs the pytest suite (and
   the ruff-lockstep guard above) on every PR and on pushes to `main`, via
-  `uv`. It runs on the **`ubuntu-latest-m` 16 GB larger runner** with the
-  repo's default parallel config (pyproject addopts `-n 4 --dist loadfile`),
-  ~5-8 min. The 7 GB standard runner couldn't hold the heavy N=3 / 7-day
-  fixtures across xdist workers — a `-n 2` run OOM-died after 32 min — so the
-  suite ran serially (`-n 0`, ~24 min) there until the org configured the
-  larger runner; resizing it below 8 GB RAM means restoring `-n 0`. Larger
-  runners are billed per-minute (no included-minute allowance), so a
-  30-minute `timeout-minutes` caps a hang.
+  `uv`. Pushes to `main` run on the **`ubuntu-latest-m` 16 GB larger
+  runner** with the repo's default parallel config (pyproject addopts `-n 4
+  --dist loadfile`), ~5-8 min. Pull requests intentionally use the standard
+  `ubuntu-latest` runner with `pytest -n 0`: the larger-runner label can sit
+  queued with `runner_id=0` before any steps start, which wedges branch
+  protection even though the suite itself is healthy. The 7 GB standard
+  runner couldn't hold the heavy N=3 / 7-day fixtures across xdist workers —
+  a `-n 2` run OOM-died after 32 min — so the PR fallback stays serial
+  (~24 min historically). The workflow timeout is 45 minutes to cover the
+  serial PR path while still capping hangs.
 - `.github/workflows/dependabot-auto-merge.yml` — enables GitHub
   auto-merge (squash) on Dependabot **patch + minor** PRs via
   `dependabot/fetch-metadata`; majors stay manual. The merge waits on the
   required checks, so a bump that breaks `test`, the lockstep guard, or
   Socket never lands. Needs repo `allow_auto_merge` plus branch protection
   requiring those checks.
+- `.github/workflows/codeql.yml` — explicit CodeQL analysis for both
+  `python` and `actions`. Branch protection requires the GitHub Advanced
+  Security app's aggregate `CodeQL` check; relying only on default setup can
+  leave a PR stuck at "Expected — Waiting for status to be reported" when the
+  dynamic run uploads only an `Analyze (python)` result and never emits the
+  aggregate context. Keep the workflow name and real CodeQL upload path in
+  place rather than replacing it with a synthetic status.
 - `.github/workflows/socket.yml` — a Socket supply-chain scan run as a
   sidecar `socket` check (`socketcli`), flagging risky dependency
   *changes* (install scripts, new capabilities, typosquats, compromised

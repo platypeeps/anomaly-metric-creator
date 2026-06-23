@@ -258,6 +258,43 @@ def test_combine_with_components_filters_unified_columns(amc, tmp_path):
     assert fieldnames[0] == "timestamp"
 
 
+def test_generated_default_combined_ignores_foreign_csv(amc, tmp_path):
+    """Generation combines the selected component set, not every CSV on disk.
+
+    ``_pre_clean_output_dir`` deliberately preserves unknown files in
+    ``--output-dir``. The generated ``combined`` artifact must still be a pure
+    view of the component CSVs written by this run; autodiscovery belongs to
+    standalone ``combine DIR``.
+    """
+    out = tmp_path / "iot_logs"
+    out.mkdir()
+    foreign = out / "synthetic_widget.csv"
+    foreign.write_text(
+        "timestamp,widget_count,widget_health\n"
+        "2026-03-10 00:00:00,42,99.9\n",
+        encoding="utf-8",
+    )
+
+    run_capture(
+        amc,
+        out,
+        days=1,
+        interval_seconds=3600,
+        extra_args=["--emit", "metrics,schema,combined"],
+    )
+
+    unified = out / "combined_metrics_unified.csv"
+    fieldnames = _read_unified_fieldnames(unified)
+    assert foreign.exists(), "generation should not delete user-owned files"
+    assert not any(f.startswith("synthetic_widget_") for f in fieldnames), (
+        f"foreign CSV columns leaked into generated combined output: {fieldnames}"
+    )
+
+    schema = amc._load_schema_document(out / "schema.json")
+    assert "synthetic_widget.csv" not in schema["files"]
+    assert "synthetic_widget" not in schema["metadata"]["components"]
+
+
 def test_combine_subcommand_components_missing_csv_errors(amc, one_day_run_a, tmp_path):
     """``combine DIR --components a,b`` errors clearly when one of the
     requested component CSVs is missing from DIR, naming the

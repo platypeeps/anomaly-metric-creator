@@ -20,14 +20,15 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
-    # 16 GB GitHub-hosted larger runner (org-configured label). Holds the
-    # heavy N=3 / 7-day fixtures across xdist workers, unlike the 7 GB
-    # standard runner that OOM-killed the parallel suite.
-    runs-on: ubuntu-latest-m
-    # Suite runs parallel (~5-8 min) here; cap well above that so a hang can't
-    # burn billed minutes for long (larger runners are billed per-minute with
-    # no included-minute allowance).
-    timeout-minutes: 30
+    # Pushes to main use the org-configured 16 GB larger runner so the default
+    # xdist suite stays fast. Pull requests use the standard runner with a
+    # serial pytest override below: the larger-runner label can sit queued with
+    # runner_id=0 before any steps start, which blocks branch protection even
+    # though the suite itself is healthy.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ubuntu-latest-m' }}
+    # PRs run the slower low-RAM fallback (~24 min historically), while main
+    # pushes stay around 5-8 min on the larger runner.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -64,13 +65,16 @@ jobs:
       - name: Lint tests (ruff F401)
         run: uv run --no-sync ruff check tests/
 
-      # No -n override: the 16 GB runner runs the repo's default parallel
-      # config (pyproject addopts `-n 4 --dist loadfile`), ~5-8 min vs the
-      # ~24 min serial run the 7 GB standard runner needed. If the runner is
-      # ever resized below 8 GB RAM, restore `-n 0` (CLAUDE.md low-RAM-CI note)
-      # to avoid the OOM.
+      # PR standard runners need the low-RAM serial path; main pushes on the
+      # larger runner keep the repo's default parallel config (pyproject
+      # addopts `-n 4 --dist loadfile`).
       - name: Run test suite
-        run: uv run --no-sync pytest
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            uv run --no-sync pytest -n 0
+          else
+            uv run --no-sync pytest
+          fi
 
   test:
     name: test

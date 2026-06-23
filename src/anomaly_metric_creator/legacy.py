@@ -12442,12 +12442,15 @@ def main(argv=None):
 
     args = parse_args(argv)
 
-    # Restrict the combine step to user-selected components when --components
-    # narrows the selection; pass None for the default ("all") so autodiscovery
-    # still picks up any extra CSVs in --output-dir. List order follows the
-    # COMPONENTS declaration so unified CSV columns stay deterministic.
+    # Generation knows exactly which component CSVs it just wrote. Always pass
+    # that explicit allowlist to the combined writer so stale/foreign CSVs left
+    # in --output-dir cannot be folded into this run's artifacts. The standalone
+    # ``combine DIR`` subcommand keeps autodiscovery when its --components value
+    # is the default "all". For generation's own default "all", keep the
+    # discover_components-compatible sorted order for byte-parity with a later
+    # ``combine DIR`` over a clean generated directory.
     if args.components == set(COMPONENTS.keys()):
-        combine_components = None
+        combine_components = sorted(COMPONENTS)
     else:
         combine_components = [name for name in COMPONENTS if name in args.components]
 
@@ -12797,11 +12800,10 @@ def main(argv=None):
     if args.combine:
         # Freshly-generated, non-DST component CSVs are emitted in chronological
         # order, so the wide combine writer can skip its defensive monotonic
-        # pre-scan for those known components. Autodiscovered extra CSVs (when
-        # ``combine_components`` is None) are not in this allowlist and still
-        # get scanned before the streaming merge is trusted.
+        # pre-scan for exactly the generated component allowlist. External
+        # ``combine DIR`` invocations still take the conservative scan.
         assume_monotonic_wide_components = (
-            set(args.components)
+            set(combine_components)
             if args.inject_dst_artifact_day == 0
             else None
         )
