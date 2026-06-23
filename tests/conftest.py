@@ -156,6 +156,45 @@ def _guard_cwd_otel_activity_log():
     )
 
 
+# GB-scale session fixtures. A test that requests any of these (directly or
+# transitively) is auto-marked ``heavy`` so the PR CI gate can run it serially
+# (``pytest -n 0 -m heavy``) while the light remainder runs under real xdist
+# (``pytest -n 2 --dist loadfile -m "not heavy"``). The 7 GB standard runner
+# OOM-died generating these across xdist workers (CLAUDE.md "Continuous
+# integration" section), so they are the only ones excluded from the parallel
+# PR smoke; every other fixture (incl. the 1-day full-resolution runs) stays in
+# the parallel set. Derive new heavy fixtures here; never hand-list test files
+# in the workflow.
+_HEAVY_SESSION_FIXTURES = frozenset(
+    {
+        "seven_day_run",
+        "n3_one_day_dataset_dir",
+        "n3_seven_day_dataset_dir",
+    }
+)
+
+
+def _item_is_heavy(fixturenames):
+    """True when a collected item's fixture closure pulls a GB-scale fixture.
+
+    ``fixturenames`` is the item's full fixture closure (``item.fixturenames``),
+    so a test that reaches a heavy fixture transitively through another fixture
+    is still classified heavy.
+    """
+    return bool(_HEAVY_SESSION_FIXTURES.intersection(fixturenames))
+
+
+def pytest_collection_modifyitems(config, items):
+    # Auto-apply the ``heavy`` marker so the marker stays in lockstep with the
+    # fixture set above with no per-test annotation to drift. The CI ``-m
+    # heavy`` step relies on this: if marking ever stops firing, that step
+    # collects zero tests and fails (pytest exit code 5), surfacing the
+    # regression instead of silently routing the GB fixtures into ``-n 2``.
+    for item in items:
+        if _item_is_heavy(getattr(item, "fixturenames", ())):
+            item.add_marker(pytest.mark.heavy)
+
+
 @pytest.fixture(scope="session")
 def amc():
     return _load_amc()

@@ -65,13 +65,27 @@ jobs:
       - name: Lint tests (ruff F401)
         run: uv run --no-sync ruff check tests/
 
-      # PR standard runners need the low-RAM serial path; main pushes on the
-      # larger runner keep the repo's default parallel config (pyproject
-      # addopts `-n 4 --dist loadfile`).
+      # PR standard runners split the suite to exercise the same xdist
+      # ordering path that main's push run uses, without OOM-ing the 7 GB
+      # runner:
+      #   1. `-m heavy -n 0`: the GB-scale 7-day / N=3 fixture tests run
+      #      serially (they are what OOM-died a full `-n 2` PR run). This step
+      #      runs first so a broken `heavy` auto-marker (conftest
+      #      pytest_collection_modifyitems) collects zero tests and fails fast
+      #      with pytest's exit code 5, instead of letting those fixtures fall
+      #      into the parallel step below and OOM.
+      #   2. `-m "not heavy" -n 2 --dist loadfile`: the light remainder runs
+      #      under real xdist, so an order-dependent / leaked-global-state
+      #      regression surfaces at the PR gate rather than only post-merge on
+      #      the main push (the determinism-coverage gap this split closes).
+      # The two `-m` sets partition the suite, so coverage is complete. main
+      # pushes keep the repo default (`-n 4 --dist loadfile`, pyproject addopts)
+      # on the larger runner.
       - name: Run test suite
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            uv run --no-sync pytest -n 0
+            uv run --no-sync pytest -n 0 -m heavy
+            uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy"
           else
             uv run --no-sync pytest
           fi
