@@ -137,6 +137,8 @@ def test_serve_help_lists_server_flags_without_generation():
         "--auth-token",
         "--max-request-body-bytes",
         "--allow-remote-without-auth",
+        "--continuous-generate",
+        "--continuous-generate-interval-seconds",
         "--no-generate",
     ):
         _assert_flag_listed(out, flag)
