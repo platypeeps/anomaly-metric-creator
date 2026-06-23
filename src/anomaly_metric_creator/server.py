@@ -1836,6 +1836,20 @@ _SNAPSHOT_KINDS = {
     "statefulsets",
     "ingress",
 }
+_MUTATION_SNAPSHOT_KINDS = {
+    "configmaps",
+    "secrets",
+    "deployments",
+    "daemonsets",
+    "services",
+    "hpa",
+    "jobs",
+    "cronjobs",
+    "serviceaccounts",
+    "pvc",
+    "statefulsets",
+    "ingress",
+}
 
 
 def run_command(
@@ -3289,7 +3303,16 @@ def _mutation_snapshot_kind(kind: str) -> str:
         "manifest": "configmaps",
     }
     normalized = aliases.get(normalized, normalized)
-    return normalized if normalized in _SNAPSHOT_KINDS else ""
+    return normalized if normalized in _MUTATION_SNAPSHOT_KINDS else ""
+
+
+def _record_continuous_generation_failure(
+    state: SimulationState,
+    exc: BaseException,
+) -> None:
+    with state.generation.lock:
+        state.generation.last_error = str(exc) or exc.__class__.__name__
+        state.generation.thread = "failed"
 
 
 def _generic_resource_row(
@@ -7569,10 +7592,11 @@ def _run_continuous_generation_once(
         state.legacy.main(run_argv)
         rows = load_anomaly_rows(state.output_dir / "anomalies.csv")
         state.replace_generated_rows(rows)
+    except SystemExit as exc:  # pragma: no cover - defensive background boundary
+        _record_continuous_generation_failure(state, exc)
+        return
     except Exception as exc:  # pragma: no cover - defensive background boundary
-        with state.generation.lock:
-            state.generation.last_error = str(exc)
-            state.generation.thread = "failed"
+        _record_continuous_generation_failure(state, exc)
         return
     with state.generation.lock:
         state.generation.generation_count = next_count

@@ -603,6 +603,21 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         assert search["total"] == 2
         assert all(item["support_status"] == "supported" for item in search["items"])
 
+        readonly_pod_patch = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/pods/cacheservice-0",
+            data=json.dumps({"metadata": {"labels": {"debug": "true"}}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(readonly_pod_patch, timeout=5)
+        assert excinfo.value.code == 405
+        readonly_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert readonly_status["kind"] == "Status"
+        assert readonly_status["reason"] == "MethodNotAllowed"
+        pods = _get_json(base_url + "/api/v1/namespaces/saas-prod/pods")
+        assert any(pod["metadata"]["name"] == "cacheservice-0" for pod in pods["items"])
+
         configmap_request = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/configmaps",
             data=json.dumps({
@@ -783,6 +798,25 @@ def test_continuous_generation_refreshes_state(amc, tmp_path, monkeypatch):
     assert "none" in calls[0]
     assert streams == ["cache_leak_restart"]
     assert state.otel_status["stream_batches"] == 1
+
+
+def test_continuous_generation_records_system_exit(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    def fail_main(argv):
+        raise SystemExit("bad generated args")
+
+    monkeypatch.setattr(state.legacy, "main", fail_main)
+    server._run_continuous_generation_once(
+        state,
+        ["--output-dir", str(tmp_path)],
+        stream_otel=False,
+    )
+
+    assert state.generation.thread == "failed"
+    assert state.generation.generation_count == 0
+    assert state.generation.last_seed == int(state.args.seed) + 1
+    assert state.generation.last_error == "bad generated args"
 
 
 def test_log_stream_follows_refreshed_generation_logs(amc, tmp_path):
