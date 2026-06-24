@@ -1010,6 +1010,37 @@ def test_continuous_generation_records_system_exit(amc, tmp_path, monkeypatch):
     assert state.generation.last_error == "bad generated args"
 
 
+def test_continuous_generation_marks_otel_disabled_without_streaming(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            started_threads.append((self.name, self.daemon))
+
+    monkeypatch.setattr(server.threading, "Thread", FakeThread)
+
+    stop_event = server._start_continuous_generation(
+        state,
+        ["--output-dir", str(tmp_path)],
+        enabled=True,
+        interval_seconds=60.0,
+        stream_otel=False,
+    )
+
+    assert stop_event is not None
+    assert started_threads == [("amc-continuous-generation", True)]
+    assert state.generation.enabled is True
+    assert state.otel_status["enabled"] is False
+    assert state.otel_status["thread"] == "disabled"
+    assert state.otel_status["continuous"] is False
+
+
 def test_log_stream_follows_refreshed_generation_logs(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     log_path = tmp_path / "metric_report.log"

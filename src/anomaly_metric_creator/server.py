@@ -7627,6 +7627,9 @@ def _start_continuous_generation(
     if stream_otel:
         state.otel_status["thread"] = "waiting"
         state.otel_status["continuous"] = True
+    else:
+        state.otel_status["thread"] = "disabled"
+        state.otel_status["continuous"] = False
 
     stop_event = threading.Event()
 
