@@ -1170,10 +1170,11 @@ def _resolve_instance_filter(spec_filter, instances: list["Instance"]):
 # Core generator
 # ------------------------------------------------------------------
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
-                       *, base_dir, total_seconds, drop_rate, interval=1.0,
+                       *, base_dir, total_seconds, drop_rate,
+                       ctx: "RunContext",
+                       interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
                        dst_inject_day=0, start_time: datetime.datetime = START,
-                       ctx: "RunContext",
                        instances: list["Instance"] | None = None,
                        topology_capture: dict[str, dict[str, np.ndarray]] | None = None,
                        topology_capture_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = None,
