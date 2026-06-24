@@ -26,6 +26,7 @@ def _build_state(
     signal_level="medium",
     days=2,
     persist_command_db=None,
+    trace_limit=server.DEFAULT_TRACE_LIMIT,
 ):
     args = amc.parse_args([
         "--duration-days", str(days),
@@ -35,7 +36,7 @@ def _build_state(
         "--output-dir", str(tmp_path),
         "--interval-seconds", "3600",
     ])
-    return server.build_state(amc, args, persist_command_db=persist_command_db)
+    return server.build_state(amc, args, persist_command_db=persist_command_db, trace_limit=trace_limit)
 
 
 def _get_json(url):
@@ -303,6 +304,32 @@ def test_kubectl_wait_ingress_uses_stable_resource_prefix(amc, tmp_path):
 
     assert result["result"]["stdout"] == "ingress/public-edge condition met: condition=ready\n"
     assert "ingre/" not in result["result"]["stdout"]
+
+
+def test_mutation_events_are_bounded_by_debug_ring_size(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3, trace_limit=3)
+    now = state.clock.now()
+
+    for index in range(5):
+        state.mutations.record_event(
+            "Normal",
+            f"Mutation{index}",
+            f"pod/apigateway-{index}",
+            f"mutation event {index}",
+            now + _dt.timedelta(seconds=index),
+        )
+
+    with state.mutations.lock:
+        reasons = [event["reason"] for event in state.mutations.extra_events]
+    assert reasons == ["Mutation2", "Mutation3", "Mutation4"]
+
+    summary = state.summary()["mutations"]
+    assert summary["extra_event_count"] == 3
+    assert summary["extra_event_limit"] == 3
+
+    resource_reasons = [event["reason"] for event in server.resource_snapshot(state)["events"]]
+    assert "Mutation0" not in resource_reasons
+    assert "Mutation4" in resource_reasons
 
 
 def test_mutating_commands_update_simulated_state(amc, tmp_path):

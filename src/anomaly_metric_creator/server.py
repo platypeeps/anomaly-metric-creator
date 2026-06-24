@@ -1412,6 +1412,7 @@ class SimulationMutations:
     deleted_resources: dict[str, set[str]] = field(default_factory=dict)
     created_resources: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     extra_events: list[dict[str, str]] = field(default_factory=list)
+    extra_event_limit: int = DEFAULT_TRACE_LIMIT
     release: HelmReleaseMutation = field(default_factory=HelmReleaseMutation)
     version: int = 0
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -1444,6 +1445,7 @@ class SimulationMutations:
                     if items
                 },
                 "extra_event_count": len(self.extra_events),
+                "extra_event_limit": self.extra_event_limit,
                 "release": {
                     "uninstalled": self.release.uninstalled,
                     "revision_count": len(self.release.revisions or []),
@@ -1461,6 +1463,13 @@ class SimulationMutations:
                 "object": obj,
                 "message": message,
             })
+            limit = max(self.extra_event_limit, 0)
+            if limit:
+                overflow = len(self.extra_events) - limit
+                if overflow > 0:
+                    del self.extra_events[:overflow]
+            else:
+                self.extra_events.clear()
             self.version += 1
 
     def set_workload(
@@ -1711,6 +1720,7 @@ def build_state(
             persist_path=persist_command_log,
             sqlite_path=persist_command_db,
         ),
+        mutations=SimulationMutations(extra_event_limit=trace_limit),
         otel_status={
             "enabled": bool(getattr(args, "otel_enabled", False)),
             "signals": sorted(getattr(args, "otel_signal_selection", None) or []),
