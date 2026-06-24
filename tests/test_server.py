@@ -269,6 +269,18 @@ def test_expanded_kubectl_and_helm_command_coverage(amc, tmp_path):
     assert "SucceededAfterRollback" in helm_test["result"]["stdout"]
 
 
+def test_kubectl_delete_ingress_uses_stable_resource_prefix(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl delete ingress public-edge -n saas-prod",
+    )
+
+    assert result["result"]["stdout"] == 'ingress "public-edge" deleted\n'
+    assert "ingre " not in result["result"]["stdout"]
+
+
 def test_mutating_commands_update_simulated_state(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
@@ -762,6 +774,38 @@ def test_state_summary_counts_anomalies_without_copying_rows(amc, tmp_path, monk
     monkeypatch.setattr(state, "active_anomalies", lambda limit=20: [])
 
     assert state.summary()["anomaly_count"] == expected_count
+
+
+def test_anomalies_endpoint_slices_without_copying_all_rows(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    rows = [
+        {"timestamp": "2026-03-01 00:00:00", "scenario": "first"},
+        {"timestamp": "2026-03-01 00:01:00", "scenario": "second"},
+    ]
+    state.replace_generated_rows(rows)
+
+    def fail_generated_rows():
+        raise AssertionError("endpoint should not copy all anomaly rows before slicing")
+
+    monkeypatch.setattr(state, "generated_rows", fail_generated_rows)
+    with _running_test_server(state) as base_url:
+        payload = _get_json(base_url + "/v1/anomalies?limit=1")
+
+    assert len(payload["items"]) == 1
+    assert payload["items"][0] == rows[0]
+
+
+def test_json_safe_payload_stabilizes_callables_and_sets():
+    payload = server._json_safe_payload({
+        "callback": lambda value: value,
+        "unordered": {"beta", "alpha"},
+        "frozen": frozenset({"2", "1"}),
+    })
+
+    assert payload["callback"] == "<callable>"
+    assert payload["unordered"] == ["alpha", "beta"]
+    assert payload["frozen"] == ["1", "2"]
+    assert "0x" not in json.dumps(payload, sort_keys=True)
 
 
 def test_continuous_generation_refreshes_state(amc, tmp_path, monkeypatch):

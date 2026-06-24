@@ -1663,6 +1663,10 @@ class SimulationState:
         with self.generation.lock:
             return list(self.anomaly_rows)
 
+    def generated_rows_slice(self, limit: int) -> list[dict[str, str]]:
+        with self.generation.lock:
+            return list(self.anomaly_rows[:max(limit, 0)])
+
     def generated_row_count(self) -> int:
         with self.generation.lock:
             return len(self.anomaly_rows)
@@ -3236,7 +3240,8 @@ def _render_delete(state: SimulationState, parsed: ParsedCommand) -> str:
     snapshot_kind = _mutation_snapshot_kind(kind)
     if snapshot_kind and name:
         state.mutations.delete_resource(snapshot_kind, name, now=now)
-    return f"{kind.rstrip('s') or 'resource'} \"{name}\" deleted\n"
+    prefix = _resource_prefix(snapshot_kind or _KIND_ALIASES.get(kind, kind) or "resource")
+    return f"{prefix} \"{name}\" deleted\n"
 
 
 def _render_apply(state: SimulationState, parsed: ParsedCommand) -> str:
@@ -6337,7 +6342,7 @@ def make_handler(
                     self._send_json(200, _scenario_payload(state))
                 elif path == "/v1/anomalies":
                     limit = _query_int(query, "limit", 100)
-                    self._send_json(200, {"items": state.generated_rows()[:limit]})
+                    self._send_json(200, {"items": state.generated_rows_slice(limit)})
                 elif path == "/v1/debug/resources":
                     self._send_json(200, resource_snapshot(state))
                 elif path == "/v1/debug/commands":
@@ -6769,11 +6774,25 @@ def _ops_profile_payload(profile: OpsScenarioProfile) -> dict[str, Any]:
 def _json_safe_payload(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if callable(value):
+        return "<callable>"
     if isinstance(value, dict):
-        return {str(key): _json_safe_payload(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
+        return {
+            str(key): _json_safe_payload(value[key])
+            for key in sorted(value, key=str)
+        }
+    if isinstance(value, (list, tuple)):
         return [_json_safe_payload(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted(
+            (_json_safe_payload(item) for item in value),
+            key=_json_safe_sort_key,
+        )
     return str(value)
+
+
+def _json_safe_sort_key(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 DEBUG_HTML = r"""<!doctype html>
