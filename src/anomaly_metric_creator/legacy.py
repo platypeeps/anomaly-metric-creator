@@ -67,6 +67,25 @@ DEFAULT_DURATION_DAYS = (
 DEFAULT_OTEL_STREAM_AUTH_SCHEME = "Bearer"
 DEFAULT_SIGNAL_LEVEL = "medium"
 
+
+def _parse_start_time_arg(value: str) -> datetime.datetime:
+    """Parse a CLI start timestamp and normalize it to naive UTC."""
+    text = value.strip()
+    if not text:
+        raise argparse.ArgumentTypeError("--start-time must be non-empty")
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "--start-time must be ISO 8601, e.g. "
+            "2026-06-24T12:34:56Z"
+        ) from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return parsed
+
 # Preflight ceiling on total emitted cells per run, where one "cell" is one
 # metric value at one timestamp summed across selected components. Trips on
 # the metric × row × component product to catch the common foot-gun of
@@ -1148,7 +1167,8 @@ def _resolve_instance_filter(spec_filter, instances: list["Instance"]):
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate, interval=1.0,
                        ts_array=None, ts_strings=None, emit_metrics=True,
-                       dst_inject_day=0, ctx: "RunContext",
+                       dst_inject_day=0, start_time: datetime.datetime = START,
+                       ctx: "RunContext",
                        instances: list["Instance"] | None = None,
                        topology_capture: dict[str, dict[str, np.ndarray]] | None = None,
                        topology_capture_by_instance: dict[str, list[dict[str, np.ndarray]]] | None = None,
@@ -1358,7 +1378,9 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 )
 
     if ts_array is None or ts_strings is None:
-        ts_array, ts_strings = _build_timestamp_arrays(total_seconds, interval)
+        ts_array, ts_strings = _build_timestamp_arrays(
+            total_seconds, interval, start_time=start_time
+        )
     drop_mask = rng.random(n_rows) < drop_rate
 
     # Elapsed seconds (not row index) so daily/hourly seasonality generators
@@ -1548,7 +1570,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         if drop_mask[row_idx]:
             continue
         col = name_to_col[aspec["metric"]]
-        ts_py = START + datetime.timedelta(seconds=float(row_idx * interval))
+        ts_py = start_time + datetime.timedelta(seconds=float(row_idx * interval))
         override_value = _resolve_anomaly_value(
             aspec, ts_py, col, t_within, span_idx, rng
         )
@@ -1847,6 +1869,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                 rows = _format_csv_row_block(
                     kept_ts, shared_metric_suffix,
                     dim_prefix="", dst_inject_day=dst_inject_day,
+                    start_time=start_time,
                 )
                 f.write("\n".join(rows.tolist()))
                 f.write("\n")
@@ -1885,6 +1908,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                         kept_ts, inst_suffix,
                         dim_prefix=f",{dim_vals}",
                         dst_inject_day=dst_inject_day,
+                        start_time=start_time,
                     )
                     f.write("\n".join(inst_rows.tolist()))
                     f.write("\n")
@@ -1915,7 +1939,8 @@ def _format_metric_suffix(str_vals: np.ndarray) -> np.ndarray:
 
 
 def _format_csv_row_block(kept_ts: np.ndarray, metric_suffix: np.ndarray,
-                          *, dim_prefix: str, dst_inject_day: int) -> np.ndarray:
+                          *, dim_prefix: str, dst_inject_day: int,
+                          start_time: datetime.datetime = START) -> np.ndarray:
     """Concatenate ``timestamp + dim_prefix + ',' + metric_suffix`` per row.
 
     ``dim_prefix`` is the empty string for the dimensionless / single-anonymous-
@@ -1940,12 +1965,13 @@ def _format_csv_row_block(kept_ts: np.ndarray, metric_suffix: np.ndarray,
     rows = np.char.add(kept_ts, f"{dim_prefix},")
     rows = np.char.add(rows, metric_suffix)
     if dst_inject_day > 0:
-        rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day)
+        rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day, start_time)
     return rows
 
 
 def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
-                         dst_day: int) -> np.ndarray:
+                         dst_day: int,
+                         start_time: datetime.datetime = START) -> np.ndarray:
     """Duplicate the 02:00–02:59 hour on ``dst_day`` (1-based) inside ``rows``.
 
     ``rows`` is the formatted ``ts,v0,...,vk`` string array; ``kept_ts`` is the
@@ -1954,7 +1980,7 @@ def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
     duplicate hour reuses the same timestamp prefix, so the resulting CSV has
     non-monotonic timestamps — the realistic fall-DST quirk.
     """
-    day_date = (START + datetime.timedelta(days=dst_day - 1)).strftime("%Y-%m-%d")
+    day_date = (start_time + datetime.timedelta(days=dst_day - 1)).strftime("%Y-%m-%d")
     dst_start = f"{day_date} 02:00:00"
     dst_end = f"{day_date} 03:00:00"
     mask = (kept_ts >= dst_start) & (kept_ts < dst_end)
@@ -2280,19 +2306,26 @@ def _format_fixed3(arr: np.ndarray) -> np.ndarray:
     return np.char.add(out, frac_part)
 
 
-def _build_timestamp_arrays(total_seconds: int, interval: float = 1.0):
+def _build_timestamp_arrays(
+    total_seconds: int,
+    interval: float = 1.0,
+    *,
+    start_time: datetime.datetime = START,
+):
     """Pre-compute the shared per-run timestamp arrays (numpy + formatted str).
 
     Built once per run and reused across all six components — they're identical
     by construction, so re-computing them per component is pure waste.
-    Row ``i`` is at ``START + i * interval`` seconds; row count is
+    Row ``i`` is at ``start_time + i * interval`` seconds; row count is
     ``floor(total_seconds / interval)``. Strings are rendered at second
     precision when ``interval >= 1.0`` and at millisecond precision otherwise
     so adjacent sub-second rows never share a timestamp string.
     """
     n_rows = int(total_seconds // interval)
     step_us = int(round(interval * 1_000_000))
-    ts_array = np.datetime64(START) + np.arange(n_rows) * np.timedelta64(step_us, "us")
+    ts_array = (
+        np.datetime64(start_time) + np.arange(n_rows) * np.timedelta64(step_us, "us")
+    )
     if interval < 1.0:
         ts_strings = np.char.replace(
             np.datetime_as_string(ts_array, unit="ms"), "T", " "
@@ -7778,6 +7811,15 @@ def parse_args(argv=None):
                         "Each scenario's ``days_required`` is the minimum value at which "
                         "any of its specs become in range; the full multi-day catalog "
                         f"manifests at {max(s.days_required for s in SCENARIOS.values())}+.")
+    g_common.add_argument(
+        "--start-time",
+        type=_parse_start_time_arg,
+        default=START,
+        metavar="TIMESTAMP",
+        help="UTC timestamp for the first generated row. Accepts ISO 8601 "
+             "values such as 2026-06-24T12:34:56Z or 2026-06-24 12:34:56. "
+             f"Default: {START.isoformat()}.",
+    )
     g_common.add_argument("--seed", type=int, default=DEFAULT_SEED,
                    help=f"RNG seed for deterministic output (default: {DEFAULT_SEED}).")
     g_common.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
@@ -12527,7 +12569,11 @@ def main(argv=None):
         interval_seconds=args.interval_seconds,
     )
 
-    ts_array, ts_strings = _build_timestamp_arrays(total_seconds, args.interval_seconds)
+    ts_array, ts_strings = _build_timestamp_arrays(
+        total_seconds,
+        args.interval_seconds,
+        start_time=args.start_time,
+    )
     n_rows = int(total_seconds // args.interval_seconds)
 
     # Topology phase 2 / phase 6 flag day: we walk
@@ -12605,6 +12651,7 @@ def main(argv=None):
                            ts_strings=ts_strings,
                            emit_metrics="metrics" in args.emit_selection,
                            dst_inject_day=args.inject_dst_artifact_day,
+                           start_time=args.start_time,
                            ctx=ctx,
                            instances=ctx.instances[name],
                            topology_capture=upstream_arrays,
@@ -12704,7 +12751,7 @@ def main(argv=None):
         )
         schema_metadata = {
             "seed": args.seed,
-            "start": START.isoformat(),
+            "start": args.start_time.isoformat(),
             "duration_days": args.duration_days,
             "interval_seconds": args.interval_seconds,
             "total_seconds": total_seconds,
