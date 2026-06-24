@@ -681,6 +681,53 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         pods = _get_json(base_url + "/api/v1/namespaces/saas-prod/pods")
         assert any(pod["metadata"]["name"] == "cacheservice-0" for pod in pods["items"])
 
+        status_patch = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway/status",
+            data=json.dumps({"status": {"readyReplicas": 0}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(status_patch, timeout=5)
+        assert excinfo.value.code == 405
+        status_patch_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert status_patch_status["kind"] == "Status"
+        assert status_patch_status["reason"] == "MethodNotAllowed"
+        deployment = _get_json(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway"
+        )
+        assert deployment["spec"]["replicas"] == 5
+        assert deployment["status"]["readyReplicas"] == 5
+        query = urllib.parse.urlencode({
+            "family": "kubernetes-api",
+            "q": "deployments/apigateway/status",
+        })
+        search = _get_json(base_url + "/v1/debug/search?" + query)
+        assert search["total"] == 1
+        assert search["items"][0]["support_status"] == "unsupported"
+        assert search["items"][0]["matched_rule_id"] == "k8s.method.unsupported"
+
+        pod_log_delete = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/pods/cacheservice-0/log",
+            method="DELETE",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(pod_log_delete, timeout=5)
+        assert excinfo.value.code == 405
+        pod_log_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert pod_log_status["kind"] == "Status"
+        assert pod_log_status["reason"] == "MethodNotAllowed"
+        pods = _get_json(base_url + "/api/v1/namespaces/saas-prod/pods")
+        assert any(pod["metadata"]["name"] == "cacheservice-0" for pod in pods["items"])
+        query = urllib.parse.urlencode({
+            "family": "kubernetes-api",
+            "q": "pods/cacheservice-0/log",
+        })
+        search = _get_json(base_url + "/v1/debug/search?" + query)
+        assert search["total"] == 1
+        assert search["items"][0]["support_status"] == "unsupported"
+        assert search["items"][0]["matched_rule_id"] == "k8s.method.unsupported"
+
         configmap_request = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/configmaps",
             data=json.dumps({

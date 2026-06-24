@@ -4339,6 +4339,10 @@ def kubernetes_api_mutating_response(
     resource = target["resource"]
     name = target["name"]
     subresource = target["subresource"]
+    if target.get("extra") or not _k8s_subresource_mutation_allowed(method, resource, subresource):
+        return _k8s_status_response(
+            *_k8s_read_only_status_args(method, path),
+        )
     now = state.clock.now()
     if method in {"PATCH", "PUT"} and resource == "deployments" and name:
         replicas = _payload_replicas(payload)
@@ -4482,6 +4486,7 @@ def _k8s_mutation_target(path: str) -> dict[str, str] | None:
             "resource": parts[4],
             "name": parts[5] if len(parts) >= 6 else "",
             "subresource": parts[6] if len(parts) >= 7 else "",
+            "extra": "/".join(parts[7:]) if len(parts) >= 8 else "",
         }
     if parts and parts[0] == "apis" and len(parts) >= 6 and parts[3] == "namespaces":
         return {
@@ -4491,8 +4496,15 @@ def _k8s_mutation_target(path: str) -> dict[str, str] | None:
             "resource": parts[5],
             "name": parts[6] if len(parts) >= 7 else "",
             "subresource": parts[7] if len(parts) >= 8 else "",
+            "extra": "/".join(parts[8:]) if len(parts) >= 9 else "",
         }
     return None
+
+
+def _k8s_subresource_mutation_allowed(method: str, resource: str, subresource: str) -> bool:
+    if not subresource:
+        return True
+    return method in {"PATCH", "PUT"} and resource == "deployments" and subresource == "scale"
 
 
 def _k8s_mutated_object(
