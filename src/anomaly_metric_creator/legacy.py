@@ -72,21 +72,20 @@ def _parse_start_time_arg(value: str) -> datetime.datetime:
     """Parse a CLI start timestamp and normalize it to naive UTC."""
     text = value.strip()
     if not text:
-        raise argparse.ArgumentTypeError("--start-time must be non-empty")
+        raise argparse.ArgumentTypeError("must be non-empty")
     if text.endswith(("Z", "z")):
         text = f"{text[:-1]}+00:00"
     try:
         parsed = datetime.datetime.fromisoformat(text)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(
-            "--start-time must be ISO 8601, e.g. "
-            "2026-06-24T12:34:56Z"
+            "must be ISO 8601, e.g. 2026-06-24T12:34:56Z"
         ) from exc
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(datetime.timezone.utc).replace(tzinfo=None)
     if parsed.microsecond:
         raise argparse.ArgumentTypeError(
-            "--start-time must be a whole-second ISO 8601 timestamp; "
+            "must be a whole-second ISO 8601 timestamp; "
             "sub-second start times cannot be represented exactly in every artifact"
         )
     return parsed

@@ -30,6 +30,19 @@ def test_parse_args_start_time_rejects_invalid_value(amc):
         ])
 
 
+@pytest.mark.parametrize("value", ["", "not-a-timestamp", "2026-06-24T12:34:56.123Z"])
+def test_parse_args_start_time_error_avoids_duplicate_flag_name(amc, capsys, value):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--start-time", value,
+            "--output-dir", "test_out",
+        ])
+
+    err = capsys.readouterr().err
+    assert "argument --start-time:" in err
+    assert "argument --start-time: --start-time" not in err
+
+
 def test_parse_args_start_time_rejects_sub_second_value(amc):
     with pytest.raises(SystemExit):
         amc.parse_args([
