@@ -307,6 +307,8 @@ Server flags:
 | `--max-request-body-bytes` | `1048576` | Maximum accepted HTTP request body size. Oversized app requests return `413`; oversized Kubernetes API requests return a Kubernetes `Status`. |
 | `--allow-remote-without-auth` | _off_ | Explicit lab-only override that permits non-loopback `--host` values without `--auth-token`. |
 | `--no-generate` | _off_ | Use existing artifacts in `--output-dir` instead of generating before serving. |
+| `--continuous-generate` | _off_ | Keep regenerating artifacts while the server runs. Each pass refreshes `/v1/state`, Kubernetes/Helm snapshots, anomaly rows, and log-stream inputs. When OTEL streaming is enabled, the continuous generator serializes regeneration and OTEL replay so each fresh batch is streamed in order. |
+| `--continuous-generate-interval-seconds` | `60.0` | Seconds to wait between continuous generation passes. |
 
 By default the server binds loopback. Binding a non-loopback host such as
 `0.0.0.0` requires `--auth-token` unless
@@ -325,13 +327,15 @@ Primary endpoints:
 | `GET /v1/kubeconfig` | Kubeconfig that points stock `kubectl` and `helm` clients at this simulator. |
 | `POST /v1/commands` | Execute a simulated command. Body accepts `{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`. |
 | `GET /version`, `/api`, `/apis/...` | Kubernetes-compatible discovery, resource, log, metrics, and Helm release Secret APIs for real clients. |
-| `GET /v1/state` | Current synthetic clock, active scenarios, OTEL status, active anomaly spans, and trace counts. |
+| `GET /v1/state` | Current synthetic clock, active scenarios, OTEL/generation status, mutable overlay summary, active anomaly spans, and trace counts. |
+| `GET /v1/scenarios` | Scenario catalog with primary/cascade signal descriptions and Kubernetes/Helm ops-profile details. |
 | `GET /v1/debug/commands` | Recent command traces. |
 | `GET /v1/debug/search` | Search command traces by `q`, `status`, `family`, `scenario`, `limit`, and `offset`; uses SQLite when `--persist-command-db` is configured. |
 | `GET /v1/debug/unsupported` | Unsupported / partial command fingerprints grouped by count, examples, and guessed intent. |
 | `GET /v1/debug/resources` | Synthetic pods, deployments, services, HPA, PVC, nodes, events, ingress, and Helm release state. |
-| `GET /v1/logs/stream` | SSE replay of `metric_report.log` lines for the generated run. |
+| `GET /v1/logs/stream` | SSE replay of `metric_report.log` lines for the generated run; connected clients receive refreshed log batches after continuous generation passes. |
 | `POST /v1/time/pause`, `/resume`, `/seek` | Simulation clock controls (`seek` expects `{"timestamp": "YYYY-MM-DD HH:MM:SS"}`). |
+| `POST /v1/mutations/reset` | Clear mutable simulator overlays and return to the baseline scenario state without restarting the server. |
 
 Supported command families in server mode:
 
@@ -342,11 +346,12 @@ Supported command families in server mode:
 - `kubectl describe` for the same synthetic resources where a description is useful
 - `kubectl logs POD`
 - `kubectl top pods|nodes`
-- `kubectl rollout status|history deployment/NAME`
-- `kubectl wait`, `exec`, and `port-forward` with simulated, non-mutating responses
+- `kubectl rollout status|history|restart deployment/NAME`
+- `kubectl scale`, `delete`, `apply`, and `create` with scenario-aware mutable simulator state
+- `kubectl wait`, `exec`, and `port-forward` with simulated diagnostic responses
 - `helm version|env|list|status|history|test|template`
 - `helm get values|manifest|notes|all|hooks`
-- `helm upgrade|rollback|uninstall` with read-only simulator responses
+- `helm install|upgrade|rollback|uninstall` with mutable release-history and values state
 
 Every anomaly scenario in the generator has a Kubernetes/Helm ops profile.
 Those profiles drive pod/deployment health, events, logs, rollout notes,
@@ -397,15 +402,32 @@ protobuf release object, which keeps the generated state inspectable while
 preserving the real-client API paths the simulator needs to observe.
 Every real-client API call is recorded as command family `kubernetes-api`, so
 unsupported client paths appear in the debug search/backlog just like custom
-command API calls. Mutating Kubernetes methods are rejected with a read-only
-`405` Kubernetes `Status` and are still traced, which makes accidental
-`delete`, `patch`, or `apply` attempts visible in the debug backlog without
-mutating simulator state.
+command API calls. Common mutating Kubernetes operations are applied to an
+in-memory overlay: `PATCH`/`PUT` deployments and the `deployments/scale`
+subresource update replica/ready counts, `DELETE` pods removes the named pod
+from the snapshot, `DELETE` deployments hides that workload, and generic create,
+patch, update, and delete calls for ConfigMaps, Secrets, Services,
+ServiceAccounts, Jobs, CronJobs, HPA, PVCs, Ingresses, StatefulSets, and
+DaemonSets appear in subsequent command/API snapshots. Unsupported mutation paths
+still return Kubernetes `Status` responses and are traced for backlog analysis.
+
+The mutable overlay is intentionally separate from the scenario catalog and
+base generated artifacts. Scenario profiles still define the baseline
+incident-shaped Kubernetes and Helm state; operator commands and real-client
+API calls layer changes on top, and `/v1/state` exposes the current mutation
+version, deleted pods/resources, created resources, release values, release
+overlay, and continuous generation counters. The debug UI Reset button and
+`POST /v1/mutations/reset` clear this overlay. With `--continuous-generate`, the
+server reruns the generator at the configured interval using incremented seeds,
+reloads `anomalies.csv`, refreshes the log and metric artifacts on disk, replays
+OTEL from each refreshed batch when `--otel-send` is active, and emits refreshed
+`metric_report.log` batches to already-connected `/v1/logs/stream` clients.
 
 Unsupported requests are intentionally captured rather than discarded. The
 debug UI groups them by normalized fingerprint, keeps raw examples and parsed
-flags, and reports the active scenario set so new command support can be added
-from observed operator behavior. Add `--persist-command-db PATH` when you want
+flags, reports generation/OTEL/mutation status, lists workload/release overlays,
+and includes a scenario catalog with detailed primary, cascade, event, log, and
+Kubernetes-impact descriptions. Add `--persist-command-db PATH` when you want
 that trace history to survive restarts and power the debug console search over
 raw commands, outputs, fingerprints, statuses, families, and active scenarios.
 

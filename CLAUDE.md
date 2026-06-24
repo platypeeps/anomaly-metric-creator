@@ -118,16 +118,24 @@ Lifecycle:
    `--namespace`, `--debug-ring-size`, `--persist-command-log`,
    `--persist-command-db`, `--auth-token`,
    `--max-request-body-bytes`, `--allow-remote-without-auth`,
-   `--no-generate`), then parses all remaining
+   `--no-generate`, `--continuous-generate`,
+   `--continuous-generate-interval-seconds`), then parses all remaining
    flags with `parse_args`.
 3. Unless `--no-generate` is set, it runs the normal generator once with
    `--otel-send none` appended so one-shot generation does not block on
    OTEL before the HTTP listener starts.
 4. It builds a `SimulationState` from the parsed args, generated
    `anomalies.csv`, `SCENARIOS`, and the simulated clock.
-5. If the original args selected OTEL streaming, the server starts a daemon
-   thread that calls the existing `stream_otel_signals()` /
-   `stream_otel_gauges()` helpers.
+5. If `--continuous-generate` is enabled, a daemon thread reruns the normal
+   generator with incremented seeds, reloads `anomalies.csv`, refreshes the
+   generated artifacts on disk, and updates the generation status exposed by
+   `/v1/state`. When OTEL streaming is enabled, this same loop serializes
+   regeneration and OTEL replay so the streamer never reads files while the
+   generator is rewriting them.
+6. If continuous generation is not enabled and the original args selected OTEL
+   streaming, the server starts a daemon thread that calls the existing
+   `stream_otel_signals()` / `stream_otel_gauges()` helpers once for the
+   startup artifacts.
 
 The command simulator never shells out. `POST /v1/commands` accepts either
 `{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`;
@@ -166,17 +174,20 @@ console must attach that bearer token to its JSON/API fetches, either from the
 browser prompt/localStorage flow or a `/debug?token=TOKEN` bootstrap. Request
 bodies are capped by
 `--max-request-body-bytes`; app endpoints return `413` JSON and Kubernetes API
-endpoints return a Kubernetes `Status`. Mutating Kubernetes HTTP methods are
-read-only rejected with `405` and still traced as unsupported
-`kubernetes-api` calls.
+endpoints return a Kubernetes `Status`. Supported mutating Kubernetes HTTP
+methods update the in-memory `SimulationMutations` overlay and are traced as
+supported `kubernetes-api` calls; unsupported mutation paths still return
+Kubernetes `Status` responses and are captured in the debug backlog.
 
 The command API should stay aligned with that same snapshot-backed surface:
 when adding a new Kubernetes resource family, update `_KIND_ALIASES`,
 `_SNAPSHOT_KINDS`, `resource_snapshot()`, `_render_get()`,
 `_render_describe()` when useful, `_k8s_api_resource_list()`,
 `_k8s_objects_for_resource()`, and table/object helpers in one pass. Keep
-mutating-looking commands (`helm upgrade`, `kubectl exec`, etc.) non-mutating
-unless server state mutation is explicitly designed and tested.
+mutating command/API support layered through `SimulationMutations`; do not
+write command-only state back into scenario definitions or generated CSV rows.
+Any new mutation must update the command/API trace classification, the snapshot
+renderers affected by the overlay, and focused coverage in `tests/test_server.py`.
 
 Scenario-specific Kubernetes/Helm behavior lives in
 `OPS_SCENARIO_PROFILES`, keyed by `Scenario.id`. `validate_ops_profiles()`
@@ -189,14 +200,33 @@ registry in the same change and add focused coverage in `tests/test_server.py`;
 do not mutate the frozen `Scenario` dataclass for command/UI-only state unless
 the generator itself needs the field.
 
+Mutable simulator state is an overlay on top of those profiles. Workload
+mutations cover scale/restart/delete effects, deleted pods are filtered from
+snapshots, generic created/deleted resources are merged into snapshot lists,
+extra events are appended to event views, and Helm release mutations replace the
+revision list and values used by `helm list/status/history/get values` and the
+Helm Secret API. `/v1/state` exposes the overlay summary and generation counters
+so the debug UI can show whether the simulator is drifting from its baseline.
+`POST /v1/mutations/reset` clears only this overlay; it must not regenerate files
+or alter the frozen scenario catalog.
+
 The debug UI is served from `GET /debug` as inline HTML/CSS/JS to avoid a
 frontend build chain. Its static shell is intentionally accessible when bearer
 auth is enabled, but it must send `Authorization` on data requests. It polls
 `/v1/state`, `/v1/debug/commands`, `/v1/debug/search`,
-`/v1/debug/unsupported`, and `/v1/debug/resources`.
+`/v1/debug/unsupported`, `/v1/debug/resources`, and `/v1/scenarios`.
 Unsupported or partial commands are grouped by normalized fingerprint so real
 operator/tool calls outside the currently supported subset become a backlog for
-future command renderers.
+future command renderers. The scenario catalog in the debug UI is backed by the
+`SCENARIOS` registry plus `OPS_SCENARIO_PROFILES`, so keep primary/cascade spec
+descriptions and ops-profile summaries useful for humans rather than treating
+them as opaque IDs.
+
+`GET /v1/logs/stream` is an SSE stream, not a one-time download: it replays the
+current `metric_report.log` immediately and then emits a generation event plus
+the refreshed log file when continuous generation writes a new batch. Keep that
+path bounded like `/v1/debug/events` so abandoned browser tabs cannot hold worker
+threads indefinitely.
 
 ### Output directory hygiene
 

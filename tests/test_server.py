@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import datetime as _dt
 import gzip
 import json
 import os
@@ -25,6 +26,7 @@ def _build_state(
     signal_level="medium",
     days=2,
     persist_command_db=None,
+    trace_limit=server.DEFAULT_TRACE_LIMIT,
 ):
     args = amc.parse_args([
         "--duration-days", str(days),
@@ -34,7 +36,7 @@ def _build_state(
         "--output-dir", str(tmp_path),
         "--interval-seconds", "3600",
     ])
-    return server.build_state(amc, args, persist_command_db=persist_command_db)
+    return server.build_state(amc, args, persist_command_db=persist_command_db, trace_limit=trace_limit)
 
 
 def _get_json(url):
@@ -103,6 +105,30 @@ def test_helm_and_rollout_responses_reflect_bad_canary(amc, tmp_path):
     )
     assert rollout["result"]["exit_code"] == 0
     assert "rolled back" in rollout["result"]["stdout"]
+
+
+def test_helm_history_uses_single_synthetic_timestamp_per_response(amc, tmp_path):
+    state = _build_state(
+        amc,
+        tmp_path,
+        scenarios="deploy_bad_canary_rollback",
+        signal_level="high",
+        days=1,
+    )
+
+    class _ChangingClock:
+        calls = 0
+
+        def now(self):
+            self.calls += 1
+            return _dt.datetime(2026, 4, 1, 12, 0, self.calls)
+
+    clock = _ChangingClock()
+    state.clock = clock
+    history = server._render_helm_history(state)
+
+    assert clock.calls == 1
+    assert history.count("2026-04-01 12:00:01") == 2
 
 
 def test_unsupported_commands_are_grouped_for_debugging(amc, tmp_path):
@@ -227,6 +253,12 @@ def test_expanded_kubectl_and_helm_command_coverage(amc, tmp_path):
     exec_result = server.run_command(state, command="kubectl exec -n saas-prod apigateway-0 -- env")
     assert "SERVICE_NAME=apigateway" in exec_result["result"]["stdout"]
 
+    follow_logs = server.run_command(state, command="kubectl logs -f apigateway-0 -n saas-prod")
+    assert follow_logs["result"]["support_status"] == "supported"
+    assert follow_logs["result"]["matched_rule_id"] == "kubectl.logs.pod"
+    assert "apigateway" in follow_logs["result"]["stdout"]
+    assert "expected pod name" not in follow_logs["result"]["stderr"]
+
     helm_all = server.run_command(state, command="helm get all simulated-saas -n saas-prod")
     assert "COMPUTED VALUES" in helm_all["result"]["stdout"]
     assert "MANIFEST" in helm_all["result"]["stdout"]
@@ -236,6 +268,150 @@ def test_expanded_kubectl_and_helm_command_coverage(amc, tmp_path):
 
     helm_test = server.run_command(state, command="helm test simulated-saas -n saas-prod")
     assert "SucceededAfterRollback" in helm_test["result"]["stdout"]
+
+
+def test_kubectl_delete_ingress_uses_stable_resource_prefix(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl delete ingress public-edge -n saas-prod",
+    )
+
+    assert result["result"]["stdout"] == 'ingress "public-edge" deleted\n'
+    assert "ingre " not in result["result"]["stdout"]
+
+
+def test_kubectl_scale_ingress_uses_stable_resource_prefix(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl scale ingress public-edge --replicas=2 -n saas-prod",
+    )
+
+    assert result["result"]["stdout"] == "ingress/public-edge scaled\n"
+    assert "ingre/" not in result["result"]["stdout"]
+
+
+def test_kubectl_wait_ingress_uses_stable_resource_prefix(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl wait --for=condition=ready ingress/public-edge -n saas-prod",
+    )
+
+    assert result["result"]["stdout"] == "ingress/public-edge condition met: condition=ready\n"
+    assert "ingre/" not in result["result"]["stdout"]
+
+
+def test_mutation_events_are_bounded_by_debug_ring_size(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3, trace_limit=3)
+    now = state.clock.now()
+
+    for index in range(5):
+        state.mutations.record_event(
+            "Normal",
+            f"Mutation{index}",
+            f"pod/apigateway-{index}",
+            f"mutation event {index}",
+            now + _dt.timedelta(seconds=index),
+        )
+
+    with state.mutations.lock:
+        reasons = [event["reason"] for event in state.mutations.extra_events]
+    assert reasons == ["Mutation2", "Mutation3", "Mutation4"]
+
+    summary = state.summary()["mutations"]
+    assert summary["extra_event_count"] == 3
+    assert summary["extra_event_limit"] == 3
+
+    resource_reasons = [event["reason"] for event in server.resource_snapshot(state)["events"]]
+    assert "Mutation0" not in resource_reasons
+    assert "Mutation4" in resource_reasons
+
+
+def test_mutating_commands_update_simulated_state(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    scale = server.run_command(
+        state,
+        command="kubectl scale deployment/apigateway --replicas=5 -n saas-prod",
+    )
+    assert scale["result"]["matched_rule_id"] == "kubectl.scale"
+    resources = server.resource_snapshot(state)
+    gateway = next(item for item in resources["deployments"] if item["name"] == "apigateway")
+    assert gateway["ready"] == "5/5"
+
+    restart = server.run_command(
+        state,
+        command="kubectl rollout restart deployment/apigateway -n saas-prod",
+    )
+    assert "restarted" in restart["result"]["stdout"]
+    resources = server.resource_snapshot(state)
+    gateway_pod = next(item for item in resources["pods"] if item["name"] == "apigateway-0")
+    assert gateway_pod["restarts"] >= 1
+
+    upgrade = server.run_command(
+        state,
+        command="helm upgrade simulated-saas ./chart -n saas-prod",
+    )
+    assert "release state updated" in upgrade["result"]["stdout"]
+    assert "REVISION: 4" in server.run_command(
+        state,
+        command="helm status simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+
+    rollback = server.run_command(
+        state,
+        command="helm rollback simulated-saas 2 -n saas-prod",
+    )
+    assert "release state updated" in rollback["result"]["stdout"]
+    assert "Rollback to revision 2" in server.run_command(
+        state,
+        command="helm history simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+
+    uninstall = server.run_command(
+        state,
+        command="helm uninstall simulated-saas -n saas-prod",
+    )
+    assert uninstall["result"]["stdout"] == 'release "simulated-saas" uninstalled\n'
+    helm_list = server.run_command(state, command="helm list -n saas-prod")
+    assert "simulated-saas" not in helm_list["result"]["stdout"]
+
+    install = server.run_command(
+        state,
+        command="helm install simulated-saas ./chart -n saas-prod --set feature.debug=true",
+    )
+    assert "STATUS: deployed" in install["result"]["stdout"]
+    assert "feature.debug: true" in server.run_command(
+        state,
+        command="helm get values simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+
+    server.run_command(state, command="helm uninstall simulated-saas -n saas-prod")
+    assert "feature.debug" not in server.run_command(
+        state,
+        command="helm get values simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+
+    create = server.run_command(
+        state,
+        command="kubectl create configmap debug-flags --from-literal=mode=on -n saas-prod",
+    )
+    assert create["result"]["stdout"] == "configmap/debug-flags created\n"
+    assert "debug-flags" in server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
+
+    server.run_command(state, command="kubectl delete configmap debug-flags -n saas-prod")
+    assert "debug-flags" not in server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
 
 
 def test_command_trace_sqlite_persistence_and_search(amc, tmp_path):
@@ -311,11 +487,30 @@ def test_debug_http_api_records_commands(amc, tmp_path):
         assert search["total"] == 1
         assert search["items"][0]["raw_input"] == "kubectl get pods -n saas-prod"
 
+        scenarios = _get_json(base_url + "/v1/scenarios")
+        cache_scenario = next(item for item in scenarios["known"] if item["id"] == "cache_leak_restart")
+        assert cache_scenario["active"] is True
+        assert cache_scenario["category"] == "multi_day_cascade"
+        assert cache_scenario["ops_profile"] is True
+        assert cache_scenario["ops_profile_detail"]["summary"]
+        assert cache_scenario["primary_specs"][0]["time_offset_seconds"] == 24 * 60 * 60
+        assert any(
+            "Cache memory leak" in spec["description"]
+            for spec in cache_scenario["primary_specs"]
+        )
+        assert any(
+            "Cache restart causes brief gateway errors" in spec["description"]
+            for spec in cache_scenario["cascade_specs"]
+        )
+
         with urllib.request.urlopen(base_url + "/debug", timeout=5) as response:
             html = response.read().decode("utf-8")
         assert "AMC Debug Console" in html
         assert "Search" in html
         assert "Unsupported Explorer" in html
+        assert "Scenario Catalog" in html
+        assert "Runtime" in html
+        assert "Mutable State" in html
 
 
 def test_server_auth_token_protects_debug_api_and_embeds_kubeconfig(amc, tmp_path):
@@ -359,7 +554,7 @@ def test_server_auth_token_protects_debug_api_and_embeds_kubeconfig(amc, tmp_pat
         assert version["gitVersion"] == "v1.29.4-amc"
 
 
-def test_request_body_limit_and_mutating_k8s_rejection_are_traced(amc, tmp_path):
+def test_request_body_limit_and_mutating_k8s_operations_are_traced(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     security = server.ServerSecurityConfig(max_body_bytes=16)
     with _running_test_server(state, security=security) as base_url:
@@ -377,19 +572,28 @@ def test_request_body_limit_and_mutating_k8s_rejection_are_traced(amc, tmp_path)
             base_url + "/api/v1/namespaces/saas-prod/pods/cacheservice-0",
             method="DELETE",
         )
-        with pytest.raises(urllib.error.HTTPError) as excinfo:
-            urllib.request.urlopen(delete, timeout=5)
-        assert excinfo.value.code == 405
-        payload = json.loads(excinfo.value.read().decode("utf-8"))
+        with urllib.request.urlopen(delete, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
         assert payload["kind"] == "Status"
-        assert payload["reason"] == "MethodNotAllowed"
-        assert "read-only" in payload["message"]
+        assert payload["reason"] == "Deleted"
+        assert "deleted" in payload["message"]
 
         query = urllib.parse.urlencode({"family": "kubernetes-api", "q": "DELETE"})
         search = _get_json(base_url + "/v1/debug/search?" + query)
         assert search["total"] == 1
-        assert search["items"][0]["support_status"] == "unsupported"
-        assert search["items"][0]["matched_rule_id"] == "k8s.method.read_only"
+        assert search["items"][0]["support_status"] == "supported"
+        assert search["items"][0]["matched_rule_id"] == "k8s.core.pods.delete"
+
+        reset_request = urllib.request.Request(
+            base_url + "/v1/mutations/reset",
+            data=b"{}",
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(reset_request, timeout=5) as response:
+            reset = json.loads(response.read().decode("utf-8"))
+        assert reset["mutations"]["version"] > 0
+        assert reset["mutations"]["deleted_pods"] == []
 
 
 def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypatch):
@@ -412,6 +616,459 @@ def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypat
         assert body["error"] == "boom"
 
 
+def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    with _running_test_server(state) as base_url:
+        scale_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway/scale",
+            data=json.dumps({"spec": {"replicas": 5}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with urllib.request.urlopen(scale_request, timeout=5) as response:
+            scale = json.loads(response.read().decode("utf-8"))
+        assert scale["kind"] == "Scale"
+        assert scale["spec"]["replicas"] == 5
+
+        deployment = _get_json(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway"
+        )
+        assert deployment["spec"]["replicas"] == 5
+        assert deployment["status"]["readyReplicas"] == 5
+
+        bool_scale_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway/scale",
+            data=json.dumps({"spec": {"replicas": False}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with urllib.request.urlopen(bool_scale_request, timeout=5) as response:
+            bool_scale = json.loads(response.read().decode("utf-8"))
+        assert bool_scale["spec"]["replicas"] == 5
+        deployment = _get_json(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway"
+        )
+        assert deployment["spec"]["replicas"] == 5
+
+        delete_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/pods/apigateway-0",
+            method="DELETE",
+        )
+        with urllib.request.urlopen(delete_request, timeout=5) as response:
+            deleted = json.loads(response.read().decode("utf-8"))
+        assert deleted["reason"] == "Deleted"
+
+        pods = _get_json(base_url + "/api/v1/namespaces/saas-prod/pods")
+        assert all(pod["metadata"]["name"] != "apigateway-0" for pod in pods["items"])
+
+        query = urllib.parse.urlencode({"family": "kubernetes-api", "q": "PATCH"})
+        search = _get_json(base_url + "/v1/debug/search?" + query)
+        assert search["total"] == 2
+        assert all(item["support_status"] == "supported" for item in search["items"])
+
+        readonly_pod_patch = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/pods/cacheservice-0",
+            data=json.dumps({"metadata": {"labels": {"debug": "true"}}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(readonly_pod_patch, timeout=5)
+        assert excinfo.value.code == 405
+        readonly_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert readonly_status["kind"] == "Status"
+        assert readonly_status["reason"] == "MethodNotAllowed"
+        pods = _get_json(base_url + "/api/v1/namespaces/saas-prod/pods")
+        assert any(pod["metadata"]["name"] == "cacheservice-0" for pod in pods["items"])
+
+        status_patch = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway/status",
+            data=json.dumps({"status": {"readyReplicas": 0}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(status_patch, timeout=5)
+        assert excinfo.value.code == 405
+        status_patch_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert status_patch_status["kind"] == "Status"
+        assert status_patch_status["reason"] == "MethodNotAllowed"
+        deployment = _get_json(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway"
+        )
+        assert deployment["spec"]["replicas"] == 5
+        assert deployment["status"]["readyReplicas"] == 5
+        query = urllib.parse.urlencode({
+            "family": "kubernetes-api",
+            "q": "deployments/apigateway/status",
+        })
+        search = _get_json(base_url + "/v1/debug/search?" + query)
+        assert search["total"] == 1
+        assert search["items"][0]["support_status"] == "unsupported"
+        assert search["items"][0]["matched_rule_id"] == "k8s.method.unsupported"
+
+        pod_log_delete = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/pods/cacheservice-0/log",
+            method="DELETE",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(pod_log_delete, timeout=5)
+        assert excinfo.value.code == 405
+        pod_log_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert pod_log_status["kind"] == "Status"
+        assert pod_log_status["reason"] == "MethodNotAllowed"
+        pods = _get_json(base_url + "/api/v1/namespaces/saas-prod/pods")
+        assert any(pod["metadata"]["name"] == "cacheservice-0" for pod in pods["items"])
+        query = urllib.parse.urlencode({
+            "family": "kubernetes-api",
+            "q": "pods/cacheservice-0/log",
+        })
+        search = _get_json(base_url + "/v1/debug/search?" + query)
+        assert search["total"] == 1
+        assert search["items"][0]["support_status"] == "unsupported"
+        assert search["items"][0]["matched_rule_id"] == "k8s.method.unsupported"
+
+        configmap_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps",
+            data=json.dumps({
+                "metadata": {"name": "debug-flags"},
+                "data": {"mode": "on"},
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(configmap_request, timeout=5) as response:
+            configmap = json.loads(response.read().decode("utf-8"))
+        assert configmap["kind"] == "ConfigMap"
+        assert configmap["metadata"]["name"] == "debug-flags"
+        assert configmap["data"]["mode"] == "on"
+
+        configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
+        assert any(item["metadata"]["name"] == "debug-flags" for item in configmaps["items"])
+
+        empty_configmap_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps",
+            data=json.dumps({"metadata": {"name": "empty-config"}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(empty_configmap_request, timeout=5) as response:
+            empty_configmap = json.loads(response.read().decode("utf-8"))
+        assert empty_configmap["data"] == {"simulated": "true"}
+        configmaps_output = server.run_command(
+            state,
+            command="kubectl get configmaps -n saas-prod",
+        )["result"]["stdout"]
+        empty_config_row = next(line for line in configmaps_output.splitlines() if line.startswith("empty-config"))
+        assert empty_config_row.split()[1] == "1"
+
+        unnamed_ingress_request = urllib.request.Request(
+            base_url + "/apis/networking.k8s.io/v1/namespaces/saas-prod/ingresses",
+            data=b"{}",
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(unnamed_ingress_request, timeout=5) as response:
+            unnamed_ingress = json.loads(response.read().decode("utf-8"))
+        assert unnamed_ingress["kind"] == "Ingress"
+        assert unnamed_ingress["metadata"]["name"] == "simulated-ingress"
+        assert "simulated-ingresse" not in json.dumps(unnamed_ingress)
+
+        zero_deployment_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments",
+            data=json.dumps({
+                "metadata": {"name": "scaled-down-worker"},
+                "spec": {"replicas": 0},
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(zero_deployment_request, timeout=5) as response:
+            zero_deployment = json.loads(response.read().decode("utf-8"))
+        assert zero_deployment["spec"]["replicas"] == 0
+        assert zero_deployment["status"]["replicas"] == 0
+        assert zero_deployment["status"]["readyReplicas"] == 0
+        deployments_output = server.run_command(
+            state,
+            command="kubectl get deployments -n saas-prod",
+        )["result"]["stdout"]
+        worker_row = next(line for line in deployments_output.splitlines() if line.startswith("scaled-down-worker"))
+        assert worker_row.split()[1] == "0/0"
+
+        zero_statefulset_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/statefulsets",
+            data=json.dumps({
+                "metadata": {"name": "scaled-down-cache"},
+                "spec": {"replicas": 0},
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(zero_statefulset_request, timeout=5) as response:
+            zero_statefulset = json.loads(response.read().decode("utf-8"))
+        assert zero_statefulset["spec"]["replicas"] == 0
+        assert zero_statefulset["status"]["replicas"] == 0
+        assert zero_statefulset["status"]["readyReplicas"] == 0
+        statefulsets_output = server.run_command(
+            state,
+            command="kubectl get statefulsets -n saas-prod",
+        )["result"]["stdout"]
+        cache_row = next(line for line in statefulsets_output.splitlines() if line.startswith("scaled-down-cache"))
+        assert cache_row.split()[1] == "0/0"
+
+        malformed_patch = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps/debug-flags",
+            data=b"{not-json",
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(malformed_patch, timeout=5)
+        assert excinfo.value.code == 400
+        error_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert error_status["kind"] == "Status"
+        assert error_status["reason"] == "BadRequest"
+        assert "invalid JSON body" in error_status["message"]
+
+        list_patch = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps/debug-flags",
+            data=b"[]",
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(list_patch, timeout=5)
+        assert excinfo.value.code == 400
+        error_status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert error_status["kind"] == "Status"
+        assert error_status["reason"] == "BadRequest"
+        assert error_status["message"] == "JSON body must be an object"
+
+        pvc_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/persistentvolumeclaims",
+            data=json.dumps({
+                "metadata": {"name": "scratch"},
+                "spec": {
+                    "accessModes": [123, "ReadWriteMany"],
+                    "resources": {"requests": {"storage": "2Gi"}},
+                },
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(pvc_request, timeout=5) as response:
+            pvc = json.loads(response.read().decode("utf-8"))
+        assert pvc["kind"] == "PersistentVolumeClaim"
+        assert pvc["spec"]["accessModes"] == ["123,ReadWriteMany"]
+        assert pvc["status"]["accessModes"] == ["123,ReadWriteMany"]
+
+        delete_configmap = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/configmaps/debug-flags",
+            method="DELETE",
+        )
+        with urllib.request.urlopen(delete_configmap, timeout=5) as response:
+            deleted_configmap = json.loads(response.read().decode("utf-8"))
+        assert deleted_configmap["reason"] == "Deleted"
+        configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
+        assert all(item["metadata"]["name"] != "debug-flags" for item in configmaps["items"])
+
+
+def test_state_summary_counts_anomalies_without_copying_rows(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    expected_count = len(state.anomaly_rows)
+
+    def fail_generated_rows():
+        raise AssertionError("summary should not copy anomaly rows to count them")
+
+    monkeypatch.setattr(state, "generated_rows", fail_generated_rows)
+    monkeypatch.setattr(state, "active_anomalies", lambda limit=20: [])
+
+    assert state.summary()["anomaly_count"] == expected_count
+
+
+def test_active_anomalies_does_not_copy_all_rows(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    now = state.clock.now()
+    rows = [
+        {
+            "timestamp": server._format_dt(now),
+            "scenario": "active",
+            "span_start": server._format_dt(now - _dt.timedelta(minutes=1)),
+            "span_end": server._format_dt(now + _dt.timedelta(minutes=1)),
+        },
+        {
+            "timestamp": server._format_dt(now + _dt.timedelta(hours=1)),
+            "scenario": "inactive",
+            "span_start": server._format_dt(now + _dt.timedelta(minutes=10)),
+            "span_end": server._format_dt(now + _dt.timedelta(hours=1)),
+        },
+    ]
+    state.replace_generated_rows(rows)
+
+    def fail_generated_rows():
+        raise AssertionError("active_anomalies should not copy all anomaly rows")
+
+    monkeypatch.setattr(state, "generated_rows", fail_generated_rows)
+
+    assert state.active_anomalies(limit=10) == [rows[0]]
+
+
+def test_anomalies_endpoint_slices_without_copying_all_rows(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    rows = [
+        {"timestamp": "2026-03-01 00:00:00", "scenario": "first"},
+        {"timestamp": "2026-03-01 00:01:00", "scenario": "second"},
+    ]
+    state.replace_generated_rows(rows)
+
+    def fail_generated_rows():
+        raise AssertionError("endpoint should not copy all anomaly rows before slicing")
+
+    monkeypatch.setattr(state, "generated_rows", fail_generated_rows)
+    with _running_test_server(state) as base_url:
+        payload = _get_json(base_url + "/v1/anomalies?limit=1")
+
+    assert len(payload["items"]) == 1
+    assert payload["items"][0] == rows[0]
+
+
+def test_json_safe_payload_stabilizes_callables_and_sets():
+    payload = server._json_safe_payload({
+        "callback": lambda value: value,
+        "unordered": {"beta", "alpha"},
+        "frozen": frozenset({"2", "1"}),
+    })
+
+    assert payload["callback"] == "<callable>"
+    assert payload["unordered"] == ["alpha", "beta"]
+    assert payload["frozen"] == ["1", "2"]
+    assert "0x" not in json.dumps(payload, sort_keys=True)
+
+
+def test_debug_ui_caches_static_scenario_catalog():
+    html = server.DEBUG_HTML
+
+    assert html.count('getJSON("/v1/scenarios")') == 1
+    assert "let scenarioCatalogPromise = null;" in html
+    assert "async function getScenarioCatalog()" in html
+    assert "getScenarioCatalog()" in html
+    assert "renderScenarioCatalogOnce(scenarios);" in html
+
+
+def test_continuous_generation_refreshes_state(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    calls = []
+    streams = []
+
+    def fake_main(argv):
+        calls.append(list(argv))
+        (tmp_path / "anomalies.csv").write_text(
+            "timestamp,component,metric,value,scenario,span_start,span_end\n"
+            "2026-03-01 00:00:00,cacheservice,error_rate,1,cache_leak_restart,"
+            "2026-03-01 00:00:00,2026-03-01 00:05:00\n",
+            encoding="utf-8",
+        )
+
+    def fake_stream(current_state):
+        streams.append(current_state.generated_rows()[0]["scenario"])
+
+    monkeypatch.setattr(state.legacy, "main", fake_main)
+    monkeypatch.setattr(server, "_run_otel_streams", fake_stream)
+    state.args.otel_enabled = True
+    server._run_continuous_generation_once(
+        state,
+        ["--output-dir", str(tmp_path)],
+        stream_otel=True,
+    )
+
+    assert state.generation.generation_count == 1
+    assert state.generation.last_seed == int(state.args.seed) + 1
+    assert state.generation.last_anomaly_count == 1
+    assert state.generated_rows()[0]["scenario"] == "cache_leak_restart"
+    assert "--otel-send" in calls[0]
+    assert "none" in calls[0]
+    assert streams == ["cache_leak_restart"]
+    assert state.otel_status["stream_batches"] == 1
+
+
+def test_continuous_generation_records_system_exit(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    def fail_main(argv):
+        raise SystemExit("bad generated args")
+
+    monkeypatch.setattr(state.legacy, "main", fail_main)
+    server._run_continuous_generation_once(
+        state,
+        ["--output-dir", str(tmp_path)],
+        stream_otel=False,
+    )
+
+    assert state.generation.thread == "failed"
+    assert state.generation.generation_count == 0
+    assert state.generation.last_seed == int(state.args.seed) + 1
+    assert state.generation.last_error == "bad generated args"
+
+
+def test_continuous_generation_marks_otel_disabled_without_streaming(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            started_threads.append((self.name, self.daemon))
+
+    monkeypatch.setattr(server.threading, "Thread", FakeThread)
+
+    stop_event = server._start_continuous_generation(
+        state,
+        ["--output-dir", str(tmp_path)],
+        enabled=True,
+        interval_seconds=60.0,
+        stream_otel=False,
+    )
+
+    assert stop_event is not None
+    assert started_threads == [("amc-continuous-generation", True)]
+    assert state.generation.enabled is True
+    assert state.otel_status["enabled"] is False
+    assert state.otel_status["thread"] == "disabled"
+    assert state.otel_status["continuous"] is False
+
+
+def test_log_stream_follows_refreshed_generation_logs(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    log_path = tmp_path / "metric_report.log"
+    log_path.write_text("initial log\n", encoding="utf-8")
+    with _running_test_server(state) as base_url:
+        with urllib.request.urlopen(base_url + "/v1/logs/stream", timeout=5) as response:
+            initial_lines = []
+            for _ in range(8):
+                line = response.readline().decode("utf-8")
+                initial_lines.append(line)
+                if "initial log" in line:
+                    break
+            assert any("initial log" in line for line in initial_lines)
+
+            log_path.write_text("refreshed log\n", encoding="utf-8")
+            with state.generation.lock:
+                state.generation.generation_count += 1
+                state.generation.last_seed = 123
+
+            refreshed_lines = []
+            for _ in range(12):
+                line = response.readline().decode("utf-8")
+                refreshed_lines.append(line)
+                if "refreshed log" in line:
+                    break
+            assert any("refreshed log" in line for line in refreshed_lines)
+
+
 def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     with _running_test_server(state) as base_url:
@@ -419,11 +1076,33 @@ def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
         assert version["gitVersion"] == "v1.29.4-amc"
 
         resources = _get_json(base_url + "/api/v1")
+        core_resources = {item["name"]: set(item["verbs"]) for item in resources["resources"]}
         assert {"pods", "secrets", "configmaps", "serviceaccounts"} <= {
             item["name"] for item in resources["resources"]
         }
+        for name in ("configmaps", "secrets", "services", "persistentvolumeclaims", "serviceaccounts"):
+            assert {"create", "delete", "patch", "update"} <= core_resources[name]
+        assert "delete" in core_resources["pods"]
+
+        apps = _get_json(base_url + "/apis/apps/v1")
+        apps_resources = {item["name"]: set(item["verbs"]) for item in apps["resources"]}
+        for name in ("deployments", "daemonsets", "statefulsets"):
+            assert {"create", "delete", "patch", "update"} <= apps_resources[name]
+
+        autoscaling = _get_json(base_url + "/apis/autoscaling/v2")
+        hpa_resources = {item["name"]: set(item["verbs"]) for item in autoscaling["resources"]}
+        assert {"create", "delete", "patch", "update"} <= hpa_resources["horizontalpodautoscalers"]
+
         batch = _get_json(base_url + "/apis/batch/v1")
         assert {"jobs", "cronjobs"} <= {item["name"] for item in batch["resources"]}
+        batch_resources = {item["name"]: set(item["verbs"]) for item in batch["resources"]}
+        for name in ("jobs", "cronjobs"):
+            assert {"create", "delete", "patch", "update"} <= batch_resources[name]
+
+        networking = _get_json(base_url + "/apis/networking.k8s.io/v1")
+        ingress_resources = {item["name"]: set(item["verbs"]) for item in networking["resources"]}
+        assert {"create", "delete", "patch", "update"} <= ingress_resources["ingresses"]
+
         discovery = _get_json(base_url + "/apis/discovery.k8s.io/v1")
         assert {"endpointslices"} <= {item["name"] for item in discovery["resources"]}
 
