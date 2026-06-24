@@ -84,6 +84,11 @@ def _parse_start_time_arg(value: str) -> datetime.datetime:
         ) from exc
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    if parsed.microsecond:
+        raise argparse.ArgumentTypeError(
+            "--start-time must be a whole-second ISO 8601 timestamp; "
+            "sub-second start times cannot be represented exactly in every artifact"
+        )
     return parsed
 
 # Preflight ceiling on total emitted cells per run, where one "cell" is one
@@ -7816,7 +7821,7 @@ def parse_args(argv=None):
         type=_parse_start_time_arg,
         default=START,
         metavar="TIMESTAMP",
-        help="UTC timestamp for the first generated row. Accepts ISO 8601 "
+        help="UTC whole-second timestamp for the first generated row. Accepts ISO 8601 "
              "values such as 2026-06-24T12:34:56Z or 2026-06-24 12:34:56. "
              f"Default: {START.isoformat()}.",
     )

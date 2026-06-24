@@ -30,6 +30,14 @@ def test_parse_args_start_time_rejects_invalid_value(amc):
         ])
 
 
+def test_parse_args_start_time_rejects_sub_second_value(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--start-time", "2026-06-24T12:34:56.123Z",
+            "--output-dir", "test_out",
+        ])
+
+
 def test_parse_args_help_duration_days_default_round_trips(amc, capsys):
     with pytest.raises(SystemExit):
         amc.parse_args(["--help"])

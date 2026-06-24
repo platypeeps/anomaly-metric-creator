@@ -239,7 +239,7 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 | Flag | Default | Notes |
 | ---- | ------- | ----- |
 | `--duration-days`   | `34.72222222222222` | Days to generate. The default combines with `--interval-seconds 60` to produce exactly 50,000 rows per component, matching the reference observability telemetry CSV shape. Each multi-day scenario has its own `days_required` (the day index of its earliest in-range offset, e.g. `llm_viral_surge_day2` at 2 and `jwks_rotation_chaos` at 3); see the [scenario catalog](#scenario-catalog) for per-scenario values. |
-| `--start-time`      | `2026-03-10T00:00:00` | UTC timestamp for the first generated row. Accepts ISO 8601 values such as `2026-06-24T12:34:56Z` or `2026-06-24 12:34:56`; timezone-aware inputs are normalized to UTC before writing timezone-less CSV timestamps and `schema.json` metadata. |
+| `--start-time`      | `2026-03-10T00:00:00` | UTC whole-second timestamp for the first generated row. Accepts ISO 8601 values such as `2026-06-24T12:34:56Z` or `2026-06-24 12:34:56`; timezone-aware inputs are normalized to UTC before writing timezone-less CSV timestamps and `schema.json` metadata. Sub-second start times are rejected because not every artifact can represent them exactly. |
 | `--seed`            | `42`        | RNG seed for deterministic output.                                 |
 | `--output-dir`      | `iot_logs`  | Directory CSVs are written into (created if missing).              |
 
