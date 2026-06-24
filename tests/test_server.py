@@ -776,6 +776,33 @@ def test_state_summary_counts_anomalies_without_copying_rows(amc, tmp_path, monk
     assert state.summary()["anomaly_count"] == expected_count
 
 
+def test_active_anomalies_does_not_copy_all_rows(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    now = state.clock.now()
+    rows = [
+        {
+            "timestamp": server._format_dt(now),
+            "scenario": "active",
+            "span_start": server._format_dt(now - _dt.timedelta(minutes=1)),
+            "span_end": server._format_dt(now + _dt.timedelta(minutes=1)),
+        },
+        {
+            "timestamp": server._format_dt(now + _dt.timedelta(hours=1)),
+            "scenario": "inactive",
+            "span_start": server._format_dt(now + _dt.timedelta(minutes=10)),
+            "span_end": server._format_dt(now + _dt.timedelta(hours=1)),
+        },
+    ]
+    state.replace_generated_rows(rows)
+
+    def fail_generated_rows():
+        raise AssertionError("active_anomalies should not copy all anomaly rows")
+
+    monkeypatch.setattr(state, "generated_rows", fail_generated_rows)
+
+    assert state.active_anomalies(limit=10) == [rows[0]]
+
+
 def test_anomalies_endpoint_slices_without_copying_all_rows(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     rows = [
@@ -806,6 +833,16 @@ def test_json_safe_payload_stabilizes_callables_and_sets():
     assert payload["unordered"] == ["alpha", "beta"]
     assert payload["frozen"] == ["1", "2"]
     assert "0x" not in json.dumps(payload, sort_keys=True)
+
+
+def test_debug_ui_caches_static_scenario_catalog():
+    html = server.DEBUG_HTML
+
+    assert html.count('getJSON("/v1/scenarios")') == 1
+    assert "let scenarioCatalogPromise = null;" in html
+    assert "async function getScenarioCatalog()" in html
+    assert "getScenarioCatalog()" in html
+    assert "renderScenarioCatalogOnce(scenarios);" in html
 
 
 def test_continuous_generation_refreshes_state(amc, tmp_path, monkeypatch):

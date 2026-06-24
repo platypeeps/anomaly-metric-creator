@@ -1648,7 +1648,7 @@ class SimulationState:
     def active_anomalies(self, limit: int = 50) -> list[dict[str, str]]:
         now = self.clock.now()
         matches: list[dict[str, str]] = []
-        for row in self.generated_rows():
+        for row in self._generated_rows_reference():
             start = _parse_optional_timestamp(row.get("span_start") or row.get("timestamp"))
             end = _parse_optional_timestamp(row.get("span_end") or row.get("timestamp"))
             if start is None or end is None:
@@ -1666,6 +1666,10 @@ class SimulationState:
     def generated_rows_slice(self, limit: int) -> list[dict[str, str]]:
         with self.generation.lock:
             return list(self.anomaly_rows[:max(limit, 0)])
+
+    def _generated_rows_reference(self) -> list[dict[str, str]]:
+        with self.generation.lock:
+            return self.anomaly_rows
 
     def generated_row_count(self) -> int:
         with self.generation.lock:
@@ -7098,6 +7102,8 @@ DEBUG_HTML = r"""<!doctype html>
     const AUTH_STORAGE_KEY = "amc.debug.authToken";
     let authPromptDismissed = false;
     let scenarioCatalog = {active: [], known: []};
+    let scenarioCatalogPromise = null;
+    let scenarioCatalogRendered = false;
     let selectedScenarioId = "";
     function bootstrapAuthToken() {
       const params = new URLSearchParams(window.location.search);
@@ -7138,6 +7144,20 @@ DEBUG_HTML = r"""<!doctype html>
     async function getJSON(url) {
       const res = await request(url);
       return await res.json();
+    }
+    async function getScenarioCatalog() {
+      if (!scenarioCatalogPromise) {
+        scenarioCatalogPromise = getJSON("/v1/scenarios")
+          .then((payload) => {
+            scenarioCatalog = payload;
+            return payload;
+          })
+          .catch((error) => {
+            scenarioCatalogPromise = null;
+            throw error;
+          });
+      }
+      return await scenarioCatalogPromise;
     }
     async function postJSON(url, body) {
       const res = await request(url, {
@@ -7304,6 +7324,11 @@ DEBUG_HTML = r"""<!doctype html>
       });
       renderScenarioDetail(known.find((item) => item.id === selectedScenarioId));
     }
+    function renderScenarioCatalogOnce(payload) {
+      if (scenarioCatalogRendered) return;
+      renderScenarioCatalog(payload);
+      scenarioCatalogRendered = true;
+    }
     function renderSpecRows(specs) {
       if (!specs.length) return `<tr><td colspan="4" class="muted">none</td></tr>`;
       return specs.map((spec) => `
@@ -7399,13 +7424,13 @@ DEBUG_HTML = r"""<!doctype html>
           getJSON("/v1/debug/commands?limit=80"),
           getJSON("/v1/debug/unsupported"),
           getJSON("/v1/debug/resources"),
-          getJSON("/v1/scenarios")
+          getScenarioCatalog()
         ]);
         renderState(state);
         renderCommands(commands.items);
         renderUnsupported(unsupported);
         renderResources(resources);
-        renderScenarioCatalog(scenarios);
+        renderScenarioCatalogOnce(scenarios);
         await runSearch();
         $("lastRefresh").textContent = new Date().toLocaleTimeString();
       } catch (error) {
