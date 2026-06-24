@@ -281,6 +281,30 @@ def test_kubectl_delete_ingress_uses_stable_resource_prefix(amc, tmp_path):
     assert "ingre " not in result["result"]["stdout"]
 
 
+def test_kubectl_scale_ingress_uses_stable_resource_prefix(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl scale ingress public-edge --replicas=2 -n saas-prod",
+    )
+
+    assert result["result"]["stdout"] == "ingress/public-edge scaled\n"
+    assert "ingre/" not in result["result"]["stdout"]
+
+
+def test_kubectl_wait_ingress_uses_stable_resource_prefix(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl wait --for=condition=ready ingress/public-edge -n saas-prod",
+    )
+
+    assert result["result"]["stdout"] == "ingress/public-edge condition met: condition=ready\n"
+    assert "ingre/" not in result["result"]["stdout"]
+
+
 def test_mutating_commands_update_simulated_state(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
@@ -663,6 +687,18 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         )["result"]["stdout"]
         empty_config_row = next(line for line in configmaps_output.splitlines() if line.startswith("empty-config"))
         assert empty_config_row.split()[1] == "1"
+
+        unnamed_ingress_request = urllib.request.Request(
+            base_url + "/apis/networking.k8s.io/v1/namespaces/saas-prod/ingresses",
+            data=b"{}",
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(unnamed_ingress_request, timeout=5) as response:
+            unnamed_ingress = json.loads(response.read().decode("utf-8"))
+        assert unnamed_ingress["kind"] == "Ingress"
+        assert unnamed_ingress["metadata"]["name"] == "simulated-ingress"
+        assert "simulated-ingresse" not in json.dumps(unnamed_ingress)
 
         zero_deployment_request = urllib.request.Request(
             base_url + "/apis/apps/v1/namespaces/saas-prod/deployments",

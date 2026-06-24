@@ -2767,6 +2767,11 @@ def _resource_prefix(kind: str) -> str:
     }.get(kind, kind.rstrip("s"))
 
 
+def _normalized_resource_prefix(kind: str) -> str:
+    normalized = _mutation_snapshot_kind(kind) or _normalize_kind(kind)
+    return _resource_prefix(normalized or kind or "resource")
+
+
 def _render_describe(state: SimulationState, kind: str, parsed: ParsedCommand) -> CommandResult:
     name = parsed.resource_name
     resources = resource_snapshot(state)
@@ -3194,7 +3199,7 @@ def _render_rollout_restart(state: SimulationState, parsed: ParsedCommand) -> st
 
 def _render_scale(state: SimulationState, parsed: ParsedCommand) -> str:
     if parsed.resource_kind not in {"deployments", "deployment", "deploy", ""}:
-        return f"{parsed.resource_kind.rstrip('s')}/{parsed.resource_name} scaled\n"
+        return f"{_normalized_resource_prefix(parsed.resource_kind)}/{parsed.resource_name} scaled\n"
     component = parsed.resource_name or "apigateway"
     replicas = _parsed_replicas(parsed)
     now = state.clock.now()
@@ -3455,9 +3460,10 @@ def _render_wait(state: SimulationState, parsed: ParsedCommand) -> str:
     component = parsed.resource_name or "apigateway"
     health = _component_health(state, component)
     condition = str(parsed.flags.get("--for") or "condition=available")
+    prefix = _normalized_resource_prefix(parsed.resource_kind)
     if health["deployment_status"] in {"Healthy", "RolledBack"}:
-        return f"{parsed.resource_kind.rstrip('s')}/{component} condition met: {condition}\n"
-    return f"{parsed.resource_kind.rstrip('s')}/{component} condition pending: {health['deployment_status']}\n"
+        return f"{prefix}/{component} condition met: {condition}\n"
+    return f"{prefix}/{component} condition pending: {health['deployment_status']}\n"
 
 
 def _render_exec(state: SimulationState, parsed: ParsedCommand) -> str:
@@ -4415,10 +4421,11 @@ def kubernetes_api_mutating_response(
             f"k8s.{resource}.delete",
         )
     if method == "POST":
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         name = (
             name
-            or str(payload.get("metadata", {}).get("name", ""))
-            or f"simulated-{resource.rstrip('s')}"
+            or str(metadata.get("name", ""))
+            or f"simulated-{_normalized_resource_prefix(resource)}"
         )
         if snapshot_kind:
             state.mutations.put_resource(
