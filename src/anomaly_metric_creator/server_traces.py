@@ -25,6 +25,13 @@ def _trace_tuple_field(payload: dict[str, Any], key: str) -> tuple[Any, ...]:
     return tuple(value)
 
 
+def _trace_int_field(payload: dict[str, Any], key: str) -> int:
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer")
+    return int(value)
+
+
 @dataclass(frozen=True)
 class CommandTrace:
     id: int
@@ -54,7 +61,7 @@ class CommandTrace:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "CommandTrace":
         return cls(
-            id=int(payload["id"]),
+            id=_trace_int_field(payload, "id"),
             received_at_wall_time=payload["received_at_wall_time"],
             simulated_time=payload["simulated_time"],
             raw_input=payload["raw_input"],
@@ -69,7 +76,7 @@ class CommandTrace:
             support_status=payload["support_status"],
             matched_rule_id=payload["matched_rule_id"],
             active_scenarios=_trace_tuple_field(payload, "active_scenarios"),
-            exit_code=int(payload["exit_code"]),
+            exit_code=_trace_int_field(payload, "exit_code"),
             stdout_preview=payload.get("stdout_preview", ""),
             stderr_preview=payload.get("stderr_preview", ""),
             stdout=payload.get("stdout", ""),

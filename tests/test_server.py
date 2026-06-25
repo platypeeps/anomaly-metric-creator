@@ -835,6 +835,16 @@ def test_command_trace_from_dict_rejects_string_active_scenarios():
         server.CommandTrace.from_dict(trace_payload)
 
 
+@pytest.mark.parametrize("field", ["id", "exit_code"])
+@pytest.mark.parametrize("value", [True, "1"])
+def test_command_trace_from_dict_rejects_non_integer_fields(field, value):
+    trace_payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    trace_payload[field] = value
+
+    with pytest.raises(ValueError, match=f"{field} must be an integer"):
+        server.CommandTrace.from_dict(trace_payload)
+
+
 def test_command_trace_memory_import_bumps_version_for_same_sized_replacement():
     store = server.CommandTraceStore()
     store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))

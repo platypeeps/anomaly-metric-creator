@@ -23,6 +23,13 @@ TRACE_BUNDLE_API_VERSION = f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}"
 _MAX_SEARCH_LIMIT = 500
 
 
+def _bundle_int_field(payload: dict[str, Any], key: str) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"trace bundle {key} must be an integer; got {value!r}")
+    return int(value)
+
+
 @dataclass(frozen=True)
 class TraceBundle:
     """A portable command trace export loaded from disk."""
@@ -53,7 +60,7 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
             "unsupported trace bundle apiVersion "
             f"{api_version!r}; expected {TRACE_BUNDLE_API_VERSION!r}"
         )
-    schema_version = payload.get("schema_version")
+    schema_version = _bundle_int_field(payload, "schema_version")
     if schema_version != COMMAND_TRACE_EXPORT_VERSION:
         raise ValueError(
             "unsupported trace bundle schema_version "

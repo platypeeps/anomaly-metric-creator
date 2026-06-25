@@ -324,6 +324,26 @@ def test_load_trace_bundle_rejects_wrong_api_version(tmp_path):
         trace_bundle.load_trace_bundle(path)
 
 
+@pytest.mark.parametrize("schema_version", [True, "1"])
+def test_load_trace_bundle_rejects_non_integer_schema_version(
+    tmp_path, schema_version
+):
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": schema_version,
+        "trace_count": 1,
+        "traces": [_trace(1, "kubectl get pods -n saas-prod").to_dict()],
+    }
+    path = tmp_path / "non-integer-schema-version.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match="trace bundle schema_version must be an integer"
+    ):
+        trace_bundle.load_trace_bundle(path)
+
+
 def test_load_trace_bundle_rejects_boolean_trace_count(tmp_path):
     payload = {
         "kind": "CommandTraceExport",
