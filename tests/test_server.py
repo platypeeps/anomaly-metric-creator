@@ -125,6 +125,20 @@ def test_kubectl_logs_models_prefix_previous_container_and_since_time(amc, tmp_p
     assert future_logs["result"]["stdout"] == ""
 
 
+def test_kubectl_logs_rejects_invalid_since_time(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(
+        state,
+        command="kubectl logs database-0 -n saas-prod --since-time=not-a-timestamp",
+    )
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["support_status"] == "partial"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.since-time"
+    assert 'invalid --since-time value "not-a-timestamp"' in logs["result"]["stderr"]
+
+
 def test_kubectl_logs_label_selector_renders_matching_pod_logs(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
 
@@ -153,6 +167,20 @@ def test_kubectl_logs_tail_limits_returned_lines(amc, tmp_path):
     assert logs["result"]["support_status"] == "supported"
     assert "apigateway login route returning 429" in logs["result"]["stdout"]
     assert "authservice failed_login_rate elevated" not in logs["result"]["stdout"]
+
+
+def test_kubectl_logs_rejects_invalid_tail(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="auth_brute_force")
+
+    logs = server.run_command(
+        state,
+        command="kubectl logs authservice-0 -n saas-prod --tail=last",
+    )
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["support_status"] == "partial"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.tail"
+    assert 'invalid --tail value "last"' in logs["result"]["stderr"]
 
 
 def test_kubectl_logs_rejects_mismatched_container(amc, tmp_path):
