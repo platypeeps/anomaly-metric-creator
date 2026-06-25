@@ -25,7 +25,9 @@ def _component_from_pod_name(name: str) -> str:
     if not name:
         return ""
     prefix, _, suffix = name.rpartition("-")
-    return prefix if suffix.isdigit() else name.split("-", 1)[0]
+    if suffix.isdigit():
+        return prefix.removesuffix("-recreated")
+    return name.split("-", 1)[0]
 
 
 def _resource_prefix(kind: str) -> str:

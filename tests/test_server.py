@@ -615,6 +615,21 @@ def test_deleted_pods_are_reconciled_with_replacement_pods(amc, tmp_path):
     assert endpoint_slice["endpoints"] == len(after)
 
 
+def test_deleting_replacement_pod_updates_original_component_overlay(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    state.mutations.delete_pod("apigateway-0", now=state.clock.now())
+    replacement = next(
+        row["name"] for row in server.resource_snapshot(state)["pods"]
+        if row["name"].startswith("apigateway-recreated-")
+    )
+
+    state.mutations.delete_pod(replacement, now=state.clock.now())
+
+    summary = state.mutations.summary()
+    assert "apigateway-recreated" not in summary["workloads"]
+    assert summary["workloads"]["apigateway"]["restarts_delta"] == 2
+
+
 def test_mutating_commands_update_simulated_state(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
