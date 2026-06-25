@@ -2,9 +2,11 @@ import base64
 import contextlib
 import datetime as _dt
 import gzip
+import importlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import urllib.error
 import urllib.parse
@@ -27,6 +29,7 @@ def _build_state(
     days=2,
     start_time=None,
     persist_command_db=None,
+    persist_command_retention=None,
     trace_limit=server.DEFAULT_TRACE_LIMIT,
 ):
     argv = [
@@ -40,7 +43,13 @@ def _build_state(
     if start_time is not None:
         argv += ["--start-time", start_time]
     args = amc.parse_args(argv)
-    return server.build_state(amc, args, persist_command_db=persist_command_db, trace_limit=trace_limit)
+    return server.build_state(
+        amc,
+        args,
+        persist_command_db=persist_command_db,
+        persist_command_retention=persist_command_retention,
+        trace_limit=trace_limit,
+    )
 
 
 def _get_json(url):
@@ -59,8 +68,12 @@ def _pod_name(component):
 
 
 @contextlib.contextmanager
-def _running_test_server(state, *, security=None):
-    httpd, base_url = server.start_test_server(state, security=security)
+def _running_test_server(state, *, security=None, request_logger=None):
+    httpd, base_url = server.start_test_server(
+        state,
+        security=security,
+        request_logger=request_logger,
+    )
     try:
         yield base_url
     finally:
@@ -484,6 +497,48 @@ def test_mutation_events_are_bounded_by_debug_ring_size(amc, tmp_path):
     assert "Mutation4" in resource_reasons
 
 
+def test_repeated_mutation_events_are_counted_once(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3, trace_limit=3)
+    now = state.clock.now()
+
+    for _ in range(3):
+        state.mutations.record_event(
+            "Normal",
+            "DebugToggle",
+            "configmap/debug-flags",
+            "configmap debug-flags configured in simulator state",
+            now,
+        )
+
+    summary = state.mutations.summary()
+    assert summary["extra_event_count"] == 1
+    assert summary["drift"]["event_overlays"] == 1
+    events = [
+        row for row in server.resource_snapshot(state)["events"]
+        if row["reason"] == "DebugToggle"
+    ]
+    assert len(events) == 1
+    assert events[0]["count"] == 3
+
+
+def test_deleted_pods_are_reconciled_with_replacement_pods(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    before = [
+        row for row in server.resource_snapshot(state)["pods"]
+        if row["component"] == "apigateway"
+    ]
+
+    state.mutations.delete_pod("apigateway-0", now=state.clock.now())
+
+    snapshot = server.resource_snapshot(state)
+    after = [row for row in snapshot["pods"] if row["component"] == "apigateway"]
+    assert len(after) == len(before)
+    assert all(row["name"] != "apigateway-0" for row in after)
+    assert any(row["name"].startswith("apigateway-recreated-") for row in after)
+    endpoint_slice = next(row for row in snapshot["endpointslices"] if row["service"] == "apigateway")
+    assert endpoint_slice["endpoints"] == len(after)
+
+
 def test_mutating_commands_update_simulated_state(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
@@ -598,6 +653,147 @@ def test_command_trace_sqlite_persistence_and_search(amc, tmp_path):
     summary = restored.traces.unsupported_summary()
     assert summary[0]["count"] == 1
     assert "kubectl debug" in summary[0]["fingerprint"]
+
+
+def test_command_trace_sqlite_search_reports_backend_and_schema(amc, tmp_path):
+    db_path = tmp_path / "commands.sqlite"
+    state = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        days=3,
+        persist_command_db=db_path,
+    )
+
+    server.run_command(state, command="kubectl auth can-i get pods -n saas-prod")
+
+    search = state.traces.search(query="auth can-i")
+    assert search["total"] == 1
+    assert search["items"][0]["matched_rule_id"] == "kubectl.auth.can-i"
+    assert search["search_backend"] in {"fts5", "like"}
+    with sqlite3.connect(db_path) as conn:
+        schema_version = conn.execute(
+            "SELECT value FROM command_trace_meta WHERE key = 'schema_version'"
+        ).fetchone()
+    assert schema_version is not None
+    assert int(schema_version[0]) >= 1
+
+
+def test_command_trace_sqlite_restart_searches_beyond_ring_size(amc, tmp_path):
+    db_path = tmp_path / "commands.sqlite"
+    state = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        days=3,
+        persist_command_db=db_path,
+        trace_limit=2,
+    )
+
+    commands = [
+        "kubectl explain old-ring-marker -n saas-prod",
+        "kubectl auth can-i get pods -n saas-prod",
+        "kubectl get services -n saas-prod",
+        "helm status simulated-saas -n saas-prod",
+        "kubectl debug pod/cacheservice-0 -n saas-prod",
+    ]
+    for command in commands:
+        server.run_command(state, command=command)
+
+    restored = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        days=3,
+        persist_command_db=db_path,
+        trace_limit=2,
+    )
+
+    assert restored.traces.count() == len(commands)
+    assert restored.traces.search(query="auth can-i")["total"] == 1
+    assert restored.traces.search(query="old-ring-marker")["total"] == 1
+    recent = restored.traces.list(limit=10)
+    assert [item["raw_input"] for item in recent] == list(reversed(commands))
+
+
+def test_command_trace_sqlite_retention_limits_persisted_history(amc, tmp_path):
+    db_path = tmp_path / "commands.sqlite"
+    state = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        days=3,
+        persist_command_db=db_path,
+        persist_command_retention=3,
+        trace_limit=2,
+    )
+
+    commands = [
+        "kubectl explain old-retention-marker -n saas-prod",
+        "kubectl get services -n saas-prod",
+        "kubectl get deployments -n saas-prod",
+        "helm status simulated-saas -n saas-prod",
+        "kubectl debug pod/cacheservice-0 -n saas-prod",
+    ]
+    for command in commands:
+        server.run_command(state, command=command)
+
+    assert state.traces.count() == 3
+    assert state.traces.get(1) is None
+    assert state.traces.search(query="old-retention-marker")["total"] == 0
+    assert [item["raw_input"] for item in state.traces.list(limit=10)] == list(reversed(commands[-3:]))
+
+    restored = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        days=3,
+        persist_command_db=db_path,
+        persist_command_retention=3,
+        trace_limit=2,
+    )
+    assert restored.traces.count() == 3
+    assert [item["raw_input"] for item in restored.traces.list(limit=10)] == list(reversed(commands[-3:]))
+
+
+def test_command_trace_export_import_round_trips_sqlite_history(amc, tmp_path):
+    source_db = tmp_path / "source.sqlite"
+    target_db = tmp_path / "target.sqlite"
+    source = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        days=3,
+        persist_command_db=source_db,
+        trace_limit=1,
+    )
+    server.run_command(source, command="kubectl get pods -n saas-prod")
+    server.run_command(source, command="kubectl auth can-i get pods -n saas-prod")
+    with _running_test_server(source) as base_url:
+        export_payload = _get_json(base_url + "/v1/debug/commands/export")
+
+    target = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        days=3,
+        persist_command_db=target_db,
+        trace_limit=1,
+    )
+    with _running_test_server(target) as base_url:
+        request = urllib.request.Request(
+            base_url + "/v1/debug/commands/import",
+            data=json.dumps(export_payload).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            imported = json.loads(response.read().decode("utf-8"))
+
+    assert imported["imported"] == 2
+    assert target.traces.count() == 2
+    assert target.traces.search(query="auth can-i")["total"] == 1
+    assert target.traces.list(limit=10)[0]["raw_input"] == "kubectl auth can-i get pods -n saas-prod"
 
 
 def test_debug_http_api_records_commands(amc, tmp_path):
@@ -748,6 +944,245 @@ def test_request_body_limit_and_mutating_k8s_operations_are_traced(amc, tmp_path
         assert reset["mutations"]["deleted_pods"] == []
 
 
+def test_server_cors_preflight_is_explicit_and_unauthenticated(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    security = server.ServerSecurityConfig(
+        auth_token="test-token",
+        cors_allow_origin="https://ops.example",
+    )
+    with _running_test_server(state, security=security) as base_url:
+        preflight = urllib.request.Request(
+            base_url + "/v1/commands",
+            headers={
+                "origin": "https://ops.example",
+                "access-control-request-method": "POST",
+                "access-control-request-headers": "authorization, content-type",
+            },
+            method="OPTIONS",
+        )
+        with urllib.request.urlopen(preflight, timeout=5) as response:
+            assert response.status == 204
+            assert response.headers["access-control-allow-origin"] == "https://ops.example"
+            assert "POST" in response.headers["access-control-allow-methods"]
+            assert "authorization" in response.headers["access-control-allow-headers"]
+            assert response.read() == b""
+
+        healthz = urllib.request.Request(
+            base_url + "/healthz",
+            headers={"origin": "https://ops.example"},
+        )
+        with urllib.request.urlopen(healthz, timeout=5) as response:
+            assert response.headers["access-control-allow-origin"] == "https://ops.example"
+
+
+def test_server_rate_limits_command_and_kubernetes_api_endpoints(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    security = server.ServerSecurityConfig(rate_limit_per_minute=1)
+    with _running_test_server(state, security=security) as base_url:
+        first_command = urllib.request.Request(
+            base_url + "/v1/commands",
+            data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(first_command, timeout=5) as response:
+            assert response.status == 200
+
+        second_command = urllib.request.Request(
+            base_url + "/v1/commands",
+            data=json.dumps({"command": "kubectl get svc -n saas-prod"}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(second_command, timeout=5)
+        assert excinfo.value.code == 429
+        assert int(excinfo.value.headers["retry-after"]) > 0
+        command_error = json.loads(excinfo.value.read().decode("utf-8"))
+        assert command_error["error"] == "rate limit exceeded"
+
+        with urllib.request.urlopen(base_url + "/version", timeout=5) as response:
+            assert response.status == 200
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(base_url + "/version", timeout=5)
+        assert excinfo.value.code == 429
+        assert int(excinfo.value.headers["retry-after"]) > 0
+        status = json.loads(excinfo.value.read().decode("utf-8"))
+        assert status["kind"] == "Status"
+        assert status["reason"] == "TooManyRequests"
+
+
+def test_serve_config_file_supplies_server_and_generation_defaults(tmp_path):
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({
+            "server": {
+                "host": "127.0.0.1",
+                "port": 0,
+                "namespace": "configured-ns",
+                "debug_ring_size": 7,
+                "persist_command_retention": 12,
+                "max_request_body_bytes": 2048,
+                "cors_allow_origin": "https://ops.example",
+                "rate_limit_per_minute": 9,
+                "no_generate": True,
+                "structured_log": True,
+                "structured_log_file": str(tmp_path / "requests.jsonl"),
+                "continuous_generate_interval_seconds": 3.5,
+            },
+            "generate": {
+                "duration_days": 2,
+                "scenarios": "cache_leak_restart",
+                "components": "apigateway,cacheservice,database",
+                "output_dir": str(tmp_path / "configured-output"),
+                "otel_send": "none",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    parser = server._build_serve_parser()
+    serve_args, generate_argv = server._parse_serve_args(
+        ["--config", str(config_path)],
+        parser,
+    )
+
+    assert serve_args.namespace == "configured-ns"
+    assert serve_args.debug_ring_size == 7
+    assert serve_args.persist_command_retention == 12
+    assert serve_args.max_request_body_bytes == 2048
+    assert serve_args.cors_allow_origin == "https://ops.example"
+    assert serve_args.rate_limit_per_minute == 9
+    assert serve_args.no_generate is True
+    assert serve_args.structured_log is True
+    assert serve_args.structured_log_file == tmp_path / "requests.jsonl"
+    assert serve_args.continuous_generate_interval_seconds == 3.5
+    assert "--duration-days" in generate_argv
+    assert "2" in generate_argv
+    assert "--output-dir" in generate_argv
+    assert str(tmp_path / "configured-output") in generate_argv
+
+
+def test_serve_cli_flags_override_config_file_values(tmp_path):
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({
+            "server": {
+                "namespace": "configured-ns",
+                "debug_ring_size": 7,
+                "structured_log": False,
+                "no_generate": True,
+            },
+            "generate": {
+                "duration_days": 2,
+                "scenarios": "cache_leak_restart",
+                "output_dir": str(tmp_path / "configured-output"),
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    parser = server._build_serve_parser()
+    serve_args, generate_argv = server._parse_serve_args(
+        [
+            "--config", str(config_path),
+            "--namespace", "cli-ns",
+            "--debug-ring-size", "11",
+            "--structured-log",
+            "--duration-days", "3",
+            "--scenarios", "db_disk_exhaustion",
+        ],
+        parser,
+    )
+
+    assert serve_args.namespace == "cli-ns"
+    assert serve_args.debug_ring_size == 11
+    assert serve_args.structured_log is True
+    duration_index = len(generate_argv) - 1 - generate_argv[::-1].index("--duration-days")
+    scenario_index = len(generate_argv) - 1 - generate_argv[::-1].index("--scenarios")
+    assert generate_argv[duration_index + 1] == "3"
+    assert generate_argv[scenario_index + 1] == "db_disk_exhaustion"
+
+
+def test_structured_request_logger_writes_request_and_error_jsonl(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    log_path = tmp_path / "server-requests.jsonl"
+    request_logger = server.StructuredRequestLogger(log_path)
+    security = server.ServerSecurityConfig(auth_token="secret-token")
+
+    with _running_test_server(
+        state,
+        security=security,
+        request_logger=request_logger,
+    ) as base_url:
+        unauthorized = urllib.request.Request(
+            base_url + "/v1/state?token=plain-secret",
+            headers={"authorization": "Bearer wrong-token"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(unauthorized, timeout=5)
+        assert excinfo.value.code == 401
+
+        def fail_command(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(server, "run_command", fail_command)
+        command = urllib.request.Request(
+            base_url + "/v1/commands",
+            data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
+            headers={
+                "authorization": "Bearer secret-token",
+                "content-type": "application/json",
+                "user-agent": "amc-test",
+            },
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(command, timeout=5)
+        assert excinfo.value.code == 500
+
+    records = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["event"] for record in records] == ["request", "request", "error"]
+    assert records[0]["status"] == 401
+    assert records[0]["path"] == "/v1/state"
+    assert records[0]["query"]["token"] == ["***"]
+    assert records[0]["authorization"] == "present"
+    assert records[1]["status"] == 500
+    assert records[1]["method"] == "POST"
+    assert records[1]["user_agent"] == "amc-test"
+    assert records[2]["error_type"] == "RuntimeError"
+    assert records[2]["message"] == "boom"
+    serialized = "\n".join(json.dumps(record, sort_keys=True) for record in records)
+    assert "secret-token" not in serialized
+    assert "plain-secret" not in serialized
+
+
+def test_security_redacts_sensitive_query_and_command_trace_values(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    with _running_test_server(state) as base_url:
+        urllib.request.urlopen(
+            base_url + "/version?" + urllib.parse.urlencode({"id_token": "api-secret"}),
+            timeout=5,
+        ).close()
+
+    result = server.run_command(
+        state,
+        command="kubectl get pods --token command-secret -n saas-prod",
+    )
+    payload = json.dumps(state.traces.export_payload(), sort_keys=True)
+    assert "api-secret" not in payload
+    assert "command-secret" not in payload
+    assert result["trace"]["raw_input"] == "kubectl get pods --token '***' -n saas-prod"
+    api_trace = next(
+        item for item in state.traces.list(limit=10)
+        if item["command_family"] == "kubernetes-api"
+    )
+    assert api_trace["parsed_flags"]["query"]["id_token"] == ["***"]
+
+
 def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     with _running_test_server(state) as base_url:
@@ -787,6 +1222,9 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
         )
         assert deployment["spec"]["replicas"] == 5
         assert deployment["status"]["readyReplicas"] == 5
+        assert deployment["metadata"]["resourceVersion"] != "1"
+        assert deployment["metadata"]["generation"] >= 2
+        assert deployment["status"]["observedGeneration"] == deployment["metadata"]["generation"]
 
         bool_scale_request = urllib.request.Request(
             base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway/scale",
@@ -812,6 +1250,10 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
 
         pods = _get_json(base_url + "/api/v1/namespaces/saas-prod/pods")
         assert all(pod["metadata"]["name"] != "apigateway-0" for pod in pods["items"])
+        assert any(
+            pod["metadata"]["name"].startswith("apigateway-recreated-")
+            for pod in pods["items"]
+        )
 
         query = urllib.parse.urlencode({"family": "kubernetes-api", "q": "PATCH"})
         search = _get_json(base_url + "/v1/debug/search?" + query)
@@ -897,6 +1339,67 @@ def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
 
         configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
         assert any(item["metadata"]["name"] == "debug-flags" for item in configmaps["items"])
+
+        tools_configmap_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/tools/configmaps",
+            data=json.dumps({
+                "metadata": {"name": "tools-flags", "labels": {"team": "ops"}},
+                "data": {"mode": "tools"},
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(tools_configmap_request, timeout=5) as response:
+            tools_configmap = json.loads(response.read().decode("utf-8"))
+        assert tools_configmap["metadata"]["namespace"] == "tools"
+        assert tools_configmap["metadata"]["labels"]["team"] == "ops"
+        default_configmaps = _get_json(base_url + "/api/v1/namespaces/saas-prod/configmaps")
+        assert all(item["metadata"]["name"] != "tools-flags" for item in default_configmaps["items"])
+        tools_configmaps = _get_json(base_url + "/api/v1/namespaces/tools/configmaps")
+        assert any(item["metadata"]["name"] == "tools-flags" for item in tools_configmaps["items"])
+        state_payload = _get_json(base_url + "/v1/state")
+        assert "tools" in state_payload["mutations"]["drift"]["namespaces"]
+        assert state_payload["mutations"]["drift"]["created_resources"] >= 2
+
+        labeled_deployment_request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments",
+            data=json.dumps({
+                "metadata": {
+                    "name": "debug-worker",
+                    "labels": {"team": "ops"},
+                },
+                "spec": {
+                    "replicas": 2,
+                    "selector": {"matchLabels": {"team": "ops"}},
+                    "template": {"metadata": {"labels": {"team": "ops"}}},
+                },
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(labeled_deployment_request, timeout=5) as response:
+            labeled_deployment = json.loads(response.read().decode("utf-8"))
+        assert labeled_deployment["metadata"]["labels"]["team"] == "ops"
+        assert labeled_deployment["spec"]["selector"]["matchLabels"]["team"] == "ops"
+        assert labeled_deployment["metadata"]["generation"] == 1
+        assert labeled_deployment["status"]["observedGeneration"] == 1
+
+        labeled_service_request = urllib.request.Request(
+            base_url + "/api/v1/namespaces/saas-prod/services",
+            data=json.dumps({
+                "metadata": {"name": "debug-worker"},
+                "spec": {
+                    "selector": {"team": "ops"},
+                    "ports": [{"port": 9090}],
+                },
+            }).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(labeled_service_request, timeout=5) as response:
+            labeled_service = json.loads(response.read().decode("utf-8"))
+        assert labeled_service["spec"]["selector"] == {"team": "ops"}
+        assert labeled_service["spec"]["ports"][0]["port"] == 9090
 
         empty_configmap_request = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/configmaps",
@@ -1107,6 +1610,68 @@ def test_debug_ui_caches_static_scenario_catalog():
     assert "renderScenarioCatalogOnce(scenarios);" in html
 
 
+def test_debug_ui_exposes_analysis_workflows():
+    html = server.DEBUG_HTML
+
+    for marker in (
+        'id="exportTraceJson"',
+        'id="exportUnsupportedJson"',
+        'id="exportUnsupportedCsv"',
+        'id="globalScenarioFilter"',
+        'id="globalKindFilter"',
+        'id="globalStatusFilter"',
+        'id="globalFamilyFilter"',
+        'id="globalWindowFilter"',
+        'id="timelineRows"',
+        'id="resourceDiffs"',
+        'id="miniCharts"',
+        'id="resourceDrawer"',
+        'id="scenarioCatalogFreshness"',
+        'id="runtimeFreshness"',
+        "function buildTimelineRows(",
+        "function renderTimeline(",
+        "function renderResourceDiffs(",
+        "function renderMiniCharts(",
+        "function openResourceDrawer(",
+        "function resourceApiPath(",
+        "function pytestSnippetForUnsupported(",
+        "function downloadJSON(",
+        "function downloadCSV(",
+    ):
+        assert marker in html
+
+
+def test_server_architecture_cleanup_modules_back_public_facade():
+    traces = importlib.import_module("anomaly_metric_creator.server_traces")
+    mutations = importlib.import_module("anomaly_metric_creator.server_mutations")
+    debug_ui = importlib.import_module("anomaly_metric_creator.server_debug_ui")
+    commands = importlib.import_module("anomaly_metric_creator.server_commands")
+    kubernetes = importlib.import_module("anomaly_metric_creator.server_kubernetes")
+    helm = importlib.import_module("anomaly_metric_creator.server_helm")
+
+    assert server.CommandTrace is traces.CommandTrace
+    assert server.CommandTraceStore is traces.CommandTraceStore
+    assert server.COMMAND_TRACE_DB_SCHEMA_VERSION == traces.COMMAND_TRACE_DB_SCHEMA_VERSION
+    assert server.COMMAND_TRACE_EXPORT_VERSION == traces.COMMAND_TRACE_EXPORT_VERSION
+    assert server.SimulationMutations is mutations.SimulationMutations
+    assert server.WorkloadMutation is mutations.WorkloadMutation
+    assert server.HelmReleaseMutation is mutations.HelmReleaseMutation
+    assert server.DEBUG_HTML is debug_ui.DEBUG_HTML
+    assert server.ParsedCommand is commands.ParsedCommand
+    assert server.CommandResult is commands.CommandResult
+    assert server.parse_command is commands.parse_command
+    assert server.render_command is commands.render_command
+    assert server.run_command is commands.run_command
+    assert server.resource_snapshot is commands.resource_snapshot
+    assert server.KubernetesApiResponse is kubernetes.KubernetesApiResponse
+    assert server.kubernetes_api_response is kubernetes.kubernetes_api_response
+    assert server.kubernetes_api_post_response is kubernetes.kubernetes_api_post_response
+    assert server.kubernetes_api_mutating_response is kubernetes.kubernetes_api_mutating_response
+    assert server.render_kubeconfig is kubernetes.render_kubeconfig
+    assert server._helm_secret_objects is helm._helm_secret_objects
+    assert server._helm_release_payload is helm._helm_release_payload
+
+
 def test_continuous_generation_refreshes_state(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     calls = []
@@ -1193,6 +1758,25 @@ def test_continuous_generation_marks_otel_disabled_without_streaming(amc, tmp_pa
     assert state.otel_status["continuous"] is False
 
 
+def test_stop_continuous_generation_signals_shutdown_and_joins_worker():
+    stop_event = server.threading.Event()
+    joined = []
+
+    class FakeWorker:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout):
+            joined.append(timeout)
+
+    stop_event.worker_thread = FakeWorker()
+
+    server._stop_continuous_generation(stop_event, timeout=0.25)
+
+    assert stop_event.is_set()
+    assert joined == [0.25]
+
+
 def test_log_stream_follows_refreshed_generation_logs(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     log_path = tmp_path / "metric_report.log"
@@ -1219,6 +1803,17 @@ def test_log_stream_follows_refreshed_generation_logs(amc, tmp_path):
                 if "refreshed log" in line:
                     break
             assert any("refreshed log" in line for line in refreshed_lines)
+
+
+def test_shutdown_event_closes_long_lived_sse_streams(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    state.shutdown_event.set()
+    with _running_test_server(state) as base_url:
+        for path in ("/v1/debug/events", "/v1/logs/stream"):
+            with urllib.request.urlopen(base_url + path, timeout=5) as response:
+                body = response.read().decode("utf-8")
+            assert "event: shutdown" in body
+            assert "server shutdown" in body
 
 
 def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):

@@ -134,15 +134,30 @@ def test_serve_help_lists_server_flags_without_generation():
         "--debug-ring-size",
         "--persist-command-log",
         "--persist-command-db",
+        "--persist-command-retention",
+        "--config",
         "--auth-token",
         "--max-request-body-bytes",
         "--allow-remote-without-auth",
+        "--cors-allow-origin",
+        "--rate-limit-per-minute",
+        "--structured-log",
+        "--structured-log-file",
         "--continuous-generate",
         "--continuous-generate-interval-seconds",
         "--no-generate",
     ):
         _assert_flag_listed(out, flag)
     assert "Kubernetes/Helm" in out
+
+
+def test_trace_bundle_help_lists_offline_trace_tools():
+    result = _invoke("trace-bundle", "--help")
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "offline" in out.lower()
+    for command in ("summary", "search", "unsupported", "export-csv"):
+        assert command in out
 
 
 def test_serve_rejects_remote_bind_without_auth_or_explicit_override():

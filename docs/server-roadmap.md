@@ -118,88 +118,119 @@ Each new surface should add:
 
 ## Roadmap: Mutable State Semantics
 
-The overlay works, but it is still intentionally lightweight. Improve it in
-small steps:
+The overlay now keeps in-memory mutation state across continuous generation
+passes and exposes baseline-vs-overlay drift in `/v1/state` and the debug UI.
+It also models Kubernetes-style `resourceVersion`, `generation`,
+`observedGeneration`, deletion timestamps, namespace-scoped created/deleted
+resource buckets, controller-style replacement pods, row-level selectors,
+owner references, and repeated-event counts.
 
-- Preserve mutation overlays across continuous generation passes while clearly
-  showing baseline-vs-overlay drift in `/v1/state` and the debug UI.
+Remaining future work:
+
 - Add optional persisted mutation state if workshops need restart continuity.
-- Model Kubernetes `resourceVersion`, `generation`, `observedGeneration`, and
-  deletion timestamps for mutated resources.
-- Add namespace-aware overlay buckets instead of assuming a single namespace
-  for all generic resources.
-- Expand controller-style reconciliation for deleted pods and scaled workloads.
-- Add owner references and selectors for created resources so `kubectl get all`
-  and related list views feel more connected.
-- Add event deduplication or event count semantics for repeated mutations.
 - Keep unsupported subresources rejected unless explicitly modeled.
 
 ## Roadmap: Debug UI And Analysis
 
-The debug UI is useful now, but the next high-value improvements are analysis
-workflows:
+The debug UI now includes the first analysis workflow pass:
 
-- Export command traces and unsupported backlog results as JSON or CSV.
-- Add a timeline view combining commands, mutation events, generation passes,
-  OTEL batches, and log-stream refreshes.
-- Add baseline-vs-overlay resource diffs for pods, deployments, Helm release
-  history, and generic resources.
-- Add "promote to test" affordances for unsupported command fingerprints,
-  probably as copyable pytest snippets rather than automatic file writes.
-- Add filters for scenario, resource kind, command family, support status, and
-  time window across all debug tables.
-- Add compact charts for generation count, anomaly count, OTEL batches, and
-  command volume.
-- Add a resource detail drawer that shows the exact Kubernetes object payload
-  returned to real clients.
-- Add clearer indication when the scenario catalog is cached and when runtime
-  state is live.
+- Command-trace JSON export and unsupported-backlog JSON/CSV export.
+- A timeline view combining command traces, cluster/mutation events, generation
+  passes, OTEL batches, and runtime refreshes.
+- Baseline-vs-overlay resource diffs for workload overlays, deleted pods,
+  replacement pods, Helm release state, and generic created/deleted resources.
+- Copyable pytest snippets for unsupported command fingerprints.
+- Global filters for scenario, resource kind, command family, support status,
+  and time window across the main debug tables.
+- Compact charts for generation count, anomaly count, OTEL batches, and command
+  volume.
+- A resource detail drawer that fetches the Kubernetes object payload returned
+  to real clients when the selected resource has a fake API path.
+- Visible live-runtime and cached-scenario-catalog status badges.
 
-Because the debug UI is inline HTML/CSS/JS in `server.py`, keep changes
-incremental and strongly tested through endpoint behavior. Consider extracting
-the debug shell only after PR 137 lands.
+Remaining future work:
+
+- Because the debug UI is inline HTML/CSS/JS in `server.py`, keep changes
+  incremental and strongly tested through endpoint behavior. Consider
+  extracting the debug shell only after PR 137 lands.
 
 ## Roadmap: Persistence And Search
 
-SQLite search is in place. Possible follow-ups:
+SQLite trace persistence now records a schema version, uses FTS5-backed search
+when available with a LIKE fallback, supports bounded retention via
+`--persist-command-retention`, exports/imports trace histories as portable JSON,
+has restart coverage for search/history continuity beyond the in-memory
+ring size, and includes offline `amc trace-bundle` tooling for exported trace
+bundles.
 
-- Add FTS5-backed search when available, with a fallback to the current LIKE
-  search.
-- Add retention controls for persisted command traces.
-- Add a schema/version migration path for the SQLite store.
-- Add export/import of trace databases for offline debugging.
-- Add tests that restart the server and verify search/history continuity over
-  more than the in-memory ring size.
+Completed follow-ups:
+
+- `amc trace-bundle summary` reports support-status, command-family, scenario,
+  and unsupported-fingerprint counts from a saved export.
+- `amc trace-bundle search` reuses the server search filters against bundle
+  JSON without a running simulator.
+- `amc trace-bundle unsupported` groups partial/unsupported traces by
+  fingerprint, and `amc trace-bundle export-csv` flattens traces for
+  spreadsheets or workshop notes.
+
+Remaining future work:
+
+- No known Persistence/Search roadmap items remain beyond workshop-driven
+  presentation polish.
 
 ## Roadmap: Security And Operations
 
-Current security is suitable for local workshops and controlled demos. Before
-broader use:
+Current security is suitable for local workshops and controlled demos. The
+serve-mode security/ops hardening now covers:
 
-- Document a reverse-proxy/TLS deployment recipe.
-- Add explicit CORS behavior rather than relying on the default stdlib server
-  behavior.
-- Redact bearer tokens and sensitive values from traces and logs.
-- Add optional rate limiting for command/API endpoints.
-- Add graceful shutdown coverage for continuous generation and long-lived SSE
+- Reverse-proxy/TLS deployment guidance in the README while keeping the
+  simulator bound to loopback.
+- Explicit CORS via `--cors-allow-origin`, including unauthenticated preflight
+  handling and access-control headers only for the configured origin or `*`.
+- Trace redaction for bearer-token-like query params, passwords, secrets,
+  client keys, and sensitive command flags before data reaches memory, JSONL,
+  SQLite, or the debug UI.
+- Optional per-client `--rate-limit-per-minute` enforcement for command and
+  Kubernetes API endpoints, with JSON `429` app responses and Kubernetes
+  `Status` API responses.
+- Graceful shutdown signaling for continuous generation and long-lived SSE
   clients.
-- Add a config-file option if serve-mode command lines become unwieldy.
-- Add structured server logs for request summaries and error paths.
+- Serve-mode JSON/YAML config files via `--config`, split into `server` and
+  `generate` maps with explicit CLI flags overriding config defaults.
+- Structured JSONL request/error logs via `--structured-log` and
+  `--structured-log-file`, including redacted query values and auth
+  present/absent status instead of bearer values.
+
+Remaining follow-ups:
+
+- No known Security/Operations roadmap items remain beyond workshop-driven
+  operational polish.
 
 ## Roadmap: Architecture Cleanup
 
-`server.py` is carrying a lot of responsibility. Avoid large refactors while PR
-137 is under review. After merge, consider extracting modules in this order:
+The behavior-preserving split is in place:
 
-1. Command parsing and renderers.
-2. Kubernetes API facade and object/table helpers.
-3. Helm release/Secret encoding.
-4. Mutable overlay state.
-5. Trace persistence and search.
-6. Debug UI shell.
+- `server_traces.py` owns `CommandTrace`, `CommandTraceStore`, JSONL/SQLite
+  persistence, FTS/LIKE search, export/import payloads, and unsupported-summary
+  grouping.
+- `server_mutations.py` owns mutable overlay dataclasses, release overlay state,
+  event coalescing, resource drift bookkeeping, and helper functions shared by
+  snapshot rendering.
+- `server_debug_ui.py` owns the inline debug shell HTML/CSS/JS. `server.py`
+  still re-exports `DEBUG_HTML` for compatibility.
+- `server_ops.py` owns scenario profiles, simulator state, command
+  parsing/rendering, resource snapshots, Kubernetes-compatible API objects, and
+  Helm release Secret encoding.
+- `server_commands.py`, `server_kubernetes.py`, and `server_helm.py` expose
+  focused command/API/Helm facets over the ops implementation so those roadmap
+  boundaries stay explicit.
+- `tests/test_server.py` includes an architecture-boundary regression test that
+  pins the extracted modules behind the existing `server.py` facade.
 
-Keep the public behavior pinned by `tests/test_server.py` before each
-extraction. The goal is a behavior-preserving split, not a rewrite.
+Remaining extraction order:
+
+- No known architecture cleanup extraction items remain. Keep future changes
+  behavior-preserving and pinned by `tests/test_server.py`.
 
 ## Suggested Resume Prompt
 

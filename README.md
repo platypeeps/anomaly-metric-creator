@@ -124,6 +124,11 @@ amc combine iot_logs
 # Validate an existing output dir against its schema.json:
 amc validate iot_logs
 
+# Inspect an exported command trace bundle without starting the server:
+amc trace-bundle summary command-traces.json
+amc trace-bundle search command-traces.json --status unsupported
+amc trace-bundle export-csv command-traces.json --output command-traces.csv
+
 # Run as an incident simulator server with a debug UI and Kubernetes/Helm
 # command API. Unrecognized serve options are parsed as normal generate flags:
 amc serve \
@@ -205,7 +210,7 @@ amc \
 
 ### CLI flags
 
-The CLI is organized around four subcommands plus grouped flags. `generate`
+The CLI is organized around five subcommands plus grouped flags. `generate`
 is the default — a bare invocation with no subcommand token runs the
 generation pipeline exactly as before:
 
@@ -229,6 +234,14 @@ generation pipeline exactly as before:
   `kubectl` / `helm` commands from the active scenario state. Open
   `/debug` for the live command trace, unsupported-command explorer,
   synthetic resource view, and scenario profile state.
+- `trace-bundle {summary,search,unsupported,export-csv} BUNDLE` — inspect a
+  JSON bundle from `GET /v1/debug/commands/export` offline. `summary` prints
+  support-status, command-family, scenario, and unsupported-fingerprint counts;
+  `search` applies the same `--q`, `--status`, `--family`, `--scenario`,
+  `--limit`, and `--offset` filters as `/v1/debug/search`; `unsupported`
+  groups partial/unsupported traces by fingerprint; and `export-csv` writes a
+  flattened trace table for spreadsheets or workshop notes. The reporting
+  commands accept `--format json` for automation.
 
 Help is two-tier: `-h` shows the common surface in the five groups below;
 `--help-all` additionally lists the advanced knobs
@@ -294,6 +307,36 @@ amc serve \
   --components apigateway,cacheservice,database,mqservice
 ```
 
+Longer serve invocations can move stable defaults into JSON or YAML:
+
+```json
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8088,
+    "namespace": "saas-prod",
+    "auth_token": "replace-me",
+    "structured_log_file": "server-requests.jsonl"
+  },
+  "generate": {
+    "duration_days": 3,
+    "scenarios": "cache_leak_restart",
+    "components": "apigateway,cacheservice,database,mqservice",
+    "otel_send": "none"
+  }
+}
+```
+
+```bash
+amc serve --config serve-config.json --port 8090
+```
+
+Config keys use the long flag names with underscores instead of hyphens. Values
+from `server` are parsed as serve-mode flags; values from `generate` are
+forwarded through the normal generation parser. Explicit CLI flags come after
+config defaults, so `--port 8090` in the example overrides the file. JSON works
+without optional dependencies; YAML requires PyYAML, matching `--instance-config`.
+
 Server flags:
 
 | Flag | Default | Notes |
@@ -304,9 +347,15 @@ Server flags:
 | `--debug-ring-size` | `500` | In-memory command trace ring size. |
 | `--persist-command-log` | _off_ | Optional JSONL file for command traces. |
 | `--persist-command-db` | _off_ | Optional SQLite file for durable command traces and search. |
+| `--persist-command-retention` | `0` | Maximum SQLite command traces to retain; `0` keeps all persisted traces. |
+| `--config` | _off_ | Optional JSON/YAML file containing `server` and `generate` defaults for `amc serve`. Explicit CLI flags override config values. |
 | `--auth-token` | _off_ | Optional bearer token required for HTTP API, debug data, command, and Kubernetes API requests. Embedded into `GET /v1/kubeconfig` when enabled. |
 | `--max-request-body-bytes` | `1048576` | Maximum accepted HTTP request body size. Oversized app requests return `413`; oversized Kubernetes API requests return a Kubernetes `Status`. |
 | `--allow-remote-without-auth` | _off_ | Explicit lab-only override that permits non-loopback `--host` values without `--auth-token`. |
+| `--cors-allow-origin` | _off_ | Optional exact `Access-Control-Allow-Origin` value for browser clients, or `*` for any origin. Preflight requests are answered without bearer auth. |
+| `--rate-limit-per-minute` | `0` | Optional per-client command and Kubernetes API request limit; `0` disables rate limiting. Limited app requests return JSON `429`; limited Kubernetes API requests return a Kubernetes `Status` with `reason: TooManyRequests`. |
+| `--structured-log` / `--no-structured-log` | _off_ | Emit one JSON request record per HTTP request plus error records for request-handling exceptions. Defaults to stderr unless `--structured-log-file` is set. |
+| `--structured-log-file` | _off_ | Optional JSONL path for structured request/error logs. Setting a path enables structured logging. |
 | `--no-generate` | _off_ | Use existing artifacts in `--output-dir` instead of generating before serving. |
 | `--continuous-generate` | _off_ | Keep regenerating artifacts while the server runs. Each pass refreshes `/v1/state`, Kubernetes/Helm snapshots, anomaly rows, and log-stream inputs. When OTEL streaming is enabled, the continuous generator serializes regeneration and OTEL replay so each fresh batch is streamed in order. |
 | `--continuous-generate-interval-seconds` | `60.0` | Seconds to wait between continuous generation passes. |
@@ -319,6 +368,43 @@ By default the server binds loopback. Binding a non-loopback host such as
 facade require `Authorization: Bearer TOKEN` when a token is configured. The
 debug console prompts for that bearer token and stores it in browser
 `localStorage`; `/debug?token=TOKEN` can also bootstrap the browser session.
+Command/API traces redact bearer tokens, token-like query values, passwords,
+secrets, and client-key shaped values before they are stored in memory, JSONL,
+or SQLite.
+Structured request logs follow the same query redaction and never record bearer
+token values: they include `timestamp`, `event`, `method`, `path`, redacted
+`query`, `status`, `client`, `user_agent`, `authorization` (`present` or
+`absent`), `duration_ms`, and `response_bytes`; error rows also include
+`error_type` and `message`.
+
+For remote lab access, put TLS and host allowlisting in a reverse proxy and
+keep the simulator bound to loopback:
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name amc.example.internal;
+
+  ssl_certificate /etc/letsencrypt/live/amc/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/amc/privkey.pem;
+
+  location / {
+    proxy_pass http://127.0.0.1:8088;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+}
+```
+
+Run the backend with an auth token, an explicit CORS origin if the browser UI is
+loaded from a different host, and a command/API limit appropriate for the
+workshop:
+
+```bash
+amc serve --auth-token "$AMC_TOKEN" \
+  --cors-allow-origin https://amc.example.internal \
+  --rate-limit-per-minute 120
+```
 
 Primary endpoints:
 
@@ -331,7 +417,9 @@ Primary endpoints:
 | `GET /v1/state` | Current synthetic clock, active scenarios, OTEL/generation status, mutable overlay summary, active anomaly spans, and trace counts. |
 | `GET /v1/scenarios` | Scenario catalog with primary/cascade signal descriptions and Kubernetes/Helm ops-profile details. |
 | `GET /v1/debug/commands` | Recent command traces. |
-| `GET /v1/debug/search` | Search command traces by `q`, `status`, `family`, `scenario`, `limit`, and `offset`; uses SQLite when `--persist-command-db` is configured. |
+| `GET /v1/debug/commands/export` | Export command traces as portable JSON for offline debugging or import into another SQLite trace store. |
+| `POST /v1/debug/commands/import` | Replace the current command trace history from a portable JSON export. |
+| `GET /v1/debug/search` | Search command traces by `q`, `status`, `family`, `scenario`, `limit`, and `offset`; uses SQLite plus FTS5 when available and falls back to LIKE search otherwise. |
 | `GET /v1/debug/unsupported` | Unsupported / partial command fingerprints grouped by count, examples, and guessed intent. |
 | `GET /v1/debug/resources` | Synthetic pods, deployments, services, HPA, PVC, nodes, events, ingress, and Helm release state. |
 | `GET /v1/logs/stream` | SSE replay of `metric_report.log` lines for the generated run; connected clients receive refreshed log batches after continuous generation passes. |
@@ -431,9 +519,24 @@ Unsupported requests are intentionally captured rather than discarded. The
 debug UI groups them by normalized fingerprint, keeps raw examples and parsed
 flags, reports generation/OTEL/mutation status, lists workload/release overlays,
 and includes a scenario catalog with detailed primary, cascade, event, log, and
-Kubernetes-impact descriptions. Add `--persist-command-db PATH` when you want
-that trace history to survive restarts and power the debug console search over
-raw commands, outputs, fingerprints, statuses, families, and active scenarios.
+Kubernetes-impact descriptions. It also includes global filters, command and
+unsupported-backlog exports, compact runtime charts, a combined timeline,
+baseline-vs-overlay resource diffs, copyable pytest snippets for unsupported
+fingerprints, and a resource drawer that fetches the same Kubernetes object
+payload real clients see where a fake API path is available. Add
+`--persist-command-db PATH` when you want that trace history to survive restarts
+and power the debug console search over raw commands, outputs, fingerprints,
+statuses, families, and active scenarios.
+Use `--persist-command-retention N` to bound the durable SQLite history, and
+use the command export/import endpoints to move trace histories between runs
+for offline debugging.
+For offline analysis outside a running server, save the export payload and use
+one of:
+
+- `amc trace-bundle summary BUNDLE.json`
+- `amc trace-bundle search BUNDLE.json --status unsupported`
+- `amc trace-bundle unsupported BUNDLE.json`
+- `amc trace-bundle export-csv BUNDLE.json --output traces.csv`
 
 #### Advanced flags
 
