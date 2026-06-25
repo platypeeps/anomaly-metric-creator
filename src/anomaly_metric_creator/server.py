@@ -3070,7 +3070,6 @@ def _logs_uses_selector(parsed: ParsedCommand) -> bool:
 
 
 def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
-    pods = _logs_target_pods(state, parsed)
     container = _logs_container_name(parsed)
     if _logs_has_container_flag(parsed) and not container:
         return CommandResult(
@@ -3080,6 +3079,7 @@ def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> Comma
             "partial",
             "kubectl.logs.container",
         )
+    pods = _logs_target_pods(state, parsed)
     if container:
         for pod in pods:
             if container != pod["component"]:
@@ -3108,7 +3108,11 @@ def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> Comma
             "partial",
             "kubectl.logs.tail",
         )
-    rule_id = "kubectl.logs.selector" if _logs_uses_selector(parsed) else "kubectl.logs.pod"
+    rule_id = (
+        "kubectl.logs.selector"
+        if _logs_uses_selector(parsed) and not parsed.resource_name
+        else "kubectl.logs.pod"
+    )
     return CommandResult(
         0,
         _render_logs(state, parsed, pods=pods, since_time=since_time, tail_limit=tail_limit),

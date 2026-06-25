@@ -151,6 +151,25 @@ def test_kubectl_logs_label_selector_renders_matching_pod_logs(amc, tmp_path):
     )
 
     assert logs["result"]["support_status"] == "supported"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.selector"
+    assert "database-0/database " in logs["result"]["stdout"]
+    assert "disk_used_pct=92" in logs["result"]["stdout"]
+    assert "cacheservice-0" not in logs["result"]["stdout"]
+
+
+def test_kubectl_logs_named_pod_takes_precedence_over_selector(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(
+        state,
+        command=(
+            "kubectl logs database-0 -l app.kubernetes.io/name=cacheservice "
+            "-n saas-prod --prefix"
+        ),
+    )
+
+    assert logs["result"]["support_status"] == "supported"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.pod"
     assert "database-0/database " in logs["result"]["stdout"]
     assert "disk_used_pct=92" in logs["result"]["stdout"]
     assert "cacheservice-0" not in logs["result"]["stdout"]
