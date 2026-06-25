@@ -278,6 +278,22 @@ def test_load_trace_bundle_rejects_non_object_trace_entries(tmp_path):
         trace_bundle.load_trace_bundle(path)
 
 
+def test_load_trace_bundle_rejects_invalid_trace_object(tmp_path):
+    trace_payload = _trace(1, "kubectl get pods -n saas-prod").to_dict()
+    del trace_payload["raw_input"]
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "traces": [trace_payload],
+    }
+    path = tmp_path / "invalid-trace-object.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="trace entry 0 is invalid"):
+        trace_bundle.load_trace_bundle(path)
+
+
 def test_load_trace_bundle_rejects_invalid_trace_count(tmp_path):
     payload = {
         "kind": "CommandTraceExport",

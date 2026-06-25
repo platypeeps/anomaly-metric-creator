@@ -66,7 +66,10 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
     for index, item in enumerate(traces_payload):
         if not isinstance(item, dict):
             raise ValueError(f"trace entry {index} must be an object")
-        traces_list.append(CommandTrace.from_dict(item))
+        try:
+            traces_list.append(CommandTrace.from_dict(item))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"trace entry {index} is invalid: {exc}") from exc
     traces = tuple(traces_list)
     raw_declared_count = payload.get("trace_count", len(traces))
     if isinstance(raw_declared_count, bool):

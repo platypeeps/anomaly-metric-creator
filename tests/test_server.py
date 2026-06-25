@@ -1011,6 +1011,26 @@ def test_command_trace_sqlite_retention_limits_persisted_history(amc, tmp_path):
     assert [item["raw_input"] for item in restored.traces.list(limit=10)] == list(reversed(commands[-3:]))
 
 
+def test_command_trace_sqlite_get_respects_retention_below_ring_limit(tmp_path):
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(
+        sqlite_path=db_path,
+        sqlite_retention=1,
+        limit=10,
+    )
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+    store.record(_trace(2, "2026-06-25T12:02:00Z", "kubectl get services"))
+
+    assert store.count() == 1
+    assert store.list() == [{"version": store.version, **_trace(
+        2,
+        "2026-06-25T12:02:00Z",
+        "kubectl get services",
+    ).to_dict()}]
+    assert store.get(1) is None
+    assert store.get(2)["raw_input"] == "kubectl get services"
+
+
 def test_command_trace_export_import_round_trips_sqlite_history(amc, tmp_path):
     source_db = tmp_path / "source.sqlite"
     target_db = tmp_path / "target.sqlite"

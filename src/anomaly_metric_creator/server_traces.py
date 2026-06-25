@@ -163,12 +163,12 @@ class CommandTraceStore:
         ]
 
     def get(self, trace_id: int) -> dict[str, Any] | None:
+        if self._sqlite_path is not None:
+            return self._get_sqlite(trace_id)
         with self._lock:
             for trace in self._items:
                 if trace.id == trace_id:
                     return trace.to_dict()
-        if self._sqlite_path is not None:
-            return self._get_sqlite(trace_id)
         return None
 
     def count(self) -> int:
