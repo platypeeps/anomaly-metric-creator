@@ -1703,7 +1703,7 @@ def build_state(
     components = tuple(name for name in legacy_module.COMPONENTS if name in args.components)
     anomaly_rows = load_anomaly_rows(args.output_dir / "anomalies.csv")
     clock = SimulationClock(
-        start_time=legacy_module.START,
+        start_time=getattr(args, "start_time", legacy_module.START),
         speedup=float(getattr(args, "otel_stream_speedup", 3600.0)),
     )
     return SimulationState(

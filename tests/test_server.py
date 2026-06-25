@@ -25,17 +25,21 @@ def _build_state(
     components="apigateway,cacheservice,database,authservice",
     signal_level="medium",
     days=2,
+    start_time=None,
     persist_command_db=None,
     trace_limit=server.DEFAULT_TRACE_LIMIT,
 ):
-    args = amc.parse_args([
+    argv = [
         "--duration-days", str(days),
         "--signal-level", signal_level,
         "--scenarios", scenarios,
         "--components", components,
         "--output-dir", str(tmp_path),
         "--interval-seconds", "3600",
-    ])
+    ]
+    if start_time is not None:
+        argv += ["--start-time", start_time]
+    args = amc.parse_args(argv)
     return server.build_state(amc, args, persist_command_db=persist_command_db, trace_limit=trace_limit)
 
 
@@ -67,6 +71,19 @@ def _running_test_server(state, *, security=None):
 def _require_real_client_smoke_opt_in():
     if os.environ.get(REAL_CLIENT_SMOKE_ENV) != "1":
         pytest.skip(f"set {REAL_CLIENT_SMOKE_ENV}=1 to run real client smoke tests")
+
+
+def test_build_state_uses_configured_start_time(amc, tmp_path):
+    state = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_collapse",
+        components="cacheservice",
+        days=1,
+        start_time="2026-06-24T12:34:56Z",
+    )
+
+    assert state.clock.start_time == _dt.datetime(2026, 6, 24, 12, 34, 56)
 
 
 def test_kubectl_responses_reflect_db_disk_exhaustion(amc, tmp_path):

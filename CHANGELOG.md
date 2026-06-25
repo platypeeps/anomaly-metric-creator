@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-(no unreleased changes)
+### Added
+
+- Added `--start-time` so generated CSV timestamps and `schema.json` metadata
+  can be anchored to a caller-provided whole-second UTC instant, while
+  preserving the historical default start time when the flag is omitted.
 
 ## 0.3.0 - 2026-06-11
 

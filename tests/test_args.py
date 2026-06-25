@@ -1,3 +1,4 @@
+import datetime
 import re
 
 import pytest
@@ -10,6 +11,44 @@ def test_parse_args_defaults(amc):
     assert args.interval_seconds == 60.0
     assert args.drop_rate == 0.0
     assert args.output_dir == Path("test_out")
+    assert args.start_time == amc.START
+
+
+def test_parse_args_start_time_accepts_utc_iso(amc):
+    args = amc.parse_args([
+        "--start-time", "2026-06-24T12:34:56Z",
+        "--output-dir", "test_out",
+    ])
+    assert args.start_time == datetime.datetime(2026, 6, 24, 12, 34, 56)
+
+
+def test_parse_args_start_time_rejects_invalid_value(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--start-time", "not-a-timestamp",
+            "--output-dir", "test_out",
+        ])
+
+
+@pytest.mark.parametrize("value", ["", "not-a-timestamp", "2026-06-24T12:34:56.123Z"])
+def test_parse_args_start_time_error_avoids_duplicate_flag_name(amc, capsys, value):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--start-time", value,
+            "--output-dir", "test_out",
+        ])
+
+    err = capsys.readouterr().err
+    assert "argument --start-time:" in err
+    assert "argument --start-time: --start-time" not in err
+
+
+def test_parse_args_start_time_rejects_sub_second_value(amc):
+    with pytest.raises(SystemExit):
+        amc.parse_args([
+            "--start-time", "2026-06-24T12:34:56.123Z",
+            "--output-dir", "test_out",
+        ])
 
 
 def test_parse_args_help_duration_days_default_round_trips(amc, capsys):

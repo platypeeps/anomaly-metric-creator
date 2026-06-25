@@ -11,6 +11,7 @@ Covers:
   is dropped from the next run's --emit selection.
 - the ``combine`` subcommand does NOT regenerate ``schema.json``.
 """
+import csv
 import json
 import subprocess
 import sys
@@ -176,6 +177,29 @@ def test_schema_metadata_captures_run_parameters(one_day_schema_run, amc):
     assert meta["scenarios"] == sorted(meta["scenarios"]), (
         "metadata.scenarios must be sorted for byte determinism"
     )
+
+
+def test_start_time_shifts_component_csv_and_schema_metadata(amc, tmp_path):
+    out = tmp_path / "custom_start_time"
+    run_capture(
+        amc,
+        out,
+        days=1,
+        interval_seconds=3600,
+        extra_args=[
+            "--start-time", "2026-06-24T12:34:56Z",
+            "--components", "cacheservice",
+            "--scenarios", "cache_collapse",
+            "--emit", "metrics,schema",
+        ],
+    )
+
+    doc = _load_schema(out)
+    assert doc["metadata"]["start"] == "2026-06-24T12:34:56"
+
+    with open(out / "cacheservice.csv", encoding="utf-8", newline="") as f:
+        first_row = next(csv.DictReader(f))
+    assert first_row["timestamp"] == "2026-06-24 12:34:56"
 
 
 def test_schema_files_list_matches_emitted_artifacts(one_day_schema_run):
