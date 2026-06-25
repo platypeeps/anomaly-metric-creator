@@ -117,6 +117,7 @@ class CommandTraceStore:
         self._next_id = 1
         self._version = 0
         self._lock = threading.Lock()
+        self._sqlite_write_lock = threading.Lock()
         if persist_path is not None:
             persist_path.parent.mkdir(parents=True, exist_ok=True)
         if sqlite_path is not None:
@@ -145,7 +146,8 @@ class CommandTraceStore:
                 with open(persist_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(trace.to_dict(), sort_keys=True) + "\n")
         if sqlite_path is not None:
-            self._insert_sqlite(trace)
+            with self._sqlite_write_lock:
+                self._insert_sqlite(trace)
 
     def list(self, limit: int | None = None) -> list[dict[str, Any]]:
         if self._sqlite_path is not None:
@@ -260,7 +262,8 @@ class CommandTraceStore:
             traces.append(CommandTrace.from_dict(item))
         if self._sqlite_path is not None:
             previous_version = self.version
-            self._replace_sqlite_traces(traces)
+            with self._sqlite_write_lock:
+                self._replace_sqlite_traces(traces)
             self._ensure_import_version_change(previous_version)
         else:
             with self._lock:

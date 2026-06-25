@@ -47,6 +47,12 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
         raise ValueError(
             f"trace bundle kind must be {TRACE_BUNDLE_KIND!r}; got {kind!r}"
         )
+    api_version = payload.get("apiVersion")
+    if api_version != TRACE_BUNDLE_API_VERSION:
+        raise ValueError(
+            "unsupported trace bundle apiVersion "
+            f"{api_version!r}; expected {TRACE_BUNDLE_API_VERSION!r}"
+        )
     schema_version = payload.get("schema_version")
     if schema_version != COMMAND_TRACE_EXPORT_VERSION:
         raise ValueError(
@@ -63,6 +69,10 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
         traces_list.append(CommandTrace.from_dict(item))
     traces = tuple(traces_list)
     raw_declared_count = payload.get("trace_count", len(traces))
+    if isinstance(raw_declared_count, bool):
+        raise ValueError(
+            f"trace bundle trace_count must be an integer; got {raw_declared_count!r}"
+        )
     try:
         declared_count = int(raw_declared_count)
     except (TypeError, ValueError) as exc:
@@ -77,7 +87,7 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
     return TraceBundle(
         path=bundle_path,
         kind=kind,
-        api_version=str(payload.get("apiVersion", TRACE_BUNDLE_API_VERSION)),
+        api_version=str(api_version),
         schema_version=int(schema_version),
         declared_trace_count=declared_count,
         traces=traces,

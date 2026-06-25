@@ -291,3 +291,33 @@ def test_load_trace_bundle_rejects_invalid_trace_count(tmp_path):
 
     with pytest.raises(ValueError, match="trace bundle trace_count must be an integer"):
         trace_bundle.load_trace_bundle(path)
+
+
+def test_load_trace_bundle_rejects_wrong_api_version(tmp_path):
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": "amc.simulator/v999",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "trace_count": 1,
+        "traces": [_trace(1, "kubectl get pods -n saas-prod").to_dict()],
+    }
+    path = tmp_path / "wrong-api-version.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsupported trace bundle apiVersion"):
+        trace_bundle.load_trace_bundle(path)
+
+
+def test_load_trace_bundle_rejects_boolean_trace_count(tmp_path):
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "trace_count": True,
+        "traces": [_trace(1, "kubectl get pods -n saas-prod").to_dict()],
+    }
+    path = tmp_path / "boolean-trace-count.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="trace bundle trace_count must be an integer"):
+        trace_bundle.load_trace_bundle(path)

@@ -9,6 +9,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -62,6 +63,21 @@ def _get_json_with_headers(url, headers):
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _read_jsonl_records_until(path, expected_count, *, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    records = []
+    while time.monotonic() < deadline:
+        if path.exists():
+            records = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            if len(records) >= expected_count:
+                return records
+        time.sleep(0.01)
+    return records
 
 
 def _pod_name(component):
@@ -829,6 +845,39 @@ def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tm
     assert [item["id"] for item in store.list()] == [4, 3]
 
 
+def test_command_trace_sqlite_record_serializes_insert_with_write_lock(tmp_path, monkeypatch):
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    observed = []
+
+    def capture_insert(trace):
+        observed.append(store._sqlite_write_lock.locked())
+
+    monkeypatch.setattr(store, "_insert_sqlite", capture_insert)
+
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+    assert observed == [True]
+
+
+def test_command_trace_sqlite_import_serializes_replace_with_write_lock(tmp_path, monkeypatch):
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    observed = []
+
+    def capture_replace(traces):
+        observed.append(store._sqlite_write_lock.locked())
+        store._next_id = max((trace.id for trace in traces), default=0) + 1
+
+    monkeypatch.setattr(store, "_replace_sqlite_traces", capture_replace)
+
+    store.import_payload({
+        "traces": [_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods").to_dict()],
+    })
+
+    assert observed == [True]
+
+
 def test_command_trace_sqlite_search_reports_backend_and_schema(amc, tmp_path):
     db_path = tmp_path / "commands.sqlite"
     state = _build_state(
@@ -1346,11 +1395,9 @@ def test_structured_request_logger_writes_request_and_error_jsonl(amc, tmp_path,
         with pytest.raises(urllib.error.HTTPError) as excinfo:
             urllib.request.urlopen(command, timeout=5)
         assert excinfo.value.code == 500
+        excinfo.value.read()
 
-    records = [
-        json.loads(line)
-        for line in log_path.read_text(encoding="utf-8").splitlines()
-    ]
+    records = _read_jsonl_records_until(log_path, 3)
     assert [record["event"] for record in records] == ["request", "request", "error"]
     assert records[0]["status"] == 401
     assert records[0]["path"] == "/v1/state"
