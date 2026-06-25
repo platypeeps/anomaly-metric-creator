@@ -92,8 +92,9 @@ Good next command/API targets:
 - `kubectl patch` variants, including merge, strategic, and JSON patch shapes.
 - `kubectl apply -f` for multi-document YAML or JSON payloads.
 - `kubectl get --watch` and API watch semantics for a bounded simulated stream.
-- `kubectl logs` flag coverage beyond `-f`, such as `--previous`, `--prefix`,
-  `--since-time`, multi-container selection, and label-selected logs.
+- Additional `kubectl logs` refinements if incident workflows need them, such
+  as duration-based `--since`, timestamped output, and richer multi-container
+  pod histories.
 - `kubectl events` or richer event sorting/filtering if the installed client
   expects it.
 - `kubectl rollout pause`, `resume`, and `undo`.

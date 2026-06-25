@@ -102,6 +102,141 @@ def test_kubectl_responses_reflect_db_disk_exhaustion(amc, tmp_path):
     assert "disk_used_pct=92" in logs["result"]["stdout"]
 
 
+def test_kubectl_logs_models_prefix_previous_container_and_since_time(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(
+        state,
+        command=(
+            "kubectl logs database-0 -n saas-prod -c database --prefix "
+            "--previous --since-time=1970-01-01T00:00:00Z"
+        ),
+    )
+    assert logs["result"]["support_status"] == "supported"
+    assert logs["result"]["stderr"] == ""
+    assert "database-0/database previous " in logs["result"]["stdout"]
+    assert "disk_used_pct=92" in logs["result"]["stdout"]
+
+    future_logs = server.run_command(
+        state,
+        command="kubectl logs database-0 -n saas-prod --since-time=2999-01-01T00:00:00Z",
+    )
+    assert future_logs["result"]["support_status"] == "supported"
+    assert future_logs["result"]["stdout"] == ""
+
+
+def test_kubectl_logs_rejects_invalid_since_time(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(
+        state,
+        command="kubectl logs database-0 -n saas-prod --since-time=not-a-timestamp",
+    )
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["support_status"] == "partial"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.since-time"
+    assert 'invalid --since-time value "not-a-timestamp"' in logs["result"]["stderr"]
+
+
+def test_kubectl_logs_label_selector_renders_matching_pod_logs(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(
+        state,
+        command=(
+            "kubectl logs -l app.kubernetes.io/name=database "
+            "-n saas-prod --prefix"
+        ),
+    )
+
+    assert logs["result"]["support_status"] == "supported"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.selector"
+    assert "database-0/database " in logs["result"]["stdout"]
+    assert "disk_used_pct=92" in logs["result"]["stdout"]
+    assert "cacheservice-0" not in logs["result"]["stdout"]
+
+
+def test_kubectl_logs_named_pod_takes_precedence_over_selector(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    def fail_snapshot(_state):
+        raise AssertionError("named pod logs should not build a resource snapshot")
+
+    monkeypatch.setattr(server, "resource_snapshot", fail_snapshot)
+
+    logs = server.run_command(
+        state,
+        command=(
+            "kubectl logs database-0 -l app.kubernetes.io/name=cacheservice "
+            "-n saas-prod --prefix"
+        ),
+    )
+
+    assert logs["result"]["support_status"] == "supported"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.pod"
+    assert "database-0/database " in logs["result"]["stdout"]
+    assert "disk_used_pct=92" in logs["result"]["stdout"]
+    assert "cacheservice-0" not in logs["result"]["stdout"]
+
+
+def test_kubectl_logs_tail_limits_returned_lines(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="auth_brute_force")
+
+    logs = server.run_command(
+        state,
+        command="kubectl logs authservice-0 -n saas-prod --tail=1",
+    )
+
+    assert logs["result"]["support_status"] == "supported"
+    assert "apigateway login route returning 429" in logs["result"]["stdout"]
+    assert "authservice failed_login_rate elevated" not in logs["result"]["stdout"]
+
+
+def test_kubectl_logs_rejects_invalid_tail(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="auth_brute_force")
+
+    logs = server.run_command(
+        state,
+        command="kubectl logs authservice-0 -n saas-prod --tail=last",
+    )
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["support_status"] == "partial"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.tail"
+    assert 'invalid --tail value "last"' in logs["result"]["stderr"]
+
+
+def test_kubectl_logs_rejects_mismatched_container(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(
+        state,
+        command="kubectl logs database-0 -n saas-prod -c apigateway",
+    )
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["support_status"] == "partial"
+    assert 'container "apigateway" is not valid for pod "database-0"' in logs["result"]["stderr"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "kubectl logs database-0 -n saas-prod -c",
+        "kubectl logs database-0 -n saas-prod --container=",
+    ],
+)
+def test_kubectl_logs_rejects_missing_container_value(amc, tmp_path, command):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(state, command=command)
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["support_status"] == "partial"
+    assert "requires a container name" in logs["result"]["stderr"]
+
+
 def test_helm_and_rollout_responses_reflect_bad_canary(amc, tmp_path):
     state = _build_state(
         amc,
