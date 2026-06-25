@@ -16,6 +16,15 @@ COMMAND_TRACE_DB_SCHEMA_VERSION = 2
 COMMAND_TRACE_EXPORT_VERSION = 1
 
 
+def _trace_tuple_field(payload: dict[str, Any], key: str) -> tuple[Any, ...]:
+    value = payload.get(key, ())
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{key} must be a list or tuple")
+    return tuple(value)
+
+
 @dataclass(frozen=True)
 class CommandTrace:
     id: int
@@ -49,7 +58,7 @@ class CommandTrace:
             received_at_wall_time=payload["received_at_wall_time"],
             simulated_time=payload["simulated_time"],
             raw_input=payload["raw_input"],
-            argv=tuple(payload.get("argv", ())),
+            argv=_trace_tuple_field(payload, "argv"),
             client=payload["client"],
             command_family=payload["command_family"],
             verb=payload["verb"],
@@ -59,7 +68,7 @@ class CommandTrace:
             parsed_flags=dict(payload.get("parsed_flags", {})),
             support_status=payload["support_status"],
             matched_rule_id=payload["matched_rule_id"],
-            active_scenarios=tuple(payload.get("active_scenarios", ())),
+            active_scenarios=_trace_tuple_field(payload, "active_scenarios"),
             exit_code=int(payload["exit_code"]),
             stdout_preview=payload.get("stdout_preview", ""),
             stderr_preview=payload.get("stderr_preview", ""),
@@ -259,7 +268,10 @@ class CommandTraceStore:
         for index, item in enumerate(traces_payload):
             if not isinstance(item, dict):
                 raise ValueError(f"trace import entry {index} must be an object")
-            traces.append(CommandTrace.from_dict(item))
+            try:
+                traces.append(CommandTrace.from_dict(item))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"trace import entry {index} is invalid: {exc}") from exc
         if self._sqlite_path is not None:
             previous_version = self.version
             with self._sqlite_write_lock:

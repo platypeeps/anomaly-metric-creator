@@ -808,6 +808,33 @@ def test_command_trace_import_rejects_non_object_trace_entries():
     assert store.count() == 0
 
 
+def test_command_trace_import_rejects_invalid_trace_objects():
+    store = server.CommandTraceStore()
+    trace_payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    del trace_payload["raw_input"]
+
+    with pytest.raises(ValueError, match="trace import entry 0 is invalid"):
+        store.import_payload({"traces": [trace_payload]})
+
+    assert store.count() == 0
+
+
+def test_command_trace_from_dict_rejects_string_argv():
+    trace_payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    trace_payload["argv"] = "kubectl"
+
+    with pytest.raises(ValueError, match="argv must be a list or tuple"):
+        server.CommandTrace.from_dict(trace_payload)
+
+
+def test_command_trace_from_dict_rejects_string_active_scenarios():
+    trace_payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    trace_payload["active_scenarios"] = "cache_leak_restart"
+
+    with pytest.raises(ValueError, match="active_scenarios must be a list or tuple"):
+        server.CommandTrace.from_dict(trace_payload)
+
+
 def test_command_trace_memory_import_bumps_version_for_same_sized_replacement():
     store = server.CommandTraceStore()
     store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
