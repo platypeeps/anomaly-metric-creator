@@ -168,6 +168,23 @@ def test_kubectl_logs_rejects_mismatched_container(amc, tmp_path):
     assert 'container "apigateway" is not valid for pod "database-0"' in logs["result"]["stderr"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "kubectl logs database-0 -n saas-prod -c",
+        "kubectl logs database-0 -n saas-prod --container=",
+    ],
+)
+def test_kubectl_logs_rejects_missing_container_value(amc, tmp_path, command):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(state, command=command)
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["support_status"] == "partial"
+    assert "requires a container name" in logs["result"]["stderr"]
+
+
 def test_helm_and_rollout_responses_reflect_bad_canary(amc, tmp_path):
     state = _build_state(
         amc,

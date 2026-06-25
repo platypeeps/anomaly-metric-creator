@@ -3072,6 +3072,14 @@ def _logs_uses_selector(parsed: ParsedCommand) -> bool:
 def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
     pods = _logs_target_pods(state, parsed)
     container = _logs_container_name(parsed)
+    if _logs_has_container_flag(parsed) and not container:
+        return CommandResult(
+            1,
+            "",
+            "error: -c/--container requires a container name\n",
+            "partial",
+            "kubectl.logs.container",
+        )
     if container:
         for pod in pods:
             if container != pod["component"]:
@@ -3123,6 +3131,10 @@ def _logs_target_pods(state: SimulationState, parsed: ParsedCommand) -> list[dic
 
 def _logs_container_name(parsed: ParsedCommand) -> str:
     return str(parsed.flags.get("-c") or parsed.flags.get("--container") or "")
+
+
+def _logs_has_container_flag(parsed: ParsedCommand) -> bool:
+    return "-c" in parsed.flags or "--container" in parsed.flags
 
 
 def _logs_since_time(parsed: ParsedCommand) -> _dt.datetime | str | None:
