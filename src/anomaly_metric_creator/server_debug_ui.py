@@ -450,7 +450,7 @@ DEBUG_HTML = r"""<!doctype html>
       <section>
         <div class="bar"><h2>Recent Events</h2><span class="muted">cluster</span></div>
         <table>
-          <thead><tr><th>Reason</th><th>Object</th><th>Message</th></tr></thead>
+          <thead><tr><th>Reason</th><th>Namespace</th><th>Object</th><th>Message</th></tr></thead>
           <tbody id="events"></tbody>
         </table>
       </section>
@@ -786,7 +786,7 @@ DEBUG_HTML = r"""<!doctype html>
         row.addEventListener("click", () => openResourceDrawer(row.dataset.kind, row.dataset.name, row.dataset.namespace));
       });
       $("events").innerHTML = resources.events.map((event) => `
-        <tr><td>${esc(event.reason)}</td><td>${esc(event.object)}</td><td>${esc(event.message)}</td></tr>
+        <tr><td>${esc(event.reason)}</td><td>${esc(event.namespace || "-")}</td><td>${esc(event.object)}</td><td>${esc(event.message)}</td></tr>
       `).join("");
     }
     function renderUnsupported(payload) {

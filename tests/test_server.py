@@ -1794,6 +1794,13 @@ def test_debug_ui_exposes_analysis_workflows():
         assert marker in html
 
 
+def test_debug_ui_recent_events_render_namespace_column():
+    html = server.DEBUG_HTML
+
+    assert "<th>Namespace</th>" in html
+    assert "${esc(event.namespace || \"-\")}" in html
+
+
 def test_server_architecture_cleanup_modules_back_public_facade():
     traces = importlib.import_module("anomaly_metric_creator.server_traces")
     mutations = importlib.import_module("anomaly_metric_creator.server_mutations")
