@@ -259,18 +259,26 @@ class CommandTraceStore:
                 raise ValueError(f"trace import entry {index} must be an object")
             traces.append(CommandTrace.from_dict(item))
         if self._sqlite_path is not None:
+            previous_version = self.version
             self._replace_sqlite_traces(traces)
+            self._ensure_import_version_change(previous_version)
         else:
             with self._lock:
+                previous_version = self._version
                 self._items.clear()
                 self._items.extend(traces[-self._limit:])
                 self._next_id = max((trace.id for trace in traces), default=0) + 1
-                self._version = len(traces)
+                self._version = max(previous_version + 1, len(traces))
         return {
             "imported": len(traces),
             "trace_count": self.count(),
             "next_id": self._next_id_snapshot(),
         }
+
+    def _ensure_import_version_change(self, previous_version: int) -> None:
+        with self._lock:
+            if self._version <= previous_version:
+                self._version = previous_version + 1
 
     def _next_id_snapshot(self) -> int:
         with self._lock:

@@ -145,13 +145,24 @@ class SimulationMutations:
                 },
             }
 
-    def record_event(self, event_type: str, reason: str, obj: str, message: str, now: _dt.datetime) -> None:
+    def record_event(
+        self,
+        event_type: str,
+        reason: str,
+        obj: str,
+        message: str,
+        now: _dt.datetime,
+        *,
+        namespace: str = DEFAULT_NAMESPACE,
+    ) -> None:
         with self.lock:
             timestamp = _format_dt(now)
+            namespace = str(namespace or DEFAULT_NAMESPACE)
             for event in self.extra_events:
                 if (
                     event.get("type") == event_type
                     and event.get("reason") == reason
+                    and event.get("namespace", DEFAULT_NAMESPACE) == namespace
                     and event.get("object") == obj
                     and event.get("message") == message
                 ):
@@ -164,6 +175,7 @@ class SimulationMutations:
                 "last_seen": timestamp,
                 "type": event_type,
                 "reason": reason,
+                "namespace": namespace,
                 "object": obj,
                 "message": message,
                 "count": 1,
@@ -262,6 +274,7 @@ class SimulationMutations:
             f"{_resource_prefix(kind)}/{name}",
             f"{_resource_prefix(kind)} {name} configured in simulator state",
             now,
+            namespace=namespace,
         )
 
     def delete_resource(
@@ -283,6 +296,7 @@ class SimulationMutations:
             f"{_resource_prefix(kind)}/{name}",
             f"{_resource_prefix(kind)} {name} deleted from simulator state",
             now,
+            namespace=namespace,
         )
 
     def reset(self) -> None:

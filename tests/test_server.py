@@ -550,6 +550,47 @@ def test_repeated_mutation_events_are_counted_once(amc, tmp_path):
     assert events[0]["count"] == 3
 
 
+def test_configured_resource_events_are_distinct_per_namespace(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    now = state.clock.now()
+
+    for namespace in ("tenant-a", "tenant-b"):
+        state.mutations.put_resource(
+            "configmaps",
+            "debug-flags",
+            {"name": "debug-flags"},
+            now=now,
+            namespace=namespace,
+        )
+
+    events = [
+        event for event in state.mutations.extra_events
+        if event["reason"] == "Configured"
+    ]
+    assert [event["namespace"] for event in events] == ["tenant-a", "tenant-b"]
+    assert [event["count"] for event in events] == [1, 1]
+
+
+def test_deleted_resource_events_are_distinct_per_namespace(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    now = state.clock.now()
+
+    for namespace in ("tenant-a", "tenant-b"):
+        state.mutations.delete_resource(
+            "configmaps",
+            "debug-flags",
+            now=now,
+            namespace=namespace,
+        )
+
+    events = [
+        event for event in state.mutations.extra_events
+        if event["reason"] == "Deleted"
+    ]
+    assert [event["namespace"] for event in events] == ["tenant-a", "tenant-b"]
+    assert [event["count"] for event in events] == [1, 1]
+
+
 def test_deleted_pods_are_reconciled_with_replacement_pods(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     before = [
@@ -728,6 +769,43 @@ def test_command_trace_import_rejects_non_object_trace_entries():
         store.import_payload(payload)
 
     assert store.count() == 0
+
+
+def test_command_trace_memory_import_bumps_version_for_same_sized_replacement():
+    store = server.CommandTraceStore()
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+    store.record(_trace(2, "2026-06-25T12:02:00Z", "kubectl get services"))
+    version_before_import = store.version
+
+    result = store.import_payload({
+        "traces": [
+            _trace(3, "2026-06-25T12:03:00Z", "kubectl get deployments").to_dict(),
+            _trace(4, "2026-06-25T12:04:00Z", "kubectl get configmaps").to_dict(),
+        ],
+    })
+
+    assert result["trace_count"] == 2
+    assert store.version > version_before_import
+    assert [item["id"] for item in store.list()] == [4, 3]
+
+
+def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tmp_path):
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+    store.record(_trace(2, "2026-06-25T12:02:00Z", "kubectl get services"))
+    version_before_import = store.version
+
+    result = store.import_payload({
+        "traces": [
+            _trace(3, "2026-06-25T12:03:00Z", "kubectl get deployments").to_dict(),
+            _trace(4, "2026-06-25T12:04:00Z", "kubectl get configmaps").to_dict(),
+        ],
+    })
+
+    assert result["trace_count"] == 2
+    assert store.version > version_before_import
+    assert [item["id"] for item in store.list()] == [4, 3]
 
 
 def test_command_trace_sqlite_search_reports_backend_and_schema(amc, tmp_path):
