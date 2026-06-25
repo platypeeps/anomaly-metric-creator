@@ -345,7 +345,8 @@ Supported command families in server mode:
 - `kubectl auth can-i`
 - `kubectl get all|namespaces|pods|configmaps|secrets|deployments|replicasets|daemonsets|services|endpoints|endpointslices|events|hpa|jobs|cronjobs|serviceaccounts|nodes|pvc|statefulsets|ingress`
 - `kubectl describe` for the same synthetic resources where a description is useful
-- `kubectl logs POD`
+- `kubectl logs POD` and selector-based logs with `-f/--follow`,
+  `--prefix`, `--previous`, `-c/--container`, `--tail`, and `--since-time`
 - `kubectl top pods|nodes`
 - `kubectl rollout status|history|restart deployment/NAME`
 - `kubectl scale`, `delete`, `apply`, and `create` with scenario-aware mutable simulator state
@@ -369,6 +370,7 @@ KUBECONFIG=/tmp/amc.kubeconfig kubectl get pods -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl get all -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl api-resources
 KUBECONFIG=/tmp/amc.kubeconfig kubectl logs cacheservice-0 -n saas-prod
+KUBECONFIG=/tmp/amc.kubeconfig kubectl logs -l app.kubernetes.io/name=cacheservice --prefix -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl top pods -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl auth can-i get pods -n saas-prod
 

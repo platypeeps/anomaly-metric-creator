@@ -1740,13 +1740,13 @@ def load_anomaly_rows(path: Path) -> list[dict[str, str]]:
 _VALUE_FLAGS = {
     "-n", "--namespace", "-o", "--output", "-l", "--selector",
     "--context", "--kubeconfig", "-c", "--container", "--tail", "--since",
-    "--field-selector", "--sort-by", "--for", "--timeout", "--replicas",
+    "--since-time", "--field-selector", "--sort-by", "--for", "--timeout", "--replicas",
     "-f", "--filename", "--from-literal", "--from-file", "--image", "--schedule",
     "--set", "--set-string", "--values",
 }
 _BOOL_FLAGS = {
     "-A", "--all-namespaces", "--previous", "-p", "--follow",
-    "--watch", "-w", "--wide", "--show-labels", "--dry-run", "--install",
+    "--prefix", "--watch", "-w", "--wide", "--show-labels", "--dry-run", "--install",
     "--atomic", "--debug", "--all", "--short", "--",
 }
 _SENSITIVE_FLAG_TOKENS = ("token", "password", "secret", "client-key")
@@ -1764,7 +1764,7 @@ _MODELED_FLAGS = {
     "-o", "--output",
     "-l", "--selector",
     "-c", "--container",
-    "--tail", "--since", "--follow",
+    "--tail", "--since", "--since-time", "--follow", "--prefix",
     "--previous", "-p",
     "--wide", "--show-labels",
     "--field-selector", "--sort-by", "--for", "--timeout",
@@ -2213,8 +2213,8 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
             return _render_describe(state, kind, parsed)
         return _unsupported(parsed, f"kubectl describe {kind or '<missing-kind>'}")
     if parsed.verb == "logs":
-        if parsed.resource_name:
-            return CommandResult(0, _render_logs(state, parsed), "", "supported", "kubectl.logs.pod")
+        if parsed.resource_name or _logs_uses_selector(parsed):
+            return _render_logs_command(state, parsed)
         return CommandResult(1, "", "error: expected pod name for logs\n", "partial", "kubectl.logs.missing-pod")
     if parsed.verb == "top":
         if kind in {"pods", "nodes"}:
@@ -3065,19 +3065,131 @@ def _render_describe(state: SimulationState, kind: str, parsed: ParsedCommand) -
     return _unsupported(parsed, f"kubectl describe {kind}")
 
 
-def _render_logs(state: SimulationState, parsed: ParsedCommand) -> str:
-    component = _component_from_name(parsed.resource_name, state.components)
-    lines = []
+def _logs_uses_selector(parsed: ParsedCommand) -> bool:
+    return bool(parsed.flags.get("-l") or parsed.flags.get("--selector"))
+
+
+def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
+    pods = _logs_target_pods(state, parsed)
+    container = _logs_container_name(parsed)
+    if container:
+        for pod in pods:
+            if container != pod["component"]:
+                return CommandResult(
+                    1,
+                    "",
+                    f'error: container "{container}" is not valid for pod "{pod["name"]}"\n',
+                    "partial",
+                    "kubectl.logs.container",
+                )
+    since_time = _logs_since_time(parsed)
+    if isinstance(since_time, str):
+        return CommandResult(
+            1,
+            "",
+            f'error: invalid --since-time value "{since_time}"\n',
+            "partial",
+            "kubectl.logs.since-time",
+        )
+    tail_limit = _logs_tail_limit(parsed)
+    if isinstance(tail_limit, str):
+        return CommandResult(
+            1,
+            "",
+            f'error: invalid --tail value "{tail_limit}"\n',
+            "partial",
+            "kubectl.logs.tail",
+        )
+    rule_id = "kubectl.logs.selector" if _logs_uses_selector(parsed) else "kubectl.logs.pod"
+    return CommandResult(
+        0,
+        _render_logs(state, parsed, pods=pods, since_time=since_time, tail_limit=tail_limit),
+        "",
+        "supported",
+        rule_id,
+    )
+
+
+def _logs_target_pods(state: SimulationState, parsed: ParsedCommand) -> list[dict[str, Any]]:
+    resources = resource_snapshot(state)
+    if parsed.resource_name:
+        pod = _find_named(resources["pods"], parsed.resource_name)
+        if pod is not None:
+            return [pod]
+        component = _component_from_name(parsed.resource_name, state.components) or parsed.resource_name
+        return [{"name": parsed.resource_name, "component": component}]
+    return _filter_snapshot_rows("pods", resources["pods"], parsed)
+
+
+def _logs_container_name(parsed: ParsedCommand) -> str:
+    return str(parsed.flags.get("-c") or parsed.flags.get("--container") or "")
+
+
+def _logs_since_time(parsed: ParsedCommand) -> _dt.datetime | str | None:
+    raw = parsed.flags.get("--since-time")
+    if raw is None:
+        return None
+    with contextlib.suppress(ValueError):
+        return _parse_user_timestamp(str(raw))
+    return str(raw)
+
+
+def _logs_tail_limit(parsed: ParsedCommand) -> int | None | str:
+    raw = parsed.flags.get("--tail")
+    if raw is None:
+        return 20
+    with contextlib.suppress(ValueError):
+        value = int(str(raw))
+        return None if value < 0 else value
+    return str(raw)
+
+
+def _render_logs(
+    state: SimulationState,
+    parsed: ParsedCommand,
+    *,
+    pods: list[dict[str, Any]] | None = None,
+    since_time: _dt.datetime | None = None,
+    tail_limit: int | None = 20,
+) -> str:
+    target_pods = pods if pods is not None else _logs_target_pods(state, parsed)
+    log_time = state.clock.now()
+    if since_time is not None and since_time > log_time:
+        return ""
+    now = _format_dt(log_time)
+    rendered: list[str] = []
+    for pod in target_pods:
+        rendered.extend(_render_pod_logs(state, parsed, pod, timestamp=now, tail_limit=tail_limit))
+    return "".join(rendered)
+
+
+def _render_pod_logs(
+    state: SimulationState,
+    parsed: ParsedCommand,
+    pod: dict[str, Any],
+    *,
+    timestamp: str,
+    tail_limit: int | None,
+) -> list[str]:
+    component = pod["component"]
+    lines: list[str] = []
     for profile in state.profiles():
         if component in profile.affected_components:
             lines.extend(profile.logs)
     if not lines:
         lines = [
-            f"{component or parsed.resource_name} health probe ok",
-            f"{component or parsed.resource_name} processed request batch without anomaly",
+            f"{component} health probe ok",
+            f"{component} processed request batch without anomaly",
         ]
-    now = _format_dt(state.clock.now())
-    return "".join(f"{now} {line}\n" for line in lines[-20:])
+    prefix = ""
+    if parsed.flags.get("--prefix"):
+        container = _logs_container_name(parsed) or component
+        prefix = f"{pod['name']}/{container} "
+    if parsed.flags.get("--previous") or parsed.flags.get("-p"):
+        prefix += "previous "
+    if tail_limit is not None:
+        lines = lines[-tail_limit:] if tail_limit else []
+    return [f"{timestamp} {prefix}{line}\n" for line in lines]
 
 
 def _render_top(state: SimulationState, kind: str) -> str:
