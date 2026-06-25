@@ -68,7 +68,13 @@ def _pod_name(component):
     return "database-0" if component == "database" else f"{component}-0"
 
 
-def _trace(trace_id, timestamp, raw_input="kubectl get pods -n saas-prod"):
+def _trace(
+    trace_id,
+    timestamp,
+    raw_input="kubectl get pods -n saas-prod",
+    *,
+    active_scenarios=("cache_leak_restart",),
+):
     return server.CommandTrace(
         id=trace_id,
         received_at_wall_time=timestamp,
@@ -84,7 +90,7 @@ def _trace(trace_id, timestamp, raw_input="kubectl get pods -n saas-prod"):
         parsed_flags={"namespace": "saas-prod"},
         support_status="supported",
         matched_rule_id="kubectl.get.pods",
-        active_scenarios=("cache_leak_restart",),
+        active_scenarios=active_scenarios,
         exit_code=0,
         stdout_preview="",
         stderr_preview="",
@@ -830,6 +836,38 @@ def test_command_trace_sqlite_search_reports_backend_and_schema(amc, tmp_path):
         ).fetchone()
     assert schema_version is not None
     assert int(schema_version[0]) >= 1
+
+
+def test_command_trace_sqlite_scenario_filter_matches_exact_membership(tmp_path):
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.record(_trace(
+        1,
+        "2026-06-25T12:01:00Z",
+        "kubectl get pods -n saas-prod",
+        active_scenarios=("cache",),
+    ))
+    store.record(_trace(
+        2,
+        "2026-06-25T12:02:00Z",
+        "kubectl get services -n saas-prod",
+        active_scenarios=("cache_leak_restart",),
+    ))
+
+    search = store.search(scenario_id="cache")
+    fallback = store._search_sqlite_like_fallback(
+        query="kubectl get",
+        support_status="",
+        command_family="",
+        scenario_id="cache",
+        limit=10,
+        offset=0,
+    )
+
+    assert search["total"] == 1
+    assert [item["id"] for item in search["items"]] == [1]
+    assert fallback["total"] == 1
+    assert [item["id"] for item in fallback["items"]] == [1]
 
 
 def test_command_trace_sqlite_restart_searches_beyond_ring_size(amc, tmp_path):

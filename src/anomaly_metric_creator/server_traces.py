@@ -564,8 +564,8 @@ class CommandTraceStore:
             where.append("command_family = ?")
             params.append(command_family)
         if scenario_id:
-            where.append("active_scenarios_json LIKE ?")
-            params.append(f"%{scenario_id}%")
+            where.append("active_scenarios_json LIKE ? ESCAPE '\\'")
+            params.append(_sqlite_json_string_like_pattern(scenario_id))
         where_sql = "WHERE " + " AND ".join(where) if where else ""
         try:
             with self._connect() as conn:
@@ -623,8 +623,8 @@ class CommandTraceStore:
             where.append("command_family = ?")
             params.append(command_family)
         if scenario_id:
-            where.append("active_scenarios_json LIKE ?")
-            params.append(f"%{scenario_id}%")
+            where.append("active_scenarios_json LIKE ? ESCAPE '\\'")
+            params.append(_sqlite_json_string_like_pattern(scenario_id))
         where_sql = "WHERE " + " AND ".join(where)
         with self._connect() as conn:
             total_row = conn.execute(
@@ -736,6 +736,17 @@ def _sqlite_fts_query(query: str) -> str:
         return '""'
     escaped = value.replace('"', '""')
     return f'"{escaped}"'
+
+
+def _sqlite_json_string_like_pattern(value: str) -> str:
+    quoted = json.dumps(str(value))
+    escaped = (
+        quoted
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"%{escaped}%"
 
 
 def _unsupported_summary_from_traces(traces: list[CommandTrace]) -> list[dict[str, Any]]:
