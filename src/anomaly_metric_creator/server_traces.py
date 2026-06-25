@@ -253,11 +253,11 @@ class CommandTraceStore:
         traces_payload = payload.get("traces")
         if not isinstance(traces_payload, list):
             raise ValueError("trace import payload must include a traces list")
-        traces = [
-            CommandTrace.from_dict(item)
-            for item in traces_payload
-            if isinstance(item, dict)
-        ]
+        traces = []
+        for index, item in enumerate(traces_payload):
+            if not isinstance(item, dict):
+                raise ValueError(f"trace import entry {index} must be an object")
+            traces.append(CommandTrace.from_dict(item))
         if self._sqlite_path is not None:
             self._replace_sqlite_traces(traces)
         else:

@@ -125,6 +125,27 @@ def test_load_trace_bundle_and_summary_counts_exported_traces(trace_bundle_path)
     assert summary["top_unsupported"][1]["fingerprint"] == "kubectl.debug"
 
 
+def test_summarize_trace_bundle_uses_timestamp_bounds_for_reordered_traces(tmp_path):
+    traces = [
+        _trace(4, "helm get manifest checkout -n saas-prod").to_dict(),
+        _trace(1, "kubectl get pods -n saas-prod").to_dict(),
+    ]
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "trace_count": len(traces),
+        "traces": traces,
+    }
+    path = tmp_path / "reordered-command-traces.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = trace_bundle.summarize_trace_bundle(trace_bundle.load_trace_bundle(path))
+
+    assert summary["first_seen"] == "2026-06-25T12:01:00Z"
+    assert summary["last_seen"] == "2026-06-25T12:04:00Z"
+
+
 def test_search_trace_bundle_reuses_server_filters(trace_bundle_path):
     bundle = trace_bundle.load_trace_bundle(trace_bundle_path)
 
@@ -254,4 +275,19 @@ def test_load_trace_bundle_rejects_non_object_trace_entries(tmp_path):
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(ValueError, match="trace entry 1 must be an object"):
+        trace_bundle.load_trace_bundle(path)
+
+
+def test_load_trace_bundle_rejects_invalid_trace_count(tmp_path):
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "trace_count": None,
+        "traces": [_trace(1, "kubectl get pods -n saas-prod").to_dict()],
+    }
+    path = tmp_path / "invalid-trace-count.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="trace bundle trace_count must be an integer"):
         trace_bundle.load_trace_bundle(path)

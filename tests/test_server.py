@@ -715,6 +715,21 @@ def test_command_trace_jsonl_persistence_writes_under_store_lock(tmp_path, monke
     assert json.loads(writes[0])["id"] == 1
 
 
+def test_command_trace_import_rejects_non_object_trace_entries():
+    store = server.CommandTraceStore()
+    payload = {
+        "traces": [
+            _trace(1, "2026-06-25T12:01:00Z").to_dict(),
+            "not-a-trace-object",
+        ],
+    }
+
+    with pytest.raises(ValueError, match="trace import entry 1 must be an object"):
+        store.import_payload(payload)
+
+    assert store.count() == 0
+
+
 def test_command_trace_sqlite_search_reports_backend_and_schema(amc, tmp_path):
     db_path = tmp_path / "commands.sqlite"
     state = _build_state(

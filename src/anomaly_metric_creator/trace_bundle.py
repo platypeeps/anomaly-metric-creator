@@ -62,7 +62,13 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
             raise ValueError(f"trace entry {index} must be an object")
         traces_list.append(CommandTrace.from_dict(item))
     traces = tuple(traces_list)
-    declared_count = int(payload.get("trace_count", len(traces)))
+    raw_declared_count = payload.get("trace_count", len(traces))
+    try:
+        declared_count = int(raw_declared_count)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"trace bundle trace_count must be an integer; got {raw_declared_count!r}"
+        ) from exc
     if declared_count != len(traces):
         raise ValueError(
             f"trace bundle trace_count is {declared_count}, but traces has "
@@ -87,8 +93,9 @@ def summarize_trace_bundle(bundle: TraceBundle) -> dict[str, Any]:
         for trace in bundle.traces
         for scenario_id in trace.active_scenarios
     )
-    first_seen = bundle.traces[0].received_at_wall_time if bundle.traces else ""
-    last_seen = bundle.traces[-1].received_at_wall_time if bundle.traces else ""
+    timestamps = [trace.received_at_wall_time for trace in bundle.traces]
+    first_seen = min(timestamps) if timestamps else ""
+    last_seen = max(timestamps) if timestamps else ""
     return {
         "path": str(bundle.path),
         "kind": bundle.kind,
