@@ -3123,13 +3123,10 @@ def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> Comma
 
 
 def _logs_target_pods(state: SimulationState, parsed: ParsedCommand) -> list[dict[str, Any]]:
-    resources = resource_snapshot(state)
     if parsed.resource_name:
-        pod = _find_named(resources["pods"], parsed.resource_name)
-        if pod is not None:
-            return [pod]
         component = _component_from_name(parsed.resource_name, state.components) or parsed.resource_name
         return [{"name": parsed.resource_name, "component": component}]
+    resources = resource_snapshot(state)
     return _filter_snapshot_rows("pods", resources["pods"], parsed)
 
 

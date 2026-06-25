@@ -157,8 +157,13 @@ def test_kubectl_logs_label_selector_renders_matching_pod_logs(amc, tmp_path):
     assert "cacheservice-0" not in logs["result"]["stdout"]
 
 
-def test_kubectl_logs_named_pod_takes_precedence_over_selector(amc, tmp_path):
+def test_kubectl_logs_named_pod_takes_precedence_over_selector(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    def fail_snapshot(_state):
+        raise AssertionError("named pod logs should not build a resource snapshot")
+
+    monkeypatch.setattr(server, "resource_snapshot", fail_snapshot)
 
     logs = server.run_command(
         state,
