@@ -141,9 +141,9 @@ class CommandTraceStore:
             self._version += 1
             persist_path = self._persist_path
             sqlite_path = self._sqlite_path
-        if persist_path is not None:
-            with open(persist_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(trace.to_dict(), sort_keys=True) + "\n")
+            if persist_path is not None:
+                with open(persist_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(trace.to_dict(), sort_keys=True) + "\n")
         if sqlite_path is not None:
             self._insert_sqlite(trace)
 
@@ -746,7 +746,8 @@ def _unsupported_summary_from_traces(traces: list[CommandTrace]) -> list[dict[st
             },
         )
         group["count"] += 1
-        group["last_seen"] = trace.received_at_wall_time
+        group["first_seen"] = min(group["first_seen"], trace.received_at_wall_time)
+        group["last_seen"] = max(group["last_seen"], trace.received_at_wall_time)
         group["support_statuses"][trace.support_status] += 1
         if len(group["examples"]) < 5:
             group["examples"].append({

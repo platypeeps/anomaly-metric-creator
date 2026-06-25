@@ -4,7 +4,11 @@ import json
 import pytest
 
 from anomaly_metric_creator import trace_bundle
-from anomaly_metric_creator.server_traces import COMMAND_TRACE_EXPORT_VERSION, CommandTrace
+from anomaly_metric_creator.server_traces import (
+    COMMAND_TRACE_EXPORT_VERSION,
+    CommandTrace,
+    unsupported_summary_from_traces,
+)
 
 
 def _trace(
@@ -165,6 +169,28 @@ def test_unsupported_summary_groups_partial_and_unsupported_traces(trace_bundle_
     )
 
 
+def test_unsupported_summary_uses_timestamp_bounds_for_newest_first_traces():
+    traces = [
+        _trace(
+            2,
+            "kubectl debug pod/apigateway-0 -n saas-prod",
+            support_status="unsupported",
+            fingerprint="kubectl.debug",
+        ),
+        _trace(
+            1,
+            "kubectl debug pod/database-0 -n saas-prod",
+            support_status="unsupported",
+            fingerprint="kubectl.debug",
+        ),
+    ]
+
+    summary = unsupported_summary_from_traces(traces)
+
+    assert summary[0]["first_seen"] == "2026-06-25T12:01:00Z"
+    assert summary[0]["last_seen"] == "2026-06-25T12:02:00Z"
+
+
 def test_write_trace_bundle_csv_flattens_searchable_trace_fields(
     trace_bundle_path,
     tmp_path,
@@ -212,3 +238,20 @@ def test_trace_bundle_cli_rejects_non_export_payload(tmp_path):
 
     with pytest.raises(SystemExit):
         trace_bundle.main(["summary", str(path)])
+
+
+def test_load_trace_bundle_rejects_non_object_trace_entries(tmp_path):
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "traces": [
+            _trace(1, "kubectl get pods -n saas-prod").to_dict(),
+            "not-a-trace-object",
+        ],
+    }
+    path = tmp_path / "malformed-command-traces.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="trace entry 1 must be an object"):
+        trace_bundle.load_trace_bundle(path)

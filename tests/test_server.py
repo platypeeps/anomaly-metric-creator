@@ -1,4 +1,5 @@
 import base64
+import builtins
 import contextlib
 import datetime as _dt
 import gzip
@@ -65,6 +66,34 @@ def _get_json_with_headers(url, headers):
 
 def _pod_name(component):
     return "database-0" if component == "database" else f"{component}-0"
+
+
+def _trace(trace_id, timestamp, raw_input="kubectl get pods -n saas-prod"):
+    return server.CommandTrace(
+        id=trace_id,
+        received_at_wall_time=timestamp,
+        simulated_time=timestamp,
+        raw_input=raw_input,
+        argv=tuple(raw_input.split()),
+        client="debug-ui",
+        command_family="kubectl",
+        verb="get",
+        resource_kind="pods",
+        resource_name="",
+        namespace="saas-prod",
+        parsed_flags={"namespace": "saas-prod"},
+        support_status="supported",
+        matched_rule_id="kubectl.get.pods",
+        active_scenarios=("cache_leak_restart",),
+        exit_code=0,
+        stdout_preview="",
+        stderr_preview="",
+        stdout="",
+        stderr="",
+        latency_ms=12.5,
+        fingerprint="kubectl.get.pods",
+        guessed_intent="Inspect pods",
+    )
 
 
 @contextlib.contextmanager
@@ -653,6 +682,37 @@ def test_command_trace_sqlite_persistence_and_search(amc, tmp_path):
     summary = restored.traces.unsupported_summary()
     assert summary[0]["count"] == 1
     assert "kubectl debug" in summary[0]["fingerprint"]
+
+
+def test_command_trace_jsonl_persistence_writes_under_store_lock(tmp_path, monkeypatch):
+    persist_path = tmp_path / "commands.jsonl"
+    store = server.CommandTraceStore(persist_path=persist_path)
+    writes = []
+
+    class _CaptureFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def write(self, line):
+            assert store._lock.locked()
+            writes.append(line)
+
+    def _open(path, mode, *, encoding=None):
+        assert path == persist_path
+        assert mode == "a"
+        assert encoding == "utf-8"
+        assert store._lock.locked()
+        return _CaptureFile()
+
+    monkeypatch.setattr(builtins, "open", _open)
+
+    store.record(_trace(1, "2026-06-25T12:01:00Z"))
+
+    assert len(writes) == 1
+    assert json.loads(writes[0])["id"] == 1
 
 
 def test_command_trace_sqlite_search_reports_backend_and_schema(amc, tmp_path):
