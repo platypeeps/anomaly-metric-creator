@@ -550,6 +550,37 @@ def test_kubectl_explain_projects_common_resource_schemas(amc, tmp_path):
     assert unknown_resource["result"]["matched_rule_id"] == "kubectl.explain.unsupported"
 
 
+def test_openapi_schema_generation_reuses_resource_snapshot(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    original_resource_snapshot = server._server_ops.resource_snapshot
+    snapshot_calls = 0
+
+    def counted_resource_snapshot(snapshot_state):
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        return original_resource_snapshot(snapshot_state)
+
+    monkeypatch.setattr(server._server_ops, "resource_snapshot", counted_resource_snapshot)
+
+    discovery = server.kubernetes_api_response(state, "GET", "/openapi/v3", {}, "")
+    assert discovery is not None
+    assert discovery.status == 200
+    assert snapshot_calls == 0
+
+    openapi_v2 = server.kubernetes_api_response(state, "GET", "/openapi/v2", {}, "")
+    assert openapi_v2 is not None
+    assert openapi_v2.status == 200
+    assert "io.k8s.api.core.v1.Pod" in openapi_v2.body["definitions"]
+    assert snapshot_calls == 1
+
+    snapshot_calls = 0
+    openapi_v3 = server.kubernetes_api_response(state, "GET", "/openapi/v3/api/v1", {}, "")
+    assert openapi_v3 is not None
+    assert openapi_v3.status == 200
+    assert "io.k8s.api.core.v1.Pod" in openapi_v3.body["components"]["schemas"]
+    assert snapshot_calls == 1
+
+
 def test_kubectl_delete_ingress_uses_stable_resource_prefix(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 

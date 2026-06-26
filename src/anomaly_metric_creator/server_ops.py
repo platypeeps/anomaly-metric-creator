@@ -2838,13 +2838,17 @@ def _render_explain(state: SimulationState, parsed: ParsedCommand) -> CommandRes
     )
 
 
-def _explain_schema_for_kind(state: SimulationState, kind: str) -> dict[str, Any] | None:
+def _explain_schema_for_kind(
+    state: SimulationState,
+    kind: str,
+    snapshot: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any] | None:
     target = _EXPLAIN_RESOURCE_TARGETS.get(kind)
     if target is None:
         return None
     group, version, resource = target
     meta = _k8s_resource_meta(group, version, resource)
-    objects = _k8s_objects_for_resource(state, group, resource) or []
+    objects = _k8s_objects_for_resource(state, group, resource, snapshot=snapshot) or []
     sample = objects[0] if objects else _minimal_k8s_object(state, meta["api_version"], meta["kind"])
     schema = _openapi_schema_from_value(
         sample,
@@ -4329,12 +4333,13 @@ def _openapi_schema_definitions(
     version: str | None = None,
     ref_prefix: str,
 ) -> dict[str, Any]:
+    snapshot = resource_snapshot(state)
     definitions: dict[str, Any] = {}
     for kind, target in _EXPLAIN_RESOURCE_TARGETS.items():
         target_group, target_version, _resource = target
         if group is not None and (target_group != group or target_version != version):
             continue
-        schema_info = _explain_schema_for_kind(state, kind)
+        schema_info = _explain_schema_for_kind(state, kind, snapshot=snapshot)
         if schema_info is None:
             continue
         schema_name = _openapi_schema_name(schema_info["api_version"], schema_info["kind"])
@@ -5738,8 +5743,9 @@ def _k8s_objects_for_resource(
     state: SimulationState,
     group: str,
     resource: str,
+    snapshot: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]] | None:
-    snapshot = resource_snapshot(state)
+    snapshot = snapshot if snapshot is not None else resource_snapshot(state)
     if group == "metrics.k8s.io":
         if resource == "pods":
             return [_k8s_pod_metrics(state, pod) for pod in snapshot["pods"]]
@@ -5788,7 +5794,10 @@ def _k8s_objects_for_resource(
     if resource == "cronjobs" and group == "batch":
         return [_k8s_cronjob(state, cronjob) for cronjob in snapshot["cronjobs"]]
     if resource == "endpointslices" and group == "discovery.k8s.io":
-        return [_k8s_endpointslice(state, endpointslice) for endpointslice in snapshot["endpointslices"]]
+        return [
+            _k8s_endpointslice(state, endpointslice, snapshot=snapshot)
+            for endpointslice in snapshot["endpointslices"]
+        ]
     if resource == "ingresses" and group == "networking.k8s.io":
         return [_k8s_ingress(state, ingress) for ingress in snapshot["ingress"]]
     return None
@@ -6177,10 +6186,15 @@ def _k8s_ingress(state: SimulationState, ingress: dict[str, Any]) -> dict[str, A
     }
 
 
-def _k8s_endpointslice(state: SimulationState, endpointslice: dict[str, Any]) -> dict[str, Any]:
+def _k8s_endpointslice(
+    state: SimulationState,
+    endpointslice: dict[str, Any],
+    snapshot: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
     namespace = _snapshot_row_namespace(endpointslice, state.namespace)
+    snapshot = snapshot if snapshot is not None else resource_snapshot(state)
     pods = [
-        pod for pod in resource_snapshot(state)["pods"]
+        pod for pod in snapshot["pods"]
         if pod["component"] == endpointslice["service"]
         and _snapshot_row_namespace(pod, state.namespace) == namespace
     ]
