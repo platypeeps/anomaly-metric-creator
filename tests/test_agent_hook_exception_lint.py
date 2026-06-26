@@ -80,6 +80,32 @@ def test_base_exception_exits_one(tmp_path: Path) -> None:
     assert "BaseException" in result.stderr
 
 
+def test_base_exception_tuple_exits_one(tmp_path: Path) -> None:
+    path = _hook(
+        tmp_path,
+        "try:\n    risky()\n"
+        "except (ValueError, BaseException) as exc:\n"
+        "    raise exc\n",
+    )
+    result = _run(path)
+    assert result.returncode == 1
+    assert "BaseException" in result.stderr
+
+
+@pytest.mark.parametrize("exception_name", ["BaseExceptionGroup", "MyBaseException"])
+def test_base_exception_substring_names_exit_zero(
+    tmp_path: Path, exception_name: str
+) -> None:
+    path = _hook(
+        tmp_path,
+        "try:\n    risky()\n"
+        f"except {exception_name} as exc:\n"
+        "    raise exc\n",
+    )
+    result = _run(path)
+    assert result.returncode == 0, result.stderr
+
+
 def test_bare_except_exits_one(tmp_path: Path) -> None:
     path = _hook(
         tmp_path,

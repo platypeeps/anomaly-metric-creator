@@ -58,16 +58,19 @@ def _has_explanatory_comment(lines: list[str], handler: ast.ExceptHandler) -> bo
     return False
 
 
-def _handler_type_text(source: str, handler: ast.ExceptHandler) -> str:
-    if handler.type is None:
-        return ""
-    return ast.get_source_segment(source, handler.type) or ""
+def _catches_base_exception(node: ast.expr) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == "BaseException"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "BaseException"
+    if isinstance(node, ast.Tuple):
+        return any(_catches_base_exception(item) for item in node.elts)
+    return False
 
 
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, path: Path, source: str, lines: list[str]) -> None:
+    def __init__(self, path: Path, lines: list[str]) -> None:
         self.path = path
-        self.source = source
         self.lines = lines
         self.violations: list[str] = []
 
@@ -75,13 +78,12 @@ class _Visitor(ast.NodeVisitor):
         if _line_is_exempted(self.lines, node.lineno):
             return
 
-        type_text = _handler_type_text(self.source, node)
         if node.type is None:
             self.violations.append(
                 f"{self.path}:{node.lineno}: bare except catches BaseException; "
                 "catch Exception or a narrower expected exception instead."
             )
-        elif "BaseException" in type_text:
+        elif _catches_base_exception(node.type):
             self.violations.append(
                 f"{self.path}:{node.lineno}: except BaseException is forbidden "
                 "in agent hooks; catch Exception or a narrower expected "
@@ -106,7 +108,7 @@ def _check_file(path: Path) -> list[str]:
         offset = exc.offset or 0
         raise ValueError(f"{path}:{line}:{offset}: cannot parse Python: {exc.msg}") from exc
 
-    visitor = _Visitor(path, source, source.splitlines())
+    visitor = _Visitor(path, source.splitlines())
     visitor.visit(tree)
     return visitor.violations
 
