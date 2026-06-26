@@ -55,7 +55,7 @@ For multi-platform projects, place equivalent versions in other platform skill d
 If the content is a coding convention, write it to spec. Examples:
 
 ```text
-.trellis/spec/backend/error-handling.md
+.trellis/spec/amc/backend/error-handling.md
 .trellis/spec/frontend/components.md
 .trellis/spec/guides/cross-platform-thinking-guide.md
 ```
@@ -67,8 +67,8 @@ After writing it, update the corresponding `index.md` so AI can find the new rul
 After writing a spec, add it to the current task context:
 
 ```bash
-python3 ./.trellis/scripts/task.py add-context <task> implement ".trellis/spec/backend/error-handling.md" "Error handling conventions"
-python3 ./.trellis/scripts/task.py add-context <task> check ".trellis/spec/backend/error-handling.md" "Review error handling"
+python3 ./.trellis/scripts/task.py add-context <task> implement ".trellis/spec/amc/backend/error-handling.md" "Error handling conventions"
+python3 ./.trellis/scripts/task.py add-context <task> check ".trellis/spec/amc/backend/error-handling.md" "Review error handling"
 ```
 
 ## Do Not Store Project-Private Rules In `trellis-meta`

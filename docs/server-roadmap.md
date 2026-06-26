@@ -6,9 +6,9 @@ debugging UI. It is intended as a transfer note for a new agent session, not as
 the authoritative architecture guide.
 
 Authoritative implementation guidance now lives in
-[.trellis/spec/backend/index.md](../.trellis/spec/backend/index.md),
-especially [API, CLI, and Server](../.trellis/spec/backend/api-cli-server.md)
-and [Operations, Security, and Logging](../.trellis/spec/backend/operations-security-logging.md).
+[.trellis/spec/amc/backend/index.md](../.trellis/spec/amc/backend/index.md),
+especially [API, CLI, and Server](../.trellis/spec/amc/backend/api-cli-server.md)
+and [Operations, Security, and Logging](../.trellis/spec/amc/backend/operations-security-logging.md).
 [CLAUDE.md](../CLAUDE.md) remains expanded historical/source detail, and
 user-facing usage remains in [README.md](../README.md).
 
@@ -241,7 +241,7 @@ Use this prompt when transferring to a new session:
 
 ```text
 Continue work in /Users/sven/repos/personal/anomaly-metric-creator on PR 137.
-Read AGENTS.md, .trellis/spec/backend/index.md, the server-mode Trellis specs,
+Read AGENTS.md, .trellis/spec/amc/backend/index.md, the server-mode Trellis specs,
 and docs/server-roadmap.md.
 Check git status, PR 137 checks, and unresolved review threads. If CI is green,
 close out review-thread housekeeping or run real-client smoke tests if asked.
