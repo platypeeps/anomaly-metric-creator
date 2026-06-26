@@ -58,6 +58,10 @@ max_journal_lines: 2000
 # Trellis auto-detects workspaces during `trellis init`, but you can also
 # configure them manually here.
 #
+packages:
+  amc:
+    path: .
+
 # packages:
 #   frontend:
 #     path: packages/frontend
@@ -74,7 +78,7 @@ max_journal_lines: 2000
 #     git: true
 
 # Default package used when --package is not specified.
-# default_package: frontend
+default_package: amc
 
 #-------------------------------------------------------------------------------
 # Channel worker OOM guard

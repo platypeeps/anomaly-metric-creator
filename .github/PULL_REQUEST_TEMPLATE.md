@@ -9,8 +9,8 @@
 ## Pre-PR checklist
 
 <!--
-Mirrors the 14 review headings in .trellis/spec/backend/testing-quality.md and
-.trellis/spec/backend/documentation-review.md. CLAUDE.md remains expanded source
+Mirrors the 14 review headings in .trellis/spec/amc/backend/testing-quality.md and
+.trellis/spec/amc/backend/documentation-review.md. CLAUDE.md remains expanded source
 detail. For each item below: tick the box once you have confirmed it, or replace
 the box line with "N/A — _reason_".
 -->
