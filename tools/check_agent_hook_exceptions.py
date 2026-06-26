@@ -42,6 +42,10 @@ def _has_explanatory_comment(lines: list[str], handler: ast.ExceptHandler) -> bo
     if len(body) != 1 or not isinstance(body[0], ast.Pass):
         return True
 
+    except_line = lines[handler.lineno - 1] if 0 < handler.lineno <= len(lines) else ""
+    if "#" in except_line and except_line.split("#", 1)[1].strip():
+        return True
+
     pass_lineno = body[0].lineno
     pass_line = lines[pass_lineno - 1] if 0 < pass_lineno <= len(lines) else ""
     if "#" in pass_line and pass_line.split("#", 1)[1].strip():

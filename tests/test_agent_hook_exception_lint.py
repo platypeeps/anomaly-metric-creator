@@ -49,6 +49,17 @@ def test_comment_before_pass_exits_zero(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_except_line_comment_exits_zero(tmp_path: Path) -> None:
+    path = _hook(
+        tmp_path,
+        "try:\n    risky()\n"
+        "except Exception:  # Optional hook context; continue without it.\n"
+        "    pass\n",
+    )
+    result = _run(path)
+    assert result.returncode == 0, result.stderr
+
+
 def test_empty_pass_without_comment_exits_one(tmp_path: Path) -> None:
     path = _hook(tmp_path, "try:\n    risky()\nexcept Exception:\n    pass\n")
     result = _run(path)
