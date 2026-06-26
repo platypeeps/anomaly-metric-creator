@@ -12,8 +12,26 @@ repos:
       - id: ruff
         name: ruff F401 (tests/)
         files: ^tests/.*\.py$
+      # Catch unused local variables in runtime code, helper tools, and Python
+      # hook adapters. PR #137/#140 code-quality comments flagged this shape in
+      # non-test files, while the existing F401 hook intentionally remains
+      # scoped to tests/.
+      - id: ruff
+        name: ruff F841 (runtime/tools/hooks)
+        args: [--select, F841]
+        files: ^(src|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
   - repo: local
     hooks:
+      # Parse Python files without writing bytecode. `python -m py_compile`
+      # would also catch syntax errors, but it writes `__pycache__` entries
+      # beside generated hook files; this AST-only guard catches malformed
+      # Python before review without filesystem side effects.
+      - id: python-syntax
+        name: validate Python syntax without bytecode
+        entry: python tools/check_python_syntax.py
+        language: python
+        files: ^(src|tests|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
+        pass_filenames: true
       # Forbid duplicate `spec_from_file_location(...)` loads of
       # `anomaly-metric-creator.py` in tests/. The canonical loader
       # lives in `tests/conftest.py:_load_amc()` (memoized) and is
@@ -90,4 +108,34 @@ repos:
         entry: python tools/check_workflow_pip.py
         language: python
         files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: true
+      # Forbid `except BaseException` / bare `except` in generated Python hook
+      # adapters and require a short reason on intentionally empty
+      # `except Exception: pass` handlers. This keeps the PR #140 hook-adapter
+      # review lesson mechanical without enabling a broad repo-wide
+      # blind-except lint.
+      - id: agent-hook-exceptions
+        name: guard agent hook exception handlers
+        entry: python tools/check_agent_hook_exceptions.py
+        language: python
+        files: ^(\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
+        pass_filenames: true
+      # Forbid unfinished Trellis journal/task template placeholders in
+      # committed workspace artifacts. Session journals and task notes are repo
+      # history, not scratchpads, so fill template sections before committing.
+      - id: trellis-placeholders
+        name: forbid unfinished Trellis placeholders
+        entry: python tools/check_trellis_placeholders.py
+        language: python
+        files: ^\.trellis/(workspace|tasks)/.*\.(md|json|jsonl|ya?ml|toml)$
+        pass_filenames: true
+      # Keep command-trace JSON import/export boundaries strict. PR #140's
+      # trace review comments came from direct casts and silent filtering on
+      # untrusted trace payloads; these modules should use the shared helper
+      # validators instead.
+      - id: trace-payload-antipatterns
+        name: forbid trace payload validation anti-patterns
+        entry: python tools/check_trace_payload_antipatterns.py
+        language: python
+        files: ^src/anomaly_metric_creator/(server_traces|trace_bundle)\.py$
         pass_filenames: true

@@ -14,9 +14,23 @@ reloads recent traces on startup, supports bounded retention, uses FTS5 when
 available, and falls back to LIKE search otherwise. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`.
 
+JSONL append, SQLite insert, and SQLite history replacement are write paths in
+the threaded server and must be serialized with the trace-store locks. SQLite
+retention is authoritative when enabled, so trace lookup/search/list behavior
+must not surface records already trimmed from persisted history. Sources:
+`src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`.
+
 Online debug search and offline bundle search must use shared
 `trace_matches_search()` and `unsupported_summary_from_traces()` helpers so
 filters and unsupported grouping stay aligned. Sources: `CLAUDE.md`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
+`tests/test_trace_bundle.py`.
+
+Scenario filters must use exact membership semantics across memory, SQLite, and
+offline bundle search. Avoid substring matching against serialized scenario
+lists; fallback SQL search should match JSON-quoted ids, then defer to shared
+in-memory predicates when exactness cannot be guaranteed. Sources:
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
@@ -91,6 +105,14 @@ Sources: `CLAUDE.md`; `README.md`; `docs/server-roadmap.md`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_mutations.py`; `tests/test_server.py`.
+
+Frequently polled debug endpoints are hot paths. Avoid full anomaly-row copies,
+full resource snapshots, repeated static catalog fetches, and per-row clock
+reads when a cheaper snapshot, cached static response, or bounded slice would
+preserve the same user-visible behavior. Sources:
+`src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_debug_ui.py`;
+`src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`.
 
 Unsupported and partial commands should be captured and grouped by normalized
 fingerprint so real operator/tool behavior becomes a backlog for future command

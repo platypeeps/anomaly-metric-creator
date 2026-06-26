@@ -18,7 +18,11 @@ Consolidated repo agent guidance into path-cited Trellis specs, retained thin pl
 
 ### Main Changes
 
-(Add details)
+- Consolidated repo agent guidance into `.trellis/spec/backend/` and left
+  platform-specific files as thin Trellis adapters.
+- Archived the completed `06-25-consolidate-agent-docs-trellis` task after PR
+  #140 merged.
+- Recorded the finish-work journal entry on `main`.
 
 ### Git Commits
 
@@ -28,7 +32,8 @@ Consolidated repo agent guidance into path-cited Trellis specs, retained thin pl
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `.venv/bin/pre-commit run --all-files`
+- [OK] `python3 ./.trellis/scripts/get_context.py`
 
 ### Status
 
