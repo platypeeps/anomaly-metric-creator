@@ -227,3 +227,45 @@ Added kubectl explain OpenAPI support and addressed PR review feedback for api-v
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Trellis journal placeholder CI fix
+
+**Date**: 2026-06-26
+**Task**: Trellis journal placeholder CI fix
+**Package**: amc
+**Branch**: `codex/kubectl-explain-openapi`
+
+### Summary
+
+Filled Trellis journal placeholders that caused the PR CI placeholder-lint failure.
+
+### Main Changes
+
+- Filled the generated Session 5 `Main Changes` and `Testing` placeholders in
+  `.trellis/workspace/sdelmas/journal-1.md`.
+- Confirmed the CI failure was limited to the Trellis placeholder lint after
+  the journal commit, with no additional OpenAPI code changes needed.
+- Pushed the focused journal cleanup commit so the PR could rerun CI on a
+  placeholder-free workspace journal.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9a8acd4` | (see git log) |
+
+### Testing
+
+- [OK] `.venv/bin/pytest tests/test_trellis_placeholder_lint.py -q`
+- [OK] `git diff --check`
+- [OK] Live PR checks on `9a8acd4` passed for CodeQL, Socket, Python 3.11, and
+  Python 3.12.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
