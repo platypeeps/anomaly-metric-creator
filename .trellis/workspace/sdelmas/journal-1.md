@@ -76,3 +76,38 @@ Addressed PR 142 review feedback for hook-lint test string concatenation and AST
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Convert Trellis setup to monorepo
+
+**Date**: 2026-06-26
+**Task**: Convert Trellis setup to monorepo
+**Package**: amc
+**Branch**: `codex/trellis-monorepo-setup`
+
+### Summary
+
+Converted Trellis to package-scoped monorepo mode with amc as the default package, moved backend specs under .trellis/spec/amc/backend, updated docs and platform references, opened PR #146, and addressed Copilot feedback about stale spec paths.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d7cffb0` | (see git log) |
+| `399cc66` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
