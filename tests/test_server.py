@@ -486,6 +486,54 @@ def test_expanded_kubectl_and_helm_command_coverage(amc, tmp_path):
     assert "SucceededAfterRollback" in helm_test["result"]["stdout"]
 
 
+def test_kubectl_explain_projects_common_resource_schemas(amc, tmp_path):
+    state = _build_state(
+        amc,
+        tmp_path,
+        scenarios="cache_leak_restart",
+        signal_level="high",
+        days=3,
+    )
+
+    pods = server.run_command(state, command="kubectl explain pods -n saas-prod")
+    assert pods["result"]["support_status"] == "supported"
+    assert pods["result"]["matched_rule_id"] == "kubectl.explain.pods"
+    assert "KIND:       Pod" in pods["result"]["stdout"]
+    assert "VERSION:    v1" in pods["result"]["stdout"]
+    assert "FIELDS:" in pods["result"]["stdout"]
+    assert "spec" in pods["result"]["stdout"]
+
+    replicas = server.run_command(
+        state,
+        command="kubectl explain deployment.spec.replicas --api-version=apps/v1 -n saas-prod",
+    )
+    assert replicas["result"]["support_status"] == "supported"
+    assert "FIELD:      spec.replicas <integer>" in replicas["result"]["stdout"]
+    assert "spec.replicas field projected" in replicas["result"]["stdout"]
+
+    recursive = server.run_command(
+        state,
+        command="kubectl explain pods.spec --recursive -n saas-prod",
+    )
+    assert recursive["result"]["support_status"] == "supported"
+    assert "containers" in recursive["result"]["stdout"]
+    assert "image" in recursive["result"]["stdout"]
+
+    unknown_field = server.run_command(
+        state,
+        command="kubectl explain pods.spec.missingField -n saas-prod",
+    )
+    assert unknown_field["result"]["support_status"] == "partial"
+    assert unknown_field["result"]["matched_rule_id"] == "kubectl.explain.unknown-field"
+
+    unknown_resource = server.run_command(
+        state,
+        command="kubectl explain widgets.example.com -n saas-prod",
+    )
+    assert unknown_resource["result"]["support_status"] == "unsupported"
+    assert unknown_resource["result"]["matched_rule_id"] == "kubectl.explain.unsupported"
+
+
 def test_kubectl_delete_ingress_uses_stable_resource_prefix(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
@@ -983,7 +1031,7 @@ def test_command_trace_sqlite_restart_searches_beyond_ring_size(amc, tmp_path):
     )
 
     commands = [
-        "kubectl explain old-ring-marker -n saas-prod",
+        "kubectl diagnose old-ring-marker -n saas-prod",
         "kubectl auth can-i get pods -n saas-prod",
         "kubectl get services -n saas-prod",
         "helm status simulated-saas -n saas-prod",
@@ -1021,7 +1069,7 @@ def test_command_trace_sqlite_retention_limits_persisted_history(amc, tmp_path):
     )
 
     commands = [
-        "kubectl explain old-retention-marker -n saas-prod",
+        "kubectl diagnose old-retention-marker -n saas-prod",
         "kubectl get services -n saas-prod",
         "kubectl get deployments -n saas-prod",
         "helm status simulated-saas -n saas-prod",
@@ -2139,6 +2187,18 @@ def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
         version = _get_json(base_url + "/version")
         assert version["gitVersion"] == "v1.29.4-amc"
 
+        openapi_v2 = _get_json(base_url + "/openapi/v2")
+        pod_schema = openapi_v2["definitions"]["io.k8s.api.core.v1.Pod"]
+        assert pod_schema["x-kubernetes-group-version-kind"] == [
+            {"group": "", "version": "v1", "kind": "Pod"}
+        ]
+        assert "spec" in pod_schema["properties"]
+
+        openapi_v3 = _get_json(base_url + "/openapi/v3")
+        assert "api/v1" in openapi_v3["paths"]
+        core_schema = _get_json(base_url + "/openapi/v3/api/v1?hash=ignored")
+        assert "io.k8s.api.core.v1.Pod" in core_schema["components"]["schemas"]
+
         resources = _get_json(base_url + "/api/v1")
         core_resources = {item["name"]: set(item["verbs"]) for item in resources["resources"]}
         assert {"pods", "secrets", "configmaps", "serviceaccounts"} <= {
@@ -2212,6 +2272,11 @@ def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
 
         jobs = _get_json(base_url + "/apis/batch/v1/namespaces/saas-prod/jobs")
         assert jobs["items"][0]["metadata"]["name"] == "scheduler-backfill"
+
+        query = urllib.parse.urlencode({"family": "kubernetes-api", "q": "openapi/v2"})
+        search = _get_json(base_url + "/v1/debug/search?" + query)
+        assert search["total"] == 1
+        assert search["items"][0]["matched_rule_id"] == "k8s.openapi.v2"
 
         slices = _get_json(
             base_url + "/apis/discovery.k8s.io/v1/namespaces/saas-prod/endpointslices"
@@ -2370,6 +2435,8 @@ def test_real_kubectl_binary_smoke_when_available(amc, tmp_path):
             return result.stdout
 
         assert "cronjobs" in run_kubectl(["api-resources"])
+        assert "FIELDS:" in run_kubectl(["explain", "pods"])
+        assert "replicas" in run_kubectl(["explain", "deployment.spec"])
         assert "deployment" in run_kubectl(["get", "all", "-n", "saas-prod"])
         assert "scheduler-backfill" in run_kubectl(["get", "jobs", "-n", "saas-prod"])
         assert "cacheservice-slice" in run_kubectl(["get", "endpointslices", "-n", "saas-prod"])

@@ -90,7 +90,6 @@ model.
 
 Good next command/API targets:
 
-- `kubectl explain` for common resources and fields.
 - `kubectl diff` and dry-run flows for supported generic resources.
 - `kubectl patch` variants, including merge, strategic, and JSON patch shapes.
 - `kubectl apply -f` for multi-document YAML or JSON payloads.
@@ -109,6 +108,12 @@ Good next command/API targets:
   common incident workflows.
 - Helm install/upgrade flags such as `--atomic`, `--wait`, `--timeout`,
   `--reuse-values`, and `--reset-values`.
+
+Recently covered compatibility:
+
+- `kubectl explain RESOURCE[.field]` for common simulator-backed resources and
+  fields, plus minimal `/openapi/v2` and `/openapi/v3/...` schema endpoints for
+  real `kubectl explain` clients.
 
 Each new surface should add:
 
