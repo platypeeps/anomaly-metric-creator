@@ -106,7 +106,13 @@ Converted Trellis to package-scoped monorepo mode with amc as the default packag
 
 ### Main Changes
 
-(Add details)
+- Configured Trellis monorepo mode with `amc` as the default package at the
+  repository root.
+- Moved backend specs into `.trellis/spec/amc/backend/` and updated project
+  docs, PR templates, GitHub review instructions, server roadmap notes, and
+  local platform skill references to the package-scoped path.
+- Opened PR #146, addressed Copilot's stale-path review feedback, resolved the
+  review thread, and recorded this Trellis session.
 
 ### Git Commits
 
@@ -117,7 +123,11 @@ Converted Trellis to package-scoped monorepo mode with amc as the default packag
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `python3 ./.trellis/scripts/get_context.py --mode packages`
+- [OK] Hidden-directory stale-reference scan, excluding archived history and
+  intentional legacy-layout detector messages.
+- [OK] Markdown link check over changed docs/specs.
+- [OK] `find .trellis/spec -type f -name '*.md' -exec python3 tools/check_trellis_placeholders.py {} +`
 
 ### Status
 
