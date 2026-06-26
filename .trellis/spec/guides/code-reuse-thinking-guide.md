@@ -1,0 +1,69 @@
+# Code Reuse Thinking Guide
+
+## Search Before Creating
+
+Before adding a helper, constant, parser branch, registry, fixture, command
+renderer, or adapter rule, search for the existing owner and extend it when the
+new behavior is the same contract. Sources:
+`.trellis/spec/backend/architecture.md`;
+`.trellis/spec/backend/testing-quality.md`; `src/anomaly_metric_creator/`;
+`tests/`.
+
+Prefer existing registries and helper APIs over parallel maps:
+`COMPONENTS`, `SCENARIOS`, `DERIVATIONS`, `TOPOLOGY`,
+`_EMIT_ARTIFACT_FILES`, `_COMBINE_OUTPUT_FILENAME`,
+`_INSTANCE_DIMENSION_COLUMNS`, `resource_snapshot()`,
+`trace_matches_search()`, and `unsupported_summary_from_traces()`. Sources:
+`CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/trace_bundle.py`; `tests/test_registry.py`;
+`tests/test_server.py`; `tests/test_trace_bundle.py`.
+
+## Duplication Checks
+
+If the same untrusted payload field, JSON/JSONL record, command trace field,
+config key, or schema field is parsed in more than one place, create or reuse a
+single validator/normalizer/projection at the data boundary. Sources:
+`.trellis/spec/backend/api-cli-server.md`;
+`.trellis/spec/backend/operations-security-logging.md`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/trace_bundle.py`;
+`src/anomaly_metric_creator/server.py`; `tests/test_trace_bundle.py`;
+`tests/test_server.py`.
+
+When adding a new Kubernetes resource family, update all related aliases,
+snapshot builders, renderers, API lists, object/table helpers, mutation overlay
+handling, trace classification, and tests together. Sources:
+`.trellis/spec/backend/architecture.md`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_mutations.py`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+When adding a new scenario, metric, or component, update the canonical registry
+and its documented/tested lockstep surfaces in the same change. Sources:
+`.trellis/spec/backend/scenarios-and-data.md`;
+`src/anomaly_metric_creator/legacy.py`; `README.md`; `tests/conftest.py`;
+`tests/test_scenarios.py`; `tests/test_registry.py`; `tests/test_server.py`.
+
+## Adapter Rule
+
+Keep platform directories as Trellis adapters. Do not copy durable project
+rules into every Codex, Claude, Copilot, Gemini, or OpenCode file; put the rule
+in `.trellis/spec/` and have platform files load or point to Trellis. Sources:
+`.trellis/spec/backend/documentation-review.md`; `.agents/`; `.codex/`;
+`.claude/`; `.gemini/`; `.github/`; `.opencode/`.
+
+## Quick Checklist
+
+- Did I search for an existing owner before adding a new helper or constant?
+  Sources: `.trellis/spec/backend/index.md`; `src/anomaly_metric_creator/`.
+- Did I update the canonical registry/helper instead of creating a parallel
+  map? Sources: `src/anomaly_metric_creator/legacy.py`;
+  `src/anomaly_metric_creator/server_ops.py`; `tests/`.
+- Did I reuse shared trace/search/config/schema validators instead of local
+  casts? Sources: `src/anomaly_metric_creator/server_traces.py`;
+  `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_trace_bundle.py`.
+- Did I add or update a Trellis spec citation for any new convention? Sources:
+  `.trellis/spec/backend/documentation-review.md`;
+  `.trellis/tasks/06-25-consolidate-agent-docs-trellis/prd.md`.

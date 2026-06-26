@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Agent guide for the anomaly metric creator. The canonical implementation is
+Expanded historical/source guide for the anomaly metric creator. Canonical
+development conventions now live in `.trellis/spec/backend/index.md`; update
+the focused Trellis spec first when a durable rule changes. The canonical implementation is
 `src/anomaly_metric_creator/legacy.py`; the top-level `anomaly-metric-creator.py` is a
 thin compatibility shim that re-exports it and runs `main()`, and the installed `amc` /
 `anomaly-metric-creator` console scripts dispatch through `anomaly_metric_creator.cli`.
@@ -54,15 +56,20 @@ post-phase-9 CLI flag day and no longer parse. Canonical surface:
 - **Subcommands** (dispatched in `main()` before argparse on
   `argv[0]`): `generate` (the default when no subcommand token is
   given — every historic bare invocation is unchanged), `combine DIR
-  [--components ...]`, `validate DIR [--warn]`, and
-  `serve [server flags] [generate flags...]`.
+  [--components ...]`, `validate DIR [--warn]`,
+  `serve [server flags] [generate flags...]`, and
+  `trace-bundle {summary,search,unsupported,export-csv} BUNDLE`.
   The subcommands carry dedicated parsers
   (`_main_combine_subcommand` / `_main_validate_subcommand` /
-  `_main_serve_subcommand`). `combine` and `validate` never route
-  through `parse_args`; `serve` has a small server-flag parser and
-  forwards unrecognized flags to `parse_args` so the normal generation
-  surface (`--scenarios`, `--components`, `--otel-send`, etc.) stays
-  authoritative.
+  `_main_serve_subcommand` / `_main_trace_bundle_subcommand`).
+  `combine`, `validate`, and `trace-bundle` never route through
+  `parse_args`; `serve` has a small server-flag parser and forwards
+  unrecognized flags to `parse_args` so the normal generation surface
+  (`--scenarios`, `--components`, `--otel-send`, etc.) stays
+  authoritative. `trace-bundle` is offline-only tooling over JSON from
+  `GET /v1/debug/commands/export`: it summarizes, searches, groups
+  unsupported traces, and exports flattened CSV without starting the HTTP
+  server.
 - **`--emit ARTIFACTS`**: tokens
   `metrics, logs, traces, gauges, schema, combined` (default
   `metrics,logs,traces`). `combined` sets the internal `args.combine`
@@ -108,7 +115,19 @@ common-use-case flag, and extend `tests/test_cli_surface.py`.
 `src/anomaly_metric_creator/server.py` owns the stdlib HTTP server behind
 `amc serve`. Keep it out of `legacy.py` except for the dispatch hook:
 server mode is a runtime facade over the generator, not a second copy of
-generation behavior.
+generation behavior. Supporting server-mode modules now hold the lower-level
+surfaces that are safe to split without changing public imports:
+`server_traces.py` owns `CommandTrace` persistence/search, `server_mutations.py`
+owns the mutable overlay dataclasses and helpers, and `server_debug_ui.py` owns
+the inline debug shell. `server_ops.py` owns the ops simulation implementation:
+scenario profiles, simulator state, command parsing/rendering, resource
+snapshots, Kubernetes-compatible API objects, and Helm release Secret encoding.
+`server_commands.py`, `server_kubernetes.py`, and `server_helm.py` are focused
+facades over those ops surfaces for the roadmap boundaries. `server.py`
+intentionally re-exports their public names for compatibility with existing
+tests and ad-hoc imports.
+Offline trace-bundle analysis lives in `trace_bundle.py` and imports
+`server_traces.py` directly rather than the HTTP server facade.
 
 Lifecycle:
 
@@ -116,11 +135,15 @@ Lifecycle:
    passes the already-loaded legacy module.
 2. `serve_main()` parses server-only flags first (`--host`, `--port`,
    `--namespace`, `--debug-ring-size`, `--persist-command-log`,
-   `--persist-command-db`, `--auth-token`,
-   `--max-request-body-bytes`, `--allow-remote-without-auth`,
+   `--persist-command-db`, `--persist-command-retention`, `--config`,
+   `--auth-token`, `--max-request-body-bytes`, `--allow-remote-without-auth`,
+   `--cors-allow-origin`, `--rate-limit-per-minute`, `--structured-log`,
+   `--structured-log-file`,
    `--no-generate`, `--continuous-generate`,
    `--continuous-generate-interval-seconds`), then parses all remaining
-   flags with `parse_args`.
+   flags with `parse_args`. `--config` may point at JSON or YAML containing
+   `server` and `generate` maps; config values are converted to long flags
+   before parsing, and explicit CLI flags are appended afterward so they win.
 3. Unless `--no-generate` is set, it runs the normal generator once with
    `--otel-send none` appended so one-shot generation does not block on
    OTEL before the HTTP listener starts.
@@ -140,13 +163,24 @@ Lifecycle:
 The command simulator never shells out. `POST /v1/commands` accepts either
 `{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`;
 `parse_command()` uses `shlex` plus a small flag parser, and
-`render_command()` returns deterministic stdout/stderr/exit-code triples.
+`render_command()` returns deterministic stdout/stderr/exit-code triples. Keep
+that behavior in `server_ops.py` and expose command-specific entrypoints
+through `server_commands.py`; `server.py` should stay the HTTP/serve facade.
 Every call is recorded as a `CommandTrace` in a thread-safe ring buffer, with
 optional JSONL persistence via `--persist-command-log` and optional SQLite
 persistence via `--persist-command-db`. The SQLite store reloads recent traces
-on restart, keeps durable counts, and backs filtered search by raw command,
+on restart, keeps durable counts, records a schema version in
+`command_trace_meta`, optionally caps retained rows via
+`--persist-command-retention`, and backs filtered search by raw command,
 stdout/stderr, fingerprint, matched rule, support status, command family, and
-active scenario.
+active scenario. SQLite search uses FTS5 when the runtime SQLite build supports
+it and falls back to the LIKE search otherwise. `GET /v1/debug/commands/export`
+and `POST /v1/debug/commands/import` move trace histories as portable JSON for
+offline debugging. `amc trace-bundle` consumes those exports for offline
+summary/search/unsupported-grouping/CSV workflows and should keep using the
+same `server_traces.trace_matches_search()` and
+`server_traces.unsupported_summary_from_traces()` helpers so online and offline
+filters stay aligned.
 
 The same server also exposes a real-client Kubernetes API facade so stock
 `kubectl` and Helm 4 can point at `/v1/kubeconfig`. Keep this facade in
@@ -174,10 +208,25 @@ console must attach that bearer token to its JSON/API fetches, either from the
 browser prompt/localStorage flow or a `/debug?token=TOKEN` bootstrap. Request
 bodies are capped by
 `--max-request-body-bytes`; app endpoints return `413` JSON and Kubernetes API
-endpoints return a Kubernetes `Status`. Supported mutating Kubernetes HTTP
-methods update the in-memory `SimulationMutations` overlay and are traced as
-supported `kubernetes-api` calls; unsupported mutation paths still return
-Kubernetes `Status` responses and are captured in the debug backlog.
+endpoints return a Kubernetes `Status`. `--cors-allow-origin` is the only CORS
+enablement path; preflight requests are answered without bearer auth, and
+normal responses include access-control headers only when the request origin
+matches that configured value (or the value is `*`). `--rate-limit-per-minute`
+caps command and Kubernetes API requests per client, returning JSON `429` for
+app calls and a Kubernetes `Status` with `reason: TooManyRequests` for API
+calls. Command/API traces must redact bearer tokens, token-like query params,
+passwords, secrets, and client-key shaped values before they reach memory,
+JSONL, SQLite, or the debug UI. Structured request logging is opt-in via
+`--structured-log` or `--structured-log-file`; it emits JSONL request summaries
+and request-handling exception records, redacts query secrets with
+`_redact_query()`, and records bearer auth only as present/absent. Server
+shutdown sets `SimulationState`'s
+shutdown event, joins the continuous-generation worker, and lets long-lived
+SSE clients receive a terminal `shutdown` event promptly. Supported mutating
+Kubernetes HTTP methods update the in-memory `SimulationMutations` overlay and
+are traced as supported `kubernetes-api` calls; unsupported mutation paths
+still return Kubernetes `Status` responses and are captured in the debug
+backlog.
 
 The command API should stay aligned with that same snapshot-backed surface:
 when adding a new Kubernetes resource family, update `_KIND_ALIASES`,
@@ -217,8 +266,14 @@ auth is enabled, but it must send `Authorization` on data requests. It polls
 `/v1/debug/unsupported`, `/v1/debug/resources`, and `/v1/scenarios`.
 Unsupported or partial commands are grouped by normalized fingerprint so real
 operator/tool calls outside the currently supported subset become a backlog for
-future command renderers. The scenario catalog in the debug UI is backed by the
-`SCENARIOS` registry plus `OPS_SCENARIO_PROFILES`, so keep primary/cascade spec
+future command renderers. The shell also derives client-side analysis views from
+those payloads: exports for command traces and unsupported groups, a combined
+timeline, baseline-vs-overlay resource diffs, global filters, compact runtime
+charts, copyable pytest snippets for unsupported fingerprints, and a resource
+drawer that fetches the same fake Kubernetes object path real clients use when
+one is available. The scenario catalog in the debug UI is backed by the
+`SCENARIOS` registry plus `OPS_SCENARIO_PROFILES` and is intentionally cached
+after first load, while runtime state stays live; keep primary/cascade spec
 descriptions and ops-profile summaries useful for humans rather than treating
 them as opaque IDs.
 
@@ -1752,7 +1807,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to 14 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, two more added later, and one — **CI / workflow / dependency hygiene** — from a full sweep of all ~750 Copilot review comments through PR #122). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 14 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — the headings below. When a heading is renamed, added, or removed here, update the template in the same diff so the two stay in lockstep.
+This checklist maps to 14 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, two more added later, and one — **CI / workflow / dependency hygiene** — from a full sweep of all ~750 Copilot review comments through PR #122). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. `.trellis/spec/backend/testing-quality.md` and `.trellis/spec/backend/documentation-review.md` are the canonical task-loadable sources for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 14 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — those headings. When a heading is renamed, added, or removed in Trellis, update the template and this source guide in the same diff so the three stay in lockstep.
 
 When a recurring issue is *mechanical* (a greppable shape), prefer turning it into a `tools/check_*.py` lint over adding a prose bullet here: the `ruff-lockstep` / `role-name-leaks` / `branch-name` lints reliably stop their patterns, whereas prose rules in this file have not (the test-resource-cost rules recurred across several PRs after being documented). The sweep's top finding was that **doc/comment-vs-code drift is the single most-flagged pattern (~30% of all review comments)** — so the Doc / docstring sync heading below is the highest-leverage one to actually run, not skim.
 

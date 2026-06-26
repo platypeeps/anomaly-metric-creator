@@ -1,0 +1,115 @@
+# Operations, Security, and Logging
+
+## Trace Persistence and Search
+
+Command traces live in a thread-safe in-memory ring buffer by default.
+`--persist-command-log` writes JSONL, and `--persist-command-db` enables SQLite
+persistence owned by `server_traces.py`. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+The SQLite trace store records `COMMAND_TRACE_DB_SCHEMA_VERSION`, stores JSON
+payloads plus indexed columns, uses WAL mode and a dedicated SQLite write lock,
+reloads recent traces on startup, supports bounded retention, uses FTS5 when
+available, and falls back to LIKE search otherwise. Sources: `CLAUDE.md`;
+`src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`.
+
+Online debug search and offline bundle search must use shared
+`trace_matches_search()` and `unsupported_summary_from_traces()` helpers so
+filters and unsupported grouping stay aligned. Sources: `CLAUDE.md`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
+`tests/test_trace_bundle.py`.
+
+Imported trace bundles and persisted trace data are untrusted input. Decode and
+validate the full payload before replacing persisted history, and reject
+booleans for integer fields. Sources: `CLAUDE.md`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
+`tests/test_trace_bundle.py`.
+
+## Security Boundary
+
+Loopback binds may run unauthenticated for local workshops. Non-loopback
+`--host` values require `--auth-token` unless the operator explicitly passes
+`--allow-remote-without-auth`. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+When bearer auth is enabled, `/healthz`, `/readyz`, `/`, and `/debug` remain
+loadable, but JSON/debug data, command, kubeconfig, and Kubernetes/Helm API
+requests require `Authorization: Bearer TOKEN`. `/v1/kubeconfig` embeds the
+token for real clients. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+Request body caps return JSON `413` for app endpoints and Kubernetes `Status`
+objects for Kubernetes API endpoints. Rate limits return JSON `429` for app
+endpoints and Kubernetes `Status` with `reason: TooManyRequests` for API
+endpoints. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+`--cors-allow-origin` is the only CORS enablement path. Preflight requests are
+answered without bearer auth, and normal responses include access-control
+headers only for the configured origin or `*`. Sources: `README.md`;
+`CLAUDE.md`; `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+## Redaction and Structured Logs
+
+Structured request logging is opt-in through `--structured-log` or
+`--structured-log-file`; it emits JSONL request summaries and request-handling
+exception rows, redacts query secrets, and records bearer auth only as
+present/absent. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+Never write bearer tokens, auth tokens, passwords, cookies, API keys,
+kubeconfig client keys, token-like query parameters, or command secrets to
+memory traces, JSONL logs, SQLite rows, OTEL logs, or debug UI payloads.
+Sources: `README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/legacy.py`; `tests/test_redact_sensitive_headers.py`;
+`tests/test_server.py`.
+
+`otel-activity.log` is transport diagnostics, not a broad application log. The
+main signal stream starts it fresh, the gauge pass appends during the same run,
+gauges-only streaming starts it fresh, and verbose request bodies are gated by
+`--otel-verbose`. Sources: `CLAUDE.md`; `README.md`;
+`src/anomaly_metric_creator/legacy.py`; `tests/conftest.py`;
+`tests/test_otel_gauges.py`; `tests/test_redact_sensitive_headers.py`.
+
+## Debug UI
+
+The debug UI is inline HTML/CSS/JS served from `server_debug_ui.py`/`GET
+/debug` to avoid a frontend build chain. The static shell may be accessible
+without bearer auth, but data requests must attach the token when auth is
+enabled. Sources: `CLAUDE.md`; `README.md`;
+`src/anomaly_metric_creator/server_debug_ui.py`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+Debug UI data should come from the same command traces, resource snapshots,
+mutation overlay, scenario catalog, and fake Kubernetes object paths that the
+command/API surfaces use. Do not create a separate debug-only state model.
+Sources: `CLAUDE.md`; `README.md`; `docs/server-roadmap.md`;
+`src/anomaly_metric_creator/server_debug_ui.py`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_mutations.py`; `tests/test_server.py`.
+
+Unsupported and partial commands should be captured and grouped by normalized
+fingerprint so real operator/tool behavior becomes a backlog for future command
+renderers. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/server_debug_ui.py`; `tests/test_server.py`;
+`tests/test_trace_bundle.py`.
+
+## Operational Roadmap Status
+
+`docs/server-roadmap.md` is a historical handoff and roadmap note, not the
+authoritative architecture source. Treat its completed/future-work claims as
+input that must be checked against code, tests, README, and these Trellis specs
+before becoming a new task. Sources: `docs/server-roadmap.md`; `README.md`;
+`CLAUDE.md`; `.trellis/spec/backend/index.md`.
+
+No known persistence/search, security/operations, or architecture-cleanup
+roadmap items remain beyond workshop-driven polish; compatibility and debug UI
+follow-ups should be scoped from current code and user needs. Sources:
+`docs/server-roadmap.md`; `README.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/server_debug_ui.py`; `tests/test_server.py`.
