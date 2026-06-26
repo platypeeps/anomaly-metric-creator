@@ -44,11 +44,15 @@ def test_documented_empty_pass_exits_zero(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "body",
     [
-        "try:\n    risky()\nexcept Exception:\n"
-        "    # Optional hook context; continue without it.\n    pass\n",
-        "try:\n    risky()\n"
-        "except Exception:  # Optional hook context; continue without it.\n"
-        "    pass\n",
+        (
+            "try:\n    risky()\nexcept Exception:\n"
+            + "    # Optional hook context; continue without it.\n    pass\n"
+        ),
+        (
+            "try:\n    risky()\n"
+            + "except Exception:  # Optional hook context; continue without it.\n"
+            + "    pass\n"
+        ),
     ],
 )
 def test_documented_empty_pass_comment_styles_exit_zero(
