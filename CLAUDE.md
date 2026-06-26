@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Agent guide for the anomaly metric creator. The canonical implementation is
+Expanded historical/source guide for the anomaly metric creator. Canonical
+development conventions now live in `.trellis/spec/backend/index.md`; update
+the focused Trellis spec first when a durable rule changes. The canonical implementation is
 `src/anomaly_metric_creator/legacy.py`; the top-level `anomaly-metric-creator.py` is a
 thin compatibility shim that re-exports it and runs `main()`, and the installed `amc` /
 `anomaly-metric-creator` console scripts dispatch through `anomaly_metric_creator.cli`.
@@ -1805,7 +1807,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to 14 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, two more added later, and one — **CI / workflow / dependency hygiene** — from a full sweep of all ~750 Copilot review comments through PR #122). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. This file is the canonical source for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 14 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — the headings below. When a heading is renamed, added, or removed here, update the template in the same diff so the two stay in lockstep.
+This checklist maps to 14 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, two more added later, and one — **CI / workflow / dependency hygiene** — from a full sweep of all ~750 Copilot review comments through PR #122). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. `.trellis/spec/backend/testing-quality.md` and `.trellis/spec/backend/documentation-review.md` are the canonical task-loadable sources for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 14 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — those headings. When a heading is renamed, added, or removed in Trellis, update the template and this source guide in the same diff so the three stay in lockstep.
 
 When a recurring issue is *mechanical* (a greppable shape), prefer turning it into a `tools/check_*.py` lint over adding a prose bullet here: the `ruff-lockstep` / `role-name-leaks` / `branch-name` lints reliably stop their patterns, whereas prose rules in this file have not (the test-resource-cost rules recurred across several PRs after being documented). The sweep's top finding was that **doc/comment-vs-code drift is the single most-flagged pattern (~30% of all review comments)** — so the Doc / docstring sync heading below is the highest-leverage one to actually run, not skim.
 

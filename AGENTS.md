@@ -1,18 +1,24 @@
 # AGENTS.md
 
-This repository's authoritative agent guide is [CLAUDE.md](CLAUDE.md). Read it for
+This repository's authoritative development conventions live in
+[.trellis/spec/backend/index.md](.trellis/spec/backend/index.md). Read the
+Trellis backend specs before editing code, docs, tests, CI, or platform
+adapters. Sources: `.trellis/spec/backend/index.md`, `.trellis/workflow.md`.
+
+[CLAUDE.md](CLAUDE.md) is retained as an expanded historical/source guide for
 the SCENARIOS-based architecture, the `Scenario` dataclass, per-scenario
 `days_required` semantics, the import-time `_validate_scenarios_registry()`
 invariants, and the lockstep checklist for adding metrics, components, or
-scenarios.
+scenarios. If guidance conflicts, reconcile it into Trellis rather than adding
+another copy here. Sources: `CLAUDE.md`, `.trellis/spec/backend/`.
 
 User-facing usage, install, CLI reference, output files, and the anomaly catalog
 live in [README.md](README.md).
 
 This file used to duplicate the agent guide and drifted from the runtime module
-after the SCENARIOS migration. To prevent that recurring, the guide now lives in
-a single place; please update [CLAUDE.md](CLAUDE.md) directly rather than
-reintroducing parallel content here.
+after the SCENARIOS migration. To prevent that recurring, durable conventions
+now live in Trellis specs; update the focused spec first and keep this file as
+a short entry point. Sources: `AGENTS.md`, `.trellis/spec/backend/index.md`.
 
 ## Quick start
 
@@ -39,5 +45,27 @@ python3 -m venv .venv
 | `src/anomaly_metric_creator/cli.py` | Package entrypoint (thin loader) |
 | `anomaly-metric-creator.py` | Top-level compatibility shim |
 | `tests/conftest.py` | Session-scoped fixtures, `run_capture` helper |
-| `CLAUDE.md` | Architecture guide, invariants, pre-PR checklist |
+| `.trellis/spec/backend/index.md` | Canonical development conventions |
+| `CLAUDE.md` | Expanded historical/source guide, invariants, pre-PR checklist source material |
 | `README.md` | User-facing docs, CLI reference, scenario catalog |
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->

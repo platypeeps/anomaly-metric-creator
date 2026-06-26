@@ -8,53 +8,53 @@ This is a packaged Python project whose canonical implementation lives in
 `src/anomaly_metric_creator/legacy.py`. The top-level
 `anomaly-metric-creator.py` file is a thin compatibility shim, and the
 installed `amc` / `anomaly-metric-creator` console scripts dispatch through
-`anomaly_metric_creator.cli`. `CLAUDE.md` is the authoritative architecture
-and review guide; `README.md` documents the user-facing surface. Read the
-relevant sections from both before reviewing a change — do not produce
-overview-only or generic Python feedback. If a change touches behavior that
-`CLAUDE.md` already specifies, the review should be grounded in those
+`anomaly_metric_creator.cli`. The authoritative development conventions live in
+`.trellis/spec/backend/index.md`; `CLAUDE.md` is an expanded historical/source
+guide, and `README.md` documents the user-facing surface. Read the relevant
+Trellis spec plus the supporting source docs before reviewing a change — do not
+produce overview-only or generic Python feedback. If a change touches behavior
+that Trellis already specifies, the review should be grounded in those
 specifics.
 
 ## Where to look first by diff shape
 
 - **Anomaly / scenario change** (`SCENARIOS`, `register_cascade`, anomaly
   generators, `--scenarios` / `--exclude-scenarios` / `--anomaly-count`) →
-  `CLAUDE.md` *Anomaly injection schema*, *Scenario registry*, *Adding a new
-  scenario*, *Scenario selector test layout*. The dispatch rule for
+  `.trellis/spec/backend/scenarios-and-data.md`, with `CLAUDE.md` as expanded
+  source detail. The dispatch rule for
   generator arity (2-arg / step-3 / span-5, with `*args` rules) is the
   single most error-prone surface — review against the exact rule, not by
   intuition.
 - **Topology / coupling / saturation** (`TOPOLOGY`, `Edge`,
   `SaturationParams`, `_compose_topology_*`, `_apply_saturation`,
-  `--topology-mode`) → `CLAUDE.md` *Topology graph*, *Saturation feedback*,
-  *LLM token-throttle*, *Per-instance topology (phase 8)*. The
+  `--topology-mode`) → `.trellis/spec/backend/architecture.md`,
+  `.trellis/spec/backend/scenarios-and-data.md`, and `docs/topology.md`. The
   realistic-mode default and the `independent` deprecation alias have
   different output bytes; locked SHA-256 hashes pin the realistic baseline.
 - **Multi-instance / dimensions** (`Instance`, `INSTANCES`,
   `--instances-per-component`, `--instance-config`,
-  `_INSTANCE_DIMENSION_COLUMNS`) → `CLAUDE.md` *Multi-instance fan-out*,
-  *Per-instance topology*, *OTEL dimension attributes*. The
+  `_INSTANCE_DIMENSION_COLUMNS`) → `.trellis/spec/backend/architecture.md`,
+  `.trellis/spec/backend/api-cli-server.md`, and `README.md`. The
   single-anonymous-`Instance()` default keeps byte-identical wide output;
   any named instance or `N > 1` switches per-component CSVs, `gauges.csv`,
   and `combined_metrics_unified.csv` into long-form layouts.
 - **Output files** (`schema.json`, `gauges.csv`,
   `combined_metrics_unified.csv`, `anomalies.csv`, OTEL streaming) →
-  `CLAUDE.md` *Output directory hygiene*, *Combine step*, *Output schema
-  document*, *Gauge metric file*, *OTEL dimension attributes*. The
+  `.trellis/spec/backend/api-cli-server.md` and `README.md`. The
   pre-clean / summary / writer / validator views must stay aligned; they
   all derive from `_EMIT_ARTIFACT_FILES`.
 - **Validator** (`--validate-output`, `--validate-warn`,
-  `_validate_*` helpers, `_RECOMPUTERS`, `DERIVATIONS`) → `CLAUDE.md`
-  *Output validator*, *MetricSpec schema metadata*, *Derived metrics*. The
+  `_validate_*` helpers, `_RECOMPUTERS`, `DERIVATIONS`) →
+  `.trellis/spec/backend/api-cli-server.md` and
+  `.trellis/spec/backend/testing-quality.md`. The
   per-component / per-metric dispatch tables must raise on unknown keys;
   silent fall-through is the canonical bug class.
-- **CLI / parse_args** → `CLAUDE.md` *Output directory hygiene*,
-  *Multi-instance fan-out*, *Mode / flag combinations* checklist heading.
+- **CLI / parse_args** → `.trellis/spec/backend/api-cli-server.md` and
+  `.trellis/spec/backend/testing-quality.md`.
   `README.md` *CLI flags* lists the user-facing surface; every new flag
   needs at least one test exercising it in isolation.
-- **Tests** (anything in `tests/`) → `CLAUDE.md` *Tests*, *Parallel
-  execution*, *Test hygiene*, *Test resource cost*, *Cross-platform test
-  guards*, *Scenario selector test layout*.
+- **Tests** (anything in `tests/`) → `.trellis/spec/backend/testing-quality.md`,
+  with `CLAUDE.md` as expanded historical/source detail.
 
 ## Hard invariants — flag any diff that breaks these
 
@@ -119,10 +119,11 @@ specifics.
   duplicate of a session-scoped fixture multiplies suite wall-time
   and peak RSS.
 
-## Pre-PR checklist headings (canonical in CLAUDE.md)
+## Pre-PR checklist headings (canonical in Trellis)
 
-PR descriptions in this repo carry a 13-heading checklist copied from
-`CLAUDE.md` *Pre-PR checklist*. When reviewing, walk the diff against
+PR descriptions in this repo carry a 14-heading checklist mirrored from
+`.trellis/spec/backend/testing-quality.md` and
+`.trellis/spec/backend/documentation-review.md`. When reviewing, walk the diff against
 each heading and call out any item that the PR description marked
 confirmed but the diff does not support:
 
@@ -162,6 +163,9 @@ confirmed but the diff does not support:
 13. **Default-behavior changes** — any default parameter value or
     fallback path change is named in the PR description and tested
     on both old and new caller shapes.
+14. **CI / workflow / dependency hygiene** — workflow YAML, dependency pins,
+    Dependabot behavior, and generated review instructions stay in lockstep
+    with Trellis, `pyproject.toml`, pre-commit, and CI.
 
 ## What not to spend review time on
 

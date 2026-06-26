@@ -1134,7 +1134,8 @@ Two `tests/`-scoped checks run on every `git commit` via
 `.pre-commit-config.yaml`:
 
 - **`ruff` F401 (unused imports).** Enforces the rule called out in
-  [CLAUDE.md](CLAUDE.md) ("Pre-PR checklist > Test hygiene") as a
+  [.trellis/spec/backend/testing-quality.md](.trellis/spec/backend/testing-quality.md)
+  ("Pytest, Ruff, and Pre-Commit") as a
   mechanical check rather than a human-reviewer task. The configuration
   lives in `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); the
   hook scopes it to `tests/`.
@@ -1175,8 +1176,9 @@ git hook from `pre-commit`), which is why
 `pre-commit install --hook-type pre-push` is a one-time per-clone
 step. It rejects
 any branch name matching `(?i)(^|\b)ver-\d+` — see
-[CLAUDE.md "Branch-name lint"](CLAUDE.md) for the policy, anchors,
-and full invocation modes of `tools/check_branch_name.py`. The
+[.trellis/spec/backend/testing-quality.md](.trellis/spec/backend/testing-quality.md)
+and [CLAUDE.md](CLAUDE.md) for the policy, anchors, and full invocation modes
+of `tools/check_branch_name.py`. The
 pre-commit hook checks the current local branch only; for full
 coverage of refspec pushes (`git push origin clean:ver-123`) and
 detached-HEAD pushes (`git push origin HEAD:ver-123`), see the
