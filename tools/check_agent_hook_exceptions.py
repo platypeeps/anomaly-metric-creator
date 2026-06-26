@@ -126,7 +126,7 @@ def main(argv: list[str]) -> int:
         except ValueError as exc:
             print(f"check_agent_hook_exceptions: {exc}", file=sys.stderr)
             return 2
-        except (OSError, UnicodeError) as exc:
+        except OSError as exc:
             print(
                 f"check_agent_hook_exceptions: cannot read {path}: {exc}",
                 file=sys.stderr,

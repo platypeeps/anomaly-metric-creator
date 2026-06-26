@@ -48,6 +48,13 @@ def test_direct_int_payload_exits_one(tmp_path: Path) -> None:
     assert "direct int" in result.stderr
 
 
+def test_direct_int_payload_get_exits_one(tmp_path: Path) -> None:
+    path = _module(tmp_path, "def f(payload):\n    return int(payload.get('id'))\n")
+    result = _run(path)
+    assert result.returncode == 1
+    assert "direct int" in result.stderr
+
+
 def test_direct_int_raw_variable_exits_one(tmp_path: Path) -> None:
     path = _module(
         tmp_path,
@@ -68,6 +75,16 @@ def test_direct_tuple_payload_exits_one(tmp_path: Path) -> None:
     result = _run(path)
     assert result.returncode == 1
     assert "direct tuple" in result.stderr
+
+
+def test_payload_named_locals_do_not_false_positive(tmp_path: Path) -> None:
+    path = _module(
+        tmp_path,
+        "def f(payload_size, payload_count, payload_parts):\n"
+        "    return int(payload_size) + int(payload_count) + len(tuple(payload_parts))\n",
+    )
+    result = _run(path)
+    assert result.returncode == 0, result.stderr
 
 
 def test_silent_dict_filter_exits_one(tmp_path: Path) -> None:

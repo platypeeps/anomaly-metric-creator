@@ -44,6 +44,29 @@ def _call_name(node: ast.AST) -> str:
     return ""
 
 
+def _is_payload_name(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Name)
+        and (node.id == "payload" or node.id.endswith("_payload"))
+    )
+
+
+def _is_payload_access(node: ast.AST | None) -> bool:
+    if isinstance(node, ast.Subscript):
+        return _is_payload_name(node.value)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ):
+        return _is_payload_name(node.func.value)
+    return False
+
+
+def _is_raw_payload_name(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Name) and node.id.startswith("raw_")
+
+
 def _is_isinstance_dict(node: ast.AST) -> bool:
     if not isinstance(node, ast.Call) or _call_name(node.func) != "isinstance":
         return False
@@ -66,18 +89,16 @@ class _Visitor(ast.NodeVisitor):
 
         name = _call_name(node.func)
         first_arg = node.args[0] if node.args else None
-        first_text = ast.get_source_segment(self.source, first_arg) if first_arg else ""
-        first_text = first_text or ""
 
         if name == "int" and (
-            "payload" in first_text or first_text.strip().startswith("raw_")
+            _is_payload_access(first_arg) or _is_raw_payload_name(first_arg)
         ):
             self.violations.append(
                 f"{self.path}:{node.lineno}: direct int() on trace payload data "
                 "bypasses strict bool/type validation; use the trace/bundle "
                 "integer helper instead."
             )
-        if name == "tuple" and "payload" in first_text:
+        if name == "tuple" and _is_payload_access(first_arg):
             self.violations.append(
                 f"{self.path}:{node.lineno}: direct tuple() on trace payload "
                 "data can split strings into characters; use the trace tuple "
@@ -144,7 +165,7 @@ def main(argv: list[str]) -> int:
         except ValueError as exc:
             print(f"check_trace_payload_antipatterns: {exc}", file=sys.stderr)
             return 2
-        except (OSError, UnicodeError) as exc:
+        except OSError as exc:
             print(
                 f"check_trace_payload_antipatterns: cannot read {path}: {exc}",
                 file=sys.stderr,
