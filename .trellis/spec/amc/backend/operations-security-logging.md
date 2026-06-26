@@ -127,7 +127,7 @@ renderers. Sources: `README.md`; `CLAUDE.md`;
 authoritative architecture source. Treat its completed/future-work claims as
 input that must be checked against code, tests, README, and these Trellis specs
 before becoming a new task. Sources: `docs/server-roadmap.md`; `README.md`;
-`CLAUDE.md`; `.trellis/spec/backend/index.md`.
+`CLAUDE.md`; `.trellis/spec/amc/backend/index.md`.
 
 No known persistence/search, security/operations, or architecture-cleanup
 roadmap items remain beyond workshop-driven polish; compatibility and debug UI

@@ -1133,7 +1133,7 @@ fixture memory near ~5 GB even under worst-case fan-out.
 Several focused checks run on every `git commit` via `.pre-commit-config.yaml`:
 
 - **`ruff` F401 (unused imports).** Enforces the rule called out in
-  [.trellis/spec/backend/testing-quality.md](.trellis/spec/backend/testing-quality.md)
+  [.trellis/spec/amc/backend/testing-quality.md](.trellis/spec/amc/backend/testing-quality.md)
   ("Pytest, Ruff, and Pre-Commit") as a
   mechanical check rather than a human-reviewer task. The configuration
   lives in `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); the
@@ -1189,7 +1189,7 @@ git hook from `pre-commit`), which is why
 `pre-commit install --hook-type pre-push` is a one-time per-clone
 step. It rejects
 any branch name matching `(?i)(^|\b)ver-\d+` — see
-[.trellis/spec/backend/testing-quality.md](.trellis/spec/backend/testing-quality.md)
+[.trellis/spec/amc/backend/testing-quality.md](.trellis/spec/amc/backend/testing-quality.md)
 and [CLAUDE.md](CLAUDE.md) for the policy, anchors, and full invocation modes
 of `tools/check_branch_name.py`. The
 pre-commit hook checks the current local branch only; for full

@@ -50,12 +50,12 @@ Before editing runtime code, tests, docs, CI, hooks, or platform adapters:
 ## Spec Map
 
 This map defines which Trellis file owns each class of durable convention.
-Sources: `.trellis/spec/backend/architecture.md`;
-`.trellis/spec/backend/api-cli-server.md`;
-`.trellis/spec/backend/scenarios-and-data.md`;
-`.trellis/spec/backend/operations-security-logging.md`;
-`.trellis/spec/backend/testing-quality.md`;
-`.trellis/spec/backend/documentation-review.md`.
+Sources: `.trellis/spec/amc/backend/architecture.md`;
+`.trellis/spec/amc/backend/api-cli-server.md`;
+`.trellis/spec/amc/backend/scenarios-and-data.md`;
+`.trellis/spec/amc/backend/operations-security-logging.md`;
+`.trellis/spec/amc/backend/testing-quality.md`;
+`.trellis/spec/amc/backend/documentation-review.md`.
 
 | Guide | Owns |
 | --- | --- |
@@ -70,11 +70,11 @@ Legacy spec filenames remain as compatibility pointers only. Do not add new
 rules to `directory-structure.md`, `database-guidelines.md`,
 `error-handling.md`, `logging-guidelines.md`, or `quality-guidelines.md`;
 put durable conventions in the focused guides above. Sources:
-`.trellis/spec/backend/directory-structure.md`;
-`.trellis/spec/backend/database-guidelines.md`;
-`.trellis/spec/backend/error-handling.md`;
-`.trellis/spec/backend/logging-guidelines.md`;
-`.trellis/spec/backend/quality-guidelines.md`.
+`.trellis/spec/amc/backend/directory-structure.md`;
+`.trellis/spec/amc/backend/database-guidelines.md`;
+`.trellis/spec/amc/backend/error-handling.md`;
+`.trellis/spec/amc/backend/logging-guidelines.md`;
+`.trellis/spec/amc/backend/quality-guidelines.md`.
 
 ## Source Precedence
 

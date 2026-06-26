@@ -14,12 +14,12 @@ server endpoints, output files, topology prose, application flow diagrams, and
 roadmap/handoff notes. Keep them consistent with the implementation specs but
 do not turn them into a duplicate agent rulebook. Sources: `README.md`;
 `docs/application-flow.md`; `docs/topology.md`; `docs/server-roadmap.md`;
-`.trellis/spec/backend/`.
+`.trellis/spec/amc/backend/`.
 
 `CLAUDE.md` remains a valuable historical and expanded source document, but new
 durable conventions should be added to Trellis first and only summarized or
 linked from adapter docs when needed. Sources: `CLAUDE.md`; `AGENTS.md`;
-`.trellis/spec/backend/index.md`.
+`.trellis/spec/amc/backend/index.md`.
 
 ## Citation Rule
 
@@ -43,7 +43,7 @@ Behavior changes must update every surface that describes the behavior:
 docstrings, CLI help strings, README, `docs/*.md`, Trellis specs, and adapter
 docs when those adapters mirror the changed convention. Sources: `CLAUDE.md`;
 `README.md`; `docs/application-flow.md`; `docs/topology.md`;
-`.trellis/spec/backend/`; `.github/instructions/anomaly-metric-creator.instructions.md`.
+`.trellis/spec/amc/backend/`; `.github/instructions/anomaly-metric-creator.instructions.md`.
 
 When a default, precedence rule, count, edge list, dispatch order, artifact
 name, flag, endpoint, or scenario changes, grep old and new wording across docs
@@ -63,7 +63,7 @@ or removing entries. Sources: `CLAUDE.md`; `README.md`;
 The PR template checklist mirrors the required review headings. If a heading is
 renamed, added, or removed in the Trellis review spec, update
 `.github/PULL_REQUEST_TEMPLATE.md` and Copilot instructions in the same diff.
-Sources: `.trellis/spec/backend/testing-quality.md`;
+Sources: `.trellis/spec/amc/backend/testing-quality.md`;
 `.github/PULL_REQUEST_TEMPLATE.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`; `CLAUDE.md`.
 
@@ -71,12 +71,12 @@ Copilot instructions should route reviewers to the relevant Trellis spec first,
 then to source files/tests and supporting historical sections as needed. They
 should not redefine project rules independently. Sources:
 `.github/instructions/anomaly-metric-creator.instructions.md`;
-`.trellis/spec/backend/index.md`; `CLAUDE.md`; `README.md`.
+`.trellis/spec/amc/backend/index.md`; `CLAUDE.md`; `README.md`.
 
 PR descriptions must name behavior changes, list the test plan, and walk the
 review checklist before draft status is removed. Sources: `CLAUDE.md`;
 `.github/PULL_REQUEST_TEMPLATE.md`;
-`.trellis/spec/backend/testing-quality.md`.
+`.trellis/spec/amc/backend/testing-quality.md`.
 
 Before opening housekeeping or finish-work PRs, fetch and compare against
 `origin/main` so already-merged archive/journal commits do not become redundant
@@ -90,7 +90,7 @@ Retain existing Codex, Claude, GitHub/Copilot, Gemini, and OpenCode Trellis
 files as platform adapters. They should teach each platform how to load
 Trellis context, not carry separate project conventions. Sources: `.agents/`;
 `.codex/`; `.claude/`; `.github/`; `.gemini/`; `.opencode/`;
-`.trellis/workflow.md`; `.trellis/spec/backend/index.md`.
+`.trellis/workflow.md`; `.trellis/spec/amc/backend/index.md`.
 
 Generated Trellis platform files may be updated by future `trellis update`
 runs. Keep local project conventions in `.trellis/spec/` or a project-local

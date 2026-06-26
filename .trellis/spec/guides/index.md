@@ -2,9 +2,9 @@
 
 Use these guides when a change risks duplication, drift, or a broken contract
 between generator, server, tests, docs, and agent workflow files. Project
-conventions live in `.trellis/spec/backend/`; these guides are prompts for
+conventions live in `.trellis/spec/amc/backend/`; these guides are prompts for
 checking the shape of a change before editing. Sources:
-`.trellis/spec/backend/index.md`; `.trellis/workflow.md`;
+`.trellis/spec/amc/backend/index.md`; `.trellis/workflow.md`;
 `.agents/skills/trellis-before-dev/SKILL.md`.
 
 | Guide | Use When |
@@ -14,6 +14,6 @@ checking the shape of a change before editing. Sources:
 
 Before committing a convention change, ensure the durable rule is captured in
 the backend specs with source paths rather than only in chat, a task note, or a
-platform-specific adapter. Sources: `.trellis/spec/backend/documentation-review.md`;
+platform-specific adapter. Sources: `.trellis/spec/amc/backend/documentation-review.md`;
 `.trellis/tasks/06-25-consolidate-agent-docs-trellis/prd.md`;
 `.agents/`; `.codex/`; `.claude/`; `.gemini/`; `.github/`; `.opencode/`.

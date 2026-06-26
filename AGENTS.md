@@ -1,16 +1,16 @@
 # AGENTS.md
 
 This repository's authoritative development conventions live in
-[.trellis/spec/backend/index.md](.trellis/spec/backend/index.md). Read the
+[.trellis/spec/amc/backend/index.md](.trellis/spec/amc/backend/index.md). Read the
 Trellis backend specs before editing code, docs, tests, CI, or platform
-adapters. Sources: `.trellis/spec/backend/index.md`, `.trellis/workflow.md`.
+adapters. Sources: `.trellis/spec/amc/backend/index.md`, `.trellis/workflow.md`.
 
 [CLAUDE.md](CLAUDE.md) is retained as an expanded historical/source guide for
 the SCENARIOS-based architecture, the `Scenario` dataclass, per-scenario
 `days_required` semantics, the import-time `_validate_scenarios_registry()`
 invariants, and the lockstep checklist for adding metrics, components, or
 scenarios. If guidance conflicts, reconcile it into Trellis rather than adding
-another copy here. Sources: `CLAUDE.md`, `.trellis/spec/backend/`.
+another copy here. Sources: `CLAUDE.md`, `.trellis/spec/amc/backend/`.
 
 User-facing usage, install, CLI reference, output files, and the anomaly catalog
 live in [README.md](README.md).
@@ -18,7 +18,7 @@ live in [README.md](README.md).
 This file used to duplicate the agent guide and drifted from the runtime module
 after the SCENARIOS migration. To prevent that recurring, durable conventions
 now live in Trellis specs; update the focused spec first and keep this file as
-a short entry point. Sources: `AGENTS.md`, `.trellis/spec/backend/index.md`.
+a short entry point. Sources: `AGENTS.md`, `.trellis/spec/amc/backend/index.md`.
 
 ## Quick start
 
@@ -45,7 +45,7 @@ python3 -m venv .venv
 | `src/anomaly_metric_creator/cli.py` | Package entrypoint (thin loader) |
 | `anomaly-metric-creator.py` | Top-level compatibility shim |
 | `tests/conftest.py` | Session-scoped fixtures, `run_capture` helper |
-| `.trellis/spec/backend/index.md` | Canonical development conventions |
+| `.trellis/spec/amc/backend/index.md` | Canonical development conventions |
 | `CLAUDE.md` | Expanded historical/source guide, invariants, pre-PR checklist source material |
 | `README.md` | User-facing docs, CLI reference, scenario catalog |
 <!-- TRELLIS:START -->

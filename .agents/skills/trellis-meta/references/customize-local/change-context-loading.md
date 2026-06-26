@@ -41,7 +41,7 @@ Context loading determines when AI reads workflow, task, spec, research, workspa
 `implement.jsonl` / `check.jsonl` are the key context loading interface:
 
 ```jsonl
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend conventions"}
+{"file": ".trellis/spec/amc/backend/index.md", "reason": "Backend conventions"}
 {"file": ".trellis/tasks/04-28-x/research/api.md", "reason": "API research"}
 ```
 
