@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-06-25
+- **Total Sessions**: 2
+- **Last Active**: 2026-06-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~39 | Active |
+| `journal-1.md` | ~78 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-06-26 | PR 142 review follow-ups | `10d217b`, `8c213b6` | `codex/review-churn-guardrails` |
 | 1 | 2026-06-25 | Consolidate agent docs into Trellis | `3dcd944` | `main` |
 <!-- @@@/auto:session-history -->
 

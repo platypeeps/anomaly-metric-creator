@@ -42,3 +42,37 @@ Consolidated repo agent guidance into path-cited Trellis specs, retained thin pl
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: PR 142 review follow-ups
+
+**Date**: 2026-06-26
+**Task**: PR 142 review follow-ups
+**Branch**: `codex/review-churn-guardrails`
+
+### Summary
+
+Addressed PR 142 review feedback for hook-lint test string concatenation and AST-precise BaseException matching; verified focused tests, hook lint, ruff, and diff checks, with remote fast checks passing and full test matrix still running at last poll.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `10d217b` | (see git log) |
+| `8c213b6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
