@@ -1130,8 +1130,7 @@ fixture memory near ~5 GB even under worst-case fan-out.
 
 ### Test-hygiene lint
 
-Two `tests/`-scoped checks run on every `git commit` via
-`.pre-commit-config.yaml`:
+Several focused checks run on every `git commit` via `.pre-commit-config.yaml`:
 
 - **`ruff` F401 (unused imports).** Enforces the rule called out in
   [.trellis/spec/backend/testing-quality.md](.trellis/spec/backend/testing-quality.md)
@@ -1150,6 +1149,20 @@ Two `tests/`-scoped checks run on every `git commit` via
   comment for the rare case that genuinely needs a fresh module
   instance (e.g. monkey-patching `_apply_scenarios` in
   `tests/test_correctness.py`).
+- **Python syntax (`tools/check_python_syntax.py`).** Parses `src/`, `tests/`,
+  `tools/`, and Python hook adapters with `ast.parse` so syntax errors fail
+  before review without creating `__pycache__` entries.
+- **`ruff` F841 (unused local variables).** Scopes unused-local enforcement to
+  runtime code, helper tools, and Python hook adapters.
+- **Agent hook exceptions (`tools/check_agent_hook_exceptions.py`).** Forbids
+  `except BaseException` / bare `except` in Python hook adapters and requires a
+  reason comment on intentionally empty `except Exception: pass` handlers.
+- **Trellis placeholders (`tools/check_trellis_placeholders.py`).** Blocks
+  unfinished journal/task template text such as `(Add details)` from committed
+  Trellis workspace artifacts.
+- **Trace payload anti-patterns (`tools/check_trace_payload_antipatterns.py`).**
+  Keeps command-trace import/export boundaries on strict validators instead of
+  direct casts or silent malformed-entry filtering.
 
 Install and run locally (the `dev` extra installs both `ruff` and
 `pre-commit`):
@@ -1159,14 +1172,14 @@ Install and run locally (the `dev` extra installs both `ruff` and
 .venv/bin/pre-commit install                # one-time per clone
 .venv/bin/pre-commit install --hook-type pre-push  # one-time per clone
 .venv/bin/pre-commit run --all-files        # ad-hoc full sweep
-.venv/bin/ruff check tests/                 # same check, no pre-commit
+.venv/bin/ruff check tests/                 # direct ruff F401 check
 ```
 
-Both `tests/`-scoped hooks run automatically on `git commit` for any
+The `tests/`-scoped hooks run automatically on `git commit` for any
 staged Python file under `tests/` (the `files: ^tests/.*\.py$`
-pattern matches subdirectories too). Adding or moving an unused
-import to `tests/` makes the commit fail with an `F401` diagnostic;
-`ruff check --fix tests/` removes it. Adding a
+pattern matches subdirectories too). Adding or moving an unused import to
+`tests/` makes the commit fail with an `F401` diagnostic; `ruff check --fix
+tests/` removes it. Adding a
 `spec_from_file_location(...)` call in a new test file fails the
 commit with a pointer to the canonical loader; switch to the `amc`
 fixture or annotate the line with `# amc-load: allow`.

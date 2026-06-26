@@ -78,6 +78,12 @@ review checklist before draft status is removed. Sources: `CLAUDE.md`;
 `.github/PULL_REQUEST_TEMPLATE.md`;
 `.trellis/spec/backend/testing-quality.md`.
 
+Before opening housekeeping or finish-work PRs, fetch and compare against
+`origin/main` so already-merged archive/journal commits do not become redundant
+PRs. A publish flow should have a non-empty, non-duplicate branch diff before
+creating a pull request. Sources: `.trellis/workflow.md`;
+`.trellis/workspace/`; `.trellis/tasks/`; `CLAUDE.md`.
+
 ## Platform Adapter Policy
 
 Retain existing Codex, Claude, GitHub/Copilot, Gemini, and OpenCode Trellis
@@ -92,6 +98,14 @@ skill rather than patching every generated copy with durable project rules.
 Sources: `.trellis/workflow.md`; `.agents/skills/trellis-meta/`;
 `.claude/skills/trellis-meta/`; `.github/skills/trellis-meta/`;
 `.opencode/skills/trellis-meta/`.
+
+Python hook adapters must not catch `BaseException` or use bare `except`, and
+intentional fail-open `except Exception: pass` handlers must include a short
+comment explaining the suppression. Enforce this mechanically instead of
+copying reviewer prose into each generated adapter. Sources:
+`.codex/hooks/`; `.github/copilot/hooks/`; `.gemini/hooks/`;
+`tools/check_agent_hook_exceptions.py`;
+`tests/test_agent_hook_exception_lint.py`.
 
 Codex inline mode skips sub-agent JSONL curation and loads task artifacts/specs
 through `trellis-before-dev`; sub-agent-capable platform files still keep their

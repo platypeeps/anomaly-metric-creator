@@ -118,6 +118,15 @@ Sources: `README.md`; `CLAUDE.md`; `docs/server-roadmap.md`;
 `src/anomaly_metric_creator/server_kubernetes.py`;
 `src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.
 
+Kubernetes mutation and event identity must include namespace anywhere a real
+cluster would treat namespace as part of object identity. Generated pod names
+such as replacement/recreated pods must map back to their owning component when
+mutations are rendered, and mutating subresources must be accepted only through
+explicit allowlists rather than any non-empty subresource path. Sources:
+`src/anomaly_metric_creator/server_mutations.py`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_kubernetes.py`; `tests/test_server.py`.
+
 Helm compatibility uses simulator JSON inside double-base64 gzip
 `helm.sh/release.v1` Secret payloads; do not document or treat these as native
 Helm 3 protobuf release objects unless the encoder changes. Sources:
@@ -141,3 +150,14 @@ are not accepted as integers. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/trace_bundle.py`;
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_trace_bundle.py`;
 `tests/test_server.py`.
+
+Trace import/export code should use the shared trace scalar and tuple validators
+rather than direct `int(...)` or `tuple(...)` calls on payload data. Invalid
+trace entries must raise validation errors with the entry index instead of being
+silently filtered out, and offline bundle search should preserve the live debug
+API contract: exact filter semantics, recent results ordered by trace id, and
+summary timestamp bounds computed from the trace set rather than file order.
+Sources: `src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/trace_bundle.py`;
+`tools/check_trace_payload_antipatterns.py`; `tests/test_trace_bundle.py`;
+`tests/test_trace_payload_antipatterns_lint.py`.

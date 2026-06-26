@@ -91,6 +91,20 @@ Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 `pyproject.toml`; `.pre-commit-config.yaml`; `README.md`; `CLAUDE.md`;
 `.github/workflows/ci.yml`.
 
+Additional mechanical guards catch recent review-churn patterns before PR
+review: syntax-only `ast.parse` over Python files, Ruff F841 unused locals for
+runtime/tools/hooks, agent-hook exception-shape checks, Trellis placeholder
+checks, and trace-payload validation anti-pattern checks. Keep these hooks
+stdlib-only where they are local scripts, with the documented `0`/`1`/`2` exit
+contract and acceptance tests over both temporary fixtures and the live repo
+tree. Sources: `.pre-commit-config.yaml`; `tools/check_python_syntax.py`;
+`tools/check_agent_hook_exceptions.py`; `tools/check_trellis_placeholders.py`;
+`tools/check_trace_payload_antipatterns.py`;
+`tests/test_python_syntax_lint.py`;
+`tests/test_agent_hook_exception_lint.py`;
+`tests/test_trellis_placeholder_lint.py`;
+`tests/test_trace_payload_antipatterns_lint.py`.
+
 Ruff is pinned in two places that must stay in lockstep: the `ruff==` dev-extra
 pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 `.pre-commit-config.yaml`. Sources: `pyproject.toml`;
