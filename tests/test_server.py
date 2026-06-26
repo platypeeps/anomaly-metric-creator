@@ -511,6 +511,22 @@ def test_kubectl_explain_projects_common_resource_schemas(amc, tmp_path):
     assert "FIELD:      spec.replicas <integer>" in replicas["result"]["stdout"]
     assert "spec.replicas field projected" in replicas["result"]["stdout"]
 
+    api_version_mismatch = server.run_command(
+        state,
+        command="kubectl explain deployment.spec.replicas --api-version=v1 -n saas-prod",
+    )
+    assert api_version_mismatch["result"]["support_status"] == "partial"
+    assert api_version_mismatch["result"]["matched_rule_id"] == "kubectl.explain.api-version"
+    assert "available as apps/v1, not v1" in api_version_mismatch["result"]["stderr"]
+
+    missing_api_version = server.run_command(
+        state,
+        command="kubectl explain deployment.spec.replicas --api-version -n saas-prod",
+    )
+    assert missing_api_version["result"]["support_status"] == "partial"
+    assert missing_api_version["result"]["matched_rule_id"] == "kubectl.explain.api-version.invalid"
+    assert "--api-version requires a non-empty value" in missing_api_version["result"]["stderr"]
+
     recursive = server.run_command(
         state,
         command="kubectl explain pods.spec --recursive -n saas-prod",

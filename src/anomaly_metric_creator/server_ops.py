@@ -2796,6 +2796,16 @@ def _render_explain(state: SimulationState, parsed: ParsedCommand) -> CommandRes
             "kubectl.explain.unsupported",
         )
     requested_api_version = str(parsed.flags.get("--api-version") or "")
+    if "--api-version" in parsed.flags and (
+        not requested_api_version or requested_api_version.startswith("-")
+    ):
+        return CommandResult(
+            1,
+            "",
+            "error: --api-version requires a non-empty value\n",
+            "partial",
+            "kubectl.explain.api-version.invalid",
+        )
     if requested_api_version and requested_api_version != schema_info["api_version"]:
         return CommandResult(
             1,
