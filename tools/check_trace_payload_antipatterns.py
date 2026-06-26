@@ -162,6 +162,12 @@ def main(argv: list[str]) -> int:
             continue
         try:
             violations.extend(_check_file(path))
+        except UnicodeError as exc:
+            print(
+                f"check_trace_payload_antipatterns: cannot read {path}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
         except ValueError as exc:
             print(f"check_trace_payload_antipatterns: {exc}", file=sys.stderr)
             return 2

@@ -119,6 +119,14 @@ def test_syntax_error_exits_two(tmp_path: Path) -> None:
     assert result.returncode == 2
 
 
+def test_non_utf8_file_exits_two(tmp_path: Path) -> None:
+    path = tmp_path / "server_traces.py"
+    path.write_bytes(b"\xff")
+    result = _run(str(path))
+    assert result.returncode == 2
+    assert "cannot read" in result.stderr
+
+
 def test_live_trace_boundary_modules_clean() -> None:
     files = [
         REPO_ROOT / "src" / "anomaly_metric_creator" / "server_traces.py",

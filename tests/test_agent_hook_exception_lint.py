@@ -99,6 +99,14 @@ def test_syntax_error_exits_two(tmp_path: Path) -> None:
     assert result.returncode == 2
 
 
+def test_non_utf8_file_exits_two(tmp_path: Path) -> None:
+    path = tmp_path / "hook.py"
+    path.write_bytes(b"\xff")
+    result = _run(str(path))
+    assert result.returncode == 2
+    assert "cannot read" in result.stderr
+
+
 def test_live_agent_hooks_clean() -> None:
     roots = [
         REPO_ROOT / ".codex" / "hooks",
