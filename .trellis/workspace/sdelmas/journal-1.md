@@ -194,7 +194,15 @@ Added kubectl explain OpenAPI support and addressed PR review feedback for api-v
 
 ### Main Changes
 
-(Add details)
+- Added simulator-backed `kubectl explain` output and OpenAPI v2/v3 schema
+  endpoints for the Kubernetes-compatible server facade.
+- Hardened `kubectl explain --api-version` handling so missing or flag-like
+  values fail cleanly, and added coverage for mismatch and invalid-value paths.
+- Reused a single `resource_snapshot()` during OpenAPI schema generation to
+  avoid repeated snapshot construction on the server hot path.
+- Derived OpenAPI v3 discovery group/version entries from
+  `_EXPLAIN_RESOURCE_TARGETS` so discovery stays aligned with generated schemas
+  as new resources are added.
 
 ### Git Commits
 
@@ -207,7 +215,10 @@ Added kubectl explain OpenAPI support and addressed PR review feedback for api-v
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `.venv/bin/ruff check src/anomaly_metric_creator/server_ops.py tests/test_server.py`
+- [OK] Focused OpenAPI and `kubectl explain` server tests.
+- [OK] `AMC_RUN_REAL_CLIENT_SMOKE=1 .venv/bin/pytest tests/test_server.py -q -k real_kubectl_binary_smoke_when_available`
+- [OK] Full local test suite: `1421 passed, 2 skipped`.
 
 ### Status
 
