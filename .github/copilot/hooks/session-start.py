@@ -34,12 +34,12 @@ if sys.platform.startswith("win"):
             try:
                 _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             except Exception:
-                pass
+                pass  # Best-effort UTF-8 setup; some host streams reject reconfigure.
         elif hasattr(_stream, "detach"):
             try:
                 setattr(sys, _stream_name, _io.TextIOWrapper(_stream.detach(), encoding="utf-8", errors="replace"))
             except Exception:
-                pass
+                pass  # Best-effort UTF-8 setup; keep original stream if wrapping fails.
 
 import json
 import os
@@ -121,7 +121,7 @@ def configure_project_encoding(project_dir: Path) -> None:
 
         configure_encoding()
     except Exception:
-        pass
+        pass  # Optional helper; fall back to the process' current stream setup.
 
 
 def _has_curated_jsonl_entry(jsonl_path: Path) -> bool:
@@ -403,7 +403,7 @@ def _build_compact_current_state(
                 f"Active tasks: {task_count} total. Use `python3 ./.trellis/scripts/task.py list --mine` only if needed."
             )
         except Exception:
-            pass
+            pass  # Active-task count is optional context; keep SessionStart non-fatal.
 
     if get_active_journal_file and count_lines:
         journal = get_active_journal_file(repo_root)
