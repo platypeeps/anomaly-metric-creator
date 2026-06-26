@@ -98,6 +98,7 @@ Poll every 30 seconds. Keep updates short.
 gh pr view "$PR_NUMBER" --json reviewRequests,latestReviews,headRefOid,updatedAt
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate
+gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate
 ```
 
 Consider the Copilot review complete when:
@@ -143,12 +144,28 @@ query($owner:String!, $repo:String!, $number:Int!) {
           }
         }
       }
+      comments(first:50) {
+        nodes {
+          id
+          databaseId
+          author { login }
+          body
+          createdAt
+          url
+        }
+      }
     }
   }
 }'
 ```
 
 If there are more than 100 threads, paginate before deciding the PR is clean.
+Fetch top-level PR conversation comments through the issues comments API because
+pull requests are issues for regular conversation comments:
+
+```bash
+gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate
+```
 
 Also check CI:
 
@@ -183,7 +200,7 @@ comment:
 
 ```bash
 gh api -X POST \
-  "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments/{comment_database_id}/replies" \
+  "repos/$OWNER/$REPO/pulls/comments/{comment_database_id}/replies" \
   -f body="..."
 ```
 
