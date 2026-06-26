@@ -244,6 +244,28 @@ If the loop would start round 6, ask:
 
 Do not continue until the user approves.
 
+## Step 7: Finish Work Automatically
+
+After the loop stops because Copilot produced no new actionable comments, run
+the Trellis finish-work flow automatically before the final report. Do not ask
+whether to run it; the absence of new Copilot comments is the trigger.
+
+1. Read `.agents/skills/trellis-finish-work/SKILL.md`.
+2. Follow that skill exactly to archive completed task state and record the
+   session journal.
+3. If finish-work creates archive or journal commits, push the current branch
+   after those commits are created:
+
+```bash
+git status -sb
+git push
+```
+
+If finish-work detects uncommitted PR work or ambiguous unrelated files, follow
+the routing in `trellis-finish-work` rather than forcing a commit. The PR review
+loop is complete only after finish-work has either completed successfully or
+reported a concrete blocker.
+
 ## Final Report
 
 Report:
@@ -252,6 +274,7 @@ Report:
 - Number of Copilot rounds completed.
 - Comments fixed, rebutted, or left for user decision.
 - Commits pushed during the loop.
+- Finish-work actions and any archive/journal commits pushed.
 - CI status.
 - Final working-tree state.
 - Recommended internal documentation, spec, prompt, or pre-commit changes that
