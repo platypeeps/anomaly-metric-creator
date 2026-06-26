@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "check_agent_hook_exceptions.py"
 
@@ -39,23 +41,20 @@ def test_documented_empty_pass_exits_zero(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_comment_before_pass_exits_zero(tmp_path: Path) -> None:
-    path = _hook(
-        tmp_path,
+@pytest.mark.parametrize(
+    "body",
+    [
         "try:\n    risky()\nexcept Exception:\n"
         "    # Optional hook context; continue without it.\n    pass\n",
-    )
-    result = _run(path)
-    assert result.returncode == 0, result.stderr
-
-
-def test_except_line_comment_exits_zero(tmp_path: Path) -> None:
-    path = _hook(
-        tmp_path,
         "try:\n    risky()\n"
         "except Exception:  # Optional hook context; continue without it.\n"
         "    pass\n",
-    )
+    ],
+)
+def test_documented_empty_pass_comment_styles_exit_zero(
+    tmp_path: Path, body: str
+) -> None:
+    path = _hook(tmp_path, body)
     result = _run(path)
     assert result.returncode == 0, result.stderr
 
