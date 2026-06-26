@@ -179,3 +179,40 @@ Added a project-local amc-server-compatibility skill with server-mode workflow, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Kubectl explain OpenAPI PR review fixes
+
+**Date**: 2026-06-26
+**Task**: Kubectl explain OpenAPI PR review fixes
+**Package**: amc
+**Branch**: `codex/kubectl-explain-openapi`
+
+### Summary
+
+Added kubectl explain OpenAPI support and addressed PR review feedback for api-version validation, snapshot reuse, and derived OpenAPI v3 discovery.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8c8a864` | (see git log) |
+| `c44705a` | (see git log) |
+| `acd4a72` | (see git log) |
+| `327fb17` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
