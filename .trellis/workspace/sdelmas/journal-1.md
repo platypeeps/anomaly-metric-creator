@@ -136,3 +136,37 @@ Converted Trellis to package-scoped monorepo mode with amc as the default packag
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Create AMC server compatibility skill
+
+**Date**: 2026-06-26
+**Task**: Create AMC server compatibility skill
+**Package**: amc
+**Branch**: `codex/amc-server-compatibility-skill`
+
+### Summary
+
+Added a project-local amc-server-compatibility skill with server-mode workflow, source-owner map, compatibility invariants, and validation guidance for Kubernetes/Helm simulator work.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `142d5ea` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
