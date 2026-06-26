@@ -97,10 +97,18 @@ explicitly say that trigger is enabled.
 
 ## Step 3: Wait For Review Completion
 
-Poll every 30 seconds. Keep updates short.
+Poll every 30 seconds with lightweight PR metadata only. Keep updates short.
 
 ```bash
 gh pr view "$PR_NUMBER" --json reviewRequests,latestReviews,headRefOid,updatedAt
+```
+
+Do not paginate full review/comment bodies during every polling interval. Once
+the Copilot review request clears, or `latestReviews` / `updatedAt` indicates
+new Copilot activity after the trigger timestamp, fetch the full review and
+comment bodies once before moving to Step 4:
+
+```bash
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate
 gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate
@@ -109,9 +117,11 @@ gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate
 Consider the Copilot review complete when:
 
 - `copilot-pull-request-reviewer` is no longer present in review requests; and
-- a Copilot review or review comment exists after the trigger timestamp for the
-  head SHA, or the review request disappears and remains absent through two
-  polling intervals.
+- `latestReviews` or the one-time full fetch confirms a Copilot review, review
+  comment, or top-level PR comment after the trigger timestamp for the head SHA;
+  or
+- the review request disappears and remains absent through two polling
+  intervals.
 
 If review status is ambiguous for more than 20 minutes, report the state and ask
 whether to keep waiting.
