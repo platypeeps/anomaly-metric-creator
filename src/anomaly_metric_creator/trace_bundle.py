@@ -78,17 +78,11 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"trace entry {index} is invalid: {exc}") from exc
     traces = tuple(traces_list)
-    raw_declared_count = payload.get("trace_count", len(traces))
-    if isinstance(raw_declared_count, bool):
+    declared_count = payload.get("trace_count", len(traces))
+    if isinstance(declared_count, bool) or not isinstance(declared_count, int):
         raise ValueError(
-            f"trace bundle trace_count must be an integer; got {raw_declared_count!r}"
+            f"trace bundle trace_count must be an integer; got {declared_count!r}"
         )
-    try:
-        declared_count = int(raw_declared_count)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"trace bundle trace_count must be an integer; got {raw_declared_count!r}"
-        ) from exc
     if declared_count != len(traces):
         raise ValueError(
             f"trace bundle trace_count is {declared_count}, but traces has "
@@ -156,7 +150,9 @@ def search_trace_bundle(
         )
     ]
     total = len(filtered)
-    page = list(reversed(filtered))[clamped_offset: clamped_offset + clamped_limit]
+    page = sorted(
+        filtered, key=lambda trace: trace.id, reverse=True
+    )[clamped_offset: clamped_offset + clamped_limit]
     return {
         "items": [
             {"version": len(bundle.traces), **trace.to_dict()}

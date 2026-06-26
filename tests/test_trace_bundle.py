@@ -175,6 +175,29 @@ def test_search_trace_bundle_applies_limit_and_offset_in_recent_first_order(
     assert [item["id"] for item in search["items"]] == [3, 2]
 
 
+def test_search_trace_bundle_sorts_reordered_bundle_by_trace_id(tmp_path):
+    traces = [
+        _trace(1, "kubectl get pods -n saas-prod").to_dict(),
+        _trace(4, "helm get manifest checkout -n saas-prod").to_dict(),
+        _trace(2, "kubectl auth can-i get pods -n saas-prod").to_dict(),
+    ]
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "trace_count": len(traces),
+        "traces": traces,
+    }
+    path = tmp_path / "reordered-command-traces.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    bundle = trace_bundle.load_trace_bundle(path)
+
+    search = trace_bundle.search_trace_bundle(bundle, limit=2)
+
+    assert search["total"] == 3
+    assert [item["id"] for item in search["items"]] == [4, 2]
+
+
 def test_unsupported_summary_groups_partial_and_unsupported_traces(trace_bundle_path):
     bundle = trace_bundle.load_trace_bundle(trace_bundle_path)
 
@@ -294,12 +317,13 @@ def test_load_trace_bundle_rejects_invalid_trace_object(tmp_path):
         trace_bundle.load_trace_bundle(path)
 
 
-def test_load_trace_bundle_rejects_invalid_trace_count(tmp_path):
+@pytest.mark.parametrize("trace_count", [None, "1"])
+def test_load_trace_bundle_rejects_invalid_trace_count(tmp_path, trace_count):
     payload = {
         "kind": "CommandTraceExport",
         "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
         "schema_version": COMMAND_TRACE_EXPORT_VERSION,
-        "trace_count": None,
+        "trace_count": trace_count,
         "traces": [_trace(1, "kubectl get pods -n saas-prod").to_dict()],
     }
     path = tmp_path / "invalid-trace-count.json"
