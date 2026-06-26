@@ -84,6 +84,14 @@ PRs. A publish flow should have a non-empty, non-duplicate branch diff before
 creating a pull request. Sources: `.trellis/workflow.md`;
 `.trellis/workspace/`; `.trellis/tasks/`; `CLAUDE.md`.
 
+The Trellis PR review loop is a project-local command surface. Keep the
+canonical loop in `.agents/skills/trellis-review-pr/SKILL.md`; platform command
+or prompt files should be thin entry points that load that skill rather than
+duplicating the loop. Sources: `.agents/skills/trellis-review-pr/SKILL.md`;
+`.gemini/commands/trellis/review-pr.toml`;
+`.github/prompts/review-pr.prompt.md`;
+`.opencode/commands/trellis/review-pr.md`.
+
 ## Platform Adapter Policy
 
 Retain existing Codex, Claude, GitHub/Copilot, Gemini, and OpenCode Trellis
