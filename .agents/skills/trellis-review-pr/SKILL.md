@@ -41,6 +41,11 @@ git status -sb
 REPO_FULL=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 OWNER=${REPO_FULL%/*}
 REPO=${REPO_FULL#*/}
+PR_NUMBER=$(gh pr view --json number --jq .number)
+PR_URL=$(gh pr view --json url --jq .url)
+HEAD_BRANCH=$(gh pr view --json headRefName --jq .headRefName)
+HEAD_SHA=$(gh pr view --json headRefOid --jq .headRefOid)
+BASE_BRANCH=$(gh pr view --json baseRefName --jq .baseRefName)
 gh pr view --json number,url,isDraft,headRefName,headRefOid,baseRefName,state,reviewRequests,latestReviews,statusCheckRollup
 ```
 
@@ -117,15 +122,19 @@ Fetch thread-aware review data. Prefer platform/GitHub tools that expose review
 thread ids and resolution state. If using `gh`, use GraphQL:
 
 ```bash
-gh api graphql \
+gh api graphql --paginate \
   -F owner="$OWNER" \
   -F repo="$REPO" \
   -F number="$PR_NUMBER" \
   -f query='
-query($owner:String!, $repo:String!, $number:Int!) {
+query($owner:String!, $repo:String!, $number:Int!, $endCursor:String) {
   repository(owner:$owner, name:$repo) {
     pullRequest(number:$number) {
-      reviewThreads(first:100) {
+      reviewThreads(first:100, after:$endCursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           id
           isResolved
@@ -144,22 +153,16 @@ query($owner:String!, $repo:String!, $number:Int!) {
           }
         }
       }
-      comments(first:50) {
-        nodes {
-          id
-          databaseId
-          author { login }
-          body
-          createdAt
-          url
-        }
-      }
     }
   }
 }'
 ```
 
-If there are more than 100 threads, paginate before deciding the PR is clean.
+`--paginate` keeps requesting review thread pages by passing `pageInfo.endCursor`
+as `$endCursor` while `pageInfo.hasNextPage` is true. If not using
+`--paginate`, repeat the query with `-F endCursor="<endCursor>"` until
+`hasNextPage` is false before deciding the PR is clean.
+
 Fetch top-level PR conversation comments through the issues comments API because
 pull requests are issues for regular conversation comments:
 
