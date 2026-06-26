@@ -581,6 +581,21 @@ def test_openapi_schema_generation_reuses_resource_snapshot(amc, tmp_path, monke
     assert snapshot_calls == 1
 
 
+def test_openapi_v3_discovery_derives_group_versions_from_explain_targets(monkeypatch):
+    monkeypatch.setitem(
+        server._server_ops._EXPLAIN_RESOURCE_TARGETS,
+        "widgets",
+        ("example.com", "v1alpha1", "widgets"),
+    )
+
+    discovery = server._server_ops._k8s_openapi_v3_discovery()
+
+    assert list(discovery["paths"]) == sorted(discovery["paths"])
+    assert discovery["paths"]["apis/example.com/v1alpha1"] == {
+        "serverRelativeURL": "/openapi/v3/apis/example.com/v1alpha1?hash=amc-example-com-v1alpha1",
+    }
+
+
 def test_kubectl_delete_ingress_uses_stable_resource_prefix(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 

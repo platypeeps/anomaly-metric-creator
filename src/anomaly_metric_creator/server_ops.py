@@ -4492,16 +4492,14 @@ def _openapi_list_schema_name(api_version: str, kind: str) -> str:
 
 
 def _openapi_group_versions() -> tuple[tuple[str, str], ...]:
-    ordered = [
-        ("", "v1"),
-        ("apps", "v1"),
-        ("autoscaling", "v2"),
-        ("batch", "v1"),
-        ("discovery.k8s.io", "v1"),
-        ("networking.k8s.io", "v1"),
-    ]
-    available = {(group, version) for group, version, _resource in _EXPLAIN_RESOURCE_TARGETS.values()}
-    return tuple(item for item in ordered if item in available)
+    return tuple(
+        sorted(
+            {
+                (group, version)
+                for group, version, _resource in _EXPLAIN_RESOURCE_TARGETS.values()
+            }
+        )
+    )
 
 
 def _openapi_group_version_from_path(path: str) -> tuple[str, str]:
