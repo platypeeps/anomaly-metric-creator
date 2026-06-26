@@ -413,7 +413,7 @@ Primary endpoints:
 | `GET /debug` | Browser debug console shell. Data requests still use bearer auth when configured. |
 | `GET /v1/kubeconfig` | Kubeconfig that points stock `kubectl` and `helm` clients at this simulator. |
 | `POST /v1/commands` | Execute a simulated command. Body accepts `{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`. |
-| `GET /version`, `/api`, `/apis/...` | Kubernetes-compatible discovery, resource, log, metrics, and Helm release Secret APIs for real clients. |
+| `GET /version`, `/api`, `/apis/...`, `/openapi/v2`, `/openapi/v3/...` | Kubernetes-compatible discovery, schema, resource, log, metrics, and Helm release Secret APIs for real clients. |
 | `GET /v1/state` | Current synthetic clock, active scenarios, OTEL/generation status, mutable overlay summary, active anomaly spans, and trace counts. |
 | `GET /v1/scenarios` | Scenario catalog with primary/cascade signal descriptions and Kubernetes/Helm ops-profile details. |
 | `GET /v1/debug/commands` | Recent command traces. |
@@ -431,6 +431,7 @@ Supported command families in server mode:
 - `kubectl version|api-versions|api-resources|cluster-info`
 - `kubectl config current-context|view`
 - `kubectl auth can-i`
+- `kubectl explain RESOURCE[.field]` for common simulator-backed resources and fields
 - `kubectl get all|namespaces|pods|configmaps|secrets|deployments|replicasets|daemonsets|services|endpoints|endpointslices|events|hpa|jobs|cronjobs|serviceaccounts|nodes|pvc|statefulsets|ingress`
 - `kubectl describe` for the same synthetic resources where a description is useful
 - `kubectl logs POD` and selector-based logs with `--follow`, `--prefix`,
@@ -458,6 +459,8 @@ curl -s http://127.0.0.1:8088/v1/kubeconfig > /tmp/amc.kubeconfig
 KUBECONFIG=/tmp/amc.kubeconfig kubectl get pods -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl get all -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl api-resources
+KUBECONFIG=/tmp/amc.kubeconfig kubectl explain pods
+KUBECONFIG=/tmp/amc.kubeconfig kubectl explain deployment.spec.replicas
 KUBECONFIG=/tmp/amc.kubeconfig kubectl logs cacheservice-0 -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl logs -l app.kubernetes.io/name=cacheservice --prefix -n saas-prod
 KUBECONFIG=/tmp/amc.kubeconfig kubectl top pods -n saas-prod

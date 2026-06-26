@@ -1081,12 +1081,12 @@ _VALUE_FLAGS = {
     "--context", "--kubeconfig", "-c", "--container", "--tail", "--since",
     "--since-time", "--field-selector", "--sort-by", "--for", "--timeout", "--replicas",
     "-f", "--filename", "--from-literal", "--from-file", "--image", "--schedule",
-    "--set", "--set-string", "--values",
+    "--set", "--set-string", "--values", "--api-version",
 }
 _BOOL_FLAGS = {
     "-A", "--all-namespaces", "--previous", "-p", "--follow",
     "--prefix", "--watch", "-w", "--wide", "--show-labels", "--dry-run", "--install",
-    "--atomic", "--debug", "--all", "--short", "--",
+    "--atomic", "--debug", "--all", "--short", "--recursive", "--",
 }
 _SENSITIVE_FLAG_TOKENS = ("token", "password", "secret", "client-key")
 _SENSITIVE_QUERY_KEYS = {
@@ -1116,7 +1116,8 @@ _MODELED_FLAGS = {
     "--field-selector", "--sort-by", "--for", "--timeout",
     "--replicas", "-f", "--filename", "--from-literal", "--from-file",
     "--image", "--schedule", "--set", "--set-string", "--values",
-    "--dry-run", "--install", "--atomic", "--debug", "--all", "--short", "--",
+    "--dry-run", "--install", "--atomic", "--debug", "--all", "--short",
+    "--recursive", "--api-version", "--",
 }
 _KIND_ALIASES = {
     "all": "all",
@@ -1216,6 +1217,68 @@ _MUTATION_SNAPSHOT_KINDS = {
 }
 _CLUSTER_SCOPED_SNAPSHOT_KINDS = {"namespaces", "nodes"}
 _NAMESPACED_SNAPSHOT_KINDS = _SNAPSHOT_KINDS - _CLUSTER_SCOPED_SNAPSHOT_KINDS
+
+_EXPLAIN_RESOURCE_TARGETS: dict[str, tuple[str, str, str]] = {
+    "namespaces": ("", "v1", "namespaces"),
+    "nodes": ("", "v1", "nodes"),
+    "pods": ("", "v1", "pods"),
+    "configmaps": ("", "v1", "configmaps"),
+    "secrets": ("", "v1", "secrets"),
+    "replicationcontrollers": ("", "v1", "replicationcontrollers"),
+    "services": ("", "v1", "services"),
+    "endpoints": ("", "v1", "endpoints"),
+    "events": ("", "v1", "events"),
+    "pvc": ("", "v1", "persistentvolumeclaims"),
+    "serviceaccounts": ("", "v1", "serviceaccounts"),
+    "deployments": ("apps", "v1", "deployments"),
+    "replicasets": ("apps", "v1", "replicasets"),
+    "daemonsets": ("apps", "v1", "daemonsets"),
+    "statefulsets": ("apps", "v1", "statefulsets"),
+    "hpa": ("autoscaling", "v2", "horizontalpodautoscalers"),
+    "jobs": ("batch", "v1", "jobs"),
+    "cronjobs": ("batch", "v1", "cronjobs"),
+    "endpointslices": ("discovery.k8s.io", "v1", "endpointslices"),
+    "ingress": ("networking.k8s.io", "v1", "ingresses"),
+}
+
+_EXPLAIN_GROUP_ALIASES = {
+    "deployments.apps": "deployments",
+    "replicasets.apps": "replicasets",
+    "daemonsets.apps": "daemonsets",
+    "statefulsets.apps": "statefulsets",
+    "horizontalpodautoscalers.autoscaling": "hpa",
+    "jobs.batch": "jobs",
+    "cronjobs.batch": "cronjobs",
+    "endpointslices.discovery.k8s.io": "endpointslices",
+    "ingresses.networking.k8s.io": "ingress",
+    "ingress.networking.k8s.io": "ingress",
+    "persistentvolumeclaims.v1": "pvc",
+    "pods.v1": "pods",
+    "services.v1": "services",
+}
+
+_EXPLAIN_RESOURCE_DESCRIPTIONS = {
+    "namespaces": "Namespace is a cluster-scoped boundary for AMC simulator resources.",
+    "nodes": "Node is a simulated Kubernetes worker node that hosts AMC pods.",
+    "pods": "Pod is a simulator-backed workload instance derived from resource_snapshot().",
+    "configmaps": "ConfigMap exposes non-sensitive AMC simulator configuration data.",
+    "secrets": "Secret exposes simulator Secret metadata and redacted data payload shape.",
+    "replicationcontrollers": "ReplicationController is advertised for compatibility; AMC does not create baseline objects.",
+    "services": "Service exposes the stable virtual endpoint for a simulated component.",
+    "endpoints": "Endpoints exposes pod IPs selected by a simulated Service.",
+    "events": "Event records scenario and mutation activity in Kubernetes-compatible form.",
+    "pvc": "PersistentVolumeClaim exposes simulated storage pressure for stateful components.",
+    "serviceaccounts": "ServiceAccount exposes identities used by simulator workloads.",
+    "deployments": "Deployment describes desired and observed state for a simulated component workload.",
+    "replicasets": "ReplicaSet is projected from simulated Deployment ownership.",
+    "daemonsets": "DaemonSet describes node-level simulator agents.",
+    "statefulsets": "StatefulSet describes stateful simulator workloads such as the database.",
+    "hpa": "HorizontalPodAutoscaler exposes simulated scaling targets and current metrics.",
+    "jobs": "Job describes one-shot simulator maintenance work.",
+    "cronjobs": "CronJob describes recurring simulator maintenance work.",
+    "endpointslices": "EndpointSlice exposes Service endpoint subsets for real kubectl clients.",
+    "ingress": "Ingress exposes the simulator edge route for the API gateway.",
+}
 
 
 def _snapshot_row_namespace(row: dict[str, Any], default_namespace: str = DEFAULT_NAMESPACE) -> str:
@@ -1395,6 +1458,13 @@ def _parse_kubectl(
     resource_name = ""
     if verb in {"api-resources", "api-versions", "cluster-info", "version"}:
         return ParsedCommand(raw, argv, "kubectl", verb, "", "", namespace, flags, tuple(positionals))
+    if verb == "explain":
+        target = positionals[1] if len(positionals) > 1 else ""
+        resource_kind, field_path = _split_explain_target(target)
+        return ParsedCommand(
+            raw, argv, "kubectl", verb,
+            resource_kind, field_path, namespace, flags, tuple(positionals)
+        )
     if verb == "events":
         return ParsedCommand(raw, argv, "kubectl", "get", "events", "", namespace, flags, tuple(positionals))
     if verb == "logs":
@@ -1523,6 +1593,25 @@ def _normalize_kind(raw: str) -> str:
     return _KIND_ALIASES.get(raw.lower(), raw.lower())
 
 
+def _split_explain_target(target: str) -> tuple[str, str]:
+    if not target:
+        return "", ""
+    parts = [part for part in target.split(".") if part]
+    for end in range(len(parts), 0, -1):
+        raw_resource = ".".join(parts[:end]).lower()
+        kind = _normalize_explain_resource(raw_resource)
+        if kind in _EXPLAIN_RESOURCE_TARGETS:
+            return kind, ".".join(parts[end:])
+    return _normalize_explain_resource(parts[0]), ".".join(parts[1:])
+
+
+def _normalize_explain_resource(raw: str) -> str:
+    lowered = raw.lower()
+    if lowered in _EXPLAIN_GROUP_ALIASES:
+        return _EXPLAIN_GROUP_ALIASES[lowered]
+    return _normalize_kind(lowered)
+
+
 def render_command(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
     if parsed.parse_error:
         return CommandResult(2, "", parsed.parse_error + "\n", "unsupported", "parse.error")
@@ -1565,6 +1654,8 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
         return CommandResult(0, _render_kubectl_api_resources(), "", "supported", "kubectl.api-resources")
     if parsed.verb == "cluster-info":
         return CommandResult(0, _render_kubectl_cluster_info(), "", "supported", "kubectl.cluster-info")
+    if parsed.verb == "explain":
+        return _render_explain(state, parsed)
     if parsed.verb == "config current-context":
         return CommandResult(0, "amc-simulator\n", "", "supported", "kubectl.config.current-context")
     if parsed.verb == "config view":
@@ -2683,6 +2774,267 @@ def _render_kubectl_cluster_info() -> str:
         "Kubernetes control plane is running at http://127.0.0.1:8088\n"
         "AMC simulator debug console is running at http://127.0.0.1:8088/debug\n"
     )
+
+
+def _render_explain(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
+    target = parsed.positionals[1] if len(parsed.positionals) > 1 else ""
+    if not target:
+        return CommandResult(
+            1,
+            "",
+            "error: resource required for kubectl explain\n",
+            "partial",
+            "kubectl.explain.missing-resource",
+        )
+    schema_info = _explain_schema_for_kind(state, parsed.resource_kind)
+    if schema_info is None:
+        return CommandResult(
+            1,
+            "",
+            f"error: resource {target!r} is not exposed by the simulator OpenAPI schema\n",
+            "unsupported",
+            "kubectl.explain.unsupported",
+        )
+    requested_api_version = str(parsed.flags.get("--api-version") or "")
+    if "--api-version" in parsed.flags and (
+        not requested_api_version or requested_api_version.startswith("-")
+    ):
+        return CommandResult(
+            1,
+            "",
+            "error: --api-version requires a non-empty value\n",
+            "partial",
+            "kubectl.explain.api-version.invalid",
+        )
+    if requested_api_version and requested_api_version != schema_info["api_version"]:
+        return CommandResult(
+            1,
+            "",
+            (
+                f"error: resource {target!r} is available as "
+                f"{schema_info['api_version']}, not {requested_api_version}\n"
+            ),
+            "partial",
+            "kubectl.explain.api-version",
+        )
+    field_schema = _explain_schema_at_path(schema_info["schema"], parsed.resource_name)
+    if field_schema is None:
+        return CommandResult(
+            1,
+            "",
+            (
+                f"error: field {parsed.resource_name!r} is not exposed for "
+                f"{schema_info['kind']}\n"
+            ),
+            "partial",
+            "kubectl.explain.unknown-field",
+        )
+    return CommandResult(
+        0,
+        _format_explain(schema_info, parsed.resource_name, field_schema, bool(parsed.flags.get("--recursive"))),
+        "",
+        "supported",
+        f"kubectl.explain.{parsed.resource_kind}",
+    )
+
+
+def _explain_schema_for_kind(
+    state: SimulationState,
+    kind: str,
+    snapshot: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any] | None:
+    target = _EXPLAIN_RESOURCE_TARGETS.get(kind)
+    if target is None:
+        return None
+    group, version, resource = target
+    meta = _k8s_resource_meta(group, version, resource)
+    objects = _k8s_objects_for_resource(state, group, resource, snapshot=snapshot) or []
+    sample = objects[0] if objects else _minimal_k8s_object(state, meta["api_version"], meta["kind"])
+    schema = _openapi_schema_from_value(
+        sample,
+        root_kind=meta["kind"],
+        path=(),
+        description=_EXPLAIN_RESOURCE_DESCRIPTIONS.get(kind, f"{meta['kind']} is projected by the AMC simulator."),
+    )
+    schema["x-kubernetes-group-version-kind"] = [{
+        "group": group,
+        "version": version,
+        "kind": meta["kind"],
+    }]
+    return {
+        "api_version": meta["api_version"],
+        "kind": meta["kind"],
+        "resource": resource,
+        "schema": schema,
+    }
+
+
+def _minimal_k8s_object(state: SimulationState, api_version: str, kind: str) -> dict[str, Any]:
+    return {
+        "apiVersion": api_version,
+        "kind": kind,
+        "metadata": _k8s_metadata(state, f"simulated-{kind.lower()}"),
+    }
+
+
+def _openapi_schema_from_value(
+    value: Any,
+    *,
+    root_kind: str,
+    path: tuple[str, ...],
+    description: str = "",
+) -> dict[str, Any]:
+    field_description = description or _explain_field_description(root_kind, path)
+    if isinstance(value, bool):
+        return {"type": "boolean", "description": field_description}
+    if isinstance(value, int):
+        return {"type": "integer", "format": "int32", "description": field_description}
+    if isinstance(value, float):
+        return {"type": "number", "format": "double", "description": field_description}
+    if isinstance(value, dict):
+        return {
+            "type": "object",
+            "title": _explain_title(root_kind, path),
+            "description": field_description,
+            "properties": {
+                str(key): _openapi_schema_from_value(item, root_kind=root_kind, path=(*path, str(key)))
+                for key, item in value.items()
+            },
+        }
+    if isinstance(value, list):
+        item_value = value[0] if value else {}
+        return {
+            "type": "array",
+            "description": field_description,
+            "items": _openapi_schema_from_value(item_value, root_kind=root_kind, path=(*path, "items")),
+        }
+    return {"type": "string", "description": field_description}
+
+
+def _explain_field_description(root_kind: str, path: tuple[str, ...]) -> str:
+    if not path:
+        return f"{root_kind} schema projected from the AMC simulator Kubernetes facade."
+    dotted = ".".join(part for part in path if part != "items")
+    return f"{dotted} field projected from AMC's simulator-backed {root_kind} object."
+
+
+def _explain_title(root_kind: str, path: tuple[str, ...]) -> str:
+    if not path:
+        return root_kind
+    if path[-1] == "metadata":
+        return "ObjectMeta"
+    words = [root_kind, *(part for part in path if part != "items")]
+    return "".join(word[:1].upper() + word[1:] for word in words if word)
+
+
+def _explain_schema_at_path(schema: dict[str, Any], field_path: str) -> dict[str, Any] | None:
+    node = schema
+    for part in [item for item in field_path.split(".") if item]:
+        node = _explain_display_schema(node)
+        properties = node.get("properties")
+        if not isinstance(properties, dict) or part not in properties:
+            return None
+        child = properties[part]
+        if not isinstance(child, dict):
+            return None
+        node = child
+    return node
+
+
+def _format_explain(
+    schema_info: dict[str, Any],
+    field_path: str,
+    field_schema: dict[str, Any],
+    recursive: bool,
+) -> str:
+    lines = [
+        f"KIND:       {schema_info['kind']}",
+        f"VERSION:    {schema_info['api_version']}",
+        "",
+    ]
+    if field_path:
+        lines.extend([
+            f"FIELD:      {field_path} {_explain_type_label(field_schema)}",
+            "",
+        ])
+    lines.extend([
+        "DESCRIPTION:",
+        "    " + str(field_schema.get("description", "")).strip(),
+        "",
+    ])
+    properties = _explain_properties(field_schema)
+    if properties:
+        lines.append("FIELDS:")
+        if recursive:
+            lines.extend(_format_recursive_explain_fields(properties, depth=1, max_depth=5))
+        else:
+            for name, child in properties.items():
+                lines.append(f"  {name:<20} {_explain_type_label(child)}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _format_recursive_explain_fields(
+    properties: dict[str, Any],
+    *,
+    depth: int,
+    max_depth: int,
+) -> list[str]:
+    lines: list[str] = []
+    indent = "  " * depth
+    for name, child in properties.items():
+        if not isinstance(child, dict):
+            continue
+        lines.append(f"{indent}{name:<20} {_explain_type_label(child)}")
+        if depth >= max_depth:
+            continue
+        child_properties = _explain_properties(child)
+        if child_properties:
+            lines.extend(
+                _format_recursive_explain_fields(
+                    child_properties,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                )
+            )
+    return lines
+
+
+def _explain_properties(schema: dict[str, Any]) -> dict[str, Any]:
+    display_schema = _explain_display_schema(schema)
+    properties = display_schema.get("properties")
+    return properties if isinstance(properties, dict) else {}
+
+
+def _explain_display_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    if schema.get("type") == "array":
+        items = schema.get("items")
+        if isinstance(items, dict):
+            return items
+    return schema
+
+
+def _explain_type_label(schema: dict[str, Any]) -> str:
+    schema_type = schema.get("type")
+    if schema_type == "array":
+        items = schema.get("items")
+        item_label = _explain_type_name(items) if isinstance(items, dict) else "Object"
+        return f"<[]{item_label}>"
+    return f"<{_explain_type_name(schema)}>"
+
+
+def _explain_type_name(schema: dict[str, Any]) -> str:
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        title = schema.get("title")
+        return str(title) if title else "Object"
+    if schema_type == "integer":
+        return "integer"
+    if schema_type == "number":
+        return "number"
+    if schema_type == "boolean":
+        return "boolean"
+    return "string"
 
 
 def _render_rollout_status(state: SimulationState, parsed: ParsedCommand) -> str:
@@ -3860,10 +4212,12 @@ def kubernetes_api_response(
     query: dict[str, list[str]],
     accept_header: str = "",
 ) -> KubernetesApiResponse | None:
-    if path != "/version" and not path.startswith(("/api", "/apis")):
+    if path != "/version" and not path.startswith(("/api", "/apis", "/openapi")):
         return None
     if method != "GET":
         return _k8s_read_only_response(method, path)
+    if path.startswith("/openapi"):
+        return _k8s_openapi_response(state, path)
     if path == "/version":
         return _k8s_json_response({
             "major": "1",
@@ -3902,11 +4256,268 @@ def kubernetes_api_response(
     )
 
 
+def _k8s_openapi_response(state: SimulationState, path: str) -> KubernetesApiResponse:
+    normalized = path.rstrip("/") or "/"
+    if normalized == "/openapi/v2":
+        return _k8s_json_response(_k8s_openapi_v2_document(state), "k8s.openapi.v2")
+    if normalized == "/openapi/v3":
+        return _k8s_json_response(_k8s_openapi_v3_discovery(), "k8s.openapi.v3.discovery")
+    prefix = "/openapi/v3/"
+    if normalized.startswith(prefix):
+        group_version = normalized[len(prefix):]
+        group, version = _openapi_group_version_from_path(group_version)
+        if (group, version) in _openapi_group_versions():
+            return _k8s_json_response(
+                _k8s_openapi_v3_document(state, group, version),
+                f"k8s.openapi.v3.{group or 'core'}.{version}",
+            )
+    return _k8s_status_response(
+        404,
+        f"{path} is not implemented by the simulator OpenAPI facade",
+        "NotFound",
+        "unsupported",
+        "k8s.openapi.unsupported",
+    )
+
+
+def _k8s_openapi_v2_document(state: SimulationState) -> dict[str, Any]:
+    return {
+        "swagger": "2.0",
+        "info": {
+            "title": "AMC simulator Kubernetes schema",
+            "version": "v1.29.4-amc",
+        },
+        "paths": _openapi_paths(openapi_version="2"),
+        "definitions": _openapi_schema_definitions(state, ref_prefix="#/definitions/"),
+    }
+
+
+def _k8s_openapi_v3_discovery() -> dict[str, Any]:
+    paths = {}
+    for group, version in _openapi_group_versions():
+        api_path = f"api/{version}" if not group else f"apis/{group}/{version}"
+        hash_token = f"amc-{(group or 'core').replace('.', '-')}-{version}"
+        paths[api_path] = {
+            "serverRelativeURL": f"/openapi/v3/{api_path}?hash={hash_token}",
+        }
+    return {"paths": paths}
+
+
+def _k8s_openapi_v3_document(
+    state: SimulationState,
+    group: str,
+    version: str,
+) -> dict[str, Any]:
+    return {
+        "openapi": "3.0.0",
+        "info": {
+            "title": f"AMC simulator Kubernetes schema {group or 'core'}/{version}",
+            "version": "v1.29.4-amc",
+        },
+        "paths": _openapi_paths(group=group, version=version, openapi_version="3"),
+        "components": {
+            "schemas": _openapi_schema_definitions(
+                state,
+                group=group,
+                version=version,
+                ref_prefix="#/components/schemas/",
+            ),
+        },
+    }
+
+
+def _openapi_schema_definitions(
+    state: SimulationState,
+    *,
+    group: str | None = None,
+    version: str | None = None,
+    ref_prefix: str,
+) -> dict[str, Any]:
+    snapshot = resource_snapshot(state)
+    definitions: dict[str, Any] = {}
+    for kind, target in _EXPLAIN_RESOURCE_TARGETS.items():
+        target_group, target_version, _resource = target
+        if group is not None and (target_group != group or target_version != version):
+            continue
+        schema_info = _explain_schema_for_kind(state, kind, snapshot=snapshot)
+        if schema_info is None:
+            continue
+        schema_name = _openapi_schema_name(schema_info["api_version"], schema_info["kind"])
+        definitions[schema_name] = schema_info["schema"]
+        definitions[_openapi_list_schema_name(schema_info["api_version"], schema_info["kind"])] = (
+            _openapi_list_schema(schema_info, schema_name, ref_prefix)
+        )
+    return definitions
+
+
+def _openapi_paths(
+    *,
+    group: str | None = None,
+    version: str | None = None,
+    openapi_version: str,
+) -> dict[str, Any]:
+    paths: dict[str, Any] = {}
+    ref_prefix = "#/definitions/" if openapi_version == "2" else "#/components/schemas/"
+    for kind, target in _EXPLAIN_RESOURCE_TARGETS.items():
+        target_group, target_version, resource = target
+        if group is not None and (target_group != group or target_version != version):
+            continue
+        api_version = target_version if not target_group else f"{target_group}/{target_version}"
+        meta_kind = _k8s_resource_meta(target_group, target_version, resource)["kind"]
+        schema_name = _openapi_schema_name(api_version, meta_kind)
+        list_schema_name = _openapi_list_schema_name(api_version, meta_kind)
+        base_path = f"/api/{target_version}" if not target_group else f"/apis/{target_group}/{target_version}"
+        if _snapshot_kind_namespaced(kind):
+            all_namespaces_path = f"{base_path}/{resource}"
+            namespaced_path = f"{base_path}/namespaces/{{namespace}}/{resource}"
+            paths[all_namespaces_path] = {
+                "get": _openapi_operation(
+                    "list",
+                    target_group,
+                    target_version,
+                    meta_kind,
+                    list_schema_name,
+                    ref_prefix,
+                    openapi_version,
+                ),
+            }
+            paths[namespaced_path] = paths[all_namespaces_path]
+            paths[f"{namespaced_path}/{{name}}"] = {
+                "get": _openapi_operation(
+                    "get",
+                    target_group,
+                    target_version,
+                    meta_kind,
+                    schema_name,
+                    ref_prefix,
+                    openapi_version,
+                ),
+            }
+        else:
+            resource_path = f"{base_path}/{resource}"
+            paths[resource_path] = {
+                "get": _openapi_operation(
+                    "list",
+                    target_group,
+                    target_version,
+                    meta_kind,
+                    list_schema_name,
+                    ref_prefix,
+                    openapi_version,
+                ),
+            }
+            paths[f"{resource_path}/{{name}}"] = {
+                "get": _openapi_operation(
+                    "get",
+                    target_group,
+                    target_version,
+                    meta_kind,
+                    schema_name,
+                    ref_prefix,
+                    openapi_version,
+                ),
+            }
+    return paths
+
+
+def _openapi_operation(
+    action: str,
+    group: str,
+    version: str,
+    kind: str,
+    schema_name: str,
+    ref_prefix: str,
+    openapi_version: str,
+) -> dict[str, Any]:
+    response: dict[str, Any] = {"description": "OK"}
+    schema_ref = {"$ref": ref_prefix + schema_name}
+    if openapi_version == "2":
+        response["schema"] = schema_ref
+    else:
+        response["content"] = {"application/json": {"schema": schema_ref}}
+    return {
+        "description": f"{action.title()} simulated {kind} resources.",
+        "operationId": f"{action}{(group or 'core').replace('.', '_')}{version}{kind}",
+        "responses": {"200": response},
+        "x-kubernetes-action": action,
+        "x-kubernetes-group-version-kind": {
+            "group": group,
+            "version": version,
+            "kind": kind,
+        },
+    }
+
+
+def _openapi_list_schema(
+    schema_info: dict[str, Any],
+    item_schema_name: str,
+    ref_prefix: str,
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "title": f"{schema_info['kind']}List",
+        "description": f"List of simulator-backed {schema_info['kind']} resources.",
+        "properties": {
+            "apiVersion": {"type": "string", "description": "API version of this list."},
+            "kind": {"type": "string", "description": "Kind of this list."},
+            "metadata": {
+                "type": "object",
+                "title": "ListMeta",
+                "description": "List metadata projected by the simulator.",
+                "properties": {
+                    "resourceVersion": {
+                        "type": "string",
+                        "description": "Synthetic list resource version.",
+                    },
+                },
+            },
+            "items": {
+                "type": "array",
+                "description": f"{schema_info['kind']} items.",
+                "items": {"$ref": ref_prefix + item_schema_name},
+            },
+        },
+    }
+
+
+def _openapi_schema_name(api_version: str, kind: str) -> str:
+    if "/" in api_version:
+        group, version = api_version.split("/", 1)
+        return f"io.k8s.api.{group}.{version}.{kind}"
+    return f"io.k8s.api.core.{api_version}.{kind}"
+
+
+def _openapi_list_schema_name(api_version: str, kind: str) -> str:
+    return _openapi_schema_name(api_version, f"{kind}List")
+
+
+def _openapi_group_versions() -> tuple[tuple[str, str], ...]:
+    return tuple(
+        sorted(
+            {
+                (group, version)
+                for group, version, _resource in _EXPLAIN_RESOURCE_TARGETS.values()
+            }
+        )
+    )
+
+
+def _openapi_group_version_from_path(path: str) -> tuple[str, str]:
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) == 2 and parts[0] == "api":
+        return "", parts[1]
+    if len(parts) == 3 and parts[0] == "apis":
+        return parts[1], parts[2]
+    return "", ""
+
+
 def kubernetes_api_post_response(
     state: SimulationState,
     path: str,
     payload: dict[str, Any],
 ) -> KubernetesApiResponse | None:
+    if path.startswith("/openapi"):
+        return _k8s_read_only_response("POST", path)
     if path == "/version":
         return _k8s_read_only_response("POST", path)
     if not path.startswith(("/api", "/apis")):
@@ -5130,8 +5741,9 @@ def _k8s_objects_for_resource(
     state: SimulationState,
     group: str,
     resource: str,
+    snapshot: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]] | None:
-    snapshot = resource_snapshot(state)
+    snapshot = snapshot if snapshot is not None else resource_snapshot(state)
     if group == "metrics.k8s.io":
         if resource == "pods":
             return [_k8s_pod_metrics(state, pod) for pod in snapshot["pods"]]
@@ -5180,7 +5792,10 @@ def _k8s_objects_for_resource(
     if resource == "cronjobs" and group == "batch":
         return [_k8s_cronjob(state, cronjob) for cronjob in snapshot["cronjobs"]]
     if resource == "endpointslices" and group == "discovery.k8s.io":
-        return [_k8s_endpointslice(state, endpointslice) for endpointslice in snapshot["endpointslices"]]
+        return [
+            _k8s_endpointslice(state, endpointslice, snapshot=snapshot)
+            for endpointslice in snapshot["endpointslices"]
+        ]
     if resource == "ingresses" and group == "networking.k8s.io":
         return [_k8s_ingress(state, ingress) for ingress in snapshot["ingress"]]
     return None
@@ -5569,10 +6184,15 @@ def _k8s_ingress(state: SimulationState, ingress: dict[str, Any]) -> dict[str, A
     }
 
 
-def _k8s_endpointslice(state: SimulationState, endpointslice: dict[str, Any]) -> dict[str, Any]:
+def _k8s_endpointslice(
+    state: SimulationState,
+    endpointslice: dict[str, Any],
+    snapshot: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
     namespace = _snapshot_row_namespace(endpointslice, state.namespace)
+    snapshot = snapshot if snapshot is not None else resource_snapshot(state)
     pods = [
-        pod for pod in resource_snapshot(state)["pods"]
+        pod for pod in snapshot["pods"]
         if pod["component"] == endpointslice["service"]
         and _snapshot_row_namespace(pod, state.namespace) == namespace
     ]
@@ -6079,7 +6699,7 @@ def _api_guess_intent(path: str, response: KubernetesApiResponse) -> str:
 
 
 def _is_kubernetes_api_path(path: str) -> bool:
-    return path == "/version" or path.startswith(("/api", "/apis"))
+    return path == "/version" or path.startswith(("/api", "/apis", "/openapi"))
 
 
 def _rate_limit_bucket(path: str) -> str:
