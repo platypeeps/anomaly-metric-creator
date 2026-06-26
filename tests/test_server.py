@@ -940,6 +940,79 @@ def test_kubectl_patch_diff_and_dry_run_commands(amc, tmp_path):
     assert "does not exist" in missing_remove["result"]["stderr"]
 
 
+def test_kubectl_patch_p_flag_space_separated(amc, tmp_path):
+    """kubectl patch -p <json> (space-separated, no =) must capture the payload."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command=(
+            "kubectl patch deployment/apigateway --type=merge "
+            '-p \'{"spec":{"replicas":3}}\' -n saas-prod'
+        ),
+    )
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["stdout"] == "deployment/apigateway patched\n"
+    gateway = next(
+        item
+        for item in server.resource_snapshot(state)["deployments"]
+        if item["name"] == "apigateway"
+    )
+    assert gateway["ready"] == "3/3"
+
+
+def test_kubectl_create_configmap_multiple_from_literal(amc, tmp_path):
+    """Multiple --from-literal flags must all produce keys in the configmap."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command=(
+            "kubectl create configmap multi-literal "
+            "--from-literal=key1=val1 --from-literal=key2=val2 --from-literal=key3=val3 "
+            "-n saas-prod"
+        ),
+    )
+    assert result["result"]["support_status"] == "supported"
+
+    get_result = server.run_command(
+        state,
+        command="kubectl get configmaps multi-literal -n saas-prod",
+    )
+    # Find the multi-literal row by name; the list may include pre-existing configmaps
+    row = next(
+        line for line in get_result["result"]["stdout"].splitlines()
+        if line.startswith("multi-literal")
+    )
+    assert row.split()[1] == "3"
+
+
+def test_kubectl_create_configmap_from_file(amc, tmp_path):
+    """--from-file flags should contribute keys to the configmap."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command=(
+            "kubectl create configmap file-config "
+            "--from-file=app.conf=/etc/app/config.conf "
+            "--from-file=/etc/app/extra.conf "
+            "-n saas-prod"
+        ),
+    )
+    assert result["result"]["support_status"] == "supported"
+
+    get_result = server.run_command(
+        state,
+        command="kubectl get configmaps file-config -n saas-prod",
+    )
+    row = next(
+        line for line in get_result["result"]["stdout"].splitlines()
+        if line.startswith("file-config")
+    )
+    assert row.split()[1] == "2"
+
+
 def test_helm_upgrade_layers_repeated_values_and_lifecycle_flags(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
