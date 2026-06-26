@@ -151,7 +151,14 @@ Added a project-local amc-server-compatibility skill with server-mode workflow, 
 
 ### Main Changes
 
-(Add details)
+- Added `.agents/skills/amc-server-compatibility/SKILL.md` as a compact
+  project-local trigger for `amc serve`, fake Kubernetes API, `kubectl`/Helm,
+  command trace, mutation overlay, and debug UI work.
+- Added `references/server-compatibility-map.md` with source owners,
+  compatibility invariants, and focused workflows for command, API, Helm,
+  trace, and debug UI changes.
+- Added `agents/openai.yaml` metadata so the skill has a useful display name,
+  description, and default prompt in Codex skill surfaces.
 
 ### Git Commits
 
@@ -161,7 +168,9 @@ Added a project-local amc-server-compatibility skill with server-mode workflow, 
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `.venv/bin/python /Users/sven/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/amc-server-compatibility`
+- [OK] `python3 tools/check_trellis_placeholders.py .agents/skills/amc-server-compatibility/SKILL.md .agents/skills/amc-server-compatibility/references/server-compatibility-map.md .agents/skills/amc-server-compatibility/agents/openai.yaml`
+- [OK] `git diff --check`
 
 ### Status
 
