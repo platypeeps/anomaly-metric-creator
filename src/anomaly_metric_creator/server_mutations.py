@@ -331,3 +331,9 @@ class SimulationMutations:
             self.release.values.update(values)
             self.release.updated_at = _format_dt(now)
             self.version += 1
+
+    def replace_release_values(self, values: dict[str, str], *, now: _dt.datetime) -> None:
+        with self.lock:
+            self.release.values = dict(values)
+            self.release.updated_at = _format_dt(now)
+            self.version += 1

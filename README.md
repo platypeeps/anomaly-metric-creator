@@ -439,11 +439,16 @@ Supported command families in server mode:
   supported for pod-targeted logs
 - `kubectl top pods|nodes`
 - `kubectl rollout status|history|restart deployment/NAME`
-- `kubectl scale`, `delete`, `apply`, and `create` with scenario-aware mutable simulator state
+- `kubectl scale`, `delete`, `patch`, `apply`, `create`, and `diff` with
+  scenario-aware mutable simulator state, plus command-mode dry-run output for
+  supported create/apply flows
 - `kubectl wait`, `exec`, and `port-forward` with simulated diagnostic responses
 - `helm version|env|list|status|history|test|template`
 - `helm get values|manifest|notes|all|hooks`
-- `helm install|upgrade|rollback|uninstall` with mutable release-history and values state
+- `helm install|upgrade|rollback|uninstall` with mutable release-history and
+  values state, including repeated `--set`, `--set-string`, `--values`/`-f`,
+  and simulated `--reuse-values`, `--reset-values`, `--wait`, `--timeout`, and
+  `--atomic` behavior
 
 Every anomaly scenario in the generator has a Kubernetes/Helm ops profile.
 Those profiles drive pod/deployment health, events, logs, rollout notes,

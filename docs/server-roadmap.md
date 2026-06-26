@@ -90,8 +90,6 @@ model.
 
 Good next command/API targets:
 
-- `kubectl diff` and dry-run flows for supported generic resources.
-- `kubectl patch` variants, including merge, strategic, and JSON patch shapes.
 - `kubectl apply -f` for multi-document YAML or JSON payloads.
 - `kubectl get --watch` and API watch semantics for a bounded simulated stream.
 - Additional `kubectl logs` refinements if incident workflows need them, such
@@ -102,15 +100,18 @@ Good next command/API targets:
 - `kubectl rollout pause`, `resume`, and `undo`.
 - More realistic `kubectl exec` command-specific outputs.
 - More complete `kubectl port-forward` lifecycle behavior.
-- Helm value layering for multiple `--set`, `--set-string`, and `--values`
-  inputs.
 - Helm `lint`, `dependency`, `repo`, and chart metadata commands where they help
   common incident workflows.
-- Helm install/upgrade flags such as `--atomic`, `--wait`, `--timeout`,
-  `--reuse-values`, and `--reset-values`.
 
 Recently covered compatibility:
 
+- `kubectl patch` in command mode for merge, strategic-merge, and focused JSON
+  patch shapes backed by the simulator mutation overlay.
+- `kubectl diff` and command-mode dry-run output for supported create/apply
+  flows.
+- Helm value layering for repeated `--set`, `--set-string`, and `--values`/`-f`
+  inputs, plus simulated install/upgrade handling for `--atomic`, `--wait`,
+  `--timeout`, `--reuse-values`, and `--reset-values`.
 - `kubectl explain RESOURCE[.field]` for common simulator-backed resources and
   fields, plus minimal `/openapi/v2` and `/openapi/v3/...` schema endpoints for
   real `kubectl explain` clients.
