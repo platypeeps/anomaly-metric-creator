@@ -56,7 +56,14 @@ Addressed PR 142 review feedback for hook-lint test string concatenation and AST
 
 ### Main Changes
 
-(Add details)
+- Made hook-lint acceptance test string concatenation explicit to satisfy the
+  CodeQL review while preserving the same test-case payloads.
+- Replaced the hook exception lint's `BaseException` substring matching with an
+  AST-aware check that catches the actual `BaseException` name, including tuple
+  handlers, without flagging names such as `BaseExceptionGroup` or
+  `MyBaseException`.
+- Added regression coverage for tuple-form `BaseException` catches and
+  substring-name false positives.
 
 ### Git Commits
 
@@ -67,7 +74,15 @@ Addressed PR 142 review feedback for hook-lint test string concatenation and AST
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `.venv/bin/python -m pytest -q tests/test_agent_hook_exception_lint.py`
+  passed locally.
+- [OK] `python3 tools/check_agent_hook_exceptions.py .codex/hooks/session-start.py .gemini/hooks/session-start.py .github/copilot/hooks/session-start.py`
+  passed locally.
+- [OK] `.venv/bin/ruff check tools/check_agent_hook_exceptions.py tests/test_agent_hook_exception_lint.py`
+  passed locally.
+- [OK] `git diff --check` passed locally.
+- [OK] PR #142 remote CodeQL, socket, Analyze, and Python matrix checks passed
+  before the finish-work journal was recorded.
 
 ### Status
 
