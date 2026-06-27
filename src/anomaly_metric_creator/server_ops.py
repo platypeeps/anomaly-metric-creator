@@ -3226,7 +3226,7 @@ def _render_rollout_undo(state: SimulationState, parsed: ParsedCommand) -> str:
     component = _rollout_component(parsed)
     now = state.clock.now()
     replicas = _replica_count(state, component)
-    revision = _first_flag_value(parsed.flags, "--to-revision", default="previous")
+    revision = _rollout_undo_revision(parsed)
     state.mutations.set_workload(
         component,
         now=now,
@@ -3243,6 +3243,13 @@ def _render_rollout_undo(state: SimulationState, parsed: ParsedCommand) -> str:
     )
     suffix = f" to revision {revision}" if revision != "previous" else ""
     return f"deployment.apps/{component} rolled back{suffix}\n"
+
+
+def _rollout_undo_revision(parsed: ParsedCommand) -> str:
+    revision = _first_flag_value(parsed.flags, "--to-revision", default="previous").strip()
+    if not revision or revision.startswith("-"):
+        return "previous"
+    return revision
 
 
 def _rollout_component(parsed: ParsedCommand) -> str:
@@ -3645,7 +3652,8 @@ def _manifest_apply_targets(
         kind, name = _resource_from_manifest_name(filename)
         snapshot_kind = _mutation_snapshot_kind(kind)
         if snapshot_kind and name:
-            return [(snapshot_kind, name, parsed.namespace, {}, filename)]
+            namespace = state.namespace if parsed.namespace == "*" else parsed.namespace
+            return [(snapshot_kind, name, namespace, {}, filename)]
         return []
     if not path.is_file():
         return CommandResult(

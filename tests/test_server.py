@@ -893,6 +893,20 @@ def test_kubectl_rollout_pause_resume_and_undo_update_overlay(amc, tmp_path):
     assert "RolloutUndo" in events["result"]["stdout"]
 
 
+def test_kubectl_rollout_undo_without_revision_uses_previous(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl rollout undo deployment/apigateway -n saas-prod --to-revision",
+    )
+
+    assert result["result"]["matched_rule_id"] == "kubectl.rollout.undo"
+    assert result["result"]["stdout"] == "deployment.apps/apigateway rolled back\n"
+    events = server.run_command(state, command="kubectl get events -n saas-prod")
+    assert "rolled back to previous revision" in events["result"]["stdout"]
+
+
 def test_kubectl_rollout_rejects_non_deployment_targets(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
@@ -1221,6 +1235,27 @@ def test_kubectl_apply_manifest_reports_non_utf8_read_failure(amc, tmp_path):
     assert result["result"]["matched_rule_id"] == "kubectl.apply.manifest.read"
     assert "unable to read manifest" in result["result"]["stderr"]
     assert state.mutations.summary()["created_resources"] == {}
+
+
+def test_kubectl_apply_missing_manifest_all_namespaces_uses_active_namespace(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "configmap-review-flag.yaml"
+
+    result = server.run_command(state, command=f"kubectl apply -A -f {manifest}")
+
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["stdout"] == "configmap/review-flag configured\n"
+    configmaps = server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
+    assert "review-flag" in configmaps
+    resources = server.resource_snapshot(state)
+    applied = next(item for item in resources["configmaps"] if item["name"] == "review-flag")
+    assert applied["namespace"] == "saas-prod"
+    summary = state.mutations.summary()
+    assert "saas-prod/review-flag" in summary["created_resources"]["configmaps"]
+    assert "*/review-flag" not in summary["created_resources"]["configmaps"]
 
 
 def test_kubectl_patch_p_flag_space_separated(amc, tmp_path):
