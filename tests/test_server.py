@@ -838,6 +838,243 @@ def test_mutating_commands_update_simulated_state(amc, tmp_path):
     )["result"]["stdout"]
 
 
+def test_kubectl_patch_diff_and_dry_run_commands(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    create = server.run_command(
+        state,
+        command="kubectl create configmap debug-flags --from-literal=mode=on -n saas-prod",
+    )
+    assert create["result"]["support_status"] == "supported"
+
+    multi_literal = server.run_command(
+        state,
+        command=(
+            "kubectl create configmap multi-flags --from-literal=one=1 "
+            "--from-literal=two=2 -n saas-prod"
+        ),
+    )
+    assert multi_literal["result"]["support_status"] == "supported"
+    multi_output = server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
+    multi_row = next(line for line in multi_output.splitlines() if line.startswith("multi-flags"))
+    assert multi_row.split()[1] == "2"
+
+    merge_patch = server.run_command(
+        state,
+        command=(
+            "kubectl patch configmap debug-flags --type=merge "
+            "--patch '{\"data\":{\"extra\":\"1\"}}' -n saas-prod"
+        ),
+    )
+    assert merge_patch["result"]["matched_rule_id"] == "kubectl.patch.configmaps"
+    assert merge_patch["result"]["stdout"] == "configmap/debug-flags patched\n"
+    configmaps_output = server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
+    debug_row = next(line for line in configmaps_output.splitlines() if line.startswith("debug-flags"))
+    assert debug_row.split()[1] == "2"
+
+    json_patch = server.run_command(
+        state,
+        command=(
+            "kubectl patch deployment/apigateway --type=json "
+            "-p '[{\"op\":\"replace\",\"path\":\"/spec/replicas\",\"value\":2}]' -n saas-prod"
+        ),
+    )
+    assert json_patch["result"]["support_status"] == "supported"
+    assert json_patch["result"]["stdout"] == "deployment/apigateway patched\n"
+    assert json_patch["trace"]["parsed_flags"]["-p"].startswith("[")
+    gateway = next(
+        item for item in server.resource_snapshot(state)["deployments"]
+        if item["name"] == "apigateway"
+    )
+    assert gateway["ready"] == "2/2"
+
+    dry_run = server.run_command(
+        state,
+        command=(
+            "kubectl create configmap dry-run-flags --from-literal=mode=off "
+            "--dry-run=client -n saas-prod"
+        ),
+    )
+    assert dry_run["result"]["stdout"] == "configmap/dry-run-flags created (dry run)\n"
+    assert "dry-run-flags" not in server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
+
+    diff = server.run_command(
+        state,
+        command="kubectl diff -f configmap-dry-run-flags.yaml -n saas-prod",
+    )
+    assert diff["result"]["exit_code"] == 1
+    assert diff["result"]["support_status"] == "supported"
+    assert "desired/configmap/dry-run-flags" in diff["result"]["stdout"]
+    assert "dry-run-flags" not in server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
+
+    unsupported_json_patch = server.run_command(
+        state,
+        command=(
+            "kubectl patch configmap debug-flags --type=json "
+            "-p '[{\"op\":\"copy\",\"path\":\"/data/copied\",\"from\":\"/data/mode\"}]' -n saas-prod"
+        ),
+    )
+    assert unsupported_json_patch["result"]["support_status"] == "partial"
+    assert unsupported_json_patch["result"]["matched_rule_id"] == "kubectl.patch.json"
+
+    missing_remove = server.run_command(
+        state,
+        command=(
+            "kubectl patch configmap debug-flags --type=json "
+            "-p '[{\"op\":\"remove\",\"path\":\"/data/missing\"}]' -n saas-prod"
+        ),
+    )
+    assert missing_remove["result"]["support_status"] == "partial"
+    assert "does not exist" in missing_remove["result"]["stderr"]
+
+
+def test_kubectl_patch_p_flag_space_separated(amc, tmp_path):
+    """kubectl patch -p <json> (space-separated, no =) must capture the payload."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command=(
+            "kubectl patch deployment/apigateway --type=merge "
+            '-p \'{"spec":{"replicas":3}}\' -n saas-prod'
+        ),
+    )
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["stdout"] == "deployment/apigateway patched\n"
+    gateway = next(
+        item
+        for item in server.resource_snapshot(state)["deployments"]
+        if item["name"] == "apigateway"
+    )
+    assert gateway["ready"] == "3/3"
+
+
+def test_kubectl_create_configmap_multiple_from_literal(amc, tmp_path):
+    """Multiple --from-literal flags must all produce keys in the configmap."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command=(
+            "kubectl create configmap multi-literal "
+            "--from-literal=key1=val1 --from-literal=key2=val2 --from-literal=key3=val3 "
+            "-n saas-prod"
+        ),
+    )
+    assert result["result"]["support_status"] == "supported"
+
+    get_result = server.run_command(
+        state,
+        command="kubectl get configmaps multi-literal -n saas-prod",
+    )
+    # Find the multi-literal row by name; the list may include pre-existing configmaps
+    row = next(
+        line for line in get_result["result"]["stdout"].splitlines()
+        if line.startswith("multi-literal")
+    )
+    assert row.split()[1] == "3"
+
+
+def test_kubectl_create_configmap_from_file(amc, tmp_path):
+    """--from-file flags should contribute keys to the configmap."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command=(
+            "kubectl create configmap file-config "
+            "--from-file=app.conf=/etc/app/config.conf "
+            "--from-file=/etc/app/extra.conf "
+            "-n saas-prod"
+        ),
+    )
+    assert result["result"]["support_status"] == "supported"
+
+    get_result = server.run_command(
+        state,
+        command="kubectl get configmaps file-config -n saas-prod",
+    )
+    row = next(
+        line for line in get_result["result"]["stdout"].splitlines()
+        if line.startswith("file-config")
+    )
+    assert row.split()[1] == "2"
+
+
+def test_helm_upgrade_layers_repeated_values_and_lifecycle_flags(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    install = server.run_command(
+        state,
+        command="helm install simulated-saas ./chart -n saas-prod --set feature.debug=true",
+    )
+    assert install["result"]["support_status"] == "supported"
+
+    upgrade = server.run_command(
+        state,
+        command=(
+            "helm upgrade simulated-saas ./chart -n saas-prod --reuse-values "
+            "--set image.tag=canary --set worker.replicas=2 "
+            "--set-string feature.enabled=true "
+            "--values base.yaml --values prod.yaml --wait --timeout=5m --atomic"
+        ),
+    )
+    assert "reused existing release values" in upgrade["result"]["stdout"]
+    assert "recorded values files: base.yaml,prod.yaml" in upgrade["result"]["stdout"]
+    assert "wait completed before 5m" in upgrade["result"]["stdout"]
+    assert "atomic rollback was not needed" in upgrade["result"]["stdout"]
+
+    values = server.run_command(
+        state,
+        command="helm get values simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+    assert "feature.debug: true" in values
+    assert "feature.enabled: true" in values
+    assert "image.tag: canary" in values
+    assert "worker.replicas: 2" in values
+    assert "values_file: prod.yaml" in values
+    assert "values_files: base.yaml,prod.yaml" in values
+
+    dry_run_reset = server.run_command(
+        state,
+        command=(
+            "helm upgrade simulated-saas ./chart -n saas-prod --reset-values "
+            "--set only.new=true --dry-run=server"
+        ),
+    )
+    assert "not changed during dry run" in dry_run_reset["result"]["stdout"]
+    values_after_dry_run = server.run_command(
+        state,
+        command="helm get values simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+    assert "feature.debug: true" in values_after_dry_run
+    assert "only.new" not in values_after_dry_run
+
+    reset = server.run_command(
+        state,
+        command="helm upgrade simulated-saas ./chart -n saas-prod --reset-values --set only.new=true",
+    )
+    assert "reset release values" in reset["result"]["stdout"]
+    values_after_reset = server.run_command(
+        state,
+        command="helm get values simulated-saas -n saas-prod",
+    )["result"]["stdout"]
+    assert "only.new: true" in values_after_reset
+    assert "feature.debug" not in values_after_reset
+
+
 def test_command_trace_sqlite_persistence_and_search(amc, tmp_path):
     db_path = tmp_path / "commands.sqlite"
     state = _build_state(

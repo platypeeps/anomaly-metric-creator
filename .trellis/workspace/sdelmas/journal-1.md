@@ -269,3 +269,48 @@ Filled Trellis journal placeholders that caused the PR CI placeholder-lint failu
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Server compatibility patch diff and Helm values
+
+**Date**: 2026-06-26
+**Task**: Server compatibility patch diff and Helm values
+**Package**: amc
+**Branch**: `codex/server-compatibility-patch-diff-helm-values`
+
+### Summary
+
+Added server-mode kubectl patch, diff, dry-run, and Helm value-layering compatibility; opened PR #151; addressed Copilot review feedback with parser and JSON Patch fixes plus regression coverage.
+
+### Main Changes
+
+- Added server-mode parsing for space-separated `kubectl patch -p` payloads and
+  normalized JSON Patch handling so missing `remove` targets fail like
+  Kubernetes instead of silently succeeding.
+- Extended simulated `kubectl diff`, `apply --dry-run`, and Helm value layering
+  coverage for generated manifests, repeated `--from-literal` flags, repeated
+  `--from-file` flags, and override precedence.
+- Updated README and server roadmap notes to describe the supported compatibility
+  behavior and remaining server-mode gaps.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0d261b1` | (see git log) |
+| `48a7318` | (see git log) |
+
+### Testing
+
+- [OK] `.venv/bin/pytest tests/test_server.py -q`
+- [OK] `.venv/bin/pytest tests/test_server.py -q -k "patch_space_separated_json_patch_payload or kubectl_create_configmap_repeated_from_literal_and_file_flags"`
+- [OK] `.venv/bin/ruff check tests/`
+- [OK] `git diff --check`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

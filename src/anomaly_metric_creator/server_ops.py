@@ -1081,12 +1081,16 @@ _VALUE_FLAGS = {
     "--context", "--kubeconfig", "-c", "--container", "--tail", "--since",
     "--since-time", "--field-selector", "--sort-by", "--for", "--timeout", "--replicas",
     "-f", "--filename", "--from-literal", "--from-file", "--image", "--schedule",
-    "--set", "--set-string", "--values", "--api-version",
+    "--set", "--set-string", "--values", "--api-version", "--patch", "--type",
+}
+_REPEATABLE_VALUE_FLAGS = {
+    "-f", "--filename", "--from-literal", "--from-file", "--set", "--set-string", "--values",
 }
 _BOOL_FLAGS = {
     "-A", "--all-namespaces", "--previous", "-p", "--follow",
     "--prefix", "--watch", "-w", "--wide", "--show-labels", "--dry-run", "--install",
-    "--atomic", "--debug", "--all", "--short", "--recursive", "--",
+    "--atomic", "--debug", "--all", "--short", "--recursive", "--wait",
+    "--reuse-values", "--reset-values", "--",
 }
 _SENSITIVE_FLAG_TOKENS = ("token", "password", "secret", "client-key")
 _SENSITIVE_QUERY_KEYS = {
@@ -1117,7 +1121,8 @@ _MODELED_FLAGS = {
     "--replicas", "-f", "--filename", "--from-literal", "--from-file",
     "--image", "--schedule", "--set", "--set-string", "--values",
     "--dry-run", "--install", "--atomic", "--debug", "--all", "--short",
-    "--recursive", "--api-version", "--",
+    "--recursive", "--api-version", "--patch", "--type", "--wait",
+    "--reuse-values", "--reset-values", "--",
 }
 _KIND_ALIASES = {
     "all": "all",
@@ -1409,13 +1414,25 @@ def _split_flags(tokens: tuple[str, ...], default_namespace: str) -> tuple[str, 
             flags[token] = True
             i += 1
             continue
+        if token.startswith("--dry-run="):
+            flags["--dry-run"] = token.split("=", 1)[1]
+            i += 1
+            continue
+        if token.startswith("-p="):
+            flags["-p"] = token.split("=", 1)[1]
+            i += 1
+            continue
+        if token == "-p" and i + 1 < len(tokens) and tokens[i + 1].strip().startswith(("{", "[")):
+            flags["-p"] = tokens[i + 1]
+            i += 2
+            continue
         if token in _VALUE_FLAGS:
-            flags[token] = tokens[i + 1] if i + 1 < len(tokens) else ""
+            _store_flag_value(flags, token, tokens[i + 1] if i + 1 < len(tokens) else "")
             i += 2
             continue
         if any(token.startswith(prefix + "=") for prefix in _VALUE_FLAGS if prefix.startswith("--")):
             key, value = token.split("=", 1)
-            flags[key] = value
+            _store_flag_value(flags, key, value)
             i += 1
             continue
         if token.startswith("--") and "=" in token:
@@ -1446,6 +1463,44 @@ def _split_flags(tokens: tuple[str, ...], default_namespace: str) -> tuple[str, 
     return namespace, flags, positionals
 
 
+def _store_flag_value(flags: dict[str, Any], key: str, value: str) -> None:
+    if key not in _REPEATABLE_VALUE_FLAGS:
+        flags[key] = value
+        return
+    existing = flags.get(key)
+    if existing is None:
+        flags[key] = value
+    elif isinstance(existing, list):
+        existing.append(value)
+    else:
+        flags[key] = [existing, value]
+
+
+def _flag_values(flags: dict[str, Any], *names: str) -> list[str]:
+    values: list[str] = []
+    for name in names:
+        raw = flags.get(name)
+        if isinstance(raw, list):
+            values.extend(str(item) for item in raw if str(item))
+        elif isinstance(raw, str) and raw:
+            values.append(raw)
+    return values
+
+
+def _first_flag_value(flags: dict[str, Any], *names: str, default: str = "") -> str:
+    values = _flag_values(flags, *names)
+    return values[0] if values else default
+
+
+def _is_dry_run(parsed: ParsedCommand) -> bool:
+    raw = parsed.flags.get("--dry-run")
+    if raw is None:
+        return False
+    if raw is True:
+        return True
+    return str(raw).strip().lower() not in {"", "false", "none", "0"}
+
+
 def _parse_kubectl(
     raw: str,
     argv: tuple[str, ...],
@@ -1469,11 +1524,11 @@ def _parse_kubectl(
         return ParsedCommand(raw, argv, "kubectl", "get", "events", "", namespace, flags, tuple(positionals))
     if verb == "logs":
         target = positionals[1] if len(positionals) > 1 else ""
-        follow_value = flags.get("-f")
+        follow_values = _flag_values(flags, "-f")
         if "-f" in flags:
             flags["--follow"] = True
-            if not target and isinstance(follow_value, str) and follow_value:
-                target = follow_value
+            if not target and follow_values:
+                target = follow_values[0]
         resource_kind, resource_name = _split_resource_token(target, default_kind="pods")
         if not resource_name:
             resource_kind, resource_name = "pods", target
@@ -1502,7 +1557,7 @@ def _parse_kubectl(
             raw, argv, "kubectl", f"rollout {subverb}".strip(),
             resource_kind, resource_name, namespace, flags, tuple(positionals)
         )
-    if verb in {"delete", "scale"}:
+    if verb in {"delete", "patch", "scale"}:
         target = positionals[1] if len(positionals) > 1 else ""
         resource_kind, resource_name = _split_resource_token(target)
         if not resource_name and len(positionals) > 2:
@@ -1518,7 +1573,7 @@ def _parse_kubectl(
             raw, argv, "kubectl", verb, resource_kind, resource_name,
             namespace, flags, tuple(positionals)
         )
-    if verb == "apply":
+    if verb in {"apply", "diff"}:
         return ParsedCommand(
             raw, argv, "kubectl", verb, "manifest", "", namespace, flags, tuple(positionals)
         )
@@ -1708,6 +1763,10 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
         return CommandResult(0, _render_scale(state, parsed), "", "supported", "kubectl.scale")
     if parsed.verb == "delete":
         return CommandResult(0, _render_delete(state, parsed), "", "supported", "kubectl.delete")
+    if parsed.verb == "patch":
+        return _render_patch(state, parsed)
+    if parsed.verb == "diff":
+        return _render_diff(state, parsed)
     if parsed.verb in {"apply", "create"}:
         return CommandResult(0, _render_apply(state, parsed), "", "supported", f"kubectl.{parsed.verb}")
     if parsed.verb == "wait":
@@ -3156,15 +3215,266 @@ def _render_delete(state: SimulationState, parsed: ParsedCommand) -> str:
     return f"{prefix} \"{name}\" deleted\n"
 
 
+def _render_patch(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
+    kind = parsed.resource_kind
+    name = parsed.resource_name
+    snapshot_kind = _mutation_snapshot_kind(kind)
+    if not snapshot_kind or not name:
+        return CommandResult(
+            1,
+            "",
+            f"error: unsupported patch target {kind or '<missing-kind>'}/{name or '<missing-name>'}\n",
+            "unsupported",
+            "kubectl.patch.unsupported",
+        )
+    parsed_payload = _patch_payload(state, parsed)
+    if isinstance(parsed_payload, CommandResult):
+        return parsed_payload
+    payload = parsed_payload
+    now = state.clock.now()
+    replicas = _payload_replicas(payload)
+    if snapshot_kind == "deployments" and replicas is not None:
+        state.mutations.set_workload(
+            name,
+            now=now,
+            replicas=replicas,
+            ready_replicas=replicas,
+            deployment_status="Healthy" if replicas else "ScaledToZero",
+            pod_status="Running",
+        )
+        state.mutations.record_event(
+            "Normal",
+            "Patched",
+            f"deployment/{name}",
+            f"patched deployment {name} replicas to {replicas}",
+            now,
+        )
+    else:
+        state.mutations.put_resource(
+            snapshot_kind,
+            name,
+            _generic_resource_row(state, snapshot_kind, name, payload=payload, parsed=parsed),
+            now=now,
+            namespace=parsed.namespace,
+        )
+    return CommandResult(
+        0,
+        f"{_resource_prefix(snapshot_kind)}/{name} patched\n",
+        "",
+        "supported",
+        f"kubectl.patch.{snapshot_kind}",
+    )
+
+
+def _patch_payload(state: SimulationState, parsed: ParsedCommand) -> dict[str, Any] | CommandResult:
+    payload_text = _patch_payload_text(parsed)
+    if not payload_text:
+        return CommandResult(
+            1,
+            "",
+            "error: kubectl patch requires --patch/-p JSON payload\n",
+            "partial",
+            "kubectl.patch.payload",
+        )
+    try:
+        raw_payload = json.loads(payload_text)
+    except json.JSONDecodeError as exc:
+        return CommandResult(
+            1,
+            "",
+            f"error: invalid patch JSON: {exc.msg}\n",
+            "partial",
+            "kubectl.patch.payload.invalid",
+        )
+    patch_type = str(parsed.flags.get("--type") or "strategic").strip().lower()
+    if patch_type in {"merge", "strategic", "strategic-merge"}:
+        if not isinstance(raw_payload, dict):
+            return CommandResult(
+                1,
+                "",
+                "error: merge and strategic patches must be JSON objects\n",
+                "partial",
+                "kubectl.patch.payload.shape",
+            )
+        base = _patch_base_payload(state, parsed)
+        return _deep_merge_patch(base, raw_payload)
+    if patch_type == "json":
+        if not isinstance(raw_payload, list):
+            return CommandResult(
+                1,
+                "",
+                "error: JSON patch payload must be a list of operations\n",
+                "partial",
+                "kubectl.patch.payload.shape",
+            )
+        base = _patch_base_payload(state, parsed)
+        error = _apply_json_patch(base, raw_payload)
+        if error:
+            return CommandResult(1, "", f"error: {error}\n", "partial", "kubectl.patch.json")
+        return base
+    return CommandResult(
+        1,
+        "",
+        f"error: patch type {patch_type!r} is not modeled; use merge, strategic, or json\n",
+        "partial",
+        "kubectl.patch.type",
+    )
+
+
+def _patch_payload_text(parsed: ParsedCommand) -> str:
+    payload = _first_flag_value(parsed.flags, "--patch")
+    if payload:
+        return payload
+    p_value = parsed.flags.get("-p")
+    if isinstance(p_value, str) and p_value:
+        return p_value
+    for token in reversed(parsed.positionals[2:]):
+        stripped = token.strip()
+        if stripped.startswith(("{", "[")):
+            return stripped
+    return ""
+
+
+def _patch_base_payload(state: SimulationState, parsed: ParsedCommand) -> dict[str, Any]:
+    snapshot_kind = _mutation_snapshot_kind(parsed.resource_kind)
+    row = None
+    if snapshot_kind:
+        rows = _filter_snapshot_rows(snapshot_kind, resource_snapshot(state).get(snapshot_kind, []), parsed)
+        row = _find_named(rows, parsed.resource_name)
+    payload: dict[str, Any] = {
+        "metadata": {
+            "name": parsed.resource_name,
+            "namespace": parsed.namespace,
+        },
+    }
+    if row is None:
+        return payload
+    labels = _string_dict(row.get("labels"))
+    annotations = _string_dict(row.get("annotations"))
+    if labels:
+        payload["metadata"]["labels"] = labels
+    if annotations:
+        payload["metadata"]["annotations"] = annotations
+    if snapshot_kind == "configmaps":
+        payload["data"] = {str(key): str(value) for key, value in row.get("keys", {}).items()}
+    elif snapshot_kind == "services":
+        payload["spec"] = {
+            "type": row.get("type", "ClusterIP"),
+            "clusterIP": row.get("cluster_ip"),
+            "selector": row.get("selector") if isinstance(row.get("selector"), dict) else {},
+            "ports": [{"port": row.get("port", 8080)}],
+        }
+    elif snapshot_kind in {"deployments", "statefulsets"}:
+        ready = str(row.get("ready", "1/1"))
+        _, _, desired = ready.partition("/")
+        payload["spec"] = {"replicas": desired or "1"}
+    return payload
+
+
+def _deep_merge_patch(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    for key, value in patch.items():
+        if value is None:
+            base.pop(str(key), None)
+        elif isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge_patch(base[key], value)
+        else:
+            base[str(key)] = value
+    return base
+
+
+def _apply_json_patch(target: dict[str, Any], operations: list[Any]) -> str:
+    for operation in operations:
+        if not isinstance(operation, dict):
+            return "JSON patch operations must be objects"
+        op = str(operation.get("op", ""))
+        path = str(operation.get("path", ""))
+        if op not in {"add", "replace", "remove"}:
+            return f"JSON patch operation {op!r} is not modeled"
+        if not path.startswith("/"):
+            return f"JSON patch path {path!r} must start with /"
+        if op == "remove":
+            error = _remove_json_pointer(target, path)
+        else:
+            error = _set_json_pointer(target, path, operation.get("value"))
+        if error:
+            return error
+    return ""
+
+
+def _json_pointer_parts(path: str) -> list[str]:
+    return [
+        part.replace("~1", "/").replace("~0", "~")
+        for part in path.lstrip("/").split("/")
+        if part
+    ]
+
+
+def _set_json_pointer(target: dict[str, Any], path: str, value: Any) -> str:
+    parts = _json_pointer_parts(path)
+    if not parts:
+        return "JSON patch root replacement is not modeled"
+    cursor: dict[str, Any] = target
+    for part in parts[:-1]:
+        child = cursor.setdefault(part, {})
+        if not isinstance(child, dict):
+            return f"JSON patch path {path!r} crosses a non-object value"
+        cursor = child
+    cursor[parts[-1]] = value
+    return ""
+
+
+def _remove_json_pointer(target: dict[str, Any], path: str) -> str:
+    parts = _json_pointer_parts(path)
+    if not parts:
+        return "JSON patch root removal is not modeled"
+    cursor: dict[str, Any] = target
+    for part in parts[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            return f"JSON patch path {path!r} does not exist"
+        cursor = child
+    if parts[-1] not in cursor:
+        return f"JSON patch path {path!r} does not exist"
+    del cursor[parts[-1]]
+    return ""
+
+
+def _render_diff(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
+    filename = _first_flag_value(parsed.flags, "-f", "--filename")
+    if not filename:
+        return CommandResult(
+            1,
+            "",
+            "error: kubectl diff requires -f/--filename for simulator-backed manifests\n",
+            "partial",
+            "kubectl.diff.filename",
+        )
+    kind, name = _resource_from_manifest_name(filename)
+    snapshot_kind = _mutation_snapshot_kind(kind)
+    prefix = _resource_prefix(snapshot_kind or kind)
+    existing = _find_named(resource_snapshot(state).get(snapshot_kind, []), name) if snapshot_kind else None
+    status = "existing" if existing else "new"
+    stdout = (
+        f"diff -u -N current/{prefix}/{name} desired/{prefix}/{name}\n"
+        f"--- current/{prefix}/{name}\n"
+        f"+++ desired/{prefix}/{name}\n"
+        "@@\n"
+        f"- simulator-state: {status}\n"
+        f"+ simulator-manifest: {filename}\n"
+    )
+    return CommandResult(1, stdout, "", "supported", "kubectl.diff")
+
+
 def _render_apply(state: SimulationState, parsed: ParsedCommand) -> str:
-    filename = parsed.flags.get("-f") or parsed.flags.get("--filename") or "manifest"
+    filename = _first_flag_value(parsed.flags, "-f", "--filename", default="manifest")
     now = state.clock.now()
     kind = parsed.resource_kind
     name = parsed.resource_name
     if parsed.verb == "apply":
         kind, name = _resource_from_manifest_name(str(filename))
     snapshot_kind = _mutation_snapshot_kind(kind)
-    if snapshot_kind and name:
+    dry_run = _is_dry_run(parsed)
+    if snapshot_kind and name and not dry_run:
         state.mutations.put_resource(
             snapshot_kind,
             name,
@@ -3172,7 +3482,7 @@ def _render_apply(state: SimulationState, parsed: ParsedCommand) -> str:
             now=now,
             namespace=parsed.namespace,
         )
-    else:
+    elif not dry_run:
         state.mutations.record_event(
             "Normal",
             "Applied",
@@ -3182,7 +3492,8 @@ def _render_apply(state: SimulationState, parsed: ParsedCommand) -> str:
         )
     action = "configured" if parsed.verb == "apply" else "created"
     target = f"{_resource_prefix(snapshot_kind)}/{name}" if snapshot_kind and name else str(filename)
-    return f"{target} {action}\n"
+    suffix = " (dry run)" if dry_run else ""
+    return f"{target} {action}{suffix}\n"
 
 
 def _resource_from_manifest_name(filename: str) -> tuple[str, str]:
@@ -3411,11 +3722,17 @@ def _string_dict(value: Any) -> dict[str, str]:
 def _configmap_keys_from_flags(parsed: ParsedCommand | None) -> dict[str, str]:
     if parsed is None:
         return {}
-    literal = parsed.flags.get("--from-literal")
-    if isinstance(literal, str) and literal:
+    keys: dict[str, str] = {}
+    for literal in _flag_values(parsed.flags, "--from-literal"):
         key, _, value = literal.partition("=")
-        return {key or "literal": value or "true"}
-    return {}
+        keys[key or "literal"] = value or "true"
+    for from_file in _flag_values(parsed.flags, "--from-file"):
+        key, separator, path = from_file.partition("=")
+        if not separator:
+            path = key
+            key = Path(path).name or "file"
+        keys[key or "file"] = f"file:{path or 'true'}"
+    return keys
 
 
 def _parsed_replicas(parsed: ParsedCommand) -> int:
@@ -3575,38 +3892,43 @@ def _render_helm_install(state: SimulationState, parsed: ParsedCommand) -> str:
     release = parsed.resource_name or DEFAULT_RELEASE
     now = state.clock.now()
     values = _helm_value_overrides(parsed)
-    revisions = [{
-        "version": 1,
-        "status": "deployed",
-        "description": f"Install applied to {release}",
-    }]
-    state.mutations.set_revisions(revisions, now=now, uninstalled=False)
-    if values:
-        state.mutations.set_release_values(values, now=now)
-    state.mutations.record_event(
-        "Normal",
-        "HelmInstall",
-        f"release/{release}",
-        f"release {release} installed by simulator command",
-        now,
-    )
+    dry_run = _is_dry_run(parsed)
+    if not dry_run:
+        revisions = [{
+            "version": 1,
+            "status": "deployed",
+            "description": f"Install applied to {release}",
+        }]
+        state.mutations.set_revisions(revisions, now=now, uninstalled=False)
+        if values:
+            state.mutations.set_release_values(values, now=now)
+        state.mutations.record_event(
+            "Normal",
+            "HelmInstall",
+            f"release/{release}",
+            f"release {release} installed by simulator command",
+            now,
+        )
+    note = _helm_operation_note(parsed, dry_run=dry_run, values=values, reset=False)
     return (
         f"NAME: {release}\n"
         f"LAST DEPLOYED: {_format_dt(now)}\n"
         f"NAMESPACE: {state.namespace}\n"
         "STATUS: deployed\n"
         "REVISION: 1\n"
-        "NOTE: simulator release state installed.\n"
+        f"{note}"
     )
 
 
 def _render_helm_upgrade(state: SimulationState, parsed: ParsedCommand) -> str:
     release = parsed.resource_name or DEFAULT_RELEASE
-    mode = "dry run" if "--dry-run" in parsed.flags else "simulated"
+    dry_run = _is_dry_run(parsed)
+    mode = "dry run" if dry_run else "simulated"
     current = _helm_release_revisions(state)
-    if "--dry-run" not in parsed.flags:
+    values = _helm_value_overrides(parsed)
+    reset = "--reset-values" in parsed.flags
+    if not dry_run:
         now = state.clock.now()
-        values = _helm_value_overrides(parsed)
         revisions = [
             {**revision, "status": "superseded" if revision["status"] == "deployed" else revision["status"]}
             for revision in current
@@ -3617,7 +3939,9 @@ def _render_helm_upgrade(state: SimulationState, parsed: ParsedCommand) -> str:
             "description": f"Upgrade applied to {release}",
         })
         state.mutations.set_revisions(revisions, now=now, uninstalled=False)
-        if values:
+        if reset:
+            state.mutations.replace_release_values(values, now=now)
+        elif values:
             state.mutations.set_release_values(values, now=now)
         state.mutations.record_event(
             "Normal",
@@ -3626,29 +3950,55 @@ def _render_helm_upgrade(state: SimulationState, parsed: ParsedCommand) -> str:
             f"release {release} upgraded by simulator command",
             now,
         )
+    note = _helm_operation_note(parsed, dry_run=dry_run, values=values, reset=reset)
     return (
         f"Release \"{release}\" has been upgraded ({mode}).\n"
         f"NAMESPACE: {state.namespace}\n"
         f"STATUS: {_helm_release(state)['status']}\n"
-        "NOTE: simulator release state updated.\n"
+        f"{note}"
     )
 
 
 def _helm_value_overrides(parsed: ParsedCommand) -> dict[str, str]:
     values: dict[str, str] = {}
     for flag in ("--set", "--set-string"):
-        raw = parsed.flags.get(flag)
-        if isinstance(raw, str):
+        for raw in _flag_values(parsed.flags, flag):
             for item in raw.split(","):
                 key, _, value = item.partition("=")
                 if key:
                     values[key] = value or "true"
-    values_file = parsed.flags.get("--values")
-    if values_file is None:
-        values_file = parsed.flags.get("-f")
-    if isinstance(values_file, str) and values_file:
-        values["values_file"] = values_file
+    value_files = _flag_values(parsed.flags, "--values", "-f")
+    if value_files:
+        values["values_file"] = value_files[-1]
+        values["values_files"] = ",".join(value_files)
     return values
+
+
+def _helm_operation_note(
+    parsed: ParsedCommand,
+    *,
+    dry_run: bool,
+    values: dict[str, str],
+    reset: bool,
+) -> str:
+    notes = []
+    if dry_run:
+        notes.append("NOTE: simulator release state not changed during dry run.")
+    else:
+        notes.append("NOTE: simulator release state updated.")
+    if "--reuse-values" in parsed.flags and not reset:
+        notes.append("NOTE: simulator reused existing release values before applying overrides.")
+    if reset:
+        action = "would reset" if dry_run else "reset"
+        notes.append(f"NOTE: simulator {action} release values before applying overrides.")
+    if values.get("values_files"):
+        notes.append(f"NOTE: simulator recorded values files: {values['values_files']}.")
+    if "--wait" in parsed.flags:
+        timeout = _first_flag_value(parsed.flags, "--timeout", default="default timeout")
+        notes.append(f"NOTE: simulator wait completed before {timeout}.")
+    if "--atomic" in parsed.flags:
+        notes.append("NOTE: simulator atomic rollback was not needed.")
+    return "\n".join(notes) + "\n"
 
 
 def _render_helm_rollback(state: SimulationState, parsed: ParsedCommand) -> str:
