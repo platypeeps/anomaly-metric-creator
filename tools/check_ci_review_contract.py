@@ -92,6 +92,10 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ),
         ("full-ci trigger", "full-ci"),
         ("full-ci output", "full_ci_requested"),
+        (
+            "full-ci output bracket expression",
+            "steps['full-ci'].outputs.full_ci_requested",
+        ),
         ("lightweight result text", "selected lane: lightweight readiness"),
         ("quick result text", "selected lane: quick test"),
         ("full result text", "selected lane: full matrix"),
@@ -101,6 +105,13 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
+    _require_not_contains(
+        text,
+        "steps.full-ci.outputs.full_ci_requested",
+        path=path,
+        label="full-ci output dot expression",
+        violations=violations,
+    )
 
 
 def _check_codeql(path: Path, text: str, violations: list[str]) -> None:

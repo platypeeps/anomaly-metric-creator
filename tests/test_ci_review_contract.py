@@ -30,6 +30,8 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         f"""
         jobs:
           changes:
+            outputs:
+              full_ci_requested: ${{{{ steps['full-ci'].outputs.full_ci_requested }}}}
             steps:
               - run: bash scripts/classify_ci_changes.sh --github-output changed-files.txt
                 id: full-ci
@@ -179,6 +181,24 @@ def test_missing_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "synchronize trigger" in result.stderr
+
+
+def test_ci_full_ci_output_requires_bracket_expression(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "steps['full-ci'].outputs.full_ci_requested",
+            "steps.full-ci.outputs.full_ci_requested",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "full-ci output bracket expression" in result.stderr
+    assert "full-ci output dot expression" in result.stderr
 
 
 def test_missing_repo_file_exits_two(tmp_path: Path) -> None:

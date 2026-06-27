@@ -27,7 +27,7 @@ jobs:
       workflow_changed: ${{ steps.classify.outputs.workflow_changed }}
       python_changed: ${{ steps.classify.outputs.python_changed }}
       review_tooling_changed: ${{ steps.classify.outputs.review_tooling_changed }}
-      full_ci_requested: ${{ steps.full-ci.outputs.full_ci_requested }}
+      full_ci_requested: ${{ steps['full-ci'].outputs.full_ci_requested }}
     steps:
       - uses: actions/checkout@v7
         with:
