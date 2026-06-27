@@ -284,7 +284,14 @@ Added server-mode kubectl patch, diff, dry-run, and Helm value-layering compatib
 
 ### Main Changes
 
-(Add details)
+- Added server-mode parsing for space-separated `kubectl patch -p` payloads and
+  normalized JSON Patch handling so missing `remove` targets fail like
+  Kubernetes instead of silently succeeding.
+- Extended simulated `kubectl diff`, `apply --dry-run`, and Helm value layering
+  coverage for generated manifests, repeated `--from-literal` flags, repeated
+  `--from-file` flags, and override precedence.
+- Updated README and server roadmap notes to describe the supported compatibility
+  behavior and remaining server-mode gaps.
 
 ### Git Commits
 
@@ -295,7 +302,10 @@ Added server-mode kubectl patch, diff, dry-run, and Helm value-layering compatib
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `.venv/bin/pytest tests/test_server.py -q`
+- [OK] `.venv/bin/pytest tests/test_server.py -q -k "patch_space_separated_json_patch_payload or kubectl_create_configmap_repeated_from_literal_and_file_flags"`
+- [OK] `.venv/bin/ruff check tests/`
+- [OK] `git diff --check`
 
 ### Status
 
