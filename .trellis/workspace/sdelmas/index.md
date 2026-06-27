@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-06-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~271 | Active |
+| `journal-1.md` | ~306 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-06-26 | Server compatibility patch diff and Helm values | `0d261b1`, `48a7318` | `codex/server-compatibility-patch-diff-helm-values` |
 | 6 | 2026-06-26 | Trellis journal placeholder CI fix | `9a8acd4` | `codex/kubectl-explain-openapi` |
 | 5 | 2026-06-26 | Kubectl explain OpenAPI PR review fixes | `8c8a864`, `c44705a`, `acd4a72`, `327fb17` | `codex/kubectl-explain-openapi` |
 | 4 | 2026-06-26 | Create AMC server compatibility skill | `142d5ea` | `codex/amc-server-compatibility-skill` |
