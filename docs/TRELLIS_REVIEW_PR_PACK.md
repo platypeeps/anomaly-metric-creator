@@ -137,9 +137,10 @@ Branch protection should continue to require the stable aggregate `test`
 context rather than a lane-specific job name.
 
 `tools/check_ci_review_contract.py` guards the named anchors in this cadence:
-classifier outputs, selected CI lanes, CodeQL/Socket triggers, Dependabot
-auto-merge safety, full-check integration, and the documentation/spec mentions
-that keep future review sessions aligned.
+classifier outputs, selected CI lanes, the required CodeQL PR-update trigger,
+Socket fast-skip triggers, Dependabot auto-merge safety, full-check
+integration, and the documentation/spec mentions that keep future review
+sessions aligned.
 
 ## Housekeeping cadence
 

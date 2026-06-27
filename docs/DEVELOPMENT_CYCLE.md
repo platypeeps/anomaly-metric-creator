@@ -59,9 +59,10 @@ keeping the stable aggregate check named `test`.
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
 | `test (py3.11/py3.12)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the full matrix and heavy/non-heavy pytest split. |
 
-CodeQL follows the full-CI cadence instead of every synchronize event. Socket
-keeps a visible PR check, but fast-skips unless dependency/security-relevant
-files changed or full CI was requested.
+CodeQL runs on PR updates because branch protection requires the GitHub
+Advanced Security `CodeQL` context on the latest commit. Socket keeps a visible
+PR check, but fast-skips unless dependency/security-relevant files changed or
+full CI was requested.
 
 `tools/check_ci_review_contract.py` is the local guard for this contract. It is
 text-based and stdlib-only so pre-commit, the lightweight CI lane, and

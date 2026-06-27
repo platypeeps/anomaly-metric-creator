@@ -59,12 +59,12 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         """
         on:
           pull_request:
-            types: [opened, reopened, ready_for_review, labeled]
+            types: [opened, synchronize, reopened, ready_for_review, labeled]
         concurrency:
           group: codeql-${{ github.ref }}
         jobs:
           analyze:
-            if: github.event.label.name == 'full-ci'
+            if: github.event.action == 'synchronize' || github.event.label.name == 'full-ci'
         """,
     )
     _write(
@@ -164,21 +164,21 @@ def test_missing_ci_lane_fails(tmp_path: Path) -> None:
     assert "quick lane" in result.stderr
 
 
-def test_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:
+def test_missing_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
     codeql = tmp_path / ".github/workflows/codeql.yml"
     codeql.write_text(
         codeql.read_text(encoding="utf-8").replace(
-            "types: [opened, reopened, ready_for_review, labeled]",
             "types: [opened, synchronize, reopened, ready_for_review, labeled]",
-        ),
+            "types: [opened, reopened, ready_for_review, labeled]",
+        ).replace("github.event.action == 'synchronize' || ", ""),
         encoding="utf-8",
     )
 
     result = _run(str(tmp_path))
 
     assert result.returncode == 1
-    assert "CodeQL synchronize trigger" in result.stderr
+    assert "synchronize trigger" in result.stderr
 
 
 def test_missing_repo_file_exits_two(tmp_path: Path) -> None:

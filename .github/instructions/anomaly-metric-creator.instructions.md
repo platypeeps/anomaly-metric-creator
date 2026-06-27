@@ -22,7 +22,11 @@ Prefer local evidence before asking for another remote review or broad GitHub
 Actions run. The repo's stable branch-protection check is the aggregate `test`
 job; `.github/workflows/ci.yml` chooses a lightweight, quick, or full lane via
 `scripts/classify_ci_changes.sh`. `tools/check_ci_review_contract.py` guards
-the workflow/script/doc anchors that keep that cadence from drifting.
+the workflow/script/doc anchors that keep that cadence from drifting. CodeQL is
+the exception to the cheap-by-default PR update rule: branch protection
+requires the GitHub Advanced Security `CodeQL` context on the latest commit, so
+the CodeQL workflow must keep its `synchronize` trigger unless the required
+check is changed at the same time.
 
 - For docs/spec/agent/review-tooling-only diffs, expect the lightweight lane
   and avoid requesting the full Python matrix unless the content changes a

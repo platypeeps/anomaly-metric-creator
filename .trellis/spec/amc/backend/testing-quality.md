@@ -139,7 +139,9 @@ workflow/dependency changes, manual dispatch, and `main` pushes. Sources:
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
-CodeQL should follow the full-CI cadence instead of every PR synchronize event.
+CodeQL must run on PR updates because branch protection requires the GitHub
+Advanced Security `CodeQL` context on the latest commit; do not remove the
+`synchronize` trigger unless branch protection is changed in the same rollout.
 Socket should keep a visible PR check but fast-skip unless
 dependency/security-relevant files changed or full CI was requested. Sources:
 `.github/workflows/codeql.yml`; `.github/workflows/socket.yml`;

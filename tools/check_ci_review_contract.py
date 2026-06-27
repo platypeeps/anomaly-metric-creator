@@ -105,18 +105,15 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
 
 def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
-        ("limited pull request events", "types: [opened, reopened, ready_for_review, labeled]"),
+        (
+            "required-context pull request events",
+            "types: [opened, synchronize, reopened, ready_for_review, labeled]",
+        ),
         ("concurrency", "concurrency:"),
+        ("synchronize trigger", "github.event.action == 'synchronize'"),
         ("full-ci label trigger", "github.event.label.name == 'full-ci'"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
-    _require_not_contains(
-        text,
-        "types: [opened, synchronize",
-        path=path,
-        label="CodeQL synchronize trigger",
-        violations=violations,
-    )
 
 
 def _check_socket(path: Path, text: str, violations: list[str]) -> None:
