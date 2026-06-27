@@ -1080,6 +1080,7 @@ _VALUE_FLAGS = {
     "-n", "--namespace", "-o", "--output", "-l", "--selector",
     "--context", "--kubeconfig", "-c", "--container", "--tail", "--since",
     "--since-time", "--field-selector", "--sort-by", "--for", "--timeout", "--replicas",
+    "--to-revision",
     "-f", "--filename", "--from-literal", "--from-file", "--image", "--schedule",
     "--set", "--set-string", "--values", "--api-version", "--patch", "--type",
 }
@@ -1118,7 +1119,7 @@ _MODELED_FLAGS = {
     "--previous", "-p",
     "--wide", "--show-labels",
     "--field-selector", "--sort-by", "--for", "--timeout",
-    "--replicas", "-f", "--filename", "--from-literal", "--from-file",
+    "--replicas", "--to-revision", "-f", "--filename", "--from-literal", "--from-file",
     "--image", "--schedule", "--set", "--set-string", "--values",
     "--dry-run", "--install", "--atomic", "--debug", "--all", "--short",
     "--recursive", "--api-version", "--patch", "--type", "--wait",
@@ -1553,6 +1554,8 @@ def _parse_kubectl(
         subverb = positionals[1] if len(positionals) > 1 else ""
         target = positionals[2] if len(positionals) > 2 else ""
         resource_kind, resource_name = _split_resource_token(target)
+        if not resource_name and len(positionals) > 3:
+            resource_name = positionals[3]
         return ParsedCommand(
             raw, argv, "kubectl", f"rollout {subverb}".strip(),
             resource_kind, resource_name, namespace, flags, tuple(positionals)
@@ -1742,23 +1745,41 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
             return CommandResult(0, _render_top(state, kind), "", "supported", f"kubectl.top.{kind}")
         return _unsupported(parsed, f"kubectl top {kind or '<missing-kind>'}")
     if parsed.verb == "rollout status":
-        if kind in {"deployments", "deployment", "deploy"} or parsed.resource_name:
+        if _is_deployment_rollout_target(parsed):
             return CommandResult(
                 0, _render_rollout_status(state, parsed), "", "supported", "kubectl.rollout.status"
             )
         return _unsupported(parsed, "kubectl rollout status")
     if parsed.verb == "rollout history":
-        if kind in {"deployments", "deployment", "deploy"} or parsed.resource_name:
+        if _is_deployment_rollout_target(parsed):
             return CommandResult(
                 0, _render_rollout_history(state, parsed), "", "supported", "kubectl.rollout.history"
             )
         return _unsupported(parsed, "kubectl rollout history")
     if parsed.verb == "rollout restart":
-        if kind in {"deployments", "deployment", "deploy"} or parsed.resource_name:
+        if _is_deployment_rollout_target(parsed):
             return CommandResult(
                 0, _render_rollout_restart(state, parsed), "", "supported", "kubectl.rollout.restart"
             )
         return _unsupported(parsed, "kubectl rollout restart")
+    if parsed.verb == "rollout pause":
+        if _is_deployment_rollout_target(parsed):
+            return CommandResult(
+                0, _render_rollout_pause(state, parsed), "", "supported", "kubectl.rollout.pause"
+            )
+        return _unsupported(parsed, "kubectl rollout pause")
+    if parsed.verb == "rollout resume":
+        if _is_deployment_rollout_target(parsed):
+            return CommandResult(
+                0, _render_rollout_resume(state, parsed), "", "supported", "kubectl.rollout.resume"
+            )
+        return _unsupported(parsed, "kubectl rollout resume")
+    if parsed.verb == "rollout undo":
+        if _is_deployment_rollout_target(parsed):
+            return CommandResult(
+                0, _render_rollout_undo(state, parsed), "", "supported", "kubectl.rollout.undo"
+            )
+        return _unsupported(parsed, "kubectl rollout undo")
     if parsed.verb == "scale":
         return CommandResult(0, _render_scale(state, parsed), "", "supported", "kubectl.scale")
     if parsed.verb == "delete":
@@ -1768,7 +1789,7 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
     if parsed.verb == "diff":
         return _render_diff(state, parsed)
     if parsed.verb in {"apply", "create"}:
-        return CommandResult(0, _render_apply(state, parsed), "", "supported", f"kubectl.{parsed.verb}")
+        return _render_apply(state, parsed)
     if parsed.verb == "wait":
         return CommandResult(0, _render_wait(state, parsed), "", "supported", "kubectl.wait")
     if parsed.verb == "exec":
@@ -3097,9 +3118,7 @@ def _explain_type_name(schema: dict[str, Any]) -> str:
 
 
 def _render_rollout_status(state: SimulationState, parsed: ParsedCommand) -> str:
-    component = parsed.resource_name or "apigateway"
-    if component.startswith("deployment/"):
-        component = component.split("/", 1)[1]
+    component = _rollout_component(parsed)
     if "deploy_bad_canary_rollback" in state.active_scenarios and component == "apigateway":
         return (
             "deployment \"apigateway\" successfully rolled out\n"
@@ -3107,6 +3126,12 @@ def _render_rollout_status(state: SimulationState, parsed: ParsedCommand) -> str
         )
     health = _component_health(state, component)
     rollout_notes = _component_rollout_notes(state, component)
+    if health["deployment_status"] == "RolledBack":
+        output = f"deployment \"{component}\" successfully rolled out\n"
+        output += "note: deployment was rolled back by simulator command\n"
+        if rollout_notes:
+            output += "\n".join(f"note: {note}" for note in rollout_notes) + "\n"
+        return output
     if health["deployment_status"] != "Healthy":
         output = f"waiting for deployment \"{component}\" rollout to finish: {health['deployment_status']}\n"
         if rollout_notes:
@@ -3119,9 +3144,7 @@ def _render_rollout_status(state: SimulationState, parsed: ParsedCommand) -> str
 
 
 def _render_rollout_history(state: SimulationState, parsed: ParsedCommand) -> str:
-    component = parsed.resource_name or "apigateway"
-    if component.startswith("deployment/"):
-        component = component.split("/", 1)[1]
+    component = _rollout_component(parsed)
     rows = [["1", "simulated-saas-0.2.0", "baseline deployment"]]
     if "deploy_bad_canary_rollback" in state.active_scenarios and component == "apigateway":
         rows.extend([
@@ -3138,9 +3161,7 @@ def _render_rollout_history(state: SimulationState, parsed: ParsedCommand) -> st
 
 
 def _render_rollout_restart(state: SimulationState, parsed: ParsedCommand) -> str:
-    component = parsed.resource_name or "apigateway"
-    if component.startswith("deployment/"):
-        component = component.split("/", 1)[1]
+    component = _rollout_component(parsed)
     now = state.clock.now()
     state.mutations.set_workload(
         component,
@@ -3157,6 +3178,82 @@ def _render_rollout_restart(state: SimulationState, parsed: ParsedCommand) -> st
         now,
     )
     return f"deployment.apps/{component} restarted\n"
+
+
+def _render_rollout_pause(state: SimulationState, parsed: ParsedCommand) -> str:
+    component = _rollout_component(parsed)
+    now = state.clock.now()
+    replicas = _replica_count(state, component)
+    state.mutations.set_workload(
+        component,
+        now=now,
+        ready_replicas=replicas,
+        deployment_status="Paused",
+        pod_status="Running",
+    )
+    state.mutations.record_event(
+        "Normal",
+        "RolloutPaused",
+        f"deployment/{component}",
+        f"deployment {component} rollout paused by simulator command",
+        now,
+    )
+    return f"deployment.apps/{component} paused\n"
+
+
+def _render_rollout_resume(state: SimulationState, parsed: ParsedCommand) -> str:
+    component = _rollout_component(parsed)
+    now = state.clock.now()
+    replicas = _replica_count(state, component)
+    state.mutations.set_workload(
+        component,
+        now=now,
+        ready_replicas=replicas,
+        deployment_status="Healthy",
+        pod_status="Running",
+    )
+    state.mutations.record_event(
+        "Normal",
+        "RolloutResumed",
+        f"deployment/{component}",
+        f"deployment {component} rollout resumed by simulator command",
+        now,
+    )
+    return f"deployment.apps/{component} resumed\n"
+
+
+def _render_rollout_undo(state: SimulationState, parsed: ParsedCommand) -> str:
+    component = _rollout_component(parsed)
+    now = state.clock.now()
+    replicas = _replica_count(state, component)
+    revision = _first_flag_value(parsed.flags, "--to-revision", default="previous")
+    state.mutations.set_workload(
+        component,
+        now=now,
+        ready_replicas=replicas,
+        deployment_status="RolledBack",
+        pod_status="Running",
+    )
+    state.mutations.record_event(
+        "Normal",
+        "RolloutUndo",
+        f"deployment/{component}",
+        f"deployment {component} rolled back to {revision} revision by simulator command",
+        now,
+    )
+    suffix = f" to revision {revision}" if revision != "previous" else ""
+    return f"deployment.apps/{component} rolled back{suffix}\n"
+
+
+def _rollout_component(parsed: ParsedCommand) -> str:
+    component = parsed.resource_name or "apigateway"
+    if component.startswith("deployment/"):
+        component = component.split("/", 1)[1]
+    return component
+
+
+def _is_deployment_rollout_target(parsed: ParsedCommand) -> bool:
+    return parsed.resource_kind == "deployments" and bool(parsed.resource_name)
 
 
 def _render_scale(state: SimulationState, parsed: ParsedCommand) -> str:
@@ -3465,13 +3562,48 @@ def _render_diff(state: SimulationState, parsed: ParsedCommand) -> CommandResult
     return CommandResult(1, stdout, "", "supported", "kubectl.diff")
 
 
-def _render_apply(state: SimulationState, parsed: ParsedCommand) -> str:
-    filename = _first_flag_value(parsed.flags, "-f", "--filename", default="manifest")
+def _render_apply(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
+    if parsed.verb == "create":
+        return _render_create(state, parsed)
+    filenames = _flag_values(parsed.flags, "-f", "--filename") or ["manifest"]
+    now = state.clock.now()
+    dry_run = _is_dry_run(parsed)
+    action = "configured"
+    targets: list[tuple[str, str, str, dict[str, Any], str]] = []
+    for filename in filenames:
+        manifest_targets = _manifest_apply_targets(state, parsed, str(filename))
+        if isinstance(manifest_targets, CommandResult):
+            return manifest_targets
+        targets.extend(manifest_targets)
+    if not targets:
+        return CommandResult(
+            1,
+            "",
+            "error: kubectl apply did not find supported simulator resources\n",
+            "partial",
+            "kubectl.apply.manifest.empty",
+        )
+    if not dry_run:
+        for snapshot_kind, name, namespace, payload, _source in targets:
+            state.mutations.put_resource(
+                snapshot_kind,
+                name,
+                _generic_resource_row(state, snapshot_kind, name, payload=payload, parsed=parsed),
+                now=now,
+                namespace=namespace,
+            )
+    suffix = " (dry run)" if dry_run else ""
+    stdout = "".join(
+        f"{_resource_prefix(snapshot_kind)}/{name} {action}{suffix}\n"
+        for snapshot_kind, name, _namespace, _payload, _source in targets
+    )
+    return CommandResult(0, stdout, "", "supported", "kubectl.apply.manifest")
+
+
+def _render_create(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
     now = state.clock.now()
     kind = parsed.resource_kind
     name = parsed.resource_name
-    if parsed.verb == "apply":
-        kind, name = _resource_from_manifest_name(str(filename))
     snapshot_kind = _mutation_snapshot_kind(kind)
     dry_run = _is_dry_run(parsed)
     if snapshot_kind and name and not dry_run:
@@ -3487,13 +3619,179 @@ def _render_apply(state: SimulationState, parsed: ParsedCommand) -> str:
             "Normal",
             "Applied",
             "manifest/simulated",
-            f"{parsed.verb} accepted {filename}; simulator state reconciled",
+            f"{parsed.verb} accepted manifest; simulator state reconciled",
             now,
         )
-    action = "configured" if parsed.verb == "apply" else "created"
-    target = f"{_resource_prefix(snapshot_kind)}/{name}" if snapshot_kind and name else str(filename)
+    target = f"{_resource_prefix(snapshot_kind)}/{name}" if snapshot_kind and name else "manifest"
     suffix = " (dry run)" if dry_run else ""
-    return f"{target} {action}{suffix}\n"
+    return CommandResult(0, f"{target} created{suffix}\n", "", "supported", "kubectl.create")
+
+
+def _manifest_apply_targets(
+    state: SimulationState,
+    parsed: ParsedCommand,
+    filename: str,
+) -> list[tuple[str, str, str, dict[str, Any], str]] | CommandResult:
+    path = Path(filename)
+    if filename == "-":
+        return CommandResult(
+            1,
+            "",
+            "error: kubectl apply from stdin is not modeled; use -f PATH\n",
+            "partial",
+            "kubectl.apply.manifest.stdin",
+        )
+    if not path.exists():
+        kind, name = _resource_from_manifest_name(filename)
+        snapshot_kind = _mutation_snapshot_kind(kind)
+        if snapshot_kind and name:
+            return [(snapshot_kind, name, parsed.namespace, {}, filename)]
+        return []
+    if not path.is_file():
+        return CommandResult(
+            1,
+            "",
+            f"error: kubectl apply -f {filename}: path is not a regular file\n",
+            "partial",
+            "kubectl.apply.manifest.read",
+        )
+    documents = _load_manifest_documents(path)
+    if isinstance(documents, CommandResult):
+        return documents
+    targets: list[tuple[str, str, str, dict[str, Any], str]] = []
+    for index, payload in enumerate(documents, start=1):
+        target = _manifest_apply_target(state, parsed, payload, filename, index)
+        if isinstance(target, CommandResult):
+            return target
+        targets.append(target)
+    return targets
+
+
+def _load_manifest_documents(path: Path) -> list[dict[str, Any]] | CommandResult:
+    suffix = path.suffix.lower()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return CommandResult(
+            1,
+            "",
+            f"error: unable to read manifest {path}: {exc}\n",
+            "partial",
+            "kubectl.apply.manifest.read",
+        )
+    try:
+        if suffix == ".json":
+            raw = json.loads(text)
+            documents = raw if isinstance(raw, list) else [raw]
+        elif suffix in {".yaml", ".yml"}:
+            try:
+                import yaml  # type: ignore[import-not-found]
+            except ModuleNotFoundError:
+                return CommandResult(
+                    1,
+                    "",
+                    f"error: PyYAML is required to parse manifest {path}\n",
+                    "partial",
+                    "kubectl.apply.manifest.yaml",
+                )
+            try:
+                documents = list(yaml.safe_load_all(text))
+            except yaml.YAMLError as exc:
+                return CommandResult(
+                    1,
+                    "",
+                    f"error: invalid manifest {path}: {exc}\n",
+                    "partial",
+                    "kubectl.apply.manifest.parse",
+                )
+        else:
+            return CommandResult(
+                1,
+                "",
+                f"error: unsupported manifest extension for {path}; use .json, .yaml, or .yml\n",
+                "partial",
+                "kubectl.apply.manifest.extension",
+            )
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return CommandResult(
+            1,
+            "",
+            f"error: invalid manifest {path}: {exc}\n",
+            "partial",
+            "kubectl.apply.manifest.parse",
+        )
+    return _normalize_manifest_documents(documents, str(path))
+
+
+def _normalize_manifest_documents(documents: list[Any], source: str) -> list[dict[str, Any]] | CommandResult:
+    normalized: list[dict[str, Any]] = []
+    for index, document in enumerate(documents, start=1):
+        if document is None:
+            continue
+        if not isinstance(document, dict):
+            return CommandResult(
+                1,
+                "",
+                f"error: manifest {source} document {index} must be a Kubernetes object\n",
+                "partial",
+                "kubectl.apply.manifest.shape",
+            )
+        if str(document.get("kind", "")).lower() == "list":
+            items = document.get("items")
+            if not isinstance(items, list):
+                return CommandResult(
+                    1,
+                    "",
+                    f"error: manifest {source} document {index} List.items must be a list\n",
+                    "partial",
+                    "kubectl.apply.manifest.shape",
+                )
+            for item_index, item in enumerate(items, start=1):
+                if not isinstance(item, dict):
+                    return CommandResult(
+                        1,
+                        "",
+                        f"error: manifest {source} document {index} item {item_index} must be a Kubernetes object\n",
+                        "partial",
+                        "kubectl.apply.manifest.shape",
+                    )
+                normalized.append(item)
+            continue
+        normalized.append(document)
+    return normalized
+
+
+def _manifest_apply_target(
+    state: SimulationState,
+    parsed: ParsedCommand,
+    payload: dict[str, Any],
+    source: str,
+    index: int,
+) -> tuple[str, str, str, dict[str, Any], str] | CommandResult:
+    raw_kind = str(payload.get("kind") or "").strip()
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    name = str(metadata.get("name") or "").strip()
+    if not raw_kind or not name:
+        return CommandResult(
+            1,
+            "",
+            f"error: manifest {source} document {index} requires kind and metadata.name\n",
+            "partial",
+            "kubectl.apply.manifest.identity",
+        )
+    snapshot_kind = _mutation_snapshot_kind(raw_kind)
+    if not snapshot_kind:
+        return CommandResult(
+            1,
+            "",
+            f"error: manifest {source} document {index} kind {raw_kind!r} is not modeled by the simulator\n",
+            "partial",
+            "kubectl.apply.manifest.unsupported",
+        )
+    namespace = str(metadata.get("namespace") or parsed.namespace or state.namespace)
+    if namespace == "*":
+        namespace = state.namespace
+    return snapshot_kind, name, namespace, payload, source
 
 
 def _resource_from_manifest_name(filename: str) -> tuple[str, str]:
@@ -7122,6 +7420,11 @@ __all__ = [
     '_render_rollout_status',
     '_render_rollout_history',
     '_render_rollout_restart',
+    '_render_rollout_pause',
+    '_render_rollout_resume',
+    '_render_rollout_undo',
+    '_rollout_component',
+    '_is_deployment_rollout_target',
     '_render_scale',
     '_render_delete',
     '_render_apply',

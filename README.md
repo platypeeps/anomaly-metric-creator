@@ -438,9 +438,10 @@ Supported command families in server mode:
   `--previous`, `-c/--container`, `--tail`, and `--since-time`; `-f` is
   supported for pod-targeted logs
 - `kubectl top pods|nodes`
-- `kubectl rollout status|history|restart deployment/NAME`
-- `kubectl scale`, `delete`, `patch`, `apply`, `create`, and `diff` with
-  scenario-aware mutable simulator state, plus command-mode dry-run output for
+- `kubectl rollout status|history|restart|pause|resume|undo deployment/NAME`
+- `kubectl scale`, `delete`, `patch`, manifest-backed `apply -f`, `create`,
+  and `diff` with scenario-aware mutable simulator state, including
+  multi-document YAML/JSON apply files and command-mode dry-run output for
   supported create/apply flows
 - `kubectl wait`, `exec`, and `port-forward` with simulated diagnostic responses
 - `helm version|env|list|status|history|test|template`
