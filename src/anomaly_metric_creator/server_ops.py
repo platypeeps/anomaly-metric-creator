@@ -3671,7 +3671,7 @@ def _load_manifest_documents(path: Path) -> list[dict[str, Any]] | CommandResult
     suffix = path.suffix.lower()
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         return CommandResult(
             1,
             "",

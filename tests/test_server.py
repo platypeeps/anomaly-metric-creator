@@ -1117,6 +1117,36 @@ def test_kubectl_apply_reads_json_list_manifest(amc, tmp_path):
     assert json_config["keys"] == {"source": "json"}
 
 
+def test_kubectl_apply_reads_json_object_manifest(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "single-resource.json"
+    manifest.write_text(
+        json.dumps({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "json-object-config",
+                "namespace": "tools",
+                "labels": {"source": "object"},
+            },
+            "data": {"mode": "single"},
+        }),
+        encoding="utf-8",
+    )
+
+    result = server.run_command(state, command=f"kubectl apply -f {manifest} -n tools")
+
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["matched_rule_id"] == "kubectl.apply.manifest"
+    assert result["result"]["stdout"] == "configmap/json-object-config configured\n"
+    json_config = next(
+        item for item in server.resource_snapshot(state)["configmaps"]
+        if item["name"] == "json-object-config" and item["namespace"] == "tools"
+    )
+    assert json_config["keys"] == {"mode": "single"}
+    assert json_config["labels"]["source"] == "object"
+
+
 def test_kubectl_apply_manifest_dry_run_does_not_mutate(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     manifest = tmp_path / "dry-run.yaml"
@@ -1178,6 +1208,19 @@ metadata:
         state,
         command="kubectl get configmaps -n tools",
     )["result"]["stdout"]
+
+
+def test_kubectl_apply_manifest_reports_non_utf8_read_failure(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "invalid-encoding.yaml"
+    manifest.write_bytes(b"\xff\xfe\x00")
+
+    result = server.run_command(state, command=f"kubectl apply -f {manifest} -n tools")
+
+    assert result["result"]["support_status"] == "partial"
+    assert result["result"]["matched_rule_id"] == "kubectl.apply.manifest.read"
+    assert "unable to read manifest" in result["result"]["stderr"]
+    assert state.mutations.summary()["created_resources"] == {}
 
 
 def test_kubectl_patch_p_flag_space_separated(amc, tmp_path):
@@ -2440,7 +2483,7 @@ def test_state_summary_counts_anomalies_without_copying_rows(amc, tmp_path, monk
 
 def test_active_anomalies_does_not_copy_all_rows(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
-    now = state.clock.now()
+    now = state.clock.pause()
     rows = [
         {
             "timestamp": server._format_dt(now),

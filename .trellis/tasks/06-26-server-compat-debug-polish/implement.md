@@ -44,3 +44,22 @@
       `/v1/state` — debug shell served, namespace/configured UI strings present,
       and rollout mutation surfaced as `Paused`.
 - [x] `git diff --check` — passed.
+
+## PR Review Adjustment Results
+
+- [x] Copilot review thread for non-UTF8 manifest files addressed by returning
+      partial `kubectl.apply.manifest.read` instead of letting
+      `UnicodeDecodeError` escape.
+- [x] Copilot test-coverage thread addressed with single-object JSON manifest
+      apply coverage and non-UTF8 manifest read-failure coverage.
+- [x] CI-only `test_active_anomalies_does_not_copy_all_rows` race fixed by
+      pausing the accelerated simulation clock before constructing the test
+      window.
+- [x] `.venv/bin/pytest tests/test_server.py -q -k "apply or active_anomalies_does_not_copy_all_rows"` — 7 passed.
+- [x] `.venv/bin/pytest tests/test_server.py -q` — 89 passed, 2 skipped
+      real-client smoke tests.
+- [x] `.venv/bin/pytest -n 2 --dist loadfile -m "not heavy"` — 1389 passed,
+      2 skipped real-client smoke tests.
+- [x] `.venv/bin/pytest -n 0 -m heavy` — 45 passed.
+- [x] `.venv/bin/ruff check tests/` — passed.
+- [x] `git diff --check` — passed.
