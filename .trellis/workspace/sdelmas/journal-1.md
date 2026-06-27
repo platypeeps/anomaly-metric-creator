@@ -314,3 +314,41 @@ Added server-mode kubectl patch, diff, dry-run, and Helm value-layering compatib
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: PR 152 review and CI cadence
+
+**Date**: 2026-06-27
+**Task**: PR 152 review and CI cadence
+**Package**: amc
+**Branch**: `server-compat-debug-polish`
+
+### Summary
+
+Completed the PR #152 review loop for server compatibility and CI cadence: restored the required CodeQL context, addressed Copilot feedback for manifest apply, rollout undo, Actions expressions, and lightweight whitespace coverage, added regression guards, and verified the PR checks are green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `16cac9c` | (see git log) |
+| `d753f87` | (see git log) |
+| `9b8d0a5` | (see git log) |
+| `f1f852b` | (see git log) |
+| `f5902be` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
