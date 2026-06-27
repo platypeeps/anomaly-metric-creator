@@ -37,6 +37,8 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 id: full-ci
           lightweight_readiness:
             name: lightweight readiness
+            steps:
+              - run: git diff --check "origin/$BASE_REF...HEAD"
           quick_check:
             name: quick test
             steps:
@@ -199,6 +201,23 @@ def test_ci_full_ci_output_requires_bracket_expression(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "full-ci output bracket expression" in result.stderr
     assert "full-ci output dot expression" in result.stderr
+
+
+def test_lightweight_whitespace_requires_pr_diff_range(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            'git diff --check "origin/$BASE_REF...HEAD"',
+            "git diff --check HEAD^ HEAD",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "lightweight whitespace PR diff" in result.stderr
 
 
 def test_missing_repo_file_exits_two(tmp_path: Path) -> None:

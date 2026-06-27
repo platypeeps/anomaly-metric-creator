@@ -100,6 +100,10 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ("quick result text", "selected lane: quick test"),
         ("full result text", "selected lane: full matrix"),
         (
+            "lightweight whitespace PR diff",
+            'git diff --check "origin/$BASE_REF...HEAD"',
+        ),
+        (
             "review-churn test coverage",
             "tests/test_ci_review_contract.py",
         ),
