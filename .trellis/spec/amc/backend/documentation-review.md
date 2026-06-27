@@ -78,6 +78,21 @@ review checklist before draft status is removed. Sources: `CLAUDE.md`;
 `.github/PULL_REQUEST_TEMPLATE.md`;
 `.trellis/spec/amc/backend/testing-quality.md`.
 
+The PR template should prompt for focused local checks, the quick local
+Trellis gate, and whether a full local gate or remote `full-ci` label is
+needed. Review guidance should prefer local evidence and the stable aggregate
+`test` context before asking for repeated remote Copilot or Actions runs.
+Sources: `.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`;
+`scripts/trellis-full-check.sh`; `tools/check_ci_review_contract.py`;
+`.github/copilot-instructions.md`;
+`.github/instructions/anomaly-metric-creator.instructions.md`.
+
+Recurring review lessons that are specific to AMC belong in
+`docs/REVIEW_PATTERNS.md` or a mechanical `tools/check_*.py` guard with tests,
+not only in PR comments. Sources: `docs/REVIEW_PATTERNS.md`;
+`.trellis/spec/amc/backend/testing-quality.md`; `tools/`;
+`tests/test_*_lint.py`.
+
 Before opening housekeeping or finish-work PRs, fetch and compare against
 `origin/main` so already-merged archive/journal commits do not become redundant
 PRs. A publish flow should have a non-empty, non-duplicate branch diff before

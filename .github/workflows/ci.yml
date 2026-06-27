@@ -2,8 +2,10 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   push:
     branches: [main]
+  workflow_dispatch:
 
 # Cancel superseded in-progress runs on the same ref to save Actions minutes.
 concurrency:
@@ -14,8 +16,194 @@ permissions:
   contents: read
 
 jobs:
-  test-matrix:
+  changes:
+    name: classify changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed_count: ${{ steps.classify.outputs.changed_count }}
+      lightweight_only: ${{ steps.classify.outputs.lightweight_only }}
+      app_required: ${{ steps.classify.outputs.app_required }}
+      dependency_changed: ${{ steps.classify.outputs.dependency_changed }}
+      workflow_changed: ${{ steps.classify.outputs.workflow_changed }}
+      python_changed: ${{ steps.classify.outputs.python_changed }}
+      review_tooling_changed: ${{ steps.classify.outputs.review_tooling_changed }}
+      full_ci_requested: ${{ steps.full-ci.outputs.full_ci_requested }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed files
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+            git diff --name-only "origin/$BASE_REF...HEAD" > changed-files.txt
+          elif [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" > changed-files.txt
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --name-only HEAD^ HEAD > changed-files.txt
+          else
+            git ls-files > changed-files.txt
+          fi
+          sed 's/^/- /' changed-files.txt
+
+      - name: Classify changed files
+        id: classify
+        run: bash scripts/classify_ci_changes.sh --github-output changed-files.txt
+
+      - name: Decide full CI cadence
+        id: full-ci
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_DRAFT: ${{ github.event.pull_request.draft || false }}
+          PR_LABEL: ${{ github.event.label.name || '' }}
+          DEPENDENCY_CHANGED: ${{ steps.classify.outputs.dependency_changed }}
+          WORKFLOW_CHANGED: ${{ steps.classify.outputs.workflow_changed }}
+        run: |
+          set -euo pipefail
+          full_ci_requested=false
+
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            full_ci_requested=true
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            case "$PR_ACTION" in
+              opened|reopened|ready_for_review)
+                if [ "$PR_DRAFT" != "true" ]; then
+                  full_ci_requested=true
+                fi
+                ;;
+              labeled)
+                if [ "$PR_LABEL" = "full-ci" ]; then
+                  full_ci_requested=true
+                fi
+                ;;
+            esac
+          fi
+
+          if [ "$DEPENDENCY_CHANGED" = "true" ] || [ "$WORKFLOW_CHANGED" = "true" ]; then
+            full_ci_requested=true
+          fi
+
+          echo "full_ci_requested=$full_ci_requested" >> "$GITHUB_OUTPUT"
+          echo "full_ci_requested=$full_ci_requested"
+
+  lightweight_readiness:
+    name: lightweight readiness
+    needs: changes
+    if: needs.changes.outputs.lightweight_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Whitespace check
+        run: |
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^ HEAD
+          else
+            git diff --check
+          fi
+
+      - name: Shell syntax for review tooling
+        run: bash -n scripts/classify_ci_changes.sh scripts/trellis-full-check.sh scripts/trellis-housekeeping.sh
+
+      - name: Smoke CI classifier
+        run: |
+          printf '%s\n' \
+            'docs/REVIEW_PATTERNS.md' \
+            '.github/prompts/review-pr.prompt.md' \
+            'scripts/trellis-full-check.sh' > /tmp/lightweight-changes.txt
+          bash scripts/classify_ci_changes.sh /tmp/lightweight-changes.txt > /tmp/classifier.out
+          grep -q '^lightweight_only=true$' /tmp/classifier.out
+          grep -q '^app_required=false$' /tmp/classifier.out
+
+      - name: Syntax and placeholder guards
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python_files=()
+          while IFS= read -r path; do
+            python_files+=("$path")
+          done < <(git ls-files 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
+          if [ "${#python_files[@]}" -gt 0 ]; then
+            python tools/check_python_syntax.py "${python_files[@]}"
+          fi
+
+          workflow_files=()
+          while IFS= read -r path; do
+            workflow_files+=("$path")
+          done < <(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
+          if [ "${#workflow_files[@]}" -gt 0 ]; then
+            python tools/check_workflow_pip.py "${workflow_files[@]}"
+          fi
+
+          trellis_files=()
+          while IFS= read -r path; do
+            trellis_files+=("$path")
+          done < <(git ls-files .trellis/tasks .trellis/workspace | grep -E '\.(md|json|jsonl|ya?ml|toml)$' || true)
+          if [ "${#trellis_files[@]}" -gt 0 ]; then
+            python tools/check_trellis_placeholders.py "${trellis_files[@]}"
+          fi
+
+          python tools/check_ci_review_contract.py
+
+  quick_check:
+    name: quick test
+    needs: changes
+    if: needs.changes.outputs.app_required == 'true' && needs.changes.outputs.full_ci_requested != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (dev extra)
+        run: uv sync --extra dev --python 3.12
+
+      - name: Smoke installed console scripts
+        run: |
+          uv venv --python 3.12 .ci-package-smoke
+          uv pip install --python .ci-package-smoke/bin/python .
+          .ci-package-smoke/bin/amc --help > /dev/null
+          .ci-package-smoke/bin/anomaly-metric-creator --help > /dev/null
+
+      - name: Check ruff version lockstep
+        run: uv run --no-sync python tools/check_ruff_lockstep.py
+
+      - name: Lint tests (ruff F401)
+        run: uv run --no-sync ruff check tests/
+
+      - name: Run quick review-churn tests
+        run: |
+          uv run --no-sync pytest -q \
+            tests/test_ci_change_classifier.py \
+            tests/test_python_syntax_lint.py \
+            tests/test_workflow_pip_lint.py \
+            tests/test_ci_review_contract.py \
+            tests/test_ruff_lockstep_lint.py \
+            tests/test_trellis_placeholder_lint.py \
+            tests/test_trace_payload_antipatterns_lint.py
+          uv run --no-sync pytest -q tests/test_server.py -k "apply or rollout"
+
+  test_matrix:
     name: test (py${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.app_required == 'true' && needs.changes.outputs.full_ci_requested == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -26,8 +214,6 @@ jobs:
     # runner_id=0 before any steps start, which blocks branch protection even
     # though the suite itself is healthy.
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ubuntu-latest-m' }}
-    # PRs run the slower low-RAM fallback (~24 min historically), while main
-    # pushes stay around 5-8 min on the larger runner.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -35,9 +221,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
         # enable-cache uses the Actions cache service, which authenticates
-        # with the runtime token (ACTIONS_RUNTIME_TOKEN) — independent of the
-        # `permissions:` block above. The job's `contents: read` therefore
-        # does not disable or break dependency caching.
+        # with the runtime token (ACTIONS_RUNTIME_TOKEN) independent of the
+        # `permissions:` block above.
         with:
           enable-cache: true
 
@@ -52,10 +237,7 @@ jobs:
           .ci-package-smoke/bin/anomaly-metric-creator --help > /dev/null
 
       # Fail before the long suite if ruff's two pins have drifted
-      # (pyproject `ruff==` vs the pre-commit `rev:`). lockfile-only
-      # (PR #115) stopped Dependabot bumping the exact `ruff==` pin, so
-      # only the pre-commit `rev` advances now — this guard turns that
-      # drift into a red `test` check instead of a silent skew.
+      # (pyproject `ruff==` vs the pre-commit `rev:`).
       - name: Check ruff version lockstep
         run: uv run --no-sync python tools/check_ruff_lockstep.py
 
@@ -67,20 +249,8 @@ jobs:
 
       # PR standard runners split the suite to exercise the same xdist
       # ordering path that main's push run uses, without OOM-ing the 7 GB
-      # runner:
-      #   1. `-m heavy -n 0`: the GB-scale 7-day / N=3 fixture tests run
-      #      serially (they are what OOM-died a full `-n 2` PR run). This step
-      #      runs first so a broken `heavy` auto-marker (conftest
-      #      pytest_collection_modifyitems) collects zero tests and fails fast
-      #      with pytest's exit code 5, instead of letting those fixtures fall
-      #      into the parallel step below and OOM.
-      #   2. `-m "not heavy" -n 2 --dist loadfile`: the light remainder runs
-      #      under real xdist, so an order-dependent / leaked-global-state
-      #      regression surfaces at the PR gate rather than only post-merge on
-      #      the main push (the determinism-coverage gap this split closes).
-      # The two `-m` sets partition the suite, so coverage is complete. main
-      # pushes keep the repo default (`-n 4 --dist loadfile`, pyproject addopts)
-      # on the larger runner.
+      # runner. The two `-m` sets partition the suite, so coverage is complete.
+      # main pushes keep the repo default on the larger runner.
       - name: Run test suite
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -92,17 +262,40 @@ jobs:
 
   test:
     name: test
-    needs: test-matrix
+    needs: [changes, lightweight_readiness, quick_check, test_matrix]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       # Branch protection requires a stable `test` context. Keep the
-      # version-specific jobs above for visibility, then fail this aggregate
-      # unless every matrix leg completed successfully.
-      - name: Check test matrix result
+      # path-selected jobs above for visibility, then fail this aggregate
+      # unless the selected lane completed successfully.
+      - name: Check selected CI lane
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          LIGHTWEIGHT_RESULT: ${{ needs.lightweight_readiness.result }}
+          QUICK_RESULT: ${{ needs.quick_check.result }}
+          MATRIX_RESULT: ${{ needs.test_matrix.result }}
+          LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
+          APP_REQUIRED: ${{ needs.changes.outputs.app_required }}
+          FULL_CI_REQUESTED: ${{ needs.changes.outputs.full_ci_requested }}
         run: |
-          if [ "${{ needs.test-matrix.result }}" != "success" ]; then
-            echo "test-matrix result: ${{ needs.test-matrix.result }}"
+          set -euo pipefail
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "changes result: $CHANGES_RESULT"
             exit 1
           fi
-          echo "test-matrix result: ${{ needs.test-matrix.result }}"
+
+          if [ "$APP_REQUIRED" = "true" ] && [ "$FULL_CI_REQUESTED" = "true" ]; then
+            echo "selected lane: full matrix"
+            test "$MATRIX_RESULT" = "success"
+          elif [ "$APP_REQUIRED" = "true" ]; then
+            echo "selected lane: quick test"
+            test "$QUICK_RESULT" = "success"
+          elif [ "$LIGHTWEIGHT_ONLY" = "true" ]; then
+            echo "selected lane: lightweight readiness"
+            test "$LIGHTWEIGHT_RESULT" = "success"
+          else
+            echo "no CI lane selected"
+            exit 1
+          fi

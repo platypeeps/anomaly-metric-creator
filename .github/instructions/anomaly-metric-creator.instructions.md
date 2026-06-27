@@ -16,6 +16,27 @@ produce overview-only or generic Python feedback. If a change touches behavior
 that Trellis already specifies, the review should be grounded in those
 specifics.
 
+## Local-first review cadence
+
+Prefer local evidence before asking for another remote review or broad GitHub
+Actions run. The repo's stable branch-protection check is the aggregate `test`
+job; `.github/workflows/ci.yml` chooses a lightweight, quick, or full lane via
+`scripts/classify_ci_changes.sh`. `tools/check_ci_review_contract.py` guards
+the workflow/script/doc anchors that keep that cadence from drifting.
+
+- For docs/spec/agent/review-tooling-only diffs, expect the lightweight lane
+  and avoid requesting the full Python matrix unless the content changes a
+  behavior contract.
+- For routine app-path PR updates, the quick lane runs install smoke, ruff,
+  review-churn lint tests, and focused server compatibility tests.
+- For app-required opened/reopened/ready PRs, the `full-ci` label,
+  workflow/dependency changes, workflow dispatch, and `main` pushes, expect the
+  full Python 3.11/3.12 matrix and heavy/non-heavy pytest split.
+- Before a final remote Copilot pass, prefer a local
+  `bash scripts/trellis-full-check.sh` run. During iteration,
+  `TRELLIS_FULL_CHECK_LEVEL=quick bash scripts/trellis-full-check.sh` is the
+  cheaper local guard.
+
 ## Where to look first by diff shape
 
 - **Anomaly / scenario change** (`SCENARIOS`, `register_cascade`, anomaly

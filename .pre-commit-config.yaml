@@ -109,6 +109,26 @@ repos:
         language: python
         files: ^\.github/workflows/.*\.ya?ml$
         pass_filenames: true
+      # The CI classifier and Trellis review scripts decide whether remote
+      # Actions can take the lightweight path. Keep shell syntax failures local
+      # so a docs/tooling-only PR does not spend a runner just to discover a
+      # malformed script.
+      - id: review-tooling-shell-syntax
+        name: validate review tooling shell syntax
+        entry: bash -n scripts/classify_ci_changes.sh scripts/trellis-full-check.sh scripts/trellis-housekeeping.sh
+        language: system
+        files: ^scripts/(classify_ci_changes|trellis-full-check|trellis-housekeeping)\.sh$
+        pass_filenames: false
+      # Guard the named anchors that keep local full-check, CI lane selection,
+      # CodeQL/Socket cadence, and review docs in sync. This is intentionally
+      # text-based and stdlib-only so it can run in pre-commit without
+      # installing project dependencies.
+      - id: ci-review-contract
+        name: guard CI/review cadence contract
+        entry: python tools/check_ci_review_contract.py
+        language: python
+        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify_ci_changes|trellis-full-check)\.sh|tools/check_ci_review_contract\.py|docs/(DEVELOPMENT_CYCLE|TRELLIS_REVIEW_PR_PACK)\.md|\.trellis/spec/amc/backend/testing-quality\.md)$
+        pass_filenames: false
       # Forbid `except BaseException` / bare `except` in generated Python hook
       # adapters and require a short reason on intentionally empty
       # `except Exception: pass` handlers. This keeps the PR #140 hook-adapter
