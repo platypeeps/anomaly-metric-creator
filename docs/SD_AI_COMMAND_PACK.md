@@ -7,11 +7,13 @@ This repo has the reusable SD AI command setup installed from
 
 - `.agents/skills/trellis-review-pr/SKILL.md`: local-review-first PR workflow.
 - `.agents/skills/trellis-full-check/SKILL.md`: full local verification workflow.
-- `.agents/skills/trellis-housekeeping/SKILL.md`: post-merge cleanup workflow.
+- `.agents/skills/trellis-housekeeping/SKILL.md`: end-of-stream
+  auto-finalize/merge and post-merge cleanup workflow.
 - `.agents/skills/sd-*/SKILL.md`: Codex-visible wrappers for the same `sd`
   entry points.
 - `scripts/trellis-full-check.sh`: canonical full-check script.
-- `scripts/trellis-housekeeping.sh`: canonical post-merge housekeeping script.
+- `scripts/trellis-housekeeping.sh`: canonical end-of-stream housekeeping
+  script for ready open PRs and merged-branch cleanup.
 - `.prism/rules.json`: default Prism review rules for repo-specific checks.
 - Platform adapters under `.claude/`, `.gemini/`, `.github/prompts/`, and
   `.opencode/` when those platform folders exist.

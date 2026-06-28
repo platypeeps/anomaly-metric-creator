@@ -312,6 +312,57 @@ def test_duplicate_journal_session_in_same_file_exits_one(tmp_path: Path) -> Non
     assert "journal-1.md" in result.stderr
 
 
+def test_duplicate_index_session_exits_one(tmp_path: Path) -> None:
+    index_path, journal_path = _workspace_artifacts(
+        tmp_path,
+        index_history_row=(
+            "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |"
+        ),
+        journal_text="""# Journal - sdelmas
+
+## Session 1: Finish thing
+
+### Main Changes
+
+- Finished the task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abc1234` | (see git log) |
+
+### Testing
+
+- [OK] smoke
+
+### Status
+
+[OK] **Completed**
+""",
+    )
+    index = Path(index_path)
+    index.write_text(
+        index.read_text(encoding="utf-8").replace(
+            "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |",
+            "\n".join(
+                [
+                    "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |",
+                    "| 1 | 2026-06-28 | Duplicate thing | `def5678` | `codex/example` |",
+                ]
+            ),
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(index_path, journal_path)
+
+    assert result.returncode == 1
+    assert "duplicate index session 1" in result.stderr
+    assert "first definition" in result.stderr
+    assert "index.md" in result.stderr
+
+
 def test_unpassed_journal_file_is_not_included_in_consistency_check(
     tmp_path: Path,
 ) -> None:

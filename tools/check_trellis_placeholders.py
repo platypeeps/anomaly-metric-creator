@@ -41,6 +41,7 @@ _COMPLETED_STATUS_RE = re.compile(r"^\[OK\]\s+\*\*Completed\*\*\s*$")
 _COMMIT_RE = re.compile(r"`([0-9a-f]{7,40})`", re.IGNORECASE)
 _INDEX_SESSION_ROW_RE = re.compile(r"^\|\s*(?P<session>\d+)\s*\|")
 _JOURNAL_SESSION_RE = re.compile(r"^## Session (?P<session>\d+):\s*(?P<title>.+?)\s*$")
+IndexEntry = tuple[list[str], int]
 JournalEntry = tuple[list[str], int, Path]
 
 
@@ -177,8 +178,11 @@ def _format_commits(commits: list[str]) -> str:
     return ", ".join(f"`{commit}`" for commit in commits)
 
 
-def _parse_index_commits(path: Path) -> dict[int, tuple[list[str], int]]:
-    sessions: dict[int, tuple[list[str], int]] = {}
+def _parse_index_commits(
+    path: Path,
+) -> tuple[dict[int, IndexEntry], list[tuple[int, IndexEntry, IndexEntry]]]:
+    sessions: dict[int, IndexEntry] = {}
+    duplicate_sessions: list[tuple[int, IndexEntry, IndexEntry]] = []
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not _INDEX_SESSION_ROW_RE.match(line):
             continue
@@ -187,8 +191,14 @@ def _parse_index_commits(path: Path) -> dict[int, tuple[list[str], int]]:
         if len(cells) < 4 or not cells[0].isdigit():
             continue
 
-        sessions[int(cells[0])] = (_COMMIT_RE.findall(cells[3]), lineno)
-    return sessions
+        session_number = int(cells[0])
+        entry = (_COMMIT_RE.findall(cells[3]), lineno)
+        existing_entry = sessions.get(session_number)
+        if existing_entry is not None:
+            duplicate_sessions.append((session_number, existing_entry, entry))
+            continue
+        sessions[session_number] = entry
+    return sessions, duplicate_sessions
 
 
 def _parse_journal_commits(path: Path) -> list[tuple[int, JournalEntry]]:
@@ -239,7 +249,7 @@ def _check_workspace_journal_commit_consistency(
     if not journal_paths:
         return []
 
-    index_sessions = _parse_index_commits(index_path)
+    index_sessions, duplicate_index_sessions = _parse_index_commits(index_path)
     journal_sessions: dict[int, JournalEntry] = {}
     duplicate_journal_sessions: list[tuple[int, JournalEntry, JournalEntry]] = []
     for journal_path in journal_paths:
@@ -253,6 +263,14 @@ def _check_workspace_journal_commit_consistency(
             journal_sessions[session_number] = journal_entry
 
     violations: list[str] = []
+    for session_number, first_entry, duplicate_entry in duplicate_index_sessions:
+        _first_commits, first_lineno = first_entry
+        _duplicate_commits, duplicate_lineno = duplicate_entry
+        violations.append(
+            f"{index_path}:{duplicate_lineno}: duplicate index session "
+            f"{session_number}; first definition is {index_path}:{first_lineno}"
+        )
+
     for session_number, first_entry, duplicate_entry in duplicate_journal_sessions:
         _first_commits, first_lineno, first_path = first_entry
         _duplicate_commits, duplicate_lineno, duplicate_path = duplicate_entry
