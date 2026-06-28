@@ -404,3 +404,50 @@ Added Prism override/retry support to the full-check gate, fixed rollout undo ev
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Review Trellis artifact guard PR
+
+**Date**: 2026-06-28
+**Task**: Review Trellis artifact guard PR
+**Package**: amc
+**Branch**: `codex/trellis-artifact-guard`
+
+### Summary
+
+Addressed Copilot feedback on duplicate journal sessions and exit-code docs; restored the full-check/review-pack contract, resolved review threads, and verified local and remote checks.
+
+### Main Changes
+
+- Restored the AMC-specific Trellis full-check and review-pack contract after
+  the generic command update dropped local review anchors.
+- Added duplicate journal-session detection to the Trellis placeholder guard and
+  covered it with a regression test.
+- Updated the guard exit-code documentation after Copilot review, replied to the
+  resolved review threads, and pushed the follow-up commits.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5e494ff` | (see git log) |
+| `66cb0be` | (see git log) |
+
+### Testing
+
+- [OK] `.venv/bin/pytest tests/test_ci_review_contract.py tests/test_trellis_full_check_script.py tests/test_trellis_placeholder_lint.py -q`
+- [OK] `.venv/bin/ruff check tools/check_trellis_placeholders.py tests/test_trellis_placeholder_lint.py`
+- [OK] `python3 tools/check_ci_review_contract.py`
+- [OK] `TRELLIS_FULL_CHECK_PRISM=0 bash scripts/trellis-full-check.sh`
+- [OK] GitHub Actions run `28330818629` passed on the latest PR head.
+- [WARN] Default Prism review failed locally because the effective Prism config
+  selected `gemini-3.1-pro-preview`, which Prism 0.5.0 does not list; external
+  Gemini rerun was not attempted after sandbox review blocked sending the diff.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-06-27
+- **Total Sessions**: 10
+- **Last Active**: 2026-06-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~397 | Active |
+| `journal-1.md` | ~441 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-06-28 | Review Trellis artifact guard PR | `5e494ff`, `66cb0be` | `codex/trellis-artifact-guard` |
 | 9 | 2026-06-27 | PR review full-check and rollout undo polish | `1157bf2`, `24ced3a` | `server-compat-debug-polish` |
 | 8 | 2026-06-27 | PR 152 review and CI cadence | `16cac9c`, `d753f87`, `9b8d0a5`, `f1f852b`, `f5902be` | `server-compat-debug-polish` |
 | 7 | 2026-06-26 | Server compatibility patch diff and Helm values | `0d261b1`, `48a7318` | `codex/server-compatibility-patch-diff-helm-values` |
