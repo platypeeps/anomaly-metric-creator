@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Local review gate, placeholder lint, pytest, and CI/review cadence expectations for final validation."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "PR review, Copilot guidance, Trellis archive, and documentation sync expectations before closing the task."}
+{"file": "docs/DEVELOPMENT_CYCLE.md", "reason": "Review-economy workflow and quick/full Trellis gate expectations for PR readiness."}
+{"file": "docs/REVIEW_PATTERNS.md", "reason": "Repository-specific review-churn lessons to check before finalizing PR feedback."}
