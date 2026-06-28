@@ -35,7 +35,7 @@ The content is organized as follows:
 - Files are sorted by Git change count (files with more changes are at the bottom)
 
 # User Provided Header
-Generated repository map for anomaly-metric-creator. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
+Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
 
 # Directory Structure
 ```

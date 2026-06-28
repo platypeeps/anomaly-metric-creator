@@ -21,6 +21,6 @@ repomix . \
   --include-full-directory-structure \
   --output "$ARTIFACT" \
   --ignore "$ARTIFACT" \
-  --header-text "Generated repository map for anomaly-metric-creator. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes."
+  --header-text "Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes."
 
 printf 'Updated %s\n' "$ARTIFACT"
