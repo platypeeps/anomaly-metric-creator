@@ -329,7 +329,10 @@ Completed the PR #152 review loop for server compatibility and CI cadence: resto
 
 ### Main Changes
 
-(Add details)
+- Restored the required CodeQL PR context after the review-economy workflow changes so branch protection gets a fresh `CodeQL` result on every PR update.
+- Addressed Copilot review feedback for manifest apply namespace fallback, rollout undo revision defaults, GitHub Actions `full-ci` output syntax, and lightweight whitespace coverage.
+- Added or extended regression coverage in `tests/test_server.py` and `tests/test_ci_review_contract.py`, plus the CI contract guard in `tools/check_ci_review_contract.py`.
+- Archived the completed Trellis task and recorded this journal entry after PR #152 review checks were clean.
 
 ### Git Commits
 
@@ -343,7 +346,12 @@ Completed the PR #152 review loop for server compatibility and CI cadence: resto
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `.venv/bin/pytest -q tests/test_ci_review_contract.py`
+- [OK] `.venv/bin/python tools/check_ci_review_contract.py`
+- [OK] `.venv/bin/python tools/check_workflow_pip.py .github/workflows/ci.yml`
+- [OK] `.venv/bin/pytest tests/test_server.py -q`
+- [OK] `TRELLIS_FULL_CHECK_LEVEL=quick TRELLIS_FULL_CHECK_PRISM=0 bash scripts/trellis-full-check.sh`
+- [OK] PR #152 checks were green before the finish-work journal/archive commits; finish-work follow-up failed only on this placeholder lint, now fixed.
 
 ### Status
 
