@@ -508,6 +508,7 @@ tests/
   test_trace_bundle.py
   test_trace_payload_antipatterns_lint.py
   test_trellis_full_check_script.py
+  test_trellis_housekeeping_script.py
   test_trellis_placeholder_lint.py
   test_validate_output.py
   test_workflow_pip_lint.py

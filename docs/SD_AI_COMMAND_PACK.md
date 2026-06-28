@@ -138,12 +138,14 @@ local branch head, remote branch head, and PR head all match, the PR is open and
 not draft, the base is the default branch, merge state is clean, reported checks
 are green, and there are no unresolved review threads. When that is true, it
 runs `trellis-finalize`, pushes the journal commit back to the PR branch with a
-best-effort `[skip ci]` marker, merges the PR, and then performs normal cleanup.
-If the gate is not satisfied, it behaves as a post-merge cleanup command:
-fetch/prune `origin`, confirm the current feature branch's PR is merged and the
-local branch head matches that PR before deleting it, switch to the default
-branch, fast-forward from `origin`, delete the merged local and remote branch,
-and then report the expected clean state plus anomalies.
+best-effort `[skip ci]` marker, re-reads the PR until that new head is clean,
+green, and comment-clean, merges the PR, and then performs normal cleanup. The
+post-finalize wait matters for repositories whose CI still reruns on `[skip ci]`
+commits. If the gate is not satisfied, it behaves as a post-merge cleanup
+command: fetch/prune `origin`, confirm the current feature branch's PR is merged
+and the local branch head matches that PR before deleting it, switch to the
+default branch, fast-forward from `origin`, delete the merged local and remote
+branch, and then report the expected clean state plus anomalies.
 
 A clean housekeeping run should end with:
 
@@ -198,6 +200,11 @@ Common environment variables:
   selected remote URL cannot be parsed as a GitHub repository.
 - `TRELLIS_HOUSEKEEPING_MERGE_STRATEGY`: auto-merge strategy: `merge`,
   `squash`, or `rebase`. Defaults to `merge`.
+- `TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_TIMEOUT_SECONDS`: seconds to wait for
+  the pushed finalize head to become clean, green, and comment-clean before
+  auto-merge. Defaults to `3600`.
+- `TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_POLL_SECONDS`: poll interval for the
+  pushed finalize-head readiness check. Defaults to `30`.
 
 Prism is enabled by default when the executable is present. If Prism is missing
 or credentials/config are unavailable, the script reports the skip and continues

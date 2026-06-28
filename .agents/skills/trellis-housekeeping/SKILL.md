@@ -34,18 +34,20 @@ The script performs this end-of-stream flow:
 5. After `trellis-finalize`, push the journal commit back to the PR branch.
    By default, the script amends that finalize commit with `[skip ci]` before
    pushing to avoid rerunning CI where GitHub branch protection allows it.
-6. Merge the PR with `gh pr merge --match-head-commit`. If GitHub refuses the
-   merge, usually because skipped required checks are pending, report an
-   anomaly instead of forcing the merge.
-7. If the current branch is a feature branch, use `gh pr view` to confirm the
+6. Re-read the PR after the finalize push and wait for the new head SHA to be
+   clean, green, and comment-clean before merging. This is required because
+   some repositories rerun CI even when the finalize commit contains `[skip ci]`.
+7. Merge the PR with `gh pr merge --match-head-commit`. If GitHub refuses the
+   merge, report an anomaly instead of forcing the merge.
+8. If the current branch is a feature branch, use `gh pr view` to confirm the
    branch's PR is `MERGED` and the local branch head matches the merged PR head
    before deleting anything.
-8. When the current feature branch is confirmed merged and the working tree is
+9. When the current feature branch is confirmed merged and the working tree is
    clean, switch to the default branch and fast-forward it from `origin`.
-9. Delete the merged local feature branch.
-10. Delete the merged remote feature branch unless
+10. Delete the merged local feature branch.
+11. Delete the merged remote feature branch unless
    `--keep-remote-branch` is passed.
-11. Verify the expected final state:
+12. Verify the expected final state:
    - default branch checked out
    - working tree clean
    - default branch matches `origin/default`

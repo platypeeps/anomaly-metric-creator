@@ -8,6 +8,8 @@ AUTO_FINALIZE=1
 SUPPRESS_FINALIZE_CI=1
 MERGE_STRATEGY="${TRELLIS_HOUSEKEEPING_MERGE_STRATEGY:-merge}"
 FINALIZE_COMMAND="${TRELLIS_HOUSEKEEPING_FINALIZE_COMMAND:-trellis-finalize}"
+FINALIZE_CHECK_TIMEOUT_SECONDS="${TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_TIMEOUT_SECONDS:-3600}"
+FINALIZE_CHECK_POLL_SECONDS="${TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_POLL_SECONDS:-30}"
 
 ACTIONS=()
 EXPECTED=()
@@ -16,6 +18,7 @@ DEFAULT_BRANCH=""
 START_BRANCH=""
 GITHUB_REPO_SLUG=""
 GH_REPO_ARGS=()
+FINALIZE_PUSHED_HEAD=""
 
 usage() {
   cat <<'EOF'
@@ -74,6 +77,14 @@ valid_merge_strategy() {
       return 1
       ;;
   esac
+}
+
+valid_non_negative_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+valid_positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
 valid_github_repo_slug() {
@@ -477,6 +488,7 @@ run_finalize_command() {
   local after_head
   local commit_count
 
+  FINALIZE_PUSHED_HEAD=""
   before_head="$(git rev-parse --verify HEAD)"
   if [ "$DRY_RUN" -eq 1 ]; then
     add_action "would run: $FINALIZE_COMMAND"
@@ -508,14 +520,101 @@ run_finalize_command() {
   add_action "$FINALIZE_COMMAND created $commit_count commit(s)"
   if [ "$SUPPRESS_FINALIZE_CI" -eq 1 ]; then
     append_skip_ci_to_head_commit || return 1
+    after_head="$(git rev-parse --verify HEAD)"
   fi
 
   if git push "$REMOTE" "HEAD:refs/heads/$START_BRANCH"; then
+    FINALIZE_PUSHED_HEAD="$after_head"
     add_action "pushed finalize journal entries to $REMOTE/$START_BRANCH"
   else
     add_anomaly "failed to push finalize journal entries to $REMOTE/$START_BRANCH"
     return 1
   fi
+}
+
+wait_for_pr_head_readiness() {
+  local branch="$1"
+  local pr_number="$2"
+  local expected_head="$3"
+  local deadline
+  local now
+  local pr_data
+  local pr_state
+  local pr_is_draft
+  local pr_url
+  local pr_head
+  local pr_head_oid
+  local pr_base
+  local pr_merge_state
+  local non_green_check_count
+  local total_check_count
+  local unresolved_count
+
+  if ! valid_non_negative_integer "$FINALIZE_CHECK_TIMEOUT_SECONDS"; then
+    add_anomaly "TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_TIMEOUT_SECONDS must be a non-negative integer; skipped auto-merge"
+    return 1
+  fi
+  if ! valid_positive_integer "$FINALIZE_CHECK_POLL_SECONDS"; then
+    add_anomaly "TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_POLL_SECONDS must be a positive integer; skipped auto-merge"
+    return 1
+  fi
+
+  deadline=$(($(date +%s) + FINALIZE_CHECK_TIMEOUT_SECONDS))
+  add_action "waiting up to ${FINALIZE_CHECK_TIMEOUT_SECONDS}s for PR #$pr_number checks on finalize head $expected_head"
+
+  while true; do
+    pr_data="$(view_open_pr_readiness_for_branch "$branch")"
+    if [ -z "$pr_data" ]; then
+      add_anomaly "failed to refresh PR #$pr_number readiness after finalize; skipped auto-merge"
+      return 1
+    fi
+
+    IFS=$'\t' read -r pr_number pr_state pr_is_draft pr_url pr_head pr_head_oid pr_base pr_merge_state non_green_check_count total_check_count <<<"$pr_data"
+    if [ "$pr_state" != "OPEN" ]; then
+      add_anomaly "PR #$pr_number is $pr_state after finalize, not OPEN; skipped auto-merge"
+      return 1
+    fi
+    if [ "$pr_is_draft" = "true" ]; then
+      add_anomaly "PR #$pr_number became a draft after finalize; skipped auto-merge"
+      return 1
+    fi
+    if [ "$pr_head" != "$branch" ]; then
+      add_anomaly "PR #$pr_number head is $pr_head after finalize, not $branch; skipped auto-merge"
+      return 1
+    fi
+    if [ -n "$DEFAULT_BRANCH" ] && [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
+      add_anomaly "PR #$pr_number base is $pr_base after finalize, expected $DEFAULT_BRANCH; skipped auto-merge"
+      return 1
+    fi
+    if [ "$pr_head_oid" != "$expected_head" ]; then
+      add_anomaly "PR #$pr_number moved to $pr_head_oid after finalize, expected $expected_head; skipped auto-merge"
+      return 1
+    fi
+    if ! valid_non_negative_integer "$non_green_check_count" || ! valid_non_negative_integer "$total_check_count"; then
+      add_anomaly "failed to parse PR #$pr_number check status after finalize; skipped auto-merge"
+      return 1
+    fi
+
+    if [ "$pr_merge_state" = "CLEAN" ] && [ "$total_check_count" -gt 0 ] && [ "$non_green_check_count" -eq 0 ]; then
+      if ! unresolved_count="$(unresolved_review_thread_count "$pr_number")"; then
+        add_anomaly "failed to inspect review threads for PR #$pr_number after finalize; skipped auto-merge"
+        return 1
+      fi
+      if [ "$unresolved_count" -ne 0 ]; then
+        add_anomaly "PR #$pr_number has $unresolved_count unresolved review thread(s) after finalize; skipped auto-merge"
+        return 1
+      fi
+      add_action "PR #$pr_number finalize head is green and comment-clean"
+      return 0
+    fi
+
+    now="$(date +%s)"
+    if [ "$now" -ge "$deadline" ]; then
+      add_anomaly "timed out after ${FINALIZE_CHECK_TIMEOUT_SECONDS}s waiting for PR #$pr_number finalize head $expected_head to become clean and green; merge state $pr_merge_state, non-green checks $non_green_check_count/$total_check_count"
+      return 1
+    fi
+    sleep "$FINALIZE_CHECK_POLL_SECONDS"
+  done
 }
 
 merge_open_pr_after_finalize() {
@@ -650,6 +749,9 @@ maybe_finalize_ready_open_pr() {
 
   add_action "PR #$pr_number is open, green, comment-clean, and matches local $branch ($pr_url)"
   run_finalize_command || return 0
+  if [ -n "$FINALIZE_PUSHED_HEAD" ]; then
+    wait_for_pr_head_readiness "$branch" "$pr_number" "$FINALIZE_PUSHED_HEAD" || return 0
+  fi
   merge_open_pr_after_finalize "$pr_number" || return 0
 }
 
