@@ -279,7 +279,7 @@ def _check_workspace_journal_commit_consistency(
             f"{session_number}; first definition is {first_path}:{first_lineno}"
         )
 
-    for session_number in sorted(journal_sessions.keys()):
+    for session_number in sorted(index_sessions.keys() | journal_sessions.keys()):
         index_entry = index_sessions.get(session_number)
         journal_entry = journal_sessions.get(session_number)
 
@@ -288,6 +288,14 @@ def _check_workspace_journal_commit_consistency(
             violations.append(
                 f"{journal_path}:{journal_lineno}: session {session_number} is "
                 f"missing from {index_path}"
+            )
+            continue
+
+        if journal_entry is None and index_entry is not None:
+            _index_commits, index_lineno = index_entry
+            violations.append(
+                f"{index_path}:{index_lineno}: session {session_number} is "
+                "missing from workspace journals"
             )
             continue
 
