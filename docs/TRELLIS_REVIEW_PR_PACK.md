@@ -104,8 +104,14 @@ Common environment variables:
 - `TRELLIS_FULL_CHECK_RUFF`: ruff command override.
 - `TRELLIS_FULL_CHECK_PRISM=0`: skip Prism review.
 - `TRELLIS_FULL_CHECK_PRISM=required`: fail if Prism is missing or cannot run.
+- `TRELLIS_FULL_CHECK_PRISM_COMPARE`: pass Prism compare mode, for example
+  `openai:gpt-5.2`.
+- `TRELLIS_FULL_CHECK_PRISM_PROVIDER` / `TRELLIS_FULL_CHECK_PRISM_MODEL`:
+  pass Prism single-provider review settings.
 - `TRELLIS_FULL_CHECK_PRISM_RULES`: explicit Prism rules file. Defaults to
   `.prism/rules.json` when present.
+- `TRELLIS_FULL_CHECK_PRISM_RETRIES`: retry count for unexpected non-finding,
+  non-authentication Prism failures. Defaults to `1`.
 - `TRELLIS_FULL_CHECK_GITO=1`: opt into Gito review.
 - `TRELLIS_FULL_CHECK_GITO_BASE_REF`: base ref for Gito review. Defaults to
   `TRELLIS_FULL_CHECK_BASE_REF`, then `origin/main`.
@@ -114,7 +120,11 @@ Common environment variables:
 
 Prism is enabled by default when the executable is present. If Prism is missing
 or credentials/config are unavailable, the script reports the skip and continues
-unless `TRELLIS_FULL_CHECK_PRISM=required` is set.
+unless `TRELLIS_FULL_CHECK_PRISM=required` is set. Other unexpected
+non-finding, non-authentication Prism failures retry once by default before
+failing the gate. Use `TRELLIS_FULL_CHECK_PRISM_COMPARE` or the
+provider/model flags to steer Prism model selection, and verify the effective
+models when global compare configuration is also present.
 
 Gito is opt-in because it can require `uvx`, cache access outside the repo,
 network access, and configured LLM credentials. When enabled, Gito writes
@@ -174,6 +184,12 @@ to be preserved next to the overwritten files.
 - Prism authentication/config failure: configure Prism locally, set
   `TRELLIS_FULL_CHECK_PRISM=0` to skip it, or set
   `TRELLIS_FULL_CHECK_PRISM=required` when review must be mandatory.
+- Unexpected Prism failure after a retry: rerun the Prism stage or set
+  `TRELLIS_FULL_CHECK_PRISM_RETRIES` higher only when the review provider or
+  local Prism wrapper is visibly unstable.
+- Prism compare provider instability: use `TRELLIS_FULL_CHECK_PRISM_COMPARE`
+  or the provider/model flags to steer the local gate, then verify the
+  effective Prism model selection before relying on the result.
 - Gito fails due to cache or network sandboxing: run from an environment with
   the needed access, or leave `TRELLIS_FULL_CHECK_GITO` unset.
 - Root-level `code-review-report.*` files appear after manual Gito runs: move

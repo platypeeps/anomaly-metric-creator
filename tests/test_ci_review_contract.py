@@ -121,6 +121,10 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         run_classifier_smoke
         pytest tests/test_ci_review_contract.py
         pytest tests/test_server.py -k "apply or rollout"
+        TRELLIS_FULL_CHECK_PRISM_COMPARE
+        TRELLIS_FULL_CHECK_PRISM_PROVIDER
+        TRELLIS_FULL_CHECK_PRISM_MODEL
+        TRELLIS_FULL_CHECK_PRISM_RETRIES
         """,
     )
     for path in [

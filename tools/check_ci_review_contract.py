@@ -186,6 +186,10 @@ def _check_full_check(path: Path, text: str, violations: list[str]) -> None:
         ("classifier smoke", "run_classifier_smoke"),
         ("review-churn tests", "tests/test_ci_review_contract.py"),
         ("focused server tests", 'tests/test_server.py -k "apply or rollout"'),
+        ("Prism compare override", "TRELLIS_FULL_CHECK_PRISM_COMPARE"),
+        ("Prism provider override", "TRELLIS_FULL_CHECK_PRISM_PROVIDER"),
+        ("Prism model override", "TRELLIS_FULL_CHECK_PRISM_MODEL"),
+        ("Prism retry knob", "TRELLIS_FULL_CHECK_PRISM_RETRIES"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 

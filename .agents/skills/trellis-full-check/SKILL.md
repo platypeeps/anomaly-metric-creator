@@ -42,7 +42,8 @@ The script runs:
   implementation flow.
 - Prism is optional by default because some environments lack provider
   credentials. Set `TRELLIS_FULL_CHECK_PRISM=required` when a missing or
-  unauthenticated Prism review should fail the command.
+  unauthenticated Prism review should fail the command. Unexpected non-finding,
+  non-authentication Prism failures are retried once by default.
 - Gito is opt-in because it may invoke `uvx`, use a cache outside the repo, and
   require LLM credentials or network access. Set `TRELLIS_FULL_CHECK_GITO=1` to
   run it. Reports are written to `.build/review/gito` by default.
@@ -63,8 +64,14 @@ The script runs:
 - `TRELLIS_FULL_CHECK_PRISM=0`: skip Prism.
 - `TRELLIS_FULL_CHECK_PRISM=required`: fail if Prism is missing or
   unauthenticated.
+- `TRELLIS_FULL_CHECK_PRISM_COMPARE`: pass Prism compare mode, for example
+  `openai:gpt-5.2`.
+- `TRELLIS_FULL_CHECK_PRISM_PROVIDER` / `TRELLIS_FULL_CHECK_PRISM_MODEL`:
+  pass Prism single-provider review settings.
 - `TRELLIS_FULL_CHECK_PRISM_RULES`: explicit Prism rules file.
 - `TRELLIS_FULL_CHECK_PRISM_FAIL_ON`: Prism fail threshold. Defaults to `high`.
+- `TRELLIS_FULL_CHECK_PRISM_RETRIES`: retry count for unexpected non-finding,
+  non-authentication Prism failures. Defaults to `1`.
 - `TRELLIS_FULL_CHECK_GITO=1`: run Gito review after Prism.
 - `TRELLIS_FULL_CHECK_GITO_BASE_REF`: base ref for Gito review. Defaults to
   `TRELLIS_FULL_CHECK_BASE_REF`, then `origin/main`.

@@ -196,6 +196,21 @@ detect_merge_base() {
 build_prism_args() {
   PRISM_ARGS=()
 
+  local compare="${TRELLIS_FULL_CHECK_PRISM_COMPARE:-}"
+  if [ -n "$compare" ]; then
+    PRISM_ARGS+=(--compare "$compare")
+  fi
+
+  local provider="${TRELLIS_FULL_CHECK_PRISM_PROVIDER:-}"
+  if [ -n "$provider" ]; then
+    PRISM_ARGS+=(--provider "$provider")
+  fi
+
+  local model="${TRELLIS_FULL_CHECK_PRISM_MODEL:-}"
+  if [ -n "$model" ]; then
+    PRISM_ARGS+=(--model "$model")
+  fi
+
   local fail_on="${TRELLIS_FULL_CHECK_PRISM_FAIL_ON:-high}"
   if [ -n "$fail_on" ]; then
     PRISM_ARGS+=(--fail-on "$fail_on")
@@ -223,36 +238,52 @@ run_prism_command() {
   local label="$1"
   shift
   local mode="${TRELLIS_FULL_CHECK_PRISM:-auto}"
+  local retries="${TRELLIS_FULL_CHECK_PRISM_RETRIES:-1}"
+  local attempt=1
+  local max_attempts=0
+  local status=0
   PRISM_ARGS=()
   build_prism_args
 
-  section "$label"
-  set +e
-  prism "$@" "${PRISM_ARGS[@]}"
-  local status=$?
-  set -e
+  if [[ ! "$retries" =~ ^[0-9]+$ ]]; then
+    printf 'error: TRELLIS_FULL_CHECK_PRISM_RETRIES must be a non-negative integer, got: %s\n' "$retries" >&2
+    exit 2
+  fi
+  max_attempts=$((retries + 1))
 
-  case "$status" in
-    0)
-      return 0
-      ;;
-    1)
-      printf 'Prism found findings at or above the configured threshold.\n' >&2
-      exit 1
-      ;;
-    3)
-      if [ "$mode" = "required" ]; then
-        printf 'Prism is required but provider authentication/configuration failed.\n' >&2
-        exit 3
-      fi
-      warn "Prism authentication/configuration failed; continuing because Prism is optional by default."
-      return 0
-      ;;
-    *)
-      printf 'Prism failed with exit code %s.\n' "$status" >&2
-      exit "$status"
-      ;;
-  esac
+  section "$label"
+  while [ "$attempt" -le "$max_attempts" ]; do
+    set +e
+    prism "$@" "${PRISM_ARGS[@]}"
+    status=$?
+    set -e
+
+    case "$status" in
+      0)
+        return 0
+        ;;
+      1)
+        printf 'Prism found findings at or above the configured threshold.\n' >&2
+        exit 1
+        ;;
+      3)
+        if [ "$mode" = "required" ]; then
+          printf 'Prism is required but provider authentication/configuration failed.\n' >&2
+          exit 3
+        fi
+        warn "Prism authentication/configuration failed; continuing because Prism is optional by default."
+        return 0
+        ;;
+    esac
+
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      warn "Prism failed with exit code $status; retrying because non-finding, non-authentication failures can be transient (attempt $((attempt + 1)) of $max_attempts)."
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  printf 'Prism failed with exit code %s after %s attempt(s).\n' "$status" "$max_attempts" >&2
+  exit "$status"
 }
 
 run_prism_reviews() {

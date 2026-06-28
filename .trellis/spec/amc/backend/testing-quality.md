@@ -121,7 +121,14 @@ ruff lockstep, `ruff check tests/`, console-script smoke coverage, focused
 review-churn tests, focused server compatibility tests, and the heavy/non-heavy
 pytest split. Use
 `TRELLIS_FULL_CHECK_LEVEL=quick` while iterating when the full pytest split
-would be premature. Sources: `scripts/trellis-full-check.sh`;
+would be premature. Use `TRELLIS_FULL_CHECK_PRISM_COMPARE`,
+`TRELLIS_FULL_CHECK_PRISM_PROVIDER`, or `TRELLIS_FULL_CHECK_PRISM_MODEL` to
+pass Prism model-selection flags without editing the script; verify effective
+model selection when global Prism compare config is also present.
+Unexpected non-finding, non-authentication Prism failures retry once by default
+via `TRELLIS_FULL_CHECK_PRISM_RETRIES`; review findings and
+authentication/config failures keep their existing fail/skip behavior.
+Sources: `scripts/trellis-full-check.sh`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `tests/test_python_syntax_lint.py`;
 `tests/test_workflow_pip_lint.py`; `tests/test_trellis_placeholder_lint.py`;
