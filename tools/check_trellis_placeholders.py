@@ -14,7 +14,7 @@ quote placeholder text.
 
 Exit codes:
 
-* ``0`` - no unfinished Trellis placeholders.
+* ``0`` - no unfinished Trellis placeholders or journal consistency errors.
 * ``1`` - at least one placeholder or journal consistency error was found.
 * ``2`` - argument or I/O error.
 """
