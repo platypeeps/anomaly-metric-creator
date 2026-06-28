@@ -1,11 +1,30 @@
 # Application flow
 
 End-to-end execution of `main(argv=None)` in `anomaly-metric-creator.py`.
-The script has three top-level modes — the `combine DIR` subcommand
-(rebuild the unified CSV from existing per-component CSVs), the
-`validate DIR [--warn]` subcommand (load `DIR/schema.json` and run
-every validator against the artifacts on disk), and the default
-`generate` pipeline.
+`main()` dispatches on `argv[0]` against `_SUBCOMMANDS = ("generate",
+"combine", "validate", "serve", "trace-bundle")` *before* any argument
+parsing, so the script has five top-level modes:
+
+- the default **`generate`** pipeline (also the fall-through when
+  `argv[0]` is not a subcommand token, so every historic bare
+  invocation is unchanged) — diagrammed below;
+- the **`combine DIR`** subcommand (rebuild the unified CSV from
+  existing per-component CSVs);
+- the **`validate DIR [--warn]`** subcommand (load `DIR/schema.json`
+  and run every validator against the artifacts on disk);
+- the **`serve [server flags] [generate flags…]`** subcommand (run the
+  generator behind a stdlib HTTP server with a Kubernetes/Helm command
+  simulator and debug APIs) — see [Server mode](#server-mode-amc-serve)
+  below;
+- the **`trace-bundle {summary,search,unsupported,export-csv} BUNDLE`**
+  subcommand (offline analysis of exported command-trace JSON; never
+  starts the HTTP server) — see [Trace-bundle
+  mode](#trace-bundle-mode-amc-trace-bundle) below.
+
+`combine`, `validate`, `serve`, and `trace-bundle` each carry a
+dedicated parser and never route through the flat `generate`
+`parse_args`. The flowchart below renders the `generate` pipeline in
+full and shows where the other four modes branch off the dispatch.
 
 ```mermaid
 flowchart TD
@@ -21,6 +40,12 @@ flowchart TD
     validate -- "violations + --warn" --> finish
     validate -- "violations (default)" --> failexit([exit 1])
 
+    mode -- "serve" --> serveparse["_main_serve_subcommand<br/>→ server.serve_main<br/>(HTTP server + Kubernetes/Helm<br/>command simulator + debug APIs;<br/>see Server mode section)"]
+    serveparse --> serveloop(("listen<br/>until shutdown"))
+
+    mode -- "trace-bundle SUB BUNDLE" --> traceparse["_main_trace_bundle_subcommand<br/>→ trace_bundle.main<br/>(offline JSON analysis,<br/>no HTTP server;<br/>see Trace-bundle section)"]
+    traceparse --> finish
+
     mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> parse["parse_args<br/>(canonical surface: --emit,<br/>--otel-send, --otel-endpoint,<br/>--otel-auth-token; -h shows 5 groups,<br/>--help-all unhides _ADVANCED_DESTS)<br/>+ _reconcile_cli_surface<br/>(canonical flags → internal namespace<br/>via set_defaults + MEZMO_OTEL_* env vars)<br/>+ validation gates"]
     parse --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit / --components)"]
     preclean --> ctx["RunContext(rng=np.random.RandomState(--seed))"]
@@ -34,7 +59,7 @@ flowchart TD
     resolve --> apply["_apply_scenarios<br/>build component_anomalies +<br/>cascading_anomalies from registry<br/>(scenarios may carry instance_filter)"]
     apply --> specs["_resolve_effective_specs (--metrics-per-component)<br/>+ _filter_anomalies_for_emitted_metrics"]
     specs --> cap["_apply_signal_level_and_count<br/>(severity filter + --anomaly-count sampling)"]
-    cap --> ts["_build_timestamp_arrays(total_seconds,<br/>--interval-seconds)"]
+    cap --> ts["_build_timestamp_arrays(total_seconds,<br/>--interval-seconds, start_time=--start-time)<br/>(--start-time defaults to START;<br/>whole-second UTC ISO 8601)"]
 
     ts --> realorder["_topology_generation_order<br/>(Kahn's algorithm, topological order;<br/>realistic topology is the only mode<br/>since the phase-9 flag day)"]
 
@@ -106,10 +131,110 @@ flowchart TD
   `--drop-rate 0`. The 1-day runs the test suite pins are still
   available via explicit `--duration-days 1`.
 
+## Server mode (`amc serve`)
+
+`serve` runs the generator behind a stdlib HTTP server that answers
+real `kubectl` / Helm 4 clients against a fake Kubernetes/Helm API,
+records every command as a redacted `CommandTrace`, and exposes a
+debug console plus JSON debug APIs. `server.py` is the HTTP/serve
+facade; the ops simulation, trace store, mutable overlay, and debug
+shell live in `server_ops.py`, `server_traces.py`,
+`server_mutations.py`, and `server_debug_ui.py` (with
+`server_commands.py` / `server_kubernetes.py` / `server_helm.py` as
+focused re-export facades). It is *not* a second copy of generation
+behavior — it is a runtime facade over the same generator.
+
+```mermaid
+flowchart TD
+    serveentry(["amc serve [server flags] [generate flags…]"]) --> srvflags["serve_main: parse server-only flags first<br/>(--host/--port/--namespace,<br/>--auth-token/--allow-remote-without-auth,<br/>--cors-allow-origin/--rate-limit-per-minute,<br/>--max-request-body-bytes,<br/>--persist-command-log/-db/-retention,<br/>--debug-ring-size, --structured-log[-file],<br/>--config JSON/YAML, --no-generate,<br/>--continuous-generate[-interval-seconds])"]
+    srvflags --> rest["forward remaining flags to parse_args<br/>(normal generation surface;<br/>explicit CLI flags win over --config)"]
+    rest --> authgate{"non-loopback --host<br/>without --auth-token?"}
+    authgate -- "yes, no --allow-remote-without-auth" --> srvfail([exit: refuse remote bind])
+    authgate -- "ok" --> gen0{"--no-generate?"}
+    gen0 -- "no (default)" --> gen1["run generator once<br/>(--otel-send none appended so<br/>one-shot generation never blocks<br/>the listener on OTEL)"]
+    gen0 -- "yes" --> simstate
+    gen1 --> simstate["build SimulationState<br/>(parsed args + anomalies.csv +<br/>SCENARIOS + simulated clock)"]
+    simstate --> contgen{"--continuous-generate?"}
+    contgen -- "yes" --> worker["daemon worker: rerun generator with<br/>incremented seeds, reload anomalies.csv,<br/>refresh artifacts, update /v1/state<br/>(serializes regen with OTEL replay)"]
+    contgen -- "no, but OTEL selected" --> otelonce["daemon thread streams startup<br/>artifacts once via stream_otel_*"]
+    contgen -- "no, no OTEL" --> listen
+    worker --> listen
+    otelonce --> listen
+    listen(["HTTP listener<br/>(per-request: auth → body cap →<br/>CORS → rate limit → dispatch →<br/>redacted CommandTrace)"]) --> routes{"route"}
+    routes -- "POST /v1/commands<br/>(command or argv)" --> cmd["parse_command + render_command<br/>(shlex, deterministic stdout/stderr/exit;<br/>never shells out) → CommandTrace"]
+    routes -- "/v1/kubeconfig,<br/>/version /api /apis,<br/>core + apps/batch/autoscaling/…" --> k8s["Kubernetes API facade<br/>(resource_snapshot-backed;<br/>Table responses, mutations via<br/>SimulationMutations overlay;<br/>family kubernetes-api)"]
+    routes -- "Helm release Secrets<br/>(helm.sh/release.v1)" --> helm["double-base64 gzip JSON<br/>release payloads (Helm-shaped)"]
+    routes -- "GET /debug,<br/>/v1/state /v1/scenarios,<br/>/v1/debug/* ,<br/>/v1/logs/stream (SSE)" --> debug["debug console + JSON debug APIs<br/>(traces, unsupported backlog,<br/>resource diffs, live state)"]
+    routes -- "/healthz /readyz" --> health["liveness/readiness<br/>(auth-exempt)"]
+    cmd --> shutdown
+    k8s --> shutdown
+    helm --> shutdown
+    debug --> shutdown
+    health --> shutdown
+    shutdown(["shutdown: set SimulationState event,<br/>join continuous-generation worker,<br/>send terminal SSE 'shutdown' event"])
+```
+
+Security/ops boundary: loopback binds may run unauthenticated; a
+non-loopback `--host` requires `--auth-token` unless
+`--allow-remote-without-auth` is passed. With token auth on, every
+endpoint except `/healthz`, `/readyz`, and the static debug shell
+(`/` and `/debug`) requires `Authorization: Bearer TOKEN`. Request
+bodies are capped by `--max-request-body-bytes`; `--cors-allow-origin`
+is the only CORS path; `--rate-limit-per-minute` caps command/API
+requests per client. Command/API traces redact bearer tokens,
+token-like query params, passwords, secrets, and client-key shaped
+values before they reach memory, JSONL, SQLite, or the debug UI.
+
+## Trace-bundle mode (`amc trace-bundle`)
+
+`trace-bundle` is offline-only tooling over the JSON that
+`GET /v1/debug/commands/export` emits — it never starts the HTTP
+server. `_main_trace_bundle_subcommand` forwards to
+`trace_bundle.main`, which dispatches a required sub-action and shares
+the `server_traces.trace_matches_search()` /
+`unsupported_summary_from_traces()` helpers with the live server so
+online and offline filters stay aligned.
+
+```mermaid
+flowchart LR
+    tbentry(["amc trace-bundle SUB BUNDLE"]) --> load["load + validate exported<br/>command-trace JSON<br/>(apiVersion / schema_version checked)"]
+    load --> sub{"SUB"}
+    sub -- "summary" --> summary["counts + top-10 unsupported<br/>fingerprints"]
+    sub -- "search" --> search["filter by raw command, stdout/stderr,<br/>fingerprint, rule, support status,<br/>family, scenario"]
+    sub -- "unsupported" --> unsupported["group unsupported/partial traces<br/>by normalized fingerprint"]
+    sub -- "export-csv" --> csv["flatten traces to CSV"]
+    summary --> emit["_emit: JSON or text<br/>(--format)"]
+    search --> emit
+    unsupported --> emit
+    csv --> emit
+```
+
 ## Significant changes
 
-Recent significant additions reflected in the diagram above:
+Recent significant additions reflected in the diagrams above:
 
+- **`serve` and `trace-bundle` subcommands — the two newest top-level
+  modes** (PRs #136–#152) — the application now has *five* dispatch
+  targets, not three. `serve` (added by the Kubernetes/Helm ops
+  simulator in PR #136, the continuous-simulator state + debug UI in
+  PR #137, and the real-client `kubectl`/Helm compatibility work in
+  PRs #139/#149/#151/#152) runs the generator behind a stdlib HTTP
+  server with a deterministic command simulator, a
+  `resource_snapshot`-backed Kubernetes API facade, Helm-shaped
+  release Secrets, a mutable `SimulationMutations` overlay, redacted
+  command/API traces, a debug console, and SSE log/event streams.
+  `trace-bundle` is the offline analysis peer over exported
+  command-trace JSON. Both are now diagrammed in the new
+  [Server mode](#server-mode-amc-serve) and
+  [Trace-bundle mode](#trace-bundle-mode-amc-trace-bundle) sections;
+  the main flowchart's `mode` dispatch gains the two extra branches.
+  The generate/combine/validate pipeline is unchanged — the server is
+  a runtime facade over the same generator, not a second copy of
+  generation behavior.
+- **Configurable generation start time** (PR #138) — the run's
+  synthetic `START` is now configurable rather than a fixed module
+  constant, flowing through `schema.json` metadata and the
+  timestamp-array build (`_build_timestamp_arrays`).
 - **CLI consolidation around common use cases** (PR #101) — the
   flat parser shrank from 41 visible flags to ~18 visible in five
   argument groups (common / anomaly selection / dataset shape /
