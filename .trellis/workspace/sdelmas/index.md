@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-06-26
+- **Total Sessions**: 9
+- **Last Active**: 2026-06-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~306 | Active |
+| `journal-1.md` | ~397 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-27 | PR review full-check and rollout undo polish | `1157bf2`, `24ced3a` | `server-compat-debug-polish` |
+| 8 | 2026-06-27 | PR 152 review and CI cadence | `16cac9c`, `d753f87`, `9b8d0a5`, `f1f852b`, `f5902be` | `server-compat-debug-polish` |
 | 7 | 2026-06-26 | Server compatibility patch diff and Helm values | `0d261b1`, `48a7318` | `codex/server-compatibility-patch-diff-helm-values` |
 | 6 | 2026-06-26 | Trellis journal placeholder CI fix | `9a8acd4` | `codex/kubectl-explain-openapi` |
 | 5 | 2026-06-26 | Kubectl explain OpenAPI PR review fixes | `8c8a864`, `c44705a`, `acd4a72`, `327fb17` | `codex/kubectl-explain-openapi` |

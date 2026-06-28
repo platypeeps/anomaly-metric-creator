@@ -1,0 +1,42 @@
+{
+  "focus": [
+    "correctness",
+    "security",
+    "testing",
+    "maintainability",
+    "docs"
+  ],
+  "severityOverrides": {
+    "security": "high",
+    "correctness": "high",
+    "testing": "medium",
+    "docs": "medium",
+    "style": "low"
+  },
+  "required": [
+    {
+      "id": "trellis-task-scope",
+      "text": "Check that changes are limited to the active Trellis task and do not silently alter unrelated workflow, task, or platform files."
+    },
+    {
+      "id": "review-recurrence-prevention",
+      "text": "Look for issues that would create repeated review loops: stale docs, missing tests, weak assertions, inconsistent command wrappers, and drift between shared skills and platform adapters."
+    },
+    {
+      "id": "installer-safety",
+      "text": "For installers or generated files, verify path validation, conflict handling, rollback behavior, and explicit user consent before overwriting local files."
+    },
+    {
+      "id": "secret-hygiene",
+      "text": "Confirm no credentials, API keys, provider tokens, local cache paths, or machine-specific secret locations are committed or logged."
+    },
+    {
+      "id": "amc-server-compatibility",
+      "text": "For server-mode kubectl, Helm, trace, or debug UI changes, verify parser coverage, stable matched_rule_id values, resource_snapshot()/SimulationMutations alignment, and focused tests/test_server.py coverage."
+    },
+    {
+      "id": "amc-ci-review-economy",
+      "text": "For workflow or review-tooling changes, verify scripts/classify_ci_changes.sh, CI lane conditions, docs/DEVELOPMENT_CYCLE.md, and Trellis testing-quality guidance stay in lockstep."
+    }
+  ]
+}

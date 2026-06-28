@@ -314,3 +314,84 @@ Added server-mode kubectl patch, diff, dry-run, and Helm value-layering compatib
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: PR 152 review and CI cadence
+
+**Date**: 2026-06-27
+**Task**: PR 152 review and CI cadence
+**Package**: amc
+**Branch**: `server-compat-debug-polish`
+
+### Summary
+
+Completed the PR #152 review loop for server compatibility and CI cadence: restored the required CodeQL context, addressed Copilot feedback for manifest apply, rollout undo, Actions expressions, and lightweight whitespace coverage, added regression guards, and verified the PR checks are green.
+
+### Main Changes
+
+- Restored the required CodeQL PR context after the review-economy workflow changes so branch protection gets a fresh `CodeQL` result on every PR update.
+- Addressed Copilot review feedback for manifest apply namespace fallback, rollout undo revision defaults, GitHub Actions `full-ci` output syntax, and lightweight whitespace coverage.
+- Added or extended regression coverage in `tests/test_server.py` and `tests/test_ci_review_contract.py`, plus the CI contract guard in `tools/check_ci_review_contract.py`.
+- Archived the completed Trellis task and recorded this journal entry after PR #152 review checks were clean.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `16cac9c` | (see git log) |
+| `d753f87` | (see git log) |
+| `9b8d0a5` | (see git log) |
+| `f1f852b` | (see git log) |
+| `f5902be` | (see git log) |
+
+### Testing
+
+- [OK] `.venv/bin/pytest -q tests/test_ci_review_contract.py`
+- [OK] `.venv/bin/python tools/check_ci_review_contract.py`
+- [OK] `.venv/bin/python tools/check_workflow_pip.py .github/workflows/ci.yml`
+- [OK] `.venv/bin/pytest tests/test_server.py -q`
+- [OK] `TRELLIS_FULL_CHECK_LEVEL=quick TRELLIS_FULL_CHECK_PRISM=0 bash scripts/trellis-full-check.sh`
+- [OK] PR #152 checks were green before the finish-work journal/archive commits; finish-work follow-up failed only on this placeholder lint, now fixed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 9: PR review full-check and rollout undo polish
+
+**Date**: 2026-06-27
+**Task**: PR review full-check and rollout undo polish
+**Package**: amc
+**Branch**: `server-compat-debug-polish`
+
+### Summary
+
+Added Prism override/retry support to the full-check gate, fixed rollout undo event wording from PR review, resolved the Copilot thread, and validated with focused tests plus the local full-check with Prism skipped.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1157bf2` | (see git log) |
+| `24ced3a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

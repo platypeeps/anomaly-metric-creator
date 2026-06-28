@@ -1,10 +1,9 @@
 name: Socket Security
 
-# Socket supply-chain scan, run as a CI sidecar alongside the `test` gate.
-# It flags risky dependency *changes* — install scripts, new network/fs/shell
-# capabilities, typosquats, compromised releases — that Dependabot's CVE-only
-# scanning can't see. Once `socket` is a required check, a poisoned Dependabot
-# bump fails the merge instead of auto-merging.
+# Socket supply-chain scan, run as a CI sidecar when a PR is ready for the
+# heavier gate or when dependency/security-relevant files changed. The job
+# remains present on PR updates so a required `socket` check can pass with a
+# fast skip instead of leaving a missing status.
 #
 # Setup (one-time): create a Socket CI/CD API key
 # (https://docs.socket.dev/docs/create-socket-api-key-for-cicd) and add it as
@@ -14,7 +13,7 @@ name: Socket Security
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 permissions:
   contents: read
@@ -30,11 +29,67 @@ jobs:
     name: socket
     runs-on: ubuntu-latest
     steps:
-      # Secrets can't be referenced in a job/step `if:`, so gate on a step
-      # output instead: with no key the real steps skip and the job still
-      # concludes success (a green required check, not a blocking "skipped").
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed files
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+          git diff --name-only "origin/$BASE_REF...HEAD" > changed-files.txt
+          sed 's/^/- /' changed-files.txt
+
+      - name: Classify changed files
+        id: classify
+        run: bash scripts/classify_ci_changes.sh --github-output changed-files.txt
+
+      - name: Decide whether to scan
+        id: scan
+        shell: bash
+        env:
+          PR_ACTION: ${{ github.event.action }}
+          PR_DRAFT: ${{ github.event.pull_request.draft || false }}
+          PR_LABEL: ${{ github.event.label.name || '' }}
+          DEPENDENCY_CHANGED: ${{ steps.classify.outputs.dependency_changed }}
+          WORKFLOW_CHANGED: ${{ steps.classify.outputs.workflow_changed }}
+        run: |
+          set -euo pipefail
+          scan=false
+
+          case "$PR_ACTION" in
+            opened|reopened|ready_for_review)
+              if [ "$PR_DRAFT" != "true" ]; then
+                scan=true
+              fi
+              ;;
+            labeled)
+              if [ "$PR_LABEL" = "full-ci" ]; then
+                scan=true
+              fi
+              ;;
+          esac
+
+          if [ "$DEPENDENCY_CHANGED" = "true" ] || [ "$WORKFLOW_CHANGED" = "true" ]; then
+            scan=true
+          fi
+
+          echo "scan=$scan" >> "$GITHUB_OUTPUT"
+          echo "scan=$scan"
+          if [ "$scan" != "true" ]; then
+            echo "::notice::No dependency/security-relevant changes and full CI was not requested; skipping Socket scan."
+          fi
+
+      # Secrets can't be referenced in a job `if:`, so gate on a step output
+      # instead: with no key the real steps skip and the job still concludes
+      # success (a green required check, not a blocking "skipped").
       - name: Check for Socket API key
         id: key
+        if: steps.scan.outputs.scan == 'true'
         env:
           SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
         run: |
@@ -42,31 +97,23 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::SOCKET_SECURITY_API_KEY not set — skipping scan. Add the secret to enable the Socket gate."
+            echo "::notice::SOCKET_SECURITY_API_KEY not set; skipping scan. Add the secret to enable the Socket gate."
           fi
 
-      - name: Checkout
-        if: steps.key.outputs.present == 'true'
-        uses: actions/checkout@v7
-        with:
-          # Socket diffs the PR head against its base; depth 2 covers the
-          # single-commit case without a full-history fetch.
-          fetch-depth: 2
-
       - name: Set up Python
-        if: steps.key.outputs.present == 'true'
+        if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install Socket CLI
-        if: steps.key.outputs.present == 'true'
-        # `python -m pip` (not bare `pip`) guarantees the install targets the
-        # interpreter actions/setup-python just selected, regardless of PATH.
+        if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
+        # `python -m pip` guarantees the install targets the interpreter
+        # actions/setup-python just selected, regardless of PATH.
         run: python -m pip install socketsecurity==2.1.0
 
       - name: Run Socket scan
-        if: steps.key.outputs.present == 'true'
+        if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
         env:
           SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
           GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}

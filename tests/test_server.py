@@ -838,6 +838,96 @@ def test_mutating_commands_update_simulated_state(amc, tmp_path):
     )["result"]["stdout"]
 
 
+def test_kubectl_rollout_pause_resume_and_undo_update_overlay(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    pause = server.run_command(
+        state,
+        command="kubectl rollout pause deployment apigateway -n saas-prod",
+    )
+    assert pause["result"]["matched_rule_id"] == "kubectl.rollout.pause"
+    assert pause["result"]["stdout"] == "deployment.apps/apigateway paused\n"
+    paused = next(
+        item for item in server.resource_snapshot(state)["deployments"]
+        if item["name"] == "apigateway"
+    )
+    assert paused["status"] == "Paused"
+
+    paused_status = server.run_command(
+        state,
+        command="kubectl rollout status deployment/apigateway -n saas-prod",
+    )
+    assert 'deployment "apigateway" rollout to finish: Paused' in paused_status["result"]["stdout"]
+    events = server.run_command(state, command="kubectl get events -n saas-prod")
+    assert "RolloutPaused" in events["result"]["stdout"]
+
+    resume = server.run_command(
+        state,
+        command="kubectl rollout resume deployment/apigateway -n saas-prod",
+    )
+    assert resume["result"]["matched_rule_id"] == "kubectl.rollout.resume"
+    assert resume["result"]["stdout"] == "deployment.apps/apigateway resumed\n"
+    resumed_status = server.run_command(
+        state,
+        command="kubectl rollout status deployment/apigateway -n saas-prod",
+    )
+    assert 'deployment "apigateway" successfully rolled out' in resumed_status["result"]["stdout"]
+
+    undo = server.run_command(
+        state,
+        command="kubectl rollout undo deployment/apigateway --to-revision=2 -n saas-prod",
+    )
+    assert undo["result"]["matched_rule_id"] == "kubectl.rollout.undo"
+    assert undo["result"]["stdout"] == "deployment.apps/apigateway rolled back to revision 2\n"
+    rolled_back = next(
+        item for item in server.resource_snapshot(state)["deployments"]
+        if item["name"] == "apigateway"
+    )
+    assert rolled_back["status"] == "RolledBack"
+    rollback_status = server.run_command(
+        state,
+        command="kubectl rollout status deployment/apigateway -n saas-prod",
+    )
+    assert "deployment was rolled back by simulator command" in rollback_status["result"]["stdout"]
+    events = server.run_command(state, command="kubectl get events -n saas-prod")
+    assert "RolloutUndo" in events["result"]["stdout"]
+    assert "rolled back to revision 2" in events["result"]["stdout"]
+    assert "rolled back to 2 revision" not in events["result"]["stdout"]
+
+
+def test_kubectl_rollout_undo_without_revision_uses_previous(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    result = server.run_command(
+        state,
+        command="kubectl rollout undo deployment/apigateway -n saas-prod --to-revision",
+    )
+
+    assert result["result"]["matched_rule_id"] == "kubectl.rollout.undo"
+    assert result["result"]["stdout"] == "deployment.apps/apigateway rolled back\n"
+    events = server.run_command(state, command="kubectl get events -n saas-prod")
+    assert "rolled back to previous revision" in events["result"]["stdout"]
+
+
+def test_kubectl_rollout_rejects_non_deployment_targets(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+
+    service_target = server.run_command(
+        state,
+        command="kubectl rollout pause service/apigateway -n saas-prod",
+    )
+    missing_name = server.run_command(
+        state,
+        command="kubectl rollout pause deployment -n saas-prod",
+    )
+
+    assert service_target["result"]["support_status"] == "unsupported"
+    assert service_target["result"]["matched_rule_id"] == "unsupported"
+    assert "kubectl rollout pause is not implemented" in service_target["result"]["stderr"]
+    assert missing_name["result"]["support_status"] == "unsupported"
+    assert "kubectl rollout pause is not implemented" in missing_name["result"]["stderr"]
+
+
 def test_kubectl_patch_diff_and_dry_run_commands(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
@@ -938,6 +1028,236 @@ def test_kubectl_patch_diff_and_dry_run_commands(amc, tmp_path):
     )
     assert missing_remove["result"]["support_status"] == "partial"
     assert "does not exist" in missing_remove["result"]["stderr"]
+
+
+def test_kubectl_apply_reads_multi_document_yaml_manifest(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "simulator-stack.yaml"
+    manifest.write_text(
+        """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: applied-config
+  namespace: tools
+  labels:
+    app: applied
+data:
+  feature: enabled
+  mode: simulator
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: applied-api
+  namespace: tools
+spec:
+  type: ClusterIP
+  selector:
+    app: applied
+  ports:
+    - port: 9090
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = server.run_command(state, command=f"kubectl apply -f {manifest} -n saas-prod")
+
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["matched_rule_id"] == "kubectl.apply.manifest"
+    assert result["result"]["stdout"] == (
+        "configmap/applied-config configured\n"
+        "service/applied-api configured\n"
+    )
+    configmaps = server.run_command(
+        state,
+        command="kubectl get configmaps -n tools",
+    )["result"]["stdout"]
+    services = server.run_command(
+        state,
+        command="kubectl get services -n tools",
+    )["result"]["stdout"]
+    assert "applied-config" in configmaps
+    assert "applied-api" in services
+    resources = server.resource_snapshot(state)
+    applied_config = next(
+        item for item in resources["configmaps"]
+        if item["name"] == "applied-config" and item["namespace"] == "tools"
+    )
+    assert applied_config["keys"] == {"feature": "enabled", "mode": "simulator"}
+    assert applied_config["labels"]["app"] == "applied"
+    applied_service = next(
+        item for item in resources["services"]
+        if item["name"] == "applied-api" and item["namespace"] == "tools"
+    )
+    assert applied_service["ports"] == "9090/TCP"
+    summary = state.mutations.summary()
+    assert "tools/applied-config" in summary["created_resources"]["configmaps"]
+    assert "tools/applied-api" in summary["created_resources"]["services"]
+
+
+def test_kubectl_apply_reads_json_list_manifest(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "resources.json"
+    manifest.write_text(
+        json.dumps([
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "json-config", "namespace": "tools"},
+                "data": {"source": "json"},
+            },
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": "json-secret", "namespace": "tools"},
+                "stringData": {"password": "simulated", "token": "redacted"},
+            },
+        ]),
+        encoding="utf-8",
+    )
+
+    result = server.run_command(state, command=f"kubectl apply -f {manifest} -n tools")
+
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["stdout"] == (
+        "configmap/json-config configured\n"
+        "secret/json-secret configured\n"
+    )
+    secrets = server.run_command(state, command="kubectl get secrets -n tools")["result"]["stdout"]
+    assert "json-secret" in secrets
+    json_config = next(
+        item for item in server.resource_snapshot(state)["configmaps"]
+        if item["name"] == "json-config" and item["namespace"] == "tools"
+    )
+    assert json_config["keys"] == {"source": "json"}
+
+
+def test_kubectl_apply_reads_json_object_manifest(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "single-resource.json"
+    manifest.write_text(
+        json.dumps({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "json-object-config",
+                "namespace": "tools",
+                "labels": {"source": "object"},
+            },
+            "data": {"mode": "single"},
+        }),
+        encoding="utf-8",
+    )
+
+    result = server.run_command(state, command=f"kubectl apply -f {manifest} -n tools")
+
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["matched_rule_id"] == "kubectl.apply.manifest"
+    assert result["result"]["stdout"] == "configmap/json-object-config configured\n"
+    json_config = next(
+        item for item in server.resource_snapshot(state)["configmaps"]
+        if item["name"] == "json-object-config" and item["namespace"] == "tools"
+    )
+    assert json_config["keys"] == {"mode": "single"}
+    assert json_config["labels"]["source"] == "object"
+
+
+def test_kubectl_apply_manifest_dry_run_does_not_mutate(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "dry-run.yaml"
+    manifest.write_text(
+        """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dry-run-applied
+  namespace: tools
+data:
+  mode: preview
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = server.run_command(
+        state,
+        command=f"kubectl apply --dry-run=client -f {manifest} -n tools",
+    )
+
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["stdout"] == "configmap/dry-run-applied configured (dry run)\n"
+    assert "dry-run-applied" not in server.run_command(
+        state,
+        command="kubectl get configmaps -n tools",
+    )["result"]["stdout"]
+    assert "configmaps" not in state.mutations.summary()["created_resources"]
+
+
+def test_kubectl_apply_manifest_rejects_unsupported_documents_atomically(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "mixed.yaml"
+    manifest.write_text(
+        """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-apply
+  namespace: tools
+data:
+  mode: blocked
+---
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: unsupported-widget
+  namespace: tools
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = server.run_command(state, command=f"kubectl apply -f {manifest} -n tools")
+
+    assert result["result"]["support_status"] == "partial"
+    assert result["result"]["matched_rule_id"] == "kubectl.apply.manifest.unsupported"
+    assert "Widget" in result["result"]["stderr"]
+    assert "should-not-apply" not in server.run_command(
+        state,
+        command="kubectl get configmaps -n tools",
+    )["result"]["stdout"]
+
+
+def test_kubectl_apply_manifest_reports_non_utf8_read_failure(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "invalid-encoding.yaml"
+    manifest.write_bytes(b"\xff\xfe\x00")
+
+    result = server.run_command(state, command=f"kubectl apply -f {manifest} -n tools")
+
+    assert result["result"]["support_status"] == "partial"
+    assert result["result"]["matched_rule_id"] == "kubectl.apply.manifest.read"
+    assert "unable to read manifest" in result["result"]["stderr"]
+    assert state.mutations.summary()["created_resources"] == {}
+
+
+def test_kubectl_apply_missing_manifest_all_namespaces_uses_active_namespace(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    manifest = tmp_path / "configmap-review-flag.yaml"
+
+    result = server.run_command(state, command=f"kubectl apply -A -f {manifest}")
+
+    assert result["result"]["support_status"] == "supported"
+    assert result["result"]["stdout"] == "configmap/review-flag configured\n"
+    configmaps = server.run_command(
+        state,
+        command="kubectl get configmaps -n saas-prod",
+    )["result"]["stdout"]
+    assert "review-flag" in configmaps
+    resources = server.resource_snapshot(state)
+    applied = next(item for item in resources["configmaps"] if item["name"] == "review-flag")
+    assert applied["namespace"] == "saas-prod"
+    summary = state.mutations.summary()
+    assert "saas-prod/review-flag" in summary["created_resources"]["configmaps"]
+    assert "*/review-flag" not in summary["created_resources"]["configmaps"]
 
 
 def test_kubectl_patch_p_flag_space_separated(amc, tmp_path):
@@ -2200,7 +2520,7 @@ def test_state_summary_counts_anomalies_without_copying_rows(amc, tmp_path, monk
 
 def test_active_anomalies_does_not_copy_all_rows(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
-    now = state.clock.now()
+    now = state.clock.pause()
     rows = [
         {
             "timestamp": server._format_dt(now),

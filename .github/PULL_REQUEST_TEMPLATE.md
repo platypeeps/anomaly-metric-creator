@@ -4,7 +4,12 @@
 
 ## Test plan
 
-<!-- Bulleted markdown checklist of TODOs for testing this PR. -->
+<!-- Bulleted markdown checklist of TODOs for testing this PR. Include focused
+checks first, then the quick/full local gate or remote full CI when relevant. -->
+
+- [ ] Focused local checks:
+- [ ] Quick local gate: `TRELLIS_FULL_CHECK_LEVEL=quick bash scripts/trellis-full-check.sh`
+- [ ] Full local gate or remote `full-ci` label needed? _yes/no, with reason_
 
 ## Pre-PR checklist
 

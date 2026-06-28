@@ -111,6 +111,50 @@ pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 `.pre-commit-config.yaml`; `CLAUDE.md`; `.github/workflows/ci.yml`;
 `tests/test_ruff_lockstep_lint.py`.
 
+## Local and Remote Review Gates
+
+Use `scripts/trellis-full-check.sh` as the local review gate rather than
+manually assembling the recurring lint/test list. The default
+`TRELLIS_FULL_CHECK_LEVEL=full` runs deterministic whitespace and shell checks,
+Python syntax/workflow/Trellis/trace guards, CI/review cadence contract checks,
+ruff lockstep, `ruff check tests/`, console-script smoke coverage, focused
+review-churn tests, focused server compatibility tests, and the heavy/non-heavy
+pytest split. Use
+`TRELLIS_FULL_CHECK_LEVEL=quick` while iterating when the full pytest split
+would be premature. Use `TRELLIS_FULL_CHECK_PRISM_COMPARE`,
+`TRELLIS_FULL_CHECK_PRISM_PROVIDER`, or `TRELLIS_FULL_CHECK_PRISM_MODEL` to
+pass Prism model-selection flags without editing the script; verify effective
+model selection when global Prism compare config is also present.
+Unexpected non-finding, non-authentication Prism failures retry once by default
+via `TRELLIS_FULL_CHECK_PRISM_RETRIES`; review findings and
+authentication/config failures keep their existing fail/skip behavior.
+Sources: `scripts/trellis-full-check.sh`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
+`tests/test_ci_review_contract.py`; `tests/test_python_syntax_lint.py`;
+`tests/test_workflow_pip_lint.py`; `tests/test_trellis_placeholder_lint.py`;
+`tests/test_trace_payload_antipatterns_lint.py`; `tests/test_server.py`;
+`docs/DEVELOPMENT_CYCLE.md`.
+
+GitHub CI must keep the stable aggregate branch-protection context named
+`test`, while `scripts/classify_ci_changes.sh` selects the cheapest safe lane:
+lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
+test for ordinary PR update churn that still touches app paths, and the full
+Python 3.11 / 3.12 matrix for app-required opened/reopened/ready PRs,
+`full-ci` label runs,
+workflow/dependency changes, manual dispatch, and `main` pushes. Sources:
+`.github/workflows/ci.yml`; `scripts/classify_ci_changes.sh`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
+`tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
+
+CodeQL must run on PR updates because branch protection requires the GitHub
+Advanced Security `CodeQL` context on the latest commit; do not remove the
+`synchronize` trigger unless branch protection is changed in the same rollout.
+Socket should keep a visible PR check but fast-skip unless
+dependency/security-relevant files changed or full CI was requested. Sources:
+`.github/workflows/codeql.yml`; `.github/workflows/socket.yml`;
+`scripts/classify_ci_changes.sh`; `tools/check_ci_review_contract.py`;
+`docs/DEVELOPMENT_CYCLE.md`.
+
 ## Review Checklist
 
 Before marking a PR ready, walk these headings: scope and description,

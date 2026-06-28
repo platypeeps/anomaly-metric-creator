@@ -777,7 +777,7 @@ DEBUG_HTML = r"""<!doctype html>
       $("resourceCount").textContent = `${rows.length} ${selectedKind}`;
       $("resourcesTable").innerHTML = rows.length ? rows.map((row) => `
         <tr class="resource-row" data-kind="${esc(selectedKind)}" data-name="${esc(row.name || row.object || row.reason || "")}" data-namespace="${esc(row.namespace || "")}">
-          <td>${esc(row.name || row.object || row.reason)}</td>
+          <td>${esc(row.name || row.object || row.reason)}<div class="muted">${esc(row.namespace || "-")}</div></td>
           <td>${esc(row.status || row.deployment_status || row.type || "-")}</td>
           <td>${esc(row.restarts ?? row.ready ?? row.count ?? row.revision ?? "-")}</td>
           <td>${esc((row.scenario_ids || []).join(", "))}</td>
@@ -896,7 +896,17 @@ DEBUG_HTML = r"""<!doctype html>
         rows.push(["pod", name, "deleted", "filtered from pod snapshots"]);
       });
       Object.entries(mutations.created_resources || {}).forEach(([kind, names]) => {
-        (names || []).forEach((name) => rows.push([kind, name, "created", "merged into resource snapshots"]));
+        (names || []).forEach((name) => {
+          const rawName = String(name || "");
+          const slashIndex = rawName.indexOf("/");
+          const namespace = slashIndex >= 0 ? rawName.slice(0, slashIndex) : "";
+          rows.push([
+            kind,
+            rawName,
+            "configured",
+            namespace ? `namespace ${namespace}; merged into resource snapshots` : "merged into resource snapshots",
+          ]);
+        });
       });
       Object.entries(mutations.deleted_resources || {}).forEach(([kind, names]) => {
         (names || []).forEach((name) => rows.push([kind, name, "deleted", "filtered from resource snapshots"]));

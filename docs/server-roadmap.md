@@ -12,53 +12,22 @@ and [Operations, Security, and Logging](../.trellis/spec/amc/backend/operations-
 [CLAUDE.md](../CLAUDE.md) remains expanded historical/source detail, and
 user-facing usage remains in [README.md](../README.md).
 
-## Current PR Snapshot
+## Current Status Snapshot
 
-- PR: `https://github.com/platypeeps/anomaly-metric-creator/pull/137`
-- Branch: `codex/complete-kubernetes-helm-ops`
-- Latest local/pushed head at the time this note was written:
-  `a3b0554c86c930253b3a3e13138418f42cdd0bdf`
-- Local full validation after the last code change:
-  `1305 passed, 2 skipped`
-- The two skipped tests are real client smoke tests guarded by
-  `AMC_RUN_REAL_CLIENT_SMOKE=1`.
-
-The latest implemented PR-review fix sets `state.otel_status["thread"]` to
-`"disabled"` when continuous generation is enabled but OTEL streaming is not.
-That prevents `/v1/state` from reporting `not_started` for OTEL work that will
-never run.
-
-Before doing new feature work, refresh the live PR state:
+No PR-specific closeout is currently tracked in this handoff. Before doing new
+feature work, refresh the local and GitHub state:
 
 ```bash
 git status -sb
-gh pr view 137 --repo platypeeps/anomaly-metric-creator \
-  --json number,title,url,headRefName,headRefOid,mergeStateStatus,reviewDecision,statusCheckRollup,latestReviews
-python3 /Users/sven/.codex/plugins/cache/openai-curated-remote/github/0.1.5/skills/gh-address-comments/scripts/fetch_comments.py \
-  --repo platypeeps/anomaly-metric-creator --pr 137
+gh pr list --repo platypeeps/anomaly-metric-creator --state open
 ```
 
-## Closeout Items For PR 137
-
-1. Wait for CI and CodeQL to finish on the latest pushed head.
-2. Review any new Copilot or code-quality comments that appear after
-   `a3b0554`.
-3. Several GitHub review threads are still unresolved in the UI even though
-   code fixes and reply comments already landed in earlier commits. Treat these
-   as UI housekeeping unless the latest thread state shows a new, non-outdated
-   actionable comment.
-4. Run the real-client smoke tests before merge if the environment has current
-   `kubectl` and Helm available:
+For changes that specifically target real-client compatibility, run smoke tests
+when the environment has current `kubectl` and Helm available:
 
 ```bash
 AMC_RUN_REAL_CLIENT_SMOKE=1 .venv/bin/pytest tests/test_server.py -q
 ```
-
-5. Merge only after checks are green and there are no fresh actionable review
-   findings.
-
-Do not resolve GitHub review threads or post new review replies unless the user
-explicitly asks for that write action.
 
 ## Implemented Baseline
 
@@ -90,14 +59,12 @@ model.
 
 Good next command/API targets:
 
-- `kubectl apply -f` for multi-document YAML or JSON payloads.
 - `kubectl get --watch` and API watch semantics for a bounded simulated stream.
 - Additional `kubectl logs` refinements if incident workflows need them, such
   as duration-based `--since`, timestamped output, and richer multi-container
   pod histories.
 - `kubectl events` or richer event sorting/filtering if the installed client
   expects it.
-- `kubectl rollout pause`, `resume`, and `undo`.
 - More realistic `kubectl exec` command-specific outputs.
 - More complete `kubectl port-forward` lifecycle behavior.
 - Helm `lint`, `dependency`, `repo`, and chart metadata commands where they help
@@ -107,6 +74,10 @@ Recently covered compatibility:
 
 - `kubectl patch` in command mode for merge, strategic-merge, and focused JSON
   patch shapes backed by the simulator mutation overlay.
+- `kubectl apply -f` in command mode for readable local JSON objects/lists and
+  multi-document YAML manifests, backed by the simulator mutation overlay.
+- `kubectl rollout pause`, `resume`, and `undo` for deployment targets, backed
+  by the simulator workload overlay and command events.
 - `kubectl diff` and command-mode dry-run output for supported create/apply
   flows.
 - Helm value layering for repeated `--set`, `--set-string`, and `--values`/`-f`
@@ -246,11 +217,11 @@ Remaining extraction order:
 Use this prompt when transferring to a new session:
 
 ```text
-Continue work in /Users/sven/repos/personal/anomaly-metric-creator on PR 137.
+Continue work in /Users/sven/repos/personal/anomaly-metric-creator.
 Read AGENTS.md, .trellis/spec/amc/backend/index.md, the server-mode Trellis specs,
 and docs/server-roadmap.md.
-Check git status, PR 137 checks, and unresolved review threads. If CI is green,
-close out review-thread housekeeping or run real-client smoke tests if asked.
+Check git status, open PRs/issues, and any unresolved review threads for the
+current branch.
 For new roadmap work, keep server behavior backed by resource_snapshot() and
 SimulationMutations, add focused tests in tests/test_server.py, then run the
 server suite and full pytest before committing.
