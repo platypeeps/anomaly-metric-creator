@@ -360,3 +360,38 @@ Completed the PR #152 review loop for server compatibility and CI cadence: resto
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: PR review full-check and rollout undo polish
+
+**Date**: 2026-06-27
+**Task**: PR review full-check and rollout undo polish
+**Package**: amc
+**Branch**: `server-compat-debug-polish`
+
+### Summary
+
+Added Prism override/retry support to the full-check gate, fixed rollout undo event wording from PR review, resolved the Copilot thread, and validated with focused tests plus the local full-check with Prism skipped.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1157bf2` | (see git log) |
+| `24ced3a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
