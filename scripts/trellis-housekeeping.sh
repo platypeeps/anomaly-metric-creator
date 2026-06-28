@@ -545,7 +545,7 @@ merge_open_pr_after_finalize() {
     return 0
   fi
 
-  if gh_pr_merge "$pr_number" "$strategy_flag" --match-head-commit "$merge_head"; then
+  if gh_pr_merge "$pr_number" "$strategy_flag" --match-head-commit "$merge_head" --yes; then
     add_action "merged PR #$pr_number with $MERGE_STRATEGY strategy"
   else
     add_anomaly "failed to merge PR #$pr_number after finalize; branch protection may require checks on the finalize commit"

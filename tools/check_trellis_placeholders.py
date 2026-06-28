@@ -41,6 +41,7 @@ _COMPLETED_STATUS_RE = re.compile(r"^\[OK\]\s+\*\*Completed\*\*\s*$")
 _COMMIT_RE = re.compile(r"`([0-9a-f]{7,40})`", re.IGNORECASE)
 _INDEX_SESSION_ROW_RE = re.compile(r"^\|\s*(?P<session>\d+)\s*\|")
 _JOURNAL_SESSION_RE = re.compile(r"^## Session (?P<session>\d+):\s*(?P<title>.+?)\s*$")
+JournalEntry = tuple[list[str], int, Path]
 
 
 def _line_is_exempted(line: str) -> bool:
@@ -190,8 +191,8 @@ def _parse_index_commits(path: Path) -> dict[int, tuple[list[str], int]]:
     return sessions
 
 
-def _parse_journal_commits(path: Path) -> dict[int, tuple[list[str], int, Path]]:
-    sessions: dict[int, tuple[list[str], int, Path]] = {}
+def _parse_journal_commits(path: Path) -> list[tuple[int, JournalEntry]]:
+    sessions: list[tuple[int, JournalEntry]] = []
     for session_number, _session_title, start_lineno, lines in _iter_journal_sessions(
         path.read_text(encoding="utf-8")
     ):
@@ -206,13 +207,28 @@ def _parse_journal_commits(path: Path) -> dict[int, tuple[list[str], int, Path]]
                 break
             if in_git_commits:
                 commits.extend(_COMMIT_RE.findall(line))
-        sessions[session_number] = (commits, start_lineno, path)
+        sessions.append((session_number, (commits, start_lineno, path)))
     return sessions
 
 
-def _check_workspace_journal_commit_consistency(root: Path) -> list[str]:
+def _workspace_journal_paths(root: Path, paths: list[Path]) -> list[Path]:
+    return sorted(
+        {
+            path
+            for path in paths
+            if path.parent == root
+            and path.is_file()
+            and path.suffix == ".md"
+            and path.name.startswith("journal-")
+        }
+    )
+
+
+def _check_workspace_journal_commit_consistency(
+    root: Path, paths: list[Path]
+) -> list[str]:
     index_path = root / "index.md"
-    journal_paths = sorted(root.glob("journal-*.md"))
+    journal_paths = _workspace_journal_paths(root, paths)
     if not index_path.exists() and not journal_paths:
         return []
     if not index_path.exists():
@@ -221,16 +237,13 @@ def _check_workspace_journal_commit_consistency(root: Path) -> list[str]:
             "commit-list consistency"
         ]
     if not journal_paths:
-        return [
-            f"{index_path}: no journal-*.md files found; cannot verify journal/index "
-            "commit-list consistency"
-        ]
+        return []
 
     index_sessions = _parse_index_commits(index_path)
-    journal_sessions: dict[int, tuple[list[str], int, Path]] = {}
-    duplicate_journal_sessions: list[tuple[int, tuple[list[str], int, Path], tuple[list[str], int, Path]]] = []
+    journal_sessions: dict[int, JournalEntry] = {}
+    duplicate_journal_sessions: list[tuple[int, JournalEntry, JournalEntry]] = []
     for journal_path in journal_paths:
-        for session_number, journal_entry in _parse_journal_commits(journal_path).items():
+        for session_number, journal_entry in _parse_journal_commits(journal_path):
             existing_entry = journal_sessions.get(session_number)
             if existing_entry is not None:
                 duplicate_journal_sessions.append(
@@ -248,7 +261,7 @@ def _check_workspace_journal_commit_consistency(root: Path) -> list[str]:
             f"{session_number}; first definition is {first_path}:{first_lineno}"
         )
 
-    for session_number in sorted(index_sessions.keys() | journal_sessions.keys()):
+    for session_number in sorted(journal_sessions.keys()):
         index_entry = index_sessions.get(session_number)
         journal_entry = journal_sessions.get(session_number)
 
@@ -257,13 +270,6 @@ def _check_workspace_journal_commit_consistency(root: Path) -> list[str]:
             violations.append(
                 f"{journal_path}:{journal_lineno}: session {session_number} is "
                 f"missing from {index_path}"
-            )
-            continue
-        if journal_entry is None and index_entry is not None:
-            _index_commits, index_lineno = index_entry
-            violations.append(
-                f"{index_path}:{index_lineno}: session {session_number} is listed "
-                "in the workspace index but no matching journal session was found"
             )
             continue
 
@@ -304,7 +310,7 @@ def main(argv: list[str]) -> int:
 
     for root in _workspace_roots(paths):
         try:
-            violations.extend(_check_workspace_journal_commit_consistency(root))
+            violations.extend(_check_workspace_journal_commit_consistency(root, paths))
         except (OSError, UnicodeError) as exc:
             print(
                 "check_trellis_placeholders: cannot read workspace journal/index "

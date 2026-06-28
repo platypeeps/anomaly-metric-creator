@@ -248,11 +248,119 @@ def test_duplicate_journal_session_exits_one(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = _run(index_path, journal_path)
+    result = _run(index_path, journal_path, str(duplicate_journal_path))
     assert result.returncode == 1
     assert "duplicate journal session 1" in result.stderr
     assert "journal-1.md" in result.stderr
     assert "journal-2.md" in result.stderr
+
+
+def test_duplicate_journal_session_in_same_file_exits_one(tmp_path: Path) -> None:
+    index_path, journal_path = _workspace_artifacts(
+        tmp_path,
+        index_history_row=(
+            "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |"
+        ),
+        journal_text="""# Journal - sdelmas
+
+## Session 1: Finish thing
+
+### Main Changes
+
+- Finished the task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abc1234` | (see git log) |
+
+### Testing
+
+- [OK] smoke
+
+### Status
+
+[OK] **Completed**
+
+## Session 1: Duplicate thing
+
+### Main Changes
+
+- Accidentally duplicated the session number.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `def5678` | (see git log) |
+
+### Testing
+
+- [OK] smoke
+
+### Status
+
+[OK] **Completed**
+""",
+    )
+
+    result = _run(index_path, journal_path)
+
+    assert result.returncode == 1
+    assert "duplicate journal session 1" in result.stderr
+    assert "journal-1.md" in result.stderr
+
+
+def test_unpassed_journal_file_is_not_included_in_consistency_check(
+    tmp_path: Path,
+) -> None:
+    index_path, journal_path = _workspace_artifacts(
+        tmp_path,
+        index_history_row=(
+            "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |"
+        ),
+        journal_text="""# Journal - sdelmas
+
+## Session 1: Finish thing
+
+### Main Changes
+
+- Finished the task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abc1234` | (see git log) |
+
+### Testing
+
+- [OK] smoke
+
+### Status
+
+[OK] **Completed**
+""",
+    )
+    scratch_journal_path = Path(journal_path).with_name("journal-2.md")
+    scratch_journal_path.write_text(
+        """# Journal - sdelmas
+
+## Session 1: Local scratch duplicate
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `def5678` | (see git log) |
+""",
+        encoding="utf-8",
+    )
+
+    result = _run(index_path, journal_path)
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_workspace_index_root_file_is_not_treated_as_developer_workspace(
