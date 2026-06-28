@@ -96,6 +96,9 @@ def _run_full_check(
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("TRELLIS_FULL_CHECK_PRISM"):
+            env.pop(key)
     env.update(
         {
             "PATH": f"{repo / 'bin'}{os.pathsep}{env['PATH']}",

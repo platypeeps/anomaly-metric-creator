@@ -891,6 +891,8 @@ def test_kubectl_rollout_pause_resume_and_undo_update_overlay(amc, tmp_path):
     assert "deployment was rolled back by simulator command" in rollback_status["result"]["stdout"]
     events = server.run_command(state, command="kubectl get events -n saas-prod")
     assert "RolloutUndo" in events["result"]["stdout"]
+    assert "rolled back to revision 2" in events["result"]["stdout"]
+    assert "rolled back to 2 revision" not in events["result"]["stdout"]
 
 
 def test_kubectl_rollout_undo_without_revision_uses_previous(amc, tmp_path):

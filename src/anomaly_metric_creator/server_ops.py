@@ -3238,7 +3238,7 @@ def _render_rollout_undo(state: SimulationState, parsed: ParsedCommand) -> str:
         "Normal",
         "RolloutUndo",
         f"deployment/{component}",
-        f"deployment {component} rolled back to {revision} revision by simulator command",
+        f"deployment {component} rolled back to {_rollout_revision_label(revision)} by simulator command",
         now,
     )
     suffix = f" to revision {revision}" if revision != "previous" else ""
@@ -3250,6 +3250,12 @@ def _rollout_undo_revision(parsed: ParsedCommand) -> str:
     if not revision or revision.startswith("-"):
         return "previous"
     return revision
+
+
+def _rollout_revision_label(revision: str) -> str:
+    if revision == "previous":
+        return "previous revision"
+    return f"revision {revision}"
 
 
 def _rollout_component(parsed: ParsedCommand) -> str:
