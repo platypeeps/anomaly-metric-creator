@@ -1,7 +1,9 @@
-description = "Run the Trellis continue workflow."
+---
+name: sd-continue
+description: Use when the user wants the SD/Codex-visible continue command for resuming the current Trellis task or workflow state.
+---
 
-prompt = """
-# Continue
+# SD Continue
 
 Run the Trellis continue workflow for the current repository.
 
@@ -12,4 +14,3 @@ Run the Trellis continue workflow for the current repository.
    and decide the next step.
 4. Report the phase or action selected by the skill, plus any missing context
    or blockers it identifies.
-"""

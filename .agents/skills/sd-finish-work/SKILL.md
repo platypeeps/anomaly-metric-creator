@@ -1,9 +1,9 @@
 ---
-description: Run the Trellis finish-work workflow.
-mode: agent
+name: sd-finish-work
+description: Use when the user wants the SD/Codex-visible finish-work command for wrapping up a Trellis coding session.
 ---
 
-# Finish Work
+# SD Finish Work
 
 Run the Trellis finish-work workflow for the current repository.
 

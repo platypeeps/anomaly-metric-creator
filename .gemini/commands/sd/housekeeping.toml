@@ -1,4 +1,4 @@
-description = "SD: housekeeping"
+description = "Run Trellis end-of-stream housekeeping."
 
 prompt = """
 # Housekeeping

@@ -1,4 +1,4 @@
-description = "SD: full-check"
+description = "Run the Trellis full-check gate."
 
 prompt = """
 # Full Check

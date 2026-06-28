@@ -58,6 +58,20 @@ or removing entries. Sources: `CLAUDE.md`; `README.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_scenarios.py`;
 `tests/test_registry.py`; `.github/PULL_REQUEST_TEMPLATE.md`.
 
+## Repository Map Artifact
+
+`docs/repomix-map.md` is the generated Repomix repository map for quick human
+or LLM orientation. Development agents should use it when it is present before
+doing broad repo-shape searches, then verify details against source files,
+tests, docs, and Trellis specs before making changes. Sources:
+`docs/repomix-map.md`; `AGENTS.md`; `.trellis/spec/amc/backend/index.md`;
+`.trellis/spec/guides/cross-layer-thinking-guide.md`.
+
+Refresh the map with `scripts/update_repomix` whenever code, docs, tests,
+scripts, or platform-adapter tree changes make the artifact stale. The script
+is the canonical refresh command and writes `docs/repomix-map.md` in place.
+Sources: `scripts/update_repomix`; `README.md`; `docs/repomix-map.md`.
+
 ## PR and Review Surfaces
 
 The PR template checklist mirrors the required review headings. If a heading is

@@ -1,6 +1,7 @@
-description = "Run the Trellis continue workflow."
+---
+description: Run the Trellis continue workflow.
+---
 
-prompt = """
 # Continue
 
 Run the Trellis continue workflow for the current repository.
@@ -12,4 +13,3 @@ Run the Trellis continue workflow for the current repository.
    and decide the next step.
 4. Report the phase or action selected by the skill, plus any missing context
    or blockers it identifies.
-"""

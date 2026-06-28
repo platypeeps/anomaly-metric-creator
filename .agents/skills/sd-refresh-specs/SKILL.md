@@ -1,7 +1,9 @@
-description = "Refresh Trellis specs, repospec artifacts, and architecture docs."
+---
+name: sd-refresh-specs
+description: Use when the user wants the SD/Codex-visible refresh-specs command to update Trellis specs, repospec artifacts, and architecture docs when warranted.
+---
 
-prompt = """
-# Refresh Specs
+# SD Refresh Specs
 
 Run the Trellis update-spec skill as-is, refresh repo-owned repospec artifacts
 through their existing maintenance infrastructure when available, then refresh
@@ -41,4 +43,3 @@ the repo's architectural overview when one exists and the work warrants it.
    - `Repospec`: refreshed path/tool, `not present`, or `no infrastructure`
    - `Architectural overview`: updated path, `not present`, or `not warranted`
    - `Validation`: checks run, or why checks were not run
-"""

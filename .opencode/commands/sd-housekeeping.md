@@ -1,3 +1,7 @@
+---
+description: Run Trellis end-of-stream housekeeping.
+---
+
 # Housekeeping
 
 Run end-of-stream Trellis housekeeping for the current repository.

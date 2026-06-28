@@ -1,3 +1,8 @@
+---
+description: Run the Trellis PR review loop.
+mode: agent
+---
+
 # Review Pull Request
 
 Run the Trellis PR review loop for the current branch's pull request.

@@ -1,3 +1,7 @@
+---
+description: Run the Trellis full-check gate.
+---
+
 # Full Check
 
 Run the Trellis full-check gate for the current repository.

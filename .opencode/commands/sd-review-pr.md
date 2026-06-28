@@ -1,3 +1,7 @@
+---
+description: Run the Trellis PR review loop.
+---
+
 # Review Pull Request
 
 Run the Trellis PR review loop for the current branch's pull request.

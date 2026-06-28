@@ -1,4 +1,4 @@
-description = "SD: review-pr"
+description = "Run the Trellis PR review loop."
 
 prompt = """
 # Review Pull Request

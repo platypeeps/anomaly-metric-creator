@@ -1,6 +1,5 @@
 ---
 description: Run the Trellis finish-work workflow.
-mode: agent
 ---
 
 # Finish Work

@@ -69,7 +69,7 @@ is_review_tooling_path() {
     .github/copilot-instructions.md|.github/copilot/hooks.json|.github/copilot/hooks/*)
       return 0
       ;;
-    docs/DEVELOPMENT_CYCLE.md|docs/REVIEW_PATTERNS.md|docs/TRELLIS_REVIEW_PR_PACK.md)
+    docs/DEVELOPMENT_CYCLE.md|docs/REVIEW_PATTERNS.md|docs/SD_AI_COMMAND_PACK.md)
       return 0
       ;;
     *)
