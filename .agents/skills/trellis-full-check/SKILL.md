@@ -21,18 +21,11 @@ The script runs:
 
 1. `git diff --check` for unstaged changes.
 2. `git diff --cached --check` for staged changes.
-3. Review-tooling shell syntax checks for the CI classifier and Trellis scripts.
-4. Mechanical Python/review guards: Python syntax, workflow pip usage,
-   Trellis placeholders, trace-payload anti-patterns, CI/review cadence
-   contract checks, ruff lockstep, and `ruff check tests/`.
-5. Console-script smoke coverage for `amc` and `anomaly-metric-creator`, or a
-   module CLI smoke when editable console scripts are not installed.
-6. Focused pytest coverage for review-churn lints and recent server
-   compatibility paths.
-7. The full heavy/non-heavy pytest split when
-   `TRELLIS_FULL_CHECK_LEVEL=full` (the default).
-8. Prism local review when `prism` is on `PATH` and Prism is not disabled.
-9. Gito review only when explicitly enabled.
+3. Common package scripts when `package.json` contains them:
+   `typecheck`, `lint`, `test:unit`, `test:integration`, `build`, and
+   `test:e2e`.
+4. Prism local review when `prism` is on `PATH` and Prism is not disabled.
+5. Gito review only when explicitly enabled.
 
 ## Safety Rules
 
@@ -42,8 +35,7 @@ The script runs:
   implementation flow.
 - Prism is optional by default because some environments lack provider
   credentials. Set `TRELLIS_FULL_CHECK_PRISM=required` when a missing or
-  unauthenticated Prism review should fail the command. Unexpected non-finding,
-  non-authentication Prism failures are retried once by default.
+  unauthenticated Prism review should fail the command.
 - Gito is opt-in because it may invoke `uvx`, use a cache outside the repo, and
   require LLM credentials or network access. Set `TRELLIS_FULL_CHECK_GITO=1` to
   run it. Reports are written to `.build/review/gito` by default.
@@ -53,25 +45,14 @@ The script runs:
 
 - `TRELLIS_FULL_CHECK_BASE_REF`: base ref for branch review. Defaults to
   `origin/main`.
-- `TRELLIS_FULL_CHECK_LEVEL=quick`: run deterministic local guards, focused
-  review-churn tests, focused server compatibility tests, Prism, and optional
-  Gito, but skip the full heavy/non-heavy pytest split.
-- `TRELLIS_FULL_CHECK_LEVEL=full`: run the quick gate plus the full pytest
-  heavy/non-heavy split. This is the default.
-- `TRELLIS_FULL_CHECK_PYTHON`: Python executable override.
-- `TRELLIS_FULL_CHECK_PYTEST`: pytest command override.
-- `TRELLIS_FULL_CHECK_RUFF`: ruff command override.
+- `TRELLIS_FULL_CHECK_NPM_SCRIPTS`: space-separated package scripts to run.
+- `TRELLIS_FULL_CHECK_PACKAGE_RUNNER`: package runner. Defaults to `npm`.
+- `TRELLIS_FULL_CHECK_SKIP_NPM=1`: skip package scripts.
 - `TRELLIS_FULL_CHECK_PRISM=0`: skip Prism.
 - `TRELLIS_FULL_CHECK_PRISM=required`: fail if Prism is missing or
   unauthenticated.
-- `TRELLIS_FULL_CHECK_PRISM_COMPARE`: pass Prism compare mode, for example
-  `openai:gpt-5.2`.
-- `TRELLIS_FULL_CHECK_PRISM_PROVIDER` / `TRELLIS_FULL_CHECK_PRISM_MODEL`:
-  pass Prism single-provider review settings.
 - `TRELLIS_FULL_CHECK_PRISM_RULES`: explicit Prism rules file.
 - `TRELLIS_FULL_CHECK_PRISM_FAIL_ON`: Prism fail threshold. Defaults to `high`.
-- `TRELLIS_FULL_CHECK_PRISM_RETRIES`: retry count for unexpected non-finding,
-  non-authentication Prism failures. Defaults to `1`.
 - `TRELLIS_FULL_CHECK_GITO=1`: run Gito review after Prism.
 - `TRELLIS_FULL_CHECK_GITO_BASE_REF`: base ref for Gito review. Defaults to
   `TRELLIS_FULL_CHECK_BASE_REF`, then `origin/main`.
@@ -83,7 +64,7 @@ The script runs:
 Report:
 
 - Whether deterministic checks passed.
-- Whether quick or full pytest coverage ran.
+- Which package scripts ran or were skipped.
 - Whether Prism ran, skipped, found findings, or lacked credentials.
 - Whether Gito ran or was intentionally skipped, and where reports were written.
 - Any command that failed and the smallest next fix.

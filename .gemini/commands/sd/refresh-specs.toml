@@ -1,0 +1,33 @@
+description = "SD: refresh-specs"
+
+prompt = """
+# Refresh Specs
+
+Run the Trellis update-spec skill as-is, then refresh the repo's architectural
+overview when one exists and the work warrants it.
+
+1. Locate and read the first existing Trellis update-spec skill:
+   - `.agents/skills/trellis-update-spec/SKILL.md`
+   - `.claude/skills/trellis-update-spec/SKILL.md`
+   - `.github/skills/trellis-update-spec/SKILL.md`
+   - `.opencode/skills/trellis-update-spec/SKILL.md`
+   Stop and report the missing skill if none of these files exists.
+2. Follow that update-spec skill without modifying, replacing, or reinterpreting
+   it. Use it to update `.trellis/spec/` with concrete contracts, conventions,
+   validation behavior, and tests learned from the work.
+3. After the update-spec pass, check whether the repo already has an
+   architectural overview. Search existing files, especially `ARCHITECTURE.md`,
+   `ARCHITECTURE_OVERVIEW.md`, `docs/ARCHITECTURE.md`,
+   `docs/ARCHITECTURE_OVERVIEW.md`, and `.trellis/spec/**/architecture*.md`.
+   Do not create a new overview unless the user asks for one.
+4. If an overview exists and the completed work changes high-level architecture
+   such as packages, services, command surfaces, data flow, persistence,
+   external integrations, config/env, or runtime/deployment topology, update the
+   overview too. If no overview exists, or if the change does not warrant an
+   architecture update, leave it untouched.
+5. Final report:
+   - `Update-spec skill`: path read
+   - `Spec updates`: paths changed, or `none`
+   - `Architectural overview`: updated path, `not present`, or `not warranted`
+   - `Validation`: checks run, or why checks were not run
+"""
