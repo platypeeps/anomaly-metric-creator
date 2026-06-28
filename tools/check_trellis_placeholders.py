@@ -226,10 +226,26 @@ def _check_workspace_journal_commit_consistency(root: Path) -> list[str]:
 
     index_sessions = _parse_index_commits(index_path)
     journal_sessions: dict[int, tuple[list[str], int, Path]] = {}
+    duplicate_journal_sessions: list[tuple[int, tuple[list[str], int, Path], tuple[list[str], int, Path]]] = []
     for journal_path in journal_paths:
-        journal_sessions.update(_parse_journal_commits(journal_path))
+        for session_number, journal_entry in _parse_journal_commits(journal_path).items():
+            existing_entry = journal_sessions.get(session_number)
+            if existing_entry is not None:
+                duplicate_journal_sessions.append(
+                    (session_number, existing_entry, journal_entry)
+                )
+                continue
+            journal_sessions[session_number] = journal_entry
 
     violations: list[str] = []
+    for session_number, first_entry, duplicate_entry in duplicate_journal_sessions:
+        _first_commits, first_lineno, first_path = first_entry
+        _duplicate_commits, duplicate_lineno, duplicate_path = duplicate_entry
+        violations.append(
+            f"{duplicate_path}:{duplicate_lineno}: duplicate journal session "
+            f"{session_number}; first definition is {first_path}:{first_lineno}"
+        )
+
     for session_number in sorted(index_sessions.keys() | journal_sessions.keys()):
         index_entry = index_sessions.get(session_number)
         journal_entry = journal_sessions.get(session_number)

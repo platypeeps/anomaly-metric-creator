@@ -76,8 +76,12 @@ bash scripts/trellis-housekeeping.sh
 ```
 
 The full-check script runs `git diff --check`, `git diff --cached --check`,
-detected package scripts, and local Prism review when Prism is available and
-configured.
+review-tooling shell syntax, Python/review guard scripts, `ruff check tests/`,
+console-script smoke coverage, focused review-churn/server pytest coverage, and
+local Prism review when Prism is available and configured. With the default
+`TRELLIS_FULL_CHECK_LEVEL=full`, it also runs the same heavy/non-heavy pytest
+split used by full CI. Use `TRELLIS_FULL_CHECK_LEVEL=quick` for a cheaper local
+pass while iterating.
 
 The continue and finish-work wrappers read `.agents/skills/trellis-continue/`
 or `.agents/skills/trellis-finish-work/` and follow those Trellis-provided
@@ -129,12 +133,24 @@ Common environment variables:
 
 - `TRELLIS_FULL_CHECK_BASE_REF`: base ref for branch review. Defaults to
   `origin/main`.
-- `TRELLIS_FULL_CHECK_NPM_SCRIPTS`: space-separated package scripts to run.
-- `TRELLIS_FULL_CHECK_SKIP_NPM=1`: skip package scripts.
+- `TRELLIS_FULL_CHECK_LEVEL=quick`: skip only the full heavy/non-heavy pytest
+  split while keeping deterministic lints, focused tests, Prism, and optional
+  Gito.
+- `TRELLIS_FULL_CHECK_LEVEL=full`: run the quick gate plus the full pytest
+  split. This is the default.
+- `TRELLIS_FULL_CHECK_PYTHON`: Python executable override.
+- `TRELLIS_FULL_CHECK_PYTEST`: pytest command override.
+- `TRELLIS_FULL_CHECK_RUFF`: ruff command override.
 - `TRELLIS_FULL_CHECK_PRISM=0`: skip Prism review.
 - `TRELLIS_FULL_CHECK_PRISM=required`: fail if Prism is missing or cannot run.
+- `TRELLIS_FULL_CHECK_PRISM_COMPARE`: pass Prism compare mode, for example
+  `openai:gpt-5.2`.
+- `TRELLIS_FULL_CHECK_PRISM_PROVIDER` / `TRELLIS_FULL_CHECK_PRISM_MODEL`:
+  pass Prism single-provider review settings.
 - `TRELLIS_FULL_CHECK_PRISM_RULES`: explicit Prism rules file. Defaults to
   `.prism/rules.json` when present.
+- `TRELLIS_FULL_CHECK_PRISM_RETRIES`: retry count for unexpected non-finding,
+  non-authentication Prism failures. Defaults to `1`.
 - `TRELLIS_FULL_CHECK_GITO=1`: opt into Gito review.
 - `TRELLIS_FULL_CHECK_GITO_BASE_REF`: base ref for Gito review. Defaults to
   `TRELLIS_FULL_CHECK_BASE_REF`, then `origin/main`.
@@ -150,7 +166,11 @@ Common environment variables:
 
 Prism is enabled by default when the executable is present. If Prism is missing
 or credentials/config are unavailable, the script reports the skip and continues
-unless `TRELLIS_FULL_CHECK_PRISM=required` is set.
+unless `TRELLIS_FULL_CHECK_PRISM=required` is set. Other unexpected
+non-finding, non-authentication Prism failures retry once by default before
+failing the gate. Use `TRELLIS_FULL_CHECK_PRISM_COMPARE` or the
+provider/model flags to steer Prism model selection, and verify the effective
+models when global compare configuration is also present.
 
 Gito is opt-in because it can require `uvx`, cache access outside the repo,
 network access, and configured LLM credentials. When enabled, Gito writes
@@ -160,9 +180,23 @@ land at the repository root.
 ## CI cadence
 
 Run the full-check locally before deliberately triggering expensive remote CI
-or remote AI review. Repos can still use labels such as `full-ci`, manual
-workflow dispatch, or ready-for-review transitions for GitHub-side expensive
-checks.
+or remote AI review. This repo's GitHub CI uses `scripts/classify_ci_changes.sh`
+to choose between:
+
+- `lightweight readiness` for docs/spec/agent/review-tooling-only changes.
+- `quick test` for ordinary PR update churn that still touches app paths.
+- the full Python 3.11/3.12 matrix for app-required diffs when a PR is opened
+  or marked ready, the `full-ci` label is applied, workflow/dependency files
+  change, workflow dispatch runs, or code lands on `main`.
+
+Branch protection should continue to require the stable aggregate `test`
+context rather than a lane-specific job name.
+
+`tools/check_ci_review_contract.py` guards the named anchors in this cadence:
+classifier outputs, selected CI lanes, the required CodeQL PR-update trigger,
+Socket fast-skip triggers, Dependabot auto-merge safety, full-check
+integration, and the documentation/spec mentions that keep future review
+sessions aligned.
 
 ## Housekeeping cadence
 
@@ -212,6 +246,12 @@ they are removed while the `sd` replacement is installed.
 - Prism authentication/config failure: configure Prism locally, set
   `TRELLIS_FULL_CHECK_PRISM=0` to skip it, or set
   `TRELLIS_FULL_CHECK_PRISM=required` when review must be mandatory.
+- Unexpected Prism failure after a retry: rerun the Prism stage or set
+  `TRELLIS_FULL_CHECK_PRISM_RETRIES` higher only when the review provider or
+  local Prism wrapper is visibly unstable.
+- Prism compare provider instability: use `TRELLIS_FULL_CHECK_PRISM_COMPARE`
+  or the provider/model flags to steer the local gate, then verify the
+  effective Prism model selection before relying on the result.
 - Gito fails due to cache or network sandboxing: run from an environment with
   the needed access, or leave `TRELLIS_FULL_CHECK_GITO` unset.
 - Root-level `code-review-report.*` files appear after manual Gito runs: move
