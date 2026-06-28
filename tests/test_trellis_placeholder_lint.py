@@ -255,6 +255,18 @@ def test_duplicate_journal_session_exits_one(tmp_path: Path) -> None:
     assert "journal-2.md" in result.stderr
 
 
+def test_workspace_index_root_file_is_not_treated_as_developer_workspace(
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / ".trellis" / "workspace" / "index.md"
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text("# Workspace Index\n", encoding="utf-8")
+
+    result = _run(str(index_path))
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_workspace_index_and_journal_commit_match_exits_zero(tmp_path: Path) -> None:
     index_path, journal_path = _workspace_artifacts(
         tmp_path,

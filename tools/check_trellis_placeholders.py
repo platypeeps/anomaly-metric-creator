@@ -155,6 +155,8 @@ def _workspace_root_for(path: Path) -> Path | None:
     parts = path.parts
     for index in range(len(parts) - 2):
         if parts[index] == ".trellis" and parts[index + 1] == "workspace":
+            if index + 3 >= len(parts):
+                return None
             return Path(*parts[: index + 3])
     return None
 

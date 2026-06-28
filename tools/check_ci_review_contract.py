@@ -35,7 +35,7 @@ REQUIRED_FILES = {
     "classifier": Path("scripts/classify_ci_changes.sh"),
     "full_check": Path("scripts/trellis-full-check.sh"),
     "development_cycle": Path("docs/DEVELOPMENT_CYCLE.md"),
-    "review_pack": Path("docs/TRELLIS_REVIEW_PR_PACK.md"),
+    "review_pack": Path("docs/SD_AI_COMMAND_PACK.md"),
     "testing_spec": Path(".trellis/spec/amc/backend/testing-quality.md"),
 }
 

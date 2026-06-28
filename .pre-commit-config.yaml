@@ -127,7 +127,7 @@ repos:
         name: guard CI/review cadence contract
         entry: python tools/check_ci_review_contract.py
         language: python
-        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify_ci_changes|trellis-full-check)\.sh|tools/check_ci_review_contract\.py|docs/(DEVELOPMENT_CYCLE|TRELLIS_REVIEW_PR_PACK)\.md|\.trellis/spec/amc/backend/testing-quality\.md)$
+        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify_ci_changes|trellis-full-check)\.sh|tools/check_ci_review_contract\.py|docs/(DEVELOPMENT_CYCLE|SD_AI_COMMAND_PACK)\.md|\.trellis/spec/amc/backend/testing-quality\.md)$
         pass_filenames: false
       # Forbid `except BaseException` / bare `except` in generated Python hook
       # adapters and require a short reason on intentionally empty
