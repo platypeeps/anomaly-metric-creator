@@ -141,10 +141,11 @@ repos:
         files: ^(\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
         pass_filenames: true
       # Forbid unfinished Trellis journal/task template placeholders in
-      # committed workspace artifacts. Session journals and task notes are repo
+      # committed workspace artifacts, and keep workspace journal commit lists
+      # aligned with their index rows. Session journals and task notes are repo
       # history, not scratchpads, so fill template sections before committing.
       - id: trellis-placeholders
-        name: forbid unfinished Trellis placeholders
+        name: guard Trellis artifact hygiene
         entry: python tools/check_trellis_placeholders.py
         language: python
         files: ^\.trellis/(workspace|tasks)/.*\.(md|json|jsonl|ya?ml|toml)$

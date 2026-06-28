@@ -375,7 +375,13 @@ Added Prism override/retry support to the full-check gate, fixed rollout undo ev
 
 ### Main Changes
 
-(Add details)
+- Added Prism model override and retry support to `scripts/trellis-full-check.sh`
+  so the review gate can switch models or recover from transient Prism failures.
+- Added script-level regression coverage for Prism retries, model override
+  propagation, and ambient environment isolation.
+- Fixed rollout undo event wording so numeric revisions render as `revision N`
+  while preserving the existing `previous revision` wording for default undo.
+- Replied to and resolved the Copilot review thread after the focused fix landed.
 
 ### Git Commits
 
@@ -386,7 +392,10 @@ Added Prism override/retry support to the full-check gate, fixed rollout undo ev
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `.venv/bin/pytest tests/test_trellis_full_check_script.py tests/test_ci_review_contract.py`
+- [OK] `.venv/bin/pytest tests/test_server.py -k "rollout" -q`
+- [OK] `TRELLIS_FULL_CHECK_PRISM=0 bash scripts/trellis-full-check.sh`
+- [OK] `git diff --check`
 
 ### Status
 

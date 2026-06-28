@@ -139,9 +139,9 @@ run_trellis_placeholder_guard() {
   done < <(git ls-files .trellis/tasks .trellis/workspace | grep -E '\.(md|json|jsonl|ya?ml|toml)$' || true)
 
   if [ "${#files[@]}" -gt 0 ]; then
-    run "Trellis placeholder guard" "$PYTHON_BIN" tools/check_trellis_placeholders.py "${files[@]}"
+    run "Trellis artifact guard" "$PYTHON_BIN" tools/check_trellis_placeholders.py "${files[@]}"
   else
-    warn "No Trellis task/workspace files found for placeholder guard."
+    warn "No Trellis task/workspace files found for artifact guard."
   fi
 }
 

@@ -29,10 +29,10 @@ TRELLIS_FULL_CHECK_LEVEL=quick bash scripts/trellis-full-check.sh
 ```
 
 The quick level runs whitespace checks, shell syntax for review tooling, Python
-syntax, workflow pip lint, Trellis placeholder lint, trace-payload guardrails,
-the CI/review cadence contract guard, ruff lockstep, `ruff check tests/`,
-console-script smoke coverage, focused review-churn pytest coverage, focused
-server compatibility coverage, and optional Prism/Gito review.
+syntax, workflow pip lint, the Trellis artifact hygiene guard, trace-payload
+guardrails, the CI/review cadence contract guard, ruff lockstep,
+`ruff check tests/`, console-script smoke coverage, focused review-churn pytest
+coverage, focused server compatibility coverage, and optional Prism/Gito review.
 
 Before marking a PR ready, requesting a final remote review, or applying the
 `full-ci` label, run the full local gate when practical:
@@ -55,7 +55,7 @@ keeping the stable aggregate check named `test`.
 
 | Lane | Runs When | Purpose |
 | --- | --- | --- |
-| `lightweight readiness` | Docs, Trellis specs/tasks, agent prompts/skills, Prism rules, or review-tooling scripts only | Catch whitespace, shell syntax, Python syntax, workflow pip, and Trellis placeholder issues without installing the full dev environment. |
+| `lightweight readiness` | Docs, Trellis specs/tasks, agent prompts/skills, Prism rules, or review-tooling scripts only | Catch whitespace, shell syntax, Python syntax, workflow pip, and Trellis artifact hygiene issues without installing the full dev environment. |
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
 | `test (py3.11/py3.12)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the full matrix and heavy/non-heavy pytest split. |
 
