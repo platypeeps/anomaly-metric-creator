@@ -413,6 +413,43 @@ def test_index_session_missing_from_journals_exits_one(tmp_path: Path) -> None:
     assert "index.md" in result.stderr
 
 
+def test_index_without_journal_input_exits_one(tmp_path: Path) -> None:
+    index_path, _journal_path = _workspace_artifacts(
+        tmp_path,
+        index_history_row=(
+            "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |"
+        ),
+        journal_text="""# Journal - sdelmas
+
+## Session 1: Finish thing
+
+### Main Changes
+
+- Finished the task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abc1234` | (see git log) |
+
+### Testing
+
+- [OK] smoke
+
+### Status
+
+[OK] **Completed**
+""",
+    )
+
+    result = _run(index_path)
+
+    assert result.returncode == 1
+    assert "workspace journal files are missing from input" in result.stderr
+    assert "index.md" in result.stderr
+
+
 def test_unpassed_journal_file_is_not_included_in_consistency_check(
     tmp_path: Path,
 ) -> None:

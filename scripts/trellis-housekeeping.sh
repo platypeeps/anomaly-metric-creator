@@ -89,17 +89,13 @@ valid_positive_integer() {
 
 valid_github_repo_slug() {
   local slug="$1"
-  local owner
-  local name
 
   case "$slug" in
-    ""|/*|*/|*/*/*|*" "*|*$'\t'*|*$'\n'*)
+    ""|*.git)
       return 1
       ;;
   esac
-  owner="${slug%%/*}"
-  name="${slug#*/}"
-  [ -n "$owner" ] && [ -n "$name" ] && [ "$owner" != "$slug" ]
+  [[ "$slug" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]+$ ]]
 }
 
 parse_args() {

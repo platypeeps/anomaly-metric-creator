@@ -247,6 +247,11 @@ def _check_workspace_journal_commit_consistency(
             "commit-list consistency"
         ]
     if not journal_paths:
+        if any(path == index_path for path in paths):
+            return [
+                f"{index_path}: workspace journal files are missing from input; "
+                "cannot verify journal/index commit-list consistency"
+            ]
         return []
 
     index_sessions, duplicate_index_sessions = _parse_index_commits(index_path)

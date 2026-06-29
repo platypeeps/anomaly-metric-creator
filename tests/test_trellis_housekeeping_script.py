@@ -47,6 +47,53 @@ def _run_harness(tmp_path: Path, body: str, *, env: dict[str, str] | None = None
     )
 
 
+def test_valid_github_repo_slug_accepts_strict_owner_repo_and_normalized_remote(
+    tmp_path: Path,
+) -> None:
+    result = _run_harness(
+        tmp_path,
+        """
+        if valid_github_repo_slug platypeeps/anomaly-metric-creator; then
+          printf 'direct=ok\\n'
+        else
+          printf 'direct=fail\\n'
+        fi
+        printf 'remote=%s\\n' "$(github_repo_from_remote_url https://github.com/platypeeps/anomaly-metric-creator.git)"
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "direct=ok",
+        "remote=platypeeps/anomaly-metric-creator",
+    ]
+
+
+def test_valid_github_repo_slug_rejects_invalid_override_shapes(
+    tmp_path: Path,
+) -> None:
+    result = _run_harness(
+        tmp_path,
+        """
+        for slug in \
+          owner/repo.git \
+          owner/repo:branch \
+          owner/repo/extra \
+          owner-/repo \
+          bad_owner/repo \
+          "owner repo/name"
+        do
+          if valid_github_repo_slug "$slug"; then
+            printf 'accepted=%s\\n' "$slug"
+          fi
+        done
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
 def test_wait_for_pr_head_readiness_accepts_clean_finalize_head(tmp_path: Path) -> None:
     result = _run_harness(
         tmp_path,
