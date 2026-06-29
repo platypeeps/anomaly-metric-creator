@@ -47,7 +47,7 @@ dev = [
   # Pinned exactly: must match `rev: vX.Y.Z` in `.pre-commit-config.yaml`
   # so a local `ruff check` and the `ruff-pre-commit` hook resolve the
   # same binary. Bump both lines together.
-  "ruff==0.15.18",
+  "ruff==0.15.20",
   "pre-commit>=3.7.0",
 ]
 
