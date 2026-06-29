@@ -129,7 +129,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
     )
     for path in [
         root / "docs/DEVELOPMENT_CYCLE.md",
-        root / "docs/TRELLIS_REVIEW_PR_PACK.md",
+        root / "docs/SD_AI_COMMAND_PACK.md",
         root / ".trellis/spec/amc/backend/testing-quality.md",
     ]:
         _write(

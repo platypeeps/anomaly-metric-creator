@@ -1,0 +1,536 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+# File Summary
+
+## Purpose
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+## File Format
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  a. A header with the file path (## File: path/to/file)
+  b. The full contents of the file in a code block
+
+## Usage Guidelines
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+- Pay special attention to the Repository Description. These contain important context and guidelines specific to this project.
+
+## Notes
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: docs/repomix-map.md
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+
+# User Provided Header
+Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
+
+# Directory Structure
+```
+.agents/
+  skills/
+    amc-server-compatibility/
+      agents/
+        openai.yaml
+      references/
+        server-compatibility-map.md
+      SKILL.md
+    sd-continue/
+      SKILL.md
+    sd-finish-work/
+      SKILL.md
+    sd-full-check/
+      SKILL.md
+    sd-housekeeping/
+      SKILL.md
+    sd-refresh-specs/
+      SKILL.md
+    sd-review-pr/
+      SKILL.md
+    trellis-before-dev/
+      SKILL.md
+    trellis-brainstorm/
+      SKILL.md
+    trellis-break-loop/
+      SKILL.md
+    trellis-channel/
+      references/
+        command-reference.md
+        forum.md
+        progress-debugging.md
+        workers.md
+        workflows.md
+      SKILL.md
+    trellis-check/
+      SKILL.md
+    trellis-continue/
+      SKILL.md
+    trellis-finish-work/
+      SKILL.md
+    trellis-full-check/
+      SKILL.md
+    trellis-housekeeping/
+      SKILL.md
+    trellis-meta/
+      references/
+        customize-local/
+          add-project-local-conventions.md
+          change-agents.md
+          change-context-loading.md
+          change-hooks.md
+          change-skills-or-commands.md
+          change-spec-structure.md
+          change-task-lifecycle.md
+          change-workflow.md
+          overview.md
+        local-architecture/
+          bundled-skills.md
+          context-injection.md
+          generated-files.md
+          multi-agent-channel.md
+          overview.md
+          spec-system.md
+          task-system.md
+          workflow.md
+          workspace-memory.md
+        platform-files/
+          agents.md
+          hooks-and-settings.md
+          overview.md
+          platform-map.md
+          skills-and-commands.md
+      SKILL.md
+    trellis-review-pr/
+      SKILL.md
+    trellis-session-insight/
+      references/
+        cli-quick-reference.md
+        triggering-patterns.md
+      SKILL.md
+    trellis-spec-bootstrap/
+      references/
+        mcp-setup.md
+        repository-analysis.md
+        spec-task-planning.md
+        spec-writing.md
+      SKILL.md
+    trellis-start/
+      SKILL.md
+    trellis-update-spec/
+      SKILL.md
+.codex/
+  agents/
+    trellis-check.toml
+    trellis-implement.toml
+    trellis-research.toml
+  hooks/
+    inject-workflow-state.py
+    session-start.py
+  config.toml
+  hooks.json
+.gemini/
+  agents/
+    trellis-check.md
+    trellis-implement.md
+    trellis-research.md
+  commands/
+    sd/
+      continue.toml
+      finish-work.toml
+      full-check.toml
+      housekeeping.toml
+      refresh-specs.toml
+      review-pr.toml
+    trellis/
+      continue.toml
+      finish-work.toml
+  hooks/
+    inject-workflow-state.py
+    session-start.py
+  settings.json
+.github/
+  agents/
+    trellis-check.agent.md
+    trellis-implement.agent.md
+    trellis-research.agent.md
+  copilot/
+    hooks/
+      inject-workflow-state.py
+      session-start.py
+    hooks.json
+  hooks/
+    trellis.json
+  instructions/
+    anomaly-metric-creator.instructions.md
+  prompts/
+    continue.prompt.md
+    finish-work.prompt.md
+    sd-continue.prompt.md
+    sd-finish-work.prompt.md
+    sd-full-check.prompt.md
+    sd-housekeeping.prompt.md
+    sd-refresh-specs.prompt.md
+    sd-review-pr.prompt.md
+  skills/
+    trellis-before-dev/
+      SKILL.md
+    trellis-brainstorm/
+      SKILL.md
+    trellis-break-loop/
+      SKILL.md
+    trellis-channel/
+      references/
+        command-reference.md
+        forum.md
+        progress-debugging.md
+        workers.md
+        workflows.md
+      SKILL.md
+    trellis-check/
+      SKILL.md
+    trellis-meta/
+      references/
+        customize-local/
+          add-project-local-conventions.md
+          change-agents.md
+          change-context-loading.md
+          change-hooks.md
+          change-skills-or-commands.md
+          change-spec-structure.md
+          change-task-lifecycle.md
+          change-workflow.md
+          overview.md
+        local-architecture/
+          bundled-skills.md
+          context-injection.md
+          generated-files.md
+          multi-agent-channel.md
+          overview.md
+          spec-system.md
+          task-system.md
+          workflow.md
+          workspace-memory.md
+        platform-files/
+          agents.md
+          hooks-and-settings.md
+          overview.md
+          platform-map.md
+          skills-and-commands.md
+      SKILL.md
+    trellis-session-insight/
+      references/
+        cli-quick-reference.md
+        triggering-patterns.md
+      SKILL.md
+    trellis-spec-bootstrap/
+      references/
+        mcp-setup.md
+        repository-analysis.md
+        spec-task-planning.md
+        spec-writing.md
+      SKILL.md
+    trellis-update-spec/
+      SKILL.md
+  workflows/
+    ci.yml
+    codeql.yml
+    dependabot-auto-merge.yml
+    socket.yml
+  copilot-instructions.md
+  dependabot.yml
+  PULL_REQUEST_TEMPLATE.md
+.opencode/
+  agents/
+    trellis-check.md
+    trellis-implement.md
+    trellis-research.md
+  commands/
+    trellis/
+      continue.md
+      finish-work.md
+      start.md
+    sd-continue.md
+    sd-finish-work.md
+    sd-full-check.md
+    sd-housekeeping.md
+    sd-refresh-specs.md
+    sd-review-pr.md
+  lib/
+    session-utils.js
+    trellis-context.js
+  plugins/
+    inject-subagent-context.js
+    inject-workflow-state.js
+    session-start.js
+  skills/
+    trellis-before-dev/
+      SKILL.md
+    trellis-brainstorm/
+      SKILL.md
+    trellis-break-loop/
+      SKILL.md
+    trellis-channel/
+      references/
+        command-reference.md
+        forum.md
+        progress-debugging.md
+        workers.md
+        workflows.md
+      SKILL.md
+    trellis-check/
+      SKILL.md
+    trellis-meta/
+      references/
+        customize-local/
+          add-project-local-conventions.md
+          change-agents.md
+          change-context-loading.md
+          change-hooks.md
+          change-skills-or-commands.md
+          change-spec-structure.md
+          change-task-lifecycle.md
+          change-workflow.md
+          overview.md
+        local-architecture/
+          bundled-skills.md
+          context-injection.md
+          generated-files.md
+          multi-agent-channel.md
+          overview.md
+          spec-system.md
+          task-system.md
+          workflow.md
+          workspace-memory.md
+        platform-files/
+          agents.md
+          hooks-and-settings.md
+          overview.md
+          platform-map.md
+          skills-and-commands.md
+      SKILL.md
+    trellis-session-insight/
+      references/
+        cli-quick-reference.md
+        triggering-patterns.md
+      SKILL.md
+    trellis-spec-bootstrap/
+      references/
+        mcp-setup.md
+        repository-analysis.md
+        spec-task-planning.md
+        spec-writing.md
+      SKILL.md
+    trellis-update-spec/
+      SKILL.md
+  package.json
+.prism/
+  rules.json
+.trellis/
+  agents/
+    check.md
+    implement.md
+  scripts/
+    common/
+      __init__.py
+      active_task.py
+      cli_adapter.py
+      config.py
+      developer.py
+      git_context.py
+      git.py
+      io.py
+      log.py
+      packages_context.py
+      paths.py
+      safe_commit.py
+      session_context.py
+      task_context.py
+      task_queue.py
+      task_store.py
+      task_utils.py
+      tasks.py
+      trellis_config.py
+      types.py
+      workflow_phase.py
+    hooks/
+      linear_sync.py
+    __init__.py
+    add_session.py
+    get_context.py
+    get_developer.py
+    init_developer.py
+    task.py
+  spec/
+    amc/
+      backend/
+        api-cli-server.md
+        architecture.md
+        database-guidelines.md
+        directory-structure.md
+        documentation-review.md
+        error-handling.md
+        index.md
+        logging-guidelines.md
+        operations-security-logging.md
+        quality-guidelines.md
+        scenarios-and-data.md
+        testing-quality.md
+    guides/
+      code-reuse-thinking-guide.md
+      cross-layer-thinking-guide.md
+      index.md
+  tasks/
+    archive/
+      2026-06/
+        00-bootstrap-guidelines/
+          prd.md
+          task.json
+        06-25-consolidate-agent-docs-trellis/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        06-26-server-compat-debug-polish/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+  workspace/
+    sdelmas/
+      index.md
+      journal-1.md
+    index.md
+  .gitignore
+  .template-hashes.json
+  .version
+  config.yaml
+  workflow.md
+.understand-anything/
+  .understandignore
+  fingerprints.json
+  knowledge-graph.json
+  meta.json
+docs/
+  application-flow.md
+  DEVELOPMENT_CYCLE.md
+  REVIEW_PATTERNS.md
+  SD_AI_COMMAND_PACK.md
+  server-roadmap.md
+  topology.md
+scripts/
+  classify_ci_changes.sh
+  trellis-full-check.sh
+  trellis-housekeeping.sh
+  update_repomix
+src/
+  anomaly_metric_creator/
+    __init__.py
+    cli.py
+    combine.py
+    legacy.py
+    models.py
+    otel.py
+    scenarios.py
+    schema.py
+    server_commands.py
+    server_debug_ui.py
+    server_helm.py
+    server_kubernetes.py
+    server_mutations.py
+    server_ops.py
+    server_traces.py
+    server.py
+    trace_bundle.py
+tests/
+  conftest.py
+  test_agent_hook_exception_lint.py
+  test_amc_module_load_lint.py
+  test_approval_duplicate_lint.py
+  test_args.py
+  test_branch_name_lint.py
+  test_cascades.py
+  test_ci_change_classifier.py
+  test_ci_review_contract.py
+  test_cli_surface.py
+  test_cli.py
+  test_combine.py
+  test_correctness.py
+  test_determinism.py
+  test_drop_rate_manifest.py
+  test_emit_selection_hygiene.py
+  test_gauges_file.py
+  test_gpu_inference.py
+  test_heavy_marker.py
+  test_instance_config.py
+  test_instance_filter.py
+  test_instances_per_component.py
+  test_instances.py
+  test_multiday_cascades.py
+  test_otel_gauges.py
+  test_otlp_units.py
+  test_package_entrypoint.py
+  test_package_facades.py
+  test_phase7_partial_outage.py
+  test_python_syntax_lint.py
+  test_redact_sensitive_headers.py
+  test_registry.py
+  test_reporting_artifacts.py
+  test_role_name_leaks_lint.py
+  test_ruff_lockstep_lint.py
+  test_run_capture_helper.py
+  test_scenario_deviation.py
+  test_scenarios.py
+  test_schema_file.py
+  test_server.py
+  test_shapes.py
+  test_topology_fanout.py
+  test_topology_llm.py
+  test_topology_loadbalancer_gateway.py
+  test_topology_multi_instance.py
+  test_topology_registry.py
+  test_topology_saturation.py
+  test_trace_bundle.py
+  test_trace_payload_antipatterns_lint.py
+  test_trellis_full_check_script.py
+  test_trellis_housekeeping_script.py
+  test_trellis_placeholder_lint.py
+  test_validate_output.py
+  test_workflow_pip_lint.py
+tools/
+  benchmark_combine.py
+  check_agent_hook_exceptions.py
+  check_amc_module_load.py
+  check_approval_duplicate.py
+  check_branch_name.py
+  check_ci_review_contract.py
+  check_python_syntax.py
+  check_role_name_leaks.py
+  check_ruff_lockstep.py
+  check_trace_payload_antipatterns.py
+  check_trellis_placeholders.py
+  check_workflow_pip.py
+.gitignore
+.pre-commit-config.yaml
+AGENTS.md
+anomaly-metric-creator.py
+CHANGELOG.md
+CLAUDE.md
+pyproject.toml
+README.md
+```

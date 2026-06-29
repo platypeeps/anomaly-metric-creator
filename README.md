@@ -100,6 +100,22 @@ The package metadata is marked private (`Private :: Do Not Upload`) to match
 the proprietary license badge; install it from this repository or an internal
 package index, not the public Python package index.
 
+## Repository map
+
+The generated Repomix repository map lives at
+[`docs/repomix-map.md`](docs/repomix-map.md). It is a metadata-only map of the
+repo structure for quick human or LLM orientation; it does not embed source file
+bodies.
+
+Refresh it after code, docs, tests, scripts, or platform-adapter tree changes:
+
+```bash
+scripts/update_repomix
+```
+
+The refresh script requires the `repomix` CLI on `PATH` and rewrites the
+generated artifact in place.
+
 ## Usage
 
 ```bash

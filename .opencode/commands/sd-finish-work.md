@@ -1,0 +1,15 @@
+---
+description: Run the Trellis finish-work workflow.
+---
+
+# Finish Work
+
+Run the Trellis finish-work workflow for the current repository.
+
+1. Read `.agents/skills/trellis-finish-work/SKILL.md`.
+2. If that skill file is missing or unreadable, stop and report that the
+   Trellis finish-work skill is unavailable.
+3. Follow that skill exactly to wrap up the current session, including its
+   quality-gate, archive, journal, and commit-reminder behavior.
+4. Report what the skill completed, what remains for the user, and any
+   validation or archival step that could not run.

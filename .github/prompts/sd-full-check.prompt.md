@@ -1,6 +1,8 @@
-description = "Trellis: full-check"
+---
+description: Run the Trellis full-check gate.
+mode: agent
+---
 
-prompt = """
 # Full Check
 
 Run the Trellis full-check gate for the current repository.
@@ -11,4 +13,3 @@ Run the Trellis full-check gate for the current repository.
    and any skipped checks.
 3. Do not edit, stage, commit, or push files unless the user separately asks for
    fixes.
-"""

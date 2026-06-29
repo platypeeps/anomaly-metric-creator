@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+ARTIFACT="docs/repomix-map.md"
+
+if ! command -v repomix >/dev/null 2>&1; then
+  printf 'error: repomix is required to refresh %s\n' "$ARTIFACT" >&2
+  printf 'install it from https://repomix.com/ or with your preferred package manager\n' >&2
+  exit 127
+fi
+
+cd "$REPO_ROOT"
+mkdir -p "$(dirname "$ARTIFACT")"
+
+repomix . \
+  --quiet \
+  --style markdown \
+  --no-files \
+  --include-full-directory-structure \
+  --output "$ARTIFACT" \
+  --ignore "$ARTIFACT" \
+  --header-text "Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes."
+
+printf 'Updated %s\n' "$ARTIFACT"

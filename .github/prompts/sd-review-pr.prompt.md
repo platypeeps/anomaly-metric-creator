@@ -1,6 +1,8 @@
-description = "Trellis: review-pr"
+---
+description: Run the Trellis PR review loop.
+mode: agent
+---
 
-prompt = """
 # Review Pull Request
 
 Run the Trellis PR review loop for the current branch's pull request.
@@ -15,4 +17,3 @@ Run the Trellis PR review loop for the current branch's pull request.
 4. Stop before a sixth remote review loop and ask the user whether to continue.
 5. End with the documentation/pre-commit recommendations requested by the
    skill.
-"""

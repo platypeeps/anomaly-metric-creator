@@ -94,10 +94,11 @@ Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 Additional mechanical guards catch recent review-churn patterns before PR
 review: syntax-only `ast.parse` over Python files, Ruff F841 unused locals for
 runtime/tools/hooks, agent-hook exception-shape checks, Trellis placeholder
-checks, and trace-payload validation anti-pattern checks. Keep these hooks
-stdlib-only where they are local scripts, with the documented `0`/`1`/`2` exit
-contract and acceptance tests over both temporary fixtures and the live repo
-tree. Sources: `.pre-commit-config.yaml`; `tools/check_python_syntax.py`;
+and journal/index commit-list consistency checks, and trace-payload validation
+anti-pattern checks. Keep these hooks stdlib-only where they are local scripts,
+with the documented `0`/`1`/`2` exit contract and acceptance tests over both
+temporary fixtures and the live repo tree. Sources: `.pre-commit-config.yaml`;
+`tools/check_python_syntax.py`;
 `tools/check_agent_hook_exceptions.py`; `tools/check_trellis_placeholders.py`;
 `tools/check_trace_payload_antipatterns.py`;
 `tests/test_python_syntax_lint.py`;

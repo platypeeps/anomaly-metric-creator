@@ -15,6 +15,12 @@ another copy here. Sources: `CLAUDE.md`, `.trellis/spec/amc/backend/`.
 User-facing usage, install, CLI reference, output files, and the anomaly catalog
 live in [README.md](README.md).
 
+If [docs/repomix-map.md](docs/repomix-map.md) is present, use it for quick
+repository orientation before broad searches. When code, docs, tests, scripts,
+or platform-adapter tree changes make the map stale, refresh it with
+`scripts/update_repomix`. Sources: `docs/repomix-map.md`,
+`scripts/update_repomix`, `.trellis/spec/amc/backend/documentation-review.md`.
+
 This file used to duplicate the agent guide and drifted from the runtime module
 after the SCENARIOS migration. To prevent that recurring, durable conventions
 now live in Trellis specs; update the focused spec first and keep this file as
@@ -45,6 +51,8 @@ python3 -m venv .venv
 | `src/anomaly_metric_creator/cli.py` | Package entrypoint (thin loader) |
 | `anomaly-metric-creator.py` | Top-level compatibility shim |
 | `tests/conftest.py` | Session-scoped fixtures, `run_capture` helper |
+| `docs/repomix-map.md` | Generated Repomix repository map |
+| `scripts/update_repomix` | Refreshes `docs/repomix-map.md` |
 | `.trellis/spec/amc/backend/index.md` | Canonical development conventions |
 | `CLAUDE.md` | Expanded historical/source guide, invariants, pre-PR checklist source material |
 | `README.md` | User-facing docs, CLI reference, scenario catalog |
