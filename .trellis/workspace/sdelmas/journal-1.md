@@ -451,3 +451,58 @@ Addressed Copilot feedback on duplicate journal sessions and exit-code docs; res
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: PR 153 review remediation
+
+**Date**: 2026-06-28
+**Task**: PR 153 review remediation
+**Package**: amc
+**Branch**: `codex/trellis-artifact-guard`
+
+### Summary
+
+Completed follow-up PR review remediation for the Trellis artifact guard, SD command pack, and housekeeping safeguards.
+
+### Main Changes
+
+- Updated SD AI command-pack assets and aligned review-tooling documentation around the new command-pack surface.
+- Restored and tightened the AMC full-check/review-tooling contract after review feedback, including CI cadence anchors and local guard behavior.
+- Hardened `scripts/trellis-housekeeping.sh` for non-interactive merge flow, finalize-head CI waiting, and strict GitHub repository slug validation.
+- Expanded `tools/check_trellis_placeholders.py` so workspace journal/index consistency catches duplicate journal/index sessions, index-only sessions, missing index rows, missing journal inputs, and argv-scoped journal checks without scanning unrelated scratch files.
+- Added focused regression coverage in `tests/test_trellis_placeholder_lint.py` and `tests/test_trellis_housekeeping_script.py` for each review finding.
+- Updated the Repomix map header and PR description so reviewers see the metadata-only map, refresh workflow, and housekeeping auto-finalize/merge behavior.
+- Replied to and resolved all actionable Copilot review threads on PR #153; latest Copilot review reported no new comments.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9da368e` | (see git log) |
+| `8b22cb6` | (see git log) |
+| `4f07eb8` | (see git log) |
+| `f9dc77d` | (see git log) |
+| `8a51893` | (see git log) |
+| `ee0c84a` | (see git log) |
+| `a358b8c` | (see git log) |
+| `dbced91` | (see git log) |
+
+### Testing
+
+- [OK] `.venv/bin/pytest -q tests/test_trellis_placeholder_lint.py tests/test_trellis_housekeeping_script.py`
+- [OK] `bash -n scripts/trellis-housekeeping.sh`
+- [OK] `python3 tools/check_python_syntax.py tools/check_trellis_placeholders.py tests/test_trellis_placeholder_lint.py tests/test_trellis_housekeeping_script.py`
+- [OK] `python3 tools/check_trellis_placeholders.py .trellis/workspace/sdelmas/index.md .trellis/workspace/sdelmas/journal-1.md`
+- [OK] `git diff --check`
+- [OK] `TRELLIS_FULL_CHECK_LEVEL=quick TRELLIS_FULL_CHECK_PRISM=0 bash scripts/trellis-full-check.sh`
+- [OK] GitHub Actions run `28340562637` passed on PR #153 head `dbced91`.
+- [OK] Final PR sweep showed merge state `CLEAN`, no unresolved review threads, and latest Copilot review with no new comments.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
