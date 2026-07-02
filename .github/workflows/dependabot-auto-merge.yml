@@ -2,8 +2,10 @@ name: Dependabot auto-merge
 
 # Turns on GitHub auto-merge for Dependabot patch/minor PRs. The workflow runs
 # on pull_request_target and never checks out PR code, so it can use write
-# permissions only for metadata actions: approval and auto-merge setup. The
-# merge still waits for branch-protection checks such as `test`.
+# permissions only for metadata and auto-merge setup. It deliberately does not
+# approve PRs because this repo does not allow GitHub Actions to create pull
+# request reviews. The merge still waits for branch-protection checks such as
+# `test`.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -27,13 +29,6 @@ jobs:
         uses: dependabot/fetch-metadata@v3
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Approve patch + minor update
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr review --approve "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge for patch + minor
         if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'

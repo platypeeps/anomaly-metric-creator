@@ -101,7 +101,7 @@ enabled. Sources: `CLAUDE.md`; `README.md`;
 Debug UI data should come from the same command traces, resource snapshots,
 mutation overlay, scenario catalog, and fake Kubernetes object paths that the
 command/API surfaces use. Do not create a separate debug-only state model.
-Sources: `CLAUDE.md`; `README.md`; `docs/server-roadmap.md`;
+Sources: `CLAUDE.md`; `README.md`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_mutations.py`; `tests/test_server.py`.
@@ -120,18 +120,3 @@ renderers. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
-
-## Operational Roadmap Status
-
-`docs/server-roadmap.md` is a historical handoff and roadmap note, not the
-authoritative architecture source. Treat its completed/future-work claims as
-input that must be checked against code, tests, README, and these Trellis specs
-before becoming a new task. Sources: `docs/server-roadmap.md`; `README.md`;
-`CLAUDE.md`; `.trellis/spec/amc/backend/index.md`.
-
-No known persistence/search, security/operations, or architecture-cleanup
-roadmap items remain beyond workshop-driven polish; compatibility and debug UI
-follow-ups should be scoped from current code and user needs. Sources:
-`docs/server-roadmap.md`; `README.md`; `src/anomaly_metric_creator/server.py`;
-`src/anomaly_metric_creator/server_traces.py`;
-`src/anomaly_metric_creator/server_debug_ui.py`; `tests/test_server.py`.

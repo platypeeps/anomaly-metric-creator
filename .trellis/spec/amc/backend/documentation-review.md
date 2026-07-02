@@ -10,10 +10,10 @@ documents. Sources: `AGENTS.md`; `CLAUDE.md`; `.trellis/workflow.md`;
 `.agents/`; `.codex/`; `.claude/`; `.gemini/`; `.opencode/`.
 
 `README.md` and `docs/` own user-facing behavior: install, usage, CLI flags,
-server endpoints, output files, topology prose, application flow diagrams, and
-roadmap/handoff notes. Keep them consistent with the implementation specs but
-do not turn them into a duplicate agent rulebook. Sources: `README.md`;
-`docs/application-flow.md`; `docs/topology.md`; `docs/server-roadmap.md`;
+server endpoints, output files, topology prose, and application flow diagrams.
+Keep them consistent with the implementation specs but do not turn them into a
+duplicate agent rulebook. Sources: `README.md`;
+`docs/application-flow.md`; `docs/topology.md`; `.trellis/tasks/`;
 `.trellis/spec/amc/backend/`.
 
 `CLAUDE.md` remains a valuable historical and expanded source document, but new
@@ -26,8 +26,8 @@ linked from adapter docs when needed. Sources: `CLAUDE.md`; `AGENTS.md`;
 Every convention added to `.trellis/spec/` must cite supporting repo paths.
 Prefer repo-relative paths; add line, symbol, or section detail when verified in
 the current pass. Sources:
-`.trellis/tasks/06-25-consolidate-agent-docs-trellis/prd.md`;
-`.trellis/tasks/06-25-consolidate-agent-docs-trellis/design.md`;
+`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/prd.md`;
+`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/design.md`;
 `AGENTS.md`.
 
 Generated/local runtime state such as `.trellis/.runtime/`, session journals,
@@ -85,19 +85,35 @@ Copilot instructions should route reviewers to the relevant Trellis spec first,
 then to source files/tests and supporting historical sections as needed. They
 should not redefine project rules independently. Sources:
 `.github/instructions/anomaly-metric-creator.instructions.md`;
-`.trellis/spec/amc/backend/index.md`; `CLAUDE.md`; `README.md`.
+`.trellis/spec/amc/backend/index.md`;
+`tools/check_copilot_instruction_contract.py`; `CLAUDE.md`; `README.md`.
 
 PR descriptions must name behavior changes, list the test plan, and walk the
 review checklist before draft status is removed. Sources: `CLAUDE.md`;
 `.github/PULL_REQUEST_TEMPLATE.md`;
 `.trellis/spec/amc/backend/testing-quality.md`.
 
-The PR template should prompt for focused local checks, the quick local
-Trellis gate, and whether a full local gate or remote `full-ci` label is
-needed. Review guidance should prefer local evidence and the stable aggregate
-`test` context before asking for repeated remote Copilot or Actions runs.
+Behavior-changing diffs should use explicit scope sections in the PR body:
+`Automation scope:`, `CI/review scope:`, `Tooling/generated scope:`,
+`Docs/user-facing scope:`, or `Runtime/server scope:` as applicable.
+`scripts/sd-ai-command-pack-pr-body-scope.py` enforces these sections with
+repo-specific categories from `.sd-ai-command-pack/pr-body-scope.json` when a
+PR body is supplied through `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY`,
+`SD_AI_COMMAND_PACK_SCOPE_PR_BODY`, or `--body-file`. Sources:
+`scripts/sd-ai-command-pack-pr-body-scope.py`;
+`.sd-ai-command-pack/pr-body-scope.json`; `tests/test_pr_body_scope_lint.py`;
+`docs/DEVELOPMENT_CYCLE.md`.
+
+The PR template should prompt for focused local checks, the local Trellis
+full-check gate, and whether a remote `full-ci` label is needed. Review
+guidance should prefer local evidence and the stable aggregate `test` context
+before asking for repeated remote Copilot or Actions runs.
 Sources: `.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`;
-`scripts/trellis-full-check.sh`; `tools/check_ci_review_contract.py`;
+`scripts/sd-ai-command-pack-full-check.sh`; `tools/check_ci_review_contract.py`;
+`tools/check_copilot_instruction_contract.py`;
+`scripts/sd-ai-command-pack-pr-body-scope.py`;
+`scripts/sd-ai-command-pack-review-preflight.mjs`;
+`scripts/check-review-preflight.mjs`;
 `.github/copilot-instructions.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`.
 
@@ -143,10 +159,10 @@ context-loading protocols. Sources: `.trellis/config.yaml`;
 `.codex/agents/trellis-implement.toml`; `.claude/agents/trellis-implement.md`;
 `.gemini/agents/trellis-implement.md`; `.opencode/agents/trellis-implement.md`.
 
-## Historical and Roadmap Notes
+## Historical Notes
 
-Historical handoff files and completed Trellis tasks are useful evidence, but
-they can become stale. Before treating roadmap text as active work, verify it
+Completed Trellis tasks and workspace journals are useful evidence, but they
+can become stale. Before treating older planning text as active work, verify it
 against current source, tests, README, and open tasks. Sources:
-`docs/server-roadmap.md`; `.trellis/tasks/`; `.trellis/workspace/`;
-`src/anomaly_metric_creator/`; `tests/`; `README.md`.
+`.trellis/tasks/`; `.trellis/workspace/`; `src/anomaly_metric_creator/`;
+`tests/`; `README.md`.

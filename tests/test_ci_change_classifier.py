@@ -1,4 +1,4 @@
-"""Acceptance tests for ``scripts/classify_ci_changes.sh``.
+"""Acceptance tests for ``scripts/classify-ci-changes.sh``.
 
 The classifier is the local source of truth for the CI workflow's cheap versus
 full gate decisions. These tests keep the path buckets explicit so workflow
@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "classify_ci_changes.sh"
+SCRIPT = REPO_ROOT / "scripts" / "classify-ci-changes.sh"
 
 
 def _changed_file(tmp_path: Path, *paths: str) -> Path:
@@ -44,7 +44,7 @@ def test_docs_specs_and_agent_files_are_lightweight(tmp_path: Path) -> None:
         "docs/DEVELOPMENT_CYCLE.md",
         ".trellis/spec/amc/backend/testing-quality.md",
         ".github/prompts/review-pr.prompt.md",
-        ".agents/skills/trellis-review-pr/SKILL.md",
+        ".agents/skills/trellis-before-dev/SKILL.md",
         ".prism/rules.json",
     )
 
@@ -89,8 +89,42 @@ def test_dependency_and_workflow_changes_force_app_gate(tmp_path: Path) -> None:
 def test_review_tooling_scripts_stay_in_lightweight_lane(tmp_path: Path) -> None:
     changed = _changed_file(
         tmp_path,
+        "scripts/classify-ci-changes.sh",
         "scripts/classify_ci_changes.sh",
-        "scripts/trellis-full-check.sh",
+        "scripts/check-review-preflight.mjs",
+        "scripts/sd-ai-command-pack-pr-body-scope.py",
+        "scripts/sd-ai-command-pack-review-scope.sh",
+        "scripts/sd-ai-command-pack-review-preflight.mjs",
+        "scripts/sd-ai-command-pack-review-local.sh",
+        "scripts/sd-ai-command-pack-install-audit.py",
+        "scripts/sd-ai-command-pack-full-check.sh",
+        "scripts/sd-ai-command-pack-housekeeping.sh",
+        ".sd-ai-command-pack/pr-body-scope.json",
+        "tests/test_pr_body_scope_lint.py",
+    )
+
+    result = _run(str(changed))
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["lightweight_only"] == "true"
+    assert outputs["app_required"] == "false"
+    assert outputs["review_tooling_changed"] == "true"
+
+
+def test_copied_trellis_and_sd_adapters_stay_in_lightweight_lane(tmp_path: Path) -> None:
+    changed = _changed_file(
+        tmp_path,
+        ".github/agents/trellis-check.agent.md",
+        ".github/skills/trellis-check/SKILL.md",
+        ".github/copilot/hooks/session-start.py",
+        ".github/prompts/sd-review-pr.prompt.md",
+        ".agents/skills/sd-review-pr/SKILL.md",
+        ".claude/commands/sd/review-pr.md",
+        ".gemini/commands/sd/review-pr.toml",
+        ".opencode/commands/sd-review-pr.md",
+        "docs/SD_AI_COMMAND_PACK.md",
+        "scripts/sd-ai-command-pack-housekeeping.sh",
     )
 
     result = _run(str(changed))
@@ -131,6 +165,30 @@ def test_missing_changed_file_list_exits_two(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "changed-files list not found" in result.stderr
+
+
+def test_explicit_path_list_after_separator_is_supported() -> None:
+    result = _run(
+        "--",
+        "docs/REVIEW_PATTERNS.md",
+        "scripts/sd-ai-command-pack-full-check.sh",
+    )
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["changed_count"] == "2"
+    assert outputs["lightweight_only"] == "true"
+    assert outputs["review_tooling_changed"] == "true"
+
+
+def test_explicit_path_list_allows_flag_like_paths() -> None:
+    result = _run("--", "-literal-file.py")
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["changed_count"] == "1"
+    assert outputs["python_changed"] == "true"
+    assert outputs["app_required"] == "true"
 
 
 def test_default_collection_includes_untracked_files(tmp_path: Path) -> None:

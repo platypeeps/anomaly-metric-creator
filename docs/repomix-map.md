@@ -55,9 +55,17 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     sd-housekeeping/
       SKILL.md
-    sd-refresh-specs/
+    sd-review-learnings/
+      SKILL.md
+    sd-review-local/
+      SKILL.md
+    sd-review-local-all/
       SKILL.md
     sd-review-pr/
+      SKILL.md
+    sd-start/
+      SKILL.md
+    sd-update-spec/
       SKILL.md
     trellis-before-dev/
       SKILL.md
@@ -78,10 +86,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     trellis-continue/
       SKILL.md
     trellis-finish-work/
-      SKILL.md
-    trellis-full-check/
-      SKILL.md
-    trellis-housekeeping/
       SKILL.md
     trellis-meta/
       references/
@@ -111,8 +115,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           overview.md
           platform-map.md
           skills-and-commands.md
-      SKILL.md
-    trellis-review-pr/
       SKILL.md
     trellis-session-insight/
       references/
@@ -151,8 +153,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       finish-work.toml
       full-check.toml
       housekeeping.toml
-      refresh-specs.toml
+      review-learnings.toml
+      review-local-all.toml
+      review-local.toml
       review-pr.toml
+      start.toml
+      update-spec.toml
     trellis/
       continue.toml
       finish-work.toml
@@ -181,8 +187,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-finish-work.prompt.md
     sd-full-check.prompt.md
     sd-housekeeping.prompt.md
-    sd-refresh-specs.prompt.md
+    sd-review-learnings.prompt.md
+    sd-review-local-all.prompt.md
+    sd-review-local.prompt.md
     sd-review-pr.prompt.md
+    sd-start.prompt.md
+    sd-update-spec.prompt.md
   skills/
     trellis-before-dev/
       SKILL.md
@@ -251,6 +261,9 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
+.gito/
+  config.toml
+  sd-ai-command-pack.env
 .opencode/
   agents/
     trellis-check.md
@@ -265,8 +278,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-finish-work.md
     sd-full-check.md
     sd-housekeeping.md
-    sd-refresh-specs.md
+    sd-review-learnings.md
+    sd-review-local-all.md
+    sd-review-local.md
     sd-review-pr.md
+    sd-start.md
+    sd-update-spec.md
   lib/
     session-utils.js
     trellis-context.js
@@ -337,6 +354,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   package.json
 .prism/
   rules.json
+  rules.schema.json
+.sd-ai-command-pack/
+  installed-targets.txt
+  pr-body-scope.json
+  review-preflight.json
 .trellis/
   agents/
     check.md
@@ -392,6 +414,56 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       cross-layer-thinking-guide.md
       index.md
   tasks/
+    06-29-debug-ui-shell-extraction/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-helm-incident-command-coverage/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-interactive-failure-mode-launcher/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-kubectl-events-compatibility/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-kubectl-exec-outputs/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-kubectl-logs-refinements/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-kubectl-port-forward-lifecycle/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-persisted-server-mutation-state/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-quick-simulator-environment-reset/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    06-29-server-watch-semantics/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -417,7 +489,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       journal-1.md
     index.md
   .gitignore
-  .template-hashes.json
   .version
   config.yaml
   workflow.md
@@ -431,12 +502,20 @@ docs/
   DEVELOPMENT_CYCLE.md
   REVIEW_PATTERNS.md
   SD_AI_COMMAND_PACK.md
-  server-roadmap.md
   topology.md
 scripts/
+  check-review-preflight.mjs
   classify_ci_changes.sh
-  trellis-full-check.sh
-  trellis-housekeeping.sh
+  classify-ci-changes.sh
+  sd-ai-command-pack-full-check.sh
+  sd-ai-command-pack-housekeeping.sh
+  sd-ai-command-pack-install-audit.py
+  sd-ai-command-pack-pr-body-scope.py
+  sd-ai-command-pack-review-learnings.py
+  sd-ai-command-pack-review-local.sh
+  sd-ai-command-pack-review-preflight.mjs
+  sd-ai-command-pack-review-scope.sh
+  sd-ai-command-pack-update-spec-kb.py
   update_repomix
 src/
   anomaly_metric_creator/
@@ -470,6 +549,7 @@ tests/
   test_cli_surface.py
   test_cli.py
   test_combine.py
+  test_copilot_instruction_contract.py
   test_correctness.py
   test_determinism.py
   test_drop_rate_manifest.py
@@ -487,6 +567,7 @@ tests/
   test_package_entrypoint.py
   test_package_facades.py
   test_phase7_partial_outage.py
+  test_pr_body_scope_lint.py
   test_python_syntax_lint.py
   test_redact_sensitive_headers.py
   test_registry.py
@@ -497,6 +578,8 @@ tests/
   test_scenario_deviation.py
   test_scenarios.py
   test_schema_file.py
+  test_sd_ai_command_pack_full_check_script.py
+  test_sd_ai_command_pack_housekeeping_script.py
   test_server.py
   test_shapes.py
   test_topology_fanout.py
@@ -507,8 +590,6 @@ tests/
   test_topology_saturation.py
   test_trace_bundle.py
   test_trace_payload_antipatterns_lint.py
-  test_trellis_full_check_script.py
-  test_trellis_housekeeping_script.py
   test_trellis_placeholder_lint.py
   test_validate_output.py
   test_workflow_pip_lint.py
@@ -519,6 +600,7 @@ tools/
   check_approval_duplicate.py
   check_branch_name.py
   check_ci_review_contract.py
+  check_copilot_instruction_contract.py
   check_python_syntax.py
   check_role_name_leaks.py
   check_ruff_lockstep.py

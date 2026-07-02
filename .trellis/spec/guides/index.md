@@ -15,5 +15,5 @@ checking the shape of a change before editing. Sources:
 Before committing a convention change, ensure the durable rule is captured in
 the backend specs with source paths rather than only in chat, a task note, or a
 platform-specific adapter. Sources: `.trellis/spec/amc/backend/documentation-review.md`;
-`.trellis/tasks/06-25-consolidate-agent-docs-trellis/prd.md`;
+`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/prd.md`;
 `.agents/`; `.codex/`; `.claude/`; `.gemini/`; `.github/`; `.opencode/`.

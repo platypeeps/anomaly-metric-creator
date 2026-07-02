@@ -113,7 +113,7 @@ The Kubernetes facade must be backed by `resource_snapshot()` and
 `SimulationMutations`, not a second resource model. It includes discovery,
 Table responses, core resources, workloads, metrics, authorization reviews,
 pod logs, and Helm-shaped release Secret storage for Helm 4 compatibility.
-Sources: `README.md`; `CLAUDE.md`; `docs/server-roadmap.md`;
+Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_kubernetes.py`;
 `src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.

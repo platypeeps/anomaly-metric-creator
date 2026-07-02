@@ -35,7 +35,7 @@ remote review loop.
   `astral-sh/ruff-pre-commit` rev in lockstep.
 - Direct third-party workflow installs must use `python -m pip install` or
   `uv pip install` with exact `==` pins.
-- CI cadence changes should update `scripts/classify_ci_changes.sh`,
+- CI cadence changes should update `scripts/classify-ci-changes.sh`,
   `.github/workflows/ci.yml`, `docs/DEVELOPMENT_CYCLE.md`, and the Trellis
   testing-quality spec together.
 - Review-pack adapters should point to Trellis specs and scripts rather than
@@ -43,8 +43,8 @@ remote review loop.
 
 ## Documentation Drift
 
-- README and `docs/server-roadmap.md` must move completed server-mode work out
-  of future/planned language in the same PR as the implementation.
+- README and server-mode Trellis task PRDs must move completed work out of
+  future/planned language in the same PR as the implementation.
 - PR descriptions should name every behavior change and explain whether the
   quick local gate, full local gate, remote full CI, or all of them were run.
 - When Copilot flags a valid repeat issue, prefer a mechanical lint/test if the

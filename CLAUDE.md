@@ -123,7 +123,7 @@ the inline debug shell. `server_ops.py` owns the ops simulation implementation:
 scenario profiles, simulator state, command parsing/rendering, resource
 snapshots, Kubernetes-compatible API objects, and Helm release Secret encoding.
 `server_commands.py`, `server_kubernetes.py`, and `server_helm.py` are focused
-facades over those ops surfaces for the roadmap boundaries. `server.py`
+facades over those ops surfaces for compatibility boundaries. `server.py`
 intentionally re-exports their public names for compatibility with existing
 tests and ad-hoc imports.
 Offline trace-bundle analysis lives in `trace_bundle.py` and imports
@@ -332,9 +332,11 @@ records carry only the always-on `response_headers` / `cf_ray`
 diagnostics, so a failing endpoint cannot re-serialize a full gauge
 batch into the log on every retry. Allowlist + round-trip coverage
 lives in `tests/test_redact_sensitive_headers.py`, and
-`tests/test_cli.py::test_otel_http_error_activity_log_includes_response_headers`
-+ `tests/test_otel_gauges.py::test_stream_otel_gauges_http_error_activity_log_includes_response_headers`
-exercise the redaction through the live HTTP error path.
+`test_otel_http_error_activity_log_includes_response_headers` in
+`tests/test_cli.py` plus
+`test_stream_otel_gauges_http_error_activity_log_includes_response_headers` in
+`tests/test_otel_gauges.py` exercise the redaction through the live HTTP error
+path.
 
 ### Combine step
 
@@ -1739,8 +1741,9 @@ In `tests/conftest.py`:
    `tests/test_registry.py` (component coverage, metric count) and several
    `tests/test_correctness.py` checks.
 4. `DEFAULT_METRIC_COUNT[name]` — historic per-component default count. Drives
-   `tests/test_cli.py::test_metrics_per_component_default_matches_legacy_columns`
-   and the default-emitted-subset checks in `tests/test_correctness.py`.
+   `test_metrics_per_component_default_matches_legacy_columns` in
+   `tests/test_cli.py` and the default-emitted-subset checks in
+   `tests/test_correctness.py`.
 
 To add anomalies for the new component, add `Scenario` entries to `SCENARIOS` that
 reference it in `primary_specs` or `cascade_specs`, and list it in

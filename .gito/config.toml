@@ -1,0 +1,31 @@
+# SD AI Command Pack Gito project configuration.
+#
+# Gito reads this repo-local file from .gito/config.toml and merges it with
+# Gito's bundled defaults. Keep provider selection and credentials in
+# ~/.gito/.env or process environment variables, not in this committed file.
+
+retries = 3
+
+exclude_files = [
+  ".github/**",
+  ".claude/**",
+  ".codex/**",
+  ".gemini/**",
+  ".opencode/**",
+  ".agents/**",
+  ".build/**",
+  ".git/**",
+  ".pytest_cache/**",
+  ".obsidian-kb/**",
+  ".trellis/**",
+  ".ruff_cache/**",
+  ".venv/**",
+  ".sd-ai-command-pack/**",
+  "node_modules/**",
+]
+
+[prompt_vars]
+requirements = """
+- Treat copied Trellis and sd-ai-command-pack files as tooling/generated surfaces unless the change intentionally updates their source or install contract.
+- Prefer findings about behavior, security, data integrity, and maintainability over wording or style feedback in copied command-pack files.
+"""

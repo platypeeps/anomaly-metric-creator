@@ -60,7 +60,7 @@ command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
 `server_debug_ui.py` for inline HTML/CSS/JS; `server_commands.py`,
 `server_kubernetes.py`, and `server_helm.py` for focused facades. Sources:
-`CLAUDE.md`; `docs/server-roadmap.md`; `src/anomaly_metric_creator/server.py`;
+`CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
@@ -89,7 +89,7 @@ Mutable simulator state is an overlay on top of baseline scenario profiles.
 Scale, restart, delete, generic resource, event, and Helm release mutations
 must layer through `SimulationMutations`; do not write command/UI-only state
 back into frozen `Scenario` entries or generated CSV rows. Sources: `CLAUDE.md`;
-`README.md`; `docs/server-roadmap.md`;
+`README.md`;
 `src/anomaly_metric_creator/server_mutations.py`;
 `src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`.
 

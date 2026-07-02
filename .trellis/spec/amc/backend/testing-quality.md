@@ -94,16 +94,19 @@ Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 Additional mechanical guards catch recent review-churn patterns before PR
 review: syntax-only `ast.parse` over Python files, Ruff F841 unused locals for
 runtime/tools/hooks, agent-hook exception-shape checks, Trellis placeholder
-and journal/index commit-list consistency checks, and trace-payload validation
-anti-pattern checks. Keep these hooks stdlib-only where they are local scripts,
-with the documented `0`/`1`/`2` exit contract and acceptance tests over both
-temporary fixtures and the live repo tree. Sources: `.pre-commit-config.yaml`;
+and journal/index commit-list consistency checks, Copilot instruction contract
+checks, and trace-payload validation anti-pattern checks. Keep these hooks
+stdlib-only where they are local scripts, with the documented `0`/`1`/`2` exit
+contract and acceptance tests over both temporary fixtures and the live repo
+tree. Sources: `.pre-commit-config.yaml`;
 `tools/check_python_syntax.py`;
 `tools/check_agent_hook_exceptions.py`; `tools/check_trellis_placeholders.py`;
+`tools/check_copilot_instruction_contract.py`;
 `tools/check_trace_payload_antipatterns.py`;
 `tests/test_python_syntax_lint.py`;
 `tests/test_agent_hook_exception_lint.py`;
 `tests/test_trellis_placeholder_lint.py`;
+`tests/test_copilot_instruction_contract.py`;
 `tests/test_trace_payload_antipatterns_lint.py`.
 
 Ruff is pinned in two places that must stay in lockstep: the `ruff==` dev-extra
@@ -114,36 +117,48 @@ pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 
 ## Local and Remote Review Gates
 
-Use `scripts/trellis-full-check.sh` as the local review gate rather than
-manually assembling the recurring lint/test list. The default
-`TRELLIS_FULL_CHECK_LEVEL=full` runs deterministic whitespace and shell checks,
-Python syntax/workflow/Trellis/trace guards, CI/review cadence contract checks,
-ruff lockstep, `ruff check tests/`, console-script smoke coverage, focused
-review-churn tests, focused server compatibility tests, and the heavy/non-heavy
-pytest split. Use
-`TRELLIS_FULL_CHECK_LEVEL=quick` while iterating when the full pytest split
-would be premature. Use `TRELLIS_FULL_CHECK_PRISM_COMPARE`,
-`TRELLIS_FULL_CHECK_PRISM_PROVIDER`, or `TRELLIS_FULL_CHECK_PRISM_MODEL` to
-pass Prism model-selection flags without editing the script; verify effective
-model selection when global Prism compare config is also present.
-Unexpected non-finding, non-authentication Prism failures retry once by default
-via `TRELLIS_FULL_CHECK_PRISM_RETRIES`; review findings and
-authentication/config failures keep their existing fail/skip behavior.
-Sources: `scripts/trellis-full-check.sh`;
-`tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
-`tests/test_ci_review_contract.py`; `tests/test_python_syntax_lint.py`;
+Use `scripts/sd-ai-command-pack-full-check.sh` as the local review gate rather than
+manually assembling the recurring lint/test list. The pack-provided script runs
+deterministic whitespace checks, the shared review preflight through
+`scripts/sd-ai-command-pack-review-preflight.mjs`, AMC's repo-local review
+preflight through `scripts/check-review-preflight.mjs`, copied/generated scope
+checks through `scripts/sd-ai-command-pack-review-scope.sh`, the structural
+install audit through `scripts/sd-ai-command-pack-install-audit.py`,
+current-diff CI classification, configured package scripts when present, and
+optional Prism/Gito review. AMC's repo-local review preflight runs the CI/review
+cadence contract guard, the Copilot instruction contract guard, the PR-body
+scope guard, and focused review-churn tests. Use
+`SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` or
+`SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0` to skip optional AI review while
+iterating. Use `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON`,
+`SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_MAX_FINDINGS`, or
+`SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES` to steer Prism without editing the script.
+Sources: `scripts/sd-ai-command-pack-full-check.sh`;
+`scripts/sd-ai-command-pack-review-preflight.mjs`;
+`scripts/check-review-preflight.mjs`;
+`scripts/sd-ai-command-pack-review-scope.sh`;
+`scripts/sd-ai-command-pack-install-audit.py`;
+`tools/check_ci_review_contract.py`;
+`tools/check_copilot_instruction_contract.py`;
+`scripts/sd-ai-command-pack-pr-body-scope.py`;
+`.sd-ai-command-pack/pr-body-scope.json`;
+`tests/test_ci_change_classifier.py`;
+`tests/test_ci_review_contract.py`;
+`tests/test_copilot_instruction_contract.py`;
+`tests/test_pr_body_scope_lint.py`;
+`tests/test_python_syntax_lint.py`;
 `tests/test_workflow_pip_lint.py`; `tests/test_trellis_placeholder_lint.py`;
 `tests/test_trace_payload_antipatterns_lint.py`; `tests/test_server.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
 
 GitHub CI must keep the stable aggregate branch-protection context named
-`test`, while `scripts/classify_ci_changes.sh` selects the cheapest safe lane:
+`test`, while `scripts/classify-ci-changes.sh` selects the cheapest safe lane:
 lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
 test for ordinary PR update churn that still touches app paths, and the full
 Python 3.11 / 3.12 matrix for app-required opened/reopened/ready PRs,
 `full-ci` label runs,
 workflow/dependency changes, manual dispatch, and `main` pushes. Sources:
-`.github/workflows/ci.yml`; `scripts/classify_ci_changes.sh`;
+`.github/workflows/ci.yml`; `scripts/classify-ci-changes.sh`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
@@ -153,8 +168,14 @@ Advanced Security `CodeQL` context on the latest commit; do not remove the
 Socket should keep a visible PR check but fast-skip unless
 dependency/security-relevant files changed or full CI was requested. Sources:
 `.github/workflows/codeql.yml`; `.github/workflows/socket.yml`;
-`scripts/classify_ci_changes.sh`; `tools/check_ci_review_contract.py`;
+`scripts/classify-ci-changes.sh`; `tools/check_ci_review_contract.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
+
+Dependabot auto-merge should enable GitHub auto-merge for patch/minor updates
+without trying to approve the pull request with `GITHUB_TOKEN`, because this
+repo's workflow token is not allowed to create PR reviews. Sources:
+`.github/workflows/dependabot-auto-merge.yml`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
 
 ## Review Checklist
 

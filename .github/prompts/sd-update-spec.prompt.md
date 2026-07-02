@@ -1,0 +1,16 @@
+---
+# description is shown by GitHub prompt pickers; mode: agent means the prompt can use tools and run an interactive workflow.
+description: Run the Software Delivery (SD) update-spec workflow for repository knowledge artifacts.
+mode: agent
+---
+
+# SD Update Spec
+
+In this pack, SD means Software Delivery. A skill is a project-installed Markdown instruction bundle resolved by the agent's trusted installed-skill resolver.
+
+Run the Software Delivery (SD) update-spec workflow for the current repository. This delegates to Trellis update-spec, then refreshes pack-owned repository knowledge artifacts such as `.obsidian-kb` links and dashboard content.
+
+1. Resolve the `sd-update-spec` skill by name using the agent's trusted skill discovery mechanism for installed skills.
+2. If that skill is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, or requires unavailable tools, stop and report the exact blocker.
+3. Use the skill as the primary instructions. It is the source of truth for Trellis update-spec delegation and pack-specific repository knowledge extensions.
+4. Report the actions taken, files changed or generated, artifacts produced, validation run, and any skipped or failed step.

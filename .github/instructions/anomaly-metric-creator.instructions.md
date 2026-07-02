@@ -21,7 +21,7 @@ specifics.
 Prefer local evidence before asking for another remote review or broad GitHub
 Actions run. The repo's stable branch-protection check is the aggregate `test`
 job; `.github/workflows/ci.yml` chooses a lightweight, quick, or full lane via
-`scripts/classify_ci_changes.sh`. `tools/check_ci_review_contract.py` guards
+`scripts/classify-ci-changes.sh`. `tools/check_ci_review_contract.py` guards
 the workflow/script/doc anchors that keep that cadence from drifting. CodeQL is
 the exception to the cheap-by-default PR update rule: branch protection
 requires the GitHub Advanced Security `CodeQL` context on the latest commit, so
@@ -37,9 +37,69 @@ check is changed at the same time.
   workflow/dependency changes, workflow dispatch, and `main` pushes, expect the
   full Python 3.11/3.12 matrix and heavy/non-heavy pytest split.
 - Before a final remote Copilot pass, prefer a local
-  `bash scripts/trellis-full-check.sh` run. During iteration,
-  `TRELLIS_FULL_CHECK_LEVEL=quick bash scripts/trellis-full-check.sh` is the
-  cheaper local guard.
+  `bash scripts/sd-ai-command-pack-full-check.sh` run. During iteration, use
+  `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
+  to skip optional AI review while keeping the deterministic local guards.
+
+## Review-cycle reduction
+
+Before posting a repeated inline comment, check whether newer commits or tests
+in the same PR already address the finding. Prefer one grouped comment per
+helper, script, or contract when several sibling edge cases share the same root
+cause.
+
+For new parsers, validators, shell guards, generated-artifact checks, and
+review-tooling scripts, review against the recurring edge-case matrix before
+asking for another remote pass: duplicate entries, missing counterpart entries,
+index-only/file-only rows, invalid encoding, empty values, flag-looking values,
+wildcard namespaces, invalid owner/repo slugs, missing paths, and unintended
+whole-repo scans.
+
+For docs, skills, prompts, CI, and Trellis changes, check lockstep across
+`.trellis/spec`, `.agents/skills`, `.github/prompts`,
+`.github/instructions`, `.pre-commit-config.yaml`,
+`scripts/classify-ci-changes.sh`, `tools/check_ci_review_contract.py`,
+`tools/check_copilot_instruction_contract.py`,
+`scripts/sd-ai-command-pack-install-audit.py`,
+`scripts/sd-ai-command-pack-pr-body-scope.py`,
+`.sd-ai-command-pack/pr-body-scope.json`, and focused tests. When the PR
+description is incomplete, leave one top-level scope comment naming the exact
+changed paths or behaviors that must be added instead of separate inline
+comments for each omitted artifact. Match the PR-body scope checker by asking
+for the relevant `Automation scope:`, `CI/review scope:`,
+`Tooling/generated scope:`, `Docs/user-facing scope:`, or
+`Runtime/server scope:` section.
+
+## Generated and copied adapter files
+
+Treat files copied in by Trellis or by `platypeeps/sd-ai-command-pack` as
+generated or adapter content. Do not spend review comments on line-level
+wording, duplicated project conventions, or broad refactors inside those files
+when a PR is only syncing them into the repo. Review the canonical source,
+local wiring, and executable integration instead.
+
+Trellis-copied GitHub adapters include `.github/agents/trellis-*.agent.md`,
+`.github/skills/trellis-*/**`, `.github/copilot/hooks.json`,
+`.github/copilot/hooks/**`, `.github/hooks/trellis.json`, and Trellis command
+or prompt entry points under `.github/prompts/`. SD command-pack copies include
+`.agents/skills/sd-*/**`, `.github/prompts/sd-*.prompt.md`,
+`.gemini/commands/sd/**`, `.opencode/commands/sd-*.md`,
+`.sd-ai-command-pack/installed-targets.txt`, `docs/SD_AI_COMMAND_PACK.md`,
+`scripts/sd-ai-command-pack-full-check.sh`,
+`scripts/sd-ai-command-pack-housekeeping.sh`,
+`scripts/sd-ai-command-pack-install-audit.py`,
+`scripts/sd-ai-command-pack-pr-body-scope.py`,
+`scripts/sd-ai-command-pack-review-learnings.py`,
+`scripts/sd-ai-command-pack-review-local.sh`,
+`scripts/sd-ai-command-pack-review-scope.sh`, and
+`scripts/sd-ai-command-pack-update-spec-kb.py`.
+
+Only comment on those copied files when the PR intentionally changes the
+generator/source pack contract, the local adapter wiring is broken, a copied
+script fails its repo tests or shell syntax checks, or the copied content
+contradicts the canonical Trellis specs. In those cases, point the fix at the
+source convention, source pack, or local integration point rather than asking
+for project-specific rules to be hand-edited into each copied adapter.
 
 ## Where to look first by diff shape
 

@@ -1,4 +1,4 @@
-"""Focused tests for ``scripts/trellis-full-check.sh`` review-tooling behavior."""
+"""Focused tests for ``scripts/sd-ai-command-pack-full-check.sh`` review-tooling behavior."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "trellis-full-check.sh"
+SCRIPT = REPO_ROOT / "scripts" / "sd-ai-command-pack-full-check.sh"
 
 
 def _write(path: Path, text: str, *, executable: bool = False) -> None:
@@ -29,9 +29,9 @@ def _make_full_check_repo(tmp_path: Path, *, prism_statuses: str) -> tuple[Path,
     repo.mkdir()
 
     (repo / "scripts").mkdir()
-    shutil.copy2(SCRIPT, repo / "scripts" / "trellis-full-check.sh")
+    shutil.copy2(SCRIPT, repo / "scripts" / "sd-ai-command-pack-full-check.sh")
     _write(
-        repo / "scripts" / "classify_ci_changes.sh",
+        repo / "scripts" / "classify-ci-changes.sh",
         """
         #!/usr/bin/env bash
         printf '%s\n' \
@@ -45,10 +45,30 @@ def _make_full_check_repo(tmp_path: Path, *, prism_statuses: str) -> tuple[Path,
         """,
         executable=True,
     )
-    _write(repo / "scripts" / "trellis-housekeeping.sh", "#!/usr/bin/env bash\n:", executable=True)
+    _write(repo / "scripts" / "check-review-preflight.mjs", "// fixture\n")
+    _write(
+        repo / "scripts" / "sd-ai-command-pack-review-scope.sh",
+        "#!/usr/bin/env bash\nprintf scope-ran > scope-ran.txt\n",
+        executable=True,
+    )
     _write(repo / "marker.txt", "before\n")
 
     bin_dir = repo / "bin"
+    _write(
+        bin_dir / "node",
+        """
+        #!/usr/bin/env bash
+        if [ "$1" = "-e" ]; then
+          exit 0
+        fi
+        if [ "$1" = "scripts/check-review-preflight.mjs" ]; then
+          printf preflight-ran > review-preflight-ran.txt
+          exit 0
+        fi
+        exit 0
+        """,
+        executable=True,
+    )
     _write(bin_dir / "python", "#!/usr/bin/env bash\nexit 0\n", executable=True)
     _write(bin_dir / "pytest", "#!/usr/bin/env bash\nexit 0\n", executable=True)
     _write(bin_dir / "ruff", "#!/usr/bin/env bash\nexit 0\n", executable=True)
@@ -97,25 +117,22 @@ def _run_full_check(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     for key in list(env):
-        if key.startswith("TRELLIS_FULL_CHECK_PRISM"):
+        if key.startswith("SD_AI_COMMAND_PACK_FULL_CHECK_PRISM"):
             env.pop(key)
     env.update(
         {
             "PATH": f"{repo / 'bin'}{os.pathsep}{env['PATH']}",
             "PRISM_COUNT_FILE": str(count_file),
             "PRISM_STATUSES": statuses,
-            "TRELLIS_FULL_CHECK_BASE_REF": "HEAD",
-            "TRELLIS_FULL_CHECK_LEVEL": "quick",
-            "TRELLIS_FULL_CHECK_PYTHON": str(repo / "bin" / "python"),
-            "TRELLIS_FULL_CHECK_PYTEST": str(repo / "bin" / "pytest"),
-            "TRELLIS_FULL_CHECK_RUFF": str(repo / "bin" / "ruff"),
+            "SD_AI_COMMAND_PACK_FULL_CHECK_BASE_REF": "HEAD",
+            "SD_AI_COMMAND_PACK_FULL_CHECK_SKIP_NPM": "1",
         }
     )
     if extra_env:
         env.update(extra_env)
 
     return subprocess.run(
-        ["bash", "scripts/trellis-full-check.sh"],
+        ["bash", "scripts/sd-ai-command-pack-full-check.sh"],
         cwd=repo,
         capture_output=True,
         env=env,
@@ -129,15 +146,28 @@ def _prism_count(path: Path) -> int:
     return int(path.read_text(encoding="utf-8").strip())
 
 
-def test_prism_unexpected_failure_retries_then_succeeds(tmp_path: Path) -> None:
+def test_review_preflight_runs_when_present(tmp_path: Path) -> None:
+    repo, count_file = _make_full_check_repo(tmp_path, prism_statuses="0")
+
+    result = _run_full_check(
+        repo,
+        count_file,
+        statuses="0",
+        extra_env={"SD_AI_COMMAND_PACK_FULL_CHECK_PRISM": "0"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (repo / "review-preflight-ran.txt").read_text(encoding="utf-8") == "preflight-ran"
+
+
+def test_prism_provider_model_config_failure_is_optional(tmp_path: Path) -> None:
     repo, count_file = _make_full_check_repo(tmp_path, prism_statuses="4,0")
 
     result = _run_full_check(repo, count_file, statuses="4,0")
 
     assert result.returncode == 0, result.stderr
-    assert _prism_count(count_file) == 2
-    assert "retrying because non-finding, non-authentication failures can be transient" in result.stderr
-    assert "attempt 2 of 2" in result.stderr
+    assert _prism_count(count_file) == 1
+    assert "Prism provider/model configuration failed" in result.stderr
 
 
 def test_prism_findings_are_not_retried(tmp_path: Path) -> None:
@@ -157,25 +187,26 @@ def test_optional_prism_auth_failure_is_not_retried(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert _prism_count(count_file) == 1
-    assert "Prism authentication/configuration failed" in result.stderr
+    assert "Prism provider authentication/configuration failed" in result.stderr
 
 
-def test_invalid_prism_retry_count_exits_two_before_running_prism(tmp_path: Path) -> None:
+def test_required_review_preflight_missing_exits_before_prism(tmp_path: Path) -> None:
     repo, count_file = _make_full_check_repo(tmp_path, prism_statuses="0")
+    (repo / "scripts" / "check-review-preflight.mjs").unlink()
 
     result = _run_full_check(
         repo,
         count_file,
         statuses="0",
-        extra_env={"TRELLIS_FULL_CHECK_PRISM_RETRIES": "sometimes"},
+        extra_env={"SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT": "required"},
     )
 
-    assert result.returncode == 2
+    assert result.returncode == 127
     assert _prism_count(count_file) == 0
-    assert "TRELLIS_FULL_CHECK_PRISM_RETRIES must be a non-negative integer" in result.stderr
+    assert "Review preflight is required" in result.stderr
 
 
-def test_prism_compare_override_is_passed_to_prism(tmp_path: Path) -> None:
+def test_prism_fail_on_override_is_passed_to_prism(tmp_path: Path) -> None:
     repo, count_file = _make_full_check_repo(tmp_path, prism_statuses="0")
     args_file = repo / "prism-args.txt"
 
@@ -185,17 +216,18 @@ def test_prism_compare_override_is_passed_to_prism(tmp_path: Path) -> None:
         statuses="0",
         extra_env={
             "PRISM_ARGS_FILE": str(args_file),
-            "TRELLIS_FULL_CHECK_PRISM_COMPARE": "openai:gpt-5.2",
+            "SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON": "medium",
         },
     )
 
     assert result.returncode == 0, result.stderr
-    assert "--compare openai:gpt-5.2" in args_file.read_text(encoding="utf-8")
+    assert "--fail-on medium" in args_file.read_text(encoding="utf-8")
 
 
-def test_prism_provider_and_model_overrides_are_passed_to_prism(tmp_path: Path) -> None:
+def test_prism_rules_file_is_passed_to_prism(tmp_path: Path) -> None:
     repo, count_file = _make_full_check_repo(tmp_path, prism_statuses="0")
     args_file = repo / "prism-args.txt"
+    _write(repo / ".prism" / "rules.json", "{}\n")
 
     result = _run_full_check(
         repo,
@@ -203,12 +235,9 @@ def test_prism_provider_and_model_overrides_are_passed_to_prism(tmp_path: Path) 
         statuses="0",
         extra_env={
             "PRISM_ARGS_FILE": str(args_file),
-            "TRELLIS_FULL_CHECK_PRISM_PROVIDER": "openai",
-            "TRELLIS_FULL_CHECK_PRISM_MODEL": "gpt-5.2",
         },
     )
 
     args = args_file.read_text(encoding="utf-8")
     assert result.returncode == 0, result.stderr
-    assert "--provider openai" in args
-    assert "--model gpt-5.2" in args
+    assert "--rules .prism/rules.json" in args
