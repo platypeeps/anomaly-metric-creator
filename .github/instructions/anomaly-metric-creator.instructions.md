@@ -28,7 +28,9 @@ advisory on PRs and not a required branch-protection context (`test` and
 `full-ci`-labeled updates are analyzed, plain synchronize events report a
 skipped analysis, and merged code is always analyzed by the push-to-main run.
 CodeQL keeps its `synchronize` trigger so pushes after the `full-ci` label is
-applied re-analyze automatically.
+applied re-analyze automatically. A skipped analysis produces no code-scanning
+summary check, so `CodeQL` must not be re-added as a required context while
+this gating is in place.
 
 - For docs/spec/agent/review-tooling-only diffs, expect the lightweight lane
   and avoid requesting the full test lane unless the content changes a

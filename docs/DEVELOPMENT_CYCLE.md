@@ -76,9 +76,11 @@ keeping the stable aggregate check named `test`.
 
 CodeQL is advisory on PRs and not a required branch-protection context
 (`test` and `socket` are the required checks): it analyzes
-opened/reopened/ready PRs and `full-ci`-labeled updates, skips on plain
-synchronize events, and always analyzes merged code on the push-to-main
-run. Socket keeps a visible
+opened/reopened/ready_for_review PRs and `full-ci`-labeled updates, skips on
+plain synchronize events, and always analyzes merged code on the push-to-main
+run. A skipped analysis produces no code-scanning summary check, so `CodeQL`
+must not be re-added as a required context while this gating is in place.
+Socket keeps a visible
 PR check, but fast-skips unless dependency/security-relevant files changed or
 full CI was requested. Dependabot auto-merge enables GitHub auto-merge for
 patch/minor updates, but does not try to approve the PR with `GITHUB_TOKEN`;
