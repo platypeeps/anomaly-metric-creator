@@ -166,10 +166,12 @@ declared floor without a dedicated CI lane. Sources:
 
 CodeQL analyzes opened/reopened/ready_for_review PRs and `full-ci`-labeled
 updates; plain `synchronize` events keep the trigger but report a skipped
-analysis job, which satisfies the required GitHub Advanced Security `CodeQL`
-context on the head commit, and merged code is always analyzed by the
-push-to-main run. Do not remove the `synchronize` trigger itself: the check
-run must exist on every head SHA.
+analysis job, and merged code is always analyzed by the push-to-main run.
+CodeQL is advisory on PRs: branch protection requires only the `test` and
+`socket` contexts (a skipped analysis produces no code-scanning summary
+check, so `CodeQL` must not be a required context while this gating is in
+place). Keep the `synchronize` trigger itself: once `full-ci` is applied,
+later pushes to the PR re-analyze automatically.
 Socket should keep a visible PR check but fast-skip unless
 dependency/security-relevant files changed or full CI was requested. Sources:
 `.github/workflows/codeql.yml`; `.github/workflows/socket.yml`;

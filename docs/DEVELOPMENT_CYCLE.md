@@ -74,8 +74,13 @@ keeping the stable aggregate check named `test`.
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
 | `test (py3.12)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the py3.12 test lane and heavy/non-heavy pytest split. |
 
-CodeQL runs on PR updates because branch protection requires the GitHub
-Advanced Security `CodeQL` context on the latest commit. Socket keeps a visible
+CodeQL is advisory on PRs and not a required branch-protection context
+(`test` and `socket` are the required checks): it analyzes
+opened/reopened/ready_for_review PRs and `full-ci`-labeled updates, skips on
+plain synchronize events, and always analyzes merged code on the push-to-main
+run. A skipped analysis produces no code-scanning summary check, so `CodeQL`
+must not be re-added as a required context while this gating is in place.
+Socket keeps a visible
 PR check, but fast-skips unless dependency/security-relevant files changed or
 full CI was requested. Dependabot auto-merge enables GitHub auto-merge for
 patch/minor updates, but does not try to approve the PR with `GITHUB_TOKEN`;

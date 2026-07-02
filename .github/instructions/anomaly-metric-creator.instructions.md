@@ -22,12 +22,15 @@ Prefer local evidence before asking for another remote review or broad GitHub
 Actions run. The repo's stable branch-protection check is the aggregate `test`
 job; `.github/workflows/ci.yml` chooses a lightweight, quick, or full lane via
 `scripts/classify-ci-changes.sh`. `tools/check_ci_review_contract.py` guards
-the workflow/script/doc anchors that keep that cadence from drifting. CodeQL keeps
-its `synchronize` trigger so the required GitHub Advanced Security `CodeQL`
-context exists on every head commit, but plain PR-update analysis is gated
-behind the `full-ci` label: ungated synchronize events report a skipped
-analysis (which satisfies the required context), and merged code is always
-analyzed by the push-to-main run.
+the workflow/script/doc anchors that keep that cadence from drifting. CodeQL is
+advisory on PRs and not a required branch-protection context (`test` and
+`socket` are the required checks): opened/reopened/ready_for_review PRs and
+`full-ci`-labeled updates are analyzed, plain synchronize events report a
+skipped analysis, and merged code is always analyzed by the push-to-main run.
+CodeQL keeps its `synchronize` trigger so pushes after the `full-ci` label is
+applied re-analyze automatically. A skipped analysis produces no code-scanning
+summary check, so `CodeQL` must not be re-added as a required context while
+this gating is in place.
 
 - For docs/spec/agent/review-tooling-only diffs, expect the lightweight lane
   and avoid requesting the full test lane unless the content changes a

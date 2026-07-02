@@ -2239,12 +2239,12 @@ run in CI):
   Socket never lands. Needs repo `allow_auto_merge` plus branch protection
   requiring those checks.
 - `.github/workflows/codeql.yml` — explicit CodeQL analysis for both
-  `python` and `actions`. Branch protection requires the GitHub Advanced
-  Security app's aggregate `CodeQL` check; relying only on default setup can
-  leave a PR stuck at "Expected — Waiting for status to be reported" when the
-  dynamic run uploads only an `Analyze (python)` result and never emits the
-  aggregate context. Keep the workflow name and real CodeQL upload path in
-  place rather than replacing it with a synthetic status.
+  `python` and `actions`, advisory on PRs (not a required branch-protection
+  context; `test` and `socket` are the required checks). Analysis runs on
+  opened/reopened/ready PRs and `full-ci`-labeled updates, skips on plain
+  synchronize events, and always runs on push to `main`. A skipped analysis
+  produces no code-scanning summary check, so `CodeQL` must not be made a
+  required context while this gating is in place.
 - `.github/workflows/socket.yml` — a Socket supply-chain scan run as a
   sidecar `socket` check (`socketcli`), flagging risky dependency
   *changes* (install scripts, new capabilities, typosquats, compromised
