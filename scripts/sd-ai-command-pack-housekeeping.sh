@@ -906,8 +906,11 @@ self_test_scenario() {
     remote_branch_head_oid() { printf 'headoid\n'; }
     unresolved_review_thread_count() { printf '%s\n' "$unresolved"; }
     git() {
-      # Leading-paren case patterns keep bash 3.2 (macOS /bin/bash) from
-      # misparsing the unbalanced ')' inside this command substitution.
+      # This stub is defined inside the scenario output-capture command
+      # substitution, where bash 3.2 misparses case patterns that end in a
+      # bare closing parenthesis. The leading-paren pattern form avoids
+      # that. Note: comments here must avoid apostrophes and literal
+      # parentheses, which also confuse the substitution scanner.
       case "$*" in
         ("rev-parse --verify refs/heads/feature^{commit}")
           printf 'headoid\n'
