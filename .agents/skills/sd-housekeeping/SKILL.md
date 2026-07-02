@@ -132,6 +132,10 @@ for the operator; they do not by themselves mean this housekeeping run failed.
 - `--keep-remote-branch`: delete the merged local branch but leave the remote
   branch on GitHub.
 - `--remote <name>`: use a remote other than `origin`.
+- `--self-test`: verify the installed script's merge-gate contract against
+  stubbed scenarios and exit. Hermetic (no git, gh, or network access), so
+  consumer repos can run it from CI instead of maintaining bespoke contract
+  tests over the vendored script.
 
 ## Final Report
 

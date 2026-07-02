@@ -450,6 +450,13 @@ report the current-stream clean state plus anomalies. Repo-wide open PRs, open
 issues, and active Trellis tasks are reported in a separate inventory section
 rather than blockers for this cleanup.
 
+The installed script also supports
+`bash scripts/sd-ai-command-pack-housekeeping.sh --self-test`, which verifies
+the vendored copy's merge-gate contract against stubbed scenarios and exits.
+It is hermetic (no git, gh, or network access), so repos can run it from CI or
+a test suite instead of maintaining bespoke contract tests over the vendored
+script; it fails non-zero if any gate scenario misbehaves.
+
 A clean current-stream housekeeping run should end with:
 
 ```text

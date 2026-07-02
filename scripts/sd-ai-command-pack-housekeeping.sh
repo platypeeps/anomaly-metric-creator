@@ -3,6 +3,7 @@ set -euo pipefail
 
 REMOTE="origin"
 DRY_RUN=0
+SELF_TEST=0
 DELETE_REMOTE_BRANCH=1
 AUTO_MERGE=1
 MERGE_STRATEGY="${SD_AI_COMMAND_PACK_HOUSEKEEPING_MERGE_STRATEGY:-merge}"
@@ -28,6 +29,9 @@ Options:
   --merge-strategy <name> Merge strategy for ready open PRs: merge, squash, or rebase. Defaults to merge.
   --keep-remote-branch   Leave the merged remote branch on GitHub.
   --remote <name>        Remote to fetch, prune, pull, and clean. Defaults to origin.
+  --self-test            Verify this installed script's merge-gate contract
+                         against stubbed scenarios (hermetic: no git, gh, or
+                         network access) and exit.
   -h, --help             Show this help.
 
 Environment:
@@ -121,6 +125,9 @@ parse_args() {
         ;;
       --keep-remote-branch)
         DELETE_REMOTE_BRANCH=0
+        ;;
+      --self-test)
+        SELF_TEST=1
         ;;
       --remote)
         shift
@@ -863,10 +870,112 @@ print_report() {
   return 1
 }
 
+# Hermetic self-test of the auto-merge gate contract. Every collaborator that
+# would touch git, gh, or the network is overridden inside a subshell, so the
+# scenarios exercise exactly the vendored gate logic in this file. Consumers
+# run `bash scripts/sd-ai-command-pack-housekeeping.sh --self-test` from CI to
+# verify their installed copy instead of maintaining bespoke contract tests.
+self_test_scenario() {
+  local name="$1" expectation="$2" is_draft="$3" merge_state="$4"
+  local blocking="$5" successful="$6" unresolved="$7"
+  local output merged=0
+
+  output="$(
+    # Guarantee hermeticity rather than assume it: with an empty PATH every
+    # unstubbed external command fails loudly, and gh is stubbed to fail so
+    # future gate logic cannot silently reach GitHub even if PATH leaks.
+    PATH=''
+    DEFAULT_BRANCH=main
+    AUTO_MERGE=1
+    MERGE_STRATEGY=merge
+    GITHUB_REPO_SLUG=owner/repo
+    ANOMALIES=()
+    working_tree_is_clean() { return 0; }
+    have() { return 0; }
+    gh() {
+      printf 'self-test: unexpected gh call: %s\n' "$*" >&2
+      return 1
+    }
+    view_open_pr_readiness_for_branch() {
+      printf '153\tOPEN\t%s\thttps://example.test/pr/153\tfeature\theadoid\tmain\t%s\t%s\t%s\n' \
+        "$is_draft" "$merge_state" "$blocking" "$successful"
+    }
+    remote_branch_head_oid() { printf 'headoid\n'; }
+    unresolved_review_thread_count() { printf '%s\n' "$unresolved"; }
+    git() {
+      # Leading-paren case patterns keep bash 3.2 (macOS /bin/bash) from
+      # misparsing the unbalanced ')' inside this command substitution.
+      case "$*" in
+        ("rev-parse --verify refs/heads/feature^{commit}")
+          printf 'headoid\n'
+          ;;
+        (*)
+          printf 'self-test: unexpected git call: %s\n' "$*" >&2
+          return 1
+          ;;
+      esac
+    }
+    merge_ready_open_pr() {
+      printf 'SELF_TEST_MERGE_EVENT\n'
+      return 0
+    }
+    maybe_merge_ready_open_pr feature
+    printf 'SELF_TEST_ANOMALIES=%s\n' "${ANOMALIES[*]-}"
+  )"
+
+  case "$output" in
+    *SELF_TEST_MERGE_EVENT*) merged=1 ;;
+  esac
+  local anomalies="${output#*SELF_TEST_ANOMALIES=}"
+
+  if [ "$expectation" = merge ]; then
+    if [ "$merged" -eq 1 ] && [ -z "$anomalies" ]; then
+      printf 'self-test: %s: ok\n' "$name"
+      return 0
+    fi
+  else
+    case "$anomalies" in
+      *"skipped auto-merge"*)
+        if [ "$merged" -eq 0 ]; then
+          printf 'self-test: %s: ok\n' "$name"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  printf 'self-test: %s: FAIL (expected %s; merged=%s anomalies=%s)\n' \
+    "$name" "$expectation" "$merged" "$anomalies" >&2
+  return 1
+}
+
+run_self_test() {
+  local failures=0
+
+  self_test_scenario "green executed checks merge" merge false CLEAN 0 2 0 || failures=$((failures + 1))
+  self_test_scenario "skipped lanes do not block" merge false CLEAN 0 1 0 || failures=$((failures + 1))
+  self_test_scenario "blocking checks refuse" refuse false CLEAN 1 3 0 || failures=$((failures + 1))
+  self_test_scenario "zero successful checks refuse" refuse false CLEAN 0 0 0 || failures=$((failures + 1))
+  self_test_scenario "undeterminable counts refuse" refuse false CLEAN unknown unknown 0 || failures=$((failures + 1))
+  self_test_scenario "non-clean merge state refuses" refuse false BLOCKED 0 2 0 || failures=$((failures + 1))
+  self_test_scenario "draft PR refuses" refuse true CLEAN 0 2 0 || failures=$((failures + 1))
+  self_test_scenario "unresolved review threads refuse" refuse false CLEAN 0 2 1 || failures=$((failures + 1))
+
+  if [ "$failures" -ne 0 ]; then
+    printf 'self-test: %s scenario(s) FAILED\n' "$failures" >&2
+    return 1
+  fi
+  printf 'self-test: all scenarios passed\n'
+  return 0
+}
+
 main() {
   local repo_root
 
   parse_args "$@"
+  if [ "$SELF_TEST" -eq 1 ]; then
+    run_self_test
+    exit $?
+  fi
   if ! have git; then
     printf 'error: git not found on PATH\n' >&2
     exit 2
