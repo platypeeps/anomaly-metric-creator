@@ -192,5 +192,105 @@ def test_ready_open_pr_does_not_merge_when_checks_are_not_green(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stderr
-    assert "events=" in result.stdout
-    assert "non-green or undeterminable checks" in result.stdout
+    assert "events=\n" in result.stdout
+    assert "non-green checks" in result.stdout
+
+
+def test_auto_merge_skips_when_no_check_executed_successfully(tmp_path: Path) -> None:
+    events_file = tmp_path / "events.txt"
+    result = _run_harness(
+        tmp_path,
+        """
+        DEFAULT_BRANCH=main
+        START_BRANCH=feature
+        MERGE_STRATEGY=merge
+        GITHUB_REPO_SLUG=owner/repo
+
+        working_tree_is_clean() {
+          return 0
+        }
+        have() {
+          return 0
+        }
+        view_open_pr_readiness_for_branch() {
+          printf '153\\tOPEN\\tfalse\\thttps://example.test/pr/153\\tfeature\\tbefore\\tmain\\tCLEAN\\t0\\t0\\n'
+        }
+        remote_branch_head_oid() {
+          printf 'before\\n'
+        }
+        git() {
+          case "$*" in
+            "rev-parse --verify refs/heads/feature^{commit}")
+              printf 'before\\n'
+              ;;
+            *)
+              printf 'unexpected git call: %s\\n' "$*" >&2
+              return 1
+              ;;
+          esac
+        }
+        gh_pr_merge() {
+          printf 'merge\\n' >> "$EVENTS_FILE"
+          return 0
+        }
+
+        maybe_merge_ready_open_pr feature
+        printf 'events=%s\\n' "$(cat "$EVENTS_FILE" 2>/dev/null || true)"
+        printf 'anomalies=%s\\n' "${ANOMALIES[*]-}"
+        """,
+        env={"EVENTS_FILE": str(events_file)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "events=\n" in result.stdout
+    assert "no successful executed checks" in result.stdout
+
+
+def test_auto_merge_skips_when_check_counts_are_undeterminable(tmp_path: Path) -> None:
+    events_file = tmp_path / "events.txt"
+    result = _run_harness(
+        tmp_path,
+        """
+        DEFAULT_BRANCH=main
+        START_BRANCH=feature
+        MERGE_STRATEGY=merge
+        GITHUB_REPO_SLUG=owner/repo
+
+        working_tree_is_clean() {
+          return 0
+        }
+        have() {
+          return 0
+        }
+        view_open_pr_readiness_for_branch() {
+          printf '153\\tOPEN\\tfalse\\thttps://example.test/pr/153\\tfeature\\tbefore\\tmain\\tCLEAN\\tunknown\\tunknown\\n'
+        }
+        remote_branch_head_oid() {
+          printf 'before\\n'
+        }
+        git() {
+          case "$*" in
+            "rev-parse --verify refs/heads/feature^{commit}")
+              printf 'before\\n'
+              ;;
+            *)
+              printf 'unexpected git call: %s\\n' "$*" >&2
+              return 1
+              ;;
+          esac
+        }
+        gh_pr_merge() {
+          printf 'merge\\n' >> "$EVENTS_FILE"
+          return 0
+        }
+
+        maybe_merge_ready_open_pr feature
+        printf 'events=%s\\n' "$(cat "$EVENTS_FILE" 2>/dev/null || true)"
+        printf 'anomalies=%s\\n' "${ANOMALIES[*]-}"
+        """,
+        env={"EVENTS_FILE": str(events_file)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "events=\n" in result.stdout
+    assert "undeterminable check counts" in result.stdout
