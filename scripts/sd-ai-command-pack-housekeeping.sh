@@ -384,7 +384,7 @@ view_open_pr_readiness_for_branch() {
   local branch="$1"
   gh_pr_view \
     --json number,state,isDraft,url,headRefName,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup \
-    --jq '[.number, .state, .isDraft, .url, .headRefName, .headRefOid, .baseRefName, .mergeStateStatus, ([.statusCheckRollup[]? | select((.__typename == "CheckRun" and (.status != "COMPLETED" or .conclusion != "SUCCESS")) or (.__typename == "StatusContext" and .state != "SUCCESS"))] | length), ([.statusCheckRollup[]?] | length)] | @tsv' \
+    --jq '[.number, .state, .isDraft, .url, .headRefName, .headRefOid, .baseRefName, .mergeStateStatus, ([.statusCheckRollup[]? | select((.__typename == "CheckRun" and (.status != "COMPLETED" or (.conclusion != "SUCCESS" and .conclusion != "SKIPPED" and .conclusion != "NEUTRAL"))) or (.__typename == "StatusContext" and .state != "SUCCESS"))] | length), ([.statusCheckRollup[]? | select((.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion == "SUCCESS") or (.__typename == "StatusContext" and .state == "SUCCESS"))] | length)] | @tsv' \
     -- "$branch" \
     2>/dev/null ||
     true
@@ -503,8 +503,8 @@ maybe_merge_ready_open_pr() {
   local pr_head_oid
   local pr_base
   local pr_merge_state
-  local failed_check_count
-  local total_check_count
+  local blocking_check_count
+  local successful_check_count
   local local_head_oid
   local remote_head_oid
   local unresolved_count
@@ -530,7 +530,7 @@ maybe_merge_ready_open_pr() {
     return 0
   fi
 
-  IFS=$'\t' read -r pr_number pr_state pr_is_draft pr_url pr_head pr_head_oid pr_base pr_merge_state failed_check_count total_check_count <<<"$pr_data"
+  IFS=$'\t' read -r pr_number pr_state pr_is_draft pr_url pr_head pr_head_oid pr_base pr_merge_state blocking_check_count successful_check_count <<<"$pr_data"
   if [ "$pr_state" != "OPEN" ]; then
     return 0
   fi
@@ -565,12 +565,22 @@ maybe_merge_ready_open_pr() {
     add_anomaly "PR #$pr_number merge state is $pr_merge_state, not CLEAN; skipped auto-merge"
     return 0
   fi
-  if ! [[ "$total_check_count" =~ ^[0-9]+$ ]] || [ "$total_check_count" -eq 0 ]; then
-    add_anomaly "PR #$pr_number has no or undeterminable reported checks; skipped auto-merge"
+  # SKIPPED and NEUTRAL check conclusions are intentional lane skips (change
+  # classifiers), so they neither block the merge nor count as green. Blocking
+  # means a run that has not completed or any conclusion other than SUCCESS,
+  # SKIPPED, or NEUTRAL (for example FAILURE, CANCELLED, TIMED_OUT, or
+  # ACTION_REQUIRED). Require at least one executed successful check and zero
+  # blocking checks.
+  if ! [[ "$successful_check_count" =~ ^[0-9]+$ ]] || ! [[ "$blocking_check_count" =~ ^[0-9]+$ ]]; then
+    add_anomaly "PR #$pr_number has undeterminable check counts; skipped auto-merge"
     return 0
   fi
-  if ! [[ "$failed_check_count" =~ ^[0-9]+$ ]] || [ "$failed_check_count" -ne 0 ]; then
-    add_anomaly "PR #$pr_number has non-green or undeterminable checks; skipped auto-merge"
+  if [ "$successful_check_count" -eq 0 ]; then
+    add_anomaly "PR #$pr_number has no successful executed checks; skipped auto-merge"
+    return 0
+  fi
+  if [ "$blocking_check_count" -ne 0 ]; then
+    add_anomaly "PR #$pr_number has non-green checks; skipped auto-merge"
     return 0
   fi
 

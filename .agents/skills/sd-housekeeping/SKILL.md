@@ -48,7 +48,10 @@ This command performs this end-of-stream flow:
    - the local branch head, remote branch head, and PR head are identical
    - the PR is open, not draft, targets the default branch, and has a `CLEAN`
      merge state
-   - the PR has at least one reported check and every reported check is green
+   - at least one executed check succeeded, and no check is blocking: pending,
+     or any conclusion other than success, skipped, or neutral (for example
+     failed, cancelled, or timed out). Checks skipped by change classifiers do
+     not block the merge.
    - GitHub review threads have no unresolved comments
 6. The script merges the PR with `gh pr merge --match-head-commit`. If GitHub
    refuses the merge, report an anomaly instead of forcing the merge.
