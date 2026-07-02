@@ -193,4 +193,4 @@ def test_ready_open_pr_does_not_merge_when_checks_are_not_green(tmp_path: Path) 
 
     assert result.returncode == 0, result.stderr
     assert "events=" in result.stdout
-    assert "non-green or undeterminable checks" in result.stdout
+    assert "non-green checks" in result.stdout
