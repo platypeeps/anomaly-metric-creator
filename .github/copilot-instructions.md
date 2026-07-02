@@ -73,4 +73,10 @@ Use the local-first review cycle:
 - Separate current, non-outdated unresolved findings from
   stale or outdated review threads. Treat copied or generated payloads as
   source and sync-contract review surfaces, not style-review surfaces.
+- On pack refresh PRs (typically titled
+  `refresh sd-ai-command-pack to <version>`), the vendored payload was
+  reviewed upstream in the
+  sd-ai-command-pack repository before release; review this repo's
+  integration (PR metadata, repo-owned files, wiring) rather than
+  re-reviewing the vendored file contents line by line.
 <!-- SD-AI-COMMAND-PACK:COPILOT-GUIDANCE:END -->
