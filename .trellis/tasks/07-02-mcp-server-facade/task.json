@@ -1,0 +1,31 @@
+{
+  "id": "mcp-server-facade",
+  "name": "mcp-server-facade",
+  "title": "Expose an MCP tool surface from amc serve for AI-agent evals",
+  "description": "Umbrella: add a Mezmo-MCP-style streamable-HTTP MCP endpoint (POST /mcp) to amc serve so RCA agents can investigate the generated telemetry (metrics, logs, topology, simulated k8s/Helm state) via MCP tools and be scored against anomalies.csv ground truth, mirroring the mock-mcp-service eval loop. Phased across four subtasks.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "amc",
+  "priority": "P2",
+  "creator": "sdelmas",
+  "assignee": "sdelmas",
+  "createdAt": "2026-07-02",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "chore/sd-command-pack-manifest",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-02-mcp-facade-core",
+    "07-02-mcp-analysis-tools",
+    "07-02-mcp-ops-tools-and-tracing",
+    "07-02-mcp-eval-mode-hardening"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
