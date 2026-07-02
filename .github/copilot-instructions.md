@@ -42,6 +42,7 @@ Use the local-first review cycle:
   primary subject, it leaks a secret, breaks obvious syntax or repository
   wiring, or directly contradicts the PR's stated tooling goal. Copied
   payloads match these families:
+  <!-- narrow-globs: skip - cross-platform generated payload families include optional platform anchors. -->
   - `.trellis/scripts/**` and `.trellis/agents/**`
   - `**/skills/trellis-*/**` and `**/skills/sd-*/**` under `.agents/`,
     `.claude/`, `.codex/`, `.cursor/`, `.gemini/`, `.github/`, `.opencode/`

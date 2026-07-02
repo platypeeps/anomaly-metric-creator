@@ -1121,7 +1121,10 @@ def create_copies(root: Path, sources: list[Path]) -> tuple[int, int, list[str]]
             copied += 1
             continue
 
-        shutil.copy2(source, copy)
+        # Sources are filtered to regular non-symlink files during discovery;
+        # follow_symlinks=False keeps that contract explicit so a future
+        # symlinked source cannot smuggle out-of-repo content into the KB.
+        shutil.copy2(source, copy, follow_symlinks=False)
         copied += 1
 
     return copied, removed, conflicts

@@ -208,10 +208,14 @@ def audit_structural_state(root: Path, targets: set[str]) -> list[str]:
 
 def _is_excluded_scan_path(relative_path: Path) -> bool:
     path_text = relative_path.as_posix()
-    return any(
-        path_text == excluded or path_text.startswith(f"{excluded}/")
-        for excluded in REFERENCE_SCAN_EXCLUDED_PARTS
-    )
+    for excluded in REFERENCE_SCAN_EXCLUDED_PARTS:
+        if "/" in excluded:
+            if path_text == excluded or path_text.startswith(f"{excluded}/"):
+                return True
+            continue
+        if excluded in relative_path.parts:
+            return True
+    return False
 
 
 def _iter_reference_scan_candidates(root: Path) -> Iterable[Path]:

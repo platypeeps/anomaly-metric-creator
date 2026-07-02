@@ -183,7 +183,7 @@ def _env_ref_re(env_prefixes: tuple[str, ...]) -> re.Pattern[str] | None:
         return None
     prefix_pattern = "|".join(re.escape(prefix) for prefix in prefixes)
     return re.compile(
-        rf"\$(?:\{{((?:{prefix_pattern})_[A-Z0-9_]+)\}}|((?:{prefix_pattern})_[A-Z0-9_]+)(?![A-Za-z0-9_]))"
+        rf"\$(?:\{{((?:{prefix_pattern})_[A-Z0-9_]+)[^}}]*\}}|((?:{prefix_pattern})_[A-Z0-9_]+)(?![A-Za-z0-9_]))"
     )
 
 
