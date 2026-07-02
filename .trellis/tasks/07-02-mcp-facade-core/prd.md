@@ -76,20 +76,20 @@ clock.
 
 ## Acceptance Criteria
 
-- [ ] `tests/test_server_mcp.py` drives `initialize` → `tools/list` →
+- [x] `tests/test_server_mcp.py` drives `initialize` → `tools/list` →
       `tools/call` for every v1 tool through the live HTTP server
       (subprocess or in-process, following `tests/test_server.py` patterns).
-- [ ] `tools/list` output is byte-stable across two server starts on the
+- [x] `tools/list` output is byte-stable across two server starts on the
       same dataset (sorted, no dict-iteration-order dependence).
-- [ ] `get_metric_histogram` bucket sums for a full-day window equal the CSV
+- [x] `get_metric_histogram` bucket sums for a full-day window equal the CSV
       row count for that component/metric (drop-rate rows excluded by
       construction), asserted in a test with an explicit `--seed`.
-- [ ] `get_current_time` reflects a `/v1/time/seek` — asserted by test.
-- [ ] `GET /mcp` returns 405; malformed JSON returns JSON-RPC parse-error;
+- [x] `get_current_time` reflects a `/v1/time/seek` — asserted by test.
+- [x] `GET /mcp` returns 405; malformed JSON returns JSON-RPC parse-error;
       unknown tool returns method-not-found-shaped tool error — all tested.
-- [ ] No new required runtime dependency (stdlib-only, or SDK behind an
+- [x] No new required runtime dependency (stdlib-only, or SDK behind an
       optional extra with a clear ImportError message).
-- [ ] Existing test suite passes unchanged.
+- [x] Existing test suite passes unchanged.
 
 ## Notes
 
