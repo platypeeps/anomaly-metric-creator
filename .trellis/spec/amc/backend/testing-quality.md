@@ -155,16 +155,21 @@ GitHub CI must keep the stable aggregate branch-protection context named
 `test`, while `scripts/classify-ci-changes.sh` selects the cheapest safe lane:
 lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
 test for ordinary PR update churn that still touches app paths, and the full
-Python 3.11 / 3.12 matrix for app-required opened/reopened/ready PRs,
+Python 3.12 test lane for app-required opened/reopened/ready PRs,
 `full-ci` label runs,
-workflow/dependency changes, manual dispatch, and `main` pushes. Sources:
+workflow/dependency changes, manual dispatch, and `main` pushes. Python 3.12
+is the only version CI tests against; `requires-python >=3.11` remains the
+declared floor without a dedicated CI lane. Sources:
 `.github/workflows/ci.yml`; `scripts/classify-ci-changes.sh`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
-CodeQL must run on PR updates because branch protection requires the GitHub
-Advanced Security `CodeQL` context on the latest commit; do not remove the
-`synchronize` trigger unless branch protection is changed in the same rollout.
+CodeQL analyzes opened/reopened/ready_for_review PRs and `full-ci`-labeled
+updates; plain `synchronize` events keep the trigger but report a skipped
+analysis job, which satisfies the required GitHub Advanced Security `CodeQL`
+context on the head commit, and merged code is always analyzed by the
+push-to-main run. Do not remove the `synchronize` trigger itself: the check
+run must exist on every head SHA.
 Socket should keep a visible PR check but fast-skip unless
 dependency/security-relevant files changed or full CI was requested. Sources:
 `.github/workflows/codeql.yml`; `.github/workflows/socket.yml`;

@@ -222,7 +222,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # Tested version policy: py3.12 only (pyproject requires-python
+        # stays >=3.11 as the declared floor; 3.12 is the validated version).
+        python-version: ["3.12"]
     # Pushes to main use the org-configured 16 GB larger runner so the default
     # xdist suite stays fast. Pull requests use the standard runner with a
     # serial pytest override below: the larger-runner label can sit queued with
