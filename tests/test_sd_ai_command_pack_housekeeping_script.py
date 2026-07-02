@@ -1,6 +1,6 @@
 """Contract check for the vendored sd-ai-command-pack housekeeping script.
 
-The script ships its own hermetic self-test (pack 0.5.5+), so this repo just
+The script ships its own hermetic self-test (`--self-test`), so this repo just
 invokes it: the contract test travels with the vendored bytes and updates
 atomically on every pack refresh instead of pinning upstream internals here.
 """
