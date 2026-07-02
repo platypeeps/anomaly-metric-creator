@@ -89,3 +89,11 @@ node_modules/
 
 # Project-local personal ignores can be added below this managed block.
 # sd-ai-command-pack trellis-gitignore end
+
+# Coverage artifacts from the CI-style pytest --cov invocation.
+.coverage
+.coverage.*
+coverage.xml
+
+# mypy incremental cache.
+.mypy_cache/
