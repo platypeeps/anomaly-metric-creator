@@ -8,6 +8,16 @@
 .agents/skills/sd-review-pr/SKILL.md
 .agents/skills/sd-start/SKILL.md
 .agents/skills/sd-update-spec/SKILL.md
+.claude/commands/sd/continue.md
+.claude/commands/sd/finish-work.md
+.claude/commands/sd/full-check.md
+.claude/commands/sd/housekeeping.md
+.claude/commands/sd/review-learnings.md
+.claude/commands/sd/review-local-all.md
+.claude/commands/sd/review-local.md
+.claude/commands/sd/review-pr.md
+.claude/commands/sd/start.md
+.claude/commands/sd/update-spec.md
 .gemini/commands/sd/continue.toml
 .gemini/commands/sd/finish-work.toml
 .gemini/commands/sd/full-check.toml
