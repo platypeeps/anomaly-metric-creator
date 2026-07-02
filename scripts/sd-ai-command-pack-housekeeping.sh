@@ -4,36 +4,35 @@ set -euo pipefail
 REMOTE="origin"
 DRY_RUN=0
 DELETE_REMOTE_BRANCH=1
-AUTO_FINALIZE=1
-SUPPRESS_FINALIZE_CI=1
-MERGE_STRATEGY="${TRELLIS_HOUSEKEEPING_MERGE_STRATEGY:-merge}"
-FINALIZE_COMMAND="${TRELLIS_HOUSEKEEPING_FINALIZE_COMMAND:-trellis-finalize}"
-FINALIZE_CHECK_TIMEOUT_SECONDS="${TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_TIMEOUT_SECONDS:-3600}"
-FINALIZE_CHECK_POLL_SECONDS="${TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_POLL_SECONDS:-30}"
+AUTO_MERGE=1
+MERGE_STRATEGY="${SD_AI_COMMAND_PACK_HOUSEKEEPING_MERGE_STRATEGY:-merge}"
 
 ACTIONS=()
 EXPECTED=()
+INVENTORY=()
 ANOMALIES=()
 DEFAULT_BRANCH=""
 START_BRANCH=""
 GITHUB_REPO_SLUG=""
 GH_REPO_ARGS=()
-FINALIZE_PUSHED_HEAD=""
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/trellis-housekeeping.sh [options]
+Usage: bash scripts/sd-ai-command-pack-housekeeping.sh [options]
 
 End-of-stream housekeeping for a single active Trellis development stream.
 
 Options:
   --dry-run              Preview cleanup without running mutating git commands.
-  --no-auto-finalize     Do not finalize and merge an already-green open PR.
-  --run-finalize-ci      Do not add a [skip ci] marker to the finalize commit.
-  --merge-strategy <name> Merge strategy for auto-finalized PRs: merge, squash, or rebase. Defaults to merge.
+  --no-auto-merge        Do not merge an already-green open PR.
+  --merge-strategy <name> Merge strategy for ready open PRs: merge, squash, or rebase. Defaults to merge.
   --keep-remote-branch   Leave the merged remote branch on GitHub.
   --remote <name>        Remote to fetch, prune, pull, and clean. Defaults to origin.
   -h, --help             Show this help.
+
+Environment:
+  SD_AI_COMMAND_PACK_HOUSEKEEPING_MERGE_STRATEGY
+                          Default merge strategy when --merge-strategy is not set.
 EOF
 }
 
@@ -51,6 +50,10 @@ add_action() {
 
 add_expected() {
   EXPECTED+=("$*")
+}
+
+add_inventory() {
+  INVENTORY+=("$*")
 }
 
 add_anomaly() {
@@ -79,23 +82,19 @@ valid_merge_strategy() {
   esac
 }
 
-valid_non_negative_integer() {
-  [[ "$1" =~ ^[0-9]+$ ]]
-}
-
-valid_positive_integer() {
-  [[ "$1" =~ ^[1-9][0-9]*$ ]]
-}
-
 valid_github_repo_slug() {
   local slug="$1"
+  local owner
+  local name
 
   case "$slug" in
-    ""|*.git)
+    ""|/*|*/|*/*/*|*" "*|*$'\t'*|*$'\n'*)
       return 1
       ;;
   esac
-  [[ "$slug" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]+$ ]]
+  owner="${slug%%/*}"
+  name="${slug#*/}"
+  [ -n "$owner" ] && [ -n "$name" ] && [ "$owner" != "$slug" ]
 }
 
 parse_args() {
@@ -104,11 +103,8 @@ parse_args() {
       --dry-run)
         DRY_RUN=1
         ;;
-      --no-auto-finalize)
-        AUTO_FINALIZE=0
-        ;;
-      --run-finalize-ci)
-        SUPPRESS_FINALIZE_CI=0
+      --no-auto-merge)
+        AUTO_MERGE=0
         ;;
       --merge-strategy)
         shift
@@ -188,14 +184,14 @@ configure_github_repo_scope() {
   local configured_slug
   local remote_url
 
-  configured_slug="${TRELLIS_HOUSEKEEPING_GITHUB_REPO:-}"
+  configured_slug="${SD_AI_COMMAND_PACK_HOUSEKEEPING_GITHUB_REPO:-}"
   GITHUB_REPO_SLUG=""
   GH_REPO_ARGS=()
   if [ -n "$configured_slug" ]; then
     if valid_github_repo_slug "$configured_slug"; then
       GITHUB_REPO_SLUG="$configured_slug"
     else
-      add_anomaly "TRELLIS_HOUSEKEEPING_GITHUB_REPO must be an owner/repo slug; ignored invalid override"
+      add_anomaly "SD_AI_COMMAND_PACK_HOUSEKEEPING_GITHUB_REPO must be an owner/repo slug; ignored invalid override"
     fi
   fi
   if [ -z "$GITHUB_REPO_SLUG" ]; then
@@ -338,7 +334,7 @@ fast_forward_default_branch() {
   if [ "$(current_branch)" != "$DEFAULT_BRANCH" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       if git show-ref --verify --quiet "refs/remotes/$REMOTE/$DEFAULT_BRANCH"; then
-        add_action "would run: git pull --ff-only $REMOTE $DEFAULT_BRANCH"
+        add_action "would fast-forward $DEFAULT_BRANCH from $REMOTE/$DEFAULT_BRANCH"
       else
         add_anomaly "remote default ref $REMOTE/$DEFAULT_BRANCH does not exist"
       fi
@@ -461,159 +457,7 @@ remote_branch_head_oid() {
   printf '%s\n' "$output"
 }
 
-append_skip_ci_to_head_commit() {
-  local message
-  message="$(git log -1 --pretty=%B)"
-  case "$message" in
-    *"[skip ci]"*|*"[ci skip]"*|*"[no ci]"*|*"[skip actions]"*|*"[actions skip]"*|*"skip-checks: true"*|*"skip-checks:true"*)
-      add_action "finalize commit already contains a CI skip instruction"
-      return 0
-      ;;
-  esac
-
-  if git commit --amend -m "$message" -m "[skip ci]" >/dev/null; then
-    add_action "added [skip ci] to the finalize commit"
-  else
-    add_anomaly "failed to add [skip ci] to the finalize commit"
-    return 1
-  fi
-}
-
-run_finalize_command() {
-  local before_head
-  local after_head
-  local commit_count
-
-  FINALIZE_PUSHED_HEAD=""
-  before_head="$(git rev-parse --verify HEAD)"
-  if [ "$DRY_RUN" -eq 1 ]; then
-    add_action "would run: $FINALIZE_COMMAND"
-    add_action "would push finalize journal entries to $REMOTE/$START_BRANCH"
-    return 0
-  fi
-
-  if ! have "$FINALIZE_COMMAND"; then
-    add_anomaly "$FINALIZE_COMMAND not found on PATH; skipped auto-finalize and merge"
-    return 1
-  fi
-
-  if ! "$FINALIZE_COMMAND"; then
-    add_anomaly "$FINALIZE_COMMAND failed; skipped auto-merge"
-    return 1
-  fi
-  if ! working_tree_is_clean; then
-    add_anomaly "$FINALIZE_COMMAND left the working tree dirty; skipped auto-merge"
-    return 1
-  fi
-
-  after_head="$(git rev-parse --verify HEAD)"
-  if [ "$after_head" = "$before_head" ]; then
-    add_action "$FINALIZE_COMMAND completed with no new commit"
-    return 0
-  fi
-
-  commit_count="$(git rev-list --count "$before_head..HEAD")"
-  add_action "$FINALIZE_COMMAND created $commit_count commit(s)"
-  if [ "$SUPPRESS_FINALIZE_CI" -eq 1 ]; then
-    append_skip_ci_to_head_commit || return 1
-    after_head="$(git rev-parse --verify HEAD)"
-  fi
-
-  if git push "$REMOTE" "HEAD:refs/heads/$START_BRANCH"; then
-    FINALIZE_PUSHED_HEAD="$after_head"
-    add_action "pushed finalize journal entries to $REMOTE/$START_BRANCH"
-  else
-    add_anomaly "failed to push finalize journal entries to $REMOTE/$START_BRANCH"
-    return 1
-  fi
-}
-
-wait_for_pr_head_readiness() {
-  local branch="$1"
-  local pr_number="$2"
-  local expected_head="$3"
-  local deadline
-  local now
-  local pr_data
-  local pr_state
-  local pr_is_draft
-  local pr_url
-  local pr_head
-  local pr_head_oid
-  local pr_base
-  local pr_merge_state
-  local non_green_check_count
-  local total_check_count
-  local unresolved_count
-
-  if ! valid_non_negative_integer "$FINALIZE_CHECK_TIMEOUT_SECONDS"; then
-    add_anomaly "TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_TIMEOUT_SECONDS must be a non-negative integer; skipped auto-merge"
-    return 1
-  fi
-  if ! valid_positive_integer "$FINALIZE_CHECK_POLL_SECONDS"; then
-    add_anomaly "TRELLIS_HOUSEKEEPING_FINALIZE_CHECK_POLL_SECONDS must be a positive integer; skipped auto-merge"
-    return 1
-  fi
-
-  deadline=$(($(date +%s) + FINALIZE_CHECK_TIMEOUT_SECONDS))
-  add_action "waiting up to ${FINALIZE_CHECK_TIMEOUT_SECONDS}s for PR #$pr_number checks on finalize head $expected_head"
-
-  while true; do
-    pr_data="$(view_open_pr_readiness_for_branch "$branch")"
-    if [ -z "$pr_data" ]; then
-      add_anomaly "failed to refresh PR #$pr_number readiness after finalize; skipped auto-merge"
-      return 1
-    fi
-
-    IFS=$'\t' read -r pr_number pr_state pr_is_draft pr_url pr_head pr_head_oid pr_base pr_merge_state non_green_check_count total_check_count <<<"$pr_data"
-    if [ "$pr_state" != "OPEN" ]; then
-      add_anomaly "PR #$pr_number is $pr_state after finalize, not OPEN; skipped auto-merge"
-      return 1
-    fi
-    if [ "$pr_is_draft" = "true" ]; then
-      add_anomaly "PR #$pr_number became a draft after finalize; skipped auto-merge"
-      return 1
-    fi
-    if [ "$pr_head" != "$branch" ]; then
-      add_anomaly "PR #$pr_number head is $pr_head after finalize, not $branch; skipped auto-merge"
-      return 1
-    fi
-    if [ -n "$DEFAULT_BRANCH" ] && [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
-      add_anomaly "PR #$pr_number base is $pr_base after finalize, expected $DEFAULT_BRANCH; skipped auto-merge"
-      return 1
-    fi
-    if [ "$pr_head_oid" != "$expected_head" ]; then
-      add_anomaly "PR #$pr_number moved to $pr_head_oid after finalize, expected $expected_head; skipped auto-merge"
-      return 1
-    fi
-    if ! valid_non_negative_integer "$non_green_check_count" || ! valid_non_negative_integer "$total_check_count"; then
-      add_anomaly "failed to parse PR #$pr_number check status after finalize; skipped auto-merge"
-      return 1
-    fi
-
-    if [ "$pr_merge_state" = "CLEAN" ] && [ "$total_check_count" -gt 0 ] && [ "$non_green_check_count" -eq 0 ]; then
-      if ! unresolved_count="$(unresolved_review_thread_count "$pr_number")"; then
-        add_anomaly "failed to inspect review threads for PR #$pr_number after finalize; skipped auto-merge"
-        return 1
-      fi
-      if [ "$unresolved_count" -ne 0 ]; then
-        add_anomaly "PR #$pr_number has $unresolved_count unresolved review thread(s) after finalize; skipped auto-merge"
-        return 1
-      fi
-      add_action "PR #$pr_number finalize head is green and comment-clean"
-      return 0
-    fi
-
-    now="$(date +%s)"
-    if [ "$now" -ge "$deadline" ]; then
-      add_anomaly "timed out after ${FINALIZE_CHECK_TIMEOUT_SECONDS}s waiting for PR #$pr_number finalize head $expected_head to become clean and green; merge state $pr_merge_state, non-green checks $non_green_check_count/$total_check_count"
-      return 1
-    fi
-    sleep "$FINALIZE_CHECK_POLL_SECONDS"
-  done
-}
-
-merge_open_pr_after_finalize() {
+merge_ready_open_pr() {
   local pr_number="$1"
   local merge_head
   local strategy_flag
@@ -636,19 +480,19 @@ merge_open_pr_after_finalize() {
   esac
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    add_action "would merge PR #$pr_number with $MERGE_STRATEGY strategy after finalize"
+    add_action "would merge PR #$pr_number with $MERGE_STRATEGY strategy"
     return 0
   fi
 
-  if gh_pr_merge "$pr_number" "$strategy_flag" --match-head-commit "$merge_head" --yes; then
+  if gh_pr_merge "$pr_number" "$strategy_flag" --match-head-commit "$merge_head"; then
     add_action "merged PR #$pr_number with $MERGE_STRATEGY strategy"
   else
-    add_anomaly "failed to merge PR #$pr_number after finalize; branch protection may require checks on the finalize commit"
+    add_anomaly "failed to merge PR #$pr_number; resolve branch protection or check failures, then rerun housekeeping"
     return 1
   fi
 }
 
-maybe_finalize_ready_open_pr() {
+maybe_merge_ready_open_pr() {
   local branch="$1"
   local pr_data
   local pr_number
@@ -665,19 +509,19 @@ maybe_finalize_ready_open_pr() {
   local remote_head_oid
   local unresolved_count
 
-  if [ "$AUTO_FINALIZE" -eq 0 ] || [ -z "$branch" ] || [ "$branch" = "$DEFAULT_BRANCH" ]; then
+  if [ "$AUTO_MERGE" -eq 0 ] || [ -z "$branch" ] || [ "$branch" = "$DEFAULT_BRANCH" ]; then
     return 0
   fi
   if ! working_tree_is_clean; then
-    add_anomaly "working tree has uncommitted changes; skipped auto-finalize and merge"
+    add_anomaly "working tree has uncommitted changes; skipped auto-merge"
     return 0
   fi
   if ! have gh; then
-    add_anomaly "gh not found; skipped auto-finalize and merge"
+    add_anomaly "gh not found; skipped auto-merge"
     return 0
   fi
   if ! valid_merge_strategy "$MERGE_STRATEGY"; then
-    add_anomaly "merge strategy is invalid; expected merge, squash, or rebase; skipped auto-finalize and merge"
+    add_anomaly "merge strategy is invalid; expected merge, squash, or rebase; skipped auto-merge"
     return 0
   fi
 
@@ -691,64 +535,60 @@ maybe_finalize_ready_open_pr() {
     return 0
   fi
   if [ "$pr_is_draft" = "true" ]; then
-    add_anomaly "PR #$pr_number for $branch is a draft; skipped auto-finalize and merge"
+    add_anomaly "PR #$pr_number for $branch is a draft; skipped auto-merge"
     return 0
   fi
   if [ "$pr_head" != "$branch" ]; then
-    add_anomaly "PR #$pr_number head is $pr_head, not $branch; skipped auto-finalize and merge"
+    add_anomaly "PR #$pr_number head is $pr_head, not $branch; skipped auto-merge"
     return 0
   fi
   if [ -n "$DEFAULT_BRANCH" ] && [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
-    add_anomaly "PR #$pr_number base is $pr_base, expected $DEFAULT_BRANCH; skipped auto-finalize and merge"
+    add_anomaly "PR #$pr_number base is $pr_base, expected $DEFAULT_BRANCH; skipped auto-merge"
     return 0
   fi
 
   local_head_oid="$(git rev-parse --verify "refs/heads/$branch^{commit}")"
   if [ "$local_head_oid" != "$pr_head_oid" ]; then
-    add_anomaly "local $branch is at $local_head_oid, but PR #$pr_number is at $pr_head_oid; skipped auto-finalize and merge"
+    add_anomaly "local $branch is at $local_head_oid, but PR #$pr_number is at $pr_head_oid; skipped auto-merge"
     return 0
   fi
   if ! remote_head_oid="$(remote_branch_head_oid "$branch")"; then
-    add_anomaly "failed to read remote branch head for $REMOTE/$branch; skipped auto-finalize and merge"
+    add_anomaly "failed to read remote branch head for $REMOTE/$branch; skipped auto-merge"
     return 0
   fi
   if [ "$remote_head_oid" != "$local_head_oid" ]; then
-    add_anomaly "remote branch $REMOTE/$branch is at $remote_head_oid, but local $branch is at $local_head_oid; skipped auto-finalize and merge"
+    add_anomaly "remote branch $REMOTE/$branch is at $remote_head_oid, but local $branch is at $local_head_oid; skipped auto-merge"
     return 0
   fi
 
   if [ "$pr_merge_state" != "CLEAN" ]; then
-    add_anomaly "PR #$pr_number merge state is $pr_merge_state, not CLEAN; skipped auto-finalize and merge"
+    add_anomaly "PR #$pr_number merge state is $pr_merge_state, not CLEAN; skipped auto-merge"
     return 0
   fi
-  if [ -z "$total_check_count" ] || [ "$total_check_count" -eq 0 ]; then
-    add_anomaly "PR #$pr_number has no reported checks; skipped auto-finalize and merge"
+  if ! [[ "$total_check_count" =~ ^[0-9]+$ ]] || [ "$total_check_count" -eq 0 ]; then
+    add_anomaly "PR #$pr_number has no or undeterminable reported checks; skipped auto-merge"
     return 0
   fi
-  if [ -n "$failed_check_count" ] && [ "$failed_check_count" -ne 0 ]; then
-    add_anomaly "PR #$pr_number has non-green checks; skipped auto-finalize and merge"
+  if ! [[ "$failed_check_count" =~ ^[0-9]+$ ]] || [ "$failed_check_count" -ne 0 ]; then
+    add_anomaly "PR #$pr_number has non-green or undeterminable checks; skipped auto-merge"
     return 0
   fi
 
   if [ -z "$GITHUB_REPO_SLUG" ]; then
-    add_anomaly "could not derive GitHub repo from $REMOTE; skipped auto-finalize and merge"
+    add_anomaly "could not derive GitHub repo from $REMOTE; skipped auto-merge"
     return 0
   fi
   if ! unresolved_count="$(unresolved_review_thread_count "$pr_number")"; then
-    add_anomaly "failed to inspect review threads for PR #$pr_number; skipped auto-finalize and merge"
+    add_anomaly "failed to inspect review threads for PR #$pr_number; skipped auto-merge"
     return 0
   fi
   if [ "$unresolved_count" -ne 0 ]; then
-    add_anomaly "PR #$pr_number has $unresolved_count unresolved review thread(s); skipped auto-finalize and merge"
+    add_anomaly "PR #$pr_number has $unresolved_count unresolved review thread(s); skipped auto-merge"
     return 0
   fi
 
   add_action "PR #$pr_number is open, green, comment-clean, and matches local $branch ($pr_url)"
-  run_finalize_command || return 0
-  if [ -n "$FINALIZE_PUSHED_HEAD" ]; then
-    wait_for_pr_head_readiness "$branch" "$pr_number" "$FINALIZE_PUSHED_HEAD" || return 0
-  fi
-  merge_open_pr_after_finalize "$pr_number" || return 0
+  merge_ready_open_pr "$pr_number" || return 0
 }
 
 cleanup_current_branch_if_merged() {
@@ -864,20 +704,20 @@ check_open_prs() {
   local open_prs
   local count
   if ! have gh; then
-    add_anomaly "gh not found; skipped open PR check"
+    add_inventory "open PRs: skipped because gh was not found"
     return 0
   fi
 
   if ! open_prs="$(gh_pr_list --state open --limit 100 --json number,title,headRefName --jq '.[] | "#\(.number) \(.headRefName): \(.title)"' 2>/dev/null)"; then
-    add_anomaly "failed to list open PRs"
+    add_inventory "open PRs: unavailable because gh failed to list open PRs"
     return 0
   fi
 
   if [ -z "$open_prs" ]; then
-    add_expected "open PRs: none"
+    add_inventory "open PRs: none"
   else
     count="$(printf '%s\n' "$open_prs" | sed '/^$/d' | wc -l | tr -d ' ')"
-    add_anomaly "open PRs remain ($count): $(printf '%s' "$open_prs" | paste -sd ';' -)"
+    add_inventory "open PRs outside this cleanup scope ($count): $(printf '%s' "$open_prs" | paste -sd ';' -)"
   fi
 }
 
@@ -885,43 +725,43 @@ check_open_issues() {
   local open_issues
   local count
   if ! have gh; then
-    add_anomaly "gh not found; skipped open issue check"
+    add_inventory "open issues: skipped because gh was not found"
     return 0
   fi
 
   if ! open_issues="$(gh_issue_list --state open --limit 100 --json number,title --jq '.[] | "#\(.number): \(.title)"' 2>/dev/null)"; then
-    add_anomaly "failed to list open issues"
+    add_inventory "open issues: unavailable because gh failed to list open issues"
     return 0
   fi
 
   if [ -z "$open_issues" ]; then
-    add_expected "open issues: none"
+    add_inventory "open issues: none"
   else
     count="$(printf '%s\n' "$open_issues" | sed '/^$/d' | wc -l | tr -d ' ')"
-    add_anomaly "open issues remain ($count): $(printf '%s' "$open_issues" | paste -sd ';' -)"
+    add_inventory "open issues outside this cleanup scope ($count): $(printf '%s' "$open_issues" | paste -sd ';' -)"
   fi
 }
 
 check_trellis_tasks() {
   local context
   if [ ! -f ".trellis/scripts/get_context.py" ]; then
-    add_anomaly ".trellis/scripts/get_context.py not found; skipped Trellis active-task check"
+    add_inventory "Trellis active tasks: skipped because .trellis/scripts/get_context.py was not found"
     return 0
   fi
   if ! have python3; then
-    add_anomaly "python3 not found; skipped Trellis active-task check"
+    add_inventory "Trellis active tasks: skipped because python3 was not found"
     return 0
   fi
 
   if ! context="$(python3 ./.trellis/scripts/get_context.py --mode record 2>&1)"; then
-    add_anomaly "Trellis record mode failed; run python3 ./.trellis/scripts/get_context.py --mode record"
+    add_inventory "Trellis active tasks: unavailable; run python3 ./.trellis/scripts/get_context.py --mode record"
     return 0
   fi
 
   if printf '%s\n' "$context" | grep -q "(no active tasks assigned to you)"; then
-    add_expected "Trellis active tasks: none"
+    add_inventory "Trellis active tasks: none assigned to current developer"
   else
-    add_anomaly "Trellis active tasks may remain; run python3 ./.trellis/scripts/get_context.py --mode record"
+    add_inventory "Trellis active tasks: active tasks may remain outside this cleanup scope"
   fi
 }
 
@@ -930,8 +770,6 @@ check_final_git_state() {
   local local_head
   local remote_head
   local extra_local
-  local extra_remote
-  local kept_remote_branch
 
   final_branch="$(current_branch)"
   if [ -n "$DEFAULT_BRANCH" ] && [ "$final_branch" = "$DEFAULT_BRANCH" ]; then
@@ -972,30 +810,18 @@ check_final_git_state() {
     add_anomaly "extra local branches remain: $(printf '%s' "$extra_local" | paste -sd ',' -)"
   fi
 
-  kept_remote_branch=""
-  if [ "$DELETE_REMOTE_BRANCH" -eq 0 ] && [ -n "$START_BRANCH" ] && [ "$START_BRANCH" != "$DEFAULT_BRANCH" ]; then
-    kept_remote_branch="$REMOTE/$START_BRANCH"
-  fi
-
-  extra_remote="$(
-    git for-each-ref --format='%(refname:short)' "refs/remotes/$REMOTE" |
-      grep -F -x -v "$REMOTE" |
-      grep -F -x -v "$REMOTE/HEAD" |
-      grep -F -x -v "$REMOTE/$DEFAULT_BRANCH" ||
-      true
-  )"
-  if [ -n "$kept_remote_branch" ]; then
-    extra_remote="$(printf '%s\n' "$extra_remote" | grep -F -x -v "$kept_remote_branch" || true)"
-  fi
-
-  if [ -z "$extra_remote" ]; then
-    if [ -n "$kept_remote_branch" ] && git show-ref --verify --quiet "refs/remotes/$REMOTE/$START_BRANCH"; then
-      add_expected "remote branches: only $REMOTE/HEAD, $REMOTE/$DEFAULT_BRANCH, and kept $kept_remote_branch"
+  if [ -n "$START_BRANCH" ] && [ "$START_BRANCH" != "$DEFAULT_BRANCH" ]; then
+    if [ "$DELETE_REMOTE_BRANCH" -eq 0 ]; then
+      if git show-ref --verify --quiet "refs/remotes/$REMOTE/$START_BRANCH"; then
+        add_expected "remote source branch kept: $REMOTE/$START_BRANCH"
+      else
+        add_anomaly "remote source branch $REMOTE/$START_BRANCH is absent despite --keep-remote-branch"
+      fi
+    elif git show-ref --verify --quiet "refs/remotes/$REMOTE/$START_BRANCH"; then
+      add_anomaly "remote source branch still tracked: $REMOTE/$START_BRANCH"
     else
-      add_expected "remote branches: only $REMOTE/HEAD and $REMOTE/$DEFAULT_BRANCH"
+      add_expected "remote source branch absent: $REMOTE/$START_BRANCH"
     fi
-  else
-    add_anomaly "extra remote-tracking branches remain: $(printf '%s' "$extra_remote" | paste -sd ',' -)"
   fi
 }
 
@@ -1014,6 +840,9 @@ print_report() {
 
   section "Expected clean state"
   print_list "${EXPECTED[@]}"
+
+  section "Inventory"
+  print_list "${INVENTORY[@]}"
 
   section "Anomalies"
   if [ "${#ANOMALIES[@]}" -eq 0 ]; then
@@ -1038,7 +867,7 @@ main() {
   fi
   cd "$repo_root"
 
-  section "Trellis housekeeping"
+  section "SD AI command pack housekeeping"
   printf 'repo: %s\n' "$repo_root"
   if [ "$DRY_RUN" -eq 1 ]; then
     printf 'mode: dry-run\n'
@@ -1057,7 +886,7 @@ main() {
   if [ "$START_BRANCH" = "$DEFAULT_BRANCH" ]; then
     fast_forward_default_branch
   else
-    maybe_finalize_ready_open_pr "$START_BRANCH"
+    maybe_merge_ready_open_pr "$START_BRANCH"
     cleanup_current_branch_if_merged "$START_BRANCH"
   fi
 

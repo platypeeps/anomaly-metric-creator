@@ -33,7 +33,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             outputs:
               full_ci_requested: ${{{{ steps['full-ci'].outputs.full_ci_requested }}}}
             steps:
-              - run: bash scripts/classify_ci_changes.sh --github-output changed-files.txt
+              - run: bash scripts/classify-ci-changes.sh --github-output changed-files.txt
                 id: full-ci
           lightweight_readiness:
             name: lightweight readiness
@@ -43,6 +43,10 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             name: quick test
             steps:
               - run: pytest tests/test_ci_review_contract.py
+              - run: pytest tests/test_copilot_instruction_contract.py
+              - run: pytest tests/test_pr_body_scope_lint.py
+              - run: python tools/check_copilot_instruction_contract.py
+              - run: python scripts/sd-ai-command-pack-pr-body-scope.py
           test_matrix:
             name: test (py3.12)
           test:
@@ -80,7 +84,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         jobs:
           socket:
             steps:
-              - run: bash scripts/classify_ci_changes.sh --github-output changed-files.txt
+              - run: bash scripts/classify-ci-changes.sh --github-output changed-files.txt
               - run: |
                   echo "No dependency/security-relevant changes"
                   if [ "$PR_LABEL" = "full-ci" ]; then true; fi
@@ -96,12 +100,26 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
           auto-merge:
             if: github.event.pull_request.user.login == 'dependabot[bot]'
             steps:
-              - run: gh pr review --approve "$PR_URL"
               - run: gh pr merge --auto --squash "$PR_URL"
         """,
     )
     _write(
-        root / "scripts/classify_ci_changes.sh",
+        root / ".pre-commit-config.yaml",
+        """
+        repos:
+          - repo: local
+            hooks:
+              - id: ci-review-contract
+                entry: python tools/check_ci_review_contract.py
+                files: ^scripts/sd-ai-command-pack-pr-body-scope\.py|\.sd-ai-command-pack/pr-body-scope\.json|tests/test_pr_body_scope_lint\.py$
+                pass_filenames: false
+              - id: copilot-instruction-contract
+                entry: python tools/check_copilot_instruction_contract.py
+                pass_filenames: false
+        """,
+    )
+    _write(
+        root / "scripts/classify-ci-changes.sh",
         """
         emit_output "lightweight_only" "$lightweight_only"
         emit_output "app_required" "$app_required"
@@ -110,38 +128,74 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         emit_output "python_changed" "$python_changed"
         emit_output "review_tooling_changed" "$review_tooling_changed"
         git ls-files --others --exclude-standard
-        scripts/trellis-full-check.sh
+        scripts/sd-ai-command-pack-review-preflight.mjs
+        scripts/check-review-preflight.mjs
+        scripts/sd-ai-command-pack-pr-body-scope.py
+        scripts/sd-ai-command-pack-review-scope.sh
+        scripts/sd-ai-command-pack-review-local.sh
+        scripts/sd-ai-command-pack-install-audit.py
+        scripts/sd-ai-command-pack-full-check.sh
+        scripts/sd-ai-command-pack-housekeeping.sh
+        .sd-ai-command-pack/pr-body-scope.json
+        tests/test_pr_body_scope_lint.py
         """,
     )
     _write(
-        root / "scripts/trellis-full-check.sh",
+        root / "scripts/sd-ai-command-pack-full-check.sh",
         """
-        TRELLIS_FULL_CHECK_LEVEL=full
-        tools/check_ci_review_contract.py
-        run_classifier_smoke
-        pytest tests/test_ci_review_contract.py
-        pytest tests/test_server.py -k "apply or rollout"
-        TRELLIS_FULL_CHECK_PRISM_COMPARE
-        TRELLIS_FULL_CHECK_PRISM_PROVIDER
-        TRELLIS_FULL_CHECK_PRISM_MODEL
-        TRELLIS_FULL_CHECK_PRISM_RETRIES
+        run_review_preflight
+        scripts/sd-ai-command-pack-review-preflight.mjs
+        scripts/check-review-preflight.mjs
+        run_sd_ai_command_pack_install_audit
+        scripts/sd-ai-command-pack-install-audit.py
+        run_sd_ai_command_pack_scope_check
+        scripts/sd-ai-command-pack-review-scope.sh
+        run_sd_ai_command_pack_pr_body_scope_check
+        scripts/sd-ai-command-pack-pr-body-scope.py
+        run_ci_classification_report
+        SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_SCRIPTS
+        SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON
+        SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_MAX_FINDINGS
+        SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES
+        SD_AI_COMMAND_PACK_FULL_CHECK_GITO
         """,
     )
-    for path in [
+    _write(
         root / "docs/DEVELOPMENT_CYCLE.md",
+        """
+        check_ci_review_contract.py
+        sd-ai-command-pack-pr-body-scope.py
+        stable aggregate
+        lightweight readiness
+        quick test
+        full-ci
+        """,
+    )
+    _write(
         root / "docs/SD_AI_COMMAND_PACK.md",
+        """
+        scripts/sd-ai-command-pack-review-preflight.mjs
+        scripts/check-review-preflight.mjs
+        scripts/sd-ai-command-pack-review-scope.sh
+        scripts/sd-ai-command-pack-install-audit.py
+        .sd-ai-command-pack/installed-targets.txt
+        Tooling/generated scope:
+        SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT
+        scripts/sd-ai-command-pack-pr-body-scope.py
+        .sd-ai-command-pack/pr-body-scope.json
+        """,
+    )
+    _write(
         root / ".trellis/spec/amc/backend/testing-quality.md",
-    ]:
-        _write(
-            path,
-            """
-            check_ci_review_contract.py
-            stable aggregate
-            lightweight readiness
-            quick test
-            full-ci
-            """,
-        )
+        """
+        check_ci_review_contract.py
+        sd-ai-command-pack-pr-body-scope.py
+        stable aggregate
+        lightweight readiness
+        quick test
+        full-ci
+        """,
+    )
 
 
 def test_real_repo_contract_is_clean() -> None:
@@ -207,6 +261,24 @@ def test_ci_full_ci_output_requires_bracket_expression(tmp_path: Path) -> None:
     assert "full-ci output dot expression" in result.stderr
 
 
+def test_dependabot_auto_merge_forbids_actions_pr_approval(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    workflow = tmp_path / ".github/workflows/dependabot-auto-merge.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            '- run: gh pr merge --auto --squash "$PR_URL"',
+            '- run: gh pr review --approve "$PR_URL"\n'
+            '              - run: gh pr merge --auto --squash "$PR_URL"',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "GitHub Actions PR approval" in result.stderr
+
+
 def test_lightweight_whitespace_requires_pr_diff_range(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
     ci = tmp_path / ".github/workflows/ci.yml"
@@ -224,9 +296,26 @@ def test_lightweight_whitespace_requires_pr_diff_range(tmp_path: Path) -> None:
     assert "lightweight whitespace PR diff" in result.stderr
 
 
+def test_full_check_runs_review_preflight(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    full_check = tmp_path / "scripts/sd-ai-command-pack-full-check.sh"
+    full_check.write_text(
+        full_check.read_text(encoding="utf-8").replace(
+            "run_review_preflight",
+            "run_review_notes",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "review preflight runner" in result.stderr
+
+
 def test_missing_repo_file_exits_two(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
-    (tmp_path / "scripts/classify_ci_changes.sh").unlink()
+    (tmp_path / "scripts/classify-ci-changes.sh").unlink()
 
     result = _run(str(tmp_path))
 

@@ -1,6 +1,6 @@
 ---
 name: amc-server-compatibility
-description: "Guide AMC server-mode Kubernetes, Helm, command-trace, mutation-overlay, and debug-UI compatibility work. Use when implementing or reviewing `amc serve`, fake Kubernetes API paths, `kubectl`/Helm command rendering, `resource_snapshot()` or `SimulationMutations` behavior, command trace/search/export behavior, or server-mode roadmap items in `docs/server-roadmap.md`."
+description: "Guide AMC server-mode Kubernetes, Helm, command-trace, mutation-overlay, and debug-UI compatibility work. Use when implementing or reviewing `amc serve`, fake Kubernetes API paths, `kubectl`/Helm command rendering, `resource_snapshot()` or `SimulationMutations` behavior, command trace/search/export behavior, or server-mode Trellis task backlog items."
 ---
 
 # AMC Server Compatibility

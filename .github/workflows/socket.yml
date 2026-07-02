@@ -46,7 +46,7 @@ jobs:
 
       - name: Classify changed files
         id: classify
-        run: bash scripts/classify_ci_changes.sh --github-output changed-files.txt
+        run: bash scripts/classify-ci-changes.sh --github-output changed-files.txt
 
       - name: Decide whether to scan
         id: scan

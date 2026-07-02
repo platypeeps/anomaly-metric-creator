@@ -50,3 +50,15 @@ updates:
       timezone: "America/Denver"
     commit-message:
       prefix: "ci(deps)"
+
+  # OpenCode adapter plugin manifest — keep the committed tool integration
+  # dependency fresh without mixing it into the product dependency PR.
+  - package-ecosystem: "npm"
+    directory: "/.opencode"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Denver"
+    commit-message:
+      prefix: "chore(opencode-deps)"

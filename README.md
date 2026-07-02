@@ -1168,7 +1168,7 @@ Several focused checks run on every `git commit` via `.pre-commit-config.yaml`:
   `spec_from_file_location(...)` call expression — the duplicate-load
   pattern that shipped in PR #63 and PR #64 (a new test re-imports
   `anomaly-metric-creator.py` instead of consuming the session-scoped
-  `amc` fixture from `tests/conftest.py:_load_amc`, doubling the
+  `amc` fixture backed by `_load_amc` in `tests/conftest.py`, doubling the
   registry-build cost). `conftest.py` is exempted wholesale; an
   individual call line opts out with a trailing `# amc-load: allow`
   comment for the rare case that genuinely needs a fresh module

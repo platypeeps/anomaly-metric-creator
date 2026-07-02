@@ -1,0 +1,14 @@
+description = "Detect or update repository review learnings."
+
+prompt = """
+# Review Learnings
+
+Detect recurring review feedback patterns and optionally update the repository learning file.
+
+1. Resolve the `sd-review-learnings` skill by name using the agent's trusted skill discovery mechanism for installed skills.
+2. Verify that `scripts/sd-ai-command-pack-review-learnings.py` exists relative to the repository root. If the skill or script is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, requires unavailable tools, or cannot execute, stop and report the exact blocker.
+3. Use the skill as the primary instructions for interpreting review patterns.
+4. From the repository root, use the first executable Python found in `./.venv/bin/python`, `./venv/bin/python`, `./env/bin/python`, `./.venv/Scripts/python.exe`, `./venv/Scripts/python.exe`, or `./env/Scripts/python.exe`; otherwise use `python3`. The script is stdlib-only, so do not install dependencies just for this command. Run `scripts/sd-ai-command-pack-review-learnings.py --include-working-tree` from the repository root for the local scan. If the script fails, stop and report the command, exit status, and complete stdout/stderr output.
+5. Run read-only by default. Add `--update` only when the user's request clearly indicates intent to modify or persist the repo learning file, typically `docs/review-learnings.md`; if intent is read-only or unclear, do not update without asking.
+6. Report detected patterns, proposed learnings, whether the learning file was updated, and any external-service or command failures.
+"""

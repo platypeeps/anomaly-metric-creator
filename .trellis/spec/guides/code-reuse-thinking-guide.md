@@ -66,4 +66,4 @@ in `.trellis/spec/` and have platform files load or point to Trellis. Sources:
   `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_trace_bundle.py`.
 - Did I add or update a Trellis spec citation for any new convention? Sources:
   `.trellis/spec/amc/backend/documentation-review.md`;
-  `.trellis/tasks/06-25-consolidate-agent-docs-trellis/prd.md`.
+  `.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/prd.md`.

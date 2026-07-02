@@ -26,7 +26,7 @@ Before editing runtime code, tests, docs, CI, hooks, or platform adapters:
 4. For command traces, SQLite persistence, request logs, auth, CORS, rate
    limits, Kubernetes/Helm facades, or debug UI work, read
    [Operations, Security, and Logging](./operations-security-logging.md).
-   Sources: `README.md`; `CLAUDE.md`; `docs/server-roadmap.md`;
+   Sources: `README.md`; `CLAUDE.md`; `.trellis/tasks/`;
    `src/anomaly_metric_creator/server_traces.py`;
    `src/anomaly_metric_creator/server_ops.py`;
    `src/anomaly_metric_creator/server_debug_ui.py`.
@@ -62,7 +62,7 @@ Sources: `.trellis/spec/amc/backend/architecture.md`;
 | [Architecture](./architecture.md) | Package layout, module boundaries, generation/server split, mutable state boundaries |
 | [API, CLI, and Server](./api-cli-server.md) | Console entry points, CLI/subcommands, schema/validate, serve mode, HTTP/Kubernetes/Helm API, trace bundles |
 | [Scenarios and Data](./scenarios-and-data.md) | `Scenario`, `SCENARIOS`, topology, metrics/components, output schema data contracts |
-| [Operations, Security, and Logging](./operations-security-logging.md) | Trace persistence/search, structured logs, redaction, auth/CORS/rate limits, debug UI, roadmap status |
+| [Operations, Security, and Logging](./operations-security-logging.md) | Trace persistence/search, structured logs, redaction, auth/CORS/rate limits, debug UI |
 | [Testing and Quality](./testing-quality.md) | Determinism, validation strategy, pytest/xdist, fixtures, pre-commit, CI, review checklist |
 | [Documentation and Review](./documentation-review.md) | Documentation sync, PR template lockstep, Copilot guidance, Trellis adapter policy |
 
@@ -89,7 +89,7 @@ spec directory so future sessions load the reconciled version. Sources:
 should explain implementation and review conventions; platform directories
 should explain how that platform enters Trellis. Avoid copying the same durable
 rule into multiple places. Sources: `README.md`; `docs/application-flow.md`;
-`docs/topology.md`; `docs/server-roadmap.md`; `.trellis/spec/`; `.agents/`;
+`docs/topology.md`; `.trellis/tasks/`; `.trellis/spec/`; `.agents/`;
 `.codex/`; `.claude/`; `.gemini/`; `.github/`; `.opencode/`.
 
 ## Quality Check
@@ -113,5 +113,5 @@ explain anything skipped. Sources: `.trellis/scripts/get_context.py`;
 Write project documentation in English, use repo-relative paths in source
 citations, and add line, symbol, or section detail when it has been verified
 during the current pass. Sources: `AGENTS.md`;
-`.trellis/tasks/06-25-consolidate-agent-docs-trellis/prd.md`;
-`.trellis/tasks/06-25-consolidate-agent-docs-trellis/design.md`.
+`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/prd.md`;
+`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/design.md`.

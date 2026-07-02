@@ -1,14 +1,17 @@
 ## Summary
 
 <!-- 1-3 bullets describing what changed and why. Name every behavior change in the diff. -->
+<!-- For broad automation, CI/review, generated/tooling, user-facing docs, or
+runtime/server changes, add the applicable explicit scope section described in
+docs/DEVELOPMENT_CYCLE.md. -->
 
 ## Test plan
 
 <!-- Bulleted markdown checklist of TODOs for testing this PR. Include focused
-checks first, then the quick/full local gate or remote full CI when relevant. -->
+checks first, then the local gate or remote full CI when relevant. -->
 
 - [ ] Focused local checks:
-- [ ] Quick local gate: `TRELLIS_FULL_CHECK_LEVEL=quick bash scripts/trellis-full-check.sh`
+- [ ] Local deterministic gate: `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
 - [ ] Full local gate or remote `full-ci` label needed? _yes/no, with reason_
 
 ## Pre-PR checklist

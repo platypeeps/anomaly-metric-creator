@@ -2,8 +2,7 @@
 
 Use this reference after `amc-server-compatibility` triggers and the task touches
 server-mode command/API compatibility. Keep changes backed by current source,
-tests, README, and Trellis specs; treat old roadmap prose as a hint until
-verified.
+tests, README, Trellis specs, and active Trellis task PRDs.
 
 ## Source Owners
 
@@ -44,8 +43,8 @@ verified.
 4. Return an explicit `CommandResult` with stable `matched_rule_id`.
 5. Add tests for the supported path, an unsupported nearby path, and any partial
    flag behavior.
-6. Update README supported-command prose and `docs/server-roadmap.md` when the
-   roadmap status changes.
+6. Update README supported-command prose and the relevant Trellis task PRD when
+   compatibility status changes.
 
 ## Adding A Kubernetes API Resource Or Path
 
