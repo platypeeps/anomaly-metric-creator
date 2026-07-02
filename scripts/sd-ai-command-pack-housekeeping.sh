@@ -878,8 +878,11 @@ print_report() {
 self_test_scenario() {
   local name="$1" expectation="$2" is_draft="$3" merge_state="$4"
   local blocking="$5" successful="$6" unresolved="$7"
-  local output merged=0
+  local output merged=0 subshell_status=0
 
+  # Capture the subshell status explicitly so a scenario that dies (for
+  # example on an unexpected external call) reports a named failure instead
+  # of relying on the caller's AND-OR context to suppress errexit.
   output="$(
     # Guarantee hermeticity rather than assume it: with an empty PATH every
     # unstubbed external command fails loudly, and gh is stubbed to fail so
@@ -921,7 +924,13 @@ self_test_scenario() {
     }
     maybe_merge_ready_open_pr feature
     printf 'SELF_TEST_ANOMALIES=%s\n' "${ANOMALIES[*]-}"
-  )"
+  )" || subshell_status=$?
+
+  if [ "$subshell_status" -ne 0 ]; then
+    printf 'self-test: %s: FAIL (scenario subshell exited %s)\n' \
+      "$name" "$subshell_status" >&2
+    return 1
+  fi
 
   case "$output" in
     *SELF_TEST_MERGE_EVENT*) merged=1 ;;
