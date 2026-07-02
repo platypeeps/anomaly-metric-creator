@@ -1166,6 +1166,55 @@ def _resolve_instance_filter(spec_filter, instances: list["Instance"]):
 
 
 # ------------------------------------------------------------------
+# Atomic artifact publication
+# ------------------------------------------------------------------
+# Suffix of the temp sibling every generated-artifact writer stages before
+# publishing via os.replace. _pre_clean_output_dir sweeps stale ones left
+# by a crashed run; the suffix keeps them out of discover_components's
+# *.csv glob.
+_ATOMIC_TMP_SUFFIX = ".tmp"
+
+
+@contextlib.contextmanager
+def _atomic_artifact_open(path, *, encoding="utf-8", newline=""):
+    """Write ``path`` atomically: temp sibling + flush + fsync + ``os.replace``.
+
+    Yields a text handle opened on ``<name>.tmp`` beside ``path`` (same
+    directory, therefore same filesystem, so the final ``os.replace`` is
+    atomic on POSIX and Windows). On clean exit the temp is flushed, fsynced,
+    and renamed onto ``path``: a concurrent reader only ever observes the
+    complete previous file or the complete new one — never a truncated or
+    momentarily-missing artifact, and a reader holding an already-open handle
+    keeps reading the old content to its consistent end. On error the temp is
+    removed and any existing ``path`` is left untouched.
+    """
+    path = Path(path)
+    tmp_path = path.with_name(path.name + _ATOMIC_TMP_SUFFIX)
+    f = open(tmp_path, "w", encoding=encoding, newline=newline)
+    try:
+        yield f
+        f.flush()
+        os.fsync(f.fileno())
+    except BaseException:
+        f.close()
+        tmp_path.unlink(missing_ok=True)
+        raise
+    else:
+        f.close()
+        os.replace(tmp_path, path)
+
+
+def _atomic_write_text(path, text, *, encoding="utf-8"):
+    """Atomic counterpart of ``Path.write_text`` for generated artifacts.
+
+    Writes ``text`` verbatim (``newline=""``), so output bytes are identical
+    across platforms rather than picking up ``os.linesep`` translation.
+    """
+    with _atomic_artifact_open(path, encoding=encoding) as f:
+        f.write(text)
+
+
+# ------------------------------------------------------------------
 # Core generator
 # ------------------------------------------------------------------
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
@@ -1861,7 +1910,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             for inst_idx, buf in per_instance_values.items()
         }
 
-        with open(file_path, "w", encoding="utf-8", newline="") as f:
+        with _atomic_artifact_open(file_path) as f:
             # Precompute the shared metric suffix once per component. Every
             # instance not in ``per_instance_str_vals`` reuses this array,
             # preserving Phase 2's "precompute once, reuse per instance"
@@ -8610,7 +8659,7 @@ def combine_logs_unified(
         print(f"File size: {size_mb:.2f} MB")
         return total_rows, size_mb
 
-    with open(output_file, "w", encoding="utf-8", newline="") as outfile:
+    with _atomic_artifact_open(output_file) as outfile:
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -8710,7 +8759,7 @@ def _write_combined_wide_materialized(
                     metric: row[metric] for metric in metric_names
                 }
 
-    with open(output_file, "w", encoding="utf-8", newline="") as outfile:
+    with _atomic_artifact_open(output_file) as outfile:
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
         writer.writeheader()
         for bucket_key in sorted(data_by_timestamp.keys()):
@@ -8801,7 +8850,7 @@ def _write_combined_long_form(
     iters = [src for _key, src in sources]
 
     rows_written = 0
-    with open(output_file, "w", encoding="utf-8", newline="") as out_f:
+    with _atomic_artifact_open(output_file) as out_f:
         writer = csv.writer(out_f, lineterminator="\n")
         writer.writerow(
             ("timestamp", "component", *_INSTANCE_DIMENSION_COLUMNS, "metric", "value")
@@ -8892,12 +8941,12 @@ def write_reporting_artifacts(
 
     with contextlib.ExitStack() as stack:
         log_f = (
-            stack.enter_context(open(log_path, "w", encoding="utf-8", newline=""))
+            stack.enter_context(_atomic_artifact_open(log_path))
             if emit_logs
             else None
         )
         trace_f = (
-            stack.enter_context(open(trace_path, "w", encoding="utf-8", newline=""))
+            stack.enter_context(_atomic_artifact_open(trace_path))
             if emit_traces
             else None
         )
@@ -10108,7 +10157,7 @@ def write_gauges_csv(
     any_dimensioned, layout = _scan_component_csv_headers(component_csv_paths)
 
     if not component_csv_paths:
-        with open(output_path, "w", encoding="utf-8", newline="") as f:
+        with _atomic_artifact_open(output_path) as f:
             f.write("timestamp,component,metric,value\n")
         return 0
 
@@ -10145,7 +10194,7 @@ def write_gauges_csv(
 
         iters = [_row_iter_4col(c) for c in sorted_components]
         rows_written = 0
-        with open(output_path, "w", encoding="utf-8", newline="") as out_f:
+        with _atomic_artifact_open(output_path) as out_f:
             writer = csv.writer(out_f, lineterminator="\n")
             writer.writerow(("timestamp", "component", "metric", "value"))
             for _dt, ts, comp, name_value_pairs in heapq.merge(
@@ -10204,7 +10253,7 @@ def write_gauges_csv(
     iters = [src for _key, src in sources]
 
     rows_written = 0
-    with open(output_path, "w", encoding="utf-8", newline="") as out_f:
+    with _atomic_artifact_open(output_path) as out_f:
         writer = csv.writer(out_f, lineterminator="\n")
         writer.writerow(
             ("timestamp", "component", *_INSTANCE_DIMENSION_COLUMNS, "metric", "value")
@@ -10461,9 +10510,9 @@ def write_schema_json(
     # (metrics, files, scenarios) keep their declared order — they are sorted
     # by the caller where determinism matters (files, scenarios) and left in
     # MetricSpec column order where the order carries meaning (metrics).
-    output_path.write_text(
+    _atomic_write_text(
+        output_path,
         json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -12374,6 +12423,20 @@ def _collect_emitted_filenames(*, emit_selection, components, combine):
     return sorted(files)
 
 
+def _known_artifact_filenames():
+    """Every artifact filename this script can write into --output-dir.
+
+    Derived from the same registries the pre-clean and end-of-run summary
+    consume (`COMPONENTS`, `_EMIT_ARTIFACT_FILES`, `_COMBINE_OUTPUT_FILENAME`)
+    so the temp-sibling sweep cannot drift from the real write slots.
+    """
+    filenames = [f"{component}.csv" for component in COMPONENTS]
+    for files in _EMIT_ARTIFACT_FILES.values():
+        filenames.extend(files)
+    filenames.append(_COMBINE_OUTPUT_FILENAME)
+    return filenames
+
+
 def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combine):
     """Remove stale artifacts from a prior run that this run will not regenerate.
 
@@ -12382,7 +12445,18 @@ def _pre_clean_output_dir(output_dir, emit_selection, selected_components, combi
     CSV the test fixture relies on for combine autodiscovery) are left alone.
     Not called by the ``combine`` subcommand; that path reads existing
     per-component CSVs as inputs.
+
+    Files this run *will* regenerate are intentionally left in place: every
+    generated-artifact writer publishes through ``_atomic_artifact_open``
+    (temp sibling + ``os.replace``), so the previous run's content stays
+    fully readable until the instant the new content replaces it. Deleting
+    here would reopen the mid-delete visibility gap the atomic writers close.
+    Stale ``*.tmp`` siblings from a crashed prior run are swept for every
+    registry-known artifact slot regardless of the emit selection — a temp
+    is never a valid artifact.
     """
+    for filename in _known_artifact_filenames():
+        (output_dir / (filename + _ATOMIC_TMP_SUFFIX)).unlink(missing_ok=True)
     metrics_on = "metrics" in emit_selection
     # Per-component CSVs: drop any that this run will not (re)write — either
     # because metrics was dropped from --emit or because the
@@ -12719,7 +12793,7 @@ def main(argv=None):
     ]
 
     if "metrics" in args.emit_selection:
-        with open(args.output_dir / "anomalies.csv", "w", encoding="utf-8", newline="") as f:
+        with _atomic_artifact_open(args.output_dir / "anomalies.csv") as f:
             # ``extrasaction="ignore"`` is a defensive guard so any future
             # ``_``-prefixed private keys on entry dicts cannot leak into the CSV.
             writer = csv.DictWriter(

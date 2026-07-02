@@ -880,6 +880,13 @@ def make_handler(
                     return
 
         def _send_log_file(self) -> bool:
+            # Safe against concurrent regeneration by construction: the
+            # generator publishes metric_report.log via legacy's
+            # _atomic_artifact_open (temp sibling + os.replace), so this
+            # open() only ever sees the complete previous or complete new
+            # file, and a continuous-generate rerun with the same emit
+            # selection never deletes it. The not-present branch below is
+            # for runs that genuinely dropped `logs` from --emit.
             log_path = state.output_dir / "metric_report.log"
             if not log_path.exists():
                 payload = json.dumps({"line": "metric_report.log is not present for this run"})
@@ -1365,6 +1372,14 @@ def _run_continuous_generation_once(
     *,
     stream_otel: bool = False,
 ) -> None:
+    # Artifact visibility during the rerun: every writer inside main()
+    # publishes via legacy's _atomic_artifact_open, so HTTP reader threads
+    # observe each artifact switch from the previous run's complete content
+    # to the new run's complete content with no truncated/missing window.
+    # The combine/gauge writers only read CSVs published earlier in the same
+    # single-threaded main() call, and reruns are serialized on this one
+    # worker thread, so no combine pass can be mid-read on a CSV another
+    # rerun is swapping.
     with state.generation.lock:
         next_count = state.generation.generation_count + 1
         seed = int(getattr(state.args, "seed", 42)) + next_count

@@ -298,6 +298,27 @@ Idempotent on missing files; files unknown to this script (user notes, the
 synthetic-extra-component CSV used by the standalone combine autodiscovery
 fixture) are left alone.
 
+**Atomic publication contract.** Every generated artifact (per-component
+CSVs, `anomalies.csv`, `metric_report.log`, `metric_traces.jsonl`,
+`gauges.csv`, `combined_metrics_unified.csv`, `schema.json`) is written
+through `_atomic_artifact_open` (or `_atomic_write_text` for
+`schema.json`): the writer stages a sibling `<name>.tmp` in `--output-dir`,
+flushes + fsyncs, then `os.replace`s onto the final path. A concurrent
+reader — notably the `amc serve` HTTP threads while `--continuous-generate`
+reruns the generator — only ever observes the complete previous or complete
+new file, never a truncation or a mid-delete gap. This is a write-mechanism
+contract only: output bytes are unchanged, and all locked SHA-256 golden
+hashes still apply. Files this run will regenerate are therefore *not*
+deleted by `_pre_clean_output_dir` (true deletion is reserved for files the
+run will genuinely not emit); stale `*.tmp` siblings from a crashed run are
+swept for every registry-known slot via `_known_artifact_filenames()`. When
+adding a new artifact writer, route it through `_atomic_artifact_open` —
+never `open(final_path, "w")` — and make sure its filename reaches the
+registries `_known_artifact_filenames()` reads. Coverage lives in
+`tests/test_atomic_writes.py`. `./otel-activity.log` is exempt: it lives
+outside `--output-dir` and appends within a run, which an
+atomic-replace-on-close writer cannot express.
+
 The end-of-run `Done - …` summary line is built from the same `args.emit_selection`
 + `args.combine` inputs, so it names exactly the artifacts written this run.
 

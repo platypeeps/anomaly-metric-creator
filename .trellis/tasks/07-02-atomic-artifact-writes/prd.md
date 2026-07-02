@@ -67,17 +67,17 @@ only the on-disk artifacts are not.
 
 ## Acceptance criteria
 
-- [ ] A helper (e.g. `_atomic_write_text` / `_atomic_write_bytes`) is the single
+- [x] A helper (e.g. `_atomic_write_text` / `_atomic_write_bytes`) is the single
       write path for all generated artifacts; no generator writes a final path
       directly via `open(path, "w")`.
-- [ ] All locked SHA-256 golden-hash tests (default, N=3, 7-day, gauges,
+- [x] All locked SHA-256 golden-hash tests (default, N=3, 7-day, gauges,
       schema, combine) pass unchanged — output bytes are identical.
-- [ ] A focused test drives a `--continuous-generate` cycle while concurrently
+- [x] A focused test drives a `--continuous-generate` cycle while concurrently
       reading `metric_report.log` / a component CSV and asserts every observed
       read is a complete previous-or-next file, never a truncation.
-- [ ] `_send_log_file` cannot observe a mid-delete `metric_report.log` (by test
+- [x] `_send_log_file` cannot observe a mid-delete `metric_report.log` (by test
       or by construction under the lock).
-- [ ] CLAUDE.md "Output directory hygiene" is updated to describe the
+- [x] CLAUDE.md "Output directory hygiene" is updated to describe the
       atomic-write contract.
 
 ## Notes
