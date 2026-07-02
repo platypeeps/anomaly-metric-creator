@@ -155,9 +155,11 @@ GitHub CI must keep the stable aggregate branch-protection context named
 `test`, while `scripts/classify-ci-changes.sh` selects the cheapest safe lane:
 lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
 test for ordinary PR update churn that still touches app paths, and the full
-Python 3.11 / 3.12 matrix for app-required opened/reopened/ready PRs,
+Python 3.12 test lane for app-required opened/reopened/ready PRs,
 `full-ci` label runs,
-workflow/dependency changes, manual dispatch, and `main` pushes. Sources:
+workflow/dependency changes, manual dispatch, and `main` pushes. Python 3.12
+is the only version CI tests against; `requires-python >=3.11` remains the
+declared floor without a dedicated CI lane. Sources:
 `.github/workflows/ci.yml`; `scripts/classify-ci-changes.sh`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
