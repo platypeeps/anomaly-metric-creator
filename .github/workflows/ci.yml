@@ -222,11 +222,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests and manual dispatch run the full compatibility
-        # matrix; pushes to main run py3.12 only, since the merged PR already
-        # validated both versions and the push lane uses the larger
-        # (higher-billed) runner.
-        python-version: ${{ github.event_name == 'push' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
+        python-version: ["3.11", "3.12"]
     # Pushes to main use the org-configured 16 GB larger runner so the default
     # xdist suite stays fast. Pull requests use the standard runner with a
     # serial pytest override below: the larger-runner label can sit queued with
