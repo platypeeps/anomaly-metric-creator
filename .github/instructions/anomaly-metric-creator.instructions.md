@@ -22,20 +22,22 @@ Prefer local evidence before asking for another remote review or broad GitHub
 Actions run. The repo's stable branch-protection check is the aggregate `test`
 job; `.github/workflows/ci.yml` chooses a lightweight, quick, or full lane via
 `scripts/classify-ci-changes.sh`. `tools/check_ci_review_contract.py` guards
-the workflow/script/doc anchors that keep that cadence from drifting. CodeQL is
-the exception to the cheap-by-default PR update rule: branch protection
-requires the GitHub Advanced Security `CodeQL` context on the latest commit, so
-the CodeQL workflow must keep its `synchronize` trigger unless the required
-check is changed at the same time.
+the workflow/script/doc anchors that keep that cadence from drifting. CodeQL keeps
+its `synchronize` trigger so the required GitHub Advanced Security `CodeQL`
+context exists on every head commit, but plain PR-update analysis is gated
+behind the `full-ci` label: ungated synchronize events report a skipped
+analysis (which satisfies the required context), and merged code is always
+analyzed by the push-to-main run.
 
 - For docs/spec/agent/review-tooling-only diffs, expect the lightweight lane
-  and avoid requesting the full Python matrix unless the content changes a
+  and avoid requesting the full test lane unless the content changes a
   behavior contract.
 - For routine app-path PR updates, the quick lane runs install smoke, ruff,
   review-churn lint tests, and focused server compatibility tests.
 - For app-required opened/reopened/ready PRs, the `full-ci` label,
   workflow/dependency changes, workflow dispatch, and `main` pushes, expect the
-  full Python 3.11/3.12 matrix and heavy/non-heavy pytest split.
+  py3.12 test lane and heavy/non-heavy pytest split (Python 3.12 is the only
+  CI-tested version).
 - Before a final remote Copilot pass, prefer a local
   `bash scripts/sd-ai-command-pack-full-check.sh` run. During iteration, use
   `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
