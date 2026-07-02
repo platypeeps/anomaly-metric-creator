@@ -72,7 +72,7 @@ keeping the stable aggregate check named `test`.
 | --- | --- | --- |
 | `lightweight readiness` | Docs, Trellis specs/tasks, agent prompts/skills, Prism rules, or review-tooling scripts only | Catch whitespace, shell syntax, Python syntax, workflow pip, and Trellis artifact hygiene issues without installing the full dev environment. |
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
-| `test (py3.11/py3.12)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the full matrix and heavy/non-heavy pytest split. |
+| `test (py3.11/py3.12)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, workflow/dependency files change, or manual dispatch runs. Pushes to `main` run py3.12 only, since the merged PR already validated both versions | Run the full matrix (py3.12 only on `main` pushes) and heavy/non-heavy pytest split. |
 
 CodeQL runs on PR updates because branch protection requires the GitHub
 Advanced Security `CodeQL` context on the latest commit. Socket keeps a visible
