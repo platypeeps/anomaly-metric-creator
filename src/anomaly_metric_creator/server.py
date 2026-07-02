@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from . import server_mcp
 from .server_debug_ui import DEBUG_HTML
 from .server_mutations import (
     HelmReleaseMutation as HelmReleaseMutation,  # noqa: F401
@@ -388,6 +389,11 @@ def make_handler(
                     return
                 if self._send_rate_limited(path):
                     return
+                if path == "/mcp":
+                    # Streamable HTTP only: a GET here is the legacy SSE
+                    # transport probe, refused like the reference mock.
+                    self._send_json(405, server_mcp.sse_not_supported_response())
+                    return
                 api_started = time.perf_counter()
                 api_response = kubernetes_api_response(
                     state,
@@ -474,6 +480,9 @@ def make_handler(
                     self._send_unauthorized(path)
                     return
                 if self._send_rate_limited(path):
+                    return
+                if path == "/mcp":
+                    self._send_mcp_post()
                     return
                 if _is_kubernetes_api_path(path):
                     api_started = time.perf_counter()
@@ -878,6 +887,29 @@ def make_handler(
                 if state.shutdown_event.wait(1.0):
                     self._send_shutdown_event()
                     return
+
+        def _send_mcp_post(self) -> None:
+            """Answer one streamable-HTTP MCP message at POST /mcp.
+
+            The JSON-RPC layer (parse errors, dispatch, tool errors) lives
+            in server_mcp; this method only moves bytes and maps the shared
+            body cap onto a JSON-RPC-shaped 413 instead of the app-endpoint
+            error shape.
+            """
+            try:
+                raw = server_mcp.read_mcp_request_body(self, security.max_body_bytes)
+            except RequestBodyTooLarge as exc:
+                self._remember_structured_error(exc)
+                self._send_json(413, server_mcp.body_too_large_response(str(exc)))
+                return
+            status, body = server_mcp.handle_mcp_http_post(state, raw)
+            if body is None:
+                # Notification: 202 Accepted with no content.
+                self.send_response(status)
+                self._send_common_headers("application/json; charset=utf-8", 0)
+                self.end_headers()
+                return
+            self._send_json(status, body)
 
         def _send_log_file(self) -> bool:
             # Safe against concurrent regeneration by construction: the

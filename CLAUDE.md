@@ -128,6 +128,23 @@ intentionally re-exports their public names for compatibility with existing
 tests and ad-hoc imports.
 Offline trace-bundle analysis lives in `trace_bundle.py` and imports
 `server_traces.py` directly rather than the HTTP server facade.
+`server_mcp.py` owns the MCP (Model Context Protocol) facade served at
+`POST /mcp`: a stateless streamable-HTTP JSON-RPC layer (`initialize`,
+`tools/list`, `tools/call`, `ping`; notifications get 202, `GET /mcp` gets
+a 405 JSON-RPC refusal) plus the read-only tool registry
+(`get_current_time`, `list_components`, `get_topology`,
+`get_metric_histogram`). Tools answer only from what the run already
+produced — the simulated clock, `_resolve_effective_specs`,
+`_serialize_topology`, and the per-component CSVs — and are subject to the
+**ground-truth wall**: no MCP tool may read `anomalies.csv` or the
+`SCENARIOS` registry, because the MCP surface is what an AI agent under
+evaluation sees while the anomaly manifest is the eval harness's scoring
+rubric. `server.py` only routes the request body (`_send_mcp_post`);
+protocol behavior, error codes, and the import-time-validated
+`MCP_TOOLS` registry live in `server_mcp.py`. When adding a tool, extend
+`MCP_TOOLS` (name, description, JSON-Schema `inputSchema`, handler),
+keep it inside the ground-truth wall, and add coverage in
+`tests/test_server_mcp.py`.
 
 Lifecycle:
 
