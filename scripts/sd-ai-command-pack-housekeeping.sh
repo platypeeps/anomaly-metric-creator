@@ -961,7 +961,10 @@ run_self_test() {
   local failures=0
 
   self_test_scenario "green executed checks merge" merge false CLEAN 0 2 0 || failures=$((failures + 1))
-  self_test_scenario "skipped lanes do not block" merge false CLEAN 0 1 0 || failures=$((failures + 1))
+  # A single executed success is enough: SKIPPED/NEUTRAL conclusions are
+  # pre-aggregated out of the counts by the readiness query, whose
+  # classification is covered by the pack's upstream jq fixture tests.
+  self_test_scenario "single executed success suffices" merge false CLEAN 0 1 0 || failures=$((failures + 1))
   self_test_scenario "blocking checks refuse" refuse false CLEAN 1 3 0 || failures=$((failures + 1))
   self_test_scenario "zero successful checks refuse" refuse false CLEAN 0 0 0 || failures=$((failures + 1))
   self_test_scenario "undeterminable counts refuse" refuse false CLEAN unknown unknown 0 || failures=$((failures + 1))
