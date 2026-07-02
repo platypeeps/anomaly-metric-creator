@@ -674,7 +674,7 @@ python3 /path/to/sd-ai-command-pack/install.py /path/to/target/repo --force
 Normal shared installs maintain a managed `sd-ai-command-pack
 trellis-gitignore` block in the repo root `.gitignore`. The block ignores
 Trellis local/runtime files such as `.trellis/.developer`,
-`.trellis/.runtime/`, `.trellis/.cache/`, `.trellis/.backup-*`,
+`.trellis/.runtime/`, `.trellis/.cache/`, Trellis backup directories,
 `.trellis/worktrees/`, and `.trellis/.template-hashes.json` without
 blanket-ignoring shareable `.trellis` workflow, spec, task, and script files.
 It also ignores local AI-tool state such as `.claude/settings.local.json`,
@@ -837,6 +837,6 @@ python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run
   `sd-review-local`, `sd-review-local-all`, or
   `SD_AI_COMMAND_PACK_FULL_CHECK_GITO=1 bash
   scripts/sd-ai-command-pack-full-check.sh` so reports go under the
-  pack-managed `.build/review/gito*` directories.
+  pack-managed `.build/review/gito` and `.build/review/gito-all` directories.
 - Stale generated cache causes type or build failures: clear the repo-specific
   generated cache and rerun the deterministic check that failed.
