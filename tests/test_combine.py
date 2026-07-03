@@ -406,7 +406,13 @@ def test_generated_non_dst_combined_skips_known_component_prescan(
             f"unexpected monotonic pre-scan for generated file {path}"
         )
 
-    monkeypatch.setattr(amc, "_wide_component_rows_are_monotonic", fail_if_prescanned)
+    # Patch the owning module: combine_logs_unified (in combine_impl) calls
+    # _wide_component_rows_are_monotonic as an intra-module name, so patching
+    # the legacy re-import would not intercept it (decomposition step 5).
+    monkeypatch.setattr(
+        "anomaly_metric_creator.combine_impl._wide_component_rows_are_monotonic",
+        fail_if_prescanned,
+    )
     out_dir = tmp_path / "generated_fast_combine"
 
     run_capture(
@@ -451,7 +457,12 @@ def test_combine_subcommand_prescans_external_wide_inputs(
         scanned.append(Path(path).name)
         return True
 
-    monkeypatch.setattr(amc, "_wide_component_rows_are_monotonic", record_prescan)
+    # See the note above: patch the combine_impl owner, not the legacy
+    # re-import, so the intra-module call is intercepted.
+    monkeypatch.setattr(
+        "anomaly_metric_creator.combine_impl._wide_component_rows_are_monotonic",
+        record_prescan,
+    )
 
     amc.main([
         "combine", str(staged),
