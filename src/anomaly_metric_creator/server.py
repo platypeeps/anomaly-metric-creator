@@ -469,7 +469,10 @@ def make_handler(
                     self._send_json(404, {"error": "not found"})
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
                 self._remember_structured_error(exc)
-                self._send_json(500, {"error": str(exc)})
+                # Generic body: str(exc) can carry filesystem paths or other
+                # internals. The structured error log keeps the detail for
+                # operators; clients only learn that the request failed.
+                self._send_json(500, {"error": "internal server error"})
 
         def do_POST(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
@@ -541,7 +544,9 @@ def make_handler(
                 self._send_json(400, {"error": str(exc)})
             except Exception as exc:
                 self._remember_structured_error(exc)
-                self._send_json(500, {"error": str(exc)})
+                # Generic body; detail goes to the structured error log only
+                # (see the do_GET boundary for the rationale).
+                self._send_json(500, {"error": "internal server error"})
 
         def do_PUT(self) -> None:
             self._handle_mutating_method("PUT")
