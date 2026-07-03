@@ -32,6 +32,12 @@ rerun's `test` reports `SUCCESS`.
   context at the moment auto-merge evaluates (a timing/ordering window), a
   legitimately-green PR could stall on a spurious red. Not yet observed;
   this is the concrete failure mode to close or rule out.
+- **Recurs on app-code PRs, not just metadata:** first seen on the
+  metadata-only #186, but #188 (a server.py app-code change, auto-merge
+  armed) reproduced the identical pattern — two `test` runs (`FAILURE` from
+  the cancelled lane, `SUCCESS` from the rerun) — and merged on the green.
+  So the churn is systematic across PR types, not a metadata-PR artifact;
+  the transient red will appear on every auto-merge-armed PR until fixed.
 
 ### 2. Redundant queued main-push runs
 
