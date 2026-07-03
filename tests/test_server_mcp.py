@@ -124,7 +124,9 @@ def test_tools_list_is_sorted_and_stable(mcp_state):
     assert names == sorted(names)
     assert set(names) == {
         "get_current_time", "list_components", "get_topology",
-        "get_metric_histogram",
+        "get_metric_histogram", "list_metric_fields",
+        "group_metrics_by_field", "get_correlated_timeline",
+        "get_logs", "deduplicate_logs",
     }
     for tool in tools:
         assert tool["description"]
@@ -243,6 +245,218 @@ def test_get_metric_histogram_argument_validation(mcp_state):
 
 
 # ------------------------------------------------------------------
+# Analysis tools (phase 2)
+# ------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def mcp_n2_state(amc, tmp_path_factory):
+    out = tmp_path_factory.mktemp("mcp_n2")
+    argv = [
+        "--duration-days", "1",
+        "--seed", "42",
+        "--components", _COMPONENTS,
+        "--output-dir", str(out),
+        "--interval-seconds", "3600",
+        "--instances-per-component", "2",
+    ]
+    amc.main(argv)
+    args = amc.parse_args(argv)
+    return server.build_state(amc, args)
+
+
+def _day_window(amc):
+    start = amc.START
+    return _epoch_ms(start), _epoch_ms(start + _dt.timedelta(days=1))
+
+
+def test_list_metric_fields_dimensionless_and_dimensioned(amc, mcp_state, mcp_n2_state):
+    payload = _call_tool(mcp_state, "list_metric_fields")["structuredContent"]
+    assert payload["dimensioned"] is False
+    assert [f["name"] for f in payload["fields"]] == ["component", "metric"]
+
+    payload = _call_tool(mcp_n2_state, "list_metric_fields")["structuredContent"]
+    assert payload["dimensioned"] is True
+    expected = ["component", "metric", *amc._INSTANCE_DIMENSION_COLUMNS]
+    assert expected  # non-empty guard
+    assert [f["name"] for f in payload["fields"]] == expected
+
+
+def test_group_by_component_counts_match_csv_cells(amc, mcp_state):
+    from_ms, to_ms = _day_window(amc)
+    payload = _call_tool(mcp_state, "group_metrics_by_field", {
+        "field": "component", "from_ms": from_ms, "to_ms": to_ms,
+    })["structuredContent"]
+    by_value = {b["value"]: b["count"] for b in payload["buckets"]}
+
+    expected = {}
+    for component in _COMPONENTS.split(","):
+        path = mcp_state.output_dir / f"{component}.csv"
+        with path.open(encoding="utf-8") as f:
+            next(f)
+            cells = sum(
+                1
+                for line in f
+                for cell in line.rstrip("\n").split(",")[1:]
+                if cell
+            )
+        expected[component] = cells
+    assert expected and all(expected.values())  # non-empty guard
+    assert by_value == expected
+    assert payload["truncated"] is False
+    counts = [b["count"] for b in payload["buckets"]]
+    assert counts == sorted(counts, reverse=True)
+
+
+def test_group_by_aggregates_avg_and_sum(amc, mcp_state):
+    from_ms, to_ms = _day_window(amc)
+    metric = "requests_per_sec"
+    payload = _call_tool(mcp_state, "group_metrics_by_field", {
+        "field": "component", "from_ms": from_ms, "to_ms": to_ms,
+        "metric": metric, "agg": "avg",
+    })["structuredContent"]
+    assert [b["value"] for b in payload["buckets"]] == ["apigateway"]
+    bucket = payload["buckets"][0]
+
+    path = mcp_state.output_dir / "apigateway.csv"
+    with path.open(encoding="utf-8") as f:
+        header = next(f).rstrip("\n").split(",")
+        col = header.index(metric)
+        values = [
+            float(line.rstrip("\n").split(",")[col])
+            for line in f
+            if line.rstrip("\n").split(",")[col]
+        ]
+    assert values  # non-empty guard
+    assert bucket["count"] == len(values)
+    assert bucket["agg_value"] == pytest.approx(sum(values) / len(values))
+
+    payload = _call_tool(mcp_state, "group_metrics_by_field", {
+        "field": "component", "from_ms": from_ms, "to_ms": to_ms,
+        "metric": metric, "agg": "p95",
+    })["structuredContent"]
+    p95 = payload["buckets"][0]["agg_value"]
+    assert min(values) <= p95 <= max(values)
+
+
+def test_group_by_dimension_field_on_n2_run(amc, mcp_n2_state):
+    from_ms, to_ms = _day_window(amc)
+    payload = _call_tool(mcp_n2_state, "group_metrics_by_field", {
+        "field": "pod", "from_ms": from_ms, "to_ms": to_ms,
+    })["structuredContent"]
+    values = {b["value"] for b in payload["buckets"]}
+    assert values == {"pod-0", "pod-1"}
+    counts = {b["count"] for b in payload["buckets"]}
+    assert len(counts) == 1  # symmetric fan-out: same measurement count per pod
+
+
+def test_group_by_limit_flags_truncation(amc, mcp_state):
+    from_ms, to_ms = _day_window(amc)
+    payload = _call_tool(mcp_state, "group_metrics_by_field", {
+        "field": "component", "from_ms": from_ms, "to_ms": to_ms, "limit": 1,
+    })["structuredContent"]
+    assert len(payload["buckets"]) == 1
+    assert payload["truncated"] is True
+
+
+def test_group_by_argument_validation(mcp_state):
+    result = _call_tool(mcp_state, "group_metrics_by_field", {
+        "field": "pod", "from_ms": 0, "to_ms": 1000,
+    })
+    assert result["isError"] is True  # dimensionless run has no pod field
+    result = _call_tool(mcp_state, "group_metrics_by_field", {
+        "field": "component", "from_ms": 0, "to_ms": 1000, "agg": "avg",
+    })
+    assert result["isError"] is True  # value agg requires a metric
+    assert "metric" in result["content"][0]["text"]
+
+
+def test_correlated_timeline_surfaces_excursions_without_ground_truth(amc, mcp_state):
+    from_ms, to_ms = _day_window(amc)
+    payload = _call_tool(mcp_state, "get_correlated_timeline", {
+        "from_ms": from_ms, "to_ms": to_ms,
+    })["structuredContent"]
+
+    assert payload["timeline"]  # the planted day has detectable excursions
+    stamps = [e["timestamp_ms"] for e in payload["timeline"]]
+    assert stamps == sorted(stamps)
+    for event in payload["timeline"]:
+        assert event["component"] in _COMPONENTS.split(",")
+        assert abs(event["z_score"]) >= payload["sensitivity"]
+
+    blob = json.dumps(payload, sort_keys=True)
+    slugs = set(amc.SCENARIOS)
+    assert slugs  # non-empty guard
+    for slug in slugs:
+        assert slug not in blob
+    anomalies = (mcp_state.output_dir / "anomalies.csv").read_text(encoding="utf-8")
+    descriptions = [
+        line.split(",")[3] for line in anomalies.splitlines()[1:] if line
+    ]
+    assert descriptions  # non-empty guard
+    for description in descriptions:
+        assert description not in blob
+
+
+def test_get_logs_window_query_and_limit(amc, mcp_state):
+    from_ms, to_ms = _day_window(amc)
+    payload = _call_tool(mcp_state, "get_logs", {
+        "from_ms": from_ms, "to_ms": to_ms,
+    })["structuredContent"]
+    log_path = mcp_state.output_dir / "metric_report.log"
+    total_lines = sum(1 for _ in log_path.open(encoding="utf-8"))
+    assert total_lines > 0  # non-empty guard
+    assert len(payload["lines"]) == total_lines
+    assert payload["truncated"] is False
+
+    filtered = _call_tool(mcp_state, "get_logs", {
+        "from_ms": from_ms, "to_ms": to_ms, "query": "component:cacheservice",
+    })["structuredContent"]
+    assert filtered["lines"]
+    for line in filtered["lines"]:
+        assert "component=cacheservice" in line
+    assert len(filtered["lines"]) < total_lines
+
+    capped = _call_tool(mcp_state, "get_logs", {
+        "from_ms": from_ms, "to_ms": to_ms, "limit": 1,
+    })["structuredContent"]
+    assert len(capped["lines"]) == 1
+    assert capped["truncated"] is True
+
+
+def test_get_logs_absent_artifact_is_note_not_error(amc, tmp_path):
+    argv = [
+        "--duration-days", "1", "--seed", "42",
+        "--components", "apigateway",
+        "--output-dir", str(tmp_path),
+        "--interval-seconds", "3600",
+        "--emit", "metrics",
+    ]
+    amc.main(argv)
+    state = server.build_state(amc, amc.parse_args(argv))
+    payload = _call_tool(state, "get_logs", {
+        "from_ms": 0, "to_ms": 10**13,
+    })["structuredContent"]
+    assert payload["lines"] == []
+    assert "note" in payload
+
+
+def test_deduplicate_logs_clusters_account_for_every_line(amc, mcp_state):
+    from_ms, to_ms = _day_window(amc)
+    payload = _call_tool(mcp_state, "deduplicate_logs", {
+        "from_ms": from_ms, "to_ms": to_ms,
+    })["structuredContent"]
+    log_path = mcp_state.output_dir / "metric_report.log"
+    total_lines = sum(1 for _ in log_path.open(encoding="utf-8"))
+    assert payload["clusters"]  # non-empty guard
+    assert sum(c["count"] for c in payload["clusters"]) == total_lines
+    assert payload["total_lines"] == total_lines
+    counts = [c["count"] for c in payload["clusters"]]
+    assert counts == sorted(counts, reverse=True)
+    for cluster in payload["clusters"]:
+        assert cluster["representative"]
+
+
+# ------------------------------------------------------------------
 # Ground-truth wall (day one)
 # ------------------------------------------------------------------
 
@@ -295,7 +509,7 @@ def test_http_round_trip_initialize_list_call(amc, tmp_path):
         status, body = _http_post(
             base_url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
         )
-        assert len(body["result"]["tools"]) == 4
+        assert len(body["result"]["tools"]) == len(server_mcp.MCP_TOOLS)
 
         status, body = _http_post(base_url, {
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",

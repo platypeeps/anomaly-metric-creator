@@ -133,9 +133,13 @@ Offline trace-bundle analysis lives in `trace_bundle.py` and imports
 `tools/list`, `tools/call`, `ping`; notifications get 202, `GET /mcp` gets
 a 405 JSON-RPC refusal) plus the read-only tool registry
 (`get_current_time`, `list_components`, `get_topology`,
-`get_metric_histogram`). Tools answer only from what the run already
-produced — the simulated clock, `_resolve_effective_specs`,
-`_serialize_topology`, and the per-component CSVs — and are subject to the
+`get_metric_histogram`, `list_metric_fields`, `group_metrics_by_field`,
+`get_correlated_timeline`, `get_logs`, `deduplicate_logs`). Tools answer
+only from what the run already produced — the simulated clock,
+`_resolve_effective_specs`, `_serialize_topology`, the per-component CSVs
+(via the same `_scan_component_csv_headers` dispatch the gauge/combine
+writers use, so dim-aware runs work identically), and
+`metric_report.log` — and are subject to the
 **ground-truth wall**: no MCP tool may read `anomalies.csv` or the
 `SCENARIOS` registry, because the MCP surface is what an AI agent under
 evaluation sees while the anomaly manifest is the eval harness's scoring

@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import math
+import re
 from dataclasses import dataclass
 from importlib import metadata as _importlib_metadata
 from typing import Any, Callable
@@ -272,6 +273,380 @@ def _tool_get_metric_histogram(state: Any, arguments: dict[str, Any]) -> dict[st
 
 
 # ------------------------------------------------------------------
+# Analysis tools (phase 2)
+# ------------------------------------------------------------------
+
+# Bucket/event budgets. Every cap is surfaced as a `truncated` flag in the
+# response — no silent truncation.
+_GROUP_BY_DEFAULT_LIMIT = 50
+_GROUP_BY_MAX_LIMIT = 500
+_TIMELINE_PER_COMPONENT_CAP = 50
+_TIMELINE_TOTAL_CAP = 200
+_LOGS_DEFAULT_LIMIT = 100
+_LOGS_MAX_LIMIT = 1000
+
+_VALUE_AGGS = ("avg", "sum", "min", "max", "p95", "p99")
+
+_LOG_TIMESTAMP_LEN = len("2026-03-01 00:00:00")
+
+
+def _scan_active_csv_headers(state: Any) -> tuple[bool, dict[str, dict]]:
+    """Header-scan the active components' CSVs via the shared writer helper."""
+    paths = {
+        name: state.output_dir / f"{name}.csv"
+        for name in _active_components(state)
+    }
+    return state.legacy._scan_component_csv_headers(paths)
+
+
+def _tool_list_metric_fields(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    any_dimensioned, _info = _scan_active_csv_headers(state)
+    fields = [
+        {"name": "component", "description": "Service component name."},
+        {"name": "metric", "description": "Metric column name."},
+    ]
+    if any_dimensioned:
+        fields.extend(
+            {"name": column, "description": f"Instance dimension '{column}'."}
+            for column in state.legacy._INSTANCE_DIMENSION_COLUMNS
+        )
+    return {"fields": fields, "dimensioned": any_dimensioned}
+
+
+def _resolve_limit(arguments: dict[str, Any], key: str, default: int, cap: int) -> int:
+    value = arguments.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise McpToolError(f"argument '{key}' must be a positive integer")
+    return min(value, cap)
+
+
+def _nearest_rank(sorted_values: list[float], percentile: float) -> float:
+    """Nearest-rank percentile: deterministic across Python versions."""
+    rank = max(1, math.ceil(percentile / 100.0 * len(sorted_values)))
+    return sorted_values[rank - 1]
+
+
+def _tool_group_metrics_by_field(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    field = _require_str(arguments, "field")
+    from_ms = _require_epoch_ms(arguments, "from_ms")
+    to_ms = _require_epoch_ms(arguments, "to_ms")
+    if from_ms >= to_ms:
+        raise McpToolError("'from_ms' must be strictly before 'to_ms'")
+    agg = arguments.get("agg", "count")
+    if agg != "count" and agg not in _VALUE_AGGS:
+        raise McpToolError(
+            f"unknown agg: {agg}; supported: count, {', '.join(_VALUE_AGGS)}"
+        )
+    metric_filter = arguments.get("metric")
+    if agg != "count" and not isinstance(metric_filter, str):
+        raise McpToolError(f"agg '{agg}' requires a 'metric' argument to aggregate")
+    limit = _resolve_limit(
+        arguments, "limit", _GROUP_BY_DEFAULT_LIMIT, _GROUP_BY_MAX_LIMIT
+    )
+
+    any_dimensioned, info = _scan_active_csv_headers(state)
+    dim_columns = tuple(state.legacy._INSTANCE_DIMENSION_COLUMNS)
+    valid_fields = ("component", "metric") + (dim_columns if any_dimensioned else ())
+    if field not in valid_fields:
+        raise McpToolError(
+            f"unknown field: {field}; available fields: {', '.join(valid_fields)}"
+        )
+
+    parse_ts = state.legacy._parse_csv_timestamp
+    counts: dict[str, int] = {}
+    sums: dict[str, float] = {}
+    mins: dict[str, float] = {}
+    maxs: dict[str, float] = {}
+    values: dict[str, list[float]] = {}
+    wants_values = agg in ("p95", "p99")
+
+    for component, entry in info.items():
+        if not entry["exists"]:
+            continue
+        dim_cols = entry["dim_cols"]
+        metric_cols = entry["metric_cols"]
+        if metric_filter is not None and metric_filter not in metric_cols:
+            continue
+        offset = 1 + len(dim_cols)
+        dim_index = (
+            1 + dim_cols.index(field) if field in dim_cols else None
+        )
+        with entry["path"].open(encoding="utf-8", newline="") as f:
+            f.readline()
+            for line in f:
+                row = line.rstrip("\n").split(",")
+                ms = _epoch_ms(parse_ts(row[0]))
+                if not from_ms <= ms < to_ms:
+                    continue
+                for metric_idx, metric_name in enumerate(metric_cols):
+                    if metric_filter is not None and metric_name != metric_filter:
+                        continue
+                    cell = row[offset + metric_idx] if len(row) > offset + metric_idx else ""
+                    if not cell:
+                        continue
+                    if field == "component":
+                        key = component
+                    elif field == "metric":
+                        key = metric_name
+                    else:
+                        key = row[dim_index] if dim_index is not None and len(row) > dim_index else ""
+                        if not key:
+                            continue
+                    counts[key] = counts.get(key, 0) + 1
+                    if agg != "count":
+                        value = float(cell)
+                        sums[key] = sums.get(key, 0.0) + value
+                        if key not in mins or value < mins[key]:
+                            mins[key] = value
+                        if key not in maxs or value > maxs[key]:
+                            maxs[key] = value
+                        if wants_values:
+                            values.setdefault(key, []).append(value)
+
+    buckets = []
+    for key in sorted(counts, key=lambda k: (-counts[k], k)):
+        bucket: dict[str, Any] = {"value": key, "count": counts[key]}
+        if agg == "avg":
+            bucket["agg_value"] = sums[key] / counts[key]
+        elif agg == "sum":
+            bucket["agg_value"] = sums[key]
+        elif agg == "min":
+            bucket["agg_value"] = mins[key]
+        elif agg == "max":
+            bucket["agg_value"] = maxs[key]
+        elif agg in ("p95", "p99"):
+            bucket["agg_value"] = _nearest_rank(
+                sorted(values[key]), float(agg[1:])
+            )
+        buckets.append(bucket)
+
+    truncated = len(buckets) > limit
+    return {
+        "field": field,
+        "agg": agg,
+        "metric": metric_filter,
+        "buckets": buckets[:limit],
+        "limit": limit,
+        "truncated": truncated,
+    }
+
+
+def _tool_get_correlated_timeline(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Cross-component timeline of metric excursions, computed from the CSVs.
+
+    Excursions are cells whose z-score against the window's own statistics
+    meets the sensitivity threshold. This is intentionally *detection over
+    the observable data* — the tool must never read ``anomalies.csv`` (the
+    eval ground truth); an agent is supposed to find the excursions the way
+    an operator would.
+    """
+    from_ms = _require_epoch_ms(arguments, "from_ms")
+    to_ms = _require_epoch_ms(arguments, "to_ms")
+    if from_ms >= to_ms:
+        raise McpToolError("'from_ms' must be strictly before 'to_ms'")
+    sensitivity = arguments.get("sensitivity", 3.0)
+    if isinstance(sensitivity, bool) or not isinstance(sensitivity, (int, float)):
+        raise McpToolError("argument 'sensitivity' must be a number")
+    sensitivity = float(sensitivity)
+    if not math.isfinite(sensitivity) or not 0.5 <= sensitivity <= 10.0:
+        raise McpToolError("argument 'sensitivity' must be in [0.5, 10]")
+
+    active = _active_components(state)
+    requested = arguments.get("components")
+    if requested is not None:
+        if (not isinstance(requested, list)
+                or not all(isinstance(c, str) for c in requested)):
+            raise McpToolError("argument 'components' must be a list of names")
+        unknown = [c for c in requested if c not in active]
+        if unknown:
+            raise McpToolError(
+                f"unknown or inactive components: {', '.join(unknown)}; "
+                f"active: {', '.join(active)}"
+            )
+        active = [c for c in active if c in set(requested)]
+
+    parse_ts = state.legacy._parse_csv_timestamp
+    per_component: dict[str, dict[str, Any]] = {}
+    all_events: list[dict[str, Any]] = []
+    for component in active:
+        path = state.output_dir / f"{component}.csv"
+        if not path.exists():
+            continue
+        series: dict[str, list[tuple[int, float]]] = {}
+        with path.open(encoding="utf-8", newline="") as f:
+            header = f.readline().rstrip("\n").split(",")
+            dim_cols, metric_cols = state.legacy._classify_component_csv_header(header)
+            offset = 1 + len(dim_cols)
+            for line in f:
+                row = line.rstrip("\n").split(",")
+                ms = _epoch_ms(parse_ts(row[0]))
+                if not from_ms <= ms < to_ms:
+                    continue
+                for metric_idx, metric_name in enumerate(metric_cols):
+                    cell = row[offset + metric_idx] if len(row) > offset + metric_idx else ""
+                    if cell:
+                        series.setdefault(metric_name, []).append((ms, float(cell)))
+        events: list[dict[str, Any]] = []
+        for metric_name, points in series.items():
+            n = len(points)
+            if n < 3:
+                continue
+            mean = sum(v for _ms, v in points) / n
+            variance = sum((v - mean) ** 2 for _ms, v in points) / n
+            std = math.sqrt(variance)
+            if std == 0.0:
+                continue
+            for ms, value in points:
+                z = (value - mean) / std
+                if abs(z) >= sensitivity:
+                    events.append({
+                        "timestamp_ms": ms,
+                        "component": component,
+                        "metric": metric_name,
+                        "value": value,
+                        "z_score": z,
+                    })
+        events.sort(key=lambda e: (e["timestamp_ms"], e["metric"]))
+        truncated = len(events) > _TIMELINE_PER_COMPONENT_CAP
+        kept = events[:_TIMELINE_PER_COMPONENT_CAP]
+        per_component[component] = {"events": kept, "truncated": truncated}
+        all_events.extend(kept)
+
+    all_events.sort(
+        key=lambda e: (e["timestamp_ms"], e["component"], e["metric"])
+    )
+    timeline_truncated = len(all_events) > _TIMELINE_TOTAL_CAP
+    return {
+        "sensitivity": sensitivity,
+        "components": per_component,
+        "timeline": all_events[:_TIMELINE_TOTAL_CAP],
+        "timeline_truncated": timeline_truncated,
+    }
+
+
+_LOG_QUERY_KEYS = ("component", "metric", "level")
+
+
+def _parse_log_query(query: Any) -> tuple[dict[str, str], list[str]]:
+    """Parse the small log query grammar: ``key:value`` filters + substrings."""
+    if query is None:
+        return {}, []
+    if not isinstance(query, str):
+        raise McpToolError("argument 'query' must be a string")
+    filters: dict[str, str] = {}
+    substrings: list[str] = []
+    for token in query.split():
+        key, sep, value = token.partition(":")
+        if sep and key in _LOG_QUERY_KEYS and value:
+            filters[key] = value
+        else:
+            substrings.append(token)
+    return filters, substrings
+
+
+def _log_line_matches(line: str, filters: dict[str, str], substrings: list[str]) -> bool:
+    for key, value in filters.items():
+        if key == "level":
+            parts = line.split(" ", 3)
+            if len(parts) < 3 or parts[2] != value:
+                return False
+        elif f"{key}={value}" not in line:
+            return False
+    return all(term in line for term in substrings)
+
+
+def _iter_log_lines_in_window(state: Any, from_ms: int, to_ms: int):
+    log_path = state.output_dir / "metric_report.log"
+    if not log_path.exists():
+        return None
+    parse_ts = state.legacy._parse_csv_timestamp
+
+    def _iterator():
+        with log_path.open(encoding="utf-8") as f:
+            for raw in f:
+                line = raw.rstrip("\n")
+                stamp = line[:_LOG_TIMESTAMP_LEN]
+                try:
+                    ms = _epoch_ms(parse_ts(stamp))
+                except ValueError:
+                    continue
+                if from_ms <= ms < to_ms:
+                    yield line
+
+    return _iterator()
+
+
+_ABSENT_LOG_NOTE = (
+    "metric_report.log was not emitted by this run (the 'logs' artifact "
+    "was not selected); no log lines are available"
+)
+
+
+def _tool_get_logs(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    from_ms = _require_epoch_ms(arguments, "from_ms")
+    to_ms = _require_epoch_ms(arguments, "to_ms")
+    if from_ms >= to_ms:
+        raise McpToolError("'from_ms' must be strictly before 'to_ms'")
+    limit = _resolve_limit(arguments, "limit", _LOGS_DEFAULT_LIMIT, _LOGS_MAX_LIMIT)
+    filters, substrings = _parse_log_query(arguments.get("query"))
+
+    lines_iter = _iter_log_lines_in_window(state, from_ms, to_ms)
+    if lines_iter is None:
+        return {"lines": [], "truncated": False, "note": _ABSENT_LOG_NOTE}
+    lines: list[str] = []
+    truncated = False
+    for line in lines_iter:
+        if not _log_line_matches(line, filters, substrings):
+            continue
+        if len(lines) >= limit:
+            truncated = True
+            break
+        lines.append(line)
+    return {"lines": lines, "truncated": truncated}
+
+
+# Variable parts stripped before clustering: the leading timestamp, the
+# per-event correlation ids, and digit runs (latencies, percentages).
+_LOG_EVENT_ID_RE = re.compile(r"event_id=\S+")
+_LOG_DIGITS_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _normalize_log_line(line: str) -> str:
+    normalized = line[_LOG_TIMESTAMP_LEN:].strip()
+    normalized = _LOG_EVENT_ID_RE.sub("event_id=*", normalized)
+    return _LOG_DIGITS_RE.sub("#", normalized)
+
+
+def _tool_deduplicate_logs(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    from_ms = _require_epoch_ms(arguments, "from_ms")
+    to_ms = _require_epoch_ms(arguments, "to_ms")
+    if from_ms >= to_ms:
+        raise McpToolError("'from_ms' must be strictly before 'to_ms'")
+    filters, substrings = _parse_log_query(arguments.get("query"))
+
+    lines_iter = _iter_log_lines_in_window(state, from_ms, to_ms)
+    if lines_iter is None:
+        return {"clusters": [], "total_lines": 0, "note": _ABSENT_LOG_NOTE}
+    representatives: dict[str, str] = {}
+    cluster_counts: dict[str, int] = {}
+    total = 0
+    for line in lines_iter:
+        if not _log_line_matches(line, filters, substrings):
+            continue
+        total += 1
+        key = _normalize_log_line(line)
+        cluster_counts[key] = cluster_counts.get(key, 0) + 1
+        representatives.setdefault(key, line)
+    clusters = [
+        {"representative": representatives[key], "count": cluster_counts[key]}
+        for key in sorted(
+            cluster_counts, key=lambda k: (-cluster_counts[k], representatives[k])
+        )
+    ]
+    return {"clusters": clusters, "total_lines": total}
+
+
+# ------------------------------------------------------------------
 # Tool registry
 # ------------------------------------------------------------------
 
@@ -341,6 +716,135 @@ MCP_TOOLS: tuple[McpTool, ...] = (
             "additionalProperties": False,
         },
         handler=_tool_get_metric_histogram,
+    ),
+    McpTool(
+        name="list_metric_fields",
+        description=(
+            "List the fields usable in group_metrics_by_field: always "
+            "'component' and 'metric', plus the instance dimensions (id, "
+            "host, pod, az, region, tenant) when this run emits "
+            "per-instance telemetry."
+        ),
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=_tool_list_metric_fields,
+    ),
+    McpTool(
+        name="group_metrics_by_field",
+        description=(
+            "Group emitted measurements by a field over a time range and "
+            "return the distribution. Default agg 'count' counts emitted "
+            "measurements per field value; aggs avg, sum, min, max, p95, "
+            "p99 aggregate a named metric's values (pass 'metric'). "
+            "Buckets sort by count descending; responses are capped by "
+            "'limit' (default 50) with a 'truncated' flag."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "description": "Field to group by (see list_metric_fields).",
+                },
+                "from_ms": _EPOCH_MS_SCHEMA,
+                "to_ms": _EPOCH_MS_SCHEMA,
+                "metric": {
+                    "type": "string",
+                    "description": "Metric to aggregate (required for value aggs).",
+                },
+                "agg": {
+                    "type": "string",
+                    "enum": ["count", "avg", "sum", "min", "max", "p95", "p99"],
+                    "description": "Aggregation; default count.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max buckets returned (default 50, max 500).",
+                },
+            },
+            "required": ["field", "from_ms", "to_ms"],
+            "additionalProperties": False,
+        },
+        handler=_tool_group_metrics_by_field,
+    ),
+    McpTool(
+        name="get_correlated_timeline",
+        description=(
+            "Detect metric excursions (cells beyond a z-score sensitivity "
+            "against the window's own statistics) per component, and "
+            "return per-component event lists plus one interleaved "
+            "cross-component timeline ordered by timestamp for root-cause "
+            "analysis. Event budgets are capped with 'truncated' flags."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "from_ms": _EPOCH_MS_SCHEMA,
+                "to_ms": _EPOCH_MS_SCHEMA,
+                "components": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional subset of components to analyze.",
+                },
+                "sensitivity": {
+                    "type": "number",
+                    "description": "Z-score threshold in [0.5, 10]; default 3.",
+                },
+            },
+            "required": ["from_ms", "to_ms"],
+            "additionalProperties": False,
+        },
+        handler=_tool_get_correlated_timeline,
+    ),
+    McpTool(
+        name="get_logs",
+        description=(
+            "Fetch report log lines in a time range. Query grammar (all "
+            "terms AND-ed): bare substrings, plus component:NAME, "
+            "metric:NAME, level:LEVEL filters. Results are capped by "
+            "'limit' (default 100) with a 'truncated' flag."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "from_ms": _EPOCH_MS_SCHEMA,
+                "to_ms": _EPOCH_MS_SCHEMA,
+                "query": {
+                    "type": "string",
+                    "description": "Optional filter (substrings and key:value terms).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max lines returned (default 100, max 1000).",
+                },
+            },
+            "required": ["from_ms", "to_ms"],
+            "additionalProperties": False,
+        },
+        handler=_tool_get_logs,
+    ),
+    McpTool(
+        name="deduplicate_logs",
+        description=(
+            "Cluster report log lines in a time range by their shape "
+            "(timestamps, correlation ids, and numbers stripped) and "
+            "return one representative per cluster with a count, sorted "
+            "by count descending. Accepts the same query grammar as "
+            "get_logs."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "from_ms": _EPOCH_MS_SCHEMA,
+                "to_ms": _EPOCH_MS_SCHEMA,
+                "query": {
+                    "type": "string",
+                    "description": "Optional filter (substrings and key:value terms).",
+                },
+            },
+            "required": ["from_ms", "to_ms"],
+            "additionalProperties": False,
+        },
+        handler=_tool_deduplicate_logs,
     ),
 )
 
