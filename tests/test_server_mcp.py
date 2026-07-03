@@ -127,6 +127,8 @@ def test_tools_list_is_sorted_and_stable(mcp_state):
         "get_metric_histogram", "list_metric_fields",
         "group_metrics_by_field", "get_correlated_timeline",
         "get_logs", "deduplicate_logs",
+        "kubectl_get", "describe_resource", "get_pod_logs",
+        "get_events", "helm_status", "helm_history",
     }
     for tool in tools:
         assert tool["description"]
@@ -454,6 +456,131 @@ def test_deduplicate_logs_clusters_account_for_every_line(amc, mcp_state):
     assert counts == sorted(counts, reverse=True)
     for cluster in payload["clusters"]:
         assert cluster["representative"]
+
+
+# ------------------------------------------------------------------
+# Ops tools + command-trace integration (phase 3)
+# ------------------------------------------------------------------
+
+def test_kubectl_get_rows_match_rendered_command(amc, tmp_path):
+    state = _build_state(amc, tmp_path)
+    payload = _call_tool(state, "kubectl_get", {"kind": "pods"})["structuredContent"]
+    assert payload["kind"] == "pods"
+    assert payload["count"] == len(payload["rows"]) > 0
+    rendered = server.run_command(
+        state, argv=["kubectl", "get", "pods", "-n", state.namespace],
+        client="test",
+    )["result"]["stdout"]
+    row_names = [row["name"] for row in payload["rows"]]
+    assert row_names  # non-empty guard
+    for row_name in row_names:
+        assert row_name in rendered  # same snapshot behind both views
+
+    result = _call_tool(state, "kubectl_get", {"kind": "frobnicators"})
+    assert result["isError"] is True
+    assert "frobnicators" in result["content"][0]["text"]
+
+
+def test_kubectl_get_reflects_api_mutation(amc, tmp_path):
+    state = _build_state(amc, tmp_path)
+    response = server.kubernetes_api_mutating_response(
+        state, "PATCH",
+        f"/apis/apps/v1/namespaces/{state.namespace}/deployments/apigateway/scale",
+        {"spec": {"replicas": 7}},
+    )
+    assert response.status < 400
+    payload = _call_tool(state, "kubectl_get", {
+        "kind": "deployments", "name": "apigateway",
+    })["structuredContent"]
+    assert payload["count"] == 1
+    row_blob = json.dumps(payload["rows"][0])
+    assert "7" in row_blob  # overlay scale visible through the MCP view
+
+
+def test_describe_logs_and_helm_tools_render(amc, mcp_state):
+    described = _call_tool(mcp_state, "describe_resource", {
+        "kind": "deployment", "name": "apigateway",
+    })["structuredContent"]
+    assert described["exit_code"] == 0
+    assert "apigateway" in described["stdout"]
+
+    pods = _call_tool(mcp_state, "kubectl_get", {"kind": "pods"})["structuredContent"]
+    pod_name = pods["rows"][0]["name"]
+    logs = _call_tool(mcp_state, "get_pod_logs", {
+        "pod": pod_name, "tail_lines": 5,
+    })["structuredContent"]
+    assert logs["exit_code"] == 0
+    assert logs["stdout"]
+
+    status = _call_tool(mcp_state, "helm_status", {
+        "release": server.DEFAULT_RELEASE,
+    })["structuredContent"]
+    assert status["exit_code"] == 0
+    assert server.DEFAULT_RELEASE in status["stdout"]
+
+    history = _call_tool(mcp_state, "helm_history", {
+        "release": server.DEFAULT_RELEASE,
+    })["structuredContent"]
+    assert history["exit_code"] == 0
+
+    events = _call_tool(mcp_state, "get_events", {})["structuredContent"]
+    assert events["count"] == len(events["rows"])
+
+
+def test_tools_call_records_mcp_command_trace(amc, tmp_path):
+    state = _build_state(amc, tmp_path)
+    before = state.traces.count()
+    _call_tool(state, "get_current_time")
+    assert state.traces.count() == before + 1
+    trace = state.traces.list(limit=1)[0]
+    assert trace["command_family"] == "mcp"
+    assert trace["verb"] == "get_current_time"
+    assert trace["support_status"] == "supported"
+    assert trace["exit_code"] == 0
+    assert trace["matched_rule_id"] == "mcp.get_current_time"
+
+    matches = state.traces.search(command_family="mcp")
+    assert matches["items"]  # the same filters kubectl traces use find it
+
+
+def test_unknown_tool_lands_in_unsupported_backlog(amc, tmp_path):
+    state = _build_state(amc, tmp_path)
+    status, body = _rpc(
+        state, "tools/call", {"name": "definitely_not_a_tool", "arguments": {}}
+    )
+    assert body["error"]["code"] == server_mcp.INVALID_PARAMS
+    groups = state.traces.unsupported_summary()
+    assert groups  # non-empty guard
+    assert "definitely_not_a_tool" in json.dumps(groups)
+
+
+def test_mcp_trace_arguments_are_redacted(amc, tmp_path):
+    state = _build_state(amc, tmp_path)
+    _call_tool(state, "get_logs", {
+        "from_ms": 0, "to_ms": 1000,
+        "token": "supersecretvalue",
+    })
+    # Whether the tool accepts or rejects the extra argument, the recorded
+    # trace must never carry the raw sensitive value.
+    trace = state.traces.list(limit=1)[0]
+    assert trace["command_family"] == "mcp"
+    assert trace["parsed_flags"].get("token") == "***"
+    assert "supersecretvalue" not in json.dumps(trace)
+
+
+def test_mcp_traces_round_trip_through_trace_bundle_helpers(amc, tmp_path):
+    from anomaly_metric_creator import server_traces
+
+    state = _build_state(amc, tmp_path)
+    _call_tool(state, "get_current_time")
+    exported = state.traces.export_payload()
+    mcp_traces = [
+        t for t in exported["traces"] if t["command_family"] == "mcp"
+    ]
+    assert mcp_traces  # non-empty guard
+    trace = server_traces.CommandTrace.from_dict(mcp_traces[0])
+    assert server_traces.trace_matches_search(trace, command_family="mcp")
+    assert not server_traces.trace_matches_search(trace, command_family="kubectl")
 
 
 # ------------------------------------------------------------------

@@ -27,11 +27,27 @@ import datetime as _dt
 import json
 import math
 import re
+import time
 from dataclasses import dataclass
 from importlib import metadata as _importlib_metadata
 from typing import Any, Callable
 
-from .server_ops import RequestBodyTooLarge, _content_length
+from .server_ops import (
+    _SNAPSHOT_KINDS,
+    ParsedCommand,
+    RequestBodyTooLarge,
+    _content_length,
+    _format_dt,
+    _normalize_kind,
+    _preview,
+    _redact_parsed_flags,
+    _snapshot_row_namespace,
+    command_fingerprint,
+    parse_command,
+    render_command,
+    resource_snapshot,
+)
+from .server_traces import CommandTrace
 
 # Latest protocol revision this facade implements; requested versions we
 # recognize are echoed back per the MCP spec, anything else falls back to
@@ -647,6 +663,102 @@ def _tool_deduplicate_logs(state: Any, arguments: dict[str, Any]) -> dict[str, A
 
 
 # ------------------------------------------------------------------
+# Ops tools (phase 3) — wrappers over the existing command simulator
+# ------------------------------------------------------------------
+# These dispatch through parse_command()/render_command() and the
+# overlay-aware resource_snapshot(), never a second resource model, so the
+# SimulationMutations overlay and scenario ops-profiles apply automatically
+# and MCP output can never contradict what a real kubectl client sees.
+# Ground-truth wall for ops output: "no more than kubectl shows" — the
+# rendered strings are the operator-visible surface, nothing appended.
+
+def _rendered_command_result(state: Any, argv: list[str]) -> dict[str, Any]:
+    """Run one simulated CLI invocation and return its observable output."""
+    parsed = parse_command(argv=argv, default_namespace=state.namespace)
+    result = render_command(state, parsed)
+    return {
+        "command": " ".join(argv),
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
+def _optional_str(arguments: dict[str, Any], key: str) -> str | None:
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise McpToolError(f"argument '{key}' must be a non-empty string")
+    return value
+
+
+def _tool_kubectl_get(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    kind = _require_str(arguments, "kind")
+    name = _optional_str(arguments, "name")
+    namespace = _optional_str(arguments, "namespace")
+    normalized = _normalize_kind(kind)
+    if normalized not in _SNAPSHOT_KINDS:
+        raise McpToolError(
+            f"unknown resource kind: {kind}; known kinds: "
+            f"{', '.join(sorted(_SNAPSHOT_KINDS))}"
+        )
+    rows = resource_snapshot(state).get(normalized, [])
+    if namespace is not None:
+        rows = [r for r in rows if _snapshot_row_namespace(r) in (namespace, "")]
+    if name is not None:
+        rows = [r for r in rows if r.get("name") == name]
+    return {"kind": normalized, "count": len(rows), "rows": rows}
+
+
+def _tool_describe_resource(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    kind = _require_str(arguments, "kind")
+    name = _require_str(arguments, "name")
+    namespace = _optional_str(arguments, "namespace")
+    argv = ["kubectl", "describe", kind, name]
+    if namespace:
+        argv += ["-n", namespace]
+    return _rendered_command_result(state, argv)
+
+
+def _tool_get_pod_logs(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    pod = _require_str(arguments, "pod")
+    namespace = _optional_str(arguments, "namespace")
+    container = _optional_str(arguments, "container")
+    tail_lines = arguments.get("tail_lines")
+    if tail_lines is not None and (
+        isinstance(tail_lines, bool) or not isinstance(tail_lines, int) or tail_lines < 1
+    ):
+        raise McpToolError("argument 'tail_lines' must be a positive integer")
+    argv = ["kubectl", "logs", pod]
+    if namespace:
+        argv += ["-n", namespace]
+    if container:
+        argv += ["-c", container]
+    if tail_lines is not None:
+        argv += [f"--tail={tail_lines}"]
+    return _rendered_command_result(state, argv)
+
+
+def _tool_get_events(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    namespace = _optional_str(arguments, "namespace")
+    rows = resource_snapshot(state).get("events", [])
+    if namespace is not None:
+        rows = [r for r in rows if _snapshot_row_namespace(r) in (namespace, "")]
+    return {"count": len(rows), "rows": rows}
+
+
+def _tool_helm_status(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    release = _require_str(arguments, "release")
+    return _rendered_command_result(state, ["helm", "status", release])
+
+
+def _tool_helm_history(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    release = _require_str(arguments, "release")
+    return _rendered_command_result(state, ["helm", "history", release])
+
+
+# ------------------------------------------------------------------
 # Tool registry
 # ------------------------------------------------------------------
 
@@ -846,6 +958,104 @@ MCP_TOOLS: tuple[McpTool, ...] = (
         },
         handler=_tool_deduplicate_logs,
     ),
+    McpTool(
+        name="kubectl_get",
+        description=(
+            "List simulated Kubernetes resources of a kind as structured "
+            "rows (the data behind `kubectl get`), optionally filtered by "
+            "name and namespace. Reflects live simulator mutations."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "description": "Resource kind, e.g. pods, deployments."},
+                "name": {"type": "string", "description": "Optional exact resource name."},
+                "namespace": {"type": "string", "description": "Optional namespace filter."},
+            },
+            "required": ["kind"],
+            "additionalProperties": False,
+        },
+        handler=_tool_kubectl_get,
+    ),
+    McpTool(
+        name="describe_resource",
+        description=(
+            "Describe one simulated Kubernetes resource — the same text "
+            "`kubectl describe` would print, including events."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "description": "Resource kind."},
+                "name": {"type": "string", "description": "Resource name."},
+                "namespace": {"type": "string", "description": "Optional namespace."},
+            },
+            "required": ["kind", "name"],
+            "additionalProperties": False,
+        },
+        handler=_tool_describe_resource,
+    ),
+    McpTool(
+        name="get_pod_logs",
+        description=(
+            "Fetch a simulated pod's logs — the same text `kubectl logs` "
+            "would print. Optional container and tail_lines."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pod": {"type": "string", "description": "Pod name."},
+                "namespace": {"type": "string", "description": "Optional namespace."},
+                "container": {"type": "string", "description": "Optional container name."},
+                "tail_lines": {"type": "integer", "description": "Optional line cap."},
+            },
+            "required": ["pod"],
+            "additionalProperties": False,
+        },
+        handler=_tool_get_pod_logs,
+    ),
+    McpTool(
+        name="get_events",
+        description=(
+            "List simulated cluster events as structured rows, optionally "
+            "filtered by namespace. Includes events added by simulator "
+            "mutations."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string", "description": "Optional namespace filter."},
+            },
+            "additionalProperties": False,
+        },
+        handler=_tool_get_events,
+    ),
+    McpTool(
+        name="helm_status",
+        description="Show a simulated Helm release's status (like `helm status RELEASE`).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "release": {"type": "string", "description": "Release name."},
+            },
+            "required": ["release"],
+            "additionalProperties": False,
+        },
+        handler=_tool_helm_status,
+    ),
+    McpTool(
+        name="helm_history",
+        description="Show a simulated Helm release's revision history (like `helm history RELEASE`).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "release": {"type": "string", "description": "Release name."},
+            },
+            "required": ["release"],
+            "additionalProperties": False,
+        },
+        handler=_tool_helm_history,
+    ),
 )
 
 
@@ -907,19 +1117,98 @@ def _tools_list_result() -> dict[str, Any]:
     }
 
 
-def _tools_call(state: Any, req_id: Any, params: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _record_mcp_trace(
+    state: Any,
+    *,
+    tool_name: str,
+    arguments: Any,
+    client: str,
+    support_status: str,
+    matched_rule_id: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    latency_ms: float,
+) -> None:
+    """Record one MCP tools/call as a CommandTrace (family ``mcp``).
+
+    Runs for every call — supported, tool-error, unknown-tool, and
+    internal-error alike — so agent misfires accumulate in the same
+    ``/v1/debug/unsupported`` backlog real kubectl misfires use. Arguments
+    are redacted through the same helper that redacts kubectl flags before
+    anything reaches memory, JSONL, SQLite, or the debug UI.
+    """
+    redacted_arguments = (
+        _redact_parsed_flags(dict(arguments)) if isinstance(arguments, dict) else {}
+    )
+    parsed = ParsedCommand(
+        raw_input=f"mcp tools/call {tool_name}",
+        argv=("mcp", "tools/call", tool_name),
+        family="mcp",
+        verb=tool_name,
+        resource_kind="",
+        resource_name="",
+        namespace="",
+        flags=redacted_arguments,
+        positionals=(),
+    )
+    trace = CommandTrace(
+        id=state.traces.next_id(),
+        received_at_wall_time=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        simulated_time=_format_dt(state.clock.now()),
+        raw_input=parsed.raw_input,
+        argv=parsed.argv,
+        client=client,
+        command_family="mcp",
+        verb=tool_name,
+        resource_kind="",
+        resource_name="",
+        namespace="",
+        parsed_flags=redacted_arguments,
+        support_status=support_status,
+        matched_rule_id=matched_rule_id,
+        active_scenarios=state.active_scenarios,
+        exit_code=exit_code,
+        stdout_preview=_preview(stdout),
+        stderr_preview=_preview(stderr),
+        stdout=stdout,
+        stderr=stderr,
+        latency_ms=round(latency_ms, 3),
+        fingerprint=command_fingerprint(parsed, support_status),
+        guessed_intent=f"mcp tool call: {tool_name}" if tool_name else "mcp tool call",
+    )
+    state.traces.record(trace)
+
+
+def _tools_call(
+    state: Any, req_id: Any, params: dict[str, Any], *, client: str
+) -> tuple[int, dict[str, Any]]:
+    started = time.perf_counter()
     name = params.get("name")
+    tool_label = name if isinstance(name, str) else repr(name)
     if not isinstance(name, str) or name not in _TOOLS_BY_NAME:
-        return 200, _error_response(
-            req_id, INVALID_PARAMS,
+        message = (
             f"unknown tool: {name!r}; available: "
-            f"{', '.join(sorted(_TOOLS_BY_NAME))}",
+            f"{', '.join(sorted(_TOOLS_BY_NAME))}"
         )
+        _record_mcp_trace(
+            state, tool_name=tool_label, arguments=params.get("arguments"),
+            client=client, support_status="unsupported",
+            matched_rule_id="mcp.unknown_tool", exit_code=1,
+            stdout="", stderr=message,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        return 200, _error_response(req_id, INVALID_PARAMS, message)
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
-        return 200, _error_response(
-            req_id, INVALID_PARAMS, "'arguments' must be an object"
+        message = "'arguments' must be an object"
+        _record_mcp_trace(
+            state, tool_name=name, arguments=None, client=client,
+            support_status="unsupported", matched_rule_id="mcp.invalid_arguments",
+            exit_code=1, stdout="", stderr=message,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
         )
+        return 200, _error_response(req_id, INVALID_PARAMS, message)
     try:
         payload = _TOOLS_BY_NAME[name].handler(state, arguments)
     except McpToolError as exc:
@@ -927,26 +1216,47 @@ def _tools_call(state: Any, req_id: Any, params: dict[str, Any]) -> tuple[int, d
             "content": [{"type": "text", "text": str(exc)}],
             "isError": True,
         }
+        _record_mcp_trace(
+            state, tool_name=name, arguments=arguments, client=client,
+            support_status="supported", matched_rule_id=f"mcp.{name}",
+            exit_code=1, stdout="", stderr=str(exc),
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
     except Exception as exc:
         # A tool bug is a protocol-level internal error; keep the type and
         # message but never a traceback.
-        return 200, _error_response(
-            req_id, INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"
+        message = f"{type(exc).__name__}: {exc}"
+        _record_mcp_trace(
+            state, tool_name=name, arguments=arguments, client=client,
+            support_status="partial", matched_rule_id=f"mcp.{name}",
+            exit_code=1, stdout="", stderr=message,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
         )
+        return 200, _error_response(req_id, INTERNAL_ERROR, message)
     else:
+        serialized = json.dumps(payload, sort_keys=True)
         result = {
-            "content": [{"type": "text", "text": json.dumps(payload, sort_keys=True)}],
+            "content": [{"type": "text", "text": serialized}],
             "structuredContent": payload,
             "isError": False,
         }
+        _record_mcp_trace(
+            state, tool_name=name, arguments=arguments, client=client,
+            support_status="supported", matched_rule_id=f"mcp.{name}",
+            exit_code=0, stdout=serialized, stderr="",
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
     return 200, {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-def handle_mcp_http_post(state: Any, raw_body: bytes) -> tuple[int, dict[str, Any] | None]:
+def handle_mcp_http_post(
+    state: Any, raw_body: bytes, *, client: str = "mcp"
+) -> tuple[int, dict[str, Any] | None]:
     """Answer one streamable-HTTP POST: ``(http_status, json_body | None)``.
 
     ``None`` bodies are 202 Accepted responses to notifications, which the
-    streamable HTTP transport answers without content.
+    streamable HTTP transport answers without content. ``client`` is the
+    caller identity recorded on each tools/call CommandTrace.
     """
     try:
         payload = json.loads(raw_body.decode("utf-8"))
@@ -980,7 +1290,7 @@ def handle_mcp_http_post(state: Any, raw_body: bytes) -> tuple[int, dict[str, An
     elif method == "tools/list":
         result = _tools_list_result()
     elif method == "tools/call":
-        return _tools_call(state, req_id, params)
+        return _tools_call(state, req_id, params, client=client)
     else:
         return 200, _error_response(
             req_id, METHOD_NOT_FOUND, f"method not found: {method}"

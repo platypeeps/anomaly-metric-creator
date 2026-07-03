@@ -134,7 +134,16 @@ Offline trace-bundle analysis lives in `trace_bundle.py` and imports
 a 405 JSON-RPC refusal) plus the read-only tool registry
 (`get_current_time`, `list_components`, `get_topology`,
 `get_metric_histogram`, `list_metric_fields`, `group_metrics_by_field`,
-`get_correlated_timeline`, `get_logs`, `deduplicate_logs`). Tools answer
+`get_correlated_timeline`, `get_logs`, `deduplicate_logs`, plus the ops
+wrappers `kubectl_get`, `describe_resource`, `get_pod_logs`, `get_events`,
+`helm_status`, `helm_history`, which dispatch through
+`parse_command`/`render_command` and the overlay-aware
+`resource_snapshot()` — never a second resource model). Every `tools/call`
+is recorded as a `CommandTrace` under command family `mcp` (redacted via
+`_redact_parsed_flags`, fingerprinted via `command_fingerprint`), so
+unknown-tool and schema-invalid calls accumulate in
+`/v1/debug/unsupported` exactly like kubectl misfires; the debug UI's
+family filter lists `mcp`. Tools answer
 only from what the run already produced — the simulated clock,
 `_resolve_effective_specs`, `_serialize_topology`, the per-component CSVs
 (via the same `_scan_component_csv_headers` dispatch the gauge/combine
