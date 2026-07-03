@@ -31,10 +31,24 @@ primitives — `_scan_component_csv_headers`, `_iter_component_rows`,
 `_ensure_long_form_fd_capacity`, `_classify_component_csv_header` — plus
 the `_INSTANCE_DIMENSION_COLUMNS` column-order constant, consumed by the
 gauge writer, the combine long-form writer, the OTEL streamer, and
-`server_mcp`), `gauges_impl.py` (`write_gauges_csv`), and `artifacts.py`
+`server_mcp`), `gauges_impl.py` (`write_gauges_csv`), `artifacts.py`
 (the `_atomic_artifact_open` / `_atomic_write_text` / `_ATOMIC_TMP_SUFFIX`
 publication helpers — landed with step 3 because `gauges_impl` depends on
-them). `tests/conftest.py::_load_amc` and the fresh-copy loaders in
+them), and `combine_impl.py` (the wide + long-form combine writers,
+`discover_components`, `_wide_component_rows_are_monotonic`, and the
+`_NON_COMPONENT_FILES` / `_COMBINE_OUTPUT_FILENAME` constants;
+`_EMIT_ARTIFACT_FILES` stays in `legacy.py` as a core emit registry).
+**Monkeypatch note:** `_wide_component_rows_are_monotonic` is called only
+by `combine_logs_unified` in `combine_impl`, so a test stubbing the
+pre-scan patches `anomaly_metric_creator.combine_impl.<name>`, not the
+`legacy` re-import (the intra-module call resolves in `combine_impl`'s
+namespace) — the design.md move-with-callers rule in practice.
+**Splice hazard learned in step 5:** a line-range cut can overlap a
+*prior* extraction's re-import stub (step 5's combine range swept up the
+step-2 `from .otlp import` block); after any extraction, grep the moved
+range for `^from \.` re-imports and confirm every leaf re-import
+(`redaction`, `timeutil`, `otlp`, `csv_layout`, `artifacts`, `combine_impl`)
+still resolves. `tests/conftest.py::_load_amc` and the fresh-copy loaders in
 `tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with
 package context (real submodule import or a dotted spec name) so these
 re-import seams resolve; a package-less `spec_from_file_location` copy would
