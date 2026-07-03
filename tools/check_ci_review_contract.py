@@ -124,6 +124,22 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "PR body scope test coverage",
             "tests/test_pr_body_scope_lint.py",
         ),
+        (
+            "auto-merge enabled PR event",
+            "types: [opened, synchronize, reopened, ready_for_review, labeled, auto_merge_enabled]",
+        ),
+        (
+            "auto-merge synchronize gate",
+            "github.event.pull_request.auto_merge != null",
+        ),
+        (
+            "auto-merge enabled full-ci trigger",
+            "auto_merge_enabled)",
+        ),
+        (
+            "per-commit push concurrency",
+            "group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}",
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
     _require_not_contains(
