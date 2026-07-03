@@ -235,7 +235,9 @@ Lifecycle:
    `--namespace`, `--debug-ring-size`, `--persist-command-log`,
    `--persist-command-db`, `--persist-command-retention`, `--config`,
    `--auth-token`, `--max-request-body-bytes`, `--allow-remote-without-auth`,
-   `--cors-allow-origin`, `--rate-limit-per-minute`, `--structured-log`,
+   `--cors-allow-origin`, `--rate-limit-per-minute`,
+   `--max-concurrent-requests`, `--max-sse-connections`,
+   `--socket-timeout-seconds`, `--structured-log`,
    `--structured-log-file`,
    `--no-generate`, `--continuous-generate`,
    `--continuous-generate-interval-seconds`), then parses all remaining
@@ -312,7 +314,29 @@ normal responses include access-control headers only when the request origin
 matches that configured value (or the value is `*`). `--rate-limit-per-minute`
 caps command and Kubernetes API requests per client, returning JSON `429` for
 app calls and a Kubernetes `Status` with `reason: TooManyRequests` for API
-calls. Command/API traces must redact bearer tokens, token-like query params,
+calls; its `_RateLimiter` sweeps idle per-client buckets each window
+(`_sweep_locked`) so the limiter's own table stays bounded on a public bind
+(the DoS-hardening feature must not itself be an unbounded allocation).
+**Remote-bind resource bounds** (task `07-02-server-remote-bind-hardening`):
+because the server is a `ThreadingHTTPServer` spawning one worker per
+connection, a reachable instance is hardened by three defaults-on bounds,
+each disablable with `0`. `_BoundedThreadingHTTPServer` caps concurrent
+worker threads (`--max-concurrent-requests`, default 64) via a
+`BoundedSemaphore` acquired in `process_request` *before* the worker thread
+starts — an over-cap connection gets a raw `503` (`_SATURATED_503`) and is
+closed, never spawning a thread. A separate SSE semaphore
+(`--max-sse-connections`, default 16) gates the two long-lived streams
+(`/v1/debug/events`, `/v1/logs/stream`) through `_with_sse_slot`, which
+refuses over-ceiling streams with a JSON `503` before any event-stream
+headers and always releases the slot on exit. The handler's `timeout` class
+attribute (`--socket-timeout-seconds`, default 30) applies a socket timeout
+via `StreamRequestHandler.setup()` so a slow-loris client cannot pin a
+worker. Both `serve_main` and `start_test_server` construct the bounded
+server, so tests exercise the bounds; the generous defaults do not affect
+single-client workshop use. This hardens the surface behind the auth gate
+but does not make an unauthenticated remote bind a supported posture (see
+the pending `07-02-security-md-and-threat-model` for the trust-boundary
+write-up). Command/API traces must redact bearer tokens, token-like query params,
 passwords, secrets, and client-key shaped values before they reach memory,
 JSONL, SQLite, or the debug UI. Structured request logging is opt-in via
 `--structured-log` or `--structured-log-file`; it emits JSONL request summaries

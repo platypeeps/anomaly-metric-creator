@@ -370,12 +370,28 @@ Server flags:
 | `--allow-remote-without-auth` | _off_ | Explicit lab-only override that permits non-loopback `--host` values without `--auth-token`. |
 | `--mcp-eval-mode` | _off_ | Hide every ground-truth-bearing surface so an agent evaluated through `/mcp` cannot read the scoring rubric. See [Evaluating agents against AMC](#evaluating-agents-against-amc). |
 | `--cors-allow-origin` | _off_ | Optional exact `Access-Control-Allow-Origin` value for browser clients, or `*` for any origin. Preflight requests are answered without bearer auth. |
-| `--rate-limit-per-minute` | `0` | Optional per-client command and Kubernetes API request limit; `0` disables rate limiting. Limited app requests return JSON `429`; limited Kubernetes API requests return a Kubernetes `Status` with `reason: TooManyRequests`. |
+| `--rate-limit-per-minute` | `0` | Optional per-client command and Kubernetes API request limit; `0` disables rate limiting. Limited app requests return JSON `429`; limited Kubernetes API requests return a Kubernetes `Status` with `reason: TooManyRequests`. Idle per-client buckets are swept each window so the limiter's own memory stays bounded on a public bind. |
+| `--max-concurrent-requests` | `64` | Cap on concurrent worker threads. An over-cap connection gets a fast `503` and is closed before a worker is spawned, so connection volume cannot exhaust threads. `0` disables the bound. |
+| `--max-sse-connections` | `16` | Cap on concurrent SSE streams (`/v1/debug/events`, `/v1/logs/stream`), each of which holds a worker for its wall-clock loop. Over-ceiling streams get a JSON `503`. `0` disables the bound. |
+| `--socket-timeout-seconds` | `30.0` | Per-connection socket timeout guarding against slow-loris clients that trickle bytes to pin a worker. `0` disables the timeout. |
 | `--structured-log` / `--no-structured-log` | _off_ | Emit one JSON request record per HTTP request plus error records for request-handling exceptions. Defaults to stderr unless `--structured-log-file` is set. |
 | `--structured-log-file` | _off_ | Optional JSONL path for structured request/error logs. Setting a path enables structured logging. |
 | `--no-generate` | _off_ | Use existing artifacts in `--output-dir` instead of generating before serving. |
 | `--continuous-generate` | _off_ | Keep regenerating artifacts while the server runs. Each pass refreshes `/v1/state`, Kubernetes/Helm snapshots, anomaly rows, and log-stream inputs. When OTEL streaming is enabled, the continuous generator serializes regeneration and OTEL replay so each fresh batch is streamed in order. |
 | `--continuous-generate-interval-seconds` | `60.0` | Seconds to wait between continuous generation passes. |
+
+The server binds loopback by default and is a lab/workshop incident
+simulator, not a hardened production service. So that a *reachable* instance
+cannot be trivially driven into resource exhaustion, three DoS bounds are on
+by default (each individually disablable with `0`): a worker-thread cap
+(`--max-concurrent-requests`), a concurrent-SSE ceiling
+(`--max-sse-connections`), and a per-connection socket timeout
+(`--socket-timeout-seconds`); the rate limiter also evicts idle per-client
+buckets so its own table cannot grow without bound. The defaults are
+generous enough not to affect single-client workshop use. This hardens the
+resource surface behind the auth gate but does not make an unauthenticated
+remote bind a supported posture — keep the server on loopback behind a
+reverse proxy for remote access (below).
 
 By default the server binds loopback. Binding a non-loopback host such as
 `0.0.0.0` requires `--auth-token` unless
