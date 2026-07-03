@@ -89,21 +89,21 @@ jobs:
                   full_ci_requested=true
                 fi
                 ;;
+              # Auto-merge lands the PR the moment required contexts go
+              # green, so pushes to an armed PR must gate on the full
+              # matrix, never the quick lane. auto_merge is frozen into
+              # the event payload at delivery; arming after the push is
+              # covered by the auto_merge_enabled case below.
               synchronize)
-                # Auto-merge lands the PR the moment required contexts go
-                # green, so pushes to an armed PR must gate on the full
-                # matrix, never the quick lane. auto_merge is frozen into
-                # the event payload at delivery; arming after the push is
-                # covered by the auto_merge_enabled case below.
                 if [ "$PR_AUTO_MERGE" = "true" ]; then
                   full_ci_requested=true
                 fi
                 ;;
+              # Arming auto-merge re-gates the current head on the full
+              # matrix (cancel-in-progress supersedes any quick run on
+              # this ref). Arm at PR-open time for the cheap path; arming
+              # after a green full lane costs one redundant full run.
               auto_merge_enabled)
-                # Arming auto-merge re-gates the current head on the full
-                # matrix (cancel-in-progress supersedes any quick run on
-                # this ref). Arm at PR-open time for the cheap path; arming
-                # after a green full lane costs one redundant full run.
                 full_ci_requested=true
                 ;;
             esac

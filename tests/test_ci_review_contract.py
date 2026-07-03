@@ -46,7 +46,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: |
                   case "$PR_ACTION" in
                     synchronize)
-                      if [ "$PR_AUTO_MERGE" = "true" ]; then full_ci_requested=true; fi
+                      if [ "$PR_AUTO_MERGE" = "true" ]; then
+                        full_ci_requested=true
+                      fi
                       ;;
                     auto_merge_enabled)
                       full_ci_requested=true
@@ -312,7 +314,25 @@ def test_missing_auto_merge_enabled_trigger_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "auto-merge enabled PR event" in result.stderr
-    assert "auto-merge enabled full-ci trigger" in result.stderr
+    assert "auto-merge enabled full-ci request" in result.stderr
+
+
+def test_auto_merge_full_ci_assignment_removal_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "full_ci_requested=true",
+            "full_ci_requested=false",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "auto-merge synchronize full-ci request" in result.stderr
+    assert "auto-merge enabled full-ci request" in result.stderr
 
 
 def test_per_ref_push_concurrency_fails(tmp_path: Path) -> None:
