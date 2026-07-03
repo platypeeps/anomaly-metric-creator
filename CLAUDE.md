@@ -159,6 +159,35 @@ protocol behavior, error codes, and the import-time-validated
 keep it inside the ground-truth wall, and add coverage in
 `tests/test_server_mcp.py`.
 
+**Eval mode (`--mcp-eval-mode`).** `amc serve` is an evaluation target for
+AI incident-response agents; the agent's scoring rubric is the run's
+`anomalies.csv` plus scenario descriptions, held by the harness. Eval mode
+hides every rubric-bearing surface so an agent reaching `/mcp` cannot read
+the key. `SimulationState.eval_mode` is the single source of truth (set by
+`build_state(..., eval_mode=)` from the `--mcp-eval-mode` serve flag) read
+by both the HTTP dispatch and the MCP log tools. The classification lives
+in **one registry** in `server.py`: `_RUBRIC_ENDPOINT_EXACT` +
+`_RUBRIC_ENDPOINT_PREFIXES` (judged by `_rubric_endpoint`) list the hidden
+surfaces (`/v1/anomalies`, `/v1/scenarios`, `/v1/state`, `/v1/logs/stream`,
+the whole `/v1/debug` prefix, and the `/` + `/debug` console shell), and
+`_INVESTIGATION_ENDPOINT_EXACT` lists the routes that stay open. In eval
+mode a rubric endpoint returns `404` (chosen over `403` for
+fingerprint-resistance) before auth and before the debug-shell branch.
+`tests/test_server_eval_mode.py::test_every_dispatched_route_is_classified`
+scans the dispatch source for path literals and fails if any route is
+unclassified — a new endpoint must be placed in the rubric or investigation
+registry, never left to default open. **Load-bearing audit finding:**
+`metric_report.log` is a *verbatim rendering of the anomaly manifest*
+(identical descriptions and `event_id`s to `anomalies.csv`, including
+`Cascading:` labels), so it is rubric-bearing — the MCP
+`get_logs`/`deduplicate_logs` tools refuse in eval mode
+(`_EVAL_MODE_LOG_NOTE`) and `/v1/logs/stream` is hidden. A future log
+artifact carrying only observable symptoms (not the manifest) could be
+reclassified, but the current report log must stay behind the wall. `/mcp`
+also gets the `mcp` rate-limit bucket and JSON-RPC-shaped 401/413/429
+refusals (`rate_limited_response` / `body_too_large_response` /
+`sse_not_supported_response` in `server_mcp`).
+
 Lifecycle:
 
 1. `_main_serve_subcommand()` imports `server.serve_main()` lazily and

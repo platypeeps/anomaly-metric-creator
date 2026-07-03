@@ -45,6 +45,54 @@ DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 CORS_ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 CORS_ALLOW_HEADERS = "authorization, content-type, accept"
 
+# --- Ground-truth wall (eval mode) --------------------------------
+# Endpoints that reveal the scoring rubric an agent under evaluation must
+# not see: the anomaly manifest, the scenario catalog, /v1/state (names
+# active scenarios + anomaly counts), the report-log stream (a verbatim
+# rendering of the manifest — same descriptions and event ids), and the
+# whole /v1/debug/* console surface (command traces carry active scenarios;
+# search/unsupported/commands expose the manifest). The debug UI shell
+# (`/`, `/debug`) reads all of the above.
+#
+# This is the single classification registry: `_rubric_endpoint` is the
+# only place a path is judged rubric-bearing, and `test_server_eval_mode`
+# asserts every dispatched route literal in this module is classified
+# (rubric or investigation) so a new endpoint cannot be added unclassified.
+_RUBRIC_ENDPOINT_EXACT = frozenset({
+    "/",
+    "/debug",
+    "/v1/anomalies",
+    "/v1/scenarios",
+    "/v1/state",
+    "/v1/logs/stream",
+})
+_RUBRIC_ENDPOINT_PREFIXES = ("/v1/debug",)
+
+# Routes that stay open in eval mode: the investigation surface an agent is
+# meant to use, plus liveness. Kept as an explicit set so the completeness
+# test can prove the union covers every dispatched path.
+_INVESTIGATION_ENDPOINT_EXACT = frozenset({
+    "/healthz",
+    "/readyz",
+    "/mcp",
+    "/v1/kubeconfig",
+    "/v1/commands",
+    "/v1/time/pause",
+    "/v1/time/resume",
+    "/v1/time/seek",
+    "/v1/mutations/reset",
+})
+
+
+def _rubric_endpoint(path: str) -> bool:
+    """Whether ``path`` reveals eval ground truth (hidden under eval mode)."""
+    if path in _RUBRIC_ENDPOINT_EXACT:
+        return True
+    return any(
+        path == prefix or path.startswith(prefix + "/")
+        for prefix in _RUBRIC_ENDPOINT_PREFIXES
+    )
+
 
 @dataclass(frozen=True)
 class ServerSecurityConfig:
@@ -381,6 +429,11 @@ def make_handler(
                 if path == "/readyz":
                     self._send_json(200, {"ready": True})
                     return
+                if state.eval_mode and _rubric_endpoint(path):
+                    # Hidden before auth and before the debug-shell branch:
+                    # the console and every rubric endpoint 404 in eval mode.
+                    self._send_json(404, {"error": "not found"})
+                    return
                 if path == "/" or path == "/debug":
                     self._send_html(200, DEBUG_HTML)
                     return
@@ -483,6 +536,9 @@ def make_handler(
                     self._send_unauthorized(path)
                     return
                 if self._send_rate_limited(path):
+                    return
+                if state.eval_mode and _rubric_endpoint(path):
+                    self._send_json(404, {"error": "not found"})
                     return
                 if path == "/mcp":
                     self._send_mcp_post()
@@ -638,6 +694,13 @@ def make_handler(
                         "unsupported",
                         "k8s.rate_limited",
                     ),
+                    extra_headers=headers,
+                )
+            elif path == "/mcp":
+                # JSON-RPC-shaped so an MCP client parses the refusal.
+                self._send_json(
+                    429,
+                    server_mcp.rate_limited_response("rate limit exceeded"),
                     extra_headers=headers,
                 )
             else:
@@ -1232,6 +1295,7 @@ def _build_serve_parser() -> argparse.ArgumentParser:
     parser.add_argument("--auth-token", default="", help="Optional bearer token required for simulator HTTP and Kubernetes API requests.")
     parser.add_argument("--max-request-body-bytes", type=int, default=DEFAULT_MAX_BODY_BYTES, help=f"Maximum accepted HTTP request body size (default: {DEFAULT_MAX_BODY_BYTES}).")
     parser.add_argument("--allow-remote-without-auth", action="store_true", help="Allow non-loopback binds without --auth-token for isolated lab use.")
+    parser.add_argument("--mcp-eval-mode", action="store_true", help="Hide every ground-truth-bearing surface (anomaly manifest, scenario catalog, /v1/state, the report-log stream, and the /v1/debug console + UI) so an agent evaluated via /mcp cannot read the scoring rubric; the MCP log tools refuse too. Keeps the kubectl/Helm/commands investigation surface open.")
     parser.add_argument("--cors-allow-origin", default="", help="Optional CORS Access-Control-Allow-Origin value for browser clients.")
     parser.add_argument("--rate-limit-per-minute", type=int, default=0, help="Optional per-client command/Kubernetes API request limit per minute (default: 0, off).")
     parser.add_argument("--structured-log", action=argparse.BooleanOptionalAction, default=False, help="Emit structured JSONL request/error logs to stderr or --structured-log-file.")
@@ -1292,6 +1356,7 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         persist_command_log=serve_args.persist_command_log,
         persist_command_db=serve_args.persist_command_db,
         persist_command_retention=serve_args.persist_command_retention,
+        eval_mode=serve_args.mcp_eval_mode,
     )
     generation_stop = _start_continuous_generation(
         state,
@@ -1321,6 +1386,11 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
     print(f"AMC simulator server listening on http://{host}:{port}/debug")
     print(f"Command API: POST http://{host}:{port}/v1/commands")
     print(f"Kubeconfig: http://{host}:{port}/v1/kubeconfig")
+    if serve_args.mcp_eval_mode:
+        print(
+            "MCP eval mode: ground-truth surfaces hidden "
+            "(manifest, scenarios, /v1/state, log stream, debug console)"
+        )
     if security.auth_token:
         print("Bearer auth: enabled")
     elif not _is_loopback_bind_host(serve_args.host):

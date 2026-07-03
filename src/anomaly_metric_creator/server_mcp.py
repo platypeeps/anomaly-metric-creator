@@ -597,6 +597,20 @@ _ABSENT_LOG_NOTE = (
     "was not selected); no log lines are available"
 )
 
+# In eval mode the report log is rubric-bearing: AMC's metric_report.log is
+# a verbatim rendering of the anomaly manifest (same descriptions and
+# event ids that anomalies.csv carries), so serving it would hand an agent
+# under evaluation the scoring key. The log tools refuse rather than leak.
+_EVAL_MODE_LOG_NOTE = (
+    "log access is disabled in eval mode: this server's report log renders "
+    "the ground-truth anomaly manifest, so it is withheld from the "
+    "investigation surface"
+)
+
+
+def _eval_mode(state: Any) -> bool:
+    return bool(getattr(state, "eval_mode", False))
+
 
 def _tool_get_logs(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     from_ms = _require_epoch_ms(arguments, "from_ms")
@@ -606,6 +620,8 @@ def _tool_get_logs(state: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     limit = _resolve_limit(arguments, "limit", _LOGS_DEFAULT_LIMIT, _LOGS_MAX_LIMIT)
     filters, substrings = _parse_log_query(arguments.get("query"))
 
+    if _eval_mode(state):
+        return {"lines": [], "truncated": False, "note": _EVAL_MODE_LOG_NOTE}
     lines_iter = _iter_log_lines_in_window(state, from_ms, to_ms)
     if lines_iter is None:
         return {"lines": [], "truncated": False, "note": _ABSENT_LOG_NOTE}
@@ -640,6 +656,8 @@ def _tool_deduplicate_logs(state: Any, arguments: dict[str, Any]) -> dict[str, A
         raise McpToolError("'from_ms' must be strictly before 'to_ms'")
     filters, substrings = _parse_log_query(arguments.get("query"))
 
+    if _eval_mode(state):
+        return {"clusters": [], "total_lines": 0, "note": _EVAL_MODE_LOG_NOTE}
     lines_iter = _iter_log_lines_in_window(state, from_ms, to_ms)
     if lines_iter is None:
         return {"clusters": [], "total_lines": 0, "note": _ABSENT_LOG_NOTE}
@@ -1318,6 +1336,10 @@ def read_mcp_request_body(handler: Any, max_bytes: int) -> bytes:
 
 
 def body_too_large_response(message: str) -> dict[str, Any]:
+    return _error_response(None, INVALID_REQUEST, message)
+
+
+def rate_limited_response(message: str) -> dict[str, Any]:
     return _error_response(None, INVALID_REQUEST, message)
 
 
