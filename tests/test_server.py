@@ -2177,7 +2177,10 @@ def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypat
             urllib.request.urlopen(request, timeout=5)
         assert excinfo.value.code == 500
         body = json.loads(excinfo.value.read().decode("utf-8"))
-        assert body["error"] == "boom"
+        # Generic on purpose: str(exc) can carry internals (paths, tokens);
+        # the detail is preserved in the structured error log instead.
+        assert body["error"] == "internal server error"
+        assert "boom" not in json.dumps(body)
 
 
 def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):

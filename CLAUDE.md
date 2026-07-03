@@ -256,7 +256,17 @@ SSE clients receive a terminal `shutdown` event promptly. Supported mutating
 Kubernetes HTTP methods update the in-memory `SimulationMutations` overlay and
 are traced as supported `kubernetes-api` calls; unsupported mutation paths
 still return Kubernetes `Status` responses and are captured in the debug
-backlog.
+backlog. Mutations are checked against the overlay-aware
+`resource_snapshot()` *before* any overlay write: a PATCH/PUT/DELETE naming
+a resource the snapshot does not contain returns a 404 `Status` and leaves
+the overlay untouched (a refused mutation must never leave partial state —
+the deployment-scale path once wrote `set_workload` before its own 404
+check). The generic 500 boundary in `server.py` returns
+`{"error": "internal server error"}`; exception detail goes only to the
+structured error log, never the response body.
+`tests/test_server_ops_fuzz.py` is the seeded malformed-input corpus
+(commands, argv shapes, API paths, mutation bodies) that pins the
+graceful-degradation contract.
 
 The command API should stay aligned with that same snapshot-backed surface:
 when adding a new Kubernetes resource family, update `_KIND_ALIASES`,

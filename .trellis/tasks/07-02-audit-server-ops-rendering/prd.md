@@ -57,15 +57,15 @@ object.
 
 ## Acceptance criteria
 
-- [ ] A fuzz/property test drives the command + k8s-API parsers with malformed
+- [x] A fuzz/property test drives the command + k8s-API parsers with malformed
       input and asserts: process stays up, status codes are correct
       (400/404/413/422 not 500 for *expected* bad input), API errors are
       Kubernetes `Status`-shaped, and traces are recorded and correctly
       classified.
-- [ ] The 500 error body is confirmed free of sensitive leakage (or fixed).
-- [ ] The mutation overlay is verified consistent after a malformed mutating
+- [x] The 500 error body is confirmed free of sensitive leakage (or fixed).
+- [x] The mutation overlay is verified consistent after a malformed mutating
       request (no partial state).
-- [ ] Any confirmed defect is filed as a follow-up task or fixed with a
+- [x] Any confirmed defect is filed as a follow-up task or fixed with a
       regression test.
 
 ## Notes

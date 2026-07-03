@@ -1358,6 +1358,14 @@ def parse_command(
     argv: list[str] | tuple[str, ...] | None = None,
     default_namespace: str = DEFAULT_NAMESPACE,
 ) -> ParsedCommand:
+    # Boundary validation: these arrive verbatim from client JSON via
+    # POST /v1/commands. A list-valued `command` used to reach shlex.split
+    # and escape as an AttributeError -> 500; a ValueError here maps to the
+    # HTTP layer's 400 handler instead.
+    if command is not None and not isinstance(command, str):
+        raise ValueError("'command' must be a string")
+    if argv is not None and not isinstance(argv, (list, tuple)):
+        raise ValueError("'argv' must be a list of strings")
     if argv is None:
         raw = command or ""
         try:
@@ -5224,6 +5232,17 @@ def kubernetes_api_mutating_response(
         )
     now = state.clock.now()
     if method in {"PATCH", "PUT"} and resource == "deployments" and name:
+        # Existence check BEFORE any overlay write: a refused mutation must
+        # not leave partial state behind (the 404 used to be checked only
+        # after set_workload/record_event had already mutated the overlay).
+        if _find_named(resource_snapshot(state)["deployments"], name) is None:
+            return _k8s_status_response(
+                404,
+                f"deployments {name!r} not found",
+                "NotFound",
+                "supported",
+                "k8s.apps.deployments.mutate.not_found",
+            )
         replicas = _payload_replicas(payload)
         if replicas is not None:
             state.mutations.set_workload(
@@ -5242,8 +5261,10 @@ def kubernetes_api_mutating_response(
                 f"{method.lower()} set deployment {name} replicas to {replicas}",
                 now,
             )
+        # Re-read after the overlay write so the response body reflects the
+        # mutation, like a real API server's returned object would.
         deployment = _find_named(resource_snapshot(state)["deployments"], name)
-        if deployment is None:
+        if deployment is None:  # pragma: no cover - defensive; checked above
             return _k8s_status_response(
                 404,
                 f"deployments {name!r} not found",
@@ -5273,6 +5294,17 @@ def kubernetes_api_mutating_response(
             f"k8s.{resource}.{method.lower()}",
         )
     if method == "DELETE" and resource == "pods" and name:
+        # Deleting a pod that is not in the (overlay-aware) snapshot must
+        # 404 without touching the overlay — the unconditional delete used
+        # to record phantom deletions for names that never existed.
+        if _find_named(resource_snapshot(state)["pods"], name) is None:
+            return _k8s_status_response(
+                404,
+                f"pods {name!r} not found",
+                "NotFound",
+                "supported",
+                "k8s.core.pods.delete.not_found",
+            )
         state.mutations.delete_pod(name, now=now)
         return _k8s_status_response(
             200,
@@ -5282,6 +5314,14 @@ def kubernetes_api_mutating_response(
             "k8s.core.pods.delete",
         )
     if method == "DELETE" and resource == "deployments" and name:
+        if _find_named(resource_snapshot(state)["deployments"], name) is None:
+            return _k8s_status_response(
+                404,
+                f"deployments {name!r} not found",
+                "NotFound",
+                "supported",
+                "k8s.apps.deployments.delete.not_found",
+            )
         state.mutations.set_workload(
             name,
             now=now,
@@ -5306,6 +5346,15 @@ def kubernetes_api_mutating_response(
             "k8s.apps.deployments.delete",
         )
     if method == "DELETE" and snapshot_kind and name:
+        rows = resource_snapshot(state).get(snapshot_kind, [])
+        if _find_named(rows, name) is None:
+            return _k8s_status_response(
+                404,
+                f"{resource} {name!r} not found",
+                "NotFound",
+                "supported",
+                f"k8s.{resource}.delete.not_found",
+            )
         state.mutations.delete_resource(snapshot_kind, name, now=now, namespace=target["namespace"])
         return _k8s_status_response(
             200,
