@@ -49,6 +49,13 @@ dev = [
   # same binary. Bump both lines together.
   "ruff==0.15.20",
   "pre-commit>=3.7.0",
+  # Pinned exactly: the CI type-check step is report-only, so its finding
+  # count is only comparable across runs when every run resolves the same
+  # mypy. Single pin site (no pre-commit hook), so no lockstep script.
+  "mypy==2.1.0",
+  # Coverage measurement in CI's full-suite lane (report-only; no
+  # threshold gate yet — see Trellis task 07-02-ci-typecheck-and-coverage).
+  "pytest-cov>=7.0",
 ]
 
 [tool.pytest.ini_options]
@@ -80,6 +87,18 @@ markers = [
   "full_resolution: declares the test depends on 1s rows (86,400/day); pairs with an explicit interval_seconds=1.0 at the run_capture call site. The script's --interval-seconds default is 60s, and interval_seconds=None inherits that default.",
   "heavy: auto-applied (tests/conftest.py pytest_collection_modifyitems) to any test whose fixture closure pulls a GB-scale session fixture (7-day / N=3). The PR CI gate runs `-m heavy` serially and `-m \"not heavy\"` under xdist so the parallel ordering path is exercised without OOM-ing the standard runner. Do not hand-apply.",
 ]
+
+[tool.mypy]
+# Report-only baseline for the annotated-but-unenforced codebase: CI runs
+# `mypy` with continue-on-error so the finding count is visible on every
+# full-suite run without gating merges. Tighten per-module (and flip the
+# CI step to gating) as 07-02-legacy-monolith-decomposition splits the
+# monolith into type-check-clean modules.
+python_version = "3.12"
+files = ["src/anomaly_metric_creator"]
+# numpy/protobuf stubs are not installed; silence the missing-import noise
+# so real type errors in first-party code stay readable.
+ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py311"

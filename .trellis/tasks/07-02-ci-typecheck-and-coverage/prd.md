@@ -45,15 +45,15 @@ from CLAUDE.md an actual measurement, so both stop being aspirational.
 
 ## Acceptance criteria
 
-- [ ] CI runs a type-checker and prints results on every PR (non-gating to
+- [x] CI runs a type-checker and prints results on every PR (non-gating to
       start); the tool is pinned in the `dev` extra.
-- [ ] CI produces an aggregated coverage report across the heavy + light test
+- [x] CI produces an aggregated coverage report across the heavy + light test
       steps; the percentage is visible in the run.
-- [ ] `pyproject.toml` `dev` extra, `required_plugins`, and any lockstep pin are
+- [x] `pyproject.toml` `dev` extra, `required_plugins`, and any lockstep pin are
       updated consistently; `tests/` still collect and pass under the existing
       xdist config.
-- [ ] CLAUDE.md's testing/CI section notes the new steps and their gating status.
-- [ ] A follow-up decision (threshold values, gating on/off) is recorded in this
+- [x] CLAUDE.md's testing/CI section notes the new steps and their gating status.
+- [x] A follow-up decision (threshold values, gating on/off) is recorded in this
       task's notes or a linked task.
 
 ## Notes

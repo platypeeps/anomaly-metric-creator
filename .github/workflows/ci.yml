@@ -264,17 +264,38 @@ jobs:
       - name: Lint tests (ruff F401)
         run: uv run --no-sync ruff check tests/
 
+      # Report-only type-check: surfaces the mypy baseline on every
+      # full-suite run without gating merges (the annotated monolith has a
+      # known-messy baseline). Config lives in [tool.mypy] in pyproject.toml;
+      # flip continue-on-error off once the baseline is burned down (tracked
+      # in Trellis task 07-02-ci-typecheck-and-coverage).
+      - name: Type-check (mypy, report-only)
+        continue-on-error: true
+        run: uv run --no-sync mypy
+
       # PR standard runners split the suite to exercise the same xdist
       # ordering path that main's push run uses, without OOM-ing the 7 GB
       # runner. The two `-m` sets partition the suite, so coverage is complete.
       # main pushes keep the repo default on the larger runner.
+      #
+      # Code coverage is measured across the whole lane (report-only, no
+      # threshold gate yet): the PR path passes --cov-append on the second
+      # step so the serial-heavy and parallel-light partitions aggregate
+      # into one report. --cov takes the source path (not the package name)
+      # because tests import the implementation through conftest's module
+      # loader, and path-based matching measures those files regardless of
+      # the module name they load under. COVERAGE_CORE=sysmon selects the
+      # py3.12 sys.monitoring backend, keeping tracing overhead low enough
+      # for the 45-minute job timeout.
       - name: Run test suite
+        env:
+          COVERAGE_CORE: sysmon
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            uv run --no-sync pytest -n 0 -m heavy
-            uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy"
+            uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
+            uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-append --cov-report=term --cov-report=xml
           else
-            uv run --no-sync pytest
+            uv run --no-sync pytest --cov=src/anomaly_metric_creator --cov-report=term --cov-report=xml
           fi
 
   test:

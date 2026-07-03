@@ -2270,6 +2270,20 @@ run in CI):
   generation caused the original OOM (the full serial suite, a strict
   superset, already fits the runner). The workflow timeout is 45 minutes to
   cover the heavy-serial + light-parallel PR path while still capping hangs.
+  The full-suite lane also runs two **report-only** quality steps: a
+  `mypy` type-check (`continue-on-error: true`; config in `[tool.mypy]`,
+  `mypy==2.1.0` pinned exactly in the `dev` extra so the finding count is
+  comparable across runs — single pin site, no lockstep script needed) and
+  pytest coverage (`--cov=src/anomaly_metric_creator`, `pytest-cov` in the
+  `dev` extra). Coverage aggregates across the PR path's two partitioned
+  steps via `--cov-append` so the reported percentage covers the whole
+  suite, and `COVERAGE_CORE=sysmon` keeps the py3.12 tracing overhead
+  inside the job timeout. Neither step gates merges yet: the mypy baseline
+  (~119 findings at introduction) and the coverage threshold decision are
+  tracked in Trellis task `07-02-ci-typecheck-and-coverage`; tighten both
+  as `07-02-legacy-monolith-decomposition` lands. `--cov` flags stay
+  CI-only — `addopts` / `required_plugins` intentionally do not reference
+  pytest-cov, so local `pytest` runs pay no tracing cost.
 - `.github/workflows/dependabot-auto-merge.yml` — enables GitHub
   auto-merge (squash) on Dependabot **patch + minor** PRs via
   `dependabot/fetch-metadata`; majors stay manual. The merge waits on the
