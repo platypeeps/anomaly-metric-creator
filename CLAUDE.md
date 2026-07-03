@@ -14,6 +14,18 @@ the script or understand the failure modes it injects.
 Small package facade modules (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) re-export focused surfaces from `legacy.py`; they
 are import-stability points for future splits, not parallel behavior copies.
+That split is now underway (the `07-02-legacy-monolith-decomposition` epic;
+boundaries and sequencing fixed in that task's `design.md`). Extraction
+pattern: code moves **verbatim** to a new module, `legacy.py` re-imports every
+moved name at the same conceptual location so the historic `legacy.<name>`
+surface (shim, facades, tests, `state.legacy` lookups) is unchanged, and new
+modules never import `legacy` (one-way dependency). Extracted so far:
+`redaction.py` (sensitive HTTP-header masking for OTEL transport
+diagnostics). `tests/conftest.py::_load_amc` and the fresh-copy loaders in
+`tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with
+package context (real submodule import or a dotted spec name) so these
+re-import seams resolve; a package-less `spec_from_file_location` copy would
+fail on them.
 
 ## Architecture
 
@@ -407,7 +419,8 @@ diagnostics inside `_http_error_activity_fields` to dump every response
 header into the `response_headers` field; an intermediary that echoes
 `Set-Cookie` / `Authorization` / `X-Api-Key` on a 4xx/5xx would have leaked
 credential material into that on-disk log. The redaction shim
-`_redact_sensitive_headers(header_pairs)` runs *before* the JSON dump and
+`_redact_sensitive_headers(header_pairs)` (in `redaction.py`; re-imported by
+`legacy.py`) runs *before* the JSON dump and
 masks the value of any header whose name (case-insensitive) is in
 `_SENSITIVE_HEADER_NAMES`: `Authorization`, `Cookie`, `Set-Cookie`,
 `Proxy-Authorization`, `X-Api-Key`. `Authorization` and

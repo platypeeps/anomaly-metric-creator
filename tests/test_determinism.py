@@ -24,10 +24,13 @@ def test_determinism_byte_identical(one_day_run_a, one_day_run_b):
 def test_import_does_not_run_generation(tmp_path):
     """Importing the module in a fresh interpreter must not trigger main()."""
     script = (
-        "import importlib.util, os\n"
-        "spec = importlib.util.spec_from_file_location('amc', os.environ['MODULE_PATH'])\n"
-        "m = importlib.util.module_from_spec(spec)\n"
-        "spec.loader.exec_module(m)\n"
+        # Import as the real package submodule (src derived from
+        # MODULE_PATH) so top-level relative imports in legacy.py — the
+        # decomposition's re-import seams — resolve in the fresh
+        # interpreter exactly as they do for installed consumers.
+        "import importlib, os, sys\n"
+        "sys.path.insert(0, os.path.dirname(os.path.dirname(os.environ['MODULE_PATH'])))\n"
+        "m = importlib.import_module('anomaly_metric_creator.legacy')\n"
         "assert hasattr(m, 'RunContext'), 'RunContext not defined after import'\n"
         "assert not hasattr(m, 'anomalies'), 'module-level anomalies list should not exist'\n"
         "assert not hasattr(m, 'cascading_anomalies'), 'module-level cascading_anomalies should not exist'\n"

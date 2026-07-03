@@ -21,15 +21,15 @@ _AMC_MODULE_CACHE = None
 def _load_amc():
     # Memoized so test-collection helpers (e.g. parametrize keys) and the
     # session-scoped ``amc`` fixture can share a single module load instead
-    # of paying for two full ``exec_module`` builds of the registry.
+    # of paying for two full registry builds. Loaded as the real package
+    # submodule (not a package-less spec_from_file_location copy) so that
+    # top-level relative imports inside legacy.py — the decomposition's
+    # re-import seams, e.g. ``from .redaction import ...`` — resolve; a
+    # package-less exec would raise "attempted relative import with no
+    # known parent package".
     global _AMC_MODULE_CACHE
     if _AMC_MODULE_CACHE is None:
-        spec = importlib.util.spec_from_file_location(
-            "anomaly_metric_creator_legacy", MODULE_PATH
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _AMC_MODULE_CACHE = module
+        _AMC_MODULE_CACHE = importlib.import_module("anomaly_metric_creator.legacy")
     return _AMC_MODULE_CACHE
 
 
