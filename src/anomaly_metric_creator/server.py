@@ -22,7 +22,7 @@ from collections import deque
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import server_mcp
 from .server_debug_ui import DEBUG_HTML
@@ -94,6 +94,13 @@ def _rubric_endpoint(path: str) -> bool:
     )
 
 
+# Remote-bind resource bounds (on by default, generous enough not to affect
+# single-client workshop use). 0 disables an individual bound.
+DEFAULT_MAX_CONCURRENT_REQUESTS = 64
+DEFAULT_MAX_SSE_CONNECTIONS = 16
+DEFAULT_SOCKET_TIMEOUT_SECONDS = 30.0
+
+
 @dataclass(frozen=True)
 class ServerSecurityConfig:
     """HTTP boundary controls for server mode."""
@@ -103,6 +110,10 @@ class ServerSecurityConfig:
     allow_remote_without_auth: bool = False
     cors_allow_origin: str = ""
     rate_limit_per_minute: int = 0
+    # DoS bounds for reachable (esp. non-loopback) binds.
+    max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS
+    max_sse_connections: int = DEFAULT_MAX_SSE_CONNECTIONS
+    socket_timeout_seconds: float = DEFAULT_SOCKET_TIMEOUT_SECONDS
 
 
 class StructuredRequestLogger:
@@ -140,20 +151,59 @@ class _RateLimitDecision:
 
 
 class _RateLimiter:
-    """Small per-client fixed-window limiter for optional lab hardening."""
+    """Small per-client fixed-window limiter for optional lab hardening.
 
-    def __init__(self, limit_per_minute: int, *, window_seconds: float = 60.0) -> None:
+    On a public bind the client key is the real peer IP, so a churning set of
+    source addresses would otherwise grow ``_calls`` without bound (the
+    DoS-hardening feature becoming its own unbounded allocation). Each
+    ``check`` runs a bounded periodic sweep that drops buckets whose newest
+    hit has fallen outside the window, so the table size tracks *recently
+    active* clients rather than every client ever seen. ``clock`` is
+    injectable for deterministic tests.
+    """
+
+    def __init__(
+        self,
+        limit_per_minute: int,
+        *,
+        window_seconds: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._limit = max(0, int(limit_per_minute))
         self._window_seconds = window_seconds
+        self._clock = clock
         self._lock = threading.RLock()
         self._calls: dict[tuple[str, str], deque[float]] = {}
+        self._last_sweep = clock()
+
+    def _table_size(self) -> int:
+        """Current number of tracked buckets (test/introspection helper)."""
+        with self._lock:
+            return len(self._calls)
+
+    def _sweep_locked(self, now: float) -> None:
+        """Drop buckets whose newest hit is older than the window.
+
+        Runs at most once per window (amortized O(1) per check); the caller
+        holds ``self._lock``.
+        """
+        cutoff = now - self._window_seconds
+        stale = [
+            key for key, calls in self._calls.items()
+            if not calls or calls[-1] <= cutoff
+        ]
+        for key in stale:
+            del self._calls[key]
+        self._last_sweep = now
 
     def check(self, client: str, bucket: str) -> _RateLimitDecision:
         if self._limit <= 0:
             return _RateLimitDecision(True)
-        now = time.monotonic()
+        now = self._clock()
         key = (client, bucket)
         with self._lock:
+            if now - self._last_sweep >= self._window_seconds:
+                self._sweep_locked(now)
             calls = self._calls.setdefault(key, deque())
             cutoff = now - self._window_seconds
             while calls and calls[0] <= cutoff:
@@ -163,6 +213,70 @@ class _RateLimiter:
                 return _RateLimitDecision(False, max(1, int(retry_after + 0.999)))
             calls.append(now)
         return _RateLimitDecision(True)
+
+
+_SATURATED_503 = (
+    b"HTTP/1.1 503 Service Unavailable\r\n"
+    b"Content-Type: application/json; charset=utf-8\r\n"
+    b"Connection: close\r\n"
+    b"Content-Length: 24\r\n"
+    b"\r\n"
+    b'{"error":"server busy"}\n'
+)
+
+
+class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """``ThreadingHTTPServer`` with a worker-thread cap and an SSE ceiling.
+
+    A reachable instance must not spawn one unbounded worker thread per
+    connection. ``max_workers`` caps concurrent request threads: an over-cap
+    connection gets a fast raw 503 and is closed *before* a worker is spawned.
+    ``max_sse_connections`` separately caps the long-lived SSE streams (each
+    holds a worker for up to its wall-clock loop), so a handful of streams
+    cannot monopolize the pool. Both bounds are opt-out (a value <= 0 leaves
+    that dimension unbounded, preserving the historic behavior).
+    """
+
+    daemon_threads = True
+
+    def __init__(self, *args: Any, max_workers: int, max_sse: int, **kwargs: Any) -> None:
+        self._worker_semaphore = (
+            threading.BoundedSemaphore(max_workers) if max_workers > 0 else None
+        )
+        self._sse_semaphore = (
+            threading.BoundedSemaphore(max_sse) if max_sse > 0 else None
+        )
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if self._worker_semaphore is not None and not self._worker_semaphore.acquire(
+            blocking=False
+        ):
+            self._refuse_saturated(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            if self._worker_semaphore is not None:
+                self._worker_semaphore.release()
+
+    def _refuse_saturated(self, request: Any) -> None:
+        with contextlib.suppress(OSError):
+            request.sendall(_SATURATED_503)
+        self.shutdown_request(request)
+
+    def try_acquire_sse(self) -> bool:
+        """Reserve an SSE slot; ``False`` means the ceiling is reached."""
+        if self._sse_semaphore is None:
+            return True
+        return self._sse_semaphore.acquire(blocking=False)
+
+    def release_sse(self) -> None:
+        if self._sse_semaphore is not None:
+            self._sse_semaphore.release()
 
 
 from . import server_ops as _server_ops
@@ -400,6 +514,13 @@ def make_handler(
 
     class _Handler(BaseHTTPRequestHandler):
         server_version = "AMCServer/0.1"
+        # StreamRequestHandler.setup() applies this to the connection socket,
+        # so a slow-loris client cannot pin a worker thread indefinitely.
+        timeout = (
+            security.socket_timeout_seconds
+            if security.socket_timeout_seconds > 0
+            else None
+        )
 
         def handle_one_request(self) -> None:
             self._request_started_at = time.perf_counter()
@@ -515,9 +636,9 @@ def make_handler(
                         offset=_query_int(query, "offset", 0),
                     ))
                 elif path == "/v1/debug/events":
-                    self._send_debug_events()
+                    self._with_sse_slot(self._send_debug_events)
                 elif path == "/v1/logs/stream":
-                    self._send_log_stream()
+                    self._with_sse_slot(self._send_log_stream)
                 else:
                     self._send_json(404, {"error": "not found"})
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
@@ -826,6 +947,26 @@ def make_handler(
                 bound_host, bound_port = self.server.server_address[:2]
                 host = f"{bound_host}:{bound_port}"
             return f"http://{host}"
+
+        def _with_sse_slot(self, handler) -> None:
+            """Run a long-lived SSE handler under the server's SSE ceiling.
+
+            Reserves one of the bounded SSE slots so concurrent streams cannot
+            monopolize the worker pool; refuses with a JSON 503 (before any
+            event-stream headers) when the ceiling is reached, and always
+            releases the slot when the stream ends.
+            """
+            server_obj = self.server
+            acquire = getattr(server_obj, "try_acquire_sse", None)
+            if acquire is not None and not acquire():
+                self._send_json(503, {"error": "SSE connection limit reached"})
+                return
+            try:
+                handler()
+            finally:
+                release = getattr(server_obj, "release_sse", None)
+                if release is not None:
+                    release()
 
         def _send_debug_events(self) -> None:
             self._send_event_stream_headers()
@@ -1298,6 +1439,9 @@ def _build_serve_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mcp-eval-mode", action="store_true", help="Hide every ground-truth-bearing surface (anomaly manifest, scenario catalog, /v1/state, the report-log stream, and the /v1/debug console + UI) so an agent evaluated via /mcp cannot read the scoring rubric; the MCP log tools refuse too. Keeps the kubectl/Helm/commands investigation surface open.")
     parser.add_argument("--cors-allow-origin", default="", help="Optional CORS Access-Control-Allow-Origin value for browser clients.")
     parser.add_argument("--rate-limit-per-minute", type=int, default=0, help="Optional per-client command/Kubernetes API request limit per minute (default: 0, off).")
+    parser.add_argument("--max-concurrent-requests", type=int, default=DEFAULT_MAX_CONCURRENT_REQUESTS, help=f"Cap on concurrent worker threads; over-cap connections get a fast 503 (default: {DEFAULT_MAX_CONCURRENT_REQUESTS}; 0 disables the bound).")
+    parser.add_argument("--max-sse-connections", type=int, default=DEFAULT_MAX_SSE_CONNECTIONS, help=f"Cap on concurrent SSE streams (/v1/debug/events, /v1/logs/stream) so long-lived streams cannot monopolize the worker pool (default: {DEFAULT_MAX_SSE_CONNECTIONS}; 0 disables the bound).")
+    parser.add_argument("--socket-timeout-seconds", type=float, default=DEFAULT_SOCKET_TIMEOUT_SECONDS, help=f"Per-connection socket timeout guarding against slow-loris clients (default: {DEFAULT_SOCKET_TIMEOUT_SECONDS}; 0 disables the timeout).")
     parser.add_argument("--structured-log", action=argparse.BooleanOptionalAction, default=False, help="Emit structured JSONL request/error logs to stderr or --structured-log-file.")
     parser.add_argument("--structured-log-file", type=Path, default=None, help="Optional JSONL path for structured request/error logs.")
     parser.add_argument("--no-generate", action="store_true", help="Use existing artifacts in --output-dir instead of generating before serving.")
@@ -1330,6 +1474,12 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         parser.error("--max-request-body-bytes must be >= 1")
     if serve_args.rate_limit_per_minute < 0:
         parser.error("--rate-limit-per-minute must be >= 0")
+    if serve_args.max_concurrent_requests < 0:
+        parser.error("--max-concurrent-requests must be >= 0")
+    if serve_args.max_sse_connections < 0:
+        parser.error("--max-sse-connections must be >= 0")
+    if serve_args.socket_timeout_seconds < 0:
+        parser.error("--socket-timeout-seconds must be >= 0")
     if serve_args.continuous_generate_interval_seconds <= 0:
         parser.error("--continuous-generate-interval-seconds must be > 0")
     if (
@@ -1374,13 +1524,18 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         allow_remote_without_auth=serve_args.allow_remote_without_auth,
         cors_allow_origin=serve_args.cors_allow_origin,
         rate_limit_per_minute=serve_args.rate_limit_per_minute,
+        max_concurrent_requests=serve_args.max_concurrent_requests,
+        max_sse_connections=serve_args.max_sse_connections,
+        socket_timeout_seconds=serve_args.socket_timeout_seconds,
     )
     request_logger = None
     if serve_args.structured_log or serve_args.structured_log_file is not None:
         request_logger = StructuredRequestLogger(serve_args.structured_log_file)
-    httpd = ThreadingHTTPServer(
+    httpd = _BoundedThreadingHTTPServer(
         (serve_args.host, serve_args.port),
         make_handler(state, security=security, request_logger=request_logger),
+        max_workers=security.max_concurrent_requests,
+        max_sse=security.max_sse_connections,
     )
     host, port = httpd.server_address
     print(f"AMC simulator server listening on http://{host}:{port}/debug")
@@ -1609,9 +1764,12 @@ def start_test_server(
 ) -> tuple[ThreadingHTTPServer, str]:
     """Start an ephemeral server for tests and return (server, base_url)."""
 
-    httpd = ThreadingHTTPServer(
+    resolved = security or ServerSecurityConfig()
+    httpd = _BoundedThreadingHTTPServer(
         ("127.0.0.1", 0),
         make_handler(state, security=security, request_logger=request_logger),
+        max_workers=resolved.max_concurrent_requests,
+        max_sse=resolved.max_sse_connections,
     )
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

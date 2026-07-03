@@ -58,17 +58,17 @@ thread or memory exhaustion by connection volume or client-address churn.
 
 ## Acceptance criteria
 
-- [ ] A test opens more than the configured concurrent-connection limit and
+- [x] A test opens more than the configured concurrent-connection limit and
       confirms excess requests get a fast 503 (or queue-and-serve) rather than
       unbounded thread growth.
-- [ ] A test confirms the rate-limiter `_calls` map does not grow without bound
+- [x] A test confirms the rate-limiter `_calls` map does not grow without bound
       across many distinct simulated client keys (post-sweep size is bounded).
-- [ ] SSE endpoints remain functionally correct (still deliver generation /
+- [x] SSE endpoints remain functionally correct (still deliver generation /
       command-version events and the terminal `shutdown` event) under the new
       ceiling.
-- [ ] New flags are covered in `tests/test_server.py` and documented in
+- [x] New flags are covered in `tests/test_server.py` and documented in
       `README.md` + the CLAUDE.md server section.
-- [ ] The startup remote-bind warning
+- [x] The startup remote-bind warning
       ([server.py:1281](src/anomaly_metric_creator/server.py:1281)) is reviewed
       against the final posture.
 
