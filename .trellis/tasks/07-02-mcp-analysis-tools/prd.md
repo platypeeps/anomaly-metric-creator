@@ -68,20 +68,20 @@ queries, a cross-component correlated timeline, and log deduplication over
 
 ## Acceptance Criteria
 
-- [ ] All four tools registered, listed, and covered in
+- [x] All four tools registered, listed, and covered in
       `tests/test_server_mcp.py` end to end with explicit `--seed` runs.
-- [ ] `group_metrics_by_field("component", ...)` totals equal per-CSV row
+- [x] `group_metrics_by_field("component", ...)` totals equal per-CSV row
       counts for the same window (consistency-with-artifacts test).
-- [ ] A correlated-timeline test on a default run shows a planted primary
+- [x] A correlated-timeline test on a default run shows a planted primary
       anomaly's excursion **without** the response containing the anomaly's
       description string, scenario slug, or any `anomalies.csv` content
       (grep-negative assertion on the serialized response).
-- [ ] Dimensioned (N=3) and dimensionless runs both tested for
+- [x] Dimensioned (N=3) and dimensionless runs both tested for
       `list_metric_fields` and `group_metrics_by_field`; expected field sets
       asserted non-empty before membership checks (vacuous-test guard).
-- [ ] Dedup on the default run collapses repeated report lines into
+- [x] Dedup on the default run collapses repeated report lines into
       clusters with correct counts (deterministic golden assertion).
-- [ ] Per-call cost stays bounded: CSVs streamed, not slurped; no
+- [x] Per-call cost stays bounded: CSVs streamed, not slurped; no
       per-row `strptime` in the hot loop.
 
 ## Notes
