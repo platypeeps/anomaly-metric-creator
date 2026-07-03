@@ -16,11 +16,21 @@
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
-  "pr_url": null,
+  "pr_url": "https://github.com/platypeeps/anomaly-metric-creator/pull/178",
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-02-decomp-timeutil-otlp",
+    "07-02-decomp-gauges-csv-layout",
+    "07-02-decomp-artifacts",
+    "07-02-decomp-combine-impl",
+    "07-02-decomp-schema-validate",
+    "07-02-decomp-otel-stream",
+    "07-02-decomp-cli-args",
+    "07-02-decomp-catalog-data",
+    "07-02-decomp-generation-topology"
+  ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Epic in progress: design.md fixed the boundaries; step 1 (redaction.py + package-aware test loaders) shipped in PR #178 with all locked golden hashes unchanged. Steps 2-10 are the nine 07-02-decomp-* child tasks, sequenced leaf-first; the RNG-critical generation/topology core is last.",
   "meta": {}
 }
