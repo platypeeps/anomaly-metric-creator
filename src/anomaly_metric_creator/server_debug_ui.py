@@ -348,6 +348,7 @@ DEBUG_HTML = r"""<!doctype html>
             <option value="kubectl">kubectl</option>
             <option value="helm">helm</option>
             <option value="kubernetes-api">kubernetes-api</option>
+            <option value="mcp">mcp</option>
           </select>
           <select id="globalWindowFilter">
             <option value="">all time</option>
@@ -415,6 +416,7 @@ DEBUG_HTML = r"""<!doctype html>
             <option value="kubectl">kubectl</option>
             <option value="helm">helm</option>
             <option value="kubernetes-api">kubernetes-api</option>
+            <option value="mcp">mcp</option>
           </select>
           <button type="submit">Search</button>
         </form>

@@ -902,7 +902,9 @@ def make_handler(
                 self._remember_structured_error(exc)
                 self._send_json(413, server_mcp.body_too_large_response(str(exc)))
                 return
-            status, body = server_mcp.handle_mcp_http_post(state, raw)
+            status, body = server_mcp.handle_mcp_http_post(
+                state, raw, client=self.client_address[0]
+            )
             if body is None:
                 # Notification: 202 Accepted with no content.
                 self.send_response(status)

@@ -64,19 +64,19 @@ supported or not — is visible in the existing command-trace debug loop.
 
 ## Acceptance Criteria
 
-- [ ] Each v1 ops tool covered in `tests/test_server_mcp.py`, asserting
+- [x] Each v1 ops tool covered in `tests/test_server_mcp.py`, asserting
       output consistency with the equivalent `POST /v1/commands` kubectl
       invocation on the same server (single-source-of-truth check).
-- [ ] A mutation applied via the Kubernetes API (e.g. scale) is visible in
+- [x] A mutation applied via the Kubernetes API (e.g. scale) is visible in
       the next `kubectl_get` MCP response (overlay flows through).
-- [ ] An MCP `tools/call` produces a `CommandTrace` with family `mcp`
+- [x] An MCP `tools/call` produces a `CommandTrace` with family `mcp`
       retrievable via `/v1/debug/commands` and `/v1/debug/search`
       (`command_family=mcp`), tested end to end.
-- [ ] An unknown MCP tool call appears in `/v1/debug/unsupported` grouped
+- [x] An unknown MCP tool call appears in `/v1/debug/unsupported` grouped
       by fingerprint, tested.
-- [ ] A tool argument containing a bearer-token-shaped string is redacted
+- [x] A tool argument containing a bearer-token-shaped string is redacted
       in the stored trace, tested.
-- [ ] `amc trace-bundle` summary/search over an export containing `mcp`
+- [x] `amc trace-bundle` summary/search over an export containing `mcp`
       traces works unchanged (the offline path shares
       `server_traces.trace_matches_search()`); one focused test.
 
