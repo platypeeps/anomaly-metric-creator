@@ -2,14 +2,17 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, auto_merge_enabled]
   push:
     branches: [main]
   workflow_dispatch:
 
 # Cancel superseded in-progress runs on the same ref to save Actions minutes.
+# Pushes group by commit instead: during a merge burst, a newer merge must not
+# cancel the previous merge commit's full-suite backstop run, or a mid-burst
+# regression is detected late and attributed to the wrong merge.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -65,6 +68,7 @@ jobs:
           PR_ACTION: ${{ github.event.action }}
           PR_DRAFT: ${{ github.event.pull_request.draft || false }}
           PR_LABEL: ${{ github.event.label.name || '' }}
+          PR_AUTO_MERGE: ${{ github.event.pull_request.auto_merge != null }}
           DEPENDENCY_CHANGED: ${{ steps.classify.outputs.dependency_changed }}
           WORKFLOW_CHANGED: ${{ steps.classify.outputs.workflow_changed }}
         run: |
@@ -84,6 +88,23 @@ jobs:
                 if [ "$PR_LABEL" = "full-ci" ]; then
                   full_ci_requested=true
                 fi
+                ;;
+              # Auto-merge lands the PR the moment required contexts go
+              # green, so pushes to an armed PR must gate on the full
+              # matrix, never the quick lane. auto_merge is frozen into
+              # the event payload at delivery; arming after the push is
+              # covered by the auto_merge_enabled case below.
+              synchronize)
+                if [ "$PR_AUTO_MERGE" = "true" ]; then
+                  full_ci_requested=true
+                fi
+                ;;
+              # Arming auto-merge re-gates the current head on the full
+              # matrix (cancel-in-progress supersedes any quick run on
+              # this ref). Arm at PR-open time for the cheap path; arming
+              # after a green full lane costs one redundant full run.
+              auto_merge_enabled)
+                full_ci_requested=true
                 ;;
             esac
           fi

@@ -2321,10 +2321,18 @@ hook, or standalone.
 Merges are gated on GitHub Actions (the local pre-commit hooks do **not**
 run in CI):
 
-- `.github/workflows/ci.yml` — the `test` job runs the pytest suite (and
-  the ruff-lockstep guard above) on every PR and on pushes to `main`, via
-  `uv`. Pushes to `main` run on the **`ubuntu-latest-m` 16 GB larger
-  runner** with the repo's default parallel config (pyproject addopts `-n 4
+- `.github/workflows/ci.yml` — a path-classified cadence keeps the stable
+  aggregate branch-protection context `test` while selecting the cheapest
+  safe lane: lightweight readiness, quick test, or the full `test (py3.12)`
+  matrix (the pytest suite plus the ruff-lockstep guard above, via `uv`).
+  The full matrix runs for opened/reopened/ready PRs, `full-ci`-labeled
+  updates, auto-merge-armed PRs (the `auto_merge_enabled` event and every
+  later push to an armed PR — auto-merge never lands on quick-lane
+  evidence), workflow/dependency diffs, manual dispatch, and every push to
+  `main`; merge-burst `main` pushes run in per-commit concurrency groups so
+  they cannot cancel each other's backstop runs, while PR refs keep
+  cancel-in-progress. Pushes to `main` run on the **`ubuntu-latest-m` 16 GB
+  larger runner** with the repo's default parallel config (pyproject addopts `-n 4
   --dist loadfile`), ~5-8 min. Pull requests intentionally use the standard
   `ubuntu-latest` runner: the larger-runner label can sit queued with
   `runner_id=0` before any steps start, which wedges branch protection even

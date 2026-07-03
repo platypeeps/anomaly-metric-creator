@@ -124,6 +124,32 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "PR body scope test coverage",
             "tests/test_pr_body_scope_lint.py",
         ),
+        (
+            "auto-merge enabled PR event",
+            "types: [opened, synchronize, reopened, ready_for_review, labeled, auto_merge_enabled]",
+        ),
+        (
+            "auto-merge synchronize gate",
+            "github.event.pull_request.auto_merge != null",
+        ),
+        # The two needles below are whitespace-normalized by
+        # _require_contains, so they pin the case labels together with
+        # their full_ci_requested assignments: keeping a label while
+        # dropping its assignment (reopening the quick-lane auto-merge
+        # gap) breaks the anchor.
+        (
+            "auto-merge synchronize full-ci request",
+            'synchronize) if [ "$PR_AUTO_MERGE" = "true" ]; then'
+            " full_ci_requested=true fi ;;",
+        ),
+        (
+            "auto-merge enabled full-ci request",
+            "auto_merge_enabled) full_ci_requested=true ;;",
+        ),
+        (
+            "per-commit push concurrency",
+            "group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}",
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
     _require_not_contains(

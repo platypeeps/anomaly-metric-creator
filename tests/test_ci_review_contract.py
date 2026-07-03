@@ -28,6 +28,12 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
     _write(
         root / ".github/workflows/ci.yml",
         f"""
+        on:
+          pull_request:
+            types: [opened, synchronize, reopened, ready_for_review, labeled, auto_merge_enabled]
+        concurrency:
+          group: ci-${{{{ github.event_name == 'push' && github.sha || github.ref }}}}
+          cancel-in-progress: true
         jobs:
           changes:
             outputs:
@@ -35,6 +41,19 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             steps:
               - run: bash scripts/classify-ci-changes.sh --github-output changed-files.txt
                 id: full-ci
+                env:
+                  PR_AUTO_MERGE: ${{{{ github.event.pull_request.auto_merge != null }}}}
+              - run: |
+                  case "$PR_ACTION" in
+                    synchronize)
+                      if [ "$PR_AUTO_MERGE" = "true" ]; then
+                        full_ci_requested=true
+                      fi
+                      ;;
+                    auto_merge_enabled)
+                      full_ci_requested=true
+                      ;;
+                  esac
           lightweight_readiness:
             name: lightweight readiness
             steps:
@@ -259,6 +278,78 @@ def test_ci_full_ci_output_requires_bracket_expression(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "full-ci output bracket expression" in result.stderr
     assert "full-ci output dot expression" in result.stderr
+
+
+def test_missing_auto_merge_synchronize_gate_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "github.event.pull_request.auto_merge != null",
+            "false",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "auto-merge synchronize gate" in result.stderr
+
+
+def test_missing_auto_merge_enabled_trigger_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8")
+        .replace(
+            "types: [opened, synchronize, reopened, ready_for_review, labeled, auto_merge_enabled]",
+            "types: [opened, synchronize, reopened, ready_for_review, labeled]",
+        )
+        .replace("auto_merge_enabled)", "never_enabled)"),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "auto-merge enabled PR event" in result.stderr
+    assert "auto-merge enabled full-ci request" in result.stderr
+
+
+def test_auto_merge_full_ci_assignment_removal_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "full_ci_requested=true",
+            "full_ci_requested=false",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "auto-merge synchronize full-ci request" in result.stderr
+    assert "auto-merge enabled full-ci request" in result.stderr
+
+
+def test_per_ref_push_concurrency_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}",
+            "group: ci-${{ github.ref }}",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "per-commit push concurrency" in result.stderr
 
 
 def test_dependabot_auto_merge_forbids_actions_pr_approval(tmp_path: Path) -> None:

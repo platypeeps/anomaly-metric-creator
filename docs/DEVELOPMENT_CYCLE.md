@@ -72,7 +72,7 @@ keeping the stable aggregate check named `test`.
 | --- | --- | --- |
 | `lightweight readiness` | Docs, Trellis specs/tasks, agent prompts/skills, Prism rules, or review-tooling scripts only | Catch whitespace, shell syntax, Python syntax, workflow pip, and Trellis artifact hygiene issues without installing the full dev environment. |
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
-| `test (py3.12)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the py3.12 test lane and heavy/non-heavy pytest split. |
+| `test (py3.12)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, auto-merge is armed (the `auto_merge_enabled` event and every later push to the armed PR), workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the py3.12 test lane and heavy/non-heavy pytest split. |
 
 CodeQL is advisory on PRs and not a required branch-protection context
 (`test` and `socket` are the required checks): it analyzes
@@ -85,6 +85,13 @@ PR check, but fast-skips unless dependency/security-relevant files changed or
 full CI was requested. Dependabot auto-merge enables GitHub auto-merge for
 patch/minor updates, but does not try to approve the PR with `GITHUB_TOKEN`;
 this repo's workflow token is not allowed to create PR reviews.
+
+Auto-merge never lands on quick-lane evidence: arming it triggers a
+full-matrix run on the current head, and every subsequent push to an armed PR
+classifies as full CI (the event payload's `auto_merge` field gates
+`synchronize` runs, so no label-ordering race can leave a quick run as the
+surviving gate). Pushes to `main` run in per-commit concurrency groups, so a
+merge burst cannot cancel a previous merge commit's full-suite backstop run.
 
 `tools/check_ci_review_contract.py` is the local guard for this cadence
 contract, `tools/check_copilot_instruction_contract.py` guards the mechanical
@@ -100,6 +107,8 @@ instructions, and docs without installing the full project environment.
 - Apply `full-ci` after substantial runtime changes, before merge if the last
   remote full matrix is stale, or whenever the quick lane is not enough
   evidence for the risk.
+- Arm auto-merge when you open the PR: arming re-gates the current head on the
+  full matrix, so arming after a green full lane costs one redundant full run.
 - Prefer a local full-check plus one remote final review over repeated
   Copilot/Actions loops.
 - If a review comment points to a recurring mechanical pattern, add or update a
