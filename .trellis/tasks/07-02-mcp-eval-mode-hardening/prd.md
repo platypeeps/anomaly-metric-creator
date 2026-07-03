@@ -74,20 +74,20 @@ provably excludes ground truth, and the eval-loop workflow (agent on
 
 ## Acceptance Criteria
 
-- [ ] In eval mode, every rubric-bearing endpoint returns the documented
+- [x] In eval mode, every rubric-bearing endpoint returns the documented
       refusal — parametrized test over the registry, plus a
       registry-completeness test that fails when a route handler is added
       without a classification.
-- [ ] In eval mode, a full serialized `tools/list` + every tool's response
+- [x] In eval mode, a full serialized `tools/list` + every tool's response
       on a default run contains no scenario slug from `SCENARIOS` and no
       `description` string from `anomalies.csv` (automated grep-negative
       sweep test, not a manual checklist).
-- [ ] Auth, rate-limit, and body-cap behaviors on `/mcp` each covered by a
+- [x] Auth, rate-limit, and body-cap behaviors on `/mcp` each covered by a
       focused test (401-equivalent, 429-equivalent, over-limit — all
       JSON-RPC-shaped).
-- [ ] Default (non-eval) mode is byte-for-byte unchanged for all existing
+- [x] Default (non-eval) mode is byte-for-byte unchanged for all existing
       endpoints; existing suite passes.
-- [ ] README and CLAUDE.md sections landed in the same diff (doc-sync
+- [x] README and CLAUDE.md sections landed in the same diff (doc-sync
       checklist heading).
 
 ## Notes

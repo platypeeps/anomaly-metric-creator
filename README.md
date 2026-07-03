@@ -368,6 +368,7 @@ Server flags:
 | `--auth-token` | _off_ | Optional bearer token required for HTTP API, debug data, command, and Kubernetes API requests. Embedded into `GET /v1/kubeconfig` when enabled. |
 | `--max-request-body-bytes` | `1048576` | Maximum accepted HTTP request body size. Oversized app requests return `413`; oversized Kubernetes API requests return a Kubernetes `Status`. |
 | `--allow-remote-without-auth` | _off_ | Explicit lab-only override that permits non-loopback `--host` values without `--auth-token`. |
+| `--mcp-eval-mode` | _off_ | Hide every ground-truth-bearing surface so an agent evaluated through `/mcp` cannot read the scoring rubric. See [Evaluating agents against AMC](#evaluating-agents-against-amc). |
 | `--cors-allow-origin` | _off_ | Optional exact `Access-Control-Allow-Origin` value for browser clients, or `*` for any origin. Preflight requests are answered without bearer auth. |
 | `--rate-limit-per-minute` | `0` | Optional per-client command and Kubernetes API request limit; `0` disables rate limiting. Limited app requests return JSON `429`; limited Kubernetes API requests return a Kubernetes `Status` with `reason: TooManyRequests`. |
 | `--structured-log` / `--no-structured-log` | _off_ | Emit one JSON request record per HTTP request plus error records for request-handling exceptions. Defaults to stderr unless `--structured-log-file` is set. |
@@ -392,6 +393,43 @@ token values: they include `timestamp`, `event`, `method`, `path`, redacted
 `query`, `status`, `client`, `user_agent`, `authorization` (`present` or
 `absent`), `duration_ms`, and `response_bytes`; error rows also include
 `error_type` and `message`.
+
+##### Evaluating agents against AMC
+
+`amc serve` doubles as an evaluation target for AI incident-response agents,
+the way `mock-mcp-service` is for the real Mezmo MCP server. An agent connects
+to the MCP endpoint at `POST /mcp` (streamable-HTTP JSON-RPC) and investigates
+the generated telemetry with the read-only tools — `get_current_time`,
+`list_components`, `get_topology`, `get_metric_histogram`,
+`list_metric_fields`, `group_metrics_by_field`, `get_correlated_timeline`,
+`get_logs`, `deduplicate_logs` — plus the simulated-cluster ops tools
+`kubectl_get`, `describe_resource`, `get_pod_logs`, `get_events`,
+`helm_status`, and `helm_history`. Every `tools/call` is recorded as an `mcp`
+command trace, so a harness can inspect exactly what the agent did.
+
+The scoring rubric is the run's `anomalies.csv` (and the scenario descriptions
+it carries): the eval harness holds those artifacts and grades what the agent
+concluded against them.
+
+**Run the eval target in eval mode.** Pass `--mcp-eval-mode` so the agent
+cannot read the rubric out of the server:
+
+```bash
+amc serve --mcp-eval-mode --auth-token "$EVAL_TOKEN" \
+  --duration-days 3 --scenarios cache_leak_restart \
+  --components apigateway,cacheservice,database,mqservice
+```
+
+Eval mode returns `404` for every ground-truth-bearing surface — the anomaly
+manifest (`/v1/anomalies`), the scenario catalog (`/v1/scenarios`), `/v1/state`
+(which names active scenarios and anomaly counts), the whole `/v1/debug/*`
+console and its UI shell (`/`, `/debug`), and `/v1/logs/stream` — while keeping
+the kubectl/Helm/commands investigation surface open. It also disables the MCP
+`get_logs`/`deduplicate_logs` tools, because this project's `metric_report.log`
+is a verbatim rendering of the anomaly manifest (same descriptions and event
+ids); serving it would hand the agent the answer key. **Without
+`--mcp-eval-mode` the server serves that ground truth** — use eval mode
+whenever an agent under test can reach the endpoint.
 
 For remote lab access, put TLS and host allowlisting in a reverse proxy and
 keep the simulator bound to loopback:

@@ -958,6 +958,12 @@ class SimulationState:
     generation: ContinuousGenerationStatus = field(default_factory=ContinuousGenerationStatus)
     otel_status: dict[str, Any] = field(default_factory=dict)
     shutdown_event: threading.Event = field(default_factory=threading.Event)
+    # Eval mode hides every ground-truth-bearing surface (the anomaly
+    # manifest, the scenario catalog, the report-log rendering of the
+    # manifest, and the debug console) so an agent under evaluation cannot
+    # read the scoring rubric. Single source of truth: both the HTTP route
+    # dispatch and the MCP log tools read this one flag.
+    eval_mode: bool = False
 
     def profiles(self) -> list[OpsScenarioProfile]:
         profiles: list[OpsScenarioProfile] = []
@@ -1035,6 +1041,7 @@ def build_state(
     persist_command_log: Path | None = None,
     persist_command_db: Path | None = None,
     persist_command_retention: int | None = None,
+    eval_mode: bool = False,
 ) -> SimulationState:
     validate_ops_profiles(legacy_module)
     active_scenarios = tuple(sorted(legacy_module._resolve_scenarios(args)))
@@ -1066,6 +1073,7 @@ def build_state(
             "gauges": bool(getattr(args, "otel_emit_gauges", False)),
             "thread": "not_started",
         },
+        eval_mode=eval_mode,
     )
 
 
@@ -7416,6 +7424,9 @@ def _is_kubernetes_api_path(path: str) -> bool:
 def _rate_limit_bucket(path: str) -> str:
     if path == "/v1/commands":
         return "commands"
+    if path == "/mcp":
+        # MCP tools/call is command-like: cap it per client like /v1/commands.
+        return "mcp"
     if _is_kubernetes_api_path(path):
         return "kubernetes-api"
     return ""
