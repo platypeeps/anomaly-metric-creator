@@ -19,7 +19,7 @@ from CLAUDE.md an actual measurement, so both stop being aspirational.
   `pyright`. Type regressions ship silently.
 - **No code-coverage measurement.** `.github/workflows/ci.yml` mentions
   "coverage" only in the sense of the heavy/light **test partition**
-  ([ci.yml:267](.github/workflows/ci.yml:267)), not `--cov`. CLAUDE.md /
+  ([ci.yml](.github/workflows/ci.yml)), not `--cov`. CLAUDE.md /
   `common/testing.md` state an 80% minimum that nothing enforces or even reports.
 
 ## Requirements
