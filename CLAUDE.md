@@ -24,7 +24,17 @@ modules never import `legacy` (one-way dependency). Extracted so far:
 diagnostics), `timeutil.py` (CSV-timestamp parsing + unix-nano conversion,
 shared by the merge writers, OTLP builders, and `server_mcp`), and
 `otlp.py` (the eight `_build_otlp_*` JSON/protobuf payload builders plus
-`_anomaly_event_id`; protobuf imports stay lazy per-function). `tests/conftest.py::_load_amc` and the fresh-copy loaders in
+`_anomaly_event_id`; protobuf imports stay lazy per-function),
+`csv_layout.py` (the shared per-component CSV header-scan / row-iteration
+primitives — `_scan_component_csv_headers`, `_iter_component_rows`,
+`_iter_component_instance_rows`, `_scan_instance_block_layout`,
+`_ensure_long_form_fd_capacity`, `_classify_component_csv_header` — plus
+the `_INSTANCE_DIMENSION_COLUMNS` column-order constant, consumed by the
+gauge writer, the combine long-form writer, the OTEL streamer, and
+`server_mcp`), `gauges_impl.py` (`write_gauges_csv`), and `artifacts.py`
+(the `_atomic_artifact_open` / `_atomic_write_text` / `_ATOMIC_TMP_SUFFIX`
+publication helpers — landed with step 3 because `gauges_impl` depends on
+them). `tests/conftest.py::_load_amc` and the fresh-copy loaders in
 `tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with
 package context (real submodule import or a dotted spec name) so these
 re-import seams resolve; a package-less `spec_from_file_location` copy would
@@ -396,8 +406,9 @@ hashes still apply. Files this run will regenerate are therefore *not*
 deleted by `_pre_clean_output_dir` (true deletion is reserved for files the
 run will genuinely not emit); stale `*.tmp` siblings from a crashed run are
 swept for every registry-known slot via `_known_artifact_filenames()`. When
-adding a new artifact writer, route it through `_atomic_artifact_open` —
-never `open(final_path, "w")` — and make sure its filename reaches the
+adding a new artifact writer, route it through `_atomic_artifact_open`
+(now in `artifacts.py`, re-imported by `legacy.py`) — never
+`open(final_path, "w")` — and make sure its filename reaches the
 registries `_known_artifact_filenames()` reads. Coverage lives in
 `tests/test_atomic_writes.py`. `./otel-activity.log` is exempt: it lives
 outside `--output-dir` and appends within a run, which an
