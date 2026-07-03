@@ -21,7 +21,10 @@ moved name at the same conceptual location so the historic `legacy.<name>`
 surface (shim, facades, tests, `state.legacy` lookups) is unchanged, and new
 modules never import `legacy` (one-way dependency). Extracted so far:
 `redaction.py` (sensitive HTTP-header masking for OTEL transport
-diagnostics). `tests/conftest.py::_load_amc` and the fresh-copy loaders in
+diagnostics), `timeutil.py` (CSV-timestamp parsing + unix-nano conversion,
+shared by the merge writers, OTLP builders, and `server_mcp`), and
+`otlp.py` (the eight `_build_otlp_*` JSON/protobuf payload builders plus
+`_anomaly_event_id`; protobuf imports stay lazy per-function). `tests/conftest.py::_load_amc` and the fresh-copy loaders in
 `tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with
 package context (real submodule import or a dotted spec name) so these
 re-import seams resolve; a package-less `spec_from_file_location` copy would
