@@ -82,6 +82,11 @@ Codex exposes the pack entry points as skills named `sd-start`, `sd-continue`,
 `$sd-review-pr`-style skill mentions.
 The start, continue, and finish-work wrappers run Trellis' existing
 `trellis-start`, `trellis-continue`, and `trellis-finish-work` skills as-is.
+On Claude Code — where Trellis ships a SessionStart hook instead of a
+`trellis-start` skill — the start wrapper derives the same session context
+from `.trellis/scripts/get_context.py` directly, and the continue and
+finish-work wrappers accept the installed `trellis:continue` and
+`trellis:finish-work` command names as valid resolutions.
 The slash command namespace is `sd`, not `trellis`, so these pack-owned wrappers
 do not collide with generated Trellis commands during future `trellis update`
 runs. Cursor command files, GitHub Copilot prompt files, and OpenCode command
@@ -231,6 +236,11 @@ The install audit checks
 pack-like files that are not listed in the installed-targets snapshot, and warns
 when legacy pack names such as `trellis-full-check`, `trellis-housekeeping`,
 `trellis-review-pr`, or `sd-refresh-specs` still appear in target files.
+Missing targets that are gitignored in the current checkout downgrade to
+warnings with a reinstall hint, and the installer keeps receipt entries
+(reported as `kept-in-receipt`) for platforms skipped only because their
+markers or anchors are gitignored here; remove a platform intentionally by
+deleting its files and its receipt lines.
 The copied/generated scope preflight reads
 `.sd-ai-command-pack/installed-targets.txt`, reports changed pack/Trellis
 runtime files, known repository-map files when present, and Trellis workspace
@@ -347,7 +357,11 @@ CI/review scope:
 The start, continue, and finish-work wrappers each invoke the matching
 Trellis-provided skill — `.agents/skills/trellis-start/`,
 `.agents/skills/trellis-continue/`, or `.agents/skills/trellis-finish-work/`
-respectively — and use it without changing its behavior.
+respectively — and use it without changing its behavior. The Claude Code
+adapters are the exception: start derives the session context from
+`.trellis/scripts/get_context.py` (Claude's Trellis layout ships a
+SessionStart hook, not a `trellis-start` skill), and continue/finish-work
+accept the `trellis:continue`/`trellis:finish-work` command form.
 
 The update-spec command does more than update `.trellis/spec/`: it is the
 pack's repository-knowledge refresh path for existing repospec/Repomix outputs,
