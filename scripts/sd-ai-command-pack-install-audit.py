@@ -7,6 +7,7 @@ import argparse
 import fnmatch
 import os
 import re
+import subprocess
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -188,11 +189,41 @@ def collect_pack_like_files(root: Path) -> list[str]:
     return sorted(set(pack_like))
 
 
-def audit_structural_state(root: Path, targets: set[str]) -> list[str]:
+def is_gitignored(root: Path, relative_path: str) -> bool:
+    """True when git confirms the path is ignored; False otherwise.
+
+    Missing git, a non-repo root, and git errors all return False, so the
+    caller keeps the fail-closed error behavior for those cases.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--", relative_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], list[str]]:
     failures: list[str] = []
+    warnings: list[str] = []
 
     for target in sorted(targets):
-        if not path_exists(root, Path(target)):
+        if path_exists(root, Path(target)):
+            continue
+        # Platform adapters may be recorded by a checkout that has them
+        # while being gitignored (e.g. repos ignoring .claude/): absence
+        # here is a local-only gap, not receipt drift.
+        if is_gitignored(root, target):
+            warnings.append(
+                "installed target is gitignored and absent in this "
+                f"checkout: {target}; re-run the pack installer here to "
+                "materialize local-only adapters"
+            )
+        else:
             failures.append(f"installed target is missing: {target}")
 
     allowed = set(targets) | LOCAL_ALLOWED_PACK_FILES
@@ -203,7 +234,7 @@ def audit_structural_state(root: Path, targets: set[str]) -> list[str]:
                 f"{relative_path}"
             )
 
-    return failures
+    return failures, warnings
 
 
 def _is_excluded_scan_path(relative_path: Path) -> bool:
@@ -305,9 +336,11 @@ def main() -> int:
         return 0
 
     targets, failures = load_installed_targets(root)
+    structural_warnings: list[str] = []
     if targets:
-        failures.extend(audit_structural_state(root, targets))
-    warnings = audit_migration_advisories(root, targets)
+        structural_failures, structural_warnings = audit_structural_state(root, targets)
+        failures.extend(structural_failures)
+    warnings = [*structural_warnings, *audit_migration_advisories(root, targets)]
 
     if failures:
         for failure in failures:
