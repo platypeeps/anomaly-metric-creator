@@ -165,8 +165,16 @@ def load_installed_targets(root: Path) -> tuple[set[str], list[str]]:
 
 
 def path_exists(root: Path, relative_path: Path) -> bool:
+    # lstat-based: Path.exists() swallows OSErrors on some Python versions
+    # and raises on others (observed crashing on 3.9 under an unreadable
+    # parent directory); "cannot be inspected" counts as absent here and
+    # the provenance audit reports the inspection failure precisely.
     path = root / relative_path
-    return path.exists() or path.is_symlink()
+    try:
+        os.lstat(path)
+    except OSError:
+        return False
+    return True
 
 
 def matches_pack_file(relative_path: str) -> bool:
@@ -291,6 +299,7 @@ def audit_provenance(root: Path) -> list[str]:
         return [f"{PROVENANCE_FILE} has no files map"]
 
     failures: list[str] = []
+    root_real = os.path.realpath(root)
     for raw_target, expected in sorted(files.items()):
         if not isinstance(raw_target, str) or not isinstance(expected, str):
             failures.append(f"{PROVENANCE_FILE} has a malformed entry: {raw_target!r}")
@@ -300,18 +309,44 @@ def audit_provenance(root: Path) -> list[str]:
             failures.append(f"{PROVENANCE_FILE} contains unsafe target {raw_target!r}")
             continue
         path = root / target
-        if not path.exists() and not path.is_symlink():
+        # Per-target lstat mirrors the provenance-file gate: missing,
+        # symlink, non-regular, and cannot-be-inspected are distinguished
+        # without exists()/is_file() OSError ambiguity. It runs before the
+        # escape check so a symlink target keeps its "not a regular file"
+        # classification wherever it points.
+        try:
+            target_mode = os.lstat(path).st_mode
+        except FileNotFoundError:
             # Local-only adapters may be legitimately absent (gitignored);
             # anything else vouched-but-gone is tampering even when the
             # receipt no longer lists it.
             if not is_gitignored(root, target):
                 failures.append(f"vouched target is missing: {target}")
             continue
-        if path.is_symlink() or not path.is_file():
+        except OSError as exc:
+            failures.append(
+                f"vouched target cannot be inspected: {target}: {exc}"
+            )
+            continue
+        if not stat.S_ISREG(target_mode):
             # Provenance vouches plain regular files; a symlink (even to a
             # matching file), directory, or other node at a vouched path is
             # tampering, not absence.
             failures.append(f"vouched target is not a regular file: {target}")
+            continue
+        # Symlinked parent directories could route the hash check outside
+        # the repository; fail closed when the real path escapes root.
+        # commonpath handles filesystem-root repos and raises on
+        # mixed-drive comparisons, which also fail closed.
+        real = os.path.realpath(path)
+        try:
+            inside = os.path.commonpath([root_real, real]) == root_real
+        except ValueError:
+            inside = False
+        if not inside:
+            failures.append(
+                f"vouched target escapes the repository root: {target}"
+            )
             continue
         try:
             content = path.read_bytes()
