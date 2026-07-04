@@ -25,5 +25,22 @@ handoff state are ready for the user to disengage.
    task or session record and for keeping finalization idempotent; do not rerun
    it for the same state unless the user explicitly asks to recover from a
    failed prior run.
-5. Report what the skill completed, what remains for the user, and any
+5. When the workflow reaches the journal-recording step, record the session
+   with the pack wrapper instead of calling `add_session.py` directly:
+
+   ```bash
+   python3 scripts/sd-ai-command-pack-record-session.py \
+     --title "..." --summary "..." --commit "hash1,hash2" \
+     --change "main change bullet" --change "..." \
+     --test "- [OK] test result line" --test "..."
+   ```
+
+   The wrapper resolves each commit's subject from git (failing fast on
+   unknown hashes), fills the Main Changes and Testing sections, and refuses
+   to commit an entry that still contains template placeholders — the
+   fill-and-amend dance after a bare `add_session.py` call is exactly what
+   it removes. If the wrapper script is missing, fall back to
+   `add_session.py` and fill the `(Add details)`, `(Add test results)`, and
+   `(see git log)` placeholders manually before pushing.
+6. Report what the skill completed, what remains for the user, and any
    validation or archival step that could not run.
