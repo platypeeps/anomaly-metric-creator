@@ -60,7 +60,9 @@ def commit_subject(commit_hash: str) -> str | None:
     if result.returncode != 0:
         return None
     subject = result.stdout.strip().splitlines()
-    return subject[0] if subject else None
+    # A valid commit can carry an empty subject (--allow-empty-message);
+    # only a failed lookup means the hash is unknown.
+    return subject[0] if subject else "(empty subject)"
 
 
 def modified_workspace_journals() -> list[Path]:
