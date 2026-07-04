@@ -320,7 +320,13 @@ def main(argv: list[str]) -> int:
     # workspace would sweep unrelated dirty files into the commit.
     stage = [journals[0], journals[0].parent / "index.md"]
     stage_args = [str(path) for path in stage if path.exists()]
-    if run_git("add", "--", *stage_args).returncode != 0:
+    added = run_git("add", "--", *stage_args)
+    if added.returncode != 0:
+        # Surface git's own output (pathspec, permission, index-lock
+        # errors), matching the commit and add_session failure paths.
+        for stream in (added.stdout, added.stderr):
+            if stream:
+                print(stream, file=sys.stderr)
         print("error: git add failed", file=sys.stderr)
         return 1
     commit = subprocess.run(
