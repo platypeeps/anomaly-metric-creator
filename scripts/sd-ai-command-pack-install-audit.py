@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -13,6 +15,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
+PROVENANCE_FILE = Path(".sd-ai-command-pack/provenance.json")
 
 # Files unique to the sd-ai-command-pack source checkout. A consumer repo never
 # has all three (it receives shipped scripts, but not the installer, manifest, or
@@ -142,7 +145,10 @@ def load_installed_targets(root: Path) -> tuple[set[str], list[str]]:
                 f"{INSTALLED_TARGETS_FILE}:{line_number} contains unsafe target {line!r}"
             )
             continue
-        targets.add(line)
+        # Receipts are generated with POSIX separators; tolerate hand-edited
+        # Windows-style relative entries so Path()/check-ignore behave the
+        # same on every platform.
+        targets.add(line.replace("\\", "/"))
 
     if not targets:
         failures.append(f"{INSTALLED_TARGETS_FILE} has no installed targets")
@@ -228,13 +234,72 @@ def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], li
 
     allowed = set(targets) | LOCAL_ALLOWED_PACK_FILES
     for relative_path in collect_pack_like_files(root):
-        if relative_path not in allowed:
+        if relative_path in allowed:
+            continue
+        # Repos may deliberately keep gitignored local-only adapters out of
+        # the tracked receipt (the exclude-and-warn policy); tolerate that.
+        if is_gitignored(root, relative_path):
+            warnings.append(
+                "local-only pack-like file is not recorded in installed "
+                f"targets: {relative_path} (gitignored; repo receipt policy "
+                "may exclude local-only adapters)"
+            )
+        else:
             failures.append(
                 "pack-like file is not listed in installed targets: "
                 f"{relative_path}"
             )
 
     return failures, warnings
+
+
+def audit_provenance(root: Path) -> list[str]:
+    """Verify recorded pack content hashes when provenance is present."""
+    provenance_path = root / PROVENANCE_FILE
+    if not provenance_path.exists():
+        return []
+
+    try:
+        payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        return [f"{PROVENANCE_FILE} is unreadable or malformed: {exc}"]
+
+    files = payload.get("files") if isinstance(payload, dict) else None
+    version = payload.get("version", "unknown") if isinstance(payload, dict) else "unknown"
+    if not isinstance(files, dict):
+        return [f"{PROVENANCE_FILE} has no files map"]
+
+    failures: list[str] = []
+    for raw_target, expected in sorted(files.items()):
+        if not isinstance(raw_target, str) or not isinstance(expected, str):
+            failures.append(f"{PROVENANCE_FILE} has a malformed entry: {raw_target!r}")
+            continue
+        target = raw_target.replace("\\", "/")
+        if is_unsafe_installed_target(target):
+            failures.append(f"{PROVENANCE_FILE} contains unsafe target {raw_target!r}")
+            continue
+        path = root / target
+        if not path.exists() and not path.is_symlink():
+            # The structural audit already classifies missing/gitignored
+            # targets; provenance only judges content that is present.
+            continue
+        if not path.is_file():
+            # Provenance vouches plain files; a directory or dangling
+            # symlink at a vouched path is tampering, not absence.
+            failures.append(f"vouched target is not a regular file: {target}")
+            continue
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            failures.append(f"vouched target is unreadable: {target}: {exc}")
+            continue
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        if digest != expected:
+            failures.append(
+                f"installed target drifted from pack {version} content: "
+                f"{target} (re-run the pack installer or review the local edit)"
+            )
+    return failures
 
 
 def _is_excluded_scan_path(relative_path: Path) -> bool:
@@ -340,6 +405,7 @@ def main() -> int:
     if targets:
         structural_failures, structural_warnings = audit_structural_state(root, targets)
         failures.extend(structural_failures)
+    failures.extend(audit_provenance(root))
     warnings = [*structural_warnings, *audit_migration_advisories(root, targets)]
 
     if failures:

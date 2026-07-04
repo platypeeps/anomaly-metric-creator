@@ -241,6 +241,17 @@ warnings with a reinstall hint, and the installer keeps receipt entries
 (reported as `kept-in-receipt`) for platforms skipped only because their
 markers or anchors are gitignored here; remove a platform intentionally by
 deleting its files and its receipt lines.
+Two receipt policies for gitignored local-only adapters are supported and
+both pass the audit: record-and-warn (the installer default — entries stay
+in the receipt and absent files warn) and exclude-and-warn (repo guards
+strip the entries — present-but-unlisted gitignored files warn instead of
+failing). Hand-edited receipt entries with Windows-style separators are
+normalized before checking. The installer also writes
+`.sd-ai-command-pack/provenance.json` with the pack version and `sha256`
+hashes of installed pack files (user-tunable files are never vouched); the
+audit fails when a vouched file's content drifts from the recorded pack
+content, so the "reviewed upstream" exemption for vendored pack files is a
+checkable claim.
 The copied/generated scope preflight reads
 `.sd-ai-command-pack/installed-targets.txt`, reports changed pack/Trellis
 runtime files, known repository-map files when present, and Trellis workspace
