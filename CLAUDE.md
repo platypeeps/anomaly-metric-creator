@@ -2369,22 +2369,22 @@ run in CI):
   evidence), workflow/dependency diffs, manual dispatch, and every push to
   `main`; merge-burst `main` pushes run in per-commit concurrency groups so
   they cannot cancel each other's backstop runs, while PR refs keep
-  cancel-in-progress. Pushes to `main` run on the **`ubuntu-latest-m` 16 GB
-  larger runner** with the repo's default parallel config (pyproject addopts `-n 4
-  --dist loadfile`), ~5-8 min. Pull requests intentionally use the standard
-  `ubuntu-latest` runner: the larger-runner label can sit queued with
-  `runner_id=0` before any steps start, which wedges branch protection even
-  though the suite itself is healthy. The 7 GB standard runner couldn't hold
+  cancel-in-progress. All events run on the standard `ubuntu-latest`
+  runner: the org's `ubuntu-latest-m` 16 GB larger runner stopped being
+  served on 2026-07-04 (main-push jobs sat queued for hours with
+  `runner_id=0`, so the post-merge backstop never ran), and larger runners
+  bill per-minute besides. The 7 GB standard runner couldn't hold
   the heavy N=3 / 7-day fixtures across xdist workers — a full `-n 2` run
-  OOM-died after 32 min — so the PR run **splits** the suite by the `heavy`
+  OOM-died after 32 min — so every run **splits** the suite by the `heavy`
   marker instead of running everything serially:
   `pytest -n 0 -m heavy` runs the GB-scale 7-day / N=3 fixture tests serially
   (low-RAM), then `pytest -n 2 --dist loadfile -m "not heavy"` runs the light
-  remainder under real xdist. This keeps the parallel worker-distribution /
-  global-state ordering path — the one main's push run uses, and the one
-  CLAUDE.md warns turns leaked global state into order-dependent flakes —
-  exercised at the PR gate, so an xdist-only regression fails the gate rather
-  than passing serially and only flaking post-merge on the main push. The
+  remainder under real xdist (~25 min total; the pyproject addopts default
+  `-n 4 --dist loadfile` still applies to local runs on larger machines).
+  This keeps the parallel worker-distribution / global-state ordering path
+  — the one CLAUDE.md warns turns leaked global state into order-dependent
+  flakes — exercised at the PR gate, so an xdist-only regression fails the
+  gate rather than passing serially and only flaking post-merge. The
   `heavy` marker is auto-applied in `tests/conftest.py`
   (`pytest_collection_modifyitems` over `_HEAVY_SESSION_FIXTURES`), so the
   partition tracks the fixture set with no per-test annotation to drift; the

@@ -246,12 +246,12 @@ jobs:
         # Tested version policy: py3.12 only (pyproject requires-python
         # stays >=3.11 as the declared floor; 3.12 is the validated version).
         python-version: ["3.12"]
-    # Pushes to main use the org-configured 16 GB larger runner so the default
-    # xdist suite stays fast. Pull requests use the standard runner with a
-    # serial pytest override below: the larger-runner label can sit queued with
-    # runner_id=0 before any steps start, which blocks branch protection even
-    # though the suite itself is healthy.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ubuntu-latest-m' }}
+    # All events use the standard runner: the org's ubuntu-latest-m larger
+    # runner stopped being served on 2026-07-04 (main-push jobs sat queued
+    # for hours with runner_id=0, so the post-merge backstop never ran), and
+    # larger runners bill per-minute besides. The heavy/not-heavy split in
+    # the test step keeps the suite inside the 7 GB standard runner.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -294,30 +294,28 @@ jobs:
         continue-on-error: true
         run: uv run --no-sync mypy
 
-      # PR standard runners split the suite to exercise the same xdist
-      # ordering path that main's push run uses, without OOM-ing the 7 GB
-      # runner. The two `-m` sets partition the suite, so coverage is complete.
-      # main pushes keep the repo default on the larger runner.
+      # The suite splits by the `heavy` marker so it fits the 7 GB standard
+      # runner: the GB-scale 7-day / N=3 fixture tests run serially first
+      # (they OOM xdist workers), then the light remainder runs under real
+      # xdist, keeping the parallel worker-distribution / global-state
+      # ordering path exercised on every run. The two `-m` sets partition
+      # the suite, so coverage is complete. ~25 min in practice.
       #
       # Code coverage is measured across the whole lane (report-only, no
-      # threshold gate yet): the PR path passes --cov-append on the second
-      # step so the serial-heavy and parallel-light partitions aggregate
-      # into one report. --cov takes the source path (not the package name)
-      # because tests import the implementation through conftest's module
-      # loader, and path-based matching measures those files regardless of
-      # the module name they load under. COVERAGE_CORE=sysmon selects the
-      # py3.12 sys.monitoring backend, keeping tracing overhead low enough
-      # for the 45-minute job timeout.
+      # threshold gate yet): --cov-append on the second step aggregates the
+      # serial-heavy and parallel-light partitions into one report. --cov
+      # takes the source path (not the package name) because tests import
+      # the implementation through conftest's module loader, and path-based
+      # matching measures those files regardless of the module name they
+      # load under. COVERAGE_CORE=sysmon selects the py3.12 sys.monitoring
+      # backend, keeping tracing overhead low enough for the 45-minute job
+      # timeout.
       - name: Run test suite
         env:
           COVERAGE_CORE: sysmon
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
-            uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-append --cov-report=term --cov-report=xml
-          else
-            uv run --no-sync pytest --cov=src/anomaly_metric_creator --cov-report=term --cov-report=xml
-          fi
+          uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
+          uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-append --cov-report=term --cov-report=xml
 
   test:
     name: test
