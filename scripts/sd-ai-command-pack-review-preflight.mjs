@@ -94,6 +94,7 @@ function defaultConfig() {
       '.sd-ai-command-pack/installed-targets.txt',
       '.sd-ai-command-pack/local-only.txt',
       '.sd-ai-command-pack/pr-body-scope.json',
+      '.sd-ai-command-pack/provenance.json',
       '.sd-ai-command-pack/review-preflight.json',
       '.trellis/.developer',
       '.trellis/.template-hashes.json',
@@ -474,6 +475,7 @@ function isSdCommandPackCopiedPath(path) {
   return (
     packInstalledTargets().has(path) ||
     path === '.sd-ai-command-pack/installed-targets.txt' ||
+    path === '.sd-ai-command-pack/provenance.json' ||
     config.copiedTemplateExtraPaths.includes(path) ||
     /^\.(agents|claude|codex|cursor|gemini|github|opencode)\/skills\/sd-[^/]+\//.test(path) ||
     path.startsWith('.claude/commands/sd/') ||
@@ -537,7 +539,7 @@ export function findMissingDocumentationPathReferences(file, text, existsPath, o
     }
     seen.add(key);
 
-    if (!existsPath(resolved)) {
+    if (!existsPath(resolved) && !resolvesToLineSuffixedPath(resolved, existsPath)) {
       missing.push({
         ...reference,
         resolved,
@@ -546,6 +548,15 @@ export function findMissingDocumentationPathReferences(file, text, existsPath, o
   }
 
   return missing;
+}
+
+function resolvesToLineSuffixedPath(resolved, existsPath) {
+  // Documentation commonly cites line anchors — `path.md:42`, `path:12-34`,
+  // `path:12:5`, `path:12-34:5` — so a target with trailing line/column
+  // suffixes resolves against its base path. Files literally named with
+  // `:digits` were already matched by the direct existence check above.
+  const base = resolved.replace(/(?::\d+(?:-\d+)?)+$/, '');
+  return base !== resolved && existsPath(base);
 }
 
 export function extractDocumentationPathReferences(file, text, options = {}) {

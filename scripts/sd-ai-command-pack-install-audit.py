@@ -5,14 +5,18 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
+import json
 import os
 import re
+import stat
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
+PROVENANCE_FILE = Path(".sd-ai-command-pack/provenance.json")
 
 # Files unique to the sd-ai-command-pack source checkout. A consumer repo never
 # has all three (it receives shipped scripts, but not the installer, manifest, or
@@ -125,13 +129,20 @@ def is_unsafe_installed_target(path_text: str) -> bool:
 
 def load_installed_targets(root: Path) -> tuple[set[str], list[str]]:
     targets_file = root / INSTALLED_TARGETS_FILE
-    if not targets_file.exists():
+    try:
+        raw_text = targets_file.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
         return set(), [f"{INSTALLED_TARGETS_FILE} is missing"]
+    except OSError as exc:
+        # Path.exists() would swallow (or on some Python versions raise)
+        # permission errors; report them instead of crashing or misreading
+        # an unreadable receipt as absent.
+        return set(), [f"{INSTALLED_TARGETS_FILE} cannot be read: {exc}"]
 
     targets: set[str] = set()
     failures: list[str] = []
     for line_number, raw_line in enumerate(
-        targets_file.read_text(encoding="utf-8", errors="replace").splitlines(),
+        raw_text.splitlines(),
         start=1,
     ):
         line = raw_line.strip()
@@ -142,7 +153,10 @@ def load_installed_targets(root: Path) -> tuple[set[str], list[str]]:
                 f"{INSTALLED_TARGETS_FILE}:{line_number} contains unsafe target {line!r}"
             )
             continue
-        targets.add(line)
+        # Receipts are generated with POSIX separators; tolerate hand-edited
+        # Windows-style relative entries so Path()/check-ignore behave the
+        # same on every platform.
+        targets.add(line.replace("\\", "/"))
 
     if not targets:
         failures.append(f"{INSTALLED_TARGETS_FILE} has no installed targets")
@@ -151,8 +165,16 @@ def load_installed_targets(root: Path) -> tuple[set[str], list[str]]:
 
 
 def path_exists(root: Path, relative_path: Path) -> bool:
+    # lstat-based: Path.exists() swallows OSErrors on some Python versions
+    # and raises on others (observed crashing on 3.9 under an unreadable
+    # parent directory); "cannot be inspected" counts as absent here and
+    # the provenance audit reports the inspection failure precisely.
     path = root / relative_path
-    return path.exists() or path.is_symlink()
+    try:
+        os.lstat(path)
+    except OSError:
+        return False
+    return True
 
 
 def matches_pack_file(relative_path: str) -> bool:
@@ -228,13 +250,116 @@ def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], li
 
     allowed = set(targets) | LOCAL_ALLOWED_PACK_FILES
     for relative_path in collect_pack_like_files(root):
-        if relative_path not in allowed:
+        if relative_path in allowed:
+            continue
+        # Repos may deliberately keep gitignored local-only adapters out of
+        # the tracked receipt (the exclude-and-warn policy); tolerate that.
+        if is_gitignored(root, relative_path):
+            warnings.append(
+                "local-only pack-like file is not recorded in installed "
+                f"targets: {relative_path} (gitignored; repo receipt policy "
+                "may exclude local-only adapters)"
+            )
+        else:
             failures.append(
                 "pack-like file is not listed in installed targets: "
                 f"{relative_path}"
             )
 
     return failures, warnings
+
+
+def audit_provenance(root: Path) -> list[str]:
+    """Verify recorded pack content hashes when provenance is present."""
+    provenance_path = root / PROVENANCE_FILE
+    try:
+        mode = os.lstat(provenance_path).st_mode
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        # exists()/is_file() swallow OSErrors as False, which would let a
+        # permission game silently disable verification; fail instead.
+        return [f"{PROVENANCE_FILE} cannot be inspected: {exc}"]
+    if not stat.S_ISREG(mode):
+        # A symlinked or non-regular provenance file would let tampering
+        # redirect or disable verification; only a regular file counts
+        # (lstat does not follow symlinks).
+        return [f"{PROVENANCE_FILE} must be a regular file"]
+
+    try:
+        payload = json.loads(
+            provenance_path.read_text(encoding="utf-8", errors="strict")
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        return [f"{PROVENANCE_FILE} is unreadable or malformed: {exc}"]
+
+    files = payload.get("files") if isinstance(payload, dict) else None
+    version = payload.get("version", "unknown") if isinstance(payload, dict) else "unknown"
+    if not isinstance(files, dict):
+        return [f"{PROVENANCE_FILE} has no files map"]
+
+    failures: list[str] = []
+    root_real = os.path.realpath(root)
+    for raw_target, expected in sorted(files.items()):
+        if not isinstance(raw_target, str) or not isinstance(expected, str):
+            failures.append(f"{PROVENANCE_FILE} has a malformed entry: {raw_target!r}")
+            continue
+        target = raw_target.replace("\\", "/")
+        if is_unsafe_installed_target(target):
+            failures.append(f"{PROVENANCE_FILE} contains unsafe target {raw_target!r}")
+            continue
+        path = root / target
+        # Per-target lstat mirrors the provenance-file gate: missing,
+        # symlink, non-regular, and cannot-be-inspected are distinguished
+        # without exists()/is_file() OSError ambiguity. It runs before the
+        # escape check so a symlink target keeps its "not a regular file"
+        # classification wherever it points.
+        try:
+            target_mode = os.lstat(path).st_mode
+        except FileNotFoundError:
+            # Local-only adapters may be legitimately absent (gitignored);
+            # anything else vouched-but-gone is tampering even when the
+            # receipt no longer lists it.
+            if not is_gitignored(root, target):
+                failures.append(f"vouched target is missing: {target}")
+            continue
+        except OSError as exc:
+            failures.append(
+                f"vouched target cannot be inspected: {target}: {exc}"
+            )
+            continue
+        if not stat.S_ISREG(target_mode):
+            # Provenance vouches plain regular files; a symlink (even to a
+            # matching file), directory, or other node at a vouched path is
+            # tampering, not absence.
+            failures.append(f"vouched target is not a regular file: {target}")
+            continue
+        # Symlinked parent directories could route the hash check outside
+        # the repository; fail closed when the real path escapes root.
+        # commonpath handles filesystem-root repos and raises on
+        # mixed-drive comparisons, which also fail closed.
+        real = os.path.realpath(path)
+        try:
+            inside = os.path.commonpath([root_real, real]) == root_real
+        except ValueError:
+            inside = False
+        if not inside:
+            failures.append(
+                f"vouched target escapes the repository root: {target}"
+            )
+            continue
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            failures.append(f"vouched target is unreadable: {target}: {exc}")
+            continue
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        if digest != expected:
+            failures.append(
+                f"installed target drifted from pack {version} content: "
+                f"{target} (re-run the pack installer or review the local edit)"
+            )
+    return failures
 
 
 def _is_excluded_scan_path(relative_path: Path) -> bool:
@@ -340,6 +465,7 @@ def main() -> int:
     if targets:
         structural_failures, structural_warnings = audit_structural_state(root, targets)
         failures.extend(structural_failures)
+    failures.extend(audit_provenance(root))
     warnings = [*structural_warnings, *audit_migration_advisories(root, targets)]
 
     if failures:

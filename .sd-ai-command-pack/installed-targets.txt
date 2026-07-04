@@ -56,6 +56,7 @@
 .prism/rules.json
 .prism/rules.schema.json
 .sd-ai-command-pack/installed-targets.txt
+.sd-ai-command-pack/provenance.json
 docs/SD_AI_COMMAND_PACK.md
 scripts/sd-ai-command-pack-full-check.sh
 scripts/sd-ai-command-pack-housekeeping.sh
