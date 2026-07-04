@@ -3,7 +3,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
+# The script runs without -e, so a failed cd must not continue in the
+# wrong directory.
+cd "$REPO_ROOT" || exit 1
 
 OVERALL_STATUS=0
 REVIEW_LOCAL_SCOPE="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_SCOPE:-diff}"
