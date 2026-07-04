@@ -36,6 +36,11 @@ Quick links:
   pack-managed repository knowledge refresh.
 - `scripts/sd-ai-command-pack-full-check.sh`: canonical full-check script.
 - `scripts/sd-ai-command-pack-housekeeping.sh`: canonical post-merge housekeeping script.
+- `scripts/sd-ai-command-pack-record-session.py`: one-shot session journal
+  recorder — wraps Trellis' `add_session.py`, resolving commit subjects
+  from git (failing fast on unknown hashes), filling the Main Changes and
+  Testing sections from `--change`/`--test` flags, and refusing to commit
+  an entry that still contains template placeholders.
 - `scripts/sd-ai-command-pack-review-scope.sh`: copied/generated file scope
   preflight for mixed PRs.
 - `scripts/sd-ai-command-pack-review-preflight.mjs`: generic dependency-free
