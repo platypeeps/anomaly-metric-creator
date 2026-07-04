@@ -8,7 +8,13 @@ the gap in one shot: it resolves each commit's subject from git (failing
 fast on unknown hashes), passes the Main Changes body through
 ``--content-file``, patches the Testing section and commit table in the
 freshly written entry, verifies no placeholders remain, and only then
-commits the workspace.
+commits the journal.
+
+Trellis versions drift across repos: some seed placeholder commit cells
+and ``- [OK] (Add test results)``, others resolve subjects themselves and
+default Testing to ``- Validation not recorded for this session.``. The
+patcher therefore anchors on the hash-keyed table row and on the section
+headings, not on any specific placeholder text.
 
 Exit codes:
 
@@ -23,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,6 +45,8 @@ def run_git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
@@ -45,7 +54,9 @@ def run_git(*args: str) -> subprocess.CompletedProcess:
 
 
 def commit_subject(commit_hash: str) -> str | None:
-    result = run_git("log", "-1", "--format=%s", commit_hash, "--")
+    result = run_git(
+        "log", "-1", "--format=%s", "--end-of-options", commit_hash, "--"
+    )
     if result.returncode != 0:
         return None
     subject = result.stdout.strip().splitlines()
@@ -60,6 +71,19 @@ def modified_workspace_journals() -> list[Path]:
         if path_text.endswith(".md") and "/journal-" in path_text:
             journals.append(Path(path_text))
     return journals
+
+
+def replace_section(block: str, heading: str, lines: list[str]) -> str | None:
+    """Replace the body under `heading` in the session block; None if absent."""
+    head = f"{heading}\n"
+    start = block.find(head)
+    if start == -1:
+        return None
+    body_at = start + len(head)
+    end = block.find("\n### ", body_at)
+    if end == -1:
+        end = len(block)
+    return block[:body_at] + "\n" + "\n".join(lines) + "\n" + block[end:]
 
 
 def patch_last_session(
@@ -84,28 +108,38 @@ def patch_last_session(
     block = text[block_start:]
 
     for commit_hash, subject in subjects.items():
-        placeholder_row = f"| `{commit_hash}` | (see git log) |"
-        if placeholder_row not in block:
-            return f"missing commit table row for {commit_hash} in {journal}"
+        # Trellis versions differ in what they seed: some write
+        # `(see git log)` placeholder cells, others resolve subjects
+        # themselves. Overwrite the hash-anchored row either way with the
+        # subject this wrapper resolved from git.
         cell = subject.replace("|", "\\|")
-        block = block.replace(placeholder_row, f"| `{commit_hash}` | {cell} |", 1)
+        row = f"| `{commit_hash}` | {cell} |"
+        row_re = re.compile(
+            r"^\| `" + re.escape(commit_hash) + r"` \| .* \|$", re.MULTILINE
+        )
+        if not row_re.search(block):
+            return f"missing commit table row for {commit_hash} in {journal}"
+        block = row_re.sub(lambda _match: row, block, count=1)
 
-    tests_placeholder = "- [OK] (Add test results)"
-    if tests_placeholder not in block:
-        return f"missing Testing placeholder in {journal}"
-    block = block.replace(tests_placeholder, "\n".join(tests), 1)
+    patched = replace_section(block, "### Testing", tests)
+    if patched is None:
+        return f"missing Testing section in the new entry in {journal}"
+    block = patched
 
     if next_steps:
-        default_next = "- None - task complete"
-        if default_next in block:
-            block = block.replace(default_next, "\n".join(next_steps), 1)
+        patched = replace_section(block, "### Next Steps", next_steps)
+        if patched is None:
+            return f"missing Next Steps section in the new entry in {journal}"
+        block = patched
 
     remaining = [p for p in PLACEHOLDERS if p in block]
     if remaining:
         return f"placeholders remain after patching {journal}: {', '.join(remaining)}"
 
     try:
-        journal.write_text(text[:block_start] + block, encoding="utf-8")
+        journal.write_text(
+            text[:block_start] + block, encoding="utf-8", errors="strict"
+        )
     except OSError as exc:
         return f"cannot write {journal}: {exc}"
     return None
@@ -165,6 +199,15 @@ def main(argv: list[str]) -> int:
         # add_session.py's explicit no-commits sentinel.
         commit_arg = ""
     hashes = [h.strip() for h in commit_arg.split(",") if h.strip()]
+    seen_hashes: set[str] = set()
+    for commit_hash in hashes:
+        if commit_hash.startswith("-"):
+            print(f"error: invalid commit hash: {commit_hash}", file=sys.stderr)
+            return 2
+        if commit_hash in seen_hashes:
+            print(f"error: duplicate commit hash: {commit_hash}", file=sys.stderr)
+            return 2
+        seen_hashes.add(commit_hash)
     subjects: dict[str, str] = {}
     for commit_hash in hashes:
         subject = commit_subject(commit_hash)
@@ -193,7 +236,7 @@ def main(argv: list[str]) -> int:
 
     before = set(modified_workspace_journals())
     with tempfile.NamedTemporaryFile(
-        "w", suffix=".md", delete=False, encoding="utf-8"
+        "w", suffix=".md", delete=False, encoding="utf-8", errors="strict"
     ) as handle:
         handle.write("\n".join(changes) + "\n")
         content_file = Path(handle.name)
@@ -216,6 +259,8 @@ def main(argv: list[str]) -> int:
         result = subprocess.run(
             command,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
@@ -279,6 +324,8 @@ def main(argv: list[str]) -> int:
     commit = subprocess.run(
         ["git", "commit", "-m", "chore: record journal", "--", *stage_args],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,

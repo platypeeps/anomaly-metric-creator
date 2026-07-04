@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.5.16",
+  "version": "0.5.17",
   "files": {
     ".agents/skills/sd-continue/SKILL.md": "sha256:dd876a967d7192844de3648e3fc26f284974e5a2e14312c2a0cddb0dec80fee3",
     ".agents/skills/sd-finish-work/SKILL.md": "sha256:d74b0e03ee0a7fe98232ce43f75257e866178546fc525341dbd93d9b231a297a",
@@ -49,7 +49,7 @@
     "scripts/sd-ai-command-pack-housekeeping.sh": "sha256:6d4052e0eeac4e76a07a4024c2b1c1c868fb527a47aba510ef50f4090a9d39ba",
     "scripts/sd-ai-command-pack-install-audit.py": "sha256:da06f98058652969463af980a13f83534474ef503dc7ad3946d9934f9601c7e9",
     "scripts/sd-ai-command-pack-pr-body-scope.py": "sha256:cfe884206a163b909f54e22586f201c838e79dcf8265b57a9f1bb65080bea338",
-    "scripts/sd-ai-command-pack-record-session.py": "sha256:9db3b473baf793281d11b3b57bbc2fff7f5af4da25476d3382ab3b6de814ef7d",
+    "scripts/sd-ai-command-pack-record-session.py": "sha256:4fd8736056a655a9db2768d29e7fae9f4aff1d3392500508ec7a1a13c6f96660",
     "scripts/sd-ai-command-pack-review-learnings.py": "sha256:d6b3cbdae1a8312f76d3f22b4e05ef9e7447108cda3bd52416989dd57eefc801",
     "scripts/sd-ai-command-pack-review-local.sh": "sha256:84646f3249e86d3b31b0fccb4450e9d03c582a314930ac1ba588b67769bab7d8",
     "scripts/sd-ai-command-pack-review-preflight.mjs": "sha256:4f4b2b818d41bd52c8d0aee4d28c06ad7e91725ff84fa626f94c17458a10da08",
