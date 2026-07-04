@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "files": {
     ".agents/skills/sd-continue/SKILL.md": "sha256:dd876a967d7192844de3648e3fc26f284974e5a2e14312c2a0cddb0dec80fee3",
     ".agents/skills/sd-finish-work/SKILL.md": "sha256:aab7b694e3607c27a125cdd72fd5c2432a218e2eb755989f6a37727d25ac5623",
@@ -49,6 +49,7 @@
     "scripts/sd-ai-command-pack-pr-body-scope.py": "sha256:cfe884206a163b909f54e22586f201c838e79dcf8265b57a9f1bb65080bea338",
     "scripts/sd-ai-command-pack-review-learnings.py": "sha256:d6b3cbdae1a8312f76d3f22b4e05ef9e7447108cda3bd52416989dd57eefc801",
     "scripts/sd-ai-command-pack-review-local.sh": "sha256:b6b9e26f05258686952098925d09bf03f152f8d84830e28e43b756808f320c98",
+    "scripts/sd-ai-command-pack-review-preflight.mjs": "sha256:4f4b2b818d41bd52c8d0aee4d28c06ad7e91725ff84fa626f94c17458a10da08",
     "scripts/sd-ai-command-pack-review-scope.sh": "sha256:07d260e2b43cac436a1cb382c18d677c66d7470542d9facc4b6ab9e9a704f887",
     "scripts/sd-ai-command-pack-update-spec-kb.py": "sha256:3caeef1989b7094d289f9a1eca1e1d5682a6520beff2ba869740f71328e70cb9"
   }

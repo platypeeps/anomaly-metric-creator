@@ -250,8 +250,10 @@ normalized before checking. The installer also writes
 `.sd-ai-command-pack/provenance.json` with the pack version and `sha256`
 hashes of installed pack files (user-tunable files are never vouched); the
 audit fails when a vouched file's content drifts from the recorded pack
-content, so the "reviewed upstream" exemption for vendored pack files is a
-checkable claim.
+content, when a vouched file is missing while not gitignored, or when a
+vouched path (or the provenance file itself) is a symlink or other
+non-regular node, so the "reviewed upstream" exemption for vendored pack
+files is a checkable claim.
 The copied/generated scope preflight reads
 `.sd-ai-command-pack/installed-targets.txt`, reports changed pack/Trellis
 runtime files, known repository-map files when present, and Trellis workspace
