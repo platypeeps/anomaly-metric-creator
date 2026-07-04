@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "files": {
     ".agents/skills/sd-continue/SKILL.md": "sha256:dd876a967d7192844de3648e3fc26f284974e5a2e14312c2a0cddb0dec80fee3",
     ".agents/skills/sd-finish-work/SKILL.md": "sha256:aab7b694e3607c27a125cdd72fd5c2432a218e2eb755989f6a37727d25ac5623",
@@ -45,14 +45,14 @@
     ".opencode/commands/sd-update-spec.md": "sha256:36b1b3564dc19569960b6204bee51a30694967f1d23c9527f8b6b2c330e69744",
     ".prism/rules.schema.json": "sha256:2b8c734e0730506ad05997aa9d224bbadfc859d438b1740eefbc35f96ee928ac",
     "docs/SD_AI_COMMAND_PACK.md": "sha256:9234064d153819c1dd48830fce2c8003e0000d4b46bfcb8471c1cc2f3c10c3fd",
-    "scripts/sd-ai-command-pack-full-check.sh": "sha256:9761db66c48e7371a9c0407034fe2bb628c76f7bd624c68393e8e45ca7fd2f46",
+    "scripts/sd-ai-command-pack-full-check.sh": "sha256:4542e2c148e4aad156b54238f8c50a7f38b3d51a5cdea43983b193c29bdc42f3",
     "scripts/sd-ai-command-pack-housekeeping.sh": "sha256:6d4052e0eeac4e76a07a4024c2b1c1c868fb527a47aba510ef50f4090a9d39ba",
     "scripts/sd-ai-command-pack-install-audit.py": "sha256:da06f98058652969463af980a13f83534474ef503dc7ad3946d9934f9601c7e9",
     "scripts/sd-ai-command-pack-pr-body-scope.py": "sha256:cfe884206a163b909f54e22586f201c838e79dcf8265b57a9f1bb65080bea338",
     "scripts/sd-ai-command-pack-review-learnings.py": "sha256:d6b3cbdae1a8312f76d3f22b4e05ef9e7447108cda3bd52416989dd57eefc801",
-    "scripts/sd-ai-command-pack-review-local.sh": "sha256:2599d9fd08afb6c939d245ff09607aa3bbdc9ff953804fb949e16df1af7e1f76",
+    "scripts/sd-ai-command-pack-review-local.sh": "sha256:84646f3249e86d3b31b0fccb4450e9d03c582a314930ac1ba588b67769bab7d8",
     "scripts/sd-ai-command-pack-review-preflight.mjs": "sha256:4f4b2b818d41bd52c8d0aee4d28c06ad7e91725ff84fa626f94c17458a10da08",
-    "scripts/sd-ai-command-pack-review-scope.sh": "sha256:90840b7248ae7be45b52f29abaaa28bd4f1cb59cd186d5795f8570168f5fd6af",
+    "scripts/sd-ai-command-pack-review-scope.sh": "sha256:2bc4a93967b8358e2e967387a4547b3e523724ad8ccd3d908977908e8cf5b202",
     "scripts/sd-ai-command-pack-update-spec-kb.py": "sha256:3caeef1989b7094d289f9a1eca1e1d5682a6520beff2ba869740f71328e70cb9"
   }
 }

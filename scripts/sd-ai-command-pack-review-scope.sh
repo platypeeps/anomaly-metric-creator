@@ -283,7 +283,7 @@ main() {
 
   # bash's `cd ""` is a silent success, so an empty root (failed
   # resolution) must be rejected explicitly.
-  if [ -z "$REPO_ROOT" ] || ! cd "$REPO_ROOT"; then
+  if [ -z "$REPO_ROOT" ] || ! cd -- "$REPO_ROOT"; then
     fail "cannot resolve repository root"
   fi
 

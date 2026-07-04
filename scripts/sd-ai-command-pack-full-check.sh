@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 # errexit does not help here: bash's `cd ""` is a silent success, so an
 # empty root (failed resolution above) must be rejected explicitly.
-if [ -z "$REPO_ROOT" ] || ! cd "$REPO_ROOT"; then
+if [ -z "$REPO_ROOT" ] || ! cd -- "$REPO_ROOT"; then
   printf 'sd-ai-command-pack-full-check: cannot resolve repository root\n' >&2
   exit 1
 fi
