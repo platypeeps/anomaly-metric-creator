@@ -887,6 +887,7 @@ self_test_scenario() {
     # Guarantee hermeticity rather than assume it: with an empty PATH every
     # unstubbed external command fails loudly, and gh is stubbed to fail so
     # future gate logic cannot silently reach GitHub even if PATH leaks.
+    # shellcheck disable=SC2123  # emptying the search path is the point
     PATH=''
     DEFAULT_BRANCH=main
     AUTO_MERGE=1
