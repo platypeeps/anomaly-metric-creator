@@ -281,7 +281,11 @@ main() {
     return 0
   fi
 
-  cd "$REPO_ROOT"
+  # bash's `cd ""` is a silent success, so an empty root (failed
+  # resolution) must be rejected explicitly.
+  if [ -z "$REPO_ROOT" ] || ! cd "$REPO_ROOT"; then
+    fail "cannot resolve repository root"
+  fi
 
   local changed_file scoped_file
   local scoped_changes=()

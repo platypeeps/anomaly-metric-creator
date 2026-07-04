@@ -3,9 +3,12 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-# The script runs without -e, so a failed cd must not continue in the
-# wrong directory.
-cd "$REPO_ROOT" || exit 1
+# The script runs without -e, and bash's `cd ""` is a silent success, so
+# guard both an empty root and a failed cd explicitly.
+if [ -z "$REPO_ROOT" ] || ! cd "$REPO_ROOT"; then
+  printf 'sd-ai-command-pack-review-local: cannot resolve repository root\n' >&2
+  exit 1
+fi
 
 OVERALL_STATUS=0
 REVIEW_LOCAL_SCOPE="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_SCOPE:-diff}"
