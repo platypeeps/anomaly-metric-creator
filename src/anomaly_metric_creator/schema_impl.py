@@ -37,21 +37,6 @@ def _live_topology() -> dict[str, list[object]]:
 SCHEMA_DOCUMENT_VERSION = 2
 
 
-# Default Pearson correlation gate for ``_validate_topology_coupling``.
-# Mirrors the issue acceptance bound (0.85) and the existing LLM
-# correlation test in ``tests/test_topology_llm.py``. Per-edge overrides
-# live in ``Edge.correlation_threshold``.
-_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD = 0.85
-
-
-# Padding (seconds) applied around every ``anomalies.csv`` window when
-# the validator excludes anomaly-affected rows from the topology
-# correlation computation. Mirrors the ``_EXCLUSION_PAD_SECONDS``
-# constant in ``tests/test_topology_llm.py`` so single-row cascades that
-# round to the nearest sampled row don't leak into the correlation pool.
-_TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS = 30
-
-
 def _metric_spec_to_schema_entry(spec: "MetricSpec") -> dict:
     """Return the schema.json entry for one ``MetricSpec``.
 
@@ -131,14 +116,14 @@ def _component_dimensions_schema_entry(
     not a dimension to slice on) whose value is non-``None`` on at least
     one instance in the list. ``cardinality`` is ``len(instances)``.
     Both keys are always present together so the validator can read them
-    in lockstep. ``axes`` is allowed to be empty with ``cardinality > 1``:
-    that is the shape produced by an instance list whose only non-``None``
-    field is ``id`` (e.g. ``[Instance(id="i0"), Instance(id="i1")]`` —
-    multiple replicas with no slicable dimension yet). The schema still
+    in lockstep. ``axes`` is allowed to be empty when the schema still
+    declares dimensions: that is the shape produced by an id-only
+    non-anonymous instance list (for example ``[Instance(id="i0"),
+    Instance(id="i1")]``) with no slicable dimension yet. The schema still
     declares the long-form CSV layout under that shape because the
     per-component CSV carries the full ``id, host, pod, az, region,
-    tenant`` prefix block whenever ``cardinality > 1``, regardless of
-    which dim columns are populated.
+    tenant`` prefix block for every non-anonymous instance list,
+    regardless of which dimension columns are populated.
     """
     if instances is None or _is_anonymous_instance_list(instances):
         return None

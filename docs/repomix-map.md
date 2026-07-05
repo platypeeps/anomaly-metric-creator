@@ -520,13 +520,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-02-decomp-schema-validate/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-02-decomp-timeutil-otlp/
       check.jsonl
       implement.jsonl
@@ -611,6 +604,14 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         06-26-server-compat-debug-polish/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+      2026-07/
+        07-02-decomp-schema-validate/
           check.jsonl
           design.md
           implement.jsonl

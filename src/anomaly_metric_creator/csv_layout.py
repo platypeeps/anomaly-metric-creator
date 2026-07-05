@@ -42,14 +42,17 @@ def _is_anonymous_instance_list(instances) -> bool:
 
     Single source of truth for the "emit today's dimensionless format"
     branch in ``generate_component()``, schema emission, and the DST-guard
-    helper. Keying off ``_INSTANCE_DIMENSION_COLUMNS`` means adding or
-    removing an ``Instance`` field touches one constant instead of two
-    predicates.
+    helper. Keying off ``_INSTANCE_DIMENSION_FIELDS`` means adding or
+    removing an ``Instance`` dimension field touches one derived constant
+    instead of multiple predicates.
     """
     if len(instances) != 1:
         return False
     only = instances[0]
-    return all(getattr(only, field) is None for field in _INSTANCE_DIMENSION_COLUMNS)
+    return (
+        getattr(only, "id") is None
+        and all(getattr(only, field) is None for field in _INSTANCE_DIMENSION_FIELDS)
+    )
 
 
 def _iter_component_rows(component: str, csv_path: Path):
@@ -383,4 +386,3 @@ def _iter_component_instance_rows(
                 ts_dt = _parse_csv_timestamp(ts)
                 metric_values = row[1: 1 + n_metrics]
                 yield (ts_dt, ts, metric_values)
-

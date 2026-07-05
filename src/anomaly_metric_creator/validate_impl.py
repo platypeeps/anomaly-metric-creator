@@ -18,12 +18,21 @@ import numpy as np
 
 from .combine_impl import _COMBINE_OUTPUT_FILENAME
 from .csv_layout import _INSTANCE_DIMENSION_COLUMNS
-from .schema_impl import (
-    SCHEMA_DOCUMENT_VERSION,
-    _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS,
-    _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD,
-)
+from .schema_impl import SCHEMA_DOCUMENT_VERSION
 from .timeutil import _parse_csv_timestamp
+
+# Default Pearson correlation gate for ``_validate_topology_coupling``.
+# Mirrors the issue acceptance bound (0.85) and the existing LLM
+# correlation test in ``tests/test_topology_llm.py``. Per-edge overrides
+# live in ``Edge.correlation_threshold``.
+_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD = 0.85
+
+# Padding (seconds) applied around every ``anomalies.csv`` window when
+# the validator excludes anomaly-affected rows from the topology
+# correlation computation. Mirrors the ``_EXCLUSION_PAD_SECONDS``
+# constant in ``tests/test_topology_llm.py`` so single-row cascades that
+# round to the nearest sampled row don't leak into the correlation pool.
+_TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS = 30
 
 _get_topology: Callable[[], dict[str, list[object]]] | None = None
 _get_topology_load_metrics: Callable[[], dict[str, tuple[str, tuple[str, ...]]]] | None = None
@@ -801,18 +810,13 @@ def _read_component_metric_column(
             else:
                 per_ts_sum[ts] += value
                 per_ts_count[ts] += 1
-    # Sort the timestamp axis so non-monotonic per-row layouts don't
-    # confuse the downstream forward-sweep mask. Two sources of
-    # non-monotonicity: (1) the dim-aware per-component CSV writes
-    # contiguous per-instance blocks (i0 chronological, then i1
-    # chronological, ...), so ``order`` restarts at ts_0 at each block
-    # boundary; (2) the dimensionless ``--inject-dst-artifact-day > 0``
-    # path (mutex with the multi-instance path) duplicates the 02:00–
-    # 02:59 wall-clock hour, so ``order`` repeats that hour's
-    # timestamps mid-CSV. The unconditional sort normalizes both into
-    # a monotonic per-timestamp axis; for a plain default
-    # dimensionless CSV the input is already monotonic so the sort is
-    # a no-op.
+    # Sort the deduplicated timestamp axis so any non-monotonic CSV row
+    # layout normalizes before the downstream forward-sweep mask sees it.
+    # Dim-aware per-component CSVs write contiguous per-instance blocks,
+    # and the DST artifact path can duplicate wall-clock timestamps; the
+    # aggregation above keeps the first-seen timestamp list unique while
+    # this sort makes the returned axis monotonic. For a plain default
+    # dimensionless CSV the input is already monotonic, so this is a no-op.
     order.sort()
     values = np.array(
         [per_ts_sum[ts] / per_ts_count[ts] for ts in order],

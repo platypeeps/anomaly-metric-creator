@@ -8782,8 +8782,6 @@ from .gauges_impl import write_gauges_csv as write_gauges_csv
 # keep working unchanged.
 from .schema_impl import (
     SCHEMA_DOCUMENT_VERSION as SCHEMA_DOCUMENT_VERSION,
-    _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD as _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD,
-    _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS as _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS,
     _configure_schema_runtime as _configure_schema_runtime,
     _metric_spec_to_schema_entry as _metric_spec_to_schema_entry,
     _saturation_params_to_schema_entry as _saturation_params_to_schema_entry,
@@ -8795,6 +8793,8 @@ from .schema_impl import (
 _configure_schema_runtime(get_topology=lambda: TOPOLOGY)
 
 from .validate_impl import (
+    _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD as _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD,
+    _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS as _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS,
     _configure_validate_runtime as _configure_validate_runtime,
     _VALIDATE_DERIVATION_TOLERANCE as _VALIDATE_DERIVATION_TOLERANCE,
     _VALIDATE_INT_TOLERANCE as _VALIDATE_INT_TOLERANCE,
