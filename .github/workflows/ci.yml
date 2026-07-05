@@ -320,7 +320,18 @@ jobs:
   test:
     name: test
     needs: [changes, lightweight_readiness, quick_check, test_matrix]
-    if: ${{ always() }}
+    # !cancelled(), not always(): when concurrency cancel-in-progress
+    # supersedes this run — e.g. arming auto-merge triggers a fresh full run
+    # on the same head — this aggregate is cancelled WITH the run, so the
+    # required `test` context reports "cancelled", not a spurious FAILURE.
+    # always() would run this job even during cancellation and evaluate
+    # `test "cancelled" = "success"` -> exit 1, flashing a transient red on
+    # every auto-merge-armed PR (07-03-ci-cadence-churn-refinement, symptom
+    # 1). A "cancelled" required check does not satisfy branch protection, so
+    # auto-merge still waits for the superseding run's real verdict; a genuine
+    # lane failure is not a cancellation, so this aggregate still runs and
+    # fails on it. Do not revert to always() — the churn returns.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       # Branch protection requires a stable `test` context. Keep the

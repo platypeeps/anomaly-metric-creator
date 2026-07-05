@@ -71,6 +71,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
           test:
             name: test
             needs: [changes, lightweight_readiness, quick_check, test_matrix]
+            if: ${{{{ !cancelled() }}}}
             steps:
               - run: |
                   echo full_ci_requested
@@ -243,6 +244,25 @@ def test_missing_ci_lane_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "quick lane" in result.stderr
+
+
+def test_reverting_aggregate_guard_to_always_fails(tmp_path: Path) -> None:
+    # Reverting the aggregate `test` job's guard from !cancelled() to
+    # always() reintroduces the churn-task symptom-1 transient FAILURE; the
+    # contract must catch that regression.
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "if: ${{ !cancelled() }}", "if: ${{ always() }}"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "cancellation-safe" in result.stderr
 
 
 def test_missing_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:

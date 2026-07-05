@@ -2369,7 +2369,20 @@ run in CI):
   evidence), workflow/dependency diffs, manual dispatch, and every push to
   `main`; merge-burst `main` pushes run in per-commit concurrency groups so
   they cannot cancel each other's backstop runs, while PR refs keep
-  cancel-in-progress. All events run on the standard `ubuntu-latest`
+  cancel-in-progress. The aggregate `test` job is guarded with
+  `if: ${{ !cancelled() }}` (never `always()`): when arming auto-merge
+  triggers a fresh full run that cancels the in-progress lane, the aggregate
+  is cancelled *with* the run — its required `test` context reports
+  `cancelled` (which does not satisfy branch protection, so auto-merge waits
+  for the superseding run's real verdict) rather than a spurious `FAILURE`.
+  `always()` would run the aggregate during cancellation and evaluate
+  `test "cancelled" = "success"` → a transient red on every auto-merge-armed
+  PR; `check_ci_review_contract.py` pins the `!cancelled()` guard so a revert
+  is caught. A superseded `main`-push commit's backstop run is *not*
+  cancelled (per-commit groups), so a merge burst spends N standard-runner
+  suites — an accepted cost of the "every merge commit gets a completed
+  verdict" guarantee, not a bug (cancelling them would reopen the gap the
+  per-commit groups close). All events run on the standard `ubuntu-latest`
   runner: the org's `ubuntu-latest-m` 16 GB larger runner stopped being
   served on 2026-07-04 (main-push jobs sat queued for hours with
   `runner_id=0`, so the post-merge backstop never ran), and larger runners

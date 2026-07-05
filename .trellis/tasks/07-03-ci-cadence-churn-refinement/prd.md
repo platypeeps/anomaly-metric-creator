@@ -88,21 +88,48 @@ Pick the minimal change that removes the rough edge without reopening the gap
   an ancestor with a newer green run?" guard), or simply accept it and
   document the cost. Lowest-risk option may be "accept + document".
 
+## Resolution (2026-07-04)
+
+**Symptom 1 — fixed.** The aggregate `test` job's guard changed from
+`if: ${{ always() }}` to `if: ${{ !cancelled() }}`. `always()` ran the
+aggregate even while concurrency was cancelling the run, evaluating
+`test "cancelled" = "success"` → the transient `FAILURE`. `!cancelled()`
+cancels the aggregate *with* the run, so its required `test` context reports
+`cancelled` — which does not satisfy branch protection (auto-merge waits for
+the superseding run's real verdict) and is not a red failure. A genuine lane
+failure is not a cancellation, so the aggregate still runs and fails on it;
+this cannot mask a real failure. Chosen over the alt (skip full-CI on
+metadata PRs) because it fixes the churn for *all* PR types (app-code PRs
+reproduced it too — see #188) with one line, and over "treat cancelled as
+success" because a false `SUCCESS` could let auto-merge fire before the
+superseding run finishes, whereas `cancelled` cannot.
+
+**Symptom 2 — accepted, not fixed.** Deduping/cancelling superseded
+`main`-push backstop runs would reintroduce exactly the gap #179's
+per-commit concurrency groups close (main pushes cancelling each other's
+verdicts). The residual cost is only N standard-runner suites per merge
+burst (the "queued for hours" severity was a separate, now-fixed
+larger-runner-availability issue — see the symptom-2 correction above). This
+is a deliberate trade-off of the #179 guarantee, documented in CLAUDE.md.
+
 ## Acceptance criteria
 
-- [ ] The chosen change is expressed in `.github/workflows/ci.yml` (and, if
+- [x] The chosen change is expressed in `.github/workflows/ci.yml` (and, if
       the invariant is lint-worthy, pinned in `tools/check_ci_review_contract.py`
       with mutation coverage in `tests/test_ci_review_contract.py`, matching
       the repo's CI-contract pattern that #179 established).
-- [ ] A metadata-only PR with auto-merge armed no longer leaves a transient
+- [x] A metadata-only PR with auto-merge armed no longer leaves a transient
       `FAILURE` on the `test` context (or the residual is proven harmless to
-      auto-merge by construction).
-- [ ] The #179 guarantees are preserved: an auto-merge-armed app-code PR still
+      auto-merge by construction). — proven by construction: a cancelled run
+      yields a `cancelled` (not `FAILURE`) `test` context.
+- [x] The #179 guarantees are preserved: an auto-merge-armed app-code PR still
       merges only on full-matrix green, and main-push commits still each get a
-      completed (non-cancelled) verdict.
-- [ ] CLAUDE.md's "Continuous integration" section documents the final
+      completed (non-cancelled) verdict. — the `if:` change only affects the
+      cancellation case; real failures still fail, main-push runs are not
+      cancelled.
+- [x] CLAUDE.md's "Continuous integration" section documents the final
       behavior (it already documents #179's model — extend it, don't fork it).
-- [ ] If symptom 2 is accepted rather than fixed, that decision and its
+- [x] If symptom 2 is accepted rather than fixed, that decision and its
       runner-minute cost are recorded here and in CLAUDE.md.
 
 ## Notes
