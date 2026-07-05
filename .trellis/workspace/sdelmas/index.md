@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-07-04
+- **Total Sessions**: 13
+- **Last Active**: 2026-07-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~545 | Active |
+| `journal-1.md` | ~581 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-07-05 | Address PR review feedback for schema extraction | `1d8d464` | `codex/decomp-schema-validate` |
 | 12 | 2026-07-04 | Extract schema and validator helpers | `df2f0d9` | `codex/decomp-schema-validate` |
 | 11 | 2026-06-28 | PR 153 review remediation | `9da368e`, `8b22cb6`, `4f07eb8`, `f9dc77d`, `8a51893`, `ee0c84a`, `a358b8c`, `dbced91` | `codex/trellis-artifact-guard` |
 | 10 | 2026-06-28 | Review Trellis artifact guard PR | `5e494ff`, `66cb0be` | `codex/trellis-artifact-guard` |

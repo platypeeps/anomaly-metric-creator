@@ -545,3 +545,37 @@ Extracted schema writer and validate-output helper code into focused modules whi
 ### Next Steps
 
 - Push codex/decomp-schema-validate and open the PR.
+
+
+## Session 13: Address PR review feedback for schema extraction
+
+**Date**: 2026-07-05
+**Task**: Address PR review feedback for schema extraction
+**Package**: amc
+**Branch**: `codex/decomp-schema-validate`
+
+### Summary
+
+Resolved PR review feedback on the schema/validator extraction by moving validator-only constants to validate_impl.py, replacing the schema facade side-effect import with import_module, tightening dimension and timestamp comments, using the derived dimension-field tuple in csv_layout.py, refreshing the repo map, and rerunning focused plus deterministic checks.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d8d464` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
