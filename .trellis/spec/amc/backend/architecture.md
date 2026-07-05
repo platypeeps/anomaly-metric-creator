@@ -12,6 +12,8 @@ wiring/import-stability surfaces, not behavior forks. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/cli.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/models.py`; `src/anomaly_metric_creator/otel.py`;
 `src/anomaly_metric_creator/scenarios.py`; `src/anomaly_metric_creator/schema.py`;
+`src/anomaly_metric_creator/schema_impl.py`;
+`src/anomaly_metric_creator/validate_impl.py`;
 `pyproject.toml`.
 
 Installed console scripts `amc` and `anomaly-metric-creator` dispatch through
@@ -46,12 +48,19 @@ parallel maps. Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 
 ## Module Boundaries
 
-Keep generation, registries, schema writing, validators, combine helpers, and
-OTEL streaming behavior in `legacy.py` unless a focused extraction preserves the
-same public surface through facades. Sources: `CLAUDE.md`;
+Keep generation, registries, and OTEL streaming behavior in `legacy.py` unless
+a focused extraction preserves the same public surface through facades. Schema
+writing now lives in `schema_impl.py`, and schema read-back/output validation
+now lives in `validate_impl.py`; both are re-imported by `legacy.py`, and the
+schema facade preserves historic object identity. When an extracted module must
+read a registry that still lives in `legacy.py`, configure live callbacks from
+`legacy.py` rather than importing `legacy.py` from the extracted module or
+copying a registry snapshot; this preserves monkeypatch-sensitive tests while
+keeping dependency direction one-way. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/otel.py`; `src/anomaly_metric_creator/schema.py`;
-`tests/test_package_facades.py`.
+`src/anomaly_metric_creator/schema_impl.py`;
+`src/anomaly_metric_creator/validate_impl.py`; `tests/test_package_facades.py`.
 
 Keep `server.py` as the stdlib HTTP facade for `amc serve`. Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
