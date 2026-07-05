@@ -50,6 +50,24 @@ superseded main commit keeps its queued run instead of being cancelled.
 - This is the intended "N parallel full suites during an N-merge burst"
   behavior, but it spends runner minutes on commits whose successor is
   already green on `main`.
+- **Correction (2026-07-04, ci.yml `b7dbea2`, external change):** the
+  "queued for hours" severity of the original observation was
+  **conflated** — it had a *second* cause now removed. The org's
+  `ubuntu-latest-m` larger runner (which main-push jobs used) was
+  decommissioned; those jobs sat `queued` with `runner_id=0` because no
+  runner picked them up, not solely because of per-commit concurrency.
+  `ci.yml` now runs all events on the standard `ubuntu-latest` runner, so
+  a superseded commit's backstop run **executes** rather than hanging. The
+  per-commit `ci-<sha>` concurrency groups from #179 are **unchanged**, so
+  the residual symptom is only "N standard-runner suites run per burst"
+  (wasted minutes), not indefinite hangs. Re-scope this symptom to that
+  milder cost — or accept + document it — when designing the fix.
+- **Symptom 1 is unaffected by `b7dbea2`:** that change touched only runner
+  selection and the test-step command (verified via
+  `git diff 56463d0..b7dbea2 -- .github/workflows/ci.yml`); the
+  `concurrency` block, the "Decide full CI cadence" step, and the aggregate
+  `test` job's `if: always()` are all untouched, so the transient-`FAILURE`
+  symptom remains fully open and is the real work here.
 
 ## Requirements / candidate approaches (decide in design)
 
