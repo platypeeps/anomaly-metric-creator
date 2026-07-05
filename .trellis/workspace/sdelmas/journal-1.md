@@ -506,3 +506,42 @@ Completed follow-up PR review remediation for the Trellis artifact guard, SD com
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Extract schema and validator helpers
+
+**Date**: 2026-07-04
+**Task**: Extract schema and validator helpers
+**Package**: amc
+**Branch**: `codex/decomp-schema-validate`
+
+### Summary
+
+Extracted schema writer and validate-output helper code into focused modules while preserving legacy facade compatibility.
+
+### Main Changes
+
+- Moved schema document writer helpers into schema_impl.py and output validation helpers into validate_impl.py.
+- Kept legacy compatibility through re-imports and live topology callbacks; moved shared dimension helper ownership to csv_layout.py.
+- Updated Trellis specs, CLAUDE.md, task artifacts, and regenerated docs/repomix-map.md.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `df2f0d9` | refactor: extract schema and validator helpers |
+
+### Testing
+
+- [OK] PYTHONPYCACHEPREFIX=/private/tmp/amc-pycache python3 -m py_compile src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/schema.py src/anomaly_metric_creator/schema_impl.py src/anomaly_metric_creator/validate_impl.py src/anomaly_metric_creator/csv_layout.py
+- [OK] .venv/bin/pytest tests/test_package_facades.py tests/test_schema_file.py tests/test_validate_output.py tests/test_cli_surface.py -n 0 (173 passed)
+- [OK] bash scripts/sd-ai-command-pack-full-check.sh with Prism/Gito disabled
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Push codex/decomp-schema-validate and open the PR.
