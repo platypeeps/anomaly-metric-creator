@@ -2,8 +2,8 @@
   "id": "ci-cadence-churn-refinement",
   "name": "ci-cadence-churn-refinement",
   "title": "Refine CI cadence: cancelled-lane transient FAILURE and redundant queued main runs",
-  "description": "Two rough edges surfaced by PR #179's auto-merge full-gate + per-commit main concurrency, observed on PR #186 (first PR under the new rules): (1) arming auto-merge triggers a full run that cancels the in-progress lane, and the aggregate 'test' job's if:always() reports FAILURE for the cancelled lane before the rerun's 'test' reports SUCCESS — a transient red check with a latent auto-merge-stall risk if the FAILURE run is ever the latest for the required context; (2) per-commit main concurrency leaves superseded commits' backstop runs queued (observed 4e1c182 queued after 49bd1b9 merged). Both are documented #179 trade-offs but rougher than ideal.",
-  "status": "planning",
+  "description": "Two rough edges surfaced by PR #179's auto-merge full-gate + per-commit main concurrency, observed on PR #186 (first PR under the new rules): (1) arming auto-merge triggers a full run that cancels the in-progress lane, and the aggregate 'test' job's if:always() reports FAILURE for the cancelled lane before the rerun's 'test' reports SUCCESS \u2014 a transient red check with a latent auto-merge-stall risk if the FAILURE run is ever the latest for the required context; (2) per-commit main concurrency leaves superseded commits' backstop runs queued (observed 4e1c182 queued after 49bd1b9 merged). Both are documented #179 trade-offs but rougher than ideal.",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",
@@ -12,7 +12,7 @@
   "assignee": "sdelmas",
   "createdAt": "2026-07-03",
   "completedAt": null,
-  "branch": null,
+  "branch": "fix/ci-cadence-churn",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Symptom 1 fixed: aggregate test job guard always() -> !cancelled() so a concurrency-cancelled run yields a `cancelled` test context, not a spurious FAILURE. Pinned in check_ci_review_contract.py with a mutation test. Symptom 2 accepted (fixing it reintroduces #179's gap); documented in CLAUDE.md. Both symptoms' final behavior in CLAUDE.md CI section.",
   "meta": {}
 }

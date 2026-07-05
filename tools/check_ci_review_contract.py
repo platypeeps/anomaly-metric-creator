@@ -150,6 +150,15 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "per-commit push concurrency",
             "group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}",
         ),
+        # The aggregate `test` job must guard with !cancelled(), not always():
+        # always() runs the aggregate even when concurrency cancels the run,
+        # evaluating `test "cancelled" = "success"` -> a transient FAILURE on
+        # every auto-merge-armed PR (07-03-ci-cadence-churn-refinement). If
+        # this anchor disappears the churn has been reintroduced.
+        (
+            "aggregate cancellation-safe guard",
+            "if: ${{ !cancelled() }}",
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
     _require_not_contains(
