@@ -358,6 +358,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
 .sd-ai-command-pack/
   installed-targets.txt
   pr-body-scope.json
+  provenance.json
   review-preflight.json
 .trellis/
   agents/
@@ -464,6 +465,132 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
+    07-02-atomic-artifact-writes/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-audit-server-ops-rendering/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-ci-typecheck-and-coverage/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-config-generate-key-validation/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-artifacts/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-catalog-data/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-cli-args/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-combine-impl/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-gauges-csv-layout/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-generation-topology/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-otel-stream/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-decomp-timeutil-otlp/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-legacy-monolith-decomposition/
+      check.jsonl
+      design.md
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-mcp-analysis-tools/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-mcp-eval-mode-hardening/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-mcp-facade-core/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-mcp-ops-tools-and-tracing/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-mcp-server-facade/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-otel-exporter-target-policy/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-redaction-allowlist-hardening/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-security-md-and-threat-model/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-server-remote-bind-hardening/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-structured-logging-in-generator/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-02-verify-topology-divzero/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-03-ci-cadence-churn-refinement/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -477,6 +604,14 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         06-26-server-compat-debug-polish/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+      2026-07/
+        07-02-decomp-schema-validate/
           check.jsonl
           design.md
           implement.jsonl
@@ -511,6 +646,7 @@ scripts/
   sd-ai-command-pack-housekeeping.sh
   sd-ai-command-pack-install-audit.py
   sd-ai-command-pack-pr-body-scope.py
+  sd-ai-command-pack-record-session.py
   sd-ai-command-pack-review-learnings.py
   sd-ai-command-pack-review-local.sh
   sd-ai-command-pack-review-preflight.mjs
@@ -520,28 +656,40 @@ scripts/
 src/
   anomaly_metric_creator/
     __init__.py
+    artifacts.py
     cli.py
+    combine_impl.py
     combine.py
+    csv_layout.py
+    gauges_impl.py
     legacy.py
     models.py
     otel.py
+    otlp.py
+    redaction.py
     scenarios.py
+    schema_impl.py
     schema.py
     server_commands.py
     server_debug_ui.py
     server_helm.py
     server_kubernetes.py
+    server_mcp.py
     server_mutations.py
     server_ops.py
     server_traces.py
     server.py
+    timeutil.py
     trace_bundle.py
+    validate_impl.py
 tests/
   conftest.py
+  test_add_session_journal_content.py
   test_agent_hook_exception_lint.py
   test_amc_module_load_lint.py
   test_approval_duplicate_lint.py
   test_args.py
+  test_atomic_writes.py
   test_branch_name_lint.py
   test_cascades.py
   test_ci_change_classifier.py
@@ -580,6 +728,10 @@ tests/
   test_schema_file.py
   test_sd_ai_command_pack_full_check_script.py
   test_sd_ai_command_pack_housekeeping_script.py
+  test_server_eval_mode.py
+  test_server_hardening.py
+  test_server_mcp.py
+  test_server_ops_fuzz.py
   test_server.py
   test_shapes.py
   test_topology_fanout.py

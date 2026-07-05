@@ -108,6 +108,8 @@ declared files, run metadata, and topology snapshot in deterministic JSON.
 Validator behavior should be updated with schema changes, and schema version
 bumps should accompany breaking shape changes. Sources: `README.md`;
 `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
+`src/anomaly_metric_creator/schema_impl.py`;
+`src/anomaly_metric_creator/validate_impl.py`;
 `tests/test_schema_file.py`; `tests/test_validate_output.py`.
 
 `--instance-config` and `schema.json` are read-back/user-editable boundaries.

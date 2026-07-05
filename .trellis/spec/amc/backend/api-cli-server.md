@@ -57,14 +57,17 @@ unknown user files alone. Sources: `CLAUDE.md`; `README.md`;
 metadata, declared files, component metric metadata, optional dimension blocks,
 and topology data, and is the single source consumed by the `validate`
 subcommand. Sources: `README.md`; `CLAUDE.md`;
-`src/anomaly_metric_creator/legacy.py`; `tests/test_schema_file.py`;
+`src/anomaly_metric_creator/legacy.py`;
+`src/anomaly_metric_creator/schema_impl.py`;
+`src/anomaly_metric_creator/validate_impl.py`; `tests/test_schema_file.py`;
 `tests/test_validate_output.py`.
 
 `validate DIR` must read back `schema.json` as untrusted input, validate file
 presence, row counts, timestamps, cell types/ranges, dimensions, derived
 metrics, anomaly ordering, and topology coupling, and return nonzero on hard
 violations unless `--warn` is passed. Sources: `README.md`; `CLAUDE.md`;
-`src/anomaly_metric_creator/legacy.py`; `tests/test_validate_output.py`;
+`src/anomaly_metric_creator/legacy.py`;
+`src/anomaly_metric_creator/validate_impl.py`; `tests/test_validate_output.py`;
 `tests/test_schema_file.py`.
 
 `combine DIR` reads existing per-component CSVs and writes

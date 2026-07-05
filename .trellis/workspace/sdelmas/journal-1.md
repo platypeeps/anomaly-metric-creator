@@ -506,3 +506,87 @@ Completed follow-up PR review remediation for the Trellis artifact guard, SD com
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Extract schema and validator helpers
+
+**Date**: 2026-07-04
+**Task**: Extract schema and validator helpers
+**Package**: amc
+**Branch**: `codex/decomp-schema-validate`
+
+### Summary
+
+Extracted schema writer and validate-output helper code into focused modules while preserving legacy facade compatibility.
+
+### Main Changes
+
+- Moved schema document writer helpers into schema_impl.py and output validation helpers into validate_impl.py.
+- Kept legacy compatibility through re-imports and live topology callbacks; moved shared dimension helper ownership to csv_layout.py.
+- Updated Trellis specs, CLAUDE.md, task artifacts, and regenerated docs/repomix-map.md.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `df2f0d9` | refactor: extract schema and validator helpers |
+
+### Testing
+
+- [OK] PYTHONPYCACHEPREFIX=/private/tmp/amc-pycache python3 -m py_compile src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/schema.py src/anomaly_metric_creator/schema_impl.py src/anomaly_metric_creator/validate_impl.py src/anomaly_metric_creator/csv_layout.py
+- [OK] .venv/bin/pytest tests/test_package_facades.py tests/test_schema_file.py tests/test_validate_output.py tests/test_cli_surface.py -n 0 (173 passed)
+- [OK] bash scripts/sd-ai-command-pack-full-check.sh with Prism/Gito disabled
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Push codex/decomp-schema-validate and open the PR.
+
+
+## Session 13: Address PR review feedback for schema extraction
+
+**Date**: 2026-07-05
+**Task**: Address PR review feedback for schema extraction
+**Package**: amc
+**Branch**: `codex/decomp-schema-validate`
+
+### Summary
+
+Resolved PR review feedback on the schema/validator extraction by moving validator-only constants to validate_impl.py, replacing the schema facade side-effect import with import_module, tightening dimension and timestamp comments, using the derived dimension-field tuple in csv_layout.py, refreshing the repo map, and rerunning focused plus deterministic checks.
+
+### Main Changes
+
+- Addressed code-quality feedback by replacing the schema facade's unused
+  `_legacy` import with an explicit `import_module(".legacy", __package__)`
+  side-effect import.
+- Moved topology validation constants from `schema_impl.py` to
+  `validate_impl.py`, while preserving the `legacy.py` compatibility exports.
+- Tightened schema dimension and timestamp-sort comments to match the extracted
+  implementation's real branch predicates and deduplicated timestamp flow.
+- Used `_INSTANCE_DIMENSION_FIELDS` directly in `_is_anonymous_instance_list()`
+  and refreshed `docs/repomix-map.md`.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d8d464` | (see git log) |
+
+### Testing
+
+- [OK] `PYTHONPYCACHEPREFIX=/private/tmp/amc-pycache python3 -m py_compile src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/schema.py src/anomaly_metric_creator/schema_impl.py src/anomaly_metric_creator/validate_impl.py src/anomaly_metric_creator/csv_layout.py`
+- [OK] `.venv/bin/pytest tests/test_package_facades.py tests/test_schema_file.py tests/test_validate_output.py tests/test_cli_surface.py tests/test_topology_registry.py -n 0` (247 passed)
+- [OK] `python3 scripts/sd-ai-command-pack-pr-body-scope.py --body-file /private/tmp/amc-pr-198-body.md`
+- [OK] `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

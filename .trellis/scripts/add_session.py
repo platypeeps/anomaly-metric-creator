@@ -55,6 +55,12 @@ from common.config import (
 )
 
 
+DEFAULT_MAIN_CHANGES = (
+    "- Detailed change bullets were not supplied; see the summary above."
+)
+DEFAULT_TESTING = "- Validation was not recorded for this session."
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -154,6 +160,7 @@ def generate_session_content(
     today: str,
     package: str | None = None,
     branch: str | None = None,
+    testing_content: str = DEFAULT_TESTING,
 ) -> str:
     """Generate session content."""
     if commit and commit != "-":
@@ -189,7 +196,7 @@ def generate_session_content(
 
 ### Testing
 
-- [OK] (Add test results)
+{testing_content}
 
 ### Status
 
@@ -396,7 +403,7 @@ def add_session(
     title: str,
     commit: str = "-",
     summary: str = "(Add summary)",
-    extra_content: str = "(Add details)",
+    extra_content: str = DEFAULT_MAIN_CHANGES,
     auto_commit: bool = True,
     package: str | None = None,
     branch: str | None = None,
@@ -514,7 +521,7 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    extra_content = "(Add details)"
+    extra_content = DEFAULT_MAIN_CHANGES
     if args.content_file:
         content_path = Path(args.content_file)
         if content_path.is_file():
