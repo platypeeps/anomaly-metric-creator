@@ -684,6 +684,7 @@ src/
     validate_impl.py
 tests/
   conftest.py
+  test_add_session_journal_content.py
   test_agent_hook_exception_lint.py
   test_amc_module_load_lint.py
   test_approval_duplicate_lint.py
