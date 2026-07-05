@@ -560,7 +560,15 @@ Resolved PR review feedback on the schema/validator extraction by moving validat
 
 ### Main Changes
 
-(Add details)
+- Addressed code-quality feedback by replacing the schema facade's unused
+  `_legacy` import with an explicit `import_module(".legacy", __package__)`
+  side-effect import.
+- Moved topology validation constants from `schema_impl.py` to
+  `validate_impl.py`, while preserving the `legacy.py` compatibility exports.
+- Tightened schema dimension and timestamp-sort comments to match the extracted
+  implementation's real branch predicates and deduplicated timestamp flow.
+- Used `_INSTANCE_DIMENSION_FIELDS` directly in `_is_anonymous_instance_list()`
+  and refreshed `docs/repomix-map.md`.
 
 ### Git Commits
 
@@ -570,7 +578,10 @@ Resolved PR review feedback on the schema/validator extraction by moving validat
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `PYTHONPYCACHEPREFIX=/private/tmp/amc-pycache python3 -m py_compile src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/schema.py src/anomaly_metric_creator/schema_impl.py src/anomaly_metric_creator/validate_impl.py src/anomaly_metric_creator/csv_layout.py`
+- [OK] `.venv/bin/pytest tests/test_package_facades.py tests/test_schema_file.py tests/test_validate_output.py tests/test_cli_surface.py tests/test_topology_registry.py -n 0` (247 passed)
+- [OK] `python3 scripts/sd-ai-command-pack-pr-body-scope.py --body-file /private/tmp/amc-pr-198-body.md`
+- [OK] `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
 
 ### Status
 
