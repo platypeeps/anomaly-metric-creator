@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.5.21",
+  "version": "0.5.22",
   "files": {
     ".agents/skills/sd-continue/SKILL.md": "sha256:dd876a967d7192844de3648e3fc26f284974e5a2e14312c2a0cddb0dec80fee3",
     ".agents/skills/sd-create-pr/SKILL.md": "sha256:fe5f0f03dbac7bf3b588061be9d1caa057703a9ba30e2c1750f4e39876366295",
@@ -59,7 +59,7 @@
     ".opencode/commands/sd-start.md": "sha256:3ab13f13c42b2577f5cc1fcc7006f7b82e0d633a4cc94fd7e4d8c7782f0b0fbb",
     ".opencode/commands/sd-update-spec.md": "sha256:36b1b3564dc19569960b6204bee51a30694967f1d23c9527f8b6b2c330e69744",
     ".prism/rules.schema.json": "sha256:2b8c734e0730506ad05997aa9d224bbadfc859d438b1740eefbc35f96ee928ac",
-    "docs/SD_AI_COMMAND_PACK.md": "sha256:2a55ec594b48e640dfc117e33e0da09063ae507c2a120fcb2dd0420336efd9bc",
+    "docs/SD_AI_COMMAND_PACK.md": "sha256:28d455d06b010409194b498d3de240cbccc43d4f9194a91ffd9357378aee0605",
     "scripts/sd-ai-command-pack-full-check.sh": "sha256:25e0a7325d1ebbf7c4fd68b53eb3fbd630345b91a914684d76446c94b05d1389",
     "scripts/sd-ai-command-pack-housekeeping.sh": "sha256:6d4052e0eeac4e76a07a4024c2b1c1c868fb527a47aba510ef50f4090a9d39ba",
     "scripts/sd-ai-command-pack-install-audit.py": "sha256:da06f98058652969463af980a13f83534474ef503dc7ad3946d9934f9601c7e9",

@@ -234,6 +234,7 @@ wording, spelling, links, formatting, examples, or implementation details inside
 copied Trellis skills/agents/commands or copied SD command-pack
 skills/prompts/scripts/docs/rules. Original Trellis-owned runtime/template
 copies are also out of scope for local edits and line-by-line review; if a
+<!-- narrow-globs: skip - optional Trellis-owned payload locations may not exist in every repo. -->
 change appears needed in `.trellis/scripts/**`, `.trellis/agents/**`, or
 platform `trellis-*` payloads, Copilot should leave one handoff comment that
 sends the finding back to the sd-ai-command-pack source session instead of

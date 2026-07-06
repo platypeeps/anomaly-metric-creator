@@ -66,6 +66,7 @@ Use the local-first review cycle:
 - Original Trellis-owned runtime/template copies are not valid modification
   targets for target-repo or sd-ai-command-pack PRs, and should not be reviewed
   line by line. Treat diffs in upstream Trellis-owned surfaces such as
+  <!-- narrow-globs: skip - optional Trellis-owned payload locations may not exist in every repo. -->
   `.trellis/scripts/**`, `.trellis/agents/**`, and platform `trellis-*` skills,
   agents, commands, prompts, workflows, hooks, and settings as ownership/scope
   issues. This does not apply to repo-owned `.trellis/spec/**` guidance or
