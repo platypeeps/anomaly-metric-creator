@@ -67,8 +67,9 @@ portable Obsidian knowledge-base workflows.
        Trellis-specific naming, and reports conflicts. Helper-selected
        knowledge files include repository docs and workflow/spec context such
        as `.trellis/workflow.md`, `.trellis/config.yaml`,
-       `.trellis/spec/**/*.md`, and repo-owned repospec or Repomix outputs such
-       as `docs/repomix-map.md` when present. Do not
+       `.trellis/spec/**/*.md`, `.trellis/tasks/**/*.md`, and repo-owned
+       repospec or Repomix outputs such as `docs/repomix-map.md` when present.
+       Do not
        manually edit `.gitignore`, create KB copies, remove stale generated
        entries, or overwrite dashboard conflicts from this wrapper.
      - Use `python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run` when

@@ -72,6 +72,12 @@ This command performs this end-of-stream flow:
      explicitly kept because `--keep-remote-branch` was used
 12. Report repo-wide open PRs, open issues, and active Trellis tasks as
     inventory, not as blockers for the current stream cleanup.
+13. Before the final answer, gather next-step candidates:
+   - open follow-up items discovered during this session
+   - existing Trellis tasks that are already `in_progress`
+   - high-value Trellis task candidates that are not started yet, prioritizing
+     `planning` tasks assigned to the current developer, then clearly important
+     repo-local tasks surfaced by `python3 ./.trellis/scripts/task.py list`
 
 ## Expected Output
 
@@ -99,6 +105,47 @@ the clean items that still hold and then lists anomalies. Treat the anomaly
 list as the handoff: it should be short enough to read quickly and specific
 enough to decide the next manual action. Repo-wide inventory lines are context
 for the operator; they do not by themselves mean this housekeeping run failed.
+
+The assistant's final response should be shorter than the raw script output and
+use this shape for a clean run:
+
+```text
+Housekeeping completed cleanly.
+PR #<number> was <merged by housekeeping|already merged by the time the script ran>; housekeeping confirmed the merge, switched to <default>, fast-forwarded to origin/<default>, deleted the local and remote <feature> branch, and pruned refs.
+
+Final state:
+Branch: <default>
+Working tree: clean
+<default> matches origin/<default>
+Local branches: only <default>
+Remote branches: origin/HEAD, origin/<default>
+PR #<number>: merged at <timestamp>
+Open PRs: <none|summary>
+Open issues: <none|summary>
+Current Trellis task: <none|summary>
+Anomalies: none
+
+Insight:
+<One short evidence-backed observation about what housekeeping proved or surfaced; omit this section when there is nothing useful beyond the final state.>
+
+No follow-up needed for this cleanup stream.
+```
+
+If cleanup is not clean, keep the same top-level shape, change the first line
+to the clearest status sentence, set any unknown or failed final-state rows to
+the exact script result, and put the exact anomaly summary in `Anomalies:`.
+Include an `Insight:` section only when the script output or session context
+supports a useful observation, such as the PR lifecycle being healthy, cleanup
+being verification-only because the PR was already merged, stale refs being
+pruned, the repo being ready for the next work stream, or a process improvement
+being worth tracking. Do not add filler insights that merely restate `clean`.
+If there are follow-up items, replace the final no-follow-up sentence with a
+numbered `Next Steps` list covering, in order: open follow-up items discovered
+during this session, existing Trellis tasks that are already `in_progress`, and
+high-value Trellis task candidates that are not started yet. Do not include
+speculative work: if a category has no evidence, say so plainly. When there are
+multiple items in a category, order them by urgency and practical value, and
+keep the list concise.
 
 ## Safety Rules
 
@@ -146,4 +193,10 @@ Report:
 - Whether a ready open PR was merged, or why it was skipped.
 - Which branch was cleaned up, if any.
 - Any anomalies exactly as the script printed them.
+- Any brief evidence-backed insight from the cleanup, only when it adds signal
+  beyond the final-state rows.
 - Whether follow-up manual action is needed.
+- Either `No follow-up needed for this cleanup stream.` or a final numbered
+  `Next Steps` section covering, in order, open session follow-ups, existing
+  in-progress Trellis tasks, and high-value Trellis task candidates to start
+  next.

@@ -49,6 +49,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     sd-continue/
       SKILL.md
+    sd-create-pr/
+      SKILL.md
     sd-finish-work/
       SKILL.md
     sd-full-check/
@@ -150,6 +152,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   commands/
     sd/
       continue.toml
+      create-pr.toml
       finish-work.toml
       full-check.toml
       housekeeping.toml
@@ -184,6 +187,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     continue.prompt.md
     finish-work.prompt.md
     sd-continue.prompt.md
+    sd-create-pr.prompt.md
     sd-finish-work.prompt.md
     sd-full-check.prompt.md
     sd-housekeeping.prompt.md
@@ -275,6 +279,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       finish-work.md
       start.md
     sd-continue.md
+    sd-create-pr.md
     sd-finish-work.md
     sd-full-check.md
     sd-housekeeping.md
@@ -587,6 +592,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     07-03-ci-cadence-churn-refinement/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-05-port-ci-cadence-fix-cross-repo/
       check.jsonl
       implement.jsonl
       prd.md
