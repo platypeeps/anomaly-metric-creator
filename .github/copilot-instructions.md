@@ -51,10 +51,10 @@ Use the local-first review cycle:
   - Trellis and `sd` command, prompt, or workflow files under
     `.agent/workflows/`, `.claude/commands/`, `.codebuddy/commands/`,
     `.cursor/commands/`, `.devin/workflows/`, `.factory/commands/`,
-    `.gemini/commands/`, `.github/prompts/`, `.kilocode/workflows/`,
+    `.gemini/commands/`, `.github/prompts/` (including `continue.prompt.md` and `finish-work.prompt.md`),
+    `.kilocode/workflows/`,
     `.opencode/commands/`, `.pi/prompts/`, `.qoder/commands/`,
-    `.trae/commands/`, and `.zcode/commands/` (including
-    `continue.prompt.md` and `finish-work.prompt.md`)
+    `.trae/commands/`, and `.zcode/commands/`
   - `.github/copilot/**`, `.github/hooks/trellis.json`, and
     `.github/agents/trellis-*`; platform hook/agent payloads under
     `.codebuddy/`, `.factory/`, `.qoder/`, `.trae/`, `.zcode/agents/`, and

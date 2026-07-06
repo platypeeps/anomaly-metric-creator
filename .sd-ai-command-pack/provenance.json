@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.5.22",
+  "version": "0.5.23",
   "files": {
     ".agents/skills/sd-continue/SKILL.md": "sha256:dd876a967d7192844de3648e3fc26f284974e5a2e14312c2a0cddb0dec80fee3",
     ".agents/skills/sd-create-pr/SKILL.md": "sha256:fe5f0f03dbac7bf3b588061be9d1caa057703a9ba30e2c1750f4e39876366295",
