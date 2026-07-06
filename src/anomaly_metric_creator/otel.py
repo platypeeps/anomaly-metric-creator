@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from .legacy import stream_otel_gauges, stream_otel_signals
+from .otel_stream import stream_otel_gauges, stream_otel_signals
 
 __all__ = ["stream_otel_gauges", "stream_otel_signals"]

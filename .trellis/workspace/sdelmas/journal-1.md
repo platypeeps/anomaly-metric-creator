@@ -590,3 +590,38 @@ Resolved PR review feedback on the schema/validator extraction by moving validat
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Extract OTEL stream helpers
+
+**Date**: 2026-07-06
+**Task**: Extract OTEL stream helpers
+**Package**: amc
+**Branch**: `codex/extract-otel-stream`
+
+### Summary
+
+Extracted OTEL streamers and activity-log helpers into otel_stream.py, preserved legacy/facade identity, refreshed Trellis guidance and repo map, addressed Copilot feedback by capping signal-stream max events across selected endpoints, and validated with focused OTEL tests plus the SD full-check gate.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `21ad963` | (see git log) |
+| `22e6644` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
