@@ -7,7 +7,10 @@
 __pycache__
 iot_logs
 otel-activity.log
-.claude
+.claude/**
+!.claude/commands/
+!.claude/commands/sd/
+!.claude/commands/sd/*.md
 .venv
 .pytest_cache
 *.egg-info
