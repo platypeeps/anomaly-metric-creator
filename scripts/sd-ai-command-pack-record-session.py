@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Record a Trellis session journal entry without template placeholders.
 
-Trellis' ``add_session.py`` seeds ``(Add test results)`` and ``(see git
-log)`` placeholders and auto-commits them, while the pack's review
-preflight rejects placeholders in completed sessions. This wrapper closes
-the gap in one shot: it resolves each commit's subject from git (failing
-fast on unknown hashes), passes the Main Changes body through
+Older Trellis ``add_session.py`` versions seed ``(Add test results)`` and
+``(see git log)`` placeholders and may auto-commit them, while the pack's
+review preflight rejects placeholders in completed sessions. Current Trellis
+templates should use explicit fallback text, but this wrapper still closes
+the legacy gap in one shot: it resolves each commit's subject from git
+(failing fast on unknown hashes), passes the Main Changes body through
 ``--content-file``, patches the Testing section and commit table in the
 freshly written entry, verifies no placeholders remain, and only then
-commits the journal.
+commits the journal. It also passes the current git branch explicitly when the
+caller does not provide ``--branch`` so stale Trellis task metadata cannot
+override the checked-out branch in older ``add_session.py`` versions.
 
 Trellis versions drift across repos: some seed placeholder commit cells
-and ``- [OK] (Add test results)``, others resolve subjects themselves and
-default Testing to ``- Validation not recorded for this session.``. The
-patcher therefore anchors on the hash-keyed table row and on the section
-headings, not on any specific placeholder text.
+and ``- [OK] (Add test results)``, while newer variants may resolve subjects
+or use non-placeholder Testing defaults. The patcher therefore anchors on the
+hash-keyed table row and on the section headings, not on any specific
+placeholder text.
 
 Exit codes:
 
@@ -63,6 +66,15 @@ def commit_subject(commit_hash: str) -> str | None:
     # A valid commit can carry an empty subject (--allow-empty-message);
     # only a failed lookup means the hash is unknown.
     return subject[0] if subject else "(empty subject)"
+
+
+def current_git_branch() -> str | None:
+    """Return the checked-out branch, or None for detached/unavailable git."""
+    result = run_git("branch", "--show-current")
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
 
 
 def modified_workspace_journals() -> list[Path]:
@@ -256,8 +268,12 @@ def main(argv: list[str]) -> int:
         ]
         if hashes:
             command.extend(["--commit", ",".join(hashes)])
-        if args.branch:
-            command.extend(["--branch", args.branch])
+        # Older Trellis add_session.py prefers task.json.branch over git's
+        # current branch. Supplying the current branch as an explicit arg keeps
+        # recorded sessions tied to the checkout that actually did the work.
+        branch = args.branch or current_git_branch()
+        if branch:
+            command.extend(["--branch", branch])
         result = subprocess.run(
             command,
             text=True,

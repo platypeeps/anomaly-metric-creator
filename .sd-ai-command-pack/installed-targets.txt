@@ -1,4 +1,5 @@
 .agents/skills/sd-continue/SKILL.md
+.agents/skills/sd-create-pr/SKILL.md
 .agents/skills/sd-finish-work/SKILL.md
 .agents/skills/sd-full-check/SKILL.md
 .agents/skills/sd-housekeeping/SKILL.md
@@ -9,6 +10,7 @@
 .agents/skills/sd-start/SKILL.md
 .agents/skills/sd-update-spec/SKILL.md
 .claude/commands/sd/continue.md
+.claude/commands/sd/create-pr.md
 .claude/commands/sd/finish-work.md
 .claude/commands/sd/full-check.md
 .claude/commands/sd/housekeeping.md
@@ -19,6 +21,7 @@
 .claude/commands/sd/start.md
 .claude/commands/sd/update-spec.md
 .gemini/commands/sd/continue.toml
+.gemini/commands/sd/create-pr.toml
 .gemini/commands/sd/finish-work.toml
 .gemini/commands/sd/full-check.toml
 .gemini/commands/sd/housekeeping.toml
@@ -31,6 +34,7 @@
 .github/PULL_REQUEST_TEMPLATE.md
 .github/copilot-instructions.md
 .github/prompts/sd-continue.prompt.md
+.github/prompts/sd-create-pr.prompt.md
 .github/prompts/sd-finish-work.prompt.md
 .github/prompts/sd-full-check.prompt.md
 .github/prompts/sd-housekeeping.prompt.md
@@ -44,6 +48,7 @@
 .gito/config.toml
 .gito/sd-ai-command-pack.env
 .opencode/commands/sd-continue.md
+.opencode/commands/sd-create-pr.md
 .opencode/commands/sd-finish-work.md
 .opencode/commands/sd-full-check.md
 .opencode/commands/sd-housekeeping.md
