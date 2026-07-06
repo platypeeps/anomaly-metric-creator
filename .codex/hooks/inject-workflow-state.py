@@ -53,12 +53,12 @@ if sys.platform.startswith("win"):
             try:
                 _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             except Exception:
-                pass  # Best-effort UTF-8 setup; some host streams reject reconfigure.
+                pass  # Optional Windows stream setup; keep hook startup non-fatal.
         elif hasattr(_stream, "detach"):
             try:
                 setattr(sys, _stream_name, _io.TextIOWrapper(_stream.detach(), encoding="utf-8", errors="replace"))
             except Exception:
-                pass  # Best-effort UTF-8 setup; keep original stream if wrapping fails.
+                pass  # Optional Windows stream setup; keep hook startup non-fatal.
 from typing import Optional
 
 
