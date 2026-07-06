@@ -128,14 +128,14 @@ def stream_otel_signals(
     failure.
     """
     sorted_rows = sorted(anomaly_rows, key=lambda row: row["timestamp"])
-    if max_events is not None:
-        sorted_rows = sorted_rows[:max_events]
     if not sorted_rows:
         return 0
 
     log_file = None
     prev_dt = None
     sent = 0
+    requests_attempted = 0
+    aborted = False
     try:
         if activity_log_path is not None:
             activity_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +151,8 @@ def stream_otel_signals(
             speedup=speedup,
         )
         for row in sorted_rows:
+            if max_events is not None and requests_attempted >= max_events:
+                break
             cur_dt = _parse_csv_timestamp(row["timestamp"])
             if prev_dt is not None:
                 wait_seconds = max(0.0, (cur_dt - prev_dt).total_seconds() / speedup)
@@ -162,6 +164,9 @@ def stream_otel_signals(
             for signal, endpoint in endpoints.items():
                 if not endpoint:
                     continue
+                if max_events is not None and requests_attempted >= max_events:
+                    aborted = True
+                    break
 
                 if signal == "logs":
                     if protocol == "protobuf":
@@ -198,6 +203,7 @@ def stream_otel_signals(
                     for hk, hv in _masked_headers(headers).items():
                         verbose_send_fields[hk.lower().replace("-", "_")] = hv
                 attempts = 0
+                requests_attempted += 1
                 while True:
                     _write_activity(
                         log_file,
@@ -274,6 +280,8 @@ def stream_otel_signals(
                             **err_fields,
                         )
                         time.sleep(backoff)
+            if aborted:
+                break
     finally:
         _write_activity(log_file, "END", sent=sent)
         if log_file is not None:

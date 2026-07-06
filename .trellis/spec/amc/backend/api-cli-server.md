@@ -39,6 +39,15 @@ defaults. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_cli.py`;
 `tests/test_otel_gauges.py`; `tests/test_cli_surface.py`.
 
+`--otel-stream-max-events` caps OTLP send attempts that are allowed to start,
+not anomaly rows. For the anomaly signal stream, count the first send attempt
+across all selected signal endpoints (`logs`, `metrics`, `traces`) so
+`--otel-send logs,metrics,traces --otel-stream-max-events 1` starts only the
+first selected signal request. A send that has started still follows the
+configured retry path. Sources: `README.md`;
+`src/anomaly_metric_creator/otel_stream.py`; `tests/test_cli.py`;
+`tests/test_otel_gauges.py`.
+
 New flags must be placed in the right parser/group, reconciled through the
 existing namespace flow, tested in isolation, and checked against interacting
 flags and subcommands. Sources: `CLAUDE.md`; `README.md`;

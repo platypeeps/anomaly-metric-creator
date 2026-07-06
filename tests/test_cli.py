@@ -669,7 +669,7 @@ def test_otel_stream_posts_events_to_endpoints(tmp_path):
             "--otel-endpoint", base_url,
             "--otel-stream-protocol", "json",
             "--otel-stream-speedup", "1000000",
-            "--otel-stream-max-events", "1",
+            "--otel-stream-max-events", "3",
             "--output-dir", str(tmp_path / "stream_run"),
         )
         assert result.returncode == 0, result.stderr
@@ -682,6 +682,46 @@ def test_otel_stream_posts_events_to_endpoints(tmp_path):
     assert len(received) == 3, f"expected 3 streamed events, got {len(received)}"
     paths = {item[0] for item in received}
     assert paths == {"/v1/logs", "/v1/metrics", "/v1/traces"}
+
+
+def test_otel_stream_max_events_caps_total_signal_requests(tmp_path):
+    """The counter stream cap applies across selected signal endpoints."""
+    received = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            received.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs):  # noqa: D401, ANN002, ANN003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        result = _invoke(
+            "--duration-days", "1",
+            "--interval-seconds", "60",
+            "--otel-send", "logs,metrics,traces",
+            "--otel-endpoint", base_url,
+            "--otel-stream-protocol", "json",
+            "--otel-stream-speedup", "1000000",
+            "--otel-stream-max-events", "1",
+            "--otel-activity-log", str(tmp_path / "otel-activity.log"),
+            "--output-dir", str(tmp_path / "stream_cap_run"),
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert received == ["/v1/logs"]
 
 
 def test_otel_stream_disabled_by_default_makes_no_requests(tmp_path):
