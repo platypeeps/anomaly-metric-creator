@@ -134,6 +134,20 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     trellis-update-spec/
       SKILL.md
+.claude/
+  commands/
+    sd/
+      continue.md
+      create-pr.md
+      finish-work.md
+      full-check.md
+      housekeeping.md
+      review-learnings.md
+      review-local-all.md
+      review-local.md
+      review-pr.md
+      start.md
+      update-spec.md
 .codex/
   agents/
     trellis-check.toml
@@ -674,6 +688,7 @@ src/
     gauges_impl.py
     legacy.py
     models.py
+    otel_stream.py
     otel.py
     otlp.py
     redaction.py

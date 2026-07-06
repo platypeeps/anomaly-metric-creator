@@ -42,13 +42,17 @@ them), and `combine_impl.py` (the wide + long-form combine writers,
 `_NON_COMPONENT_FILES` / `_COMBINE_OUTPUT_FILENAME` constants;
 `_EMIT_ARTIFACT_FILES` stays in `legacy.py` as a core emit registry),
 `schema_impl.py` (`SCHEMA_DOCUMENT_VERSION`, schema document serializers,
-topology snapshot serialization, and `write_schema_json`), and
+topology snapshot serialization, and `write_schema_json`),
 `validate_impl.py` (schema read-back shape validation, artifact validators,
 derivation checks, topology coupling checks, long-form dimension checks, and
-`validate_output`). `schema_impl.py` and `validate_impl.py` access live topology
-registries through callbacks configured by `legacy.py` so tests that patch
-`legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS` still exercise the current
-registry state without introducing a reverse import.
+`validate_output`), and `otel_stream.py` (`stream_otel_signals`,
+`stream_otel_gauges`, `_write_activity`, `_verbose_body_repr`, and
+`_http_error_activity_fields`). `schema_impl.py` and `validate_impl.py` access
+live topology registries through callbacks configured by `legacy.py` so tests
+that patch `legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS` still exercise the
+current registry state without introducing a reverse import. `otel.py` imports
+its public streamers from `otel_stream.py`; `legacy.py` re-imports the same
+objects so facade/legacy identity remains stable.
 **Monkeypatch note:** `_wide_component_rows_are_monotonic` is called only
 by `combine_logs_unified` in `combine_impl`, so a test stubbing the
 pre-scan patches `anomaly_metric_creator.combine_impl.<name>`, not the
@@ -59,8 +63,8 @@ namespace) — the design.md move-with-callers rule in practice.
 step-2 `from .otlp import` block); after any extraction, grep the moved
 range for `^from \.` re-imports and confirm every leaf re-import
 (`redaction`, `timeutil`, `otlp`, `csv_layout`, `artifacts`, `combine_impl`,
-`schema_impl`, `validate_impl`) still resolves. `tests/conftest.py::_load_amc`
-and the fresh-copy loaders in
+`schema_impl`, `validate_impl`, `otel_stream`) still resolves.
+`tests/conftest.py::_load_amc` and the fresh-copy loaders in
 `tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with
 package context (real submodule import or a dotted spec name) so these
 re-import seams resolve; a package-less `spec_from_file_location` copy would
