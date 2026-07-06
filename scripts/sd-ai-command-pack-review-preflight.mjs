@@ -59,16 +59,28 @@ function defaultConfig() {
       '.trellis/spec/**',
     ],
     referencePrefixes: [
+      '.agent/',
       '.agents/',
+      '.claude/',
+      '.codebuddy/',
       '.codex/',
       '.cursor/',
+      '.devin/',
+      '.factory/',
       '.gemini/',
       '.gito/',
       '.github/',
+      '.kiro/',
+      '.kilocode/',
       '.opencode/',
+      '.pi/',
       '.prism/',
+      '.qoder/',
+      '.reasonix/',
       '.sd-ai-command-pack/',
       '.trellis/',
+      '.trae/',
+      '.zcode/',
       'apps/',
       'docs/',
       'scripts/',
@@ -452,22 +464,45 @@ function isTrellisCopiedPath(path) {
     path === '.trellis/.version' ||
     path.startsWith('.trellis/scripts/') ||
     path.startsWith('.trellis/agents/') ||
-    /^\.(agents|claude|codex|cursor|gemini|github|opencode)\/skills\/trellis-[^/]+\//.test(path) ||
+    /^\.(agent|agents|claude|codebuddy|codex|cursor|devin|factory|gemini|github|kiro|kilocode|opencode|pi|qoder|reasonix|trae|zcode)\/skills\/trellis-[^/]+\//.test(path) ||
     /^\.github\/agents\/trellis-[^/]+\.agent\.md$/.test(path) ||
     path === '.github/prompts/continue.prompt.md' ||
     path === '.github/prompts/finish-work.prompt.md' ||
     path.startsWith('.github/copilot/hooks/') ||
     path === '.github/hooks/trellis.json' ||
-    /^\.(claude|cursor|gemini|opencode)\/agents\/trellis-[^/]+\.md$/.test(path) ||
+    /^\.(claude|codebuddy|cursor|gemini|opencode|pi|qoder|trae|zcode)\/agents\/trellis-[^/]+\.md$/.test(path) ||
+    /^\.zcode\/cli\/agents\/trellis-[^/]+\.md$/.test(path) ||
+    /^\.factory\/droids\/trellis-[^/]+\.md$/.test(path) ||
+    /^\.kiro\/agents\/trellis[^/]*\.json$/.test(path) ||
     path.startsWith('.claude/commands/trellis/') ||
+    path.startsWith('.codebuddy/commands/trellis/') ||
     /^\.cursor\/commands\/trellis-[^/]+\.md$/.test(path) ||
+    /^\.devin\/workflows\/trellis-[^/]+\.md$/.test(path) ||
+    path.startsWith('.factory/commands/trellis/') ||
     path.startsWith('.gemini/commands/trellis/') ||
+    /^\.kilocode\/workflows\/(start|continue|finish-work)\.md$/.test(path) ||
+    /^\.agent\/workflows\/(start|continue|finish-work)\.md$/.test(path) ||
     path.startsWith('.opencode/commands/trellis/') ||
+    /^\.pi\/prompts\/trellis-[^/]+\.md$/.test(path) ||
+    /^\.qoder\/commands\/trellis-[^/]+\.md$/.test(path) ||
+    /^\.trae\/commands\/trellis-[^/]+\.md$/.test(path) ||
+    path.startsWith('.zcode/commands/trellis/') ||
+    path.startsWith('.codebuddy/hooks/') ||
+    path === '.codebuddy/settings.json' ||
+    path.startsWith('.factory/hooks/') ||
+    path === '.factory/settings.json' ||
     path.startsWith('.gemini/hooks/') ||
     path === '.gemini/settings.json' ||
+    path.startsWith('.kiro/hooks/') ||
     path.startsWith('.opencode/lib/') ||
     path.startsWith('.opencode/plugins/') ||
-    path === '.opencode/package.json'
+    path === '.opencode/package.json' ||
+    path.startsWith('.pi/extensions/trellis/') ||
+    path === '.pi/settings.json' ||
+    path.startsWith('.qoder/hooks/') ||
+    path === '.qoder/settings.json' ||
+    path.startsWith('.trae/hooks/') ||
+    path === '.trae/hooks.json'
   );
 }
 
@@ -477,13 +512,22 @@ function isSdCommandPackCopiedPath(path) {
     path === '.sd-ai-command-pack/installed-targets.txt' ||
     path === '.sd-ai-command-pack/provenance.json' ||
     config.copiedTemplateExtraPaths.includes(path) ||
-    /^\.(agents|claude|codex|cursor|gemini|github|opencode)\/skills\/sd-[^/]+\//.test(path) ||
+    /^\.(agent|agents|claude|codebuddy|codex|cursor|devin|factory|gemini|github|kiro|kilocode|opencode|pi|qoder|reasonix|trae|zcode)\/skills\/sd-[^/]+\//.test(path) ||
+    /^\.agent\/workflows\/sd-[^/]+\.md$/.test(path) ||
     path.startsWith('.claude/commands/sd/') ||
+    path.startsWith('.codebuddy/commands/sd/') ||
     /^\.cursor\/commands\/sd-[^/]+\.md$/.test(path) ||
+    /^\.devin\/workflows\/sd-[^/]+\.md$/.test(path) ||
+    path.startsWith('.factory/commands/sd/') ||
     /^\.github\/prompts\/sd-[^/]+\.prompt\.md$/.test(path) ||
     path === '.github/copilot-instructions.md' ||
     path.startsWith('.gemini/commands/sd/') ||
+    /^\.kilocode\/workflows\/sd-[^/]+\.md$/.test(path) ||
     /^\.opencode\/commands\/sd-[^/]+\.md$/.test(path) ||
+    /^\.pi\/prompts\/sd-[^/]+\.md$/.test(path) ||
+    /^\.qoder\/commands\/sd-[^/]+\.md$/.test(path) ||
+    /^\.trae\/commands\/sd-[^/]+\.md$/.test(path) ||
+    path.startsWith('.zcode/commands/sd/') ||
     path.startsWith('scripts/sd-ai-command-pack-') ||
     path === 'scripts/sd-ai-command-pack-review-scope.sh' ||
     path === 'scripts/trellis-full-check.sh' ||

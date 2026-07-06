@@ -73,6 +73,39 @@ PROJECT_MANIFESTS = {
     "turbo.json",
     "workspace.json",
 }
+PLATFORM_GUIDANCE_ROOTS = {
+    ".agent",
+    ".agents",
+    ".claude",
+    ".codebuddy",
+    ".codex",
+    ".cursor",
+    ".devin",
+    ".factory",
+    ".gemini",
+    ".github",
+    ".kiro",
+    ".kilocode",
+    ".opencode",
+    ".pi",
+    ".qoder",
+    ".reasonix",
+    ".trae",
+    ".zcode",
+}
+PLATFORM_GUIDANCE_FILENAMES = {
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "README.md",
+    "SKILL.md",
+    "config.toml",
+    "copilot-instructions.md",
+    "hooks.json",
+    "package.json",
+    "settings.json",
+}
+PLATFORM_GUIDANCE_SUFFIXES = DOC_SUFFIXES | {".json", ".toml", ".yaml", ".yml"}
 EXCLUDED_PARTS = {
     ".cache",
     ".git",
@@ -266,11 +299,50 @@ def is_trellis_knowledge(path: Path) -> bool:
         Path(".trellis/config.yml"),
         Path(".trellis/workflow.md"),
     } or (
+        len(path.parts) == 3
+        and path.parts[0] == ".trellis"
+        and path.parts[1] == "agents"
+        and path.suffix.lower() in DOC_SUFFIXES
+    ) or (
+        len(path.parts) >= 3
+        and path.parts[0] == ".trellis"
+        and path.parts[1] == "tasks"
+        and path.suffix.lower() in DOC_SUFFIXES
+    ) or (
         len(path.parts) >= 3
         and path.parts[0] == ".trellis"
         and path.parts[1] == "spec"
         and path.suffix.lower() in DOC_SUFFIXES
     )
+
+
+def is_platform_guidance(path: Path) -> bool:
+    parts = path.parts
+    if not parts or parts[0] not in PLATFORM_GUIDANCE_ROOTS:
+        return False
+    if path.suffix.lower() not in PLATFORM_GUIDANCE_SUFFIXES:
+        return False
+    if path.name in PLATFORM_GUIDANCE_FILENAMES:
+        return True
+    if "instructions" in parts and path.suffix.lower() in DOC_SUFFIXES:
+        return True
+    if "prompts" in parts and path.suffix.lower() in DOC_SUFFIXES:
+        return True
+    if "commands" in parts and path.suffix.lower() in {".md", ".toml"}:
+        return (
+            path.stem.startswith(("sd-", "trellis-"))
+            or "sd" in parts
+            or "trellis" in parts
+        )
+    if "workflows" in parts and path.suffix.lower() in DOC_SUFFIXES:
+        return path.stem.startswith(("sd-", "trellis-")) or path.stem in {
+            "start",
+            "continue",
+            "finish-work",
+        }
+    if path.name == "SKILL.md" and len(parts) >= 3:
+        return any(part.startswith(("sd-", "trellis-")) for part in parts)
+    return False
 
 
 def is_repo_map(path: Path) -> bool:
@@ -290,6 +362,7 @@ def is_relevant(path: Path) -> bool:
         is_named_doc(path)
         or is_docs_file(path)
         or is_trellis_knowledge(path)
+        or is_platform_guidance(path)
         or is_repo_map(path)
         or is_project_manifest(path)
     )
@@ -616,6 +689,16 @@ def source_description(path: Path) -> str:
         return "Workflow phases, task rules, and routing guidance."
     if path in {Path(".trellis/config.yaml"), Path(".trellis/config.yml")}:
         return "Project configuration and spec routing."
+    if len(parts) >= 3 and parts[0] == ".trellis" and parts[1] == "tasks":
+        if lower_name == "prd.md":
+            return "Task requirements, scope, and acceptance criteria."
+        if lower_name == "design.md":
+            return "Task design notes and implementation approach."
+        if lower_name == "implement.md":
+            return "Task implementation notes and execution context."
+        if lower_name == "check.md":
+            return "Task verification notes and quality-gate context."
+        return "Task documentation and delivery context."
     if len(parts) >= 3 and parts[0] == ".trellis" and parts[1] == "spec":
         layer = parts[2]
         if layer == "guides":
@@ -625,15 +708,7 @@ def source_description(path: Path) -> str:
         if lower_name == "index.md":
             return f"Index for the {layer} spec layer."
         return f"{layer.title()} code-spec guidance for future implementation."
-    if parts and parts[0] in {
-        ".agents",
-        ".claude",
-        ".codex",
-        ".cursor",
-        ".gemini",
-        ".github",
-        ".opencode",
-    }:
+    if parts and parts[0] in PLATFORM_GUIDANCE_ROOTS:
         return "AI-platform guidance or adapter metadata."
     if is_project_manifest(path):
         return "Project manifest describing package, build, or workspace shape."
@@ -667,6 +742,11 @@ KB_CATEGORIES: tuple[tuple[str, str, str], ...] = (
         "trellis-workflow-config",
         "Workflow and Configuration",
         "Workflow and repository configuration context.",
+    ),
+    (
+        "task-documentation",
+        "Task Documentation",
+        "Task PRDs, designs, implementation notes, and verification context.",
     ),
     (
         "trellis-backend-specs",
@@ -709,13 +789,24 @@ KB_CATEGORY_BY_KEY = {
 }
 KB_CATEGORY_ORDER = {key: index for index, (key, _, _) in enumerate(KB_CATEGORIES)}
 PLATFORM_DESTINATION_PREFIXES = {
+    ".agent": "antigravity",
     ".agents": "codex",
     ".claude": "claude",
+    ".codebuddy": "codebuddy",
     ".codex": "codex",
     ".cursor": "cursor",
+    ".devin": "devin",
+    ".factory": "factory",
     ".gemini": "gemini",
     ".github": "github",
+    ".kiro": "kiro",
+    ".kilocode": "kilo",
     ".opencode": "opencode",
+    ".pi": "pi",
+    ".qoder": "qoder",
+    ".reasonix": "reasonix",
+    ".trae": "trae",
+    ".zcode": "zcode",
 }
 
 
@@ -724,15 +815,7 @@ def source_category(path: Path) -> str:
     upper_name = path.name.upper()
     if is_repo_map(path):
         return "repository-maps"
-    if parts and parts[0] in {
-        ".agents",
-        ".claude",
-        ".codex",
-        ".cursor",
-        ".gemini",
-        ".github",
-        ".opencode",
-    }:
+    if parts and parts[0] in PLATFORM_GUIDANCE_ROOTS:
         return "agent-platform-guidance"
     if path == Path("AGENTS.md"):
         return "agent-platform-guidance"
@@ -757,6 +840,8 @@ def source_category(path: Path) -> str:
         Path(".trellis/workflow.md"),
     }:
         return "trellis-workflow-config"
+    if len(parts) >= 3 and parts[0] == ".trellis" and parts[1] == "tasks":
+        return "task-documentation"
     if len(parts) >= 3 and parts[0] == ".trellis" and parts[1] == "spec":
         if parts[2] == "backend":
             return "trellis-backend-specs"
@@ -802,11 +887,23 @@ def destination_filename_for_source(source: Path) -> str:
     if parts and parts[0] in PLATFORM_DESTINATION_PREFIXES:
         prefix = PLATFORM_DESTINATION_PREFIXES[parts[0]]
         stem = source.stem
+        if source.name == "SKILL.md" and len(parts) >= 2:
+            return f"{prefix}-{visible_path_component(parts[-2])}.md"
         if source.name == "agents.md":
             return f"{prefix}-agents.md"
         if source.name == "package.json":
             return f"{prefix}-package.json"
         return f"{prefix}-{visible_path_component(stem)}{suffix}"
+
+    if len(parts) >= 3 and parts[0] == ".trellis" and parts[1] == "tasks":
+        task_parts = [
+            visible_path_component(part)
+            for part in parts[2:-1]
+            if visible_path_component(part)
+        ]
+        prefix = "-".join(task_parts)
+        stem = visible_path_component(source.stem)
+        return f"{prefix}-{stem}{suffix}" if prefix else f"{stem}{suffix}"
 
     if source_category(source) == "package-documentation":
         parent_parts = [

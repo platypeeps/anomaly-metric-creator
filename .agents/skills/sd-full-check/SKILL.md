@@ -71,6 +71,14 @@ the full set: base-ref discovery, package runner and script list, Prism rules
 and threshold, Gito output directory and rate-limit retry tuning, PR-body config
 paths, and deprecated fallbacks.
 
+- On macOS, prefer a Homebrew Python-backed virtualenv for repo-local Python
+  checks, especially coverage runs. Apple/Xcode Python often lacks project dev
+  dependencies and can try to write bytecode caches under protected
+  `~/Library/Caches` paths.
+- In sandboxed agent sessions, set writable temp-backed caches before rerunning
+  checks that fail while creating tool state: `PYTHONPYCACHEPREFIX`,
+  `UV_CACHE_DIR`, `UV_TOOL_DIR`, and `RUFF_CACHE_DIR`. The canonical
+  copy/paste block lives in `docs/SD_AI_COMMAND_PACK.md` → Configuration.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_BASE_REF`: explicit base ref for branch review.
   When unset, the script discovers the remote default ref, then the branch
   upstream, then the first available remote ref.

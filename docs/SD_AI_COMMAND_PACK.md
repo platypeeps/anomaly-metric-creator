@@ -23,6 +23,8 @@ Quick links:
 - `.agents/skills/sd-start/SKILL.md`: Codex-visible Trellis start wrapper.
 - `.agents/skills/sd-continue/SKILL.md`: Codex-visible Trellis continue wrapper.
 - `.agents/skills/sd-finish-work/SKILL.md`: Codex-visible Trellis finish-work wrapper.
+- `.agents/skills/sd-create-pr/SKILL.md`: spec-refresh, commit, push, PR
+  creation/reuse, and PR-review orchestration workflow.
 - `.agents/skills/sd-review-pr/SKILL.md`: deterministic local gate plus remote
   PR review workflow.
 - `.agents/skills/sd-review-local/SKILL.md`: local review provider fix loop.
@@ -74,6 +76,9 @@ Quick links:
   agent, or platform-library markers. A plain `.github` directory for Actions
   is not enough. Use `--platform <name>` or `--all` to force a platform adapter
   even when no active marker is present.
+  ZCode Trellis agents are detected at `.zcode/agents/`; the legacy
+  `.zcode/cli/agents/` path is still treated as copied Trellis surface during
+  the transition for review scope and local-only excludes.
 
 The command and prompt files are entry points only. The workflow behavior lives
 in the shared skills and scripts. The update-spec workflow runs the
@@ -81,10 +86,10 @@ Trellis-provided `trellis-update-spec` skill as-is, refreshes repo-owned
 repospec artifacts through existing maintenance infrastructure when available,
 and then performs the architecture-overview check.
 Codex exposes the pack entry points as skills named `sd-start`, `sd-continue`,
-`sd-finish-work`, `sd-full-check`, `sd-housekeeping`, `sd-review-pr`,
-`sd-review-local`, `sd-review-local-all`, `sd-review-learnings`, and
-`sd-update-spec`; type `/sd` in Codex command completion or invoke them with
-`$sd-review-pr`-style skill mentions.
+`sd-finish-work`, `sd-create-pr`, `sd-full-check`, `sd-housekeeping`,
+`sd-review-pr`, `sd-review-local`, `sd-review-local-all`,
+`sd-review-learnings`, and `sd-update-spec`; type `/sd` in Codex command
+completion or invoke them with `$sd-review-pr`-style skill mentions.
 The start, continue, and finish-work wrappers run Trellis' existing
 `trellis-start`, `trellis-continue`, and `trellis-finish-work` skills as-is.
 On Claude Code — where Trellis ships a SessionStart hook instead of a
@@ -94,9 +99,10 @@ finish-work wrappers accept the installed `trellis:continue` and
 `trellis:finish-work` command names as valid resolutions.
 The slash command namespace is `sd`, not `trellis`, so these pack-owned wrappers
 do not collide with generated Trellis commands during future `trellis update`
-runs. Cursor command files, GitHub Copilot prompt files, and OpenCode command
-files use flat `sd-<command>` filenames so completion lists can surface them
-when you type `/sd`.
+runs. Command-capable adapters expose either namespaced `sd/<command>` files or
+flat `sd-<command>` files, matching the platform convention Trellis uses for
+that tool. Skill-only adapters install the same `sd-*` skills into the
+platform's native skill root.
 For Gemini CLI, the project command files intentionally live under
 `.gemini/commands/sd/`; Gemini maps a file such as
 `.gemini/commands/sd/review-pr.toml` to `/sd:review-pr` and shows the TOML
@@ -118,29 +124,33 @@ loaded project command files.
    which findings to fix and repeats until no items are selected.
 6. Use the review-local-all command when you want the same local fix loop run
    against the entire checked-out repository rather than just recent diffs.
-7. Use the review-pr command for the PR loop. It should run the deterministic
+7. Use the create-pr command when you want the publishing wrapper: it runs
+   `sd-update-spec`, stages only intended files, commits and pushes the feature
+   branch when needed, creates or reuses the branch PR, and then enters the
+   review-pr loop.
+8. Use the review-pr command for an existing PR loop. It should run the deterministic
    local full-check path with Prism/Gito disabled before requesting remote
    review. Run `sd-full-check`, `sd-review-local`, or `sd-review-local-all`
    explicitly when you want Prism/Gito.
-8. Request the configured remote reviewer, defaulting to GitHub Copilot, after
+9. Request the configured remote reviewer, defaulting to GitHub Copilot, after
    a clean local pass and again after every pushed review-fix commit made
    during the loop, unless the user explicitly asked for local-only review.
-9. Let the review-pr command reply to and resolve review threads as part of the
+10. Let the review-pr command reply to and resolve review threads as part of the
    normal loop once findings are fixed, rebutted with evidence, or confirmed
    already addressed.
-10. Use the review-learnings command when review comments repeat across PRs and
+11. Use the review-learnings command when review comments repeat across PRs and
    you want to capture repo-specific preventive guidance.
-11. Run the update-spec command when the work taught you a durable
+12. Run the update-spec command when the work taught you a durable
    implementation contract or convention. It runs the existing update-spec skill
    and also checks whether an existing architectural overview needs to be
    updated.
-12. Run the finish-work command when the coding session is complete and you need
+13. Run the finish-work command when the coding session is complete and you need
    the Trellis finish-work skill's quality gate, archive, journal, and commit
    reminder behavior.
-13. After the PR merges, run the housekeeping command to get back to the default
+14. After the PR merges, run the housekeeping command to get back to the default
    branch, prune/delete the merged development stream, and see the condensed
    clean-state/anomaly report.
-14. If the review-pr command sees the PR is already merged or becomes merged
+15. If the review-pr command sees the PR is already merged or becomes merged
    while the command is running, it stops the review loop and runs post-merge
    housekeeping before the final report. This does not wake inactive sessions;
    it only runs when the active agent observes the merge.
@@ -155,6 +165,13 @@ The default remote reviewer for review-pr is GitHub Copilot's
 five configured remote-review requests before the command asks whether to keep
 going.
 
+The create-pr wrapper honors `SD_AI_COMMAND_PACK_CREATE_PR_BASE` for a base
+branch override, `SD_AI_COMMAND_PACK_CREATE_PR_COMMIT_MESSAGE` when it creates
+a commit without a user-provided message, and
+`SD_AI_COMMAND_PACK_CREATE_PR_DRAFT=1` when the PR should start as a draft.
+It still delegates the actual review loop to review-pr after PR creation or
+reuse.
+
 ## Commands
 
 Use the platform-native command when available.
@@ -165,6 +182,7 @@ Claude Code and Gemini CLI:
 /sd:start
 /sd:continue
 /sd:finish-work
+/sd:create-pr
 /sd:full-check
 /sd:housekeeping
 /sd:review-pr
@@ -174,13 +192,14 @@ Claude Code and Gemini CLI:
 /sd:update-spec
 ```
 
-Cursor command files, GitHub Copilot prompt files, OpenCode command files, and
-Codex skills:
+Cursor command files, GitHub Copilot prompt files, OpenCode command files,
+Qoder commands, Trae commands, Pi prompts, workflow adapters, and Codex skills:
 
 ```bash
 /sd-start
 /sd-continue
 /sd-finish-work
+/sd-create-pr
 /sd-full-check
 /sd-housekeeping
 /sd-review-pr
@@ -192,6 +211,9 @@ Codex skills:
 
 In Codex, you can also invoke the enabled skills explicitly with
 `$sd-review-pr`-style skill mentions.
+
+CodeBuddy, Factory Droid, and ZCode use namespaced `sd/<command>` command
+folders. Kiro and Reasonix expose the same entries as native `sd-*` skills.
 
 For GitHub installs, the pack also seeds `.github/PULL_REQUEST_TEMPLATE.md`
 with Summary, Test plan, and Pre-PR checklist sections that prompt for the
@@ -210,9 +232,28 @@ obvious syntax breakage, secret leakage, or a direct mismatch with the PR's
 stated tooling goal. It explicitly tells Copilot not to leave line comments on
 wording, spelling, links, formatting, examples, or implementation details inside
 copied Trellis skills/agents/commands or copied SD command-pack
-skills/prompts/scripts/docs/rules. It also asks Copilot to group duplicate root
-causes and point to deterministic local checks when they already cover a
-repeated issue class.
+skills/prompts/scripts/docs/rules. Original Trellis-owned runtime/template
+copies are also out of scope for local edits and line-by-line review; if a
+change appears needed in `.trellis/scripts/**`, `.trellis/agents/**`, or
+platform `trellis-*` payloads, Copilot should leave one handoff comment that
+sends the finding back to the sd-ai-command-pack source session instead of
+reviewing the copied file. It also asks Copilot to group duplicate root causes
+and point to deterministic local checks when they already cover a repeated
+issue class.
+
+Pasteable handoff for those findings:
+
+```text
+Handoff for sd-ai-command-pack source session:
+A change appears needed in original Trellis-owned runtime/template files,
+which should not be edited in the consumer repo copy.
+Affected file(s): <paths>
+Desired behavior: <short behavior>
+Evidence/repro: <commands, review finding, or failure>
+Please decide whether this belongs in an sd-ai-command-pack wrapper/template,
+a pack-owned guard, or an upstream Trellis change, then implement the durable
+source-owned fix.
+```
 
 Use the script directly from any shell:
 
@@ -302,12 +343,24 @@ Prism and Gito scans use the pack's managed standard exclusions for top-level
 AI/tooling/cache directories:
 
 ```text
-.github/
+.agent/
+.agents/
 .claude/
 .codex/
+.codebuddy/
+.cursor/
+.devin/
+.factory/
 .gemini/
+.github/
+.kiro/
+.kilocode/
 .opencode/
-.agents/
+.pi/
+.qoder/
+.reasonix/
+.trae/
+.zcode/
 .build/
 .git/
 .pytest_cache/
@@ -415,7 +468,8 @@ repo root and ensure that folder is listed in `.gitignore` inside a managed
 managed block is written to `.git/info/exclude` instead. The folder contains
 copies of repository-knowledge files such as README files, agent instructions,
 architecture and decision docs, `.trellis/spec/**/*.md`, `.trellis/workflow.md`,
-`.trellis/config.yaml`, repo-owned repospec or Repomix outputs such as
+`.trellis/config.yaml`, `.trellis/tasks/**/*.md`, repo-owned repospec or
+Repomix outputs such as
 `docs/repomix-map.md`, and project manifests that explain the repository shape
 when present. The helper writes those copies into visible semantic category
 folders rather than mirroring hidden source paths, so generated KB file and
@@ -508,11 +562,77 @@ A clean current-stream housekeeping run should end with:
 none
 ```
 
+The agent-facing final response should summarize that script output in a short
+housekeeping report rather than pasting every line. A clean report should use
+this shape:
+
+```text
+Housekeeping completed cleanly.
+PR #<number> was <merged by housekeeping|already merged by the time the script ran>; housekeeping confirmed the merge, switched to <default>, fast-forwarded to origin/<default>, deleted the local and remote <feature> branch, and pruned refs.
+
+Final state:
+Branch: <default>
+Working tree: clean
+<default> matches origin/<default>
+Local branches: only <default>
+Remote branches: origin/HEAD, origin/<default>
+PR #<number>: merged at <timestamp>
+Open PRs: <none|summary>
+Open issues: <none|summary>
+Current Trellis task: <none|summary>
+Anomalies: none
+
+Insight:
+<One short evidence-backed observation about what housekeeping proved or surfaced; omit this section when there is nothing useful beyond the final state.>
+
+No follow-up needed for this cleanup stream.
+```
+
+Include `Insight:` only when the script output or session context supports a
+useful observation, such as the PR lifecycle being healthy, cleanup being
+verification-only because the PR was already merged, stale refs being pruned,
+the repo being ready for the next work stream, or a process improvement being
+worth tracking. Do not add filler insights that merely restate `clean`.
+If follow-up items exist, replace the final no-follow-up sentence with a
+numbered `Next Steps` list that covers: open follow-up items from the session,
+existing Trellis tasks already in progress, and high-value Trellis task
+candidates to start next. If a category has no evidence, the report should say
+that plainly instead of inventing work.
+
 ## Configuration
 
 Common environment variables:
 
 ### Full Check And Preflight
+
+On macOS, prefer a Homebrew Python-backed virtualenv for repo-local Python
+checks, especially coverage runs. Apple/Xcode Python often lacks project dev
+dependencies and can try to write bytecode caches under protected
+`~/Library/Caches` paths. A portable setup is:
+
+```bash
+BREW_PYTHON="${BREW_PYTHON:-/opt/homebrew/bin/python3}"
+test -x "$BREW_PYTHON" || BREW_PYTHON=/usr/local/bin/python3
+"$BREW_PYTHON" -m venv .venv
+. .venv/bin/activate
+```
+
+In sandboxed agent sessions, some otherwise-correct local checks fail because
+their default caches or temporary files land outside the writable sandbox, or
+inside repo cache directories the agent cannot write. Before running `uv run`,
+`uvx`, Ruff, Python compile/coverage, `scripts/preflight-pr.sh`, or
+`sd-ai-command-pack-full-check.sh`, prefer sandbox-local cache directories:
+
+```bash
+SANDBOX_TMP="${SANDBOX_TMP:-${TMPDIR:-/tmp}}"
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$SANDBOX_TMP/sd-ai-command-pack-pycache}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$SANDBOX_TMP/sd-ai-command-pack-uv-cache}"
+export UV_TOOL_DIR="${UV_TOOL_DIR:-$SANDBOX_TMP/sd-ai-command-pack-uv-tools}"
+export RUFF_CACHE_DIR="${RUFF_CACHE_DIR:-$SANDBOX_TMP/sd-ai-command-pack-ruff-cache}"
+```
+
+These variables are safe for normal developer shells too: they only redirect
+ephemeral tool state and do not change what the checks validate.
 
 - `SD_AI_COMMAND_PACK_FULL_CHECK_BASE_REF`: explicit base ref for branch review.
   When unset, branch-diff helpers use the discovered remote default ref, then
@@ -712,6 +832,16 @@ To refresh installed assets from the pack checkout:
 python3 /path/to/sd-ai-command-pack/install.py /path/to/target/repo --force
 ```
 
+Use `python3 /path/to/sd-ai-command-pack/install.py --help` for the safe CLI
+summary, or `--version` to print the pack name and version without touching a
+target repo.
+
+To remove the pack from a target checkout:
+
+```bash
+python3 /path/to/sd-ai-command-pack/install.py /path/to/target/repo --remove
+```
+
 Normal shared installs maintain a managed `sd-ai-command-pack
 trellis-gitignore` block in the repo root `.gitignore`. The block ignores
 Trellis local/runtime files such as `.trellis/.developer`,
@@ -720,8 +850,9 @@ Trellis local/runtime files such as `.trellis/.developer`,
 blanket-ignoring shareable `.trellis` workflow, spec, task, and script files.
 It also ignores local AI-tool state such as `.claude/settings.local.json`,
 tool caches, logs, sessions, tmp folders, Gito report/temp artifacts,
-`.opencode/node_modules/`, and root `node_modules/` without blanket-ignoring
-`.claude/`, `.codex/`, `.gemini/`, `.gito/`, or `.opencode/`.
+tool-specific local state, `.opencode/node_modules/`, and root
+`node_modules/` without blanket-ignoring shareable platform adapter
+directories.
 The installer replaces exact unmarked `.trellis/` ignore entries with that
 specific-pattern block.
 
@@ -760,12 +891,24 @@ sd-ai-command-pack-uv-cache/
 sd-ai-command-pack-uv-tools/
 
 # AI-tool local state; keep shared platform adapters tracked.
+.agent/**/*.local.*
+.agent/**/.cache/
+.agent/**/cache/
+.agent/**/logs/
+.agent/**/tmp/
+.agent/**/*.log
 .claude/settings.local.json
 .claude/**/*.local.*
 .claude/**/.cache/
 .claude/**/cache/
 .claude/**/logs/
 .claude/**/*.log
+.codebuddy/**/*.local.*
+.codebuddy/**/.cache/
+.codebuddy/**/cache/
+.codebuddy/**/logs/
+.codebuddy/**/tmp/
+.codebuddy/**/*.log
 .codex/**/*.local.*
 .codex/**/.cache/
 .codex/**/cache/
@@ -773,6 +916,24 @@ sd-ai-command-pack-uv-tools/
 .codex/**/sessions/
 .codex/**/tmp/
 .codex/**/*.log
+.cursor/**/*.local.*
+.cursor/**/.cache/
+.cursor/**/cache/
+.cursor/**/logs/
+.cursor/**/tmp/
+.cursor/**/*.log
+.devin/**/*.local.*
+.devin/**/.cache/
+.devin/**/cache/
+.devin/**/logs/
+.devin/**/tmp/
+.devin/**/*.log
+.factory/**/*.local.*
+.factory/**/.cache/
+.factory/**/cache/
+.factory/**/logs/
+.factory/**/tmp/
+.factory/**/*.log
 .gemini/settings.local.json
 .gemini/**/*.local.*
 .gemini/**/.cache/
@@ -786,6 +947,18 @@ sd-ai-command-pack-uv-tools/
 .gito/**/logs/
 .gito/**/tmp/
 .gito/**/*.log
+.kiro/**/*.local.*
+.kiro/**/.cache/
+.kiro/**/cache/
+.kiro/**/logs/
+.kiro/**/tmp/
+.kiro/**/*.log
+.kilocode/**/*.local.*
+.kilocode/**/.cache/
+.kilocode/**/cache/
+.kilocode/**/logs/
+.kilocode/**/tmp/
+.kilocode/**/*.log
 .opencode/**/*.local.*
 .opencode/**/.cache/
 .opencode/**/cache/
@@ -795,6 +968,36 @@ sd-ai-command-pack-uv-tools/
 .opencode/**/sessions/
 .opencode/node_modules/
 .opencode/**/*.log
+.pi/**/*.local.*
+.pi/**/.cache/
+.pi/**/cache/
+.pi/**/logs/
+.pi/**/tmp/
+.pi/**/*.log
+.qoder/**/*.local.*
+.qoder/**/.cache/
+.qoder/**/cache/
+.qoder/**/logs/
+.qoder/**/tmp/
+.qoder/**/*.log
+.reasonix/**/*.local.*
+.reasonix/**/.cache/
+.reasonix/**/cache/
+.reasonix/**/logs/
+.reasonix/**/tmp/
+.reasonix/**/*.log
+.trae/**/*.local.*
+.trae/**/.cache/
+.trae/**/cache/
+.trae/**/logs/
+.trae/**/tmp/
+.trae/**/*.log
+.zcode/**/*.local.*
+.zcode/**/.cache/
+.zcode/**/cache/
+.zcode/**/logs/
+.zcode/**/tmp/
+.zcode/**/*.log
 node_modules/
 
 # Project-local personal ignores can be added below this managed block.
@@ -832,10 +1035,23 @@ review rules are not replaced during a pack refresh. The pack-owned
 `.gito/sd-ai-command-pack.env` file is updateable like scripts and docs so the
 standard Gito concurrency cap can be refreshed.
 
+Use `--remove` to uninstall pack-owned assets. Removal deletes pack-vouched
+files, files that still match the bundled template, generated pack state under
+`.sd-ai-command-pack/`, and the pack-managed blocks in `.gitignore`,
+`.git/info/exclude`, and `.github/copilot-instructions.md`. Drifted files,
+symlinks, directories, and user-owned policy files are preserved by default;
+add `--force` to delete drifted regular pack files too, and add `--backup` to
+keep `.bak` copies of deleted files.
+
 After installing or refreshing a target repo, a quick smoke test is:
 
 ```bash
 cd /path/to/repo
+SANDBOX_TMP="${SANDBOX_TMP:-${TMPDIR:-/tmp}}"
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$SANDBOX_TMP/sd-ai-command-pack-pycache}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$SANDBOX_TMP/sd-ai-command-pack-uv-cache}"
+export UV_TOOL_DIR="${UV_TOOL_DIR:-$SANDBOX_TMP/sd-ai-command-pack-uv-tools}"
+export RUFF_CACHE_DIR="${RUFF_CACHE_DIR:-$SANDBOX_TMP/sd-ai-command-pack-ruff-cache}"
 python3 scripts/sd-ai-command-pack-install-audit.py
 bash -n scripts/sd-ai-command-pack-full-check.sh
 bash -n scripts/sd-ai-command-pack-review-local.sh
@@ -873,6 +1089,10 @@ python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run
   backoff. If the failure is network or credential related, run from an
   environment with the needed access. For `sd-full-check`, leave
   `SD_AI_COMMAND_PACK_FULL_CHECK_GITO` unset unless Gito is configured locally.
+- `uvx`, Ruff, Python compile/coverage, preflight, or full-check fail with
+  `Operation not permitted` while creating cache or temporary files: export the
+  sandbox-local `PYTHONPYCACHEPREFIX`, `UV_CACHE_DIR`, `UV_TOOL_DIR`, and
+  `RUFF_CACHE_DIR` block from Configuration, then rerun the same command.
 - Root-level `code-review-report.*` files appear after manual Gito runs: the
   managed gitignore block ignores them, but prefer running through
   `sd-review-local`, `sd-review-local-all`, or
