@@ -467,8 +467,13 @@ def _body_has_heading(body: str, headings: tuple[str, ...]) -> bool:
     # blockquote, or list markers) so a passing mention in prose, a URL, or a
     # code span does not satisfy the section requirement.
     for heading in headings:
+        normalized = heading.strip()
+        if normalized.endswith(":"):
+            normalized = normalized[:-1].rstrip()
         pattern = re.compile(
-            r"^[ \t]*[>#*\-]*[ \t]*" + re.escape(heading),
+            r"^[ \t]*[>#*\-]*[ \t]*"
+            + re.escape(normalized)
+            + r"(?::.*|[ \t]*)$",
             re.IGNORECASE | re.MULTILINE,
         )
         if pattern.search(body):

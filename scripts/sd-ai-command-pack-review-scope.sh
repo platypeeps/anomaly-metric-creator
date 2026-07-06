@@ -193,7 +193,7 @@ is_trellis_journal_scope_path() {
 github_pr_body_mentions_scope() {
   local body="$1"
 
-  grep -Eiq '(^|[[:space:]])(Tooling/generated scope|Generated/tooling scope|Copied/generated scope):' <<<"$body"
+  grep -Eiq '^[[:space:]>#*\-]*(Tooling/generated scope|Generated/tooling scope|Copied/generated scope)(:.*|[[:space:]]*)$' <<<"$body"
 }
 
 check_pr_body_scope() {

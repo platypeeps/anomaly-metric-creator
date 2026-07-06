@@ -1,9 +1,9 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.5.23",
+  "version": "0.5.27",
   "files": {
     ".agents/skills/sd-continue/SKILL.md": "sha256:dd876a967d7192844de3648e3fc26f284974e5a2e14312c2a0cddb0dec80fee3",
-    ".agents/skills/sd-create-pr/SKILL.md": "sha256:fe5f0f03dbac7bf3b588061be9d1caa057703a9ba30e2c1750f4e39876366295",
+    ".agents/skills/sd-create-pr/SKILL.md": "sha256:c276005706c232e3a698e4064d0294761db5247c88baa3e9358a9cca791605fd",
     ".agents/skills/sd-finish-work/SKILL.md": "sha256:d74b0e03ee0a7fe98232ce43f75257e866178546fc525341dbd93d9b231a297a",
     ".agents/skills/sd-full-check/SKILL.md": "sha256:448f5ec2c5e8ea8a0806d5dfb74cbc98e9710b0a654ee0abac1ec2580ab0266a",
     ".agents/skills/sd-housekeeping/SKILL.md": "sha256:4cf9388d83de765750777c0222ac4775a2d58c92edd7c38928db76e7394308a0",
@@ -59,16 +59,16 @@
     ".opencode/commands/sd-start.md": "sha256:3ab13f13c42b2577f5cc1fcc7006f7b82e0d633a4cc94fd7e4d8c7782f0b0fbb",
     ".opencode/commands/sd-update-spec.md": "sha256:36b1b3564dc19569960b6204bee51a30694967f1d23c9527f8b6b2c330e69744",
     ".prism/rules.schema.json": "sha256:2b8c734e0730506ad05997aa9d224bbadfc859d438b1740eefbc35f96ee928ac",
-    "docs/SD_AI_COMMAND_PACK.md": "sha256:28d455d06b010409194b498d3de240cbccc43d4f9194a91ffd9357378aee0605",
+    "docs/SD_AI_COMMAND_PACK.md": "sha256:74f333cebd77a1b0e8d0bcd8bfc87c72d93179d9c4780a031b5d081a9f3cb030",
     "scripts/sd-ai-command-pack-full-check.sh": "sha256:25e0a7325d1ebbf7c4fd68b53eb3fbd630345b91a914684d76446c94b05d1389",
     "scripts/sd-ai-command-pack-housekeeping.sh": "sha256:6d4052e0eeac4e76a07a4024c2b1c1c868fb527a47aba510ef50f4090a9d39ba",
-    "scripts/sd-ai-command-pack-install-audit.py": "sha256:da06f98058652969463af980a13f83534474ef503dc7ad3946d9934f9601c7e9",
-    "scripts/sd-ai-command-pack-pr-body-scope.py": "sha256:4d73a3b2cda6aa21e5842fe37627fd71261736df519a083c164d8d463b73bc0f",
+    "scripts/sd-ai-command-pack-install-audit.py": "sha256:eef44e6bbfb77738ec8afba07bf04e8e9b5ab89bccfa049a2dcd9beb6172794b",
+    "scripts/sd-ai-command-pack-pr-body-scope.py": "sha256:4218d91933c8e100efe78a2c1b32635046d5d208a89e276ba4596435bb1a7136",
     "scripts/sd-ai-command-pack-record-session.py": "sha256:ab212b49182d127eac23e944982c99dcc035fa4b514b519ff921b2fefaab9bb6",
     "scripts/sd-ai-command-pack-review-learnings.py": "sha256:d6b3cbdae1a8312f76d3f22b4e05ef9e7447108cda3bd52416989dd57eefc801",
     "scripts/sd-ai-command-pack-review-local.sh": "sha256:a4f769fe43759bd582b46e44f785859e39a3a9a66dfda11e147063421e8c0084",
     "scripts/sd-ai-command-pack-review-preflight.mjs": "sha256:ce4f600cf8d7305d51a64ad561891df60f566f35b68a72591bfb1932fa0c46d5",
-    "scripts/sd-ai-command-pack-review-scope.sh": "sha256:2bc4a93967b8358e2e967387a4547b3e523724ad8ccd3d908977908e8cf5b202",
-    "scripts/sd-ai-command-pack-update-spec-kb.py": "sha256:e0cf8573220892fbf6a3280f69c6babaf0bb6250306e77fd9d4229ed9af4f5ed"
+    "scripts/sd-ai-command-pack-review-scope.sh": "sha256:3d324d7ed434135ec25d5347b23e7f921adb090a4ec22f245f8e94a355f02001",
+    "scripts/sd-ai-command-pack-update-spec-kb.py": "sha256:f07190dcd6bd6022461498cfa1df5d320b2e360a8478a6a90ca9dc17457f2659"
   }
 }
