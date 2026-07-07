@@ -30,6 +30,7 @@ These tests cover:
 
 from __future__ import annotations
 
+import re
 
 import pytest
 
@@ -1617,7 +1618,7 @@ def test_compose_scenarios_x_signal_level_low_drops_medium_with_warning(amc, tmp
         f"Expected exactly one WARNING for {_MEDIUM_1D_SLUG} at --signal-level low; "
         f"got {len(warnings)}: {warnings!r}"
     )
-    assert "--signal-level" in warnings[0]
+    assert re.search(r"(?<![\w-])--signal-level(?![\w-])", warnings[0]), warnings[0]
 
 
 def test_compose_scenarios_x_signal_level_medium_drops_high_with_warning(amc, tmp_path):
@@ -1640,7 +1641,7 @@ def test_compose_scenarios_x_signal_level_medium_drops_high_with_warning(amc, tm
         f"Expected exactly one WARNING for {_HIGH_1D_SLUG} at --signal-level medium; "
         f"got {len(warnings)}: {warnings!r}"
     )
-    assert "--signal-level" in warnings[0]
+    assert re.search(r"(?<![\w-])--signal-level(?![\w-])", warnings[0]), warnings[0]
 
 
 def test_compose_scenarios_x_duration_days_short_run_drops_multi_day(amc, tmp_path):
@@ -1663,7 +1664,7 @@ def test_compose_scenarios_x_duration_days_short_run_drops_multi_day(amc, tmp_pa
         f"Expected exactly one WARNING for {_MEDIUM_MULTI_SLUG} at --duration-days 1; "
         f"got {len(warnings)}: {warnings!r}"
     )
-    assert "--duration-days" in warnings[0]
+    assert re.search(r"(?<![\w-])--duration-days(?![\w-])", warnings[0]), warnings[0]
 
 
 def test_compose_scenarios_x_components_disjoint_drops_silently(amc, tmp_path):

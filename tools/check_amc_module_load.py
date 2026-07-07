@@ -53,6 +53,13 @@ Exemptions:
     (see `tests/test_correctness.py`);
   * collection-time parametrize loaders that fire before pytest
     fixtures resolve (see `tests/test_scenarios.py`).
+
+Exit codes (matching the sibling ``tools/check_*.py`` lints):
+
+* ``0`` - no duplicate module loads found.
+* ``1`` - at least one disallowed ``spec_from_file_location`` load.
+* ``2`` - argument or I/O error (an unreadable or non-UTF-8 file), so a
+  structural failure is distinguishable from a real violation.
 """
 
 from __future__ import annotations
@@ -245,7 +252,13 @@ def main(argv: list[str]) -> int:
             continue
         if not path.is_file():
             continue
-        violations.extend(_check_file(path))
+        try:
+            violations.extend(_check_file(path))
+        except (OSError, UnicodeDecodeError) as exc:
+            # Structural failure (unreadable / non-UTF-8 file) is exit 2, not
+            # a traceback and not a false "violation" (exit 1).
+            print(f"check_amc_module_load: cannot read {path}: {exc}", file=sys.stderr)
+            return 2
     if violations:
         print("\n".join(violations), file=sys.stderr)
         print(

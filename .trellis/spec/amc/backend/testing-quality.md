@@ -99,7 +99,11 @@ and journal/index commit-list consistency checks, Copilot instruction contract
 checks, and trace-payload validation anti-pattern checks. Keep these hooks
 stdlib-only where they are local scripts, with the documented `0`/`1`/`2` exit
 contract and acceptance tests over both temporary fixtures and the live repo
-tree. Sources: `.pre-commit-config.yaml`;
+tree. `tools/benchmark_combine.py` is the one intentional exception to the
+every-tool-has-tests convention: it is a measurement harness (imports the
+project + numpy, not a `check_*` lint) with no `0`/`1`/`2` contract and no
+acceptance test, and is not wired into pre-commit or CI. Sources:
+`.pre-commit-config.yaml`;
 `tools/check_python_syntax.py`;
 `tools/check_agent_hook_exceptions.py`; `tools/check_trellis_placeholders.py`;
 `tools/check_copilot_instruction_contract.py`;

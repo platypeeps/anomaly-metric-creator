@@ -2312,7 +2312,7 @@ def _build_timestamp_arrays(
 ):
     """Pre-compute the shared per-run timestamp arrays (numpy + formatted str).
 
-    Built once per run and reused across all six components — they're identical
+    Built once per run and reused across every component — they're identical
     by construction, so re-computing them per component is pure waste.
     Row ``i`` is at ``start_time + i * interval`` seconds; row count is
     ``floor(total_seconds / interval)``. Strings are rendered at second
@@ -9122,7 +9122,7 @@ def main(argv=None):
         # Gauge stream normally appends after the anomaly-counter stream so both
         # passes share one log. In gauges-only mode (--otel-send gauges) there is no prior
         # signal pass, so the gauge stream starts a fresh log instead.
-        gauge_auth = auth_headers.get("metrics") if otel_active else None
+        gauge_auth = auth_headers.get("metrics")
         component_csv_paths = {
             c: args.output_dir / f"{c}.csv" for c in sorted(args.components)
         }
