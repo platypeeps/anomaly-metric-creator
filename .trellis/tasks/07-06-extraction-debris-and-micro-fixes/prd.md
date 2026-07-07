@@ -54,14 +54,44 @@ for their own tasks but wrong enough to mislead.
   every-tool-has-tests convention (measurement harness), so the exemption
   is recorded rather than rediscovered.
 
+### Added 2026-07-07 (review-ledger completion — items found by the same review that initially went untracked)
+
+- `pyproject.toml` `[tool.pytest.ini_options]`: add `--strict-markers` to
+  `addopts`. Both used markers (`full_resolution`, `heavy`) are already
+  registered, so today a typo'd marker name only warns; strict mode makes
+  it fail. Validate with a full collection pass (`pytest --collect-only`)
+  in the PR.
+- Tighten the residual bare-substring flag assertions to anchored/token
+  matching per the repo's own checklist rule
+  ([tests/test_cli.py:79](tests/test_cli.py:79) `"--help-all" in out`;
+  [tests/test_args.py:676](tests/test_args.py:676)-680 five flag names
+  substring-matched against the preflight error;
+  [tests/test_scenarios.py:1620](tests/test_scenarios.py:1620)/:1643/:1666
+  flags in WARNING lines). Do NOT touch
+  tests/test_server.py:2039/:2041/:2692 — those are exact-token-safe
+  (`in` on an argv *list*).
+- `.github/workflows/ci.yml` classifier job: drop the declared-but-unused
+  job outputs (`changed_count`, `python_changed`,
+  `review_tooling_changed` at ci.yml:26/:31-32 — only
+  `dependency_changed`/`workflow_changed`/`lightweight_only`/
+  `app_required`/`full_ci_requested` are consumed downstream). The
+  underlying `emit_output` calls in `scripts/classify-ci-changes.sh` stay
+  (the CI contract lint anchors `emit_output "python_changed"` in the
+  *script*, not the workflow outputs block) — run
+  `tools/check_ci_review_contract.py` in the PR to confirm.
+
 ## Acceptance Criteria
 
 - [ ] All listed items fixed in one PR; full suite green.
 - [ ] No golden-hash changes (generator-side edits are comment/docstring/
       dead-condition only).
-- [ ] `pytest --collect-only` emits zero warnings.
+- [ ] `pytest --collect-only` emits zero warnings and passes under
+      `--strict-markers`.
 - [ ] `check_amc_module_load.py` exits 2 on an unreadable path (unit
       test added).
+- [ ] Flag-presence assertions in the three listed test files use
+      anchored/token matching; `check_ci_review_contract.py` still exits 0
+      after the ci.yml outputs cleanup.
 
 ## Notes
 
