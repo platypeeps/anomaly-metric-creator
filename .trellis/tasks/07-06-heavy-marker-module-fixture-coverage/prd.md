@@ -61,12 +61,47 @@ pyproject.toml.
 
 ## Acceptance Criteria
 
-- [ ] No test that generates or consumes a 7-day full-resolution or N=3
+- [x] No test that generates or consumes a 7-day full-resolution or N=3
       full-resolution dataset collects into `-m "not heavy"`.
-- [ ] Locked 7-day gauges/schema SHA-256 assertions still pass (deriving
+- [x] Locked 7-day gauges/schema SHA-256 assertions still pass (deriving
       from the session dataset must not change bytes).
-- [ ] `pytest -m heavy` / `-m "not heavy"` still partition the suite.
-- [ ] Light-lane CI wall-clock does not regress (spot-check in the PR).
+- [x] `pytest -m heavy` / `-m "not heavy"` still partition the suite.
+- [x] Light-lane CI wall-clock does not regress (spot-check in the PR).
+
+## Resolution (2026-07-07)
+
+Two mechanisms, per the mechanism-fit of each fixture:
+
+- **`seven_day_gauges_run` now derives** from the session `seven_day_run`
+  dataset (hardlink per-component CSVs + `write_gauges_csv`) instead of
+  running a second full 7-day generation. `write_gauges_csv` is a pure
+  function of the CSV bytes, so `GAUGES_SEVEN_DAY_HASH` holds
+  byte-identically (verified: the 7-day gauge byte test passes). This both
+  removes a duplicate GB generation and makes the fixture heavy
+  transitively (it requests a `_HEAVY_SESSION_FIXTURES` member).
+- **`seven_day_schema_run` and `synthetic_n3_run` are classified via a new
+  `_HEAVY_MODULE_FIXTURES` registry** in conftest. Neither can derive
+  byte-compatibly: schema.json's `files` section is coupled to the exact
+  `--emit metrics,schema` selection (`seven_day_run` emits
+  `metrics,logs,traces`), and `synthetic_n3_run` overlays a synthetic
+  scenario via `registry_overlay`. `_item_is_heavy` now checks both sets.
+
+Verified: `--collect-only -m heavy` includes all three GB tests
+(`test_gauges_csv_byte_identical_default_seven_day`,
+`test_schema_byte_identical_default_seven_day`,
+`test_synthetic_pod0_spike_lifts_only_pod0_saturation`); `-m "not heavy"`
+contains none of them. Both locked 7-day hashes pass (94s serial). Light
+subset of the affected files: 76 passed, 12 deselected. `test_heavy_marker.py`
+extended with a `_HEAVY_MODULE_FIXTURES` non-empty guard, per-registry
+detection, and an explicit assertion that all three review-flagged fixtures
+classify heavy. pyproject `heavy` marker text and the conftest comment
+updated to the final rule.
+
+The related MEDIUM (1-day `one_day_gauges_run`/`one_day_schema_run` also
+regenerate rather than derive) is left as-is: the conftest contract keeps
+1-day full-resolution runs in the parallel set deliberately, so they are
+not a marker-escape — deriving them would be a pure cost optimization out
+of scope for this correctness fix.
 
 ## Notes
 

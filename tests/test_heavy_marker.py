@@ -14,7 +14,11 @@ stops marking anything, that step collects zero tests and pytest exits
 non-zero.
 """
 
-from conftest import _HEAVY_SESSION_FIXTURES, _item_is_heavy
+from conftest import (
+    _HEAVY_MODULE_FIXTURES,
+    _HEAVY_SESSION_FIXTURES,
+    _item_is_heavy,
+)
 
 
 def test_heavy_fixture_set_is_nonempty():
@@ -24,11 +28,29 @@ def test_heavy_fixture_set_is_nonempty():
     assert _HEAVY_SESSION_FIXTURES
 
 
+def test_heavy_module_fixture_set_is_nonempty():
+    # Same non-empty guard for the module-fixture registry: an empty set
+    # would silently stop classifying the regenerating GB-scale module
+    # fixtures as heavy.
+    assert _HEAVY_MODULE_FIXTURES
+
+
 def test_item_is_heavy_detects_each_declared_heavy_fixture():
-    for fixture_name in _HEAVY_SESSION_FIXTURES:
+    for fixture_name in _HEAVY_SESSION_FIXTURES | _HEAVY_MODULE_FIXTURES:
         assert _item_is_heavy(("amc", "tmp_path_factory", fixture_name)), (
             f"{fixture_name} is declared heavy but was not detected"
         )
+
+
+def test_item_is_heavy_detects_gb_scale_module_fixtures():
+    # The three GB-scale module fixtures the 07-06 review found escaping the
+    # marker must all classify heavy: two via the module registry, and
+    # seven_day_gauges_run transitively via its seven_day_run request.
+    assert _item_is_heavy(("amc", "tmp_path_factory", "seven_day_schema_run"))
+    assert _item_is_heavy(("amc", "tmp_path_factory", "synthetic_n3_run"))
+    assert _item_is_heavy(
+        ("amc", "seven_day_run", "tmp_path_factory", "seven_day_gauges_run")
+    )
 
 
 def test_item_is_heavy_false_for_light_fixtures():
