@@ -909,7 +909,13 @@ a failing exit code.
 
 ### Output files
 
-Written to `--output-dir` (default `iot_logs/`):
+Written to `--output-dir` (default `iot_logs/`). Every artifact is published
+**atomically**: the writer stages a sibling `<name>.tmp`, flushes and fsyncs,
+then `os.replace`s it onto the final path. A concurrent reader — notably the
+`amc serve` HTTP threads while `--continuous-generate` reruns the generator —
+therefore only ever sees a complete previous or complete new file, never a
+truncation or a half-written artifact. A crashed run may leave a `<name>.tmp`
+sibling behind; the next run sweeps it.
 
 - `authservice.csv`
 - `cacheservice.csv`

@@ -1,7 +1,8 @@
 # Topology graph (v1)
 
-The `TOPOLOGY` constant in `anomaly-metric-creator.py` declares the directed
-service-call graph alongside `COMPONENTS`. It is consulted by
+The `TOPOLOGY` constant in `src/anomaly_metric_creator/legacy.py` declares the
+directed service-call graph alongside `COMPONENTS` (the top-level
+`anomaly-metric-creator.py` is a re-export shim). It is consulted by
 realistic topology — the default since the phase 6 flag day and the
 only mode since phase 9 removed the `--topology-mode independent`
 contrast alias — to thread upstream load through downstream baselines

@@ -13,10 +13,14 @@ and the anomaly catalog live in [README.md](README.md). Read it first if you nee
 the script or understand the failure modes it injects.
 Small package facade modules (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) are import-stability points for focused surfaces,
-not parallel behavior copies. Most still re-export through `legacy.py`; the
-schema facade imports the focused schema/validator implementations after
-loading `legacy.py` for live registry wiring, so object identity with the
-historic `legacy.<name>` surface remains stable.
+not parallel behavior copies. Three now re-export from their extracted
+implementations (`combine.py`→`combine_impl.py`, `otel.py`→`otel_stream.py`,
+`schema.py`→`schema_impl.py`/`validate_impl.py`); `models.py` and
+`scenarios.py` still route through `legacy.py` because their dataclasses and
+registries have not been extracted yet. The schema facade imports the focused
+schema/validator implementations after loading `legacy.py` for live registry
+wiring, so object identity with the historic `legacy.<name>` surface remains
+stable.
 That split is now underway (the `07-02-legacy-monolith-decomposition` epic;
 boundaries and sequencing fixed in that task's `design.md`). Extraction
 pattern: code moves **verbatim** to a new module, `legacy.py` re-imports every
@@ -2021,9 +2025,13 @@ cases differently:
 
 ### Changing time range
 
-Modify `START` (datetime) to shift when the synthetic day begins. To generate more
-than one day, pass `--duration-days N` rather than editing the `SECONDS_PER_DAY`
-constant — it is fixed at 86,400 by design.
+Pass `--start-time ISO8601` to shift when the synthetic day begins (it
+overrides the module `START` default without a code edit; see
+`_parse_start_time_arg` and `README.md`). To generate more than one day, pass
+`--duration-days N` rather than editing the `SECONDS_PER_DAY` constant — it is
+fixed at 86,400 by design. Editing the `START` datetime constant still changes
+the built-in default for callers that omit `--start-time`, but the flag is the
+supported per-run lever.
 
 ### Adjusting anomaly timing
 

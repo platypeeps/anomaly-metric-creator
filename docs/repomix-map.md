@@ -434,11 +434,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       cross-layer-thinking-guide.md
       index.md
   tasks/
-    06-29-debug-ui-shell-extraction/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     06-29-helm-incident-command-coverage/
       check.jsonl
       implement.jsonl
@@ -484,27 +479,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-02-atomic-artifact-writes/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-audit-server-ops-rendering/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-ci-typecheck-and-coverage/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     07-02-config-generate-key-validation/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-decomp-artifacts/
       check.jsonl
       implement.jsonl
       prd.md
@@ -519,27 +494,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-02-decomp-combine-impl/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-decomp-gauges-csv-layout/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     07-02-decomp-generation-topology/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-decomp-otel-stream/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-decomp-timeutil-otlp/
       check.jsonl
       implement.jsonl
       prd.md
@@ -547,31 +502,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     07-02-legacy-monolith-decomposition/
       check.jsonl
       design.md
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-mcp-analysis-tools/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-mcp-eval-mode-hardening/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-mcp-facade-core/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-mcp-ops-tools-and-tracing/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-mcp-server-facade/
-      check.jsonl
       implement.jsonl
       prd.md
       task.json
@@ -590,11 +520,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-02-server-remote-bind-hardening/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     07-02-structured-logging-in-generator/
       check.jsonl
       implement.jsonl
@@ -605,12 +530,82 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-03-ci-cadence-churn-refinement/
+    07-05-port-ci-cadence-fix-cross-repo/
       check.jsonl
       implement.jsonl
       prd.md
       task.json
-    07-05-port-ci-cadence-fix-cross-repo/
+    07-06-ci-workflow-hardening/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-coverage-threshold-and-mypy-gating/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-docs-refresh-sweep/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-eval-mode-ground-truth-wall-completeness/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-eval-mode-symptom-log-artifact/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-extraction-debris-and-micro-fixes/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-heavy-marker-module-fixture-coverage/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-library-api-error-posture/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-long-form-merge-writer-dedupe/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-otel-stream-retry-unification/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-registry-callback-wiring-hardening/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-server-ops-decomposition/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-trellis-spec-server-era-backfill/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-uv-locked-ci-enforcement/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-06-validate-impl-split-and-cleanup/
       check.jsonl
       implement.jsonl
       prd.md
@@ -635,11 +630,96 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
       2026-07/
+        06-29-debug-ui-shell-extraction/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-atomic-artifact-writes/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-audit-server-ops-rendering/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-ci-typecheck-and-coverage/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-decomp-artifacts/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-decomp-combine-impl/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-decomp-gauges-csv-layout/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-decomp-otel-stream/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
         07-02-decomp-schema-validate/
           check.jsonl
           design.md
           implement.jsonl
           implement.md
+          prd.md
+          task.json
+        07-02-decomp-timeutil-otlp/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-mcp-analysis-tools/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-mcp-eval-mode-hardening/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-mcp-facade-core/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-mcp-ops-tools-and-tracing/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-mcp-server-facade/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-server-remote-bind-hardening/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-03-ci-cadence-churn-refinement/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-trellis-task-archive-sweep/
+          check.jsonl
+          implement.jsonl
           prd.md
           task.json
   workspace/
@@ -792,4 +872,5 @@ CHANGELOG.md
 CLAUDE.md
 pyproject.toml
 README.md
+SECURITY.md
 ```

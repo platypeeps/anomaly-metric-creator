@@ -1,12 +1,53 @@
 # Changelog
 
+This file captures notable user-facing changes. Between tagged releases the
+authoritative history is the GitHub release notes and the git commit log; the
+**Unreleased** section below is a best-effort summary of what has landed on
+`main` since the last release and is updated when notable behavior changes.
+
 ## Unreleased
 
 ### Added
 
-- Added `--start-time` so generated CSV timestamps and `schema.json` metadata
+- **Server mode (`amc serve`).** A stdlib HTTP server that turns a generated
+  run into an interactive incident simulator: a `kubectl`/Helm-compatible
+  Kubernetes REST facade for real clients, a `POST /v1/commands` command
+  simulator (deterministic stdout/stderr/exit codes, never shells out),
+  command-trace persistence (ring buffer + optional JSONL/SQLite), an inline
+  debug UI at `/debug`, and continuous regeneration (`--continuous-generate`).
+- **MCP endpoint (`POST /mcp`).** A stateless streamable-HTTP JSON-RPC layer
+  exposing a read-only tool registry over what the run produced, so `amc
+  serve` can be an evaluation target for AI incident-response agents.
+- **Evaluation mode (`--mcp-eval-mode`).** A ground-truth wall that hides
+  every rubric-bearing surface (the anomaly manifest, scenario registry, and
+  active-scenario identifiers) from an agent under evaluation.
+- **`trace-bundle` subcommand.** Offline `summary`/`search`/`unsupported`/
+  `export-csv` analysis of exported command-trace JSON without starting the
+  server.
+- **`--start-time`** so generated CSV timestamps and `schema.json` metadata
   can be anchored to a caller-provided whole-second UTC instant, while
   preserving the historical default start time when the flag is omitted.
+- **`SECURITY.md`** documenting the trust model, the remote-bind posture
+  (discouraged; not a supported production posture), and credential handling.
+
+### Changed
+
+- **Atomic artifact publication.** Every generated artifact is now staged as a
+  sibling `<name>.tmp` and `os.replace`d into place, so a concurrent reader
+  (notably the serve-mode HTTP threads under `--continuous-generate`) never
+  observes a partial file. Output bytes are unchanged.
+- **Remote-bind DoS hardening.** Defaults-on resource bounds for a reachable
+  `amc serve` bind — `--max-concurrent-requests` (64), `--max-sse-connections`
+  (16), `--socket-timeout-seconds` (30) — each disablable with `0`.
+- **Python support policy: latest stable CPython only.** `requires-python` is
+  now `>=3.14`; older interpreters are unsupported and untested.
+
+### Internal
+
+- The ~13k-line `legacy.py` monolith is being decomposed into focused modules
+  (`redaction`, `timeutil`, `otlp`, `csv_layout`, `gauges_impl`, `artifacts`,
+  `combine_impl`, `schema_impl`, `validate_impl`, `otel_stream`, …) with
+  byte-identical output — no behavior change.
 
 ## 0.3.0 - 2026-06-11
 

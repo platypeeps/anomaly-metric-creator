@@ -1,11 +1,22 @@
 # Application flow
 
-End-to-end execution of `main(argv=None)` in `anomaly-metric-creator.py`.
-The script has three top-level modes — the `combine DIR` subcommand
-(rebuild the unified CSV from existing per-component CSVs), the
-`validate DIR [--warn]` subcommand (load `DIR/schema.json` and run
-every validator against the artifacts on disk), and the default
-`generate` pipeline.
+End-to-end execution of `main(argv=None)` in
+`src/anomaly_metric_creator/legacy.py` (the top-level
+`anomaly-metric-creator.py` is a re-export shim). The script has five
+top-level modes, dispatched on the `argv[0]` subcommand token in `main()`
+before any argparse runs:
+
+- **`generate`** (the implicit default when no subcommand token is given) —
+  the synthetic-data pipeline detailed below.
+- **`combine DIR`** — rebuild `combined_metrics_unified.csv` from existing
+  per-component CSVs; never runs generation.
+- **`validate DIR [--warn]`** — load `DIR/schema.json` and run every
+  validator against the artifacts on disk.
+- **`serve [server flags] [generate flags…]`** — start the stdlib HTTP
+  server (Kubernetes/Helm simulator + MCP endpoint); see the serve-lifecycle
+  note below.
+- **`trace-bundle {summary,search,unsupported,export-csv} BUNDLE`** —
+  offline analysis of exported command-trace JSON; never starts the server.
 
 ```mermaid
 flowchart TD
@@ -20,6 +31,14 @@ flowchart TD
     validate -- "no violations" --> finish
     validate -- "violations + --warn" --> finish
     validate -- "violations (default)" --> failexit([exit 1])
+
+    mode -- "serve" --> serveparse["_main_serve_subcommand<br/>→ serve_main<br/>(server flags first, then generate flags)"]
+    serveparse --> serverun["generate once (--otel-send none appended)<br/>→ build SimulationState<br/>→ listen; --mcp-eval-mode walls the rubric;<br/>--continuous-generate reruns the generator<br/>(atomic publication so HTTP readers never<br/>see partial files)"]
+    serverun --> serveblock([runs until interrupted])
+
+    mode -- "trace-bundle SUB" --> tbparse["_main_trace_bundle_subcommand<br/>(offline; no HTTP server)"]
+    tbparse --> tbrun["summary / search / unsupported / export-csv<br/>over exported CommandTrace JSON"]
+    tbrun --> finish
 
     mode -- "default: generate<br/>(defaults: 50,000 rows<br/>at 60s interval ≈ 34.72 days,<br/>--drop-rate 0)" --> parse["parse_args<br/>(canonical surface: --emit,<br/>--otel-send, --otel-endpoint,<br/>--otel-auth-token; -h shows 5 groups,<br/>--help-all unhides _ADVANCED_DESTS)<br/>+ _reconcile_cli_surface<br/>(canonical flags → internal namespace<br/>via set_defaults + MEZMO_OTEL_* env vars)<br/>+ validation gates"]
     parse --> preclean["output_dir.mkdir<br/>+ _pre_clean_output_dir<br/>(stale artifacts removed per<br/>--emit / --components)"]
@@ -73,6 +92,22 @@ flowchart TD
   per-component cell, derivation, and row-count checks against the
   wide or long CSV layout based on the schema's per-component
   `dimensions` block.
+- **Serve lifecycle.** `amc serve` runs the normal generator once (with
+  `--otel-send none` appended so the listener is not blocked on OTEL),
+  builds a `SimulationState` from the parsed args + generated
+  `anomalies.csv` + `SCENARIOS` + the simulated clock, then listens. The
+  Kubernetes/Helm command API, the real-client REST facade, the MCP
+  endpoint (`POST /mcp`), and the debug UI are all read-only facades over
+  that state — never a second generation path. `--mcp-eval-mode` hides
+  every rubric-bearing surface and withholds active-scenario identifiers
+  (the eval ground-truth wall). `--continuous-generate` reruns the
+  generator on a daemon thread with incremented seeds; because every
+  artifact is published atomically (`<name>.tmp` staged + `os.replace`d),
+  the HTTP threads only ever read a complete previous or complete new file.
+- **Artifacts are published atomically.** Each writer stages a sibling
+  `<name>.tmp` and `os.replace`s it onto the final path, so a concurrent
+  reader never observes a truncated or half-written artifact. `*.tmp`
+  siblings left by a crashed run are swept on the next run.
 - Topology coupling and saturation (always on since the phase-9
   flag day removed `--topology-mode`) re-shape downstream `MetricSpec`
   baselines from upstream load columns captured during generation.
