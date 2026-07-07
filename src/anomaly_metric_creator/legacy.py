@@ -9134,7 +9134,7 @@ def main(argv=None):
             speedup=args.otel_stream_speedup,
             timeout_seconds=args.otel_stream_timeout_seconds,
             max_events=args.otel_stream_max_events,
-            max_retries=3,
+            # max_retries uses the shared _OTEL_DEFAULT_MAX_RETRIES default.
             auth_headers=gauge_auth,
             protocol=args.otel_stream_protocol,
             activity_log_path=args.otel_activity_log,
