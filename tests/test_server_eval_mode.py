@@ -57,6 +57,49 @@ def _post(base_url, path, payload, headers=None):
         return exc.code, exc.read()
 
 
+def _request(method, base_url, path, headers=None, data=None):
+    request = urllib.request.Request(
+        base_url + path,
+        data=data,
+        headers=headers or {},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+def _ops_surface_blob(base_url, pod_name):
+    """Serialize every investigation-open ops surface that renders scenario
+    data: the MCP `kubectl_get` tool (ConfigMap + pod rows), the
+    `/v1/commands` command API (helm values, exec env, configmap), and the
+    real Kubernetes REST facade (ConfigMap object). Returns one string for a
+    slug-presence sweep.
+    """
+    parts = []
+    for kind in ("configmaps", "pods"):
+        _s, body = _post(base_url, "/mcp", {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "kubectl_get", "arguments": {"kind": kind}},
+        })
+        parts.append(body.decode("utf-8"))
+    for command in (
+        "helm get values simulated-saas -n saas-prod",
+        f"kubectl exec {pod_name} -n saas-prod -- env",
+        "kubectl get configmap simulated-saas-config -n saas-prod -o yaml",
+    ):
+        _s, body = _post(base_url, "/v1/commands", {"command": command})
+        parts.append(body.decode("utf-8"))
+    _s, body = _get(
+        base_url,
+        "/api/v1/namespaces/saas-prod/configmaps/simulated-saas-config",
+    )
+    parts.append(body.decode("utf-8"))
+    return "\n".join(parts)
+
+
 _RUBRIC_PATHS = [
     "/", "/debug",
     "/v1/anomalies", "/v1/scenarios", "/v1/state",
@@ -188,6 +231,78 @@ def test_eval_mode_tool_surface_has_no_ground_truth_leak(amc, tmp_path):
     assert descriptions  # non-empty guard
     leaked = [d for d in descriptions if d and d in blob]
     assert not leaked, leaked
+
+
+def test_eval_mode_ops_surfaces_have_no_scenario_slug_leak(amc, tmp_path):
+    """Leak sweep over the ops surfaces (07-06 review): the ConfigMap
+    `SCENARIOS` key, pod `scenario_ids`, `kubectl exec ... env`, `helm get
+    values`, and the Helm release config all previously named the active
+    scenarios in eval mode. Drive each surface live and assert no active slug
+    survives, with a non-eval control proving the surfaces really carry the
+    data (so the eval assertion cannot pass vacuously).
+    """
+    eval_state = _build_state(amc, tmp_path / "eval", eval_mode=True)
+    active = set(eval_state.active_scenarios)
+    assert active  # non-empty guard: default medium run fires ~11 scenarios
+
+    httpd, base_url = server.start_test_server(eval_state)
+    try:
+        eval_blob = _ops_surface_blob(base_url, "authservice-0")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    leaked = sorted(slug for slug in active if slug in eval_blob)
+    assert not leaked, f"active scenario slugs leaked in eval mode: {leaked}"
+
+    # Positive control: the identical surfaces in non-eval mode DO carry the
+    # slugs, so the sweep exercises the real render paths.
+    plain_state = _build_state(amc, tmp_path / "plain", eval_mode=False)
+    httpd, base_url = server.start_test_server(plain_state)
+    try:
+        plain_blob = _ops_surface_blob(base_url, "authservice-0")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert any(slug in plain_blob for slug in active), (
+        "control failed: no active slug appeared on the ops surfaces in "
+        "non-eval mode, so the eval sweep proves nothing"
+    )
+
+
+def test_eval_mode_rubric_404_before_auth_every_method(amc, tmp_path):
+    """Fingerprint resistance across methods: with auth enabled, an
+    unauthenticated request to a rubric endpoint must 404 (route hidden),
+    never 401 (route exists, needs a token). The pre-fix `do_POST` and
+    `_handle_mutating_method` checked auth before the rubric gate, leaking
+    endpoint existence via 401. Non-eval control returns 401, proving auth is
+    genuinely on and the 404 is the wall, not a missing route.
+    """
+    security = server.ServerSecurityConfig(auth_token="secret-token")
+    rubric_path = "/v1/anomalies"  # rubric endpoint reachable by any method
+    methods = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+    eval_state = _build_state(amc, tmp_path / "eval", eval_mode=True)
+    httpd, base_url = server.start_test_server(eval_state, security=security)
+    try:
+        for method in methods:
+            status, _ = _request(method, base_url, rubric_path)
+            assert status == 404, f"{method} eval-mode rubric leaked {status}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    plain_state = _build_state(amc, tmp_path / "plain", eval_mode=False)
+    httpd, base_url = server.start_test_server(plain_state, security=security)
+    try:
+        for method in methods:
+            status, _ = _request(method, base_url, rubric_path)
+            assert status == 401, (
+                f"{method} non-eval control expected 401 auth challenge, "
+                f"got {status}"
+            )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_eval_mode_log_tools_refuse(amc, tmp_path):

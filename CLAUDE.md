@@ -243,6 +243,39 @@ also gets the `mcp` rate-limit bucket and JSON-RPC-shaped 401/413/429
 refusals (`rate_limited_response` / `body_too_large_response` /
 `sse_not_supported_response` in `server_mcp`).
 
+**Endpoint hiding is necessary but not sufficient — the investigation-open
+surfaces must also not name the rubric (task
+`07-06-eval-mode-ground-truth-wall-completeness`).** The active scenario
+*slugs* are as load-bearing as the manifest: an agent that reads
+`db_stall,cache_collapse` off any open surface has the answer key. The
+extended wall rule is **no active-scenario identifier on any surface an
+eval agent can reach — only observable symptoms**. Concretely, in eval mode
+`state.active_scenarios` is withheld from every investigation-open render
+path via the `_exposed_active_scenarios` / `_exposed_component_scenarios`
+helpers in `server_ops.py` (which return empty in eval mode, collapsing to
+a legitimate zero-scenario run rather than a marker, so the redaction is
+itself fingerprint-resistant): the `simulated-saas-config` ConfigMap
+`SCENARIOS` key, per-pod `scenario_ids` in `resource_snapshot()` (so the
+MCP `kubectl_get` tool, the `_k8s_configmap` REST object, and command-mode
+`kubectl get` all inherit it from the single snapshot), `kubectl exec … env`
+output, `helm get values`, and the Helm release `config.scenarios` payload.
+**The `/v1/commands` response echoes the `CommandTrace` (`{"trace": …}`),
+whose `active_scenarios` field would otherwise leak the full list on every
+command regardless of what was run** — `run_command` scrubs that field from
+the echo in eval mode while the *stored* trace keeps the real slugs (the
+walled `/v1/debug/*` + `/v1/debug/commands/export` surfaces are the
+harness's scoring data). Behavioral signals are deliberately **not** gated
+— unhealthy pods, profile-driven events, and the `ScenarioInfluenced`
+health status stay visible (`_component_scenarios` is the behavior helper;
+only the emit sites are wrapped), because the agent must still see the
+symptoms. The rubric-`404`-before-auth ordering holds for **every** method
+(`do_GET`, `do_POST`, and `_handle_mutating_method` for PUT/PATCH/DELETE):
+an unauthenticated request to a rubric endpoint returns `404`, never `401`,
+so eval mode cannot be fingerprinted by probing which paths challenge for a
+bearer token. `tests/test_server_eval_mode.py` pins the multi-surface leak
+sweep (with a non-eval positive control so it cannot pass vacuously) and the
+per-method ordering.
+
 Lifecycle:
 
 1. `_main_serve_subcommand()` imports `server.serve_main()` lazily and

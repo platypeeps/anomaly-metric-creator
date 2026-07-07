@@ -653,13 +653,17 @@ def make_handler(
             query = urllib.parse.parse_qs(parsed.query)
             path = parsed.path
             try:
+                if state.eval_mode and _rubric_endpoint(path):
+                    # Rubric 404 runs before auth and rate-limiting, matching
+                    # do_GET: an unauthenticated POST to a hidden endpoint must
+                    # 404, never 401, so eval mode cannot be fingerprinted by
+                    # probing which paths challenge for a bearer token.
+                    self._send_json(404, {"error": "not found"})
+                    return
                 if not self._is_authorized():
                     self._send_unauthorized(path)
                     return
                 if self._send_rate_limited(path):
-                    return
-                if state.eval_mode and _rubric_endpoint(path):
-                    self._send_json(404, {"error": "not found"})
                     return
                 if path == "/mcp":
                     self._send_mcp_post()
@@ -747,6 +751,12 @@ def make_handler(
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             query = urllib.parse.parse_qs(parsed.query)
+            if state.eval_mode and _rubric_endpoint(path):
+                # Same fingerprint-resistant ordering as do_GET/do_POST: a
+                # PUT/PATCH/DELETE to a hidden endpoint 404s before auth, so a
+                # rubric path is indistinguishable from a nonexistent one.
+                self._send_json(404, {"error": "not found"})
+                return
             if not self._is_authorized():
                 self._send_unauthorized(path)
                 return
