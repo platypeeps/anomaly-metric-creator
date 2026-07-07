@@ -16,21 +16,31 @@ that currently overstates coverage.
 
 ## Problem (concrete failure scenario)
 
+> **Location update (2026-07-06):** the decomposition epic moved these
+> symbols out of `legacy.py` (steps 1 and 7). Current locations are used
+> below; behavior re-verified unchanged on 2026-07-06 — the gap is still
+> present.
+
 `_http_error_activity_fields` at
-[legacy.py:9535](src/anomaly_metric_creator/legacy.py:9535) serializes **every**
+[otel_stream.py:70](src/anomaly_metric_creator/otel_stream.py:70) serializes **every**
 response header into the `response_headers` field of `otel-activity.log` on a
-4xx/5xx from an OTEL endpoint. Redaction runs through
-`_redact_sensitive_headers` ([legacy.py:9487](src/anomaly_metric_creator/legacy.py:9487)),
+4xx/5xx from an OTEL endpoint (serialization at
+[otel_stream.py:93](src/anomaly_metric_creator/otel_stream.py:93)). Redaction runs through
+`_redact_sensitive_headers` ([redaction.py:83](src/anomaly_metric_creator/redaction.py:83)),
 which only masks the five names in `_SENSITIVE_HEADER_NAMES`
-([legacy.py:9432](src/anomaly_metric_creator/legacy.py:9432)):
-`authorization`, `cookie`, `set-cookie`, `proxy-authorization`, `x-api-key`.
+([redaction.py:28](src/anomaly_metric_creator/redaction.py:28)):
+`authorization`, `cookie`, `set-cookie`, `proxy-authorization`, `x-api-key`
+(the non-allowlisted pass-through is the `else` branch at
+[redaction.py:101](src/anomaly_metric_creator/redaction.py:101)).
 
 **When** an upstream proxy/gateway echoes a credential in a nonstandard header
 — `X-Auth-Token`, `X-Amz-Security-Token`, `X-Session-Id`, `X-Subject-Token`
 (Keystone), `X-Vault-Token`, `Authentication-Info` — on an error response,
 **the value is written to disk verbatim.** The docstring at
-[legacy.py:9515](src/anomaly_metric_creator/legacy.py:9515) claims it prevents
-credential leakage generally; it only covers the five allowlisted names.
+[otel_stream.py:75](src/anomaly_metric_creator/otel_stream.py:75) claims it prevents
+credential leakage generally ("never leaks credential material into the
+on-disk log"), and [redaction.py:11](src/anomaly_metric_creator/redaction.py:11)
+repeats the framing; both only cover the five allowlisted names.
 
 ## Requirements
 
@@ -41,14 +51,16 @@ credential leakage generally; it only covers the five allowlisted names.
   `x-request-id`, `retry-after`, `cache-control`, `content-encoding`, etc.).
   A never-before-seen header defaults to masked.
 - Keep the schemed-header behavior (`_SCHEMED_SENSITIVE_HEADERS`,
-  [legacy.py:9444](src/anomaly_metric_creator/legacy.py:9444)) — preserve the
+  [redaction.py:40](src/anomaly_metric_creator/redaction.py:40)) — preserve the
   `Bearer`/`Basic` scheme prefix on `Authorization`/`Proxy-Authorization`.
 - Keep the request-side `_masked_headers`
-  ([legacy.py:9466](src/anomaly_metric_creator/legacy.py:9466)) in lockstep so
+  ([redaction.py:62](src/anomaly_metric_creator/redaction.py:62)) in lockstep so
   the two paths cannot drift (the file already documents this intent).
 - Correct the `_http_error_activity_fields` docstring
-  ([legacy.py:9515](src/anomaly_metric_creator/legacy.py:9515)) to describe the
-  actual guarantee.
+  ([otel_stream.py:75](src/anomaly_metric_creator/otel_stream.py:75)) AND the
+  `redaction.py` module docstring
+  ([redaction.py:11](src/anomaly_metric_creator/redaction.py:11)) to describe
+  the actual guarantee.
 - Do not change the `--otel-verbose`-gated `request_body` behavior — that is a
   separate, already-correct gate.
 - Consider whether the same posture should apply to the server-side request
@@ -72,7 +84,8 @@ credential leakage generally; it only covers the five allowlisted names.
 
 ## Notes
 
-- Low effort, contained to `legacy.py` + its tests.
+- Low effort, contained to `redaction.py` + `otel_stream.py` + their tests
+  (`legacy.py` only re-imports these names — no edits there).
 - The allowlist-of-safe list should be deliberately short and documented; when
   in doubt, mask. A false-mask costs a diagnostic; a false-pass costs a
   credential.

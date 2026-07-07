@@ -1,0 +1,85 @@
+# Refresh stale docs: application-flow, CHANGELOG decision, CLAUDE.md drift
+
+## Review context
+
+- **Source:** deep-dive documentation review, 2026-07-06.
+- **Confidence:** CONFIRMED (each stale claim verified against code).
+- **Severity:** MEDIUM–HIGH within the docs dimension: two docs are
+  substantively wrong/abandoned; the rest are point fixes.
+- **Category:** documentation.
+
+## Goal
+
+Fix the user-facing documentation drift found by the review: the two
+stale/abandoned docs (`docs/application-flow.md`, `CHANGELOG.md`) and the
+point inaccuracies in otherwise-current docs.
+
+## Problem (verified 2026-07-06)
+
+- **`docs/application-flow.md` documents 3 of 5 CLI modes** ("The script
+  has three top-level modes", :4-8) — it predates `serve` (PR #136,
+  landed five hours after the doc's last commit) and `trace-bundle`
+  (PR #140). Its entry-point claim (:3, "main() in
+  anomaly-metric-creator.py") is also wrong — dispatch lives at
+  [legacy.py:8770](src/anomaly_metric_creator/legacy.py:8770)-8779. The
+  doc omits server mode, continuous generation, MCP/eval, and atomic
+  publication entirely.
+- **`CHANGELOG.md` is abandoned:** last entry 2026-06-24; ~64 PRs merged
+  since (MCP, eval mode, atomic writes, hardening, the entire
+  decomposition); `version = "0.3.0"` in pyproject.toml; the live
+  "## Unreleased" heading advertises maintenance that is not happening.
+- **CLAUDE.md "Changing time range"** (:1969-1973) says edit `START` in
+  source — `--start-time` has existed since PR #138
+  ([legacy.py:7807](src/anomaly_metric_creator/legacy.py:7807);
+  README.md:271); CLAUDE.md never mentions the flag. Also the preamble
+  facade sentence ("Most still re-export through `legacy.py`") is now 2
+  of 5.
+- **AGENTS.md:50** claims legacy.py "~12,800 lines" (9,188 as of
+  2026-07-06); its key-files table predates all ten extractions.
+- **docs/topology.md:3** says `TOPOLOGY` lives in
+  `anomaly-metric-creator.py` (it is
+  [legacy.py:3076](src/anomaly_metric_creator/legacy.py:3076)); all other
+  topology.md facts verified accurate.
+- **docs/repomix-map.md** lists the archived `07-02-decomp-otel-stream`
+  task as active — one `scripts/update_repomix` run fixes it.
+- Minor: `.trellis/spec/amc/backend/api-cli-server.md` omits the
+  `--emit gauges` → `metrics` dependency (goes with the spec-backfill
+  task if that lands first).
+
+## Requirements
+
+- Rewrite `docs/application-flow.md`: five-mode dispatch (`generate`,
+  `combine`, `validate`, `serve`, `trace-bundle`), a serve-lifecycle lane
+  (generate-once → SimulationState → MCP/eval → continuous-generate +
+  atomic publication), corrected entry-point path.
+- **CHANGELOG decision (explicit):** either backfill a 0.4.0-shaped entry
+  covering the serve/MCP/eval/atomic/hardening era and wire changelog
+  updates into the finish-work flow, or replace the file with a short
+  "see git log / releases" pointer. A dangling "Unreleased" section is
+  the worst state. Align the pyproject `version` with the chosen story.
+- CLAUDE.md: replace the edit-`START` guidance with `--start-time`; fix
+  the facade summary sentence.
+- AGENTS.md: drop hardcoded line counts (they auto-stale during an active
+  decomposition); regenerate the key-files table or point at the repomix
+  map.
+- Fix the topology.md path claim; run `scripts/update_repomix`.
+
+## Acceptance Criteria
+
+- [ ] application-flow.md names all five modes and passes a fact
+      spot-check against `_SUBCOMMANDS` and the serve lifecycle.
+- [ ] CHANGELOG state is deliberate (backfilled or retired) and the
+      pyproject version matches it.
+- [ ] CLAUDE.md contains `--start-time` guidance, no edit-`START`
+      instruction, and an accurate facade sentence.
+- [ ] No doc claims `TOPOLOGY`/`main()` live in the shim file.
+- [ ] repomix map regenerated.
+
+## Notes
+
+- README "Significant changes" list (:29-77) is frozen at the 0.2/0.3 era
+  — refresh it here if the CHANGELOG decision is "retire" (the README
+  list becomes the only recency surface).
+- CLAUDE.md diet (shrinking per-feature sections to spec pointers) is a
+  candidate follow-on once `07-06-trellis-spec-server-era-backfill`
+  lands; out of scope here.

@@ -78,6 +78,21 @@ copies." This task is that future split.
 - [ ] CLAUDE.md's architecture/module section is updated in the same PR.
 - [ ] Import-time validation still fires exactly once, in the same order.
 
+## Status update (2026-07-06 review)
+
+- Steps 1–7 landed (PRs #178, #181, #183, #185, #198, #203): `redaction.py`,
+  `timeutil.py`+`otlp.py`, `csv_layout.py`+`gauges_impl.py`+`artifacts.py`,
+  `combine_impl.py`, `schema_impl.py`+`validate_impl.py`, `otel_stream.py`.
+  `legacy.py` is **9,188 lines** (from 12,992 at design time; the "~12,919"
+  above was an earlier measurement of the same pre-extraction state).
+- Steps 8–10 remain (`decomp-cli-args`, `decomp-catalog-data`,
+  `decomp-generation-topology`), plus the `scenarios_impl.py` scheduling
+  gap and the end-state decision now recorded in `design.md`'s Status
+  section.
+- Acceptance-criteria deviation to resolve: `validate_impl.py` shipped at
+  1,684 lines (> the 800-line cap this epic's own criteria require) — see
+  design.md Invariants note.
+
 ## Notes
 
 - **Epic — do not attempt in one session.** Break into per-module child tasks

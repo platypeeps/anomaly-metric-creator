@@ -104,7 +104,7 @@ jobs:
         if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install Socket CLI
         if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'

@@ -207,11 +207,11 @@ jobs:
           enable-cache: true
 
       - name: Sync dependencies (dev extra)
-        run: uv sync --extra dev --python 3.12
+        run: uv sync --extra dev --python 3.14
 
       - name: Smoke installed console scripts
         run: |
-          uv venv --python 3.12 .ci-package-smoke
+          uv venv --python 3.14 .ci-package-smoke
           uv pip install --python .ci-package-smoke/bin/python .
           .ci-package-smoke/bin/amc --help > /dev/null
           .ci-package-smoke/bin/anomaly-metric-creator --help > /dev/null
@@ -243,9 +243,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Tested version policy: py3.12 only (pyproject requires-python
-        # stays >=3.11 as the declared floor; 3.12 is the validated version).
-        python-version: ["3.12"]
+        # Tested version policy: latest stable CPython only (decided
+        # 2026-07-06). pyproject requires-python is >=3.14 — the floor and
+        # the validated version are the same; bump both together when a new
+        # stable CPython lands.
+        python-version: ["3.14"]
     # All events use the standard runner: the org's ubuntu-latest-m larger
     # runner stopped being served on 2026-07-04 (main-push jobs sat queued
     # for hours with runner_id=0, so the post-merge backstop never ran), and
@@ -307,9 +309,9 @@ jobs:
       # takes the source path (not the package name) because tests import
       # the implementation through conftest's module loader, and path-based
       # matching measures those files regardless of the module name they
-      # load under. COVERAGE_CORE=sysmon selects the py3.12 sys.monitoring
-      # backend, keeping tracing overhead low enough for the 45-minute job
-      # timeout.
+      # load under. COVERAGE_CORE=sysmon selects the sys.monitoring backend
+      # (available since py3.12), keeping tracing overhead low enough for
+      # the 45-minute job timeout.
       - name: Run test suite
         env:
           COVERAGE_CORE: sysmon

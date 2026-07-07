@@ -1,7 +1,7 @@
 # anomaly-metric-creator
 
 [![CI](https://github.com/platypeeps/anomaly-metric-creator/actions/workflows/ci.yml/badge.svg)](https://github.com/platypeeps/anomaly-metric-creator/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
 ![License: Proprietary](https://img.shields.io/badge/license-proprietary-red.svg)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
@@ -77,7 +77,8 @@ Recent significant additions to the generator:
 
 ## Install
 
-Requires Python 3.11+.
+Requires Python 3.14 (the project supports only the latest stable CPython;
+the floor moves forward when a new stable release lands).
 
 ```bash
 # Runtime install (uses the dependencies declared in pyproject.toml):

@@ -27,10 +27,11 @@
     "07-02-decomp-otel-stream",
     "07-02-decomp-cli-args",
     "07-02-decomp-catalog-data",
-    "07-02-decomp-generation-topology"
+    "07-02-decomp-generation-topology",
+    "07-06-validate-impl-split-and-cleanup"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Epic in progress: design.md fixed the boundaries; step 1 (redaction.py + package-aware test loaders) shipped in PR #178 with all locked golden hashes unchanged. Steps 2-10 are the nine 07-02-decomp-* child tasks, sequenced leaf-first; the RNG-critical generation/topology core is last. | FOLLOW-UP (cosmetic, from step 5 / PR #185): _EMIT_ARTIFACT_FILES now sits under the `# Combine step` section header in legacy.py after the combine writers moved to combine_impl.py \u2014 the header is misleading since the constant is a core emit registry, not combine-specific (a comment clarifies it stays). Relabel or move the constant above the header when a later decomp step (likely catalog-data) next reorganizes that region; too small for its own PR.",
+  "notes": "Epic in progress: design.md fixed the boundaries; step 1 (redaction.py + package-aware test loaders) shipped in PR #178 with all locked golden hashes unchanged. Steps 2-10 are the nine 07-02-decomp-* child tasks, sequenced leaf-first; the RNG-critical generation/topology core is last. | FOLLOW-UP (cosmetic, from step 5 / PR #185): _EMIT_ARTIFACT_FILES now sits under the `# Combine step` section header in legacy.py after the combine writers moved to combine_impl.py — the header is misleading since the constant is a core emit registry, not combine-specific (a comment clarifies it stays). Relabel or move the constant above the header when a later decomp step (likely catalog-data) next reorganizes that region; too small for its own PR.",
   "meta": {}
 }

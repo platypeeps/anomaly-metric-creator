@@ -3,7 +3,7 @@
   "name": "debug-ui-shell-extraction",
   "title": "Evaluate debug UI shell extraction",
   "description": "Consider extracting the inline debug UI shell from server.py only when it reduces maintenance risk and remains strongly covered by endpoint behavior tests.",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "amc",
@@ -11,7 +11,7 @@
   "creator": "sdelmas",
   "assignee": "sdelmas",
   "createdAt": "2026-06-29",
-  "completedAt": null,
+  "completedAt": "2026-07-06",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Closed 2026-07-06 as completed-by-prior-work: the shell extraction already shipped in commit 3dcd944 (PR #140, 2026-06-25), before this task was filed from the migrated backlog. server_debug_ui.py owns DEBUG_HTML; server.py re-exports it (server.py:28) and serves it (server.py:559); no inline HTML remains in server.py; facade-identity + content-marker coverage in tests/test_server.py:2624-2647. See prd.md Resolution section.",
   "meta": {}
 }

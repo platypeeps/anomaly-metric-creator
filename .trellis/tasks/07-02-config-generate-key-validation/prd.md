@@ -18,13 +18,15 @@ or mismapped.
 ## Problem (concrete failure scenario)
 
 `_load_serve_config` at
-[server.py:1043](src/anomaly_metric_creator/server.py:1043) validates the config
+[server.py:1293](src/anomaly_metric_creator/server.py:1293) validates the config
 file well: suffix check, `safe_load`, dict type-check, and an **allowlist** for
 top-level (`server`/`generate`) and for `server` keys
-(`unknown_server` at [server.py:1089](src/anomaly_metric_creator/server.py:1089)).
+(`unknown_server` at [server.py:1339](src/anomaly_metric_creator/server.py:1339)).
 But the `generate` map is only type-checked as a dict
-([server.py:1087](src/anomaly_metric_creator/server.py:1087)) and then handed to
-`_config_mapping_to_argv` for flag conversion.
+([server.py:1337](src/anomaly_metric_creator/server.py:1337)) and then handed to
+`_config_mapping_to_argv` ([server.py:1377](src/anomaly_metric_creator/server.py:1377))
+for flag conversion. *(Line refs re-verified 2026-07-06 — the gap is still
+present.)*
 
 **When** a user writes `generate: { componentss: [...] }` (typo) or any key that
 does not map to a real generate flag, **the mistake is not rejected at config
@@ -41,7 +43,7 @@ key that collides with nothing) is silently dropped.
   repo's single-source-of-truth rule).
 - Raise a `ValueError` naming the offending key(s) and the file, matching the
   existing `unknown_server` message shape
-  ([server.py:1090](src/anomaly_metric_creator/server.py:1090)).
+  ([server.py:1340](src/anomaly_metric_creator/server.py:1340)).
 - Preserve the existing precedence: explicit CLI flags still win over config
   values.
 - Do not reject valid generate keys (verify against the real

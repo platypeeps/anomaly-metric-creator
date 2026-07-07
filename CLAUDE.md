@@ -2378,8 +2378,11 @@ run in CI):
 
 - `.github/workflows/ci.yml` — a path-classified cadence keeps the stable
   aggregate branch-protection context `test` while selecting the cheapest
-  safe lane: lightweight readiness, quick test, or the full `test (py3.12)`
+  safe lane: lightweight readiness, quick test, or the full `test (py3.14)`
   matrix (the pytest suite plus the ruff-lockstep guard above, via `uv`).
+  The tested version policy is latest-stable-CPython-only (decided
+  2026-07-06): `requires-python` in `pyproject.toml` equals the single CI
+  matrix version; bump both together when a new stable CPython lands.
   The full matrix runs for opened/reopened/ready PRs, `full-ci`-labeled
   updates, auto-merge-armed PRs (the `auto_merge_enabled` event and every
   later push to an armed PR — auto-merge never lands on quick-lane
@@ -2432,8 +2435,8 @@ run in CI):
   pytest coverage (`--cov=src/anomaly_metric_creator`, `pytest-cov` in the
   `dev` extra). Coverage aggregates across the PR path's two partitioned
   steps via `--cov-append` so the reported percentage covers the whole
-  suite, and `COVERAGE_CORE=sysmon` keeps the py3.12 tracing overhead
-  inside the job timeout. Neither step gates merges yet: the mypy baseline
+  suite, and `COVERAGE_CORE=sysmon` (the sys.monitoring backend, py3.12+)
+  keeps the tracing overhead inside the job timeout. Neither step gates merges yet: the mypy baseline
   (~119 findings at introduction) and the coverage threshold decision are
   tracked in Trellis task `07-02-ci-typecheck-and-coverage`; tighten both
   as `07-02-legacy-monolith-decomposition` lands. `--cov` flags stay

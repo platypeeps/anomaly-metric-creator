@@ -18,14 +18,25 @@ mode keeps its current human-readable stderr UX.
 
 `generate_component` and the scenario-resolution pipeline emit warnings via
 `print(..., file=sys.stderr)` — e.g. the out-of-range anomaly-spec warning at
-[legacy.py:1344](src/anomaly_metric_creator/legacy.py:1344), the zero-match
-instance-filter warning, and the severity/duration drop warnings in
-`_resolve_scenarios`. Because `server.py` imports and calls this same module in
+[legacy.py:1337](src/anomaly_metric_creator/legacy.py:1337), the zero-match
+instance-filter warning at
+[legacy.py:1292](src/anomaly_metric_creator/legacy.py:1292), and the
+severity/duration drop warnings in `_resolve_scenarios`
+([legacy.py:7451](src/anomaly_metric_creator/legacy.py:7451) /
+[legacy.py:7458](src/anomaly_metric_creator/legacy.py:7458)). Because
+`server.py` imports and calls this same module in
 a background continuous-generation thread
-([server.py:1377](src/anomaly_metric_creator/server.py:1377)), these prints
+([server.py:1607](src/anomaly_metric_creator/server.py:1607)), these prints
 escape as unstructured text onto the server process's stderr, bypassing the
-`StructuredRequestLogger` ([server.py:59](src/anomaly_metric_creator/server.py:59))
+`StructuredRequestLogger` ([server.py:119](src/anomaly_metric_creator/server.py:119))
 and any log routing the operator configured.
+
+*Scope note (2026-07-06 re-verification):* src/ has **13** `file=sys.stderr`
+print sites and **zero** `logging` usage anywhere in the package. Generator
+side: 7 in `legacy.py` + 4 in `otel_stream.py` (the OTEL retry/FAIL
+notices at otel_stream.py:250/268/446/464 — decide whether they convert in
+this task or stay CLI-facing); the 2 in `server.py` (:1552/:1556) are
+serve-startup messages and out of scope here.
 
 ## Requirements
 
