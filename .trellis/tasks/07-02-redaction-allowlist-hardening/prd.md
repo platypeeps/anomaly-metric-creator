@@ -68,19 +68,57 @@ repeats the framing; both only cover the five allowlisted names.
 
 ## Acceptance criteria
 
-- [ ] A header with a novel name carrying a secret-shaped value is masked in
+- [x] A header with a novel name carrying a secret-shaped value is masked in
       `response_headers` (unit test with a synthetic `HTTPError` whose headers
       include e.g. `X-Amz-Security-Token`).
-- [ ] Known-safe operational headers still appear unmasked (so the diagnostic
+- [x] Known-safe operational headers still appear unmasked (so the diagnostic
       stays useful) — covered by the same test.
-- [ ] Existing redaction round-trip tests
+- [x] Existing redaction round-trip tests
       (`tests/test_redact_sensitive_headers.py`) and the live-HTTP-error tests
       (`test_otel_http_error_activity_log_includes_response_headers` in
       `tests/test_cli.py`, and the gauge variant in `tests/test_otel_gauges.py`)
       pass, updated for the new posture.
-- [ ] The `_http_error_activity_fields` docstring matches the implementation.
-- [ ] CLAUDE.md's redaction section (the `_SENSITIVE_HEADER_NAMES` paragraph) is
+- [x] The `_http_error_activity_fields` docstring matches the implementation.
+- [x] CLAUDE.md's redaction section (the `_SENSITIVE_HEADER_NAMES` paragraph) is
       updated to describe the mask-unless-known-safe posture.
+
+## Resolution (2026-07-07)
+
+`_redact_sensitive_headers` (response-side, untrusted upstream) flipped to
+**mask-unless-known-safe**: every value is masked except the short
+`_SAFE_RESPONSE_HEADER_NAMES` allowlist (content-type/length/encoding/
+language, cache-control, date, server, vary, age, retry-after, cf-ray,
+x-request-id). The `x-*` namespace is the riskiest (x-amz-security-token,
+x-vault-token live there), so only `x-request-id` is allowlisted from it.
+
+**Deliberate asymmetry decision:** the request-side `_masked_headers` stays
+**allowlist-of-sensitive** rather than converging to the response posture.
+The request path builds headers this process controls and only ever attaches
+`Authorization`; the OTEL request today sends just `Content-Type` +
+`Authorization`, so both postures produce identical request-side output — the
+asymmetry is correct threat modeling (trusted origin vs untrusted upstream)
+plus future-proofing, not drift. Both paths share `_mask_sensitive_value`
+(scheme-prefix preservation), and a new test
+(`test_masked_headers_request_side_keeps_allowlist_of_sensitive`) pins the
+asymmetry so the two cannot silently converge.
+
+**`_redact_query` decision (PRD asked to note it):** left as-is, out of
+scope. It redacts token-shaped *query parameters* on our own server's
+inbound request log — a different surface with well-known param names
+(component, timestamps), where mask-unless-known-safe would over-redact
+legitimate diagnostics with no credential-leak benefit. The untrusted-input
+concern that motivates mask-unless-known-safe is specific to *response*
+headers echoed by an upstream.
+
+Docstrings corrected: `redaction.py` module docstring,
+`_mask_sensitive_value`, both redactors, and
+`otel_stream._http_error_activity_fields`. Tests: 20 in
+`test_redact_sensitive_headers.py` (added novel-credential masking, safe-set
+canonical, request-side asymmetry, novel end-to-end) + the two live-HTTP-error
+integration tests updated for the new posture. 55 focused tests pass; ruff
+clean; mypy unchanged at the 137 baseline. Transport-only — no generator path,
+golden hashes unaffected. CLAUDE.md redaction section rewritten for the
+two-posture design.
 
 ## Notes
 

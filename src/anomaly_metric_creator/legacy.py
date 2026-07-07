@@ -8500,6 +8500,7 @@ from .otlp import (
 # ``state.legacy`` attribute lookups — is unchanged. New code should import
 # from ``anomaly_metric_creator.redaction`` directly.
 from .redaction import (
+    _SAFE_RESPONSE_HEADER_NAMES as _SAFE_RESPONSE_HEADER_NAMES,  # noqa: F401
     _SCHEMED_SENSITIVE_HEADERS as _SCHEMED_SENSITIVE_HEADERS,  # noqa: F401
     _SENSITIVE_HEADER_NAMES as _SENSITIVE_HEADER_NAMES,  # noqa: F401
     _mask_sensitive_value as _mask_sensitive_value,  # noqa: F401

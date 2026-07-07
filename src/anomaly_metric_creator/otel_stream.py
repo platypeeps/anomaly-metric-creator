@@ -74,9 +74,14 @@ def _http_error_activity_fields(
 
     Response header values are passed through
     ``_redact_sensitive_headers`` before they are serialized into the
-    ``response_headers`` field, so an upstream proxy that echoes
-    ``Set-Cookie`` / ``Authorization`` / ``X-Api-Key`` on a 4xx/5xx
-    response never leaks credential material into the on-disk log.
+    ``response_headers`` field. That redactor is **mask-unless-known-safe**:
+    every value is masked except a short allowlist of non-credential
+    operational headers, so an upstream proxy that echoes a credential on a
+    4xx/5xx — whether under a standard name (``Set-Cookie``,
+    ``Authorization``, ``X-Api-Key``) or a novel one (``X-Amz-Security-Token``,
+    ``X-Vault-Token``, ``Authentication-Info``) — never leaks credential
+    material into the on-disk log. Known-safe headers (``Content-Type``,
+    ``Date``, ``cf-ray``, …) stay legible so the diagnostic remains useful.
 
     ``response_headers`` and ``cf_ray`` are always-on diagnostics. The
     raw ``request_body`` is included only under ``verbose=True`` —

@@ -1,28 +1,29 @@
-"""Allowlist tests for ``_redact_sensitive_headers`` and the
-``_http_error_activity_fields`` integration introduced by PR #83.
+"""Redaction tests for ``_redact_sensitive_headers`` (response-side) and
+``_masked_headers`` (request-side), plus the ``_http_error_activity_fields``
+integration introduced by PR #83.
 
 Background: PR #83 widened OTLP HTTP-error diagnostics in
 ``_http_error_activity_fields`` to dump every response header into the
-activity log under the ``response_headers`` field. Cloudflare and other
-intermediaries can echo back ``Set-Cookie`` and ``Authorization`` (or
-report back which auth header the client sent), so the dump can leak
-session cookies or bearer/api-key material into the on-disk log.
-``_redact_sensitive_headers`` is the redaction shim that runs before
-``json.dumps(header_pairs, ...)`` and masks values for a fixed allowlist
-of sensitive header names (case-insensitive).
+activity log under the ``response_headers`` field. An untrusted upstream can
+echo a credential under **any** header name — standard (``Set-Cookie``,
+``Authorization``, ``X-Api-Key``) or novel (``X-Amz-Security-Token``,
+``X-Vault-Token``, ``Authentication-Info``).
 
-The canonical sensitive set is::
+The two redaction paths have **deliberately different postures**
+(task ``07-02-redaction-allowlist-hardening``):
 
-    Authorization
-    Cookie
-    Set-Cookie
-    Proxy-Authorization
-    X-Api-Key
+* ``_redact_sensitive_headers`` (response-side, untrusted upstream) is
+  **mask-unless-known-safe**: every value is masked except a short allowlist
+  of non-credential operational headers (``_SAFE_RESPONSE_HEADER_NAMES``), so
+  a novel credential header cannot leak.
+* ``_masked_headers`` (request-side, headers this process builds) stays
+  **allowlist-of-sensitive** (``_SENSITIVE_HEADER_NAMES``): we control the
+  outbound set and only ever attach ``Authorization``.
 
-These tests cover every case variant the matcher needs to recognize plus
-the round-trip through ``_http_error_activity_fields`` so a future
-refactor that breaks the redaction call site fails this suite, not a
-production log review.
+These tests pin both postures (so they cannot silently converge or drift),
+every case variant the matcher needs, and the round-trip through
+``_http_error_activity_fields`` so a future refactor that breaks a redaction
+call site fails this suite, not a production log review.
 """
 import http.client
 import io
@@ -47,6 +48,37 @@ def test_sensitive_header_names_is_canonical_lowercase_set(amc):
         "x-api-key",
     })
     assert amc._SENSITIVE_HEADER_NAMES == expected
+
+
+def test_safe_response_header_names_is_canonical_lowercase_set(amc):
+    """The response matcher compares ``name.lower() in
+    _SAFE_RESPONSE_HEADER_NAMES``, so the set must hold lowercased entries —
+    a mixed-case entry would silently mask a header meant to pass through."""
+    assert amc._SAFE_RESPONSE_HEADER_NAMES  # non-empty guard
+    assert all(
+        name == name.lower() for name in amc._SAFE_RESPONSE_HEADER_NAMES
+    ), amc._SAFE_RESPONSE_HEADER_NAMES
+    # The safe set must NOT overlap the request-side sensitive set — a name
+    # cannot be both a credential and safe-to-log.
+    assert not (amc._SAFE_RESPONSE_HEADER_NAMES & amc._SENSITIVE_HEADER_NAMES)
+
+
+def test_masked_headers_request_side_keeps_allowlist_of_sensitive(amc):
+    """Deliberate asymmetry pin: the request-side ``_masked_headers`` masks
+    only ``_SENSITIVE_HEADER_NAMES`` members (we build the outbound headers),
+    so a non-sensitive request header passes through even though the
+    response-side path would mask it. Masks ``Authorization`` with its scheme
+    preserved. If a refactor accidentally converges the two paths, this fails."""
+    masked = amc._masked_headers({
+        "Content-Type": "application/x-protobuf",
+        "Authorization": "Bearer outbound-secret",
+        "User-Agent": "amc/otel-stream",
+    })
+    assert masked["Content-Type"] == "application/x-protobuf"
+    assert masked["Authorization"] == "Bearer ***"
+    # User-Agent is not sensitive on the request side (we set it), so it is
+    # surfaced verbatim — unlike the mask-unless-known-safe response path.
+    assert masked["User-Agent"] == "amc/otel-stream"
 
 
 # ---------------------------------------------------------------------------
@@ -130,19 +162,43 @@ def test_redact_sensitive_headers_case_insensitive_matching(amc):
         )
 
 
-def test_redact_sensitive_headers_passes_through_non_sensitive(amc):
-    """Headers outside the allowlist are surfaced verbatim — diagnostics
-    like CF-Ray, X-Debug-Header, Content-Type, and Server are part of
-    the value of the failure log."""
+def test_redact_sensitive_headers_passes_through_known_safe(amc):
+    """Known-safe operational headers are surfaced verbatim — they carry no
+    credential and their value is part of what makes the failure log useful."""
     pairs = [
         ("CF-Ray", "abc123-DFW"),
-        ("X-Debug-Header", "visible"),
         ("Content-Type", "application/json"),
         ("Server", "cloudflare"),
         ("X-Request-Id", "req-42"),
+        ("Date", "Mon, 01 Jun 2026 11:00:00 GMT"),
+        ("Cache-Control", "no-store"),
+        ("Retry-After", "120"),
     ]
     redacted = amc._redact_sensitive_headers(pairs)
     assert redacted == pairs
+
+
+def test_redact_sensitive_headers_masks_novel_credential_header(amc):
+    """Mask-unless-known-safe: a header outside the safe allowlist is masked
+    even though it is NOT in the request-side sensitive set. This is the core
+    fix — an untrusted upstream that echoes a credential under a nonstandard
+    name (``X-Amz-Security-Token``, ``X-Vault-Token``, ``X-Subject-Token``,
+    ``X-Session-Id``, ``Authentication-Info``) must not leak it to disk."""
+    novel = [
+        "X-Amz-Security-Token",
+        "X-Vault-Token",
+        "X-Subject-Token",
+        "X-Session-Id",
+        "X-Auth-Token",
+        "Authentication-Info",
+    ]
+    assert novel  # non-empty guard
+    for name in novel:
+        redacted = amc._redact_sensitive_headers([(name, "super-secret-value")])
+        assert redacted == [(name, "***")], (
+            f"{name} carried a secret-shaped value and must be masked under "
+            f"the mask-unless-known-safe posture; got {redacted!r}"
+        )
 
 
 def test_redact_sensitive_headers_redacts_each_duplicate_set_cookie(amc):
@@ -153,13 +209,13 @@ def test_redact_sensitive_headers_redacts_each_duplicate_set_cookie(amc):
     pairs = [
         ("Set-Cookie", "session=abc; Path=/"),
         ("Set-Cookie", "csrftoken=xyz; Path=/; Secure"),
-        ("X-Debug-Header", "kept"),
+        ("Content-Type", "text/html"),
     ]
     redacted = amc._redact_sensitive_headers(pairs)
     assert redacted == [
         ("Set-Cookie", "***"),
         ("Set-Cookie", "***"),
-        ("X-Debug-Header", "kept"),
+        ("Content-Type", "text/html"),
     ]
 
 
@@ -234,7 +290,10 @@ def test_http_error_activity_fields_redacts_response_headers(amc):
     headers = json.loads(fields["response_headers"])
     headers_map = {name: value for name, value in headers}
     assert headers_map["CF-Ray"] == "real-ray-001"
-    assert headers_map["X-Debug-Header"] == "kept"
+    # X-Debug-Header is not in the known-safe allowlist, so under the
+    # mask-unless-known-safe posture it is masked (it could carry a
+    # credential from an untrusted upstream).
+    assert headers_map["X-Debug-Header"] == "***"
     assert headers_map["Set-Cookie"] == "***"
     assert headers_map["Cookie"] == "***"
     assert headers_map["X-Api-Key"] == "***"
@@ -243,6 +302,28 @@ def test_http_error_activity_fields_redacts_response_headers(amc):
     # cf_ray field is sourced from the headers separately; verify it
     # still reads the CF-Ray value and is unaffected by redaction.
     assert fields["cf_ray"] == "real-ray-001"
+
+
+def test_http_error_activity_fields_masks_novel_credential_header(amc):
+    """End-to-end mask-unless-known-safe: a 401 whose upstream echoes a
+    credential under a nonstandard header (``X-Amz-Security-Token``) must
+    mask it in the ``response_headers`` payload while known-safe operational
+    headers survive. This is the on-disk contract the fix protects."""
+    exc = _build_http_error(
+        401,
+        [
+            ("Content-Type", "application/json"),
+            ("Date", "Mon, 01 Jun 2026 11:00:00 GMT"),
+            ("X-Amz-Security-Token", "FQoGZXIvYXdzE-super-secret-sts-token"),
+            ("X-Vault-Token", "hvs.CAESIJ-secret"),
+        ],
+    )
+    fields = amc._http_error_activity_fields(exc, body=b"{}", content_type="application/json")
+    headers_map = dict(json.loads(fields["response_headers"]))
+    assert headers_map["Content-Type"] == "application/json"
+    assert headers_map["Date"] == "Mon, 01 Jun 2026 11:00:00 GMT"
+    assert headers_map["X-Amz-Security-Token"] == "***"
+    assert headers_map["X-Vault-Token"] == "***"
 
 
 def test_http_error_activity_fields_redacts_case_variant_response_headers(amc):
