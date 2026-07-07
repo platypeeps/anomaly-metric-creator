@@ -61,6 +61,24 @@ endpoints and Kubernetes `Status` with `reason: TooManyRequests` for API
 endpoints. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
+Because the server is a `ThreadingHTTPServer` spawning one worker per
+connection, a reachable (especially non-loopback) bind is hardened by three
+defaults-on resource bounds, each disablable with `0`: a concurrent
+worker-thread cap (`--max-concurrent-requests`, default 64) enforced by a
+`BoundedSemaphore` acquired before the worker thread starts (an over-cap
+connection gets a raw `503` and is closed, never spawning a thread); a
+concurrent-SSE ceiling (`--max-sse-connections`, default 16) gating the two
+long-lived streams (`/v1/debug/events`, `/v1/logs/stream`) with a JSON `503`
+before any event-stream headers; and a per-request socket timeout
+(`--socket-timeout-seconds`, default 30) applied in the handler's `setup()` so
+a slow-loris client cannot pin a worker. The rate limiter also sweeps idle
+per-client buckets each window so the limiter's own table stays bounded on a
+public bind. These bounds harden the surface behind the auth gate but do not
+make an unauthenticated remote bind a supported posture — see `SECURITY.md` for
+the trust boundary and the remote-bind decision. Sources: `README.md`;
+`CLAUDE.md`; `SECURITY.md`; `src/anomaly_metric_creator/server.py`;
+`tests/test_server_hardening.py`; `tests/test_server.py`.
+
 `--cors-allow-origin` is the only CORS enablement path. Preflight requests are
 answered without bearer auth, and normal responses include access-control
 headers only for the configured origin or `*`. Sources: `README.md`;

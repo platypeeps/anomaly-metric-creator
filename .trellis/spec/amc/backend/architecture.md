@@ -50,11 +50,18 @@ parallel maps. Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 ## Module Boundaries
 
 Keep generation and registries in `legacy.py` unless a focused extraction
-preserves the same public surface through facades. Schema writing now lives in
-`schema_impl.py`, schema read-back/output validation now lives in
-`validate_impl.py`, and OTEL HTTP streaming now lives in `otel_stream.py`; these
-modules are re-imported by `legacy.py`, and their package facades preserve
-historic object identity. When an extracted module must read a registry that
+preserves the same public surface through facades. Ten focused modules have
+been extracted so far (decomposition epic `07-02-legacy-monolith-decomposition`,
+steps 1–7): `redaction.py` (sensitive HTTP-header masking), `timeutil.py`
+(CSV-timestamp parsing / unix-nano conversion), `otlp.py` (the `_build_otlp_*`
+JSON/protobuf payload builders), `csv_layout.py` (shared per-component CSV
+scan/iteration primitives + `_INSTANCE_DIMENSION_COLUMNS`), `gauges_impl.py`
+(`write_gauges_csv`), `artifacts.py` (atomic-publication helpers),
+`combine_impl.py` (wide + long-form combine writers), `schema_impl.py`
+(schema.json writers), `validate_impl.py` (schema read-back / output
+validation), and `otel_stream.py` (OTEL HTTP streaming). All are re-imported by
+`legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
+`scenarios.py`, `schema.py`) preserve historic object identity. When an extracted module must read a registry that
 still lives in `legacy.py`, configure live callbacks from `legacy.py` rather
 than importing `legacy.py` from the extracted module or copying a registry
 snapshot; this preserves monkeypatch-sensitive tests while keeping dependency
@@ -70,16 +77,23 @@ behavior belongs in focused modules: `server_ops.py` for simulation state,
 commands, Kubernetes objects, and Helm Secret encoding; `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
-`server_debug_ui.py` for inline HTML/CSS/JS; `server_commands.py`,
-`server_kubernetes.py`, and `server_helm.py` for focused facades. Sources:
+`server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP
+(Model Context Protocol) facade served at `POST /mcp` (stateless JSON-RPC
+plus the read-only tool registry and the eval-mode ground-truth wall);
+`server_commands.py`, `server_kubernetes.py`, and `server_helm.py` for focused
+facades. `server.py` only routes the MCP request body; protocol behavior and
+the import-time-validated `MCP_TOOLS` registry live in `server_mcp.py`.
+Sources:
 `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
+`src/anomaly_metric_creator/server_mcp.py`;
 `src/anomaly_metric_creator/server_commands.py`;
 `src/anomaly_metric_creator/server_kubernetes.py`;
-`src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.
+`src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`;
+`tests/test_server_mcp.py`; `tests/test_server_eval_mode.py`.
 
 Offline trace-bundle analysis belongs in `trace_bundle.py` and should import
 search/unsupported helpers from `server_traces.py`, not from the HTTP facade, so

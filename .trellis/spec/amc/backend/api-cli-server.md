@@ -27,8 +27,9 @@ generation flags to the normal parser. Sources: `CLAUDE.md`; `README.md`;
 `tests/test_cli_surface.py`; `tests/test_trace_bundle.py`.
 
 The canonical artifact flag is `--emit` with tokens `metrics`, `logs`,
-`traces`, `gauges`, `schema`, and `combined`. `combined` requires `metrics`,
-and `schema` has no artifact dependency. Sources: `README.md`; `CLAUDE.md`;
+`traces`, `gauges`, `schema`, and `combined`. `combined` **and** `gauges` each
+require `metrics` (the parser rejects the combination otherwise); `schema` has
+no artifact dependency. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_emit_selection_hygiene.py`;
 `tests/test_cli_surface.py`.
 
@@ -61,6 +62,20 @@ for artifacts/components that this run will not regenerate while leaving
 unknown user files alone. Sources: `CLAUDE.md`; `README.md`;
 `docs/application-flow.md`; `src/anomaly_metric_creator/legacy.py`;
 `tests/test_emit_selection_hygiene.py`; `tests/test_reporting_artifacts.py`.
+
+Every generated artifact is published **atomically**: a writer stages a
+sibling `<name>.tmp` in `--output-dir`, flushes + fsyncs, then `os.replace`s
+onto the final path, so a concurrent reader (notably the `amc serve` HTTP
+threads while `--continuous-generate` reruns the generator) only ever observes
+the complete previous or complete new file. New artifact writers must route
+through `_atomic_artifact_open` / `_atomic_write_text` (in `artifacts.py`),
+never `open(final_path, "w")`, and their filename must reach the registries
+`_known_artifact_filenames()` reads so stale `*.tmp` siblings are swept. Files
+this run will regenerate are therefore not deleted by pre-clean (true deletion
+is reserved for files the run will not emit). `./otel-activity.log` is exempt:
+it lives outside `--output-dir` and appends within a run. Sources: `CLAUDE.md`;
+`src/anomaly_metric_creator/artifacts.py`;
+`src/anomaly_metric_creator/legacy.py`; `tests/test_atomic_writes.py`.
 
 `schema.json` is opt-in via `--emit schema`, uses `schema_version`, run
 metadata, declared files, component metric metadata, optional dimension blocks,
@@ -111,6 +126,49 @@ visible in debug search and backlog views. Sources: `CLAUDE.md`; `README.md`;
 `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
+
+## MCP Facade and Eval Mode
+
+`amc serve` exposes an MCP (Model Context Protocol) endpoint at `POST /mcp`: a
+stateless streamable-HTTP JSON-RPC layer (`initialize`, `tools/list`,
+`tools/call`, `ping`; notifications get 202, `GET /mcp` gets a 405 JSON-RPC
+refusal) plus a read-only tool registry (`MCP_TOOLS`). Protocol behavior, error
+codes, and the import-time-validated registry live in `server_mcp.py`;
+`server.py` only routes the request body. Every `tools/call` is recorded as a
+`CommandTrace` under command family `mcp`, so unknown-tool and schema-invalid
+calls accumulate in `/v1/debug/unsupported` like kubectl misfires. Tools answer
+only from what the run already produced (the simulated clock, resolved specs,
+serialized topology, the per-component CSVs, and `metric_report.log`) and are
+subject to the **ground-truth wall**: no MCP tool may read `anomalies.csv` or
+the `SCENARIOS` registry, because the MCP surface is what an AI agent under
+evaluation sees while the anomaly manifest is the eval harness's scoring
+rubric. When adding a tool, extend `MCP_TOOLS`, keep it inside the wall, and add
+coverage in `tests/test_server_mcp.py`. Sources: `CLAUDE.md`; `README.md`;
+`src/anomaly_metric_creator/server_mcp.py`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server_mcp.py`.
+
+`amc serve --mcp-eval-mode` is a stricter posture: the run's active scenarios
+and anomaly manifest are the scoring rubric, so eval mode hides every
+rubric-bearing surface. `SimulationState.eval_mode` is the single source of
+truth. Route classification lives in one registry in `server.py`
+(`_RUBRIC_ENDPOINT_EXACT` + `_RUBRIC_ENDPOINT_PREFIXES`, judged by
+`_rubric_endpoint`): the hidden surfaces are `/v1/anomalies`, `/v1/scenarios`,
+`/v1/state`, `/v1/logs/stream`, the whole `/v1/debug` prefix, and the `/` +
+`/debug` console shell; a rubric endpoint returns `404` (chosen over `403` for
+fingerprint-resistance) **before auth for every HTTP method**.
+`test_every_dispatched_route_is_classified` fails if any dispatched route is
+left unclassified, so a new endpoint must be placed in the rubric or
+investigation registry, never left to default open. Beyond endpoint hiding, no
+active-scenario identifier may appear on any investigation-open surface — the
+`get_logs`/`deduplicate_logs` MCP tools refuse in eval mode (because
+`metric_report.log` is a verbatim manifest rendering), and the active scenario
+slugs are withheld from the ConfigMap `SCENARIOS` key, pod `scenario_ids`,
+`kubectl exec … env`, `helm get values`, the Helm release payload, and the
+`/v1/commands` trace echo. Sources: `CLAUDE.md`; `README.md`;
+`src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_mcp.py`;
+`tests/test_server_eval_mode.py`.
 
 ## HTTP, Kubernetes, and Helm API
 
