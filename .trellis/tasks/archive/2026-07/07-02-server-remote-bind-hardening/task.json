@@ -11,7 +11,7 @@
   "creator": "sdelmas",
   "assignee": "sdelmas",
   "createdAt": "2026-07-02",
-  "completedAt": "2026-07-03",
+  "completedAt": "2026-07-06",
   "branch": "fix/server-remote-bind-hardening",
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Scoped as: lab tool, remote is not a supported posture but the two confirmed resource bugs are fixed regardless. _BoundedThreadingHTTPServer caps worker threads (raw 503 before thread spawn) and SSE streams (JSON 503 via _with_sse_slot); handler.timeout guards slow-loris; _RateLimiter._sweep_locked evicts idle buckets. Three defaults-on flags (--max-concurrent-requests 64, --max-sse-connections 16, --socket-timeout-seconds 30), each disablable with 0. Startup remote-bind warning reviewed: still accurate (it flags the auth gap, orthogonal to the new resource bounds) \u2014 left as-is. Full trust-boundary write-up remains the separate 07-02-security-md-and-threat-model task, which this PRD gates on.",
+  "notes": "Scoped as: lab tool, remote is not a supported posture but the two confirmed resource bugs are fixed regardless. _BoundedThreadingHTTPServer caps worker threads (raw 503 before thread spawn) and SSE streams (JSON 503 via _with_sse_slot); handler.timeout guards slow-loris; _RateLimiter._sweep_locked evicts idle buckets. Three defaults-on flags (--max-concurrent-requests 64, --max-sse-connections 16, --socket-timeout-seconds 30), each disablable with 0. Startup remote-bind warning reviewed: still accurate (it flags the auth gap, orthogonal to the new resource bounds) — left as-is. Full trust-boundary write-up remains the separate 07-02-security-md-and-threat-model task, which this PRD gates on.",
   "meta": {}
 }
