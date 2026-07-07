@@ -63,6 +63,15 @@ point inaccuracies in otherwise-current docs.
   decomposition); regenerate the key-files table or point at the repomix
   map.
 - Fix the topology.md path claim; run `scripts/update_repomix`.
+- *(Added 2026-07-07, review-ledger completion)* README: document the
+  atomic-publication contract in the output-files section — artifacts are
+  staged as `<name>.tmp` siblings and `os.replace`d into place, so
+  concurrent readers (notably `amc serve` under `--continuous-generate`)
+  never observe partial files, and a crashed run may leave `*.tmp`
+  siblings that the next run sweeps. README's only current "atomic" hit
+  is Helm's `--atomic` flag (README.md:522); the contract itself is
+  documented in CLAUDE.md and `tests/test_atomic_writes.py` but invisible
+  to README-only users.
 
 ## Acceptance Criteria
 
@@ -73,6 +82,8 @@ point inaccuracies in otherwise-current docs.
 - [ ] CLAUDE.md contains `--start-time` guidance, no edit-`START`
       instruction, and an accurate facade sentence.
 - [ ] No doc claims `TOPOLOGY`/`main()` live in the shim file.
+- [ ] README describes the atomic-publication contract (`.tmp` staging +
+      replace; serve-mode readers never see partial artifacts).
 - [ ] repomix map regenerated.
 
 ## Notes

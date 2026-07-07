@@ -36,6 +36,24 @@ label with two different lifetimes.
    to the quick lane) but persistent in codeql.yml (re-analyzes every
    push while labeled). Each behavior is separately documented, but one
    label carrying two semantics is a trap.
+5. **`.opencode/package.json` is Dependabot-managed but classified as
+   review tooling** *(added 2026-07-07, review-ledger completion)*: the
+   `npm` ecosystem in `dependabot.yml` manages it, but
+   `scripts/classify-ci-changes.sh` routes `.opencode/*` to the
+   review-tooling → lightweight lane and leaves `dependency_changed`
+   false, so an npm bump there skips both the full test matrix on
+   synchronize and socket's dependency re-scan gate. Mitigations already
+   in place (socket scans at `opened`; auto-merge forces the full matrix
+   on the armed head) make this small — either classify the path (or
+   `**/package.json`) as a dependency change, or record the accepted
+   risk in the classifier comments.
+6. **`src/` has no CI lint coverage beyond report-only mypy** *(added
+   2026-07-07)*: CI runs `ruff check tests/` only (repo-wide rule set is
+   F401), and the F841 pre-commit hook scoped to src/tools/hooks never
+   runs in CI (local hooks are explicitly not a CI gate in this repo).
+   Decide the CI-enforced rule set for `src/` (at minimum mirror the
+   pre-commit F401/F841 scopes in the quick + full lanes) and wire it in,
+   or record why src-side lint stays local-only.
 
 ## Requirements
 
@@ -62,6 +80,11 @@ label with two different lifetimes.
 - [ ] The PR-body scope step provably enforces (test or lint anchor) or
       is removed everywhere it is claimed.
 - [ ] One documented `full-ci` lifetime, contract-lint-pinned.
+- [ ] An `.opencode/package.json` bump routes to the dependency lane (or
+      the accepted risk is recorded in the classifier), covered by
+      `tests/test_ci_change_classifier.py`.
+- [ ] The `src/` CI lint decision is implemented or recorded; if
+      implemented, the quick and full lanes run it.
 - [ ] `check_ci_review_contract.py` and its tests updated for any anchors
       this task adds; existing anchors untouched.
 
