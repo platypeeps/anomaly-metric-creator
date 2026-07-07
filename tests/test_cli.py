@@ -1124,13 +1124,13 @@ def test_otel_http_error_activity_log_includes_response_headers(
     """HTTP receiver failures log response headers — and, only under
     ``verbose=True``, the request payload — including CF-Ray.
 
-    The sensitive ``Set-Cookie`` and ``Authorization`` headers that
-    Cloudflare-style intermediaries can echo on a 4xx response must be
-    masked before they reach the on-disk activity log; the
-    ``CF-Ray`` / ``X-Debug-Header`` diagnostic pair survives so the
-    failure record stays useful. The raw ``request_body`` follows the
-    ``--otel-verbose`` contract: present in verbose failure records,
-    absent otherwise.
+    Under the mask-unless-known-safe response posture, a credential an
+    intermediary echoes on a 4xx (``Set-Cookie``, ``Authorization``,
+    ``X-Api-Key``) is masked before it reaches the on-disk activity log, and
+    so is any header outside the known-safe allowlist (``X-Debug-Header``).
+    The known-safe ``CF-Ray`` survives so the failure record stays useful.
+    The raw ``request_body`` follows the ``--otel-verbose`` contract: present
+    in verbose failure records, absent otherwise.
     """
     class _Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
@@ -1193,7 +1193,11 @@ def test_otel_http_error_activity_log_includes_response_headers(
     log_text = log_target.read_text()
     response_headers = json.loads(kv["response_headers"])
     assert ["CF-Ray", "test-ray-123"] in response_headers
-    assert ["X-Debug-Header", "visible"] in response_headers
+    # X-Debug-Header is not in the known-safe allowlist, so it is masked
+    # under the mask-unless-known-safe posture (an untrusted upstream could
+    # echo a credential under any nonstandard name).
+    assert ["X-Debug-Header", "***"] in response_headers
+    assert "X-Debug-Header: visible" not in log_text
     # Sensitive headers must reach the activity log only in their
     # redacted form. Asserting both the (name, "***") pair is present
     # AND the plaintext value is absent from the full log file

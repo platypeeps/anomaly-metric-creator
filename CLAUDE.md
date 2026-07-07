@@ -519,19 +519,37 @@ gauges`) starts it fresh.
 The file is also listed in the repo `.gitignore` so a stray run from inside a
 clone never commits OTLP transport diagnostics. PR #83 widened the HTTP-error
 diagnostics inside `_http_error_activity_fields` to dump every response
-header into the `response_headers` field; an intermediary that echoes
-`Set-Cookie` / `Authorization` / `X-Api-Key` on a 4xx/5xx would have leaked
-credential material into that on-disk log. The redaction shim
-`_redact_sensitive_headers(header_pairs)` (in `redaction.py`; re-imported by
-`legacy.py`) runs *before* the JSON dump and
-masks the value of any header whose name (case-insensitive) is in
-`_SENSITIVE_HEADER_NAMES`: `Authorization`, `Cookie`, `Set-Cookie`,
-`Proxy-Authorization`, `X-Api-Key`. `Authorization` and
-`Proxy-Authorization` are also in `_SCHEMED_SENSITIVE_HEADERS`, so the
-scheme prefix (`Bearer` / `Basic`) is kept and only the credential is
-replaced with `***`; every other sensitive header has its full value
-replaced. The request-side `_masked_headers` reads the same set so
-the two paths cannot drift. The raw `request_body` diagnostic on
+header into the `response_headers` field; an intermediary that echoes a
+credential on a 4xx/5xx — under a standard name (`Set-Cookie` /
+`Authorization` / `X-Api-Key`) or a **novel** one (`X-Amz-Security-Token`,
+`X-Vault-Token`, `X-Subject-Token`, `Authentication-Info`) — would have
+leaked credential material into that on-disk log. The two redaction shims in
+`redaction.py` (re-imported by `legacy.py`) run *before* the JSON dump and
+take **deliberately different postures** for their two trust origins
+(task `07-02-redaction-allowlist-hardening`):
+
+- **Response side (`_redact_sensitive_headers`, untrusted upstream) is
+  mask-unless-known-safe.** Every response-header value is masked *except*
+  the short allowlist `_SAFE_RESPONSE_HEADER_NAMES` (`content-type`,
+  `content-length`, `content-encoding`, `content-language`, `cache-control`,
+  `date`, `server`, `vary`, `age`, `retry-after`, `cf-ray`, `x-request-id`).
+  A never-before-seen header defaults to masked, so a credential an upstream
+  echoes under any nonstandard name cannot reach disk. The `x-*` namespace is
+  the riskiest, so only `x-request-id` is allowlisted from it.
+- **Request side (`_masked_headers`, headers this process builds) stays
+  allowlist-of-sensitive.** It masks only `_SENSITIVE_HEADER_NAMES`
+  (`Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`,
+  `X-Api-Key`) because we control the outbound set and only ever attach
+  `Authorization`; operational headers like `Content-Type` stay legible.
+  Today the request path sends only `Content-Type` + `Authorization`, so this
+  is observably identical to the response posture — the asymmetry is
+  future-proofing plus correct threat modeling, not drift.
+
+Both paths share `_mask_sensitive_value`: `Authorization` /
+`Proxy-Authorization` are in `_SCHEMED_SENSITIVE_HEADERS`, so the scheme
+prefix (`Bearer` / `Basic`) is kept and only the credential is replaced with
+`***`; every other masked header has its full value replaced. The raw
+`request_body` diagnostic on
 RETRY/FAIL records is gated behind `--otel-verbose` (threaded as the
 `verbose` kwarg into `_http_error_activity_fields`); non-verbose error
 records carry only the always-on `response_headers` / `cf_ray`
