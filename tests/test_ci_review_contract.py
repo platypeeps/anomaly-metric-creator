@@ -61,6 +61,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
           quick_check:
             name: quick test
             steps:
+              - run: uv sync --extra dev --locked --python 3.14
               - run: pytest tests/test_ci_review_contract.py
               - run: pytest tests/test_copilot_instruction_contract.py
               - run: pytest tests/test_pr_body_scope_lint.py
@@ -263,6 +264,25 @@ def test_reverting_aggregate_guard_to_always_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "cancellation-safe" in result.stderr
+
+
+def test_removing_locked_sync_flag_fails(tmp_path: Path) -> None:
+    # Dropping --locked from `uv sync` lets the runner silently re-resolve
+    # when pyproject and uv.lock drift, voiding the committed-lock contract
+    # (07-06-uv-locked-ci-enforcement); the anchor must catch that.
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "uv sync --extra dev --locked", "uv sync --extra dev"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "locked dependency sync" in result.stderr
 
 
 def test_missing_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:

@@ -116,6 +116,14 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "PR body scope guard",
             "python scripts/sd-ai-command-pack-pr-body-scope.py",
         ),
+        # `uv sync` must pass --locked so pyproject/uv.lock drift fails the
+        # job instead of silently re-resolving in the runner
+        # (07-06-uv-locked-ci-enforcement). Pins both the quick and full
+        # lanes via the shared substring.
+        (
+            "locked dependency sync",
+            "uv sync --extra dev --locked",
+        ),
         (
             "Copilot instruction contract test coverage",
             "tests/test_copilot_instruction_contract.py",

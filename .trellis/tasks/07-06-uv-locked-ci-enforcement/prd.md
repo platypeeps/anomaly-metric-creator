@@ -40,12 +40,26 @@ contract whenever drift exists.
 
 ## Acceptance Criteria
 
-- [ ] CI fails when pyproject.toml and uv.lock disagree (contract-lint
+- [x] CI fails when pyproject.toml and uv.lock disagree (contract-lint
       mutation test proves the anchor; optionally demonstrate with a
       temporary drift commit in the PR).
-- [ ] mypy==2.1.0 and pytest-cov resolve from the lock in CI logs.
-- [ ] `docs/DEVELOPMENT_CYCLE.md` / CLAUDE.md CI text mentions the locked
-      sync if they describe the sync steps.
+- [x] mypy==2.1.0 and pytest-cov resolve from the lock in CI logs.
+- [x] `docs/DEVELOPMENT_CYCLE.md` / CLAUDE.md CI text mentions the locked
+      sync if they describe the sync steps. — N/A: neither doc names the
+      `uv sync` step (grep confirmed), so there is nothing to update.
+
+## Resolution (2026-07-07)
+
+`--locked` added to both `uv sync` invocations in `ci.yml` (quick lane
+:210, full lane :270). New `check_ci_review_contract.py` anchor
+"locked dependency sync" pins the substring `uv sync --extra dev --locked`
+(matches both lanes); mutation test `test_removing_locked_sync_flag_fails`
+in `tests/test_ci_review_contract.py` proves a revert to bare
+`uv sync --extra dev` fails the lint. The minimal contract fixture gained a
+matching `--locked` sync step so the baseline still passes. Verified
+`uv sync --extra dev --locked` resolves cleanly against the committed lock
+(mypy==2.1.0 + pytest-cov present since the 2026-07-06 regen). Contract
+lint exits 0; 15 contract tests pass.
 
 ## Notes
 

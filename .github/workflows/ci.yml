@@ -207,7 +207,10 @@ jobs:
           enable-cache: true
 
       - name: Sync dependencies (dev extra)
-        run: uv sync --extra dev --python 3.14
+        # --locked fails the job if pyproject.toml and uv.lock disagree,
+        # instead of silently re-resolving in the runner. Keeps the
+        # committed lock authoritative (07-06-uv-locked-ci-enforcement).
+        run: uv sync --extra dev --locked --python 3.14
 
       - name: Smoke installed console scripts
         run: |
@@ -267,7 +270,7 @@ jobs:
           enable-cache: true
 
       - name: Sync dependencies (dev extra)
-        run: uv sync --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --extra dev --locked --python ${{ matrix.python-version }}
 
       - name: Smoke installed console scripts
         run: |
