@@ -3,8 +3,19 @@
 ## Status (2026-07-06 review)
 
 - Steps 1–7 have landed (PRs #178, #181, #183, #185, #198, #203);
-  `legacy.py` is now **9,188 lines** (~29% removed). Steps 8–10 remain
+  `legacy.py` is now ~9,180 lines (~29% removed). Steps 8–10 remain
   (`planning` child tasks).
+- **[2026-07-07] Step 8 (cli_args) ↔ step 9 (catalog-data) dependency
+  found.** An AST scan of the CLI cluster shows `parse_args` reads the
+  monkeypatched `COMPONENTS` / `SCENARIOS` / `DEFAULT_METRICS_PER_COMPONENT`
+  registries (plus ~14 plain config constants). Because the one-way rule
+  forbids `cli_args.py` from importing `legacy`, step 8 is **not** a plain
+  verbatim move — it needs the `schema_impl`-style callback seam, OR step 9
+  must land first so cli_args imports the catalog module directly. Full
+  analysis + the recommended approach are in the
+  `07-02-decomp-cli-args` PRD. **Decide seam-vs-reorder here before the
+  step-8 code.** This corrects the design's implicit "step 8 is a leaf move"
+  assumption.
 - Corrections applied below, marked **[2026-07-06]**: step 3/4 dependency
   inversion (landed together in PR #183), csv_layout scope expansion,
   `scenarios_impl.py` added to the sequencing (it was in the section map
