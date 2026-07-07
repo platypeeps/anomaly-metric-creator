@@ -347,7 +347,9 @@ unless the storage encoder is changed to emit Helm's protobuf release object.
 Every real-client request should be recorded as command family `kubernetes-api`
 so unsupported client paths remain visible in `/v1/debug/search`.
 
-Security/ops boundary: loopback binds may run unauthenticated for local
+Security/ops boundary (the full trust model, remote-bind posture,
+credential handling, and known limits live in [SECURITY.md](SECURITY.md) at
+the repo root): loopback binds may run unauthenticated for local
 workshops, but non-loopback `--host` values require `--auth-token` unless the
 operator explicitly passes `--allow-remote-without-auth`. When token auth is
 enabled, every endpoint except `/healthz`, `/readyz`, and the static debug
@@ -384,8 +386,8 @@ worker. Both `serve_main` and `start_test_server` construct the bounded
 server, so tests exercise the bounds; the generous defaults do not affect
 single-client workshop use. This hardens the surface behind the auth gate
 but does not make an unauthenticated remote bind a supported posture (see
-the pending `07-02-security-md-and-threat-model` for the trust-boundary
-write-up). Command/API traces must redact bearer tokens, token-like query params,
+[SECURITY.md](SECURITY.md) for the trust-boundary write-up: remote bind is
+discouraged and only tolerated for isolated lab networks, never supported). Command/API traces must redact bearer tokens, token-like query params,
 passwords, secrets, and client-key shaped values before they reach memory,
 JSONL, SQLite, or the debug UI. Structured request logging is opt-in via
 `--structured-log` or `--structured-log-file`; it emits JSONL request summaries

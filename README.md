@@ -382,7 +382,10 @@ Server flags:
 | `--continuous-generate-interval-seconds` | `60.0` | Seconds to wait between continuous generation passes. |
 
 The server binds loopback by default and is a lab/workshop incident
-simulator, not a hardened production service. So that a *reachable* instance
+simulator, not a hardened production service. The full trust model, the
+remote-bind posture, credential handling, and known limits are documented in
+[SECURITY.md](SECURITY.md); the summary below is the operational subset.
+So that a *reachable* instance
 cannot be trivially driven into resource exhaustion, three DoS bounds are on
 by default (each individually disablable with `0`): a worker-thread cap
 (`--max-concurrent-requests`), a concurrent-SSE ceiling
