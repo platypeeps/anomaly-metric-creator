@@ -1348,8 +1348,16 @@ def run_command(
         guessed_intent=guess_intent(parsed),
     )
     state.traces.record(trace)
+    # The stored trace keeps the real active_scenarios: the walled
+    # /v1/debug/* and /v1/debug/commands/export surfaces are the eval
+    # harness's scoring data. But /v1/commands is investigation-open, so the
+    # echoed trace must be scrubbed in eval mode — otherwise every command
+    # response carries the full active-scenario list regardless of the
+    # command run. stdout/stderr are already render-redacted upstream.
+    trace_dict = trace.to_dict()
+    trace_dict["active_scenarios"] = list(_exposed_active_scenarios(state))
     return {
-        "trace": trace.to_dict(),
+        "trace": trace_dict,
         "result": {
             "exit_code": result.exit_code,
             "stdout": result.stdout,
@@ -1911,7 +1919,7 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
                 "LOG_LEVEL": "info",
                 "FEATURE_FLAGS": "checkout_v2,adaptive_cache",
                 "OTEL_EXPORTER": "enabled",
-                "SCENARIOS": ",".join(state.active_scenarios),
+                "SCENARIOS": ",".join(_exposed_active_scenarios(state)),
             },
         },
         {
@@ -2022,7 +2030,7 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
                 "pod_ip": pod_ip,
                 "cpu_m": health["cpu_m"],
                 "memory_mi": health["memory_mi"],
-                "scenario_ids": _component_scenarios(state, component),
+                "scenario_ids": _exposed_component_scenarios(state, component),
                 "events": _component_events(state, component),
                 "resource_version": resource_version,
             })
@@ -2041,7 +2049,7 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
                 "pod_ip": pod_ip,
                 "cpu_m": health["cpu_m"],
                 "memory_mi": health["memory_mi"],
-                "scenario_ids": _component_scenarios(state, component),
+                "scenario_ids": _exposed_component_scenarios(state, component),
                 "events": _component_events(state, component),
                 "recreated_from": deleted_pod_name,
                 "resource_version": resource_version,
@@ -4097,7 +4105,7 @@ def _render_exec(state: SimulationState, parsed: ParsedCommand) -> str:
         return (
             f"SERVICE_NAME={component}\n"
             f"NAMESPACE={state.namespace}\n"
-            f"SCENARIOS={','.join(state.active_scenarios)}\n"
+            f"SCENARIOS={','.join(_exposed_active_scenarios(state))}\n"
         )
     if "curl" in command:
         return f"HTTP/1.1 200 OK\nx-amc-component: {component}\n\nok\n"
@@ -4185,7 +4193,7 @@ def _render_helm_get(state: SimulationState, kind: str) -> str:
             f"namespace: {state.namespace}\n"
             "observability:\n"
             "  otel: true\n"
-            f"scenarios: {json.dumps(list(state.active_scenarios))}\n"
+            f"scenarios: {json.dumps(list(_exposed_active_scenarios(state)))}\n"
             + value_lines
         )
     if kind == "manifest":
@@ -4554,6 +4562,33 @@ def _component_scenarios(state: SimulationState, component: str) -> list[str]:
         if component in affected:
             matches.append(scenario_id)
     return matches
+
+
+def _exposed_active_scenarios(state: SimulationState) -> tuple[str, ...]:
+    """Active scenario slugs for investigation-open ops surfaces.
+
+    Empty in eval mode (`amc serve --mcp-eval-mode`). The active scenarios
+    are the eval harness's scoring rubric, so no ops surface reachable by
+    the agent under evaluation — ConfigMap data, ``kubectl exec ... env``,
+    ``helm get values``, the Helm release payload, or pod ``scenario_ids``
+    — may name them. The value collapses to empty rather than a marker
+    string so eval output is indistinguishable from a legitimate
+    zero-scenario run (fingerprint-resistant). Behavioral signals
+    (unhealthy pods, events, ``ScenarioInfluenced`` status) are
+    deliberately unaffected: the agent must still observe the *symptoms*,
+    just not the labels.
+    """
+    return () if state.eval_mode else state.active_scenarios
+
+
+def _exposed_component_scenarios(state: SimulationState, component: str) -> list[str]:
+    """Per-component scenario slugs for pod snapshot rows; empty in eval
+    mode. See :func:`_exposed_active_scenarios` for the rationale. The
+    behavioral :func:`_component_scenarios` (which drives the
+    ``ScenarioInfluenced`` health signal) is intentionally *not* gated, so
+    symptoms stay visible while the labels do not.
+    """
+    return [] if state.eval_mode else _component_scenarios(state, component)
 
 
 def _component_events(state: SimulationState, component: str) -> list[str]:
@@ -7077,7 +7112,7 @@ def _helm_release_payload(state: SimulationState, revision: dict[str, Any]) -> d
             "replicaCount": 3,
             "namespace": state.namespace,
             "observability": {"otel": True},
-            "scenarios": list(state.active_scenarios),
+            "scenarios": list(_exposed_active_scenarios(state)),
         },
         "manifest": _render_helm_get(state, "manifest"),
         "hooks": [],
@@ -7529,6 +7564,8 @@ __all__ = [
     '_apply_component_impact',
     '_status_priority',
     '_component_scenarios',
+    '_exposed_active_scenarios',
+    '_exposed_component_scenarios',
     '_component_events',
     '_component_rollout_notes',
     '_event_rows',

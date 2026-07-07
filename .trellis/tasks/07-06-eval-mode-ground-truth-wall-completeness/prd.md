@@ -70,15 +70,52 @@ ordering, so neither gap is caught today.
 
 ## Acceptance Criteria
 
-- [ ] In eval mode, no response from `/mcp` tools, `POST /v1/commands`,
+- [x] In eval mode, no response from `/mcp` tools, `POST /v1/commands`,
       or the Kubernetes REST facade contains any active scenario slug
       (regression test with a seeded run and a response-body sweep).
-- [ ] Rubric endpoints return 404 before auth for GET, POST, PUT, PATCH,
+- [x] Rubric endpoints return 404 before auth for GET, POST, PUT, PATCH,
       DELETE in eval mode (parametrized test).
-- [ ] Non-eval-mode output is byte-unchanged (existing server tests pass
+- [x] Non-eval-mode output is byte-unchanged (existing server tests pass
       untouched).
-- [ ] `tests/test_server_eval_mode.py` completeness coverage extended per
+- [x] `tests/test_server_eval_mode.py` completeness coverage extended per
       the requirements.
+
+## Resolution (2026-07-07)
+
+Fixed via a single `state.eval_mode` gate at each emit site (no second
+resource model). Redaction helpers `_exposed_active_scenarios` /
+`_exposed_component_scenarios` in `server_ops.py` return empty in eval mode
+— collapsing to a legitimate zero-scenario run, so the redaction is itself
+fingerprint-resistant — and wrap the enumerated leak sites: ConfigMap
+`SCENARIOS`, pod `scenario_ids` (at the `resource_snapshot()` source, so
+MCP `kubectl_get` / REST `_k8s_configmap` / command mode all inherit it),
+`kubectl exec … env`, `helm get values`, and the Helm release
+`config.scenarios`. The behavioral `_component_scenarios` (drives the
+`ScenarioInfluenced` health signal) is intentionally left ungated so
+symptoms stay visible.
+
+**Seventh vector found by the sweep (not in the original enumeration):**
+the `/v1/commands` response echoes the `CommandTrace` via
+`{"trace": trace.to_dict()}`, whose `active_scenarios` field leaked the
+full active list on *every* command regardless of what was run.
+`run_command` now scrubs that field from the echo in eval mode while the
+*stored* trace keeps the real slugs (the walled `/v1/debug/*` +
+`/v1/debug/commands/export` surfaces are the harness's scoring data). This
+is exactly why the PRD demanded a live response-body sweep rather than
+trusting the enumerated sites — the pre-read enumeration missed it.
+
+Ordering: the rubric-`404`-before-auth check now runs for all methods —
+moved above auth in `do_POST` and added to `_handle_mutating_method`
+(PUT/PATCH/DELETE), matching `do_GET`.
+
+Tests (`tests/test_server_eval_mode.py`):
+`test_eval_mode_ops_surfaces_have_no_scenario_slug_leak` (live multi-surface
+sweep with a non-eval positive control asserting the surfaces really carry
+the slugs) and `test_eval_mode_rubric_404_before_auth_every_method`
+(auth-enabled 404-not-401 per method, with a non-eval 401 control). Full
+server suite green (178 passed). CLAUDE.md eval-mode section updated with the
+extended-wall rule; the Trellis spec statement is left to
+`07-06-trellis-spec-server-era-backfill` per the split.
 
 ## Notes
 
