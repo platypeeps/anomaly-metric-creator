@@ -53,12 +53,38 @@ publication contract — restoring the credibility of the spec-first rule.
 
 ## Acceptance Criteria
 
-- [ ] `grep -ri "mcp|eval.mode|atomic|max-sse"` over the spec dir hits the
+- [x] `grep -ri "mcp|eval.mode|atomic|max-sse"` over the spec dir hits the
       right documents with accurate content.
-- [ ] `architecture.md` module list equals `src/anomaly_metric_creator/`
+- [x] `architecture.md` module list equals `src/anomaly_metric_creator/`
       reality on the day it merges.
-- [ ] No contradiction between backfilled spec text and CLAUDE.md
+- [x] No contradiction between backfilled spec text and CLAUDE.md
       (spot-check the overlapping sections).
+
+## Resolution (2026-07-07)
+
+Backfilled the three spec files, every claim cross-checked against code:
+
+- `architecture.md`: the Module Boundaries section now names all ten
+  extracted modules (was 3) and adds `server_mcp.py` (the MCP facade) to the
+  server-module list with its role and test sources.
+- `api-cli-server.md`: new "MCP Facade and Eval Mode" section (JSON-RPC
+  contract, `MCP_TOOLS` registry, ground-truth wall, and the full eval-mode
+  wall including the `#209` no-slug-on-any-surface rule + the
+  rubric-404-before-auth-per-method ordering); the atomic-publication
+  contract added to Output Contracts; the `--emit gauges` → `metrics`
+  dependency corrected (was only `combined`).
+- `operations-security-logging.md`: the three remote-bind bounds
+  (`--max-concurrent-requests` 64, `--max-sse-connections` 16,
+  `--socket-timeout-seconds` 30, each disablable with 0) + the rate-limiter
+  idle-bucket sweep, with a `SECURITY.md` cross-link for the remote-bind
+  posture.
+
+Verified: the bounds default constants (64/16/30.0), the eval registry
+(`_RUBRIC_ENDPOINT_*`/`_rubric_endpoint`), the atomic helpers
+(`_atomic_artifact_open`/`_atomic_write_text`/`_known_artifact_filenames`),
+`MCP_TOOLS`, and `test_every_dispatched_route_is_classified` all exist as
+cited. `check_copilot_instruction_contract.py` and the role-name lint pass;
+the acceptance grep hits all three docs.
 
 ## Notes
 
