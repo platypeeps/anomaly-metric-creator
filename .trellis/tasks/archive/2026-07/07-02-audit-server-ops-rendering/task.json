@@ -11,7 +11,7 @@
   "creator": "sdelmas",
   "assignee": "sdelmas",
   "createdAt": "2026-07-02",
-  "completedAt": "2026-07-02",
+  "completedAt": "2026-07-06",
   "branch": "test/server-ops-fuzz-audit",
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Audit outcome: parser/renderer surface is largely graceful (shlex errors -> parse.error, unknown verbs/resources/selectors handled, malformed JSON mutation bodies tolerated). Four defect classes found and fixed inline: (1) non-string 'command' / non-list 'argv' reached shlex and escaped as 500 \u2014 now ValueError -> 400 at the parse_command boundary; (2) DELETE of nonexistent pods/deployments/generic resources returned 200 and polluted the overlay \u2014 now 404 Status with overlay untouched; (3) deployment PATCH/PUT wrote set_workload/record_event BEFORE its 404 existence check (partial state on refused mutation) \u2014 check moved first; (4) 500 bodies leaked str(exc) \u2014 now generic, detail in the structured error log. Seeded fuzz corpus lives in tests/test_server_ops_fuzz.py.",
+  "notes": "Audit outcome: parser/renderer surface is largely graceful (shlex errors -> parse.error, unknown verbs/resources/selectors handled, malformed JSON mutation bodies tolerated). Four defect classes found and fixed inline: (1) non-string 'command' / non-list 'argv' reached shlex and escaped as 500 — now ValueError -> 400 at the parse_command boundary; (2) DELETE of nonexistent pods/deployments/generic resources returned 200 and polluted the overlay — now 404 Status with overlay untouched; (3) deployment PATCH/PUT wrote set_workload/record_event BEFORE its 404 existence check (partial state on refused mutation) — check moved first; (4) 500 bodies leaked str(exc) — now generic, detail in the structured error log. Seeded fuzz corpus lives in tests/test_server_ops_fuzz.py.",
   "meta": {}
 }
