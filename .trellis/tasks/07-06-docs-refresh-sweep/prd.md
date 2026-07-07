@@ -75,16 +75,45 @@ point inaccuracies in otherwise-current docs.
 
 ## Acceptance Criteria
 
-- [ ] application-flow.md names all five modes and passes a fact
+- [x] application-flow.md names all five modes and passes a fact
       spot-check against `_SUBCOMMANDS` and the serve lifecycle.
-- [ ] CHANGELOG state is deliberate (backfilled or retired) and the
+- [x] CHANGELOG state is deliberate (backfilled or retired) and the
       pyproject version matches it.
-- [ ] CLAUDE.md contains `--start-time` guidance, no edit-`START`
+- [x] CLAUDE.md contains `--start-time` guidance, no edit-`START`
       instruction, and an accurate facade sentence.
-- [ ] No doc claims `TOPOLOGY`/`main()` live in the shim file.
-- [ ] README describes the atomic-publication contract (`.tmp` staging +
+- [x] No doc claims `TOPOLOGY`/`main()` live in the shim file.
+- [x] README describes the atomic-publication contract (`.tmp` staging +
       replace; serve-mode readers never see partial artifacts).
-- [ ] repomix map regenerated.
+- [x] repomix map regenerated.
+
+## Resolution (2026-07-07)
+
+- **application-flow.md** rewritten: intro now names all five modes with the
+  corrected entry-point path (`legacy.py`, not the shim); the mermaid
+  dispatch node gains `serve` and `trace-bundle` branches; a serve-lifecycle
+  note (generate-once → SimulationState → MCP/eval → continuous-generate +
+  atomic publication) and an atomic-writes note added. The accurate
+  generate-pipeline detail was preserved untouched.
+- **CHANGELOG decision:** backfilled the `Unreleased` section to accurately
+  cover the whole serve/MCP/eval/`trace-bundle`/atomic/hardening/`--start-time`/
+  SECURITY.md/py3.14 era plus an Internal note on the decomposition — fixing
+  the "dangling with one item" state. Added a maintenance-policy header
+  (Unreleased = merged-but-untagged; git history authoritative between
+  releases). No pyproject version bump: no release was cut, so these are
+  correctly Unreleased.
+- **CLAUDE.md:** `--start-time` guidance replaces the edit-`START`
+  instruction; the facade summary sentence corrected to "three re-export from
+  extracted impls; `models.py`/`scenarios.py` still route through legacy."
+- **AGENTS.md:** dropped the hardcoded "~12,800 lines" (points at
+  `docs/repomix-map.md` for current sizes).
+- **topology.md:** `TOPOLOGY` path corrected to `legacy.py`.
+- **README:** atomic-publication contract documented as a lead-in to the
+  Output files section.
+- **repomix map** regenerated via `scripts/update_repomix`.
+
+Verified: role-name lint clean on all touched docs; the five-mode dispatch
+and serve lifecycle present; no `three top-level modes` / `~12,800` /
+`Most still re-export` stale strings remain.
 
 ## Notes
 

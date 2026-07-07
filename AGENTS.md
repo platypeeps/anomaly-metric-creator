@@ -47,7 +47,7 @@ python3 -m venv .venv
 
 | Path | Role |
 |------|------|
-| `src/anomaly_metric_creator/legacy.py` | Canonical implementation (~12,800 lines) |
+| `src/anomaly_metric_creator/legacy.py` | Canonical implementation (large; being decomposed into focused modules — see `docs/repomix-map.md` for current sizes) |
 | `src/anomaly_metric_creator/cli.py` | Package entrypoint (thin loader) |
 | `anomaly-metric-creator.py` | Top-level compatibility shim |
 | `tests/conftest.py` | Session-scoped fixtures, `run_capture` helper |
