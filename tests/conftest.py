@@ -174,14 +174,39 @@ _HEAVY_SESSION_FIXTURES = frozenset(
 )
 
 
+# GB-scale *module*-scoped fixtures that regenerate rather than derive from a
+# session fixture, so name-matching against ``_HEAVY_SESSION_FIXTURES`` alone
+# would miss them and let them run in the parallel lane (07-06 review). List
+# every module fixture whose body drives a full 7-day / N>1 generation and that
+# cannot reuse a session dataset:
+#   - ``seven_day_schema_run``: schema.json's ``files`` section is coupled to
+#     the exact ``--emit metrics,schema`` selection, so it can't derive from
+#     ``seven_day_run`` (which emits ``metrics,logs,traces``) byte-compatibly.
+#   - ``synthetic_n3_run``: overlays a synthetic scenario via ``registry_overlay``
+#     so it can't reuse the shared N=3 dataset.
+# ``seven_day_gauges_run`` is intentionally absent: it *derives* from
+# ``seven_day_run`` (see test_gauges_file.py), so it is already heavy through
+# the session-fixture request and needs no entry here.
+_HEAVY_MODULE_FIXTURES = frozenset(
+    {
+        "seven_day_schema_run",
+        "synthetic_n3_run",
+    }
+)
+
+
 def _item_is_heavy(fixturenames):
     """True when a collected item's fixture closure pulls a GB-scale fixture.
 
     ``fixturenames`` is the item's full fixture closure (``item.fixturenames``),
     so a test that reaches a heavy fixture transitively through another fixture
-    is still classified heavy.
+    is still classified heavy. Matches both the GB-scale session fixtures and
+    the GB-scale module fixtures that regenerate instead of deriving.
     """
-    return bool(_HEAVY_SESSION_FIXTURES.intersection(fixturenames))
+    closure = set(fixturenames)
+    return bool(
+        _HEAVY_SESSION_FIXTURES & closure or _HEAVY_MODULE_FIXTURES & closure
+    )
 
 
 def pytest_collection_modifyitems(config, items):

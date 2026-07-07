@@ -57,14 +57,27 @@ def one_day_gauges_run(amc, tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def seven_day_gauges_run(amc, tmp_path_factory):
-    # Explicit 1s cadence preserves the full-resolution GAUGES_SEVEN_DAY_HASH.
-    out = tmp_path_factory.mktemp("ver138_seven_day_gauges")
-    return run_capture(
-        amc, out, days=7,
-        extra_args=["--emit", "metrics,gauges"],
-        interval_seconds=1.0,
-    )
+def seven_day_gauges_run(amc, seven_day_run, tmp_path_factory):
+    """Derive gauges.csv from the shared session-scoped 7-day dataset
+    (``seven_day_run``, 1s cadence) instead of re-running the full 7-day
+    generator per module. ``write_gauges_csv`` is a pure function of the
+    per-component CSV bytes, so GAUGES_SEVEN_DAY_HASH holds byte-identically
+    (the emit selection that produced the CSVs does not affect their bytes).
+
+    Requesting ``seven_day_run`` (a ``_HEAVY_SESSION_FIXTURES`` member) also
+    pulls this module's gauge tests into the ``heavy`` marker, so the GB-scale
+    work runs serially on the PR CI gate instead of OOM-ing the parallel lane
+    (07-06-heavy-marker-module-fixture-coverage). Hardlinks the per-component
+    CSVs to avoid doubling the dataset's disk footprint — same rationale as
+    ``n3_one_day_gauges_run`` below."""
+    out = tmp_path_factory.mktemp("seven_day_gauges")
+    component_csv_paths = {}
+    for name in sorted(amc.COMPONENTS.keys()):
+        dst = out / f"{name}.csv"
+        os.link(seven_day_run.out_dir / f"{name}.csv", dst)
+        component_csv_paths[name] = dst
+    amc.write_gauges_csv(component_csv_paths, out / "gauges.csv")
+    return SimpleNamespace(out_dir=out, stderr="")
 
 
 # ------------------------------------------------------------------

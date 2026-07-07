@@ -60,6 +60,11 @@ def synthetic_n3_run(amc, tmp_path_factory):
 
     Returns the output directory so individual tests can read
     per-component / per-instance CSVs.
+
+    GB-scale N=3 generation that overlays a synthetic scenario via
+    ``registry_overlay``, so it cannot reuse the shared session N=3 dataset.
+    Classified ``heavy`` via ``conftest._HEAVY_MODULE_FIXTURES`` so it stays
+    out of the parallel CI lane (07-06-heavy-marker-module-fixture-coverage).
     """
     # Patch SCENARIOS with one extra synthetic scenario so the
     # primary anomaly on apigateway.requests_per_sec fires only on

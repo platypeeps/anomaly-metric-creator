@@ -64,6 +64,12 @@ def one_day_schema_run(amc, tmp_path_factory):
 @pytest.fixture(scope="module")
 def seven_day_schema_run(amc, tmp_path_factory):
     # Explicit 1s cadence preserves the full-resolution SCHEMA_SEVEN_DAY_HASH.
+    # This GB-scale fixture regenerates rather than deriving from
+    # ``seven_day_run``: schema.json's ``files`` section is coupled to the
+    # exact ``--emit metrics,schema`` selection, which ``seven_day_run``
+    # (``metrics,logs,traces``) does not match. It is classified ``heavy`` via
+    # ``conftest._HEAVY_MODULE_FIXTURES`` so it stays out of the parallel CI
+    # lane (07-06-heavy-marker-module-fixture-coverage).
     out = tmp_path_factory.mktemp("ver139_seven_day_schema")
     return run_capture(
         amc, out, days=7, interval_seconds=1.0,
