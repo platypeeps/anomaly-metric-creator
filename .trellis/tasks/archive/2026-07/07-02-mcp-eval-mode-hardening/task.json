@@ -11,7 +11,7 @@
   "creator": "sdelmas",
   "assignee": "sdelmas",
   "createdAt": "2026-07-02",
-  "completedAt": "2026-07-02",
+  "completedAt": "2026-07-06",
   "branch": "feat/mcp-eval-mode",
   "base_branch": "chore/sd-command-pack-manifest",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "07-02-mcp-server-facade",
   "relatedFiles": [],
-  "notes": "Audit sweep found a load-bearing leak: metric_report.log is a verbatim rendering of anomalies.csv (same descriptions, event_ids, Cascading: labels). The phase-2 get_logs/deduplicate_logs MCP tools read it, and /v1/logs/stream streams it \u2014 all handed an agent the answer key. Eval mode now hides the log stream + refuses the two log tools, plus /v1/anomalies, /v1/scenarios, /v1/state, /v1/debug/*, and the console shell, via one _rubric_endpoint registry with a source-scanning completeness test. Chose 404 over 403 for fingerprint-resistance. Follow-up worth considering: a distinct symptom-level observable log artifact that eval mode could serve (the current report log cannot be, by construction).",
+  "notes": "Audit sweep found a load-bearing leak: metric_report.log is a verbatim rendering of anomalies.csv (same descriptions, event_ids, Cascading: labels). The phase-2 get_logs/deduplicate_logs MCP tools read it, and /v1/logs/stream streams it — all handed an agent the answer key. Eval mode now hides the log stream + refuses the two log tools, plus /v1/anomalies, /v1/scenarios, /v1/state, /v1/debug/*, and the console shell, via one _rubric_endpoint registry with a source-scanning completeness test. Chose 404 over 403 for fingerprint-resistance. Follow-up worth considering: a distinct symptom-level observable log artifact that eval mode could serve (the current report log cannot be, by construction).",
   "meta": {}
 }
