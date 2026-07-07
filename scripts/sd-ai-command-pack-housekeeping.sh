@@ -853,13 +853,25 @@ record_dry_run_final_state_note() {
 
 print_report() {
   section "Tasks performed"
-  print_list "${ACTIONS[@]}"
+  if [ "${#ACTIONS[@]}" -eq 0 ]; then
+    print_list
+  else
+    print_list "${ACTIONS[@]}"
+  fi
 
   section "Expected clean state"
-  print_list "${EXPECTED[@]}"
+  if [ "${#EXPECTED[@]}" -eq 0 ]; then
+    print_list
+  else
+    print_list "${EXPECTED[@]}"
+  fi
 
   section "Inventory"
-  print_list "${INVENTORY[@]}"
+  if [ "${#INVENTORY[@]}" -eq 0 ]; then
+    print_list
+  else
+    print_list "${INVENTORY[@]}"
+  fi
 
   section "Anomalies"
   if [ "${#ANOMALIES[@]}" -eq 0 ]; then
