@@ -23,3 +23,14 @@ Add kubectl logs refinements for incident workflows, such as duration-based --si
 
 - Source: migrated server-mode compatibility backlog entry.
 - Treat this as workshop-driven polish; defer if no concrete incident workflow benefits.
+- **Current state (verified 2026-07-06):** `--since-time`
+  ([server_ops.py:2744](src/anomaly_metric_creator/server_ops.py:2744)),
+  `--tail` ([server_ops.py:2753](src/anomaly_metric_creator/server_ops.py:2753)),
+  and `-c/--container` (validated against the component,
+  [server_ops.py:2686](src/anomaly_metric_creator/server_ops.py:2686)) are
+  handled. Two verified gaps to prioritize: **`--since` (duration form) is
+  parsed but silently not applied** in `_render_pod_logs` — a silent no-op
+  is worse than an unmodeled flag and should be first; `--timestamps` is not
+  in `_MODELED_FLAGS`, so it downgrades the trace to `partial` via
+  `_with_flag_support`
+  ([server_ops.py:1705](src/anomaly_metric_creator/server_ops.py:1705)).

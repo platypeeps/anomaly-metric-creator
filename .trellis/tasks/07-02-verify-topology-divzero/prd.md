@@ -19,12 +19,15 @@ close as "no change needed, test added".
 The topology composition divides by upstream magnitudes:
 
 - `_compose_topology_coupled_specs`
-  ([legacy.py:3504](src/anomaly_metric_creator/legacy.py:3504)) computes
+  ([legacy.py:3497](src/anomaly_metric_creator/legacy.py:3497)) computes
   `(upstream / upstream_base) * downstream_base * w_norm` and the callable-edge
   miss-ratio signal `cache_misses / (cache_hits + cache_misses)`
-  (`_cache_miss_ratio_signal`, [legacy.py:3059](src/anomaly_metric_creator/legacy.py:3059)).
-- `_apply_saturation` ([legacy.py:3699](src/anomaly_metric_creator/legacy.py:3699))
+  (`_cache_miss_ratio_signal`, [legacy.py:3052](src/anomaly_metric_creator/legacy.py:3052)).
+- `_apply_saturation` ([legacy.py:3692](src/anomaly_metric_creator/legacy.py:3692))
   divides `upstream_load / sat.midpoint`.
+
+> **Line refs updated 2026-07-06** (all six symbols are still in
+> `legacy.py`; the topology cluster extracts in decomposition step 10).
 
 CLAUDE.md asserts guards exist (zero-denominator → 0 for the cache ratio;
 utilization clamp for saturation; `_TOPOLOGY_COUPLE_NOISE_STD` floor), and the
@@ -41,15 +44,15 @@ determinism contract.
 
 - Read `_compose_topology_coupled_specs`, `_cache_miss_ratio_signal`,
   `_apply_saturation`, `_per_instance_upstream_view`
-  ([legacy.py:4054](src/anomaly_metric_creator/legacy.py:4054)), and
+  ([legacy.py:4047](src/anomaly_metric_creator/legacy.py:4047)), and
   `_compute_topology_arrays_per_instance`
-  ([legacy.py:4133](src/anomaly_metric_creator/legacy.py:4133)) end to end.
+  ([legacy.py:4126](src/anomaly_metric_creator/legacy.py:4126)) end to end.
 - Enumerate the zero/degenerate denominators and confirm each is guarded:
   `upstream_base == 0`; `cache_hits + cache_misses == 0`; `sat.midpoint`
   (validated positive at import — confirm the validator actually runs on every
   edge); an upstream column trimmed to absent by `--metrics-per-component`;
   a downstream with zero matched instances under per-instance routing
-  (`_matched_cardinality`, [legacy.py:4035](src/anomaly_metric_creator/legacy.py:4035)).
+  (`_matched_cardinality`, [legacy.py:4028](src/anomaly_metric_creator/legacy.py:4028)).
 - Add explicit finite-value assertions where a guarantee is implicit.
 - Add a focused regression test that runs the topology path under the
   denominator-stress configs and asserts every emitted cell is finite (and that
@@ -72,3 +75,32 @@ determinism contract.
   reading the full path, and this one was left as a suspicion. Closing it either
   hardens the code or converts a suspicion into a documented guarantee + test.
 - If confirmed clean, downgrade/close with the test as the deliverable.
+
+## Pre-read findings (2026-07-06 review — narrows the verify scope)
+
+A read-through during the 2026-07-06 architecture/code review confirmed the
+primary guards, so the remaining work is the regression test plus a decision
+on two residual holes:
+
+- **Guards confirmed:** `ups_arr / ups_base` gated by `if ups_base > 0`
+  ([legacy.py:3647](src/anomaly_metric_creator/legacy.py:3647), and
+  [legacy.py:4310](src/anomaly_metric_creator/legacy.py:4310) on the
+  per-instance path); `downstream_base <= 0` skips
+  ([legacy.py:3618](src/anomaly_metric_creator/legacy.py:3618)); cache ratio
+  uses `np.divide(..., out=zeros, where=total > 0)` — zero- AND NaN-safe
+  ([legacy.py:3069](src/anomaly_metric_creator/legacy.py:3069));
+  `sat.midpoint` re-validated at call time
+  ([legacy.py:3719](src/anomaly_metric_creator/legacy.py:3719));
+  per-instance mean guarded by `if not arrays: continue`
+  ([legacy.py:4110](src/anomaly_metric_creator/legacy.py:4110)).
+- **Residual hole 1:** `w / sum_w` ([legacy.py:3665](src/anomaly_metric_creator/legacy.py:3665)
+  and [legacy.py:4322](src/anomaly_metric_creator/legacy.py:4322)) relies
+  entirely on import-time weight validation; a monkeypatched/programmatic
+  `TOPOLOGY` whose active constant weights sum to 0 reaches a
+  ZeroDivisionError (or inf with numpy operands). Decide: runtime guard or
+  documented precondition.
+- **Residual hole 2:** `_apply_saturation` never checks `upstream_load`
+  itself for NaN/inf — `np.maximum(NaN, 0.0)` is NaN and propagates through
+  the logistic. Unreachable from generated captures (finite by
+  construction); reachable by direct callers. Decide: assert-finite or
+  documented precondition.

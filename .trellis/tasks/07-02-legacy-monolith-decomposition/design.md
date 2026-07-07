@@ -1,4 +1,22 @@
-# Design: decomposing legacy.py (12,992 lines)
+# Design: decomposing legacy.py (12,992 lines at design time)
+
+## Status (2026-07-06 review)
+
+- Steps 1–7 have landed (PRs #178, #181, #183, #185, #198, #203);
+  `legacy.py` is now **9,188 lines** (~29% removed). Steps 8–10 remain
+  (`planning` child tasks).
+- Corrections applied below, marked **[2026-07-06]**: step 3/4 dependency
+  inversion (landed together in PR #183), csv_layout scope expansion,
+  `scenarios_impl.py` added to the sequencing (it was in the section map
+  but missing from the step list), and the `validate_impl.py` size
+  deviation recorded under Invariants.
+- **Open end-state decision:** after steps 8–10, `legacy.py` retains
+  `main()` (~590 lines), constants/emit-registry/re-import wiring (~350),
+  scenario resolution + `_load_instance_config` (~395, destination
+  unassigned), and `RunContext` — ~1,300–1,500 lines, still above the
+  800-line cap. Decide whether the epic's "thin" target means <800
+  (requires scoping the resolution cluster and slimming `main()`) or
+  "dispatch + wiring only" (record the accepted size).
 
 ## Section map (measured 2026-07-02, post-#176)
 
@@ -68,8 +86,19 @@ early extractions touch this list.
    instance-block scan helpers, EXCEPT `_scan_component_csv_headers` /
    `_classify_component_csv_header`, which are shared with combine and the
    MCP tools → those go to a small `csv_layout.py` leaf in the same PR.
+   **[2026-07-06] As landed (PR #183):** the split went further than
+   planned — ALL shared CSV primitives (`_iter_component_rows`,
+   `_iter_component_instance_rows`, `_scan_instance_block_layout`,
+   `_ensure_long_form_fd_capacity`, `_is_anonymous_instance_list`,
+   `_INSTANCE_DIMENSION_COLUMNS`, plus the two originally named helpers)
+   live in `csv_layout.py` (388 lines); `gauges_impl.py` holds only
+   `write_gauges_csv`. Better cohesion (otel_stream and server_mcp share
+   the primitives); recorded here so the map matches reality.
 4. **`artifacts.py`** — `_atomic_artifact_open`, `_atomic_write_text`,
-   `_ATOMIC_TMP_SUFFIX`.
+   `_ATOMIC_TMP_SUFFIX`. **[2026-07-06]** Landed *with* step 3 in PR #183:
+   `gauges_impl` imports `_atomic_artifact_open` and a leaf cannot import
+   `legacy`, so this step could never follow step 3 — the original
+   ordering inverted the dependency.
 5. **`combine_impl.py`** — `combine_logs*`, wide/long writers, monotonic
    scan. Caveat: `_wide_component_rows_are_monotonic` is monkeypatched →
    it and its only caller move together; the `combine.py` facade re-points.
@@ -81,7 +110,15 @@ early extractions touch this list.
 8. **`cli_args.py`** — `parse_args`, `_reconcile_cli_surface`,
    `_ADVANCED_DESTS`, subcommand parsers. `main()` stays in `legacy.py`.
 9. **Late (each its own design check-in):** `scenario_catalog.py` (data
-   move), `catalog.py` (`COMPONENTS`), `models_impl.py`.
+   move), `catalog.py` (`COMPONENTS`), `models_impl.py`, and
+   **`scenarios_impl.py`** **[2026-07-06]** — the section map assigns the
+   scenario builders + `Scenario` + spec validators (old lines 385–1168;
+   now ~362–1035 + `register_cascade`/seasonality at ~2337–2407 +
+   `_validate_scenario_spec` at ~6478–6806, ~745+ lines total) to
+   `scenarios_impl.py`, but the original step list never scheduled it.
+   It moves with (or immediately after) the `scenario_catalog.py` data
+   move, honoring the move-with-registries validator rule. Without this,
+   the epic "completes" with the cluster stranded in `legacy.py`.
 10. **Last:** `generation.py` + `topology_impl.py` — the RNG-order-critical
     core. Only after every hash has survived steps 1–9.
 
@@ -98,7 +135,11 @@ at the same relative position, preserving the documented order.
 
 - All locked SHA-256 golden hashes unchanged (full suite).
 - `python anomaly-metric-creator.py --help` and `amc --help` work.
-- Every new module < 800 lines.
+- Every new module < 800 lines. **[2026-07-06] Known deviation:**
+  `validate_impl.py` shipped at 1,684 lines in step 6 (the validator moved
+  wholesale). Either a follow-up split restores the invariant or the
+  waiver is recorded explicitly — tracked as a proposed follow-up task
+  from the 2026-07-06 architecture review.
 - `conftest._load_amc()` still yields a module exposing the full historic
   namespace.
 - mypy finding count does not increase (CI report-only step).
