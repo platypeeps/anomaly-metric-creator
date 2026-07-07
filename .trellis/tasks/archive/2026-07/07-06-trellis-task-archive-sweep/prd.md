@@ -40,11 +40,25 @@ is the existing flow.
 
 ## Acceptance Criteria
 
-- [ ] No `status=completed` task remains in the active
+- [x] No `status=completed` task remains in the active
       `.trellis/tasks/` top level.
-- [ ] `task.py list` / `list-archive` both render correctly afterward.
-- [ ] The decomposition epic still resolves its children; Trellis
+- [x] `task.py list` / `list-archive` both render correctly afterward.
+- [x] The decomposition epic still resolves its children; Trellis
       placeholder lint passes on the moved artifacts.
+
+## Resolution (2026-07-06)
+
+All 15 completed tasks archived to `archive/2026-07/` via
+`task.py archive` (the 14 from the review inventory plus
+`06-29-debug-ui-shell-extraction`, closed during the review). Verified:
+zero `completed` tasks remain active; `task.py list` shows only
+planning/in_progress work; `list-archive 2026-07` renders the moved set;
+the decomposition epic resolves all 10 children across the archive
+boundary and reports `[6/10 done]`. This task archives itself in the
+same PR as the sixteenth move. `docs/repomix-map.md` regeneration is
+deliberately deferred to `07-06-docs-refresh-sweep`, which owns the
+repomix refresh (the map was already stale from PRs #206/#207's 16 new
+task dirs before this sweep).
 
 ## Notes
 
