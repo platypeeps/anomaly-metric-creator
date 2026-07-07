@@ -7,12 +7,15 @@ name = "anomaly-metric-creator"
 version = "0.3.0"
 description = "Synthetic IoT-style metric log generator with built-in anomalies."
 readme = "README.md"
-requires-python = ">=3.11"
+# Latest-stable-only support policy (decided 2026-07-06): the project
+# tracks the newest stable CPython; older versions are not supported or
+# tested. Bump this floor when a new stable CPython lands.
+requires-python = ">=3.14"
 classifiers = [
   "Private :: Do Not Upload",
   "License :: Other/Proprietary License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.14",
   "Topic :: System :: Monitoring",
 ]
 dependencies = [
@@ -94,14 +97,14 @@ markers = [
 # full-suite run without gating merges. Tighten per-module (and flip the
 # CI step to gating) as 07-02-legacy-monolith-decomposition splits the
 # monolith into type-check-clean modules.
-python_version = "3.12"
+python_version = "3.14"
 files = ["src/anomaly_metric_creator"]
 # numpy/protobuf stubs are not installed; silence the missing-import noise
 # so real type errors in first-party code stay readable.
 ignore_missing_imports = true
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 # F401 (unused imports) is configured repo-wide so that `ruff check`

@@ -156,15 +156,17 @@ GitHub CI must keep the stable aggregate branch-protection context named
 `test`, while `scripts/classify-ci-changes.sh` selects the cheapest safe lane:
 lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
 test for ordinary PR update churn that still touches app paths, and the full
-Python 3.12 test lane for app-required opened/reopened/ready PRs,
+Python 3.14 test lane for app-required opened/reopened/ready PRs,
 `full-ci` label runs, auto-merge-armed PRs (the `auto_merge_enabled` event
 and every later push to an armed PR, via the payload's `auto_merge` field),
 workflow/dependency changes, manual dispatch, and `main` pushes. Auto-merge
 must never merge on quick-lane evidence, and `main` pushes run in per-commit
 concurrency groups so merge-burst runs cannot cancel each other's backstop
-verdicts. Python 3.12
-is the only version CI tests against; `requires-python >=3.11` remains the
-declared floor without a dedicated CI lane. Sources:
+verdicts. The version policy (decided 2026-07-06) is
+latest-stable-CPython-only: the single CI matrix version and
+`requires-python` in `pyproject.toml` are the same value (currently
+`>=3.14`) and move forward together when a new stable CPython lands —
+there is no older declared floor and no multi-version lane. Sources:
 `.github/workflows/ci.yml`; `scripts/classify-ci-changes.sh`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
