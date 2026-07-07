@@ -61,14 +61,34 @@ in `07-02-redaction-allowlist-hardening` is "defense in depth" or "load-bearing"
 
 ## Acceptance criteria
 
-- [ ] `SECURITY.md` exists and states the trust boundary, the no-untrusted-users
+- [x] `SECURITY.md` exists and states the trust boundary, the no-untrusted-users
       assumption, the credential-handling summary, known limits, and a reporting
       channel.
-- [ ] The remote-bind posture is explicitly stated (one sentence: supported and
+- [x] The remote-bind posture is explicitly stated (one sentence: supported and
       hardened, or discouraged and warned).
-- [ ] `README.md` and CLAUDE.md link to it.
-- [ ] The `role-name-leaks` lint passes on the new file
+- [x] `README.md` and CLAUDE.md link to it.
+- [x] The `role-name-leaks` lint passes on the new file
       (`tools/check_role_name_leaks.py` scans Markdown).
+
+## Resolution (2026-07-07)
+
+`SECURITY.md` added at the repo root. **Remote-bind posture recorded:
+discouraged and only tolerated for isolated lab networks — not a supported
+production posture** (matching PR #188's scoping). The doc covers the trust
+model (loopback-only lab tool, no-untrusted-users assumption), what auth
+does/doesn't protect (unauthenticated `/healthz`, `/readyz`, `/`, `/debug`;
+everything else bearer-gated; no auth at all when no token is set), eval
+mode as a cooperative-harness containment boundary (now including the
+#209 slug/ordering seal), credential handling (kubeconfig token embedding,
+trace/log redaction, the allowlist `otel-activity.log` masking with a
+pointer to `07-02-redaction-allowlist-hardening`), the actual response
+headers, and known limits split into existing protections (the PR #188
+bounds, body caps, atomic writes) vs remaining gaps (no TLS, no CSP on the
+debug shell, single shared secret). Reporting channel: GitHub private
+vulnerability reporting. All code citations verified against current
+`server.py`; role-name lint clean. README.md and CLAUDE.md link to it and
+the stale "pending `07-02-security-md-and-threat-model`" reference in
+CLAUDE.md was replaced.
 
 ## Notes
 
