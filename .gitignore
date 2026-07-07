@@ -177,3 +177,9 @@ coverage.xml
 
 # mypy incremental cache.
 .mypy_cache/
+
+# ruff cache (protected only by ruff's own nested .gitignore otherwise).
+.ruff_cache/
+
+# understand-anything generated analysis cache (knowledge graph / fingerprints).
+.understand-anything/

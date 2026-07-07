@@ -126,7 +126,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
     )
     _write(
         root / ".pre-commit-config.yaml",
-        """
+        r"""
         repos:
           - repo: local
             hooks:

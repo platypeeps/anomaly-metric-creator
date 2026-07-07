@@ -673,11 +673,18 @@ def test_preflight_error_message_names_relevant_flags(amc, capsys):
             "--output-dir", "test_out",
         ])
     err = capsys.readouterr().err
-    assert "--interval-seconds" in err
-    assert "--duration-days" in err
-    assert "--metrics-per-component" in err
-    assert "--components" in err
-    assert "--allow-huge-output" in err
+    # Anchored matching so a future flag that has one of these as a prefix
+    # (e.g. --components vs a hypothetical --components-foo) cannot satisfy
+    # the assertion by accident (repo checklist: no bare-substring flag tests).
+    for flag in (
+        "--interval-seconds",
+        "--duration-days",
+        "--metrics-per-component",
+        "--components",
+        "--allow-huge-output",
+    ):
+        assert re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", err), \
+            f"preflight error must name {flag}; got: {err}"
 
 
 def test_preflight_skipped_for_combine_subcommand(amc, tmp_path):

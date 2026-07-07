@@ -103,6 +103,22 @@ def _raw_get_full(host, port, path, *, timeout=5.0):
     return b"".join(chunks)
 
 
+def _poll_until_503(host, port, path, *, deadline_seconds=5.0):
+    """Poll ``path`` with fresh short connections until it returns a 503 or
+    the deadline expires. Replaces a fixed ``sleep`` so a slow runner that
+    takes longer to occupy the worker/SSE slots cannot flake the assertion:
+    an over-cap request is refused before a worker thread spawns, so each
+    poll is cheap and does not itself consume a slot."""
+    end = time.monotonic() + deadline_seconds
+    resp = b""
+    while time.monotonic() < end:
+        resp = _raw_get(host, port, path)
+        if b"503" in resp:
+            return resp
+        time.sleep(0.02)
+    return resp
+
+
 def test_worker_cap_returns_503_when_saturated(amc, tmp_path):
     state = _hardened_state(amc, tmp_path)
     security = server.ServerSecurityConfig(
@@ -115,10 +131,9 @@ def test_worker_cap_returns_503_when_saturated(amc, tmp_path):
         # Occupy both worker slots with long-lived SSE streams.
         for _ in range(2):
             held.append(_raw_get(host, port, "/v1/debug/events", linger=True))
-        # Let the two handlers start and acquire their worker slots.
-        time.sleep(0.5)
         # A third connection cannot get a worker: fast 503, no thread growth.
-        resp = _raw_get(host, port, "/healthz")
+        # Poll until the two handlers have acquired both slots (bounded wait).
+        resp = _poll_until_503(host, port, "/healthz")
         assert b"503" in resp, resp
     finally:
         for sock in held:
@@ -137,9 +152,9 @@ def test_sse_ceiling_returns_503_over_limit(amc, tmp_path):
     held = []
     try:
         held.append(_raw_get(host, port, "/v1/debug/events", linger=True))
-        time.sleep(0.5)
         # Second SSE stream exceeds the ceiling: 503, worker not monopolized.
-        resp = _raw_get(host, port, "/v1/logs/stream")
+        # Poll until the first stream holds the only slot (bounded wait).
+        resp = _poll_until_503(host, port, "/v1/logs/stream")
         assert b"503" in resp, resp
     finally:
         for sock in held:

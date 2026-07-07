@@ -188,13 +188,3 @@ def write_gauges_csv(
                 writer.writerow((ts, comp, *dims, name, raw))
                 rows_written += 1
     return rows_written
-
-
-# Schema-document version. Bump on any breaking change to the ``schema.json``
-# shape so consumers (including the validator) can fail fast against a stale
-# document. The validator rejects unknown versions outright.
-#
-# Version 2 (phase 7): adds a top-level ``topology`` section
-# carrying the directed coupling graph (source -> edge[]) so
-# the ``validate`` subcommand can run the realistic-mode Pearson coupling
-# check against the snapshot of edges the run was supposed to honor.

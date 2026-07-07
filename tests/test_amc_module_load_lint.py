@@ -47,6 +47,17 @@ def test_flags_naked_call(tmp_path: Path):
     assert str(bad) in result.stderr
 
 
+def test_non_utf8_file_exits_2_not_1(tmp_path: Path):
+    """A structural failure (unreadable / non-UTF-8 file) must exit 2, so it
+    is distinguishable from a real violation (exit 1) — the documented
+    0/1/2 contract all sibling lints follow."""
+    bad = tmp_path / "test_binary.py"
+    bad.write_bytes(b"\xff\xfe not valid utf-8 \x80\x81")
+    result = _run(bad)
+    assert result.returncode == 2, result.stderr
+    assert "cannot read" in result.stderr
+
+
 def test_flags_attribute_call(tmp_path: Path):
     bad = tmp_path / "test_attr.py"
     bad.write_text(

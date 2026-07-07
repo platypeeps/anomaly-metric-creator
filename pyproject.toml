@@ -80,7 +80,10 @@ pythonpath = ["src"]
 # `pytest-xdist` installed, the `addopts` `-n` flag would otherwise
 # fail with a cryptic "unrecognized arguments" error.
 required_plugins = ["pytest-xdist"]
-addopts = "-ra --dist loadfile -n 4"
+# --strict-markers turns a typo'd or unregistered @pytest.mark.<name> into a
+# collection error instead of a silent warning. Both markers used in the
+# suite (full_resolution, heavy) are registered below.
+addopts = "-ra --strict-markers --dist loadfile -n 4"
 # Registered markers. These declarations exist so pytest's --strict-markers
 # mode (and any lint that consumes the [tool.pytest.ini_options].markers
 # list) treats the marker name as known; no conftest helper reads marker

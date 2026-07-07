@@ -497,20 +497,3 @@ def combine_logs(input_dir, components=None, *, assume_monotonic_wide_components
     )
 
 
-# _anomaly_event_id and the OTLP payload builders moved verbatim to
-# otlp.py (decomposition step 2). Re-imported here so the historic
-# ``legacy.<name>`` surface is unchanged; new code should import from
-# anomaly_metric_creator.otlp directly.
-from .otlp import (
-    _anomaly_event_id as _anomaly_event_id,
-    _build_otlp_gauge_payload as _build_otlp_gauge_payload,
-    _build_otlp_gauge_protobuf as _build_otlp_gauge_protobuf,
-    _build_otlp_log_payload as _build_otlp_log_payload,
-    _build_otlp_log_protobuf as _build_otlp_log_protobuf,
-    _build_otlp_metric_payload as _build_otlp_metric_payload,
-    _build_otlp_metric_protobuf as _build_otlp_metric_protobuf,
-    _build_otlp_trace_payload as _build_otlp_trace_payload,
-    _build_otlp_trace_protobuf as _build_otlp_trace_protobuf,
-)
-
-
