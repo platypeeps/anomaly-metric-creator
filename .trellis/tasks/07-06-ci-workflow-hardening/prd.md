@@ -126,6 +126,23 @@ autonomous end-of-session change:**
   them into the focused pass (the src/ lint decision also overlaps
   `07-06-coverage-threshold-and-mypy-gating`).
 
+### New finding (2026-07-07, discovered on PR #219): fragile `git diff` merge-base
+
+The `changes` and `socket` jobs' **"Collect changed files"** step shallow-
+fetches `origin/$BASE_REF` at `--depth=1`, then runs a three-dot
+`git diff --name-only "origin/$BASE_REF...HEAD"`. When the PR branch has
+fallen **behind** the target branch (e.g. another PR merges during this PR's
+CI lane), the merge-base is no longer inside the depth-1 shallow fetch and
+the step dies with `fatal: origin/$BASE_REF...HEAD: no merge base` (exit
+128), failing the required `test` context. PR #219 hit this after #218
+merged mid-lane; a rebase onto the current tip worked around it, but that is
+a manual fix every stale PR would need. Fold a real fix into the focused
+pass — deepen the fetch (drop `--depth=1` or use `--deepen`) or fall back to
+a two-dot `git diff origin/$BASE_REF HEAD` when the three-dot form fails.
+The `changes` job's own checkout already uses `fetch-depth: 0`, so the
+shallow re-fetch is what re-shallows `origin/$BASE_REF` — the two are in
+tension.
+
 ## Notes
 
 - Dependabot auto-merge and the `!cancelled()` aggregate guard were
