@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import datetime
 import heapq
+import http.client
 import json
 import shlex
 import sys
@@ -18,6 +19,13 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+# Shared retry policy for both OTEL streamers. ``_OTEL_DEFAULT_MAX_RETRIES``
+# is the single default threaded into both ``stream_otel_signals`` and
+# ``stream_otel_gauges``; ``_OTEL_BACKOFF_MAX_SECONDS`` caps the exponential
+# backoff (``min(2 ** (attempts - 1), cap)``).
+_OTEL_DEFAULT_MAX_RETRIES = 3
+_OTEL_BACKOFF_MAX_SECONDS = 8
 
 from .csv_layout import _iter_component_rows
 from .otlp import (
@@ -110,6 +118,104 @@ def _http_error_activity_fields(
     return fields
 
 
+def _post_with_retries(
+    req,
+    body: bytes,
+    content_type: str,
+    *,
+    timeout_seconds: float,
+    max_retries: int,
+    log_file,
+    verbose: bool,
+    signal: str,
+    endpoint: str,
+    id_fields: dict,
+    verbose_send_fields: dict,
+    subject: str,
+) -> bool:
+    """POST ``req`` with exponential-backoff retries; return success.
+
+    Emits the SEND / OK / RETRY / FAIL activity records both OTEL streamers
+    share, so the backoff formula, retry accounting, and record field order
+    have one definition. Returns ``True`` when an ``OK`` record was written
+    and ``False`` when retries were exhausted (a ``FAIL`` record was
+    written). ``id_fields`` is the per-item identity dict every record for
+    this item carries (``event_ts``/``component``/``metric`` for signals, or
+    ``batch_start_ts``/``batch_end_ts``/``data_points`` for gauges); the
+    ``signal, endpoint, *id_fields, attempt, *verbose`` order is preserved
+    byte-for-byte from the pre-unification records. ``subject`` is the human
+    string for the stderr WARNING lines.
+
+    Catches ``urllib.error.URLError`` (covering ``HTTPError``) **and**
+    ``http.client.HTTPException`` — e.g. ``BadStatusLine`` from a malformed
+    response, which ``urllib``'s handler does not wrap as ``URLError`` and
+    which would otherwise escape and kill the caller. Under ``amc serve``
+    that caller is a daemon OTEL thread, so an unhandled transport error
+    would silently stop streaming with a bare traceback.
+    """
+    attempts = 0
+    while True:
+        _write_activity(
+            log_file,
+            "SEND",
+            signal=signal,
+            endpoint=endpoint,
+            **id_fields,
+            attempt=f"{attempts + 1}/{max_retries + 1}",
+            **verbose_send_fields,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                response_status = response.status
+            ok_fields: dict = {}
+            if verbose:
+                ok_fields["status"] = response_status
+            _write_activity(log_file, "OK", signal=signal, **id_fields, **ok_fields)
+            return True
+        except (urllib.error.URLError, http.client.HTTPException) as exc:
+            attempts += 1
+            http_error_fields = _http_error_activity_fields(
+                exc, body, content_type, verbose=verbose
+            )
+            err_fields: dict = {}
+            if verbose:
+                err_fields["error_type"] = type(exc).__name__
+                if isinstance(exc, urllib.error.HTTPError):
+                    err_fields["status"] = exc.code
+            if attempts > max_retries:
+                print(
+                    f"WARNING: OTEL {signal} stream failed for {subject}: {exc}",
+                    file=sys.stderr,
+                )
+                _write_activity(
+                    log_file,
+                    "FAIL",
+                    signal=signal,
+                    **id_fields,
+                    error=repr(str(exc)),
+                    **http_error_fields,
+                    **err_fields,
+                )
+                return False
+            backoff = min(2 ** (attempts - 1), _OTEL_BACKOFF_MAX_SECONDS)
+            print(
+                f"WARNING: OTEL {signal} stream retry {attempts}/{max_retries} for "
+                f"{subject}: {exc}",
+                file=sys.stderr,
+            )
+            _write_activity(
+                log_file,
+                "RETRY",
+                signal=signal,
+                **id_fields,
+                attempt=f"{attempts}/{max_retries}",
+                error=repr(str(exc)),
+                **http_error_fields,
+                **err_fields,
+            )
+            time.sleep(backoff)
+
+
 def stream_otel_signals(
     endpoints: dict[str, str], # {"logs": url, "metrics": url, "traces": url}
     anomaly_rows: list[dict],
@@ -117,7 +223,7 @@ def stream_otel_signals(
     speedup: float,
     timeout_seconds: float,
     max_events: int | None = None,
-    max_retries: int = 3,
+    max_retries: int = _OTEL_DEFAULT_MAX_RETRIES,
     auth_headers: dict[str, dict[str, str]] | None = None, # {"logs": {"Authorization": ...}, ...}
     protocol: str = "json",
     activity_log_path: Path | None = None,
@@ -207,84 +313,26 @@ def stream_otel_signals(
                     verbose_send_fields["body"] = _verbose_body_repr(body, content_type)
                     for hk, hv in _masked_headers(headers).items():
                         verbose_send_fields[hk.lower().replace("-", "_")] = hv
-                attempts = 0
                 requests_attempted += 1
-                while True:
-                    _write_activity(
-                        log_file,
-                        "SEND",
-                        signal=signal,
-                        endpoint=endpoint,
-                        event_ts=row["timestamp"],
-                        component=row["component"],
-                        metric=row["metric"],
-                        attempt=f"{attempts + 1}/{max_retries + 1}",
-                        **verbose_send_fields,
-                    )
-                    try:
-                        with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
-                            response_status = response.status
-                        ok_fields: dict = {}
-                        if verbose:
-                            ok_fields["status"] = response_status
-                        _write_activity(
-                            log_file,
-                            "OK",
-                            signal=signal,
-                            event_ts=row["timestamp"],
-                            component=row["component"],
-                            metric=row["metric"],
-                            **ok_fields,
-                        )
-                        sent += 1
-                        break
-                    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-                        attempts += 1
-                        http_error_fields = _http_error_activity_fields(
-                            exc, body, content_type, verbose=verbose
-                        )
-                        err_fields: dict = {}
-                        if verbose:
-                            err_fields["error_type"] = type(exc).__name__
-                            if isinstance(exc, urllib.error.HTTPError):
-                                err_fields["status"] = exc.code
-                        if attempts > max_retries:
-                            print(
-                                f"WARNING: OTEL {signal} stream failed for {row['timestamp']} "
-                                f"({row['component']}.{row['metric']}): {exc}",
-                                file=sys.stderr,
-                            )
-                            _write_activity(
-                                log_file,
-                                "FAIL",
-                                signal=signal,
-                                event_ts=row["timestamp"],
-                                component=row["component"],
-                                metric=row["metric"],
-                                error=repr(str(exc)),
-                                **http_error_fields,
-                                **err_fields,
-                            )
-                            break
-                        backoff = min(2 ** (attempts - 1), 8)
-                        print(
-                            f"WARNING: OTEL {signal} stream retry {attempts}/{max_retries} for "
-                            f"{row['timestamp']} ({row['component']}.{row['metric']}): {exc}",
-                            file=sys.stderr,
-                        )
-                        _write_activity(
-                            log_file,
-                            "RETRY",
-                            signal=signal,
-                            event_ts=row["timestamp"],
-                            component=row["component"],
-                            metric=row["metric"],
-                            attempt=f"{attempts}/{max_retries}",
-                            error=repr(str(exc)),
-                            **http_error_fields,
-                            **err_fields,
-                        )
-                        time.sleep(backoff)
+                if _post_with_retries(
+                    req,
+                    body,
+                    content_type,
+                    timeout_seconds=timeout_seconds,
+                    max_retries=max_retries,
+                    log_file=log_file,
+                    verbose=verbose,
+                    signal=signal,
+                    endpoint=endpoint,
+                    id_fields={
+                        "event_ts": row["timestamp"],
+                        "component": row["component"],
+                        "metric": row["metric"],
+                    },
+                    verbose_send_fields=verbose_send_fields,
+                    subject=f"{row['timestamp']} ({row['component']}.{row['metric']})",
+                ):
+                    sent += 1
             if aborted:
                 break
     finally:
@@ -303,7 +351,7 @@ def stream_otel_gauges(
     speedup: float,
     timeout_seconds: float,
     max_events: int | None,
-    max_retries: int,
+    max_retries: int = _OTEL_DEFAULT_MAX_RETRIES,
     auth_headers: dict[str, str] | None,
     protocol: str,
     activity_log_path: Path | None,
@@ -403,84 +451,26 @@ def stream_otel_gauges(
             for hk, hv in _masked_headers(headers).items():
                 verbose_send_fields[hk.lower().replace("-", "_")] = hv
 
-        attempts = 0
-        while True:
-            _write_activity(
-                log_file,
-                "SEND",
-                signal="metrics_gauge",
-                endpoint=endpoint,
-                batch_start_ts=batch_start_ts,
-                batch_end_ts=batch_end_ts,
-                data_points=data_points,
-                attempt=f"{attempts + 1}/{max_retries + 1}",
-                **verbose_send_fields,
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
-                    response_status = response.status
-                ok_fields: dict = {}
-                if verbose:
-                    ok_fields["status"] = response_status
-                _write_activity(
-                    log_file,
-                    "OK",
-                    signal="metrics_gauge",
-                    batch_start_ts=batch_start_ts,
-                    batch_end_ts=batch_end_ts,
-                    data_points=data_points,
-                    **ok_fields,
-                )
-                requests_sent += 1
-                data_points_sent += data_points
-                break
-            except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-                attempts += 1
-                http_error_fields = _http_error_activity_fields(
-                    exc, body, content_type, verbose=verbose
-                )
-                err_fields: dict = {}
-                if verbose:
-                    err_fields["error_type"] = type(exc).__name__
-                    if isinstance(exc, urllib.error.HTTPError):
-                        err_fields["status"] = exc.code
-                if attempts > max_retries:
-                    print(
-                        f"WARNING: OTEL metrics_gauge stream failed for batch "
-                        f"{batch_start_ts}..{batch_end_ts}: {exc}",
-                        file=sys.stderr,
-                    )
-                    _write_activity(
-                        log_file,
-                        "FAIL",
-                        signal="metrics_gauge",
-                        batch_start_ts=batch_start_ts,
-                        batch_end_ts=batch_end_ts,
-                        data_points=data_points,
-                        error=repr(str(exc)),
-                        **http_error_fields,
-                        **err_fields,
-                    )
-                    break
-                backoff = min(2 ** (attempts - 1), 8)
-                print(
-                    f"WARNING: OTEL metrics_gauge stream retry {attempts}/{max_retries} "
-                    f"for batch {batch_start_ts}..{batch_end_ts}: {exc}",
-                    file=sys.stderr,
-                )
-                _write_activity(
-                    log_file,
-                    "RETRY",
-                    signal="metrics_gauge",
-                    batch_start_ts=batch_start_ts,
-                    batch_end_ts=batch_end_ts,
-                    data_points=data_points,
-                    attempt=f"{attempts}/{max_retries}",
-                    error=repr(str(exc)),
-                    **http_error_fields,
-                    **err_fields,
-                )
-                time.sleep(backoff)
+        if _post_with_retries(
+            req,
+            body,
+            content_type,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            log_file=log_file,
+            verbose=verbose,
+            signal="metrics_gauge",
+            endpoint=endpoint,
+            id_fields={
+                "batch_start_ts": batch_start_ts,
+                "batch_end_ts": batch_end_ts,
+                "data_points": data_points,
+            },
+            verbose_send_fields=verbose_send_fields,
+            subject=f"batch {batch_start_ts}..{batch_end_ts}",
+        ):
+            requests_sent += 1
+            data_points_sent += data_points
 
         prev_batch_start_dt = batch_start_dt
         batch = []

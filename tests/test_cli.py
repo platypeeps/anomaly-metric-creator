@@ -6,6 +6,7 @@ state is leaking determinism.
 """
 
 import filecmp
+import http.client
 import json
 import os
 import subprocess
@@ -1217,6 +1218,55 @@ def test_otel_http_error_activity_log_includes_response_headers(
             "non-verbose FAIL records must not carry the raw request "
             "payload (--otel-verbose contract)"
         )
+
+
+def test_otel_stream_survives_malformed_response_bad_status_line(
+    amc, tmp_path, monkeypatch
+):
+    """A malformed HTTP response (``http.client.BadStatusLine``) is NOT an
+    ``OSError``, so ``urllib``'s handler does not wrap it as ``URLError`` and
+    it escapes ``urlopen``. The retry loop must catch it (via the widened
+    ``http.client.HTTPException`` clause) and record RETRY/FAIL instead of
+    propagating — an escape would kill the serve-mode daemon OTEL thread.
+    Regression guard for 07-06-otel-stream-retry-unification.
+    """
+    def _raise_bad_status_line(req, timeout=None):
+        raise http.client.BadStatusLine("garbage status line from a broken proxy")
+
+    monkeypatch.setattr(
+        "anomaly_metric_creator.otel_stream.urllib.request.urlopen",
+        _raise_bad_status_line,
+    )
+
+    log_target = tmp_path / "bad_status.log"
+    # Must not raise: the stream returns 0 sent and logs the failure.
+    sent = amc.stream_otel_signals(
+        {"metrics": "http://127.0.0.1:1/v1/metrics"},
+        [{
+            "timestamp": "2026-03-10 00:00:00",
+            "component": "database",
+            "metric": "write_latency_ms",
+            "description": "Synthetic malformed-response failure",
+        }],
+        speedup=1000000.0,
+        timeout_seconds=2.0,
+        max_events=1,
+        max_retries=1,
+        auth_headers=None,
+        protocol="json",
+        activity_log_path=log_target,
+        verbose=True,  # so records carry error_type=<exception class>
+    )
+    assert sent == 0
+    log_lines = log_target.read_text().splitlines()
+    # max_retries=1 → one RETRY then one FAIL; both must record the exception
+    # type, proving the widened http.client.HTTPException clause caught it.
+    assert any(
+        " RETRY " in line and "error_type=BadStatusLine" in line for line in log_lines
+    ), "expected a RETRY activity record with error_type=BadStatusLine"
+    assert any(
+        " FAIL " in line and "error_type=BadStatusLine" in line for line in log_lines
+    ), "expected a FAIL activity record with error_type=BadStatusLine"
 
 
 def test_otel_activity_log_not_created_when_streaming_disabled(tmp_path):
