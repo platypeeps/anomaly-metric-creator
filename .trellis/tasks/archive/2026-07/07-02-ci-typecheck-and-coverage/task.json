@@ -11,7 +11,7 @@
   "creator": "sdelmas",
   "assignee": "sdelmas",
   "createdAt": "2026-07-02",
-  "completedAt": "2026-07-02",
+  "completedAt": "2026-07-06",
   "branch": "chore/ci-typecheck-coverage",
   "base_branch": "main",
   "worktree_path": null,
