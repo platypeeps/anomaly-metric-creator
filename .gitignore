@@ -60,6 +60,10 @@ sd-ai-command-pack-uv-tools/
 .agent/**/logs/
 .agent/**/tmp/
 .agent/**/*.log
+.claude/**
+!.claude/commands/
+!.claude/commands/sd/
+!.claude/commands/sd/*.md
 .claude/settings.local.json
 .claude/**/*.local.*
 .claude/**/.cache/

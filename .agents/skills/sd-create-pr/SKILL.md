@@ -31,8 +31,10 @@ review loop.
   `sd-full-check`, `sd-review-local`, or `sd-review-local-all`; `sd-review-pr`
   disables Prism and Gito for its command-owned local gate.
 - Do not create a PR from the repository default branch. If the current branch
-  is the default branch, stop and ask the user to create or switch to a feature
-  branch.
+  is the default branch, create a feature branch before continuing. Prefer
+  `SD_AI_COMMAND_PACK_CREATE_PR_BRANCH` when set; otherwise derive a concise
+  `codex/<slug>` name from the requested work or commit message and fall back
+  to a timestamped `codex/prepare-pr-<timestamp>` name when needed.
 - Do not stage unrelated or ambiguous work. Capture the dirty state before and
   after `sd-update-spec`, classify all changed and untracked paths, and stage
   only files that clearly belong to the PR. Ask before touching ambiguous
@@ -71,7 +73,32 @@ BASE_BRANCH="${BASE_BRANCH:-$(git symbolic-ref --quiet --short refs/remotes/orig
 ```
 
 Stop if `CURRENT_BRANCH` is empty, if no base branch can be resolved, or if the
-current branch equals the base branch.
+current branch cannot be moved off the base branch.
+
+If the current branch equals the base branch, create a feature branch instead of
+stopping. Prefer an explicit branch name, then a user-provided slug, then a slug
+derived from the commit message. Use a timestamped fallback when the derived
+name is empty or already exists:
+
+```bash
+if [ "$CURRENT_BRANCH" = "$BASE_BRANCH" ]; then
+  TARGET_BRANCH="${SD_AI_COMMAND_PACK_CREATE_PR_BRANCH:-}"
+  if [ -z "$TARGET_BRANCH" ]; then
+    BRANCH_SOURCE="${SD_AI_COMMAND_PACK_CREATE_PR_BRANCH_SLUG:-${SD_AI_COMMAND_PACK_CREATE_PR_COMMIT_MESSAGE:-prepare-pr}}"
+    BRANCH_SLUG=$(printf '%s' "$BRANCH_SOURCE" \
+      | tr '[:upper:]' '[:lower:]' \
+      | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g' \
+      | cut -c1-48)
+    TARGET_BRANCH="codex/${BRANCH_SLUG:-prepare-pr}"
+  fi
+  if git show-ref --verify --quiet "refs/heads/$TARGET_BRANCH" \
+    || git ls-remote --exit-code --heads origin "$TARGET_BRANCH" >/dev/null 2>&1; then
+    TARGET_BRANCH="${TARGET_BRANCH}-$(date -u +%Y%m%d%H%M%S)"
+  fi
+  git switch -c "$TARGET_BRANCH"
+  CURRENT_BRANCH=$(git branch --show-current)
+fi
+```
 
 Capture the initial dirty state before refreshing specs:
 

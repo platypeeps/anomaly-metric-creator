@@ -294,21 +294,27 @@ in the receipt and absent files warn) and exclude-and-warn (repo guards
 strip the entries — present-but-unlisted gitignored files warn instead of
 failing). Hand-edited receipt entries with Windows-style separators are
 normalized before checking. The installer also writes
-`.sd-ai-command-pack/provenance.json` with the pack version and `sha256`
-hashes of installed pack files (user-tunable files are never vouched); the
-audit fails when a vouched file's content drifts from the recorded pack
-content, when a vouched file is missing while not gitignored, or when a
-vouched path (or the provenance file itself) is a symlink or other
+`.sd-ai-command-pack/provenance.json` with the installed payload version and
+`sha256` hashes of installed pack files (user-tunable files are never
+vouched); the audit fails when a vouched file's content drifts from the
+recorded pack content, when a vouched file is missing while not gitignored,
+or when a vouched path (or the provenance file itself) is a symlink or other
 non-regular node, so the "reviewed upstream" exemption for vendored pack
-files is a checkable claim.
+files is a checkable claim. The source checkout's current manifest version
+can intentionally be newer than the provenance version in a target repo when
+the newer release did not change installed payload bytes; a passing audit
+reports the installed payload provenance version and confirms the vouched
+hashes still match.
 The copied/generated scope preflight reads
 `.sd-ai-command-pack/installed-targets.txt`, reports changed pack/Trellis
 runtime files, known repository-map files when present, and Trellis workspace
 journal/index files as integration-only review surface. When the GitHub CLI can
 resolve a current PR, it checks that the PR body includes a
 `Tooling/generated scope:` section before review cycles spend attention on
-copied or generated surfaces. In CI or local preflights where `gh pr view`
-should not run, pass the PR body through `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`.
+copied or generated surfaces. Markdown headings without the colon, such as
+`## Tooling/generated scope`, are accepted too. In CI or local preflights where
+`gh pr view` should not run, pass the PR body through
+`SD_AI_COMMAND_PACK_SCOPE_PR_BODY`.
 
 The review preflight is intentionally generic and safe to run without project
 dependencies. It checks for duplicate npm override sources of truth, changed
@@ -773,6 +779,13 @@ ephemeral tool state and do not change what the checks validate.
 - `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`: explicit PR body text for tooling/generated
   scope checks when `gh pr view` should not be used. Deprecated fallback:
   `REVIEW_PREFLIGHT_PR_BODY`.
+- `SD_AI_COMMAND_PACK_CREATE_PR_BRANCH`: explicit feature branch name for
+  `sd-create-pr` when it starts on the repository default branch. When unset,
+  `sd-create-pr` derives a `codex/<slug>` branch from
+  `SD_AI_COMMAND_PACK_CREATE_PR_BRANCH_SLUG`,
+  `SD_AI_COMMAND_PACK_CREATE_PR_COMMIT_MESSAGE`, or a timestamped fallback.
+- `SD_AI_COMMAND_PACK_CREATE_PR_BRANCH_SLUG`: slug source used to derive the
+  default `codex/<slug>` feature branch when an explicit branch is not set.
 - `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHECK=0`: skip configurable PR-body scope
   checks.
 - `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHECK=required`: fail if the pack-provided
@@ -849,11 +862,12 @@ Trellis local/runtime files such as `.trellis/.developer`,
 `.trellis/.runtime/`, `.trellis/.cache/`, Trellis backup directories,
 `.trellis/worktrees/`, and `.trellis/.template-hashes.json` without
 blanket-ignoring shareable `.trellis` workflow, spec, task, and script files.
-It also ignores local AI-tool state such as `.claude/settings.local.json`,
-tool caches, logs, sessions, tmp folders, Gito report/temp artifacts,
+It also keeps shared Claude SD commands trackable while ignoring the rest of
+`.claude/` as local Claude Code state. Other AI-tool local state such as tool
+caches, logs, sessions, tmp folders, Gito report/temp artifacts,
 tool-specific local state, `.opencode/node_modules/`, and root
-`node_modules/` without blanket-ignoring shareable platform adapter
-directories.
+`node_modules/` are ignored without blanket-ignoring shareable non-Claude
+platform adapter directories.
 The installer replaces exact unmarked `.trellis/` ignore entries with that
 specific-pattern block.
 
@@ -898,6 +912,10 @@ sd-ai-command-pack-uv-tools/
 .agent/**/logs/
 .agent/**/tmp/
 .agent/**/*.log
+.claude/**
+!.claude/commands/
+!.claude/commands/sd/
+!.claude/commands/sd/*.md
 .claude/settings.local.json
 .claude/**/*.local.*
 .claude/**/.cache/

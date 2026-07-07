@@ -269,34 +269,41 @@ def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], li
     return failures, warnings
 
 
-def audit_provenance(root: Path) -> list[str]:
+def audit_provenance(root: Path) -> tuple[list[str], str | None]:
     """Verify recorded pack content hashes when provenance is present."""
     provenance_path = root / PROVENANCE_FILE
     try:
         mode = os.lstat(provenance_path).st_mode
     except FileNotFoundError:
-        return []
+        return [], None
     except OSError as exc:
         # exists()/is_file() swallow OSErrors as False, which would let a
         # permission game silently disable verification; fail instead.
-        return [f"{PROVENANCE_FILE} cannot be inspected: {exc}"]
+        return [f"{PROVENANCE_FILE} cannot be inspected: {exc}"], None
     if not stat.S_ISREG(mode):
         # A symlinked or non-regular provenance file would let tampering
         # redirect or disable verification; only a regular file counts
         # (lstat does not follow symlinks).
-        return [f"{PROVENANCE_FILE} must be a regular file"]
+        return [f"{PROVENANCE_FILE} must be a regular file"], None
 
     try:
         payload = json.loads(
             provenance_path.read_text(encoding="utf-8", errors="strict")
         )
     except (OSError, UnicodeError, ValueError) as exc:
-        return [f"{PROVENANCE_FILE} is unreadable or malformed: {exc}"]
+        return [f"{PROVENANCE_FILE} is unreadable or malformed: {exc}"], None
 
     files = payload.get("files") if isinstance(payload, dict) else None
-    version = payload.get("version", "unknown") if isinstance(payload, dict) else "unknown"
+    raw_version = payload.get("version") if isinstance(payload, dict) else None
+    version = (
+        raw_version
+        if isinstance(raw_version, str) and raw_version.strip()
+        else "unknown"
+    )
     if not isinstance(files, dict):
-        return [f"{PROVENANCE_FILE} has no files map"]
+        return [f"{PROVENANCE_FILE} has no files map"], None
+    if not files:
+        return [f"{PROVENANCE_FILE} has an empty files map"], None
 
     failures: list[str] = []
     root_real = os.path.realpath(root)
@@ -359,7 +366,7 @@ def audit_provenance(root: Path) -> list[str]:
                 f"installed target drifted from pack {version} content: "
                 f"{target} (re-run the pack installer or review the local edit)"
             )
-    return failures
+    return failures, version
 
 
 def _is_excluded_scan_path(relative_path: Path) -> bool:
@@ -465,7 +472,8 @@ def main() -> int:
     if targets:
         structural_failures, structural_warnings = audit_structural_state(root, targets)
         failures.extend(structural_failures)
-    failures.extend(audit_provenance(root))
+    provenance_failures, provenance_version = audit_provenance(root)
+    failures.extend(provenance_failures)
     warnings = [*structural_warnings, *audit_migration_advisories(root, targets)]
 
     if failures:
@@ -477,6 +485,11 @@ def main() -> int:
         print(f"warning: {warning}")
 
     print(f"SD AI command pack install audit passed: {len(targets)} targets checked.")
+    if provenance_version is not None:
+        print(
+            "Installed payload provenance: "
+            f"version {provenance_version}; vouched file hashes match."
+        )
     return 0
 
 

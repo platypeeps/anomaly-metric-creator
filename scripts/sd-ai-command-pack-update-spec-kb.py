@@ -889,7 +889,7 @@ def destination_filename_for_source(source: Path) -> str:
         stem = source.stem
         if source.name == "SKILL.md" and len(parts) >= 2:
             return f"{prefix}-{visible_path_component(parts[-2])}.md"
-        if source.name == "agents.md":
+        if source.name.lower() == "agents.md":
             return f"{prefix}-agents.md"
         if source.name == "package.json":
             return f"{prefix}-package.json"
