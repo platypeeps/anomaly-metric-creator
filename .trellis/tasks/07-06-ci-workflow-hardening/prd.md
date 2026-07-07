@@ -75,18 +75,56 @@ label with two different lifetimes.
 
 ## Acceptance Criteria
 
-- [ ] Zero mutable third-party action tags across the four workflows.
-- [ ] All merge-blocking jobs carry `timeout-minutes`.
+- [x] Zero mutable third-party action tags across the four workflows.
+- [x] All merge-blocking jobs carry `timeout-minutes`.
 - [ ] The PR-body scope step provably enforces (test or lint anchor) or
-      is removed everywhere it is claimed.
-- [ ] One documented `full-ci` lifetime, contract-lint-pinned.
+      is removed everywhere it is claimed. — **deferred, see below**
+- [ ] One documented `full-ci` lifetime, contract-lint-pinned. —
+      **deferred, see below**
 - [ ] An `.opencode/package.json` bump routes to the dependency lane (or
       the accepted risk is recorded in the classifier), covered by
-      `tests/test_ci_change_classifier.py`.
+      `tests/test_ci_change_classifier.py`. — **deferred**
 - [ ] The `src/` CI lint decision is implemented or recorded; if
-      implemented, the quick and full lanes run it.
-- [ ] `check_ci_review_contract.py` and its tests updated for any anchors
-      this task adds; existing anchors untouched.
+      implemented, the quick and full lanes run it. — **deferred**
+- [x] `check_ci_review_contract.py` and its tests updated for any anchors
+      this task adds; existing anchors untouched. — no new anchors in the
+      shipped subset; SHA pins are Dependabot-maintained (an anchor would
+      fight the bumps), timeouts are additive.
+
+## Progress (2026-07-07) — safe subset shipped, merge-gate items deferred
+
+**Shipped:** all five actions across the four workflows are SHA-pinned with
+`# vX` comments (`actions/checkout` v7, `actions/setup-python` v6,
+`astral-sh/setup-uv` v8.3.0, `dependabot/fetch-metadata` v3,
+`github/codeql-action` v4 — Dependabot's `github-actions` ecosystem keeps
+the pins fresh), and the three merge-blocking jobs that lacked a timeout
+now have one (`changes` 10m, `socket` 15m, the `test` aggregate 5m). Both
+are unambiguous wins, self-verified by the PR's own full CI run.
+
+**Deferred with analysis — these change the *shared merge gate* for every
+contributor, so they warrant a deliberate decision rather than an
+autonomous end-of-session change:**
+
+- **PR-body scope enforcement is NOT safe to simply wire in.** The scope
+  script fails (exit 1) when a PR body *is* supplied but lacks the scope
+  heading matching the changed paths. Wiring `github.event.pull_request.body`
+  into the lightweight lane would therefore **break Dependabot auto-merge**:
+  a Dependabot PR touches dependency files (→ needs a "dependency" scope
+  heading) but its body never carries one, so the scope step would fail and
+  block the auto-merge the repo relies on. Options for the focused pass:
+  (a) delete the no-op step + the `DEVELOPMENT_CYCLE.md` claim; (b) wire it
+  in *with* a `github.actor == 'dependabot[bot]'` (and bot-actor) skip.
+  Decide deliberately.
+- **`full-ci` label lifetime unification** changes CI cadence (ci.yml/
+  socket.yml one-shot at the `labeled` event vs codeql.yml persistent on
+  every synchronize). Aligning codeql to one-shot is the consistent choice
+  (matches the deliberate cadence design; codeql is advisory so low cost),
+  but it is a cadence change worth an explicit nod + a contract anchor +
+  mutation test.
+- **`.opencode/package.json` classification** and the **`src/` CI-lint
+  decision** are lower-risk but touch the classifier / lint surface; fold
+  them into the focused pass (the src/ lint decision also overlaps
+  `07-06-coverage-threshold-and-mypy-gating`).
 
 ## Notes
 
