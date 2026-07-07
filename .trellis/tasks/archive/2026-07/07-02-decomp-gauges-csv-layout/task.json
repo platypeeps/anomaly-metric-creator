@@ -11,7 +11,7 @@
   "creator": "sdelmas",
   "assignee": "sdelmas",
   "createdAt": "2026-07-02",
-  "completedAt": "2026-07-02",
+  "completedAt": "2026-07-06",
   "branch": "refactor/extract-gauges-csv-layout",
   "base_branch": "refactor/extract-redaction",
   "worktree_path": null,
