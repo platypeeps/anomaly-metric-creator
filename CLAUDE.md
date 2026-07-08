@@ -2489,20 +2489,32 @@ run in CI):
   generation caused the original OOM (the full serial suite, a strict
   superset, already fits the runner). The workflow timeout is 45 minutes to
   cover the heavy-serial + light-parallel PR path while still capping hangs.
-  The full-suite lane also runs two **report-only** quality steps: a
-  `mypy` type-check (`continue-on-error: true`; config in `[tool.mypy]`,
-  `mypy==2.1.0` pinned exactly in the `dev` extra so the finding count is
-  comparable across runs — single pin site, no lockstep script needed) and
-  pytest coverage (`--cov=src/anomaly_metric_creator`, `pytest-cov` in the
-  `dev` extra). Coverage aggregates across the PR path's two partitioned
-  steps via `--cov-append` so the reported percentage covers the whole
-  suite, and `COVERAGE_CORE=sysmon` (the sys.monitoring backend, py3.12+)
-  keeps the tracing overhead inside the job timeout. Neither step gates merges yet: the mypy baseline
-  (~119 findings at introduction) and the coverage threshold decision are
-  tracked in Trellis task `07-02-ci-typecheck-and-coverage`; tighten both
-  as `07-02-legacy-monolith-decomposition` lands. `--cov` flags stay
-  CI-only — `addopts` / `required_plugins` intentionally do not reference
-  pytest-cov, so local `pytest` runs pay no tracing cost.
+  The full-suite lane also runs mypy and coverage, each in a **report-only +
+  gated** pair (`07-06-coverage-threshold-and-mypy-gating`). **mypy:** a
+  report-only baseline step (`continue-on-error: true`, whole `[tool.mypy]`
+  `files` set — legacy.py + the server layer are the known-messy ~137-error
+  baseline) plus a **gating** step that runs `mypy --follow-imports=silent`
+  over the currently-clean modules and fails on any error there. The gated
+  list is the modules that already type-check clean (the extracted leaf
+  modules, the facades, `cli.py`, and the clean `server_*` modules);
+  `--follow-imports=silent` checks their imports for inference but reports
+  only errors originating in the listed files, so importing still-dirty
+  `legacy.py` does not leak its errors into the gate. Grow the list as
+  decomposition extracts clean modules; never drop one to silence a
+  regression. `mypy==2.1.0` is pinned exactly in the `dev` extra so the
+  baseline count is comparable across runs (single pin site, no lockstep
+  script). **coverage:** `--cov=src/anomaly_metric_creator` aggregated across
+  the PR path's two partitioned steps via `--cov-append`, gated with
+  `--cov-fail-under=85` on the final run — a no-regression ratchet ~3 points
+  below the measured 88% (xdist/partition jitter headroom), ratcheted UP
+  toward the measured number as `07-02-legacy-monolith-decomposition` lands,
+  never lowered to pass a red build. `coverage.xml` is uploaded as a
+  workflow artifact (`actions/upload-artifact`, `if: ${{ !cancelled() }}` so
+  it publishes even when the gate trips). `COVERAGE_CORE=sysmon` (the
+  sys.monitoring backend, py3.12+) keeps tracing overhead inside the job
+  timeout. `--cov` flags stay CI-only — `addopts` / `required_plugins`
+  intentionally do not reference pytest-cov, so local `pytest` runs pay no
+  tracing cost.
 - `.github/workflows/dependabot-auto-merge.yml` — enables GitHub
   auto-merge (squash) on Dependabot **patch + minor** PRs via
   `dependabot/fetch-metadata`; majors stay manual. The merge waits on the
