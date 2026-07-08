@@ -44,8 +44,14 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
-          git diff --name-only "origin/$BASE_REF...HEAD" > changed-files.txt
+          # Full history (no --depth=1): the checkout uses fetch-depth: 0, so a
+          # shallow re-fetch re-shallows origin/$BASE_REF and the three-dot
+          # merge-base fails once this branch falls behind the base (07-06
+          # finding on PR #219). Two-dot fallback is safe here: --name-only
+          # exits non-zero only on that git error, never to signal a diff.
+          git fetch --no-tags origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+          git diff --name-only "origin/$BASE_REF...HEAD" > changed-files.txt \
+            || git diff --name-only "origin/$BASE_REF" HEAD > changed-files.txt
           sed 's/^/- /' changed-files.txt
 
       - name: Classify changed files

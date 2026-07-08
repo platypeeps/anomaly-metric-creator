@@ -45,6 +45,15 @@ is_dependency_path() {
     .github/workflows/socket.yml|.github/workflows/dependabot-auto-merge.yml)
       return 0
       ;;
+    # npm manifests anywhere (e.g. .opencode/package.json, managed by the
+    # `npm` Dependabot ecosystem). `.opencode/*` also matches
+    # is_review_tooling_path, but a dependency match forces the full matrix +
+    # Socket re-scan (main() escalates on dependency_changed), so an npm bump
+    # no longer slips into the lightweight lane. `case` globs cross `/`, so
+    # `*/package.json` covers any depth.
+    package.json|*/package.json|package-lock.json|*/package-lock.json)
+      return 0
+      ;;
     *)
       return 1
       ;;

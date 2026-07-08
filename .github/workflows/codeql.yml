@@ -19,6 +19,17 @@ permissions:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
+    # `full-ci` lifetime is intentionally asymmetric across the workflows
+    # (pinned in tools/check_ci_review_contract.py so it cannot drift):
+    # ci.yml and socket.yml honor the label ONE-SHOT (only at the `labeled`
+    # event; a later plain `synchronize` drops back to the quick lane / skip)
+    # because the full matrix and Socket scan are the cost-gated lanes. CodeQL
+    # is advisory and cheap, so it honors the label PERSISTENTLY — the
+    # `synchronize` arm below re-reads the label set on every push while the
+    # label is present (contains(...labels...), not just github.event.label on
+    # the labeled event), keeping security analysis running for the life of a
+    # flagged PR. Do not "unify" by making CodeQL one-shot: that reduces
+    # security coverage, the wrong direction for a scanner.
     if: >-
       ${{
         github.event_name != 'pull_request' ||

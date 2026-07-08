@@ -93,7 +93,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
           group: codeql-${{ github.ref }}
         jobs:
           analyze:
-            if: github.event.action == 'synchronize' || github.event.label.name == 'full-ci'
+            if: (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'full-ci')) || github.event.label.name == 'full-ci'
         """,
     )
     _write(
@@ -292,7 +292,11 @@ def test_missing_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:
         codeql.read_text(encoding="utf-8").replace(
             "types: [opened, synchronize, reopened, ready_for_review, labeled]",
             "types: [opened, reopened, ready_for_review, labeled]",
-        ).replace("github.event.action == 'synchronize' || ", ""),
+        ).replace(
+            "(github.event.action == 'synchronize' && "
+            "contains(github.event.pull_request.labels.*.name, 'full-ci')) || ",
+            "",
+        ),
         encoding="utf-8",
     )
 
@@ -300,6 +304,46 @@ def test_missing_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "synchronize trigger" in result.stderr
+
+
+def test_missing_codeql_persistent_full_ci_recheck_fails(tmp_path: Path) -> None:
+    # Dropping the persistent contains(...labels...) re-check (leaving only a
+    # plain synchronize) is the "unify CodeQL to one-shot" regression the
+    # anchor guards against — it would silently cut security-scan coverage on
+    # flagged PRs. The plain-synchronize replacement keeps the synchronize
+    # trigger anchor satisfied so only the persistence anchor fires.
+    _write_minimal_contract(tmp_path)
+    codeql = tmp_path / ".github/workflows/codeql.yml"
+    codeql.write_text(
+        codeql.read_text(encoding="utf-8").replace(
+            "(github.event.action == 'synchronize' && "
+            "contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+            "github.event.action == 'synchronize'",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "persistent full-ci re-check on synchronize" in result.stderr
+
+
+def test_ci_persistent_full_ci_recheck_is_forbidden(tmp_path: Path) -> None:
+    # The inverse: ci.yml must NOT gain codeql's persistent label re-check.
+    # Making the cost-gated full matrix persistent-on-label is a cadence change
+    # that must update the contract, not slip in silently.
+    _write_minimal_contract(
+        tmp_path,
+        ci_extra=(
+            "# contains(github.event.pull_request.labels.*.name, 'full-ci')"
+        ),
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "persistent full-ci re-check (belongs only in codeql.yml)" in result.stderr
 
 
 def test_ci_full_ci_output_requires_bracket_expression(tmp_path: Path) -> None:

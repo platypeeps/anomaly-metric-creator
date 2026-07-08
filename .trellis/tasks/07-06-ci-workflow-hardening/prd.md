@@ -78,14 +78,29 @@ label with two different lifetimes.
 - [x] Zero mutable third-party action tags across the four workflows.
 - [x] All merge-blocking jobs carry `timeout-minutes`.
 - [ ] The PR-body scope step provably enforces (test or lint anchor) or
-      is removed everywhere it is claimed. — **deferred, see below**
-- [ ] One documented `full-ci` lifetime, contract-lint-pinned. —
-      **deferred, see below**
-- [ ] An `.opencode/package.json` bump routes to the dependency lane (or
-      the accepted risk is recorded in the classifier), covered by
-      `tests/test_ci_change_classifier.py`. — **deferred**
-- [ ] The `src/` CI lint decision is implemented or recorded; if
-      implemented, the quick and full lanes run it. — **deferred**
+      is removed everywhere it is claimed. — **still deferred** (item 7;
+      the pack-side bot-skip shipped in sd-ai-command-pack#61, but the
+      repo-side ci.yml wiring is intentionally out of the "items 1–6"
+      batch and awaits an explicit enforce decision).
+- [x] `full-ci` lifetime documented and contract-lint-pinned — **not**
+      unified. The one-shot (ci.yml/socket.yml) vs persistent (codeql.yml)
+      split is kept deliberately (unifying CodeQL to one-shot would cut
+      security coverage); documented in DEVELOPMENT_CYCLE.md + CLAUDE.md and
+      pinned in `check_ci_review_contract.py` (codeql persistent-re-check
+      positive anchor + ci.yml `_require_not_contains` guard).
+- [x] An `.opencode/package.json` bump routes to the dependency lane
+      (`is_dependency_path` now matches `package.json`/`package-lock.json`
+      at any depth), covered by `tests/test_ci_change_classifier.py`
+      (`test_opencode_package_json_forces_dependency_lane`).
+- [x] The `src/` CI lint decision is implemented: the quick and full lanes
+      run `ruff check --select F841` on `src tools .codex/hooks
+      .github/copilot/hooks .gemini/hooks`, mirroring the pre-commit F841
+      hook. F401 stays tests-only (src/ facades re-export deliberately).
+- [x] The `no merge base` finding is fixed: the classifier + socket
+      "Collect changed files" and the lightweight whitespace step drop the
+      `--depth=1` shallow re-fetch (checkout is already `fetch-depth: 0`),
+      with a two-dot fallback on the `--name-only` collects (safe there;
+      omitted on `git diff --check` where `||` would mask real failures).
 - [x] `check_ci_review_contract.py` and its tests updated for any anchors
       this task adds; existing anchors untouched. — no new anchors in the
       shipped subset; SHA pins are Dependabot-maintained (an anchor would

@@ -176,6 +176,19 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         label="full-ci output dot expression",
         violations=violations,
     )
+    # ci.yml honors full-ci ONE-SHOT (only at the `labeled` event). The
+    # persistent `contains(...labels...'full-ci')` re-check belongs to
+    # codeql.yml alone; if it appears here, someone made the cost-gated full
+    # matrix persistent-on-label — a deliberate cadence change that must
+    # update this contract, not slip in silently. (Pairs with the codeql
+    # positive anchor above.)
+    _require_not_contains(
+        text,
+        "contains(github.event.pull_request.labels.*.name, 'full-ci')",
+        path=path,
+        label="persistent full-ci re-check (belongs only in codeql.yml)",
+        violations=violations,
+    )
 
 
 def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
@@ -187,6 +200,15 @@ def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
         ("concurrency", "concurrency:"),
         ("synchronize trigger", "github.event.action == 'synchronize'"),
         ("full-ci label trigger", "github.event.label.name == 'full-ci'"),
+        # CodeQL honors full-ci PERSISTENTLY: the synchronize arm re-reads the
+        # label set on every push (contains(...labels...)), unlike ci.yml /
+        # socket.yml which are one-shot at the `labeled` event. This anchor
+        # pins that intentional asymmetry so a "unify to one-shot" edit (which
+        # would cut security coverage) breaks the contract instead.
+        (
+            "persistent full-ci re-check on synchronize",
+            "contains(github.event.pull_request.labels.*.name, 'full-ci')",
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 

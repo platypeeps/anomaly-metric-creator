@@ -80,6 +80,18 @@ opened/reopened/ready_for_review PRs and `full-ci`-labeled updates, skips on
 plain synchronize events, and always analyzes merged code on the push-to-main
 run. A skipped analysis produces no code-scanning summary check, so `CodeQL`
 must not be re-added as a required context while this gating is in place.
+
+The `full-ci` label's lifetime is deliberately asymmetric across the
+workflows, and the split is pinned in `tools/check_ci_review_contract.py` so it
+cannot drift silently. `ci.yml` and `socket.yml` honor the label **one-shot**
+— only at the `labeled` event; a later plain `synchronize` drops the cost-gated
+full matrix / Socket scan back to the quick lane or skip unless auto-merge is
+armed or dependency/workflow files changed. `codeql.yml` honors it
+**persistently** — its `synchronize` arm re-reads the label set on every push
+while the label is present, so security analysis keeps running for the life of
+a flagged PR. Do not "unify" the two by making CodeQL one-shot: CodeQL is
+advisory and cheap, and one-shot would cut security coverage.
+
 Socket keeps a visible
 PR check, but fast-skips unless dependency/security-relevant files changed or
 full CI was requested. Dependabot auto-merge enables GitHub auto-merge for
