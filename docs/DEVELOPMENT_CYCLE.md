@@ -106,12 +106,26 @@ surviving gate). Pushes to `main` run in per-commit concurrency groups, so a
 merge burst cannot cancel a previous merge commit's full-suite backstop run.
 
 `tools/check_ci_review_contract.py` is the local guard for this cadence
-contract, `tools/check_copilot_instruction_contract.py` guards the mechanical
-Copilot-instruction contract, and `scripts/sd-ai-command-pack-pr-body-scope.py`
-guards behavior-changing PR-body scope sections when a PR body is supplied.
-They are text-based and stdlib-only so pre-commit, the lightweight CI lane, and
-`scripts/sd-ai-command-pack-full-check.sh` can catch drift between workflows, scripts,
-instructions, and docs without installing the full project environment.
+contract, and `tools/check_copilot_instruction_contract.py` guards the
+mechanical Copilot-instruction contract. Both are text-based and stdlib-only,
+so pre-commit, the lightweight CI lane, and
+`scripts/sd-ai-command-pack-full-check.sh` hard-fail on drift between
+workflows, scripts, instructions, and docs without installing the full
+project environment.
+
+`scripts/sd-ai-command-pack-pr-body-scope.py` is a **best-effort advisory,
+not a hard CI gate.** It fails only when a PR body is supplied — the local
+preflight path (`--body-file` or the `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY`
+/ `SD_AI_COMMAND_PACK_SCOPE_PR_BODY` env vars) — and that body omits the scope
+section matching the changed paths. CI runs it in the lightweight lane
+*without* passing the PR body, so there it only reports detected scope
+categories and never fails the build; it is also not wired into the
+`quick`/`full` lanes, so `src/**` changes are not scope-checked in CI at all.
+Treat the scope headings as author discipline — the PR template prompts for
+them and the pre-PR checklist covers them — not a CI-enforced merge gate.
+Turning it into a real gate would mean passing the PR body plus an `--actor`
+bot-skip (on a pack version that ships it) and running the check in the app
+lanes; that is deliberately not wired today.
 
 ## Review Economy Rules
 
