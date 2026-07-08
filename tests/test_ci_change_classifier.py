@@ -112,6 +112,27 @@ def test_review_tooling_scripts_stay_in_lightweight_lane(tmp_path: Path) -> None
     assert outputs["review_tooling_changed"] == "true"
 
 
+def test_opencode_package_json_forces_dependency_lane(tmp_path: Path) -> None:
+    # `.opencode/package.json` is managed by the `npm` Dependabot ecosystem, so
+    # a bump must run the full matrix + Socket re-scan. It also matches
+    # `.opencode/*` (review tooling), so this pins that the npm-manifest
+    # dependency classification wins over the lightweight review-tooling route.
+    # The nested path also proves the `*/package.json` glob crosses `/`.
+    changed = _changed_file(
+        tmp_path,
+        ".opencode/package.json",
+        ".opencode/package-lock.json",
+    )
+
+    result = _run(str(changed))
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["dependency_changed"] == "true"
+    assert outputs["app_required"] == "true"
+    assert outputs["lightweight_only"] == "false"
+
+
 def test_copied_trellis_and_sd_adapters_stay_in_lightweight_lane(tmp_path: Path) -> None:
     changed = _changed_file(
         tmp_path,

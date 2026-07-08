@@ -45,8 +45,17 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
-            git diff --name-only "origin/$BASE_REF...HEAD" > changed-files.txt
+            # Full history (no --depth=1): the checkout above uses
+            # fetch-depth: 0, so a shallow re-fetch re-shallows
+            # origin/$BASE_REF and the three-dot merge-base fails with
+            # `fatal: origin/$BASE_REF...HEAD: no merge base` once this branch
+            # falls behind the base (07-06 finding on PR #219, after #218
+            # merged mid-lane). Fall back to a two-dot diff if the merge-base
+            # still can't be computed; --name-only exits 0 on success and only
+            # non-zero on that git error, so the || cannot mask a real diff.
+            git fetch --no-tags origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+            git diff --name-only "origin/$BASE_REF...HEAD" > changed-files.txt \
+              || git diff --name-only "origin/$BASE_REF" HEAD > changed-files.txt
           elif [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
             git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" > changed-files.txt
           elif git rev-parse HEAD^ >/dev/null 2>&1; then
@@ -84,6 +93,14 @@ jobs:
                   full_ci_requested=true
                 fi
                 ;;
+              # `full-ci` is honored ONE-SHOT here: only at the `labeled`
+              # event, via github.event.label.name. A later plain
+              # `synchronize` does NOT re-read the label set, so a flagged PR
+              # that pushes again drops back to the quick lane unless
+              # auto-merge is armed or dependency/workflow files changed. This
+              # is deliberate (the full matrix is cost-gated) and asymmetric
+              # with codeql.yml's persistent re-check — the split is pinned in
+              # tools/check_ci_review_contract.py.
               labeled)
                 if [ "$PR_LABEL" = "full-ci" ]; then
                   full_ci_requested=true
@@ -136,7 +153,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_REF" ]; then
-            git fetch --no-tags --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+            # Full history (no --depth=1) so the three-dot merge-base resolves
+            # when this branch is behind the base (same #219 flaw as the
+            # classifier's collect step). No two-dot fallback here: `git diff
+            # --check` exits 1 on a real whitespace error, so a `|| two-dot`
+            # would swallow legitimate failures, not just the merge-base error.
+            git fetch --no-tags origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
             git diff --check "origin/$BASE_REF...HEAD"
           elif [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
             git diff --check "$BEFORE_SHA" "$GITHUB_SHA"
@@ -225,6 +247,14 @@ jobs:
       - name: Lint tests (ruff F401)
         run: uv run --no-sync ruff check tests/
 
+      # Mirror the pre-commit `ruff F841` hook (unused locals) on runtime, tool,
+      # and hook-adapter code. Local hooks are not a CI gate, so a contributor
+      # who skips `pre-commit install` would otherwise bypass F841 on src/.
+      # F401 stays tests-only by design: the facade modules (combine.py, etc.)
+      # re-export names that read as "unused imports", so F401 on src/ is wrong.
+      - name: Lint runtime/tools (ruff F841)
+        run: uv run --no-sync ruff check --select F841 src tools .codex/hooks .github/copilot/hooks .gemini/hooks
+
       - name: Run quick review-churn tests
         run: |
           uv run --no-sync pytest -q \
@@ -289,6 +319,12 @@ jobs:
       # would otherwise bypass the check entirely.
       - name: Lint tests (ruff F401)
         run: uv run --no-sync ruff check tests/
+
+      # Mirror the pre-commit `ruff F841` hook (unused locals) on runtime, tool,
+      # and hook-adapter code — the same scope the quick lane runs. F401 stays
+      # tests-only by design (the src/ facade re-exports would trip it).
+      - name: Lint runtime/tools (ruff F841)
+        run: uv run --no-sync ruff check --select F841 src tools .codex/hooks .github/copilot/hooks .gemini/hooks
 
       # Report-only type-check: surfaces the mypy baseline on every
       # full-suite run without gating merges (the annotated monolith has a

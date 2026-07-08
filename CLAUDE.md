@@ -2515,7 +2515,18 @@ run in CI):
   opened/reopened/ready PRs and `full-ci`-labeled updates, skips on plain
   synchronize events, and always runs on push to `main`. A skipped analysis
   produces no code-scanning summary check, so `CodeQL` must not be made a
-  required context while this gating is in place.
+  required context while this gating is in place. The `full-ci` label's
+  lifetime is intentionally asymmetric: ci.yml and socket.yml honor it
+  **one-shot** (only at the `labeled` event; a later plain synchronize drops
+  the cost-gated full matrix/scan back to the quick lane unless auto-merge is
+  armed or dependency/workflow files changed), while codeql.yml honors it
+  **persistently** — its synchronize arm re-checks the label set
+  (`contains(github.event.pull_request.labels.*.name, 'full-ci')`) on every
+  push, so security analysis runs for the life of a flagged PR. Do not unify
+  the two by making CodeQL one-shot (that cuts security coverage). Both
+  semantics are pinned in `tools/check_ci_review_contract.py` (a positive
+  anchor on codeql's persistent re-check; a `_require_not_contains` guard
+  keeping that form out of ci.yml) so neither drifts silently.
 - `.github/workflows/socket.yml` — a Socket supply-chain scan run as a
   sidecar `socket` check (`socketcli`), flagging risky dependency
   *changes* (install scripts, new capabilities, typosquats, compromised
