@@ -326,14 +326,45 @@ jobs:
       - name: Lint runtime/tools (ruff F841)
         run: uv run --no-sync ruff check --select F841 src tools .codex/hooks .github/copilot/hooks .gemini/hooks
 
-      # Report-only type-check: surfaces the mypy baseline on every
-      # full-suite run without gating merges (the annotated monolith has a
-      # known-messy baseline). Config lives in [tool.mypy] in pyproject.toml;
-      # flip continue-on-error off once the baseline is burned down (tracked
-      # in Trellis task 07-02-ci-typecheck-and-coverage).
-      - name: Type-check (mypy, report-only)
+      # Type-check in two steps (07-06-coverage-threshold-and-mypy-gating).
+      # The report-only run surfaces the full mypy baseline on every
+      # full-suite run — legacy.py + the server layer are the known-messy
+      # ~137-error baseline — and never gates. Config: [tool.mypy] in
+      # pyproject.toml.
+      - name: Type-check baseline (mypy, report-only)
         continue-on-error: true
         run: uv run --no-sync mypy
+
+      # Gate: the modules that are already mypy-clean must stay at zero
+      # errors, so a regression in one of them fails the build.
+      # --follow-imports=silent type-checks their imports for inference but
+      # reports only errors originating in the listed files, so importing a
+      # still-dirty module (e.g. legacy.py) does not leak its errors here.
+      # Add a module to this list once it reaches zero errors (the set grows
+      # as 07-02-legacy-monolith-decomposition extracts clean modules); never
+      # drop one to silence a regression — fix the type error instead.
+      - name: Type-check gate (mypy, clean modules)
+        run: |
+          uv run --no-sync mypy --follow-imports=silent \
+            src/anomaly_metric_creator/__init__.py \
+            src/anomaly_metric_creator/artifacts.py \
+            src/anomaly_metric_creator/cli.py \
+            src/anomaly_metric_creator/combine.py \
+            src/anomaly_metric_creator/gauges_impl.py \
+            src/anomaly_metric_creator/models.py \
+            src/anomaly_metric_creator/otel.py \
+            src/anomaly_metric_creator/otel_stream.py \
+            src/anomaly_metric_creator/otlp.py \
+            src/anomaly_metric_creator/redaction.py \
+            src/anomaly_metric_creator/scenarios.py \
+            src/anomaly_metric_creator/schema.py \
+            src/anomaly_metric_creator/server_commands.py \
+            src/anomaly_metric_creator/server_debug_ui.py \
+            src/anomaly_metric_creator/server_helm.py \
+            src/anomaly_metric_creator/server_kubernetes.py \
+            src/anomaly_metric_creator/server_mcp.py \
+            src/anomaly_metric_creator/server_mutations.py \
+            src/anomaly_metric_creator/timeutil.py
 
       # The suite splits by the `heavy` marker so it fits the 7 GB standard
       # runner: the GB-scale 7-day / N=3 fixture tests run serially first
@@ -342,21 +373,40 @@ jobs:
       # ordering path exercised on every run. The two `-m` sets partition
       # the suite, so coverage is complete. ~25 min in practice.
       #
-      # Code coverage is measured across the whole lane (report-only, no
-      # threshold gate yet): --cov-append on the second step aggregates the
-      # serial-heavy and parallel-light partitions into one report. --cov
-      # takes the source path (not the package name) because tests import
-      # the implementation through conftest's module loader, and path-based
-      # matching measures those files regardless of the module name they
-      # load under. COVERAGE_CORE=sysmon selects the sys.monitoring backend
-      # (available since py3.12), keeping tracing overhead low enough for
-      # the 45-minute job timeout.
+      # Code coverage is measured across the whole lane: --cov-append on the
+      # second step aggregates the serial-heavy and parallel-light partitions
+      # into one report, and --cov-fail-under gates the second (final) run on
+      # the combined total. --cov takes the source path (not the package
+      # name) because tests import the implementation through conftest's
+      # module loader, and path-based matching measures those files
+      # regardless of the module name they load under. COVERAGE_CORE=sysmon
+      # selects the sys.monitoring backend (available since py3.12), keeping
+      # tracing overhead low enough for the 45-minute job timeout.
+      #
+      # The floor is a no-regression ratchet: 85 sits ~3 points below the
+      # measured 88% (allowing for xdist/partition jitter) so a real coverage
+      # drop fails the build while normal variance does not. The suite already
+      # clears the 80% house standard; ratchet this floor UP toward the
+      # measured number as 07-02-legacy-monolith-decomposition extracts and
+      # tests more of legacy.py — never lower it to make a red build pass
+      # (07-06-coverage-threshold-and-mypy-gating).
       - name: Run test suite
         env:
           COVERAGE_CORE: sysmon
         run: |
           uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
-          uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-append --cov-report=term --cov-report=xml
+          uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-append --cov-report=term --cov-report=xml --cov-fail-under=85
+
+      # Publish coverage.xml for inspection/trend tracking. !cancelled() so it
+      # uploads whether the suite passed or the coverage gate failed (you want
+      # the report most when the gate trips), but not on a cancelled run.
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-xml-py${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: warn
 
   test:
     name: test

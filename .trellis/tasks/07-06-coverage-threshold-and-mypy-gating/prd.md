@@ -47,13 +47,34 @@ flip." Until this task, no open tracker carried that work. Current state:
 - Update the ci.yml comment (and the CLAUDE.md CI paragraph) to point at
   this task / the ratchet plan instead of the closed task.
 
+## Measurement (recorded 2026-07-08)
+
+- **Coverage:** full-suite TOTAL = **88%** (9104 statements, 1134 missed),
+  from the last two full-matrix runs on `main` (run 28898380172 / sha
+  `9ac0349`, stable across runs). Ratchet floor set to **85**
+  (`--cov-fail-under=85`) — ~3 points below measured, headroom for
+  xdist/partition jitter.
+- **mypy:** 137 errors in 9 files under `python_version = 3.14`
+  (legacy.py 43, server_ops 41, server 24, server_traces 11, schema_impl 8,
+  validate_impl 6, combine_impl 2, csv_layout 1, trace_bundle 1). **19 of 28
+  modules are 0-error** and form the gated set: the extracted leaf modules
+  (redaction, timeutil, otlp, artifacts, gauges_impl, otel_stream), the five
+  facades (combine, models, otel, scenarios, schema), cli, `__init__`, and
+  the clean `server_*` modules (server_commands, server_debug_ui,
+  server_helm, server_kubernetes, server_mcp, server_mutations).
+
 ## Acceptance Criteria
 
-- [ ] CI fails on coverage regression below the ratchet value.
-- [ ] mypy gates on the agreed module set; report-only remains only for
-      legacy.py (and recorded exceptions).
-- [ ] coverage.xml uploaded as an artifact on full-lane runs.
-- [ ] No stale task pointers remain in ci.yml comments or CLAUDE.md.
+- [x] CI fails on coverage regression below the ratchet value
+      (`--cov-fail-under=85` on the aggregating pytest run).
+- [x] mypy gates on the agreed module set (19 clean modules via
+      `mypy --follow-imports=silent`, `continue-on-error` off); the
+      report-only whole-package baseline stays for legacy.py + the dirty
+      server layer.
+- [x] coverage.xml uploaded as an artifact on full-lane runs
+      (`actions/upload-artifact`, `if: ${{ !cancelled() }}`).
+- [x] No stale task pointers remain in ci.yml comments or CLAUDE.md (the
+      `07-02-ci-typecheck-and-coverage` pointer now points at this task).
 
 ## Notes
 
