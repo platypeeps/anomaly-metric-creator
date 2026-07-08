@@ -98,13 +98,43 @@ but kept `always()` on its aggregate now has this exact transient — #179 and
 
 ## Acceptance criteria
 
-- [ ] Every candidate repo the operator provides is audited against the
-      three preconditions, with a recorded verdict.
-- [ ] Affected repos get the `!cancelled()` guard (+ lint anchor/mutation
-      test where a CI-contract lint exists), each in its own PR.
-- [ ] Repos that need #179's auto-merge full-gate first are flagged (not
-      silently given only half the pair).
-- [ ] A short per-repo results summary is recorded (here or a linked doc).
+- [x] Every candidate repo the operator provides is audited against the
+      three preconditions, with a recorded verdict (see Results).
+- [x] Affected repos get the `!cancelled()` guard, each in its own PR
+      (hoa-manager #92, rwbp-website #109, rwbp-coordinator #97,
+      loadsmith #63). None of the target repos carry a CI-contract lint, so
+      no anchor/mutation test applied there; the invariant is pinned inline
+      via the "Do not revert to always()" rationale comment on each
+      `ci_result` guard. (amc, the origin, keeps its contract-lint anchor +
+      `test_reverting_aggregate_guard_to_always_fails` mutation test.)
+- [x] Repos needing #179's auto-merge full-gate first are flagged: none. The
+      three rwbp/loadsmith repos have no auto-merge workflow (so the #197
+      transient-red is low-frequency there — manual re-push/re-run only, not
+      auto-merge arming), and hoa already gates its expensive lane on the
+      `full-ci` trigger. Only the `!cancelled()` half of the #197/#179 pair
+      was needed anywhere.
+- [x] A short per-repo results summary is recorded (see Results).
+
+## Results (2026-07-08)
+
+Candidate set = every platypeeps repo with a `ci.yml` fan-in aggregate under
+`concurrency: cancel-in-progress`. The Hugo/static sites
+(`www_platypeeps_com`, `copper-hugo-*`, …) have no such workflow, and
+`sd-ai-command-pack` uses a non-aggregate `tests.yml` — all n/a. Four repos
+qualified, and a per-`ci_result`-block audit found **all four affected** (an
+initial coarse grep mis-read the `${{ }}`-wrapped guards and under-reported;
+the authoritative audit pulled each aggregate's `if:` directly):
+
+| Repo | `ci_result` guard was | auto-merge | Verdict | Fix PR (merged) |
+|---|---|---|---|---|
+| hoa-manager | `if: ${{ always() }}` | yes | affected | #92 |
+| rwbp-website | `if: ${{ always() }}` | no | affected (low-freq) | #109 |
+| rwbp-coordinator | `if: always()` | no | affected (low-freq) | #97 |
+| loadsmith | `if: ${{ always() }}` | no | affected (low-freq) | #63 |
+
+Each fix is the one-line `always()` → `!cancelled()` guard on the
+branch-protection-required `ci_result` aggregate, with the ported rationale
+comment. All four PRs merged 2026-07-08. Task complete.
 
 ## Notes / decisions to make
 
