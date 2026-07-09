@@ -25,6 +25,8 @@ Quick links:
 - `.agents/skills/sd-finish-work/SKILL.md`: Codex-visible Trellis finish-work wrapper.
 - `.agents/skills/sd-create-pr/SKILL.md`: spec-refresh, commit, push, PR
   creation/reuse, and PR-review orchestration workflow.
+- `.agents/skills/sd-work-backlog/SKILL.md`: sequential Trellis backlog work
+  loop that delegates PR/review/cleanup to the existing SD commands.
 - `.agents/skills/sd-review-pr/SKILL.md`: deterministic local gate plus remote
   PR review workflow.
 - `.agents/skills/sd-review-local/SKILL.md`: local review provider fix loop.
@@ -86,8 +88,8 @@ Trellis-provided `trellis-update-spec` skill as-is, refreshes repo-owned
 repospec artifacts through existing maintenance infrastructure when available,
 and then performs the architecture-overview check.
 Codex exposes the pack entry points as skills named `sd-start`, `sd-continue`,
-`sd-finish-work`, `sd-create-pr`, `sd-full-check`, `sd-housekeeping`,
-`sd-review-pr`, `sd-review-local`, `sd-review-local-all`,
+`sd-finish-work`, `sd-create-pr`, `sd-work-backlog`, `sd-full-check`,
+`sd-housekeeping`, `sd-review-pr`, `sd-review-local`, `sd-review-local-all`,
 `sd-review-learnings`, and `sd-update-spec`; type `/sd` in Codex command
 completion or invoke them with `$sd-review-pr`-style skill mentions.
 The start, continue, and finish-work wrappers run Trellis' existing
@@ -128,29 +130,34 @@ loaded project command files.
    `sd-update-spec`, stages only intended files, commits and pushes the feature
    branch when needed, creates or reuses the branch PR, and then enters the
    review-pr loop.
-8. Use the review-pr command for an existing PR loop. It should run the deterministic
+8. Use the work-backlog command when you want to work through existing Trellis
+   tasks sequentially. It selects one implementation-ready task, completes it
+   through create-pr, review-pr, housekeeping, and an extra housekeeping
+   verification, then addresses or records follow-ups and learnings before
+   selecting the next task.
+9. Use the review-pr command for an existing PR loop. It should run the deterministic
    local full-check path with Prism/Gito disabled before requesting remote
    review. Run `sd-full-check`, `sd-review-local`, or `sd-review-local-all`
    explicitly when you want Prism/Gito.
-9. Request the configured remote reviewer, defaulting to GitHub Copilot, after
+10. Request the configured remote reviewer, defaulting to GitHub Copilot, after
    a clean local pass and again after every pushed review-fix commit made
    during the loop, unless the user explicitly asked for local-only review.
-10. Let the review-pr command reply to and resolve review threads as part of the
+11. Let the review-pr command reply to and resolve review threads as part of the
    normal loop once findings are fixed, rebutted with evidence, or confirmed
    already addressed.
-11. Use the review-learnings command when review comments repeat across PRs and
+12. Use the review-learnings command when review comments repeat across PRs and
    you want to capture repo-specific preventive guidance.
-12. Run the update-spec command when the work taught you a durable
+13. Run the update-spec command when the work taught you a durable
    implementation contract or convention. It runs the existing update-spec skill
    and also checks whether an existing architectural overview needs to be
    updated.
-13. Run the finish-work command when the coding session is complete and you need
+14. Run the finish-work command when the coding session is complete and you need
    the Trellis finish-work skill's quality gate, archive, journal, and commit
    reminder behavior.
-14. After the PR merges, run the housekeeping command to get back to the default
+15. After the PR merges, run the housekeeping command to get back to the default
    branch, prune/delete the merged development stream, and see the condensed
    clean-state/anomaly report.
-15. If the review-pr command sees the PR is already merged or becomes merged
+16. If the review-pr command sees the PR is already merged or becomes merged
    while the command is running, it stops the review loop and runs post-merge
    housekeeping before the final report. This does not wake inactive sessions;
    it only runs when the active agent observes the merge.
@@ -172,6 +179,19 @@ a commit without a user-provided message, and
 It still delegates the actual review loop to review-pr after PR creation or
 reuse.
 
+The work-backlog command is a sequential backlog runner. It inventories active
+Trellis tasks, selects the highest-value implementation-ready task, works only
+that task through the normal Trellis and SD PR flow, runs housekeeping plus one
+extra housekeeping verification, then handles follow-ups before selecting
+another task. Small, unblocked follow-ups are addressed immediately; larger or
+separate items are recorded as Trellis tasks; durable learnings go into specs,
+docs, or review-learnings. If a task needs user input, the command asks one
+blocking question, waits up to 15 minutes when the platform can wait, then
+parks the task with a dated `Parked by sd-work-backlog` PRD note and continues
+to the next actionable task. It stops when no active tasks remain, all remaining
+tasks are parked or require input, or a delegated SD/Trellis gate reports a
+blocker.
+
 ## Commands
 
 Use the platform-native command when available.
@@ -183,6 +203,7 @@ Claude Code and Gemini CLI:
 /sd:continue
 /sd:finish-work
 /sd:create-pr
+/sd:work-backlog
 /sd:full-check
 /sd:housekeeping
 /sd:review-pr
@@ -200,6 +221,7 @@ Qoder commands, Trae commands, Pi prompts, workflow adapters, and Codex skills:
 /sd-continue
 /sd-finish-work
 /sd-create-pr
+/sd-work-backlog
 /sd-full-check
 /sd-housekeeping
 /sd-review-pr
@@ -497,7 +519,10 @@ maps, and project manifests rather than by source folder name.
 `LLM-KB - <repo>.md` is a generated, self-contained overview for LLM and
 Obsidian indexing. If a
 user-owned file already exists at either generated path, the helper leaves it
-untouched and reports a conflict. Run
+untouched and reports a conflict. Exit codes: `0` clean, `1` for `--check`
+staleness, `2` for hard errors, and `3` when a refresh completes but reports
+conflicts it could not bring current — automation should treat `3` as
+"KB partially stale", not success. Run
 `python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run` to preview the
 refresh without writes, `--check` to verify the generated folder and ignore
 entry are current, or `--help` for the safe CLI summary.
@@ -659,10 +684,21 @@ ephemeral tool state and do not change what the checks validate.
   review preflight script to run before the legacy repo-local
   `scripts/check-review-preflight.mjs` fallback.
 - `SD_AI_COMMAND_PACK_INSTALL_AUDIT=0`: skip the structural post-install audit.
+- `SD_AI_COMMAND_PACK_FULL_CHECK_KB`: Obsidian KB freshness check mode.
+  Default `auto` runs `scripts/sd-ai-command-pack-update-spec-kb.py --check`
+  only when a generated `.obsidian-kb/` folder exists and skips with a warning
+  otherwise; `0` skips entirely; `required` fails when the helper, `python3`,
+  or a passing check is unavailable. A stale KB fails the full check with a
+  refresh hint.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PACK_DRIFT=0`: skip the pack source drift
-  gates (template twin parity and env-var documentation coverage). These gates
-  only run inside the sd-ai-command-pack source repository itself and are
-  skipped automatically in target repos.
+  gates (template twin parity, release-version coverage for shipped payload
+  changes, and env-var documentation coverage). These gates only run inside the
+  sd-ai-command-pack source repository itself and are skipped automatically in
+  target repos.
+- `SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF`: explicit base ref for the
+  pack-source release-version gate. Defaults to
+  `SD_AI_COMMAND_PACK_FULL_CHECK_BASE_REF`, then the discovered branch-diff
+  sequence above.
 - `SD_AI_COMMAND_PACK_INSTALL_AUDIT=required`: fail if the full-check cannot run
   the audit script.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_SCRIPTS`: space-separated package scripts
@@ -801,6 +837,12 @@ ephemeral tool state and do not change what the checks validate.
   NUL-delimited changed path list for configurable PR-body scope checks.
 - `SD_AI_COMMAND_PACK_CHANGED_FILES`: fallback changed-path list for the
   PR-body scope check when the `PR_BODY_SCOPE` variant above is unset.
+- `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR`: PR author login (or pass
+  `--actor`). A bot login ending in `[bot]` (`dependabot[bot]`,
+  `github-actions[bot]`, `renovate[bot]`, …) is exempt from strict PR-body
+  scope validation and exits `0`, so wiring the check into CI does not fail
+  automated PRs (whose bodies never carry the human scope headings) and
+  block their auto-merge.
 - `SD_AI_COMMAND_PACK_HOUSEKEEPING_GITHUB_REPO`: explicit `owner/repo` slug when the
   selected remote URL cannot be parsed as a GitHub repository.
 - `SD_AI_COMMAND_PACK_HOUSEKEEPING_MERGE_STRATEGY`: auto-merge strategy: `merge`,
