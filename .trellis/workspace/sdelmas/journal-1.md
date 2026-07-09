@@ -109,7 +109,7 @@ Converted Trellis to package-scoped monorepo mode with amc as the default packag
 - Configured Trellis monorepo mode with `amc` as the default package at the
   repository root.
 - Moved backend specs into `.trellis/spec/amc/backend/` and updated project
-  docs, PR templates, GitHub review instructions, server roadmap notes, and
+  docs, PR templates, GitHub review instructions, server compatibility notes, and
   local platform skill references to the package-scoped path.
 - Opened PR #146, addressed Copilot's stale-path review feedback, resolved the
   review thread, and recorded this Trellis session.
@@ -290,7 +290,7 @@ Added server-mode kubectl patch, diff, dry-run, and Helm value-layering compatib
 - Extended simulated `kubectl diff`, `apply --dry-run`, and Helm value layering
   coverage for generated manifests, repeated `--from-literal` flags, repeated
   `--from-file` flags, and override precedence.
-- Updated README and server roadmap notes to describe the supported compatibility
+- Updated README and server compatibility notes to describe the supported compatibility
   behavior and remaining server-mode gaps.
 
 ### Git Commits
@@ -605,7 +605,10 @@ Extracted OTEL streamers and activity-log helpers into otel_stream.py, preserved
 
 ### Main Changes
 
-- Detailed change bullets were not supplied; see the summary above.
+- Added `.trellis/tasks/07-09-multi-instance-dst-splice-boundary/` to track the remaining multi-instance DST splice decision boundary.
+- Removed stale prior planning-file references from archived Trellis task records and the session journal.
+- Documented Trellis task records as the canonical backlog/follow-up home in the backend documentation spec.
+- Refreshed `docs/repomix-map.md` and the generated Obsidian KB payload.
 
 ### Git Commits
 
@@ -613,6 +616,46 @@ Extracted OTEL streamers and activity-log helpers into otel_stream.py, preserved
 |------|---------|
 | `21ad963` | (see git log) |
 | `22e6644` | (see git log) |
+
+### Testing
+
+- `python3 ./.trellis/scripts/task.py validate .trellis/tasks/07-09-multi-instance-dst-splice-boundary`
+- `python3 ./.trellis/scripts/task.py validate .trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis`
+- `python3 ./.trellis/scripts/task.py validate .trellis/tasks/archive/2026-06/06-26-server-compat-debug-polish`
+- `python3 tools/check_trellis_placeholders.py ...`
+- `python3 scripts/sd-ai-command-pack-update-spec-kb.py --check`
+- `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
+- Remote CI and Copilot review on PR #231 passed with no actionable comments.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 15: Consolidate planning follow-ups into Trellis
+
+**Date**: 2026-07-09
+**Task**: Consolidate planning follow-ups into Trellis
+**Package**: amc
+**Branch**: `codex/consolidate-roadmap-tasks`
+
+### Summary
+
+Consolidated prior planning follow-ups into Trellis task records, added the remaining multi-instance DST splice boundary planning task, documented backlog ownership in the backend documentation spec, refreshed generated repo map and KB outputs, then opened PR #231 with green local and remote checks.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8045f0d` | (see git log) |
 
 ### Testing
 

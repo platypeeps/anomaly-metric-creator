@@ -6,14 +6,14 @@ Improve AMC serve-mode workshop compatibility by making `kubectl apply -f`
 consume real multi-document YAML/JSON manifest files instead of only deriving a
 single resource from the filename, add deployment rollout lifecycle commands,
 then make the resulting simulator state more visible in the debug UI and keep
-user-facing roadmap/docs wording in sync.
+user-facing docs and Trellis guidance in sync.
 
 ## Confirmed Facts
 
-- `docs/server-roadmap.md` lists `kubectl apply -f` for multi-document YAML or
-  JSON payloads as a good next compatibility target and says every new surface
-  needs parser coverage, trace visibility, nearby unsupported/partial coverage,
-  and focused `tests/test_server.py` tests.
+- The prior server-mode handoff listed `kubectl apply -f` for multi-document
+  YAML or JSON payloads as a good next compatibility target and said every new
+  surface needs parser coverage, trace visibility, nearby unsupported/partial
+  coverage, and focused `tests/test_server.py` tests.
 - `src/anomaly_metric_creator/server_ops.py` already parses `apply`/`diff` as
   manifest commands, writes created resources through `SimulationMutations`, and
   projects generic rows into `resource_snapshot()`.
@@ -24,8 +24,8 @@ user-facing roadmap/docs wording in sync.
   created resources, resource diffs, and resource drawers from `/v1/state` and
   `/v1/debug/resources`; debug UI changes should consume those same backend
   payloads rather than inventing browser-only state.
-- `docs/server-roadmap.md` also listed `kubectl rollout pause`, `resume`, and
-  `undo` as useful next server-mode compatibility targets.
+- The same handoff also listed `kubectl rollout pause`, `resume`, and `undo` as
+  useful next server-mode compatibility targets.
 - Rollout status/history/restart already operate on deployment targets through
   scenario profiles and `SimulationMutations` workload overlays.
 
@@ -53,7 +53,7 @@ user-facing roadmap/docs wording in sync.
   unsupported.
 - Improve debug UI visibility for created resources so applied manifest objects
   are easier to inspect from the overlay/resource-diff surfaces.
-- Update README and `docs/server-roadmap.md` so completed and remaining
+- Update README and canonical Trellis guidance so completed and remaining
   server-mode items match the implementation.
 
 ## Acceptance Criteria
@@ -74,7 +74,7 @@ user-facing roadmap/docs wording in sync.
       workload overlay and appear in later rollout status / event output.
 - [x] Non-deployment rollout lifecycle targets remain unsupported instead of
       being treated as generic rollout-compatible resources.
-- [x] README and roadmap docs no longer describe this slice as future work.
+- [x] README and Trellis docs no longer describe this slice as future work.
 
 ## Notes
 

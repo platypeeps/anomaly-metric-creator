@@ -14,7 +14,7 @@
    mutation summary data.
 6. Add deployment-scoped rollout lifecycle support for pause, resume, and undo,
    including `--to-revision` parsing and focused regression coverage.
-7. Update README and `docs/server-roadmap.md`.
+7. Update README and canonical Trellis guidance.
 8. Run targeted checks:
    - `.venv/bin/pytest tests/test_server.py -q -k "rollout or apply"`
    - `.venv/bin/pytest tests/test_server.py -q`

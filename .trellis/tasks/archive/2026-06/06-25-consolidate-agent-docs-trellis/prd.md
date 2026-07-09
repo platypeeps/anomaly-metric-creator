@@ -19,9 +19,9 @@ agent-workflow guidance.
   SCENARIOS registry rules, pre-PR checklist, and validation expectations.
   Source path: `CLAUDE.md`.
 - `README.md` and `docs/` contain user-facing usage, CLI/API behavior,
-  topology, application flow, and roadmap material that must stay consistent
-  with agent-facing implementation guidance. Source paths: `README.md`,
-  `docs/application-flow.md`, `docs/topology.md`, `docs/server-roadmap.md`.
+  topology, application flow, and server-mode material that must stay
+  consistent with agent-facing implementation guidance. Source paths:
+  `README.md`, `docs/application-flow.md`, `docs/topology.md`.
 - GitHub and Copilot files define review, workflow, PR, and automation
   expectations that may overlap with Trellis guidance. Source paths:
   `.github/PULL_REQUEST_TEMPLATE.md`,
@@ -67,7 +67,7 @@ agent-workflow guidance.
 6. Keep user-facing docs consistent with agent-facing specs, especially for CLI
    behavior, server/serve mode, topology, trace bundles, scenario semantics,
    validation commands, and output files. Source paths: `README.md`,
-   `docs/application-flow.md`, `docs/topology.md`, `docs/server-roadmap.md`,
+   `docs/application-flow.md`, `docs/topology.md`,
    `src/anomaly_metric_creator/`, `tests/`.
 7. Preserve existing work and avoid product-runtime behavior changes unless a
    documentation inconsistency reveals a narrowly scoped fix that the task

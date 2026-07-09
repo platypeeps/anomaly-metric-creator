@@ -14,8 +14,7 @@
 - User-facing runtime behavior belongs in `README.md` and `docs/`; agent-facing
   implementation rules belong in `.trellis/spec/`; overlapping statements must
   be reconciled rather than copied blindly. Source paths: `README.md`,
-  `docs/application-flow.md`, `docs/topology.md`, `docs/server-roadmap.md`,
-  `.trellis/spec/`.
+  `docs/application-flow.md`, `docs/topology.md`, `.trellis/spec/`.
 
 ## Proposed Spec Layout
 
@@ -41,7 +40,7 @@
 - `.trellis/spec/backend/operations-security-logging.md`: serve-mode config,
   structured request/error logs, command simulator, Kubernetes/Helm facades,
   security boundaries, and operational diagnostics. Source paths: `CLAUDE.md`,
-  `docs/server-roadmap.md`, `src/anomaly_metric_creator/server_ops.py`,
+  `src/anomaly_metric_creator/server_ops.py`,
   `src/anomaly_metric_creator/server_commands.py`,
   `src/anomaly_metric_creator/server_kubernetes.py`,
   `src/anomaly_metric_creator/server_helm.py`,
@@ -92,10 +91,9 @@ and no stale files keep contradictory guidance. Source paths:
   user-facing docs, then agent guides, then historical planning notes. Source
   paths: `src/anomaly_metric_creator/`, `tests/`, `README.md`, `docs/`,
   `CLAUDE.md`, `.trellis/tasks/`, `.trellis/workspace/`.
-- Historical roadmap or task text should become a follow-up only when it still
-  matches current code and docs. Source paths: `docs/server-roadmap.md`,
-  `.trellis/tasks/`, `.trellis/workspace/`, `src/anomaly_metric_creator/`,
-  `tests/`.
+- Historical planning or task text should become a follow-up only when it still
+  matches current code and docs. Source paths: `.trellis/tasks/`,
+  `.trellis/workspace/`, `src/anomaly_metric_creator/`, `tests/`.
 
 ## Verification Design
 
