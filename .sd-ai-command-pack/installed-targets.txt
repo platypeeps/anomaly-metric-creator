@@ -9,6 +9,7 @@
 .agents/skills/sd-review-pr/SKILL.md
 .agents/skills/sd-start/SKILL.md
 .agents/skills/sd-update-spec/SKILL.md
+.agents/skills/sd-work-backlog/SKILL.md
 .claude/commands/sd/continue.md
 .claude/commands/sd/create-pr.md
 .claude/commands/sd/finish-work.md
@@ -20,6 +21,7 @@
 .claude/commands/sd/review-pr.md
 .claude/commands/sd/start.md
 .claude/commands/sd/update-spec.md
+.claude/commands/sd/work-backlog.md
 .gemini/commands/sd/continue.toml
 .gemini/commands/sd/create-pr.toml
 .gemini/commands/sd/finish-work.toml
@@ -31,6 +33,7 @@
 .gemini/commands/sd/review-pr.toml
 .gemini/commands/sd/start.toml
 .gemini/commands/sd/update-spec.toml
+.gemini/commands/sd/work-backlog.toml
 .github/PULL_REQUEST_TEMPLATE.md
 .github/copilot-instructions.md
 .github/prompts/sd-continue.prompt.md
@@ -44,6 +47,7 @@
 .github/prompts/sd-review-pr.prompt.md
 .github/prompts/sd-start.prompt.md
 .github/prompts/sd-update-spec.prompt.md
+.github/prompts/sd-work-backlog.prompt.md
 .gitignore
 .gito/config.toml
 .gito/sd-ai-command-pack.env
@@ -58,6 +62,7 @@
 .opencode/commands/sd-review-pr.md
 .opencode/commands/sd-start.md
 .opencode/commands/sd-update-spec.md
+.opencode/commands/sd-work-backlog.md
 .prism/rules.json
 .prism/rules.schema.json
 .sd-ai-command-pack/installed-targets.txt

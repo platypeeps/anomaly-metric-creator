@@ -271,6 +271,13 @@ def is_excluded(path: Path) -> bool:
     parts = path.parts
     if any(part in EXCLUDED_PARTS for part in parts):
         return True
+    # Trellis runtime and backup artifacts must never feed KB source
+    # discovery; durable .trellis knowledge (spec/tasks/workflow) stays
+    # eligible through the path-aware checks below.
+    if any(part.startswith(".backup-") or part == ".runtime" for part in parts):
+        return True
+    if parts[:1] == (".trellis",) and "worktrees" in parts[1:]:
+        return True
     return len(parts) >= 2 and parts[0] == ".trellis" and parts[1] == "workspace"
 
 
@@ -1408,7 +1415,11 @@ def refresh(root: Path) -> int:
         overview_state=overview_state,
         conflicts=conflicts,
     )
-    return 0
+    # Exit 3: refresh completed but some entries could not be brought
+    # current (user-owned symlinks, occupied non-files, dashboard
+    # collisions). Automation must not read a partially-stale KB as
+    # success; 1 stays the --check staleness exit and 2 stays hard errors.
+    return 3 if conflicts else 0
 
 
 def main(argv: list[str] | None = None) -> int:

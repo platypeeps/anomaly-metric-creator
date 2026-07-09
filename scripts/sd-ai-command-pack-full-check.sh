@@ -364,7 +364,9 @@ review_filter_csv_from_paths() {
   done < <(sort -u "$patterns_file")
 
   rm -f "$patterns_file"
-  join_by_comma "${patterns[@]}"
+  # ${arr[@]+...} guards the empty-array case: bash < 4.4 (macOS ships 3.2)
+  # treats "${arr[@]}" of an empty array as unbound under set -u.
+  join_by_comma ${patterns[@]+"${patterns[@]}"}
 }
 
 reviewable_changed_filter_csv() {
@@ -555,6 +557,44 @@ run_sd_ai_command_pack_install_audit() {
   run "SD AI command pack install audit" python3 "$script"
 }
 
+run_sd_ai_command_pack_kb_freshness_check() {
+  local mode="${SD_AI_COMMAND_PACK_FULL_CHECK_KB:-auto}"
+  local script="scripts/sd-ai-command-pack-update-spec-kb.py"
+
+  if is_disabled "$mode"; then
+    warn "Skipping Obsidian KB freshness check because SD_AI_COMMAND_PACK_FULL_CHECK_KB=$mode."
+    return 0
+  fi
+
+  if [ ! -f "$script" ]; then
+    if [ "$mode" = "required" ]; then
+      printf 'Obsidian KB freshness check is required but %s is missing.\n' "$script" >&2
+      exit 127
+    fi
+    warn "$script not found; skipping Obsidian KB freshness check."
+    return 0
+  fi
+
+  if ! have python3; then
+    if [ "$mode" = "required" ]; then
+      printf 'Obsidian KB freshness check is required but python3 is not found on PATH.\n' >&2
+      exit 127
+    fi
+    warn "python3 not found on PATH; skipping Obsidian KB freshness check."
+    return 0
+  fi
+
+  if [ "$mode" != "required" ] && [ ! -d ".obsidian-kb" ]; then
+    warn "No generated .obsidian-kb folder; skipping Obsidian KB freshness check. Run 'python3 $script' to generate it."
+    return 0
+  fi
+
+  if ! run "SD AI command pack Obsidian KB freshness check" python3 "$script" --check; then
+    printf 'Generated Obsidian KB is stale or blocked. Refresh it with: python3 %s\n' "$script" >&2
+    exit 1
+  fi
+}
+
 run_pack_source_drift_gates() {
   # Deterministic pre-PR gates that only apply inside the sd-ai-command-pack
   # source repository itself: every tracked manifest target must match its
@@ -574,10 +614,14 @@ run_pack_source_drift_gates() {
     return 0
   fi
 
-  section "Pack source drift gates: template twins and env-var docs"
-  python3 - <<'PACK_SOURCE_DRIFT_GATES'
+  section "Pack source drift gates: template twins, release version, and env-var docs"
+  local release_base_ref
+  release_base_ref="$(full_check_base_ref)"
+  SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF="${SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF:-$release_base_ref}" python3 - <<'PACK_SOURCE_DRIFT_GATES'
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -596,6 +640,130 @@ for item in manifest.get("files", []):
     if source.read_bytes() != target.read_bytes():
         errors.append(f"template drift: {target} differs from {source}")
 print(f"template twin pairs compared: {compared}")
+
+def git_output(args, *, allow_fail=False):
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        if allow_fail:
+            return None
+        errors.append(f"git command failed to start: git {' '.join(args)}: {exc}")
+        return None
+    if result.returncode != 0:
+        if allow_fail:
+            return None
+        detail = (result.stderr or result.stdout).strip()
+        errors.append(f"git command failed: git {' '.join(args)}: {detail}")
+        return None
+    return result.stdout
+
+
+def git_paths(args):
+    output = git_output(args, allow_fail=True)
+    if output is None:
+        return set()
+    return {line.strip() for line in output.splitlines() if line.strip()}
+
+
+def git_ref_status(ref):
+    if not ref:
+        return False, None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        return False, (
+            f"release version gate cannot resolve base ref {ref!r}: "
+            f"git executable unavailable: {exc}"
+        )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        return False, (
+            f"release version gate cannot compare committed payload changes "
+            f"because base ref {ref!r} does not resolve{suffix}"
+        )
+    return True, None
+
+
+base_ref = os.environ.get("SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF", "").strip()
+changed_paths = set()
+base_resolves, base_ref_error = git_ref_status(base_ref)
+if base_ref and base_resolves:
+    changed_paths |= git_paths(["diff", "--name-only", f"{base_ref}...HEAD"])
+elif base_ref and base_ref_error:
+    errors.append(base_ref_error)
+changed_paths |= git_paths(["diff", "--cached", "--name-only"])
+changed_paths |= git_paths(["diff", "--name-only"])
+
+payload_singletons = {
+    "manifest.json",
+    "docs/SD_AI_COMMAND_PACK.md",
+    "templates/docs/SD_AI_COMMAND_PACK.md",
+}
+payload_changed = sorted(
+    path
+    for path in changed_paths
+    if path.startswith("templates/") or path in payload_singletons
+)
+current_version = str(manifest.get("version", "")).strip()
+base_version = None
+if base_ref and base_resolves:
+    base_manifest = git_output(["show", f"{base_ref}:manifest.json"], allow_fail=True)
+    if base_manifest is not None:
+        try:
+            base_version = str(json.loads(base_manifest).get("version", "")).strip()
+        except json.JSONDecodeError:
+            base_version = None
+
+if base_version is not None:
+    version_bumped = bool(current_version and current_version != base_version)
+else:
+    manifest_diff = "\n".join(
+        output
+        for output in (
+            git_output(["diff", "--cached", "--", "manifest.json"], allow_fail=True),
+            git_output(["diff", "--", "manifest.json"], allow_fail=True),
+        )
+        if output
+    )
+    version_bumped = bool(re.search(r'(?m)^[+-]\s*"version"\s*:', manifest_diff))
+
+if payload_changed:
+    preview = ", ".join(payload_changed[:8])
+    if len(payload_changed) > 8:
+        preview += f", ... ({len(payload_changed)} total)"
+    if not version_bumped:
+        if base_version is None:
+            version_detail = "manifest version change was not visible in the current diff"
+        else:
+            version_detail = (
+                f"manifest version stayed at {current_version!r} relative to {base_ref}"
+            )
+        errors.append(
+            "release version drift: shipped payload changed without manifest "
+            f"version bump ({preview}); {version_detail}"
+        )
+    elif base_version is None:
+        print("release version gate: shipped payload changed and manifest version diff was detected")
+    else:
+        print(
+            "release version gate: shipped payload changed; "
+            f"manifest version {base_version} -> {current_version}"
+        )
+else:
+    print("release version gate: no shipped payload changes detected")
 
 var_re = re.compile(r"SD_AI_COMMAND_PACK_[A-Z0-9_]+")
 exempt = {
@@ -789,6 +957,7 @@ main() {
   run "Whitespace check: staged diff" git diff --cached --check
   run_review_preflight
   run_sd_ai_command_pack_install_audit
+  run_sd_ai_command_pack_kb_freshness_check
   run_pack_source_drift_gates
   run_sd_ai_command_pack_scope_check
   run_sd_ai_command_pack_pr_body_scope_check

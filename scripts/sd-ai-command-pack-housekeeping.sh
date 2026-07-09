@@ -135,6 +135,12 @@ parse_args() {
           printf 'error: --remote requires a value\n' >&2
           exit 2
         fi
+        case "$1" in
+          -*)
+            printf 'error: --remote value must not start with "-": %s\n' "$1" >&2
+            exit 2
+            ;;
+        esac
         REMOTE="$1"
         ;;
       -h|--help)
@@ -160,7 +166,13 @@ working_tree_status() {
 }
 
 working_tree_is_clean() {
-  [ -z "$(working_tree_status)" ]
+  # Fail closed: a failing `git status` (index.lock contention, filesystem
+  # errors) must read as "not verifiably clean", never as clean.
+  local status_output
+  if ! status_output="$(working_tree_status)"; then
+    return 1
+  fi
+  [ -z "$status_output" ]
 }
 
 run_mutating_git() {
@@ -246,7 +258,7 @@ detect_default_branch() {
   local symbolic
   symbolic="$(git symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null || true)"
   if [ -n "$symbolic" ]; then
-    DEFAULT_BRANCH="${symbolic#${REMOTE}/}"
+    DEFAULT_BRANCH="${symbolic#"${REMOTE}"/}"
     return 0
   fi
 
@@ -255,6 +267,11 @@ detect_default_branch() {
       DEFAULT_BRANCH="$(gh repo view "$GITHUB_REPO_SLUG" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
     else
       DEFAULT_BRANCH="$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
+    fi
+    if [ "$DEFAULT_BRANCH" = "null" ]; then
+      # gh prints the literal string "null" with exit 0 for repos without
+      # a default branch; fall through to the main/master probes instead.
+      DEFAULT_BRANCH=""
     fi
     if [ -n "$DEFAULT_BRANCH" ]; then
       return 0

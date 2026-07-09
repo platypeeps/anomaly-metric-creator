@@ -70,6 +70,11 @@ class AddedLine:
     content: str
 
 
+def _neutralize_managed_markers(text: str) -> str:
+    text = text.replace(MANAGED_START, "[managed-start marker removed]")
+    return text.replace(MANAGED_END, "[managed-end marker removed]")
+
+
 @dataclasses.dataclass(frozen=True)
 class Finding:
     category: str
@@ -83,10 +88,15 @@ class Finding:
         return f"[sd-review-learnings:{self.category}] {location}: {self.detail}"
 
     def markdown_item(self) -> str:
+        # Same managed-block injection surface as PR comment rendering:
+        # paths and details originate from repo-controlled diff content.
         location = f"{self.path}:{self.lineno}" if self.lineno else self.path
+        location = _neutralize_managed_markers(location)
+        detail = _neutralize_managed_markers(self.detail)
+        recommendation = _neutralize_managed_markers(self.recommendation)
         return (
-            f"- **{self.category}** `{location}`: {self.detail} "
-            f"Recommendation: {self.recommendation}"
+            f"- **{self.category}** `{location}`: {detail} "
+            f"Recommendation: {recommendation}"
         )
 
 
@@ -102,8 +112,13 @@ class PullRequestComment:
 
     def markdown_item(self) -> str:
         state = "current" if not self.is_resolved and not self.is_outdated else "historical"
-        body = _one_line(self.body, limit=220)
-        return f"- **{state}** PR #{self.pr_number} `{self.path}`: {body} ({self.pr_url})"
+        # Every rendered field is untrusted (bodies, file paths, URLs can
+        # all carry repo-controlled text): an embedded managed marker would
+        # splice the managed block on the next update.
+        body = _neutralize_managed_markers(_one_line(self.body, limit=220))
+        path = _neutralize_managed_markers(self.path)
+        url = _neutralize_managed_markers(self.pr_url)
+        return f"- **{state}** PR #{self.pr_number} `{path}`: {body} ({url})"
 
 
 def _parse_diff(diff_text: str) -> tuple[set[str], list[AddedLine]]:
@@ -640,6 +655,8 @@ query($owner:String!, $name:String!, $number:Int!) {
             ],
             repo_root,
         )
+        if not isinstance(payload, dict):
+            continue
         data = payload.get("data")
         if not isinstance(data, dict):
             continue
@@ -817,9 +834,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.diff_from is not None:
             diff_text = args.diff_from.read_text(encoding="utf-8", errors="replace")
         else:
+            resolved_base = args.base or default_base_ref(repo_root)
+            if not resolved_base and not args.include_working_tree:
+                print(
+                    "[sd-review-learnings:scan] no base ref could be "
+                    "resolved (no origin/HEAD, upstream, or remote refs); "
+                    "nothing was scanned",
+                    file=sys.stderr,
+                )
             diff_text = build_local_diff(
                 repo_root,
-                base=args.base,
+                base=resolved_base or None,
                 include_working_tree=args.include_working_tree,
             )
         findings = extract_findings(diff_text, repo_root, env_prefixes=env_prefixes)

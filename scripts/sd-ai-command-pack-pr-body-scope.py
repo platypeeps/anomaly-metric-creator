@@ -8,6 +8,14 @@ fails when a PR body is supplied through ``--body-file``,
 ``REVIEW_PREFLIGHT_PR_BODY``. Repos can add project-specific categories with a
 JSON config file rather than editing this copied script.
 
+Automated authors are exempt. When the PR author is passed via ``--actor`` or
+``SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR`` and the login is a bot (GitHub bot
+logins carry the ``[bot]`` suffix — ``dependabot[bot]``,
+``github-actions[bot]``, ``renovate[bot]``, …), the check reports the skip and
+exits ``0`` even when a body is supplied. Without this, wiring the checker
+into CI would fail every Dependabot/Renovate PR (their bodies never carry the
+human scope headings) and block the auto-merge those bots rely on.
+
 Config shape:
 
 {
@@ -22,7 +30,8 @@ Config shape:
 
 Exit codes:
 
-* ``0`` - no issue found, or no PR body was available to enforce.
+* ``0`` - no issue found, no PR body was available to enforce, or the PR
+  author is an exempt bot (``--actor`` / ``SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR``).
 * ``1`` - a supplied PR body is missing a required scope section.
 * ``2`` - argument, git, config, or I/O error.
 """
@@ -49,6 +58,9 @@ BODY_ENV_VARS = (
 CHANGED_FILES_ENV_VARS = (
     "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHANGED_FILES",
     "SD_AI_COMMAND_PACK_CHANGED_FILES",
+)
+ACTOR_ENV_VARS = (
+    "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR",
 )
 CONFIG_ENV_VAR = "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CONFIG"
 DEFAULT_CONFIG_PATH = Path(".sd-ai-command-pack/pr-body-scope.json")
@@ -298,9 +310,11 @@ def _matches_pattern(normalized_path: str, pattern: str) -> bool:
     """Match a normalized repository path against a PR-body scope glob."""
     normalized_pattern = _remove_dot_slash(pattern.replace("\\", "/"))
     if normalized_pattern.endswith("/**"):
+        # fnmatch expands glob characters in the base (e.g. sd-*), and its
+        # "*" crosses "/" so f"{base}/*" covers arbitrary depth under it.
         base_pattern = normalized_pattern[:-3].rstrip("/")
-        return normalized_path == base_pattern or normalized_path.startswith(
-            f"{base_pattern}/"
+        return fnmatch.fnmatchcase(normalized_path, base_pattern) or fnmatch.fnmatchcase(
+            normalized_path, f"{base_pattern}/*"
         )
     return fnmatch.fnmatchcase(normalized_path, normalized_pattern)
 
@@ -481,12 +495,39 @@ def _body_has_heading(body: str, headings: tuple[str, ...]) -> bool:
     return False
 
 
+def _resolve_actor(explicit: str | None) -> str:
+    """Resolve the PR author login from the flag, then the env fallback."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    for var in ACTOR_ENV_VARS:
+        value = os.environ.get(var)
+        if value and value.strip():
+            return value.strip()
+    return ""
+
+
+def _actor_is_exempt(actor: str) -> bool:
+    """True when the PR author is automation and must not be held to the
+    PR-body scope contract.
+
+    GitHub bot logins carry the ``[bot]`` suffix (``dependabot[bot]``,
+    ``github-actions[bot]``, ``renovate[bot]``, …), so a single suffix check
+    covers every bot that opens PRs. A non-``[bot]`` service account that
+    needs the same exemption should be handled by the caller (skip the step
+    for that actor); keeping this predicate to the universal ``[bot]``
+    convention avoids a per-repo actor allowlist the pack would have to
+    maintain.
+    """
+    return bool(actor) and actor.endswith("[bot]")
+
+
 def check(
     root: Path,
     *,
     body_file: Path | None = None,
     changed_files_path: Path | None = None,
     config_path: Path | None = None,
+    actor: str | None = None,
 ) -> tuple[int, list[str]]:
     """Run the PR body scope check and return an exit code plus messages."""
     changed_files, changed_error = _load_changed_files(root, changed_files_path)
@@ -509,6 +550,14 @@ def check(
         f"info: detected {rule.label} paths: {', '.join(paths[:5])}"
         for rule, paths in scoped_changes.items()
     ]
+
+    resolved_actor = _resolve_actor(actor)
+    if _actor_is_exempt(resolved_actor):
+        return 0, [
+            *detected,
+            f"info: PR-body scope check skipped for automated actor "
+            f"'{resolved_actor}'.",
+        ]
 
     if body is None:
         return 0, [
@@ -565,6 +614,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             ".sd-ai-command-pack/pr-body-scope.json when present."
         ),
     )
+    parser.add_argument(
+        "--actor",
+        help=(
+            "PR author login. A bot login (ending in '[bot]', e.g. "
+            "dependabot[bot]) is exempt from strict scope validation. "
+            "Falls back to SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -576,6 +633,7 @@ def main(argv: list[str]) -> int:
         body_file=args.body_file,
         changed_files_path=args.changed_files,
         config_path=args.config,
+        actor=args.actor,
     )
     if messages:
         print("\n".join(messages), file=sys.stderr if status else sys.stdout)
