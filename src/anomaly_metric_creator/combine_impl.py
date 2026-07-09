@@ -24,11 +24,8 @@ from pathlib import Path
 
 from .artifacts import _atomic_artifact_open
 from .csv_layout import (
-    _INSTANCE_DIMENSION_COLUMNS,
-    _ensure_long_form_fd_capacity,
-    _iter_component_instance_rows,
     _scan_component_csv_headers,
-    _scan_instance_block_layout,
+    write_long_form_merge,
 )
 
 _NON_COMPONENT_FILES = {"anomalies.csv", "gauges.csv"}
@@ -397,57 +394,14 @@ def _write_combined_long_form(
             f"missing component CSVs for long-form combine: "
             f"{', '.join(missing)}"
         )
-    sources = []
+    # Source-building, FD preflight, (component, instance_dims) sort/tie-break,
+    # header, and emission are shared with the gauges long-form writer in
+    # csv_layout.write_long_form_merge (07-06-long-form-merge-writer-dedupe).
+    # ``components`` order is intentionally not preserved — sort alphabetically
+    # so the on-disk component order is deterministic regardless of how the
+    # caller built the list (matches the long-form gauges tie-break contract).
     sorted_components = sorted(components)
-    for component in sorted_components:
-        entry = layout[component]
-        metric_cols = entry["metric_cols"]
-        has_dims = bool(entry["dim_cols"])
-        instance_blocks = _scan_instance_block_layout(
-            entry["path"], has_dims=has_dims,
-        )
-        for instance_dims, start_offset in instance_blocks:
-            row_iter = _iter_component_instance_rows(
-                entry["path"], start_offset,
-                has_dims=has_dims, n_metrics=len(metric_cols),
-            )
-
-            def _tagged(_iter=row_iter, _comp=component,
-                        _dims=instance_dims, _cols=metric_cols):
-                for ts_dt, ts_raw, values in _iter:
-                    yield (ts_dt, ts_raw, _comp, _dims, _cols, values)
-            # Sort key carries the full ``instance_dims`` tuple (see
-            # the ``write_gauges_csv`` long-form path for the same
-            # rationale); ``id`` is the leading field, which yields the
-            # documented ``(timestamp, component, instance_id, metric)``
-            # tie-break order in v1.
-            sources.append(((component, instance_dims), _tagged()))
-
-    # Each source holds an open file handle for the lifetime of the
-    # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
-    # 14 components × 20 instances = 280 handles) either bump the
-    # rlimit up to fit or fail with an actionable message before
-    # ``heapq.merge`` tries to prime the heap.
-    _ensure_long_form_fd_capacity(len(sources))
-
-    sources.sort(key=lambda item: item[0])
-    iters = [src for _key, src in sources]
-
-    rows_written = 0
-    with _atomic_artifact_open(output_file) as out_f:
-        writer = csv.writer(out_f, lineterminator="\n")
-        writer.writerow(
-            ("timestamp", "component", *_INSTANCE_DIMENSION_COLUMNS, "metric", "value")
-        )
-        for _dt, ts, comp, dims, metric_cols, values in heapq.merge(
-            *iters, key=lambda item: item[0]
-        ):
-            for name, raw in zip(metric_cols, values):
-                if raw == "":
-                    continue
-                writer.writerow((ts, comp, *dims, name, raw))
-                rows_written += 1
-    return rows_written
+    return write_long_form_merge(sorted_components, layout, output_file)
 
 
 def combine_logs(input_dir, components=None, *, assume_monotonic_wide_components=None):
