@@ -3661,11 +3661,17 @@ def _compose_topology_coupled_specs(
         constant_contrib = np.zeros(n_rows, dtype=np.float64)
         if active_constant:
             sum_w = sum(w for _, _, w in active_constant)
-            for ups_arr, ups_base, w in active_constant:
-                w_norm = w / sum_w  # normalise so contributions sum to 1.0
-                constant_contrib = constant_contrib + (
-                    ups_arr / ups_base * downstream_base * w_norm
-                )
+            # sum_w > 0 in the shipped graph (constant weights are positive),
+            # but a monkeypatched/programmatic TOPOLOGY whose active constant
+            # weights sum to 0 would divide by zero here. Zero total weight
+            # means no constant coupling, so leave constant_contrib at zeros
+            # (07-02-verify-topology-divzero).
+            if sum_w > 0:
+                for ups_arr, ups_base, w in active_constant:
+                    w_norm = w / sum_w  # normalise so contributions sum to 1.0
+                    constant_contrib = constant_contrib + (
+                        ups_arr / ups_base * downstream_base * w_norm
+                    )
 
         coupled = (
             constant_contrib
@@ -3717,9 +3723,19 @@ def _apply_saturation(
     constructed at composition time.
     """
     _validate_saturation_params(sat, context="_apply_saturation")
-    utilization = np.maximum(
-        np.asarray(upstream_load, dtype=np.float64), 0.0
-    ) / float(sat.midpoint)
+    upstream_arr = np.asarray(upstream_load, dtype=np.float64)
+    # Generated captures are finite by construction (Kahn ordering feeds this
+    # only post-round load columns), so this never fires on real output; it
+    # fails loud for direct/programmatic callers rather than letting a
+    # NaN/inf propagate silently through the logistic into a metric cell
+    # (07-02-verify-topology-divzero). np.maximum/np.minimum do not filter
+    # NaN, so the utilization clamp below cannot catch it.
+    if not np.all(np.isfinite(upstream_arr)):
+        raise ValueError(
+            "_apply_saturation: upstream_load must be finite; "
+            "got NaN/inf values"
+        )
+    utilization = np.maximum(upstream_arr, 0.0) / float(sat.midpoint)
     np.minimum(utilization, _SATURATION_MAX_UTILIZATION, out=utilization)
     logistic = 1.0 / (1.0 + np.exp(-sat.steepness * (utilization - 1.0)))
     latency_multiplier = 1.0 + sat.latency_gain * logistic
@@ -4318,11 +4334,15 @@ def _compute_topology_arrays_per_instance(
             constant_contrib = np.zeros(n_rows, dtype=np.float64)
             if active_constant:
                 sum_w = sum(w for _, _, w in active_constant)
-                for ups_arr, ups_base, w in active_constant:
-                    w_norm = w / sum_w
-                    constant_contrib = constant_contrib + (
-                        ups_arr / ups_base * downstream_base * w_norm
-                    )
+                # Guard sum_w == 0 as in the aggregate path above
+                # (07-02-verify-topology-divzero): zero total constant weight
+                # means no coupling contribution, not a divide-by-zero.
+                if sum_w > 0:
+                    for ups_arr, ups_base, w in active_constant:
+                        w_norm = w / sum_w
+                        constant_contrib = constant_contrib + (
+                            ups_arr / ups_base * downstream_base * w_norm
+                        )
 
             # Lazy noise draw: only after we know this metric has an
             # active contribution. ``setdefault`` keeps the noise

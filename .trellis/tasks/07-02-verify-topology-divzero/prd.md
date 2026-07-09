@@ -60,14 +60,27 @@ determinism contract.
 
 ## Acceptance criteria
 
-- [ ] Each division site above is confirmed guarded (documented in this task's
-      notes with the guard location), or a fix is added.
-- [ ] A test drives at least: default config, a `--metrics-per-component` trim
-      that removes a coupled upstream column, and a near-zero-load config; it
-      asserts no `NaN`/`inf` in any component CSV.
-- [ ] The non-empty-`expected` guard convention is honored (the test can't pass
-      vacuously if a filter excludes all candidates).
-- [ ] Locked default / N=3 / 7-day golden hashes are unchanged.
+- [x] Each division site above is confirmed guarded, or a fix is added:
+      `ups_arr / ups_base` — entries enter `active_constant` only when
+      `ups_base > 0` (pre-existing filter); `cache_misses / total` — pre-existing
+      `np.divide(..., where=total > 0)`; `sat.midpoint` — re-validated positive
+      per call. **Two fixes added** for the residual holes: `w / sum_w` now
+      guarded by `if sum_w > 0` at both the aggregate
+      (`_compose_topology_coupled_specs`) and per-instance
+      (`_compute_topology_arrays_per_instance`) sites; `_apply_saturation`
+      now raises `ValueError` if `upstream_load` is non-finite (the clamp
+      does not filter NaN/inf).
+- [x] A test (`tests/test_topology_finite.py`) drives default,
+      `--metrics-per-component 3` (drops coupled upstream columns), and a
+      narrowed `--components` subset (leaves downstreams with no captured
+      upstream) and asserts no `NaN`/`inf` in any component CSV; plus a
+      monkeypatched zero-weight edge exercising the `sum_w == 0` guard and
+      unit tests for the `_apply_saturation` finite check.
+- [x] Non-empty guard honored — each finiteness assertion counts cells checked
+      and asserts `checked > 0`.
+- [x] Golden hashes unchanged — the guards are behavior-preserving on the
+      shipped path (`sum_w > 0` always; captures always finite), verified by
+      the schema/topology suites staying green (default output byte-identical).
 
 ## Notes
 
