@@ -15,11 +15,8 @@ from pathlib import Path
 
 from .artifacts import _atomic_artifact_open
 from .csv_layout import (
-    _INSTANCE_DIMENSION_COLUMNS,
-    _ensure_long_form_fd_capacity,
-    _iter_component_instance_rows,
     _scan_component_csv_headers,
-    _scan_instance_block_layout,
+    write_long_form_merge,
 )
 from .timeutil import _parse_csv_timestamp
 
@@ -128,63 +125,11 @@ def write_gauges_csv(
                     rows_written += 1
         return rows_written
 
-    # Long form with dimensions (phase 5). Build one merge iterator
-    # per (component, instance) block. Each block is timestamp-monotonic
-    # because ``generate_component`` writes dimensioned CSVs as sequential
-    # per-instance blocks. We sort sources by (component_name, instance_id)
-    # before passing them to ``heapq.merge`` so equal-timestamp output
-    # groups by component, then by instance id, and within each row the
-    # inner metric loop walks columns in MetricSpec order — matching the
-    # ``(timestamp, component, instance_id, metric)`` tie-break order
-    # promised in the docstring.
-
-    sources = []
-    for component in sorted_components:
-        entry = layout[component]
-        metric_cols = entry["metric_cols"]
-        has_dims = bool(entry["dim_cols"])
-        instance_blocks = _scan_instance_block_layout(
-            entry["path"], has_dims=has_dims,
-        )
-        for instance_dims, start_offset in instance_blocks:
-            row_iter = _iter_component_instance_rows(
-                entry["path"], start_offset,
-                has_dims=has_dims, n_metrics=len(metric_cols),
-            )
-
-            def _tagged(_iter=row_iter, _comp=component,
-                        _dims=instance_dims, _cols=metric_cols):
-                for ts_dt, ts_raw, values in _iter:
-                    yield (ts_dt, ts_raw, _comp, _dims, _cols, values)
-            # Sort key carries the full ``instance_dims`` tuple, not
-            # just the leading ``id`` field, so a hypothetical future
-            # registry where two instances share an ``id`` but differ
-            # in another dim still gets a total order. In v1 the ``id``
-            # is unique per component, so the trailing fields are inert.
-            sources.append(((component, instance_dims), _tagged()))
-
-    # Each source holds an open file handle for the lifetime of the
-    # merge. Pre-flight the FD soft limit so high-fan-out runs (e.g.,
-    # 14 components × 20 instances = 280 handles) either bump the
-    # rlimit up to fit or fail with an actionable message before
-    # ``heapq.merge`` tries to prime the heap.
-    _ensure_long_form_fd_capacity(len(sources))
-
-    sources.sort(key=lambda item: item[0])
-    iters = [src for _key, src in sources]
-
-    rows_written = 0
-    with _atomic_artifact_open(output_path) as out_f:
-        writer = csv.writer(out_f, lineterminator="\n")
-        writer.writerow(
-            ("timestamp", "component", *_INSTANCE_DIMENSION_COLUMNS, "metric", "value")
-        )
-        for _dt, ts, comp, dims, metric_cols, values in heapq.merge(
-            *iters, key=lambda item: item[0]
-        ):
-            for name, raw in zip(metric_cols, values):
-                if raw == "":
-                    continue
-                writer.writerow((ts, comp, *dims, name, raw))
-                rows_written += 1
-    return rows_written
+    # Long form with dimensions (phase 5): merge the per-(component, instance)
+    # blocks chronologically into the 10-column CSV. The source-building,
+    # FD preflight, (component, instance_dims) sort/tie-break, header, and
+    # empty-cell skip are shared with the combined long-form writer in
+    # csv_layout.write_long_form_merge (07-06-long-form-merge-writer-dedupe).
+    # This writer's caller already ensures every component CSV exists, so
+    # unlike the combine path there is no missing-file guard here.
+    return write_long_form_merge(sorted_components, layout, output_path)

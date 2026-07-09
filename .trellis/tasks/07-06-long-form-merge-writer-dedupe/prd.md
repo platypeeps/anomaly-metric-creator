@@ -38,10 +38,15 @@ missing-file guard differs.
 
 ## Acceptance Criteria
 
-- [ ] Single merge implementation; grep shows no duplicated long-form
-      header tuple outside `csv_layout.py`.
-- [ ] All locked gauge/combine SHA-256 hashes unchanged (full-ci run).
-- [ ] CLAUDE.md updated in the same PR.
+- [x] Single merge implementation — `csv_layout.write_long_form_merge`;
+      `write_gauges_csv` and `_write_combined_long_form` are thin wrappers
+      (the latter keeps its missing-input `SystemExit` guard). grep confirms
+      the 10-column header tuple appears only in `csv_layout.py`.
+- [x] All locked gauge/combine SHA-256 hashes unchanged — `test_gauges_file.py`
+      + `test_combine.py` (59 tests incl. N=3 and 7-day) pass byte-identical.
+- [x] CLAUDE.md updated in the same PR (the `csv_layout` owns-list plus the
+      gauges 10-column and combine long-layout sections name the shared home;
+      the raw-string vs float-coerce asymmetry note is preserved).
 
 ## Notes
 

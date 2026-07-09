@@ -35,8 +35,11 @@ shared by the merge writers, OTLP builders, and `server_mcp`), and
 `csv_layout.py` (the shared per-component CSV header-scan / row-iteration
 primitives — `_scan_component_csv_headers`, `_iter_component_rows`,
 `_iter_component_instance_rows`, `_scan_instance_block_layout`,
-`_ensure_long_form_fd_capacity`, `_classify_component_csv_header` — plus
-the `_INSTANCE_DIMENSION_COLUMNS` column-order constant, consumed by the
+`_ensure_long_form_fd_capacity`, `_classify_component_csv_header` — the
+`_INSTANCE_DIMENSION_COLUMNS` column-order constant, and
+`write_long_form_merge`, the single long-form `heapq.merge` writer shared by
+both file writers (`write_gauges_csv` and `_write_combined_long_form`)
+after 07-06-long-form-merge-writer-dedupe; consumed by the
 gauge writer, the combine long-form writer, the OTEL streamer, and
 `server_mcp`), `gauges_impl.py` (`write_gauges_csv`), `artifacts.py`
 (the `_atomic_artifact_open` / `_atomic_write_text` / `_ATOMIC_TMP_SUFFIX`
@@ -615,7 +618,12 @@ and dispatches one of two layouts:
   prefix (the `--instances-per-component N > 1` shape from Phase 2). The
   combine writer dispatches into `_write_combined_long_form` and emits
   `timestamp, component, id, host, pod, az, region, tenant, metric,
-  value`. Rows are merged chronologically with `heapq.merge` across
+  value`. `_write_combined_long_form` keeps the missing-input
+  `SystemExit` guard, then delegates the merge to the shared
+  `csv_layout.write_long_form_merge` — the same writer
+  `write_gauges_csv` uses (07-06-long-form-merge-writer-dedupe), so the two
+  file writers cannot drift. Rows are merged chronologically with
+  `heapq.merge` across
   per-(component, instance) iterators sourced from
   `_iter_component_instance_rows`; the per-instance ``(dim_tuple,
   start_offset)`` pairs per file come from
@@ -1105,7 +1113,12 @@ Layout is decided by header inspection via
   tenant` prefix (the `--instances-per-component N > 1` shape from
   Phase 2). The writer emits
   `timestamp, component, id, host, pod, az, region, tenant, metric,
-  value`. Per-(component, instance) iterators come from
+  value`. The whole long-form merge — source-building, FD preflight,
+  `(component, instance_dims)` sort/tie-break, header, and empty-cell skip —
+  lives in the shared `csv_layout.write_long_form_merge`
+  (07-06-long-form-merge-writer-dedupe); `write_gauges_csv` is a thin wrapper
+  that passes its sorted component list + layout in. Per-(component, instance)
+  iterators come from
   `_iter_component_instance_rows`; the per-instance ``(dim_tuple,
   start_offset)`` pairs per file come from
   `_scan_instance_block_layout` — a one-pass dim-only scan that

@@ -13,8 +13,10 @@ one copy; ``legacy.py`` re-imports each name so the historic
 from __future__ import annotations
 
 import csv
+import heapq
 from pathlib import Path
 
+from .artifacts import _atomic_artifact_open
 from .timeutil import _parse_csv_timestamp
 
 
@@ -386,3 +388,75 @@ def _iter_component_instance_rows(
                 ts_dt = _parse_csv_timestamp(ts)
                 metric_values = row[1: 1 + n_metrics]
                 yield (ts_dt, ts, metric_values)
+
+
+def write_long_form_merge(
+    sorted_components: list[str], layout: dict[str, dict], output_path: Path,
+) -> int:
+    """Chronologically merge the per-(component, instance) rows of a
+    dimensioned run into the 10-column long-form CSV
+    ``timestamp, component, id, host, pod, az, region, tenant, metric, value``
+    and atomically publish it at ``output_path``. Returns the count of
+    ``(timestamp, component, instance, metric)`` rows written.
+
+    Shared by the two long-form *file* writers — ``write_gauges_csv`` (the
+    ``gauges.csv`` peer of ``stream_otel_gauges``) and
+    ``_write_combined_long_form`` (the dimensioned
+    ``combined_metrics_unified.csv`` path). Callers own their component
+    ordering (pass a pre-sorted ``sorted_components``) and their own
+    missing-input policy before calling; everything downstream — the
+    ``(component, instance_dims)`` sort key, the tie-break, the header, and
+    the empty-cell skip — is identical, so it lives here rather than
+    duplicated at each site (07-06-long-form-merge-writer-dedupe). Raw cell
+    strings pass through verbatim so the byte hash never depends on
+    ``str(float)`` repr; the OTEL streamer's ``float()`` coercion is a
+    deliberate, separate asymmetry that this dedupe does not touch.
+    """
+    sources = []
+    for component in sorted_components:
+        entry = layout[component]
+        metric_cols = entry["metric_cols"]
+        has_dims = bool(entry["dim_cols"])
+        instance_blocks = _scan_instance_block_layout(
+            entry["path"], has_dims=has_dims,
+        )
+        for instance_dims, start_offset in instance_blocks:
+            row_iter = _iter_component_instance_rows(
+                entry["path"], start_offset,
+                has_dims=has_dims, n_metrics=len(metric_cols),
+            )
+
+            def _tagged(_iter=row_iter, _comp=component,
+                        _dims=instance_dims, _cols=metric_cols):
+                for ts_dt, ts_raw, values in _iter:
+                    yield (ts_dt, ts_raw, _comp, _dims, _cols, values)
+            # Sort key carries the full ``instance_dims`` tuple, not just the
+            # leading ``id`` field, so a hypothetical future registry where
+            # two instances share an ``id`` but differ in another dim still
+            # gets a total order. In v1 the ``id`` is unique per component, so
+            # the trailing fields are inert.
+            sources.append(((component, instance_dims), _tagged()))
+
+    # Each source holds an open file handle for the lifetime of the merge, so
+    # preflight the FD soft limit (14 components x 20 instances = 280 handles
+    # at max fan-out) before ``heapq.merge`` primes the heap.
+    _ensure_long_form_fd_capacity(len(sources))
+
+    sources.sort(key=lambda item: item[0])
+    iters = [src for _key, src in sources]
+
+    rows_written = 0
+    with _atomic_artifact_open(output_path) as out_f:
+        writer = csv.writer(out_f, lineterminator="\n")
+        writer.writerow(
+            ("timestamp", "component", *_INSTANCE_DIMENSION_COLUMNS, "metric", "value")
+        )
+        for _dt, ts, comp, dims, metric_cols, values in heapq.merge(
+            *iters, key=lambda item: item[0]
+        ):
+            for name, raw in zip(metric_cols, values):
+                if raw == "":
+                    continue
+                writer.writerow((ts, comp, *dims, name, raw))
+                rows_written += 1
+    return rows_written
