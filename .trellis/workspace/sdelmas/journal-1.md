@@ -109,7 +109,7 @@ Converted Trellis to package-scoped monorepo mode with amc as the default packag
 - Configured Trellis monorepo mode with `amc` as the default package at the
   repository root.
 - Moved backend specs into `.trellis/spec/amc/backend/` and updated project
-  docs, PR templates, GitHub review instructions, server roadmap notes, and
+  docs, PR templates, GitHub review instructions, server compatibility notes, and
   local platform skill references to the package-scoped path.
 - Opened PR #146, addressed Copilot's stale-path review feedback, resolved the
   review thread, and recorded this Trellis session.
@@ -290,7 +290,7 @@ Added server-mode kubectl patch, diff, dry-run, and Helm value-layering compatib
 - Extended simulated `kubectl diff`, `apply --dry-run`, and Helm value layering
   coverage for generated manifests, repeated `--from-literal` flags, repeated
   `--from-file` flags, and override precedence.
-- Updated README and server roadmap notes to describe the supported compatibility
+- Updated README and server compatibility notes to describe the supported compatibility
   behavior and remaining server-mode gaps.
 
 ### Git Commits

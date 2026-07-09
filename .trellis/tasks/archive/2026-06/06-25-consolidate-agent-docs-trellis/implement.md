@@ -42,8 +42,7 @@
    `.codex/`, `.claude/`, `.gemini/`, `.opencode/`.
 2. Keep user-facing docs focused on usage and behavior, and avoid turning them
    into a second implementation-rule source. Source paths: `README.md`,
-   `docs/application-flow.md`, `docs/topology.md`, `docs/server-roadmap.md`,
-   `.trellis/spec/`.
+   `docs/application-flow.md`, `docs/topology.md`, `.trellis/spec/`.
 3. Do not change product runtime code unless a directly verified inconsistency
    requires a small supporting fix. Source paths: `src/anomaly_metric_creator/`,
    `tests/`, `README.md`, `docs/`.

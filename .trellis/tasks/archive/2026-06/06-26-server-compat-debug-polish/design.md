@@ -57,9 +57,9 @@ UI and documentation polish that reflects the resulting overlay state.
 
 ## Docs
 
-- Move `kubectl apply -f` multi-document coverage from future to recently
-  covered in `docs/server-roadmap.md`.
-- Move rollout pause/resume/undo from future to recently covered in
-  `docs/server-roadmap.md`.
+- Move `kubectl apply -f` multi-document coverage from future work to
+  completed compatibility guidance.
+- Move rollout pause/resume/undo from future work to completed compatibility
+  guidance.
 - Update README serve-mode compatibility prose to mention manifest-backed apply
   and the additional rollout verbs.

@@ -69,6 +69,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     sd-update-spec/
       SKILL.md
+    sd-work-backlog/
+      SKILL.md
     trellis-before-dev/
       SKILL.md
     trellis-brainstorm/
@@ -148,6 +150,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       review-pr.md
       start.md
       update-spec.md
+      work-backlog.md
 .codex/
   agents/
     trellis-check.toml
@@ -176,6 +179,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       review-pr.toml
       start.toml
       update-spec.toml
+      work-backlog.toml
     trellis/
       continue.toml
       finish-work.toml
@@ -211,6 +215,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review-pr.prompt.md
     sd-start.prompt.md
     sd-update-spec.prompt.md
+    sd-work-backlog.prompt.md
   skills/
     trellis-before-dev/
       SKILL.md
@@ -303,6 +308,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review-pr.md
     sd-start.md
     sd-update-spec.md
+    sd-work-backlog.md
   lib/
     session-utils.js
     trellis-context.js
@@ -510,47 +516,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-02-redaction-allowlist-hardening/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-security-md-and-threat-model/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     07-02-structured-logging-in-generator/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-02-verify-topology-divzero/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-05-port-ci-cadence-fix-cross-repo/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-ci-workflow-hardening/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-coverage-threshold-and-mypy-gating/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-docs-refresh-sweep/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-eval-mode-ground-truth-wall-completeness/
       check.jsonl
       implement.jsonl
       prd.md
@@ -560,27 +526,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-06-extraction-debris-and-micro-fixes/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-heavy-marker-module-fixture-coverage/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     07-06-library-api-error-posture/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-long-form-merge-writer-dedupe/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-otel-stream-retry-unification/
       check.jsonl
       implement.jsonl
       prd.md
@@ -595,17 +541,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    07-06-trellis-spec-server-era-backfill/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
-    07-06-uv-locked-ci-enforcement/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     07-06-validate-impl-split-and-cleanup/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    07-09-multi-instance-dst-splice-boundary/
       check.jsonl
       implement.jsonl
       prd.md
@@ -707,7 +648,22 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        07-02-redaction-allowlist-hardening/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-security-md-and-threat-model/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
         07-02-server-remote-bind-hardening/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-02-verify-topology-divzero/
           check.jsonl
           implement.jsonl
           prd.md
@@ -717,7 +673,62 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        07-05-port-ci-cadence-fix-cross-repo/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-ci-workflow-hardening/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-coverage-threshold-and-mypy-gating/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-docs-refresh-sweep/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-eval-mode-ground-truth-wall-completeness/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-extraction-debris-and-micro-fixes/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-heavy-marker-module-fixture-coverage/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-long-form-merge-writer-dedupe/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-otel-stream-retry-unification/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-trellis-spec-server-era-backfill/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
         07-06-trellis-task-archive-sweep/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        07-06-uv-locked-ci-enforcement/
           check.jsonl
           implement.jsonl
           prd.md
@@ -731,11 +742,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   .version
   config.yaml
   workflow.md
-.understand-anything/
-  .understandignore
-  fingerprints.json
-  knowledge-graph.json
-  meta.json
 docs/
   application-flow.md
   DEVELOPMENT_CYCLE.md
@@ -840,6 +846,7 @@ tests/
   test_server.py
   test_shapes.py
   test_topology_fanout.py
+  test_topology_finite.py
   test_topology_llm.py
   test_topology_loadbalancer_gateway.py
   test_topology_multi_instance.py

@@ -58,6 +58,26 @@ or removing entries. Sources: `CLAUDE.md`; `README.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_scenarios.py`;
 `tests/test_registry.py`; `.github/PULL_REQUEST_TEMPLATE.md`.
 
+## Backlog and Follow-Up Ownership
+
+Trellis task records are the canonical home for planned implementation work,
+backlog slices, and follow-up decisions. User-facing docs can describe current
+capabilities and supported behavior, but they should not carry a parallel list
+of future work once the item has been converted into `.trellis/tasks/`.
+Sources: `.trellis/tasks/07-09-multi-instance-dst-splice-boundary/prd.md`;
+`.trellis/tasks/06-29-server-watch-semantics/prd.md`;
+`.trellis/tasks/06-29-helm-incident-command-coverage/prd.md`; `README.md`.
+
+When consolidating older planning or handoff notes, map each still-relevant
+item to an active or archived Trellis task, create a new task only for a
+current-doc item that has no tracker, then remove stale file references and
+future-work phrasing from docs, journals, and task context manifests. Do not
+leave the same work item tracked in both a user-facing document and a Trellis
+task. Sources: `.trellis/tasks/07-09-multi-instance-dst-splice-boundary/prd.md`;
+`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/`;
+`.trellis/tasks/archive/2026-06/06-26-server-compat-debug-polish/`;
+`.trellis/workspace/sdelmas/journal-1.md`.
+
 ## Repository Map Artifact
 
 `docs/repomix-map.md` is the generated Repomix repository map for quick human

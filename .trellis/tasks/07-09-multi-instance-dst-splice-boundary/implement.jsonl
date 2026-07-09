@@ -1,0 +1,4 @@
+{"file": "README.md", "reason": "Current user-facing docs identify the multi-instance plus DST splice combination as the only remaining generated-shape gate."}
+{"file": "CLAUDE.md", "reason": "Expanded historical/source guidance records the design rationale for rejecting DST splice with multi-instance outputs and OTEL gauge batching."}
+{"file": ".trellis/spec/amc/backend/scenarios-and-data.md", "reason": "Canonical backend spec context for scenario data, instance config, schema read-back, and data-shape validation boundaries."}
+{"file": ".trellis/spec/amc/backend/api-cli-server.md", "reason": "CLI flag and validation posture context for preserving explicit parser/validation behavior."}
