@@ -78,10 +78,28 @@ def current_git_branch() -> str | None:
 
 
 def modified_workspace_journals() -> list[Path]:
-    result = run_git("status", "--porcelain", "--", WORKSPACE)
+    # -z gives NUL-delimited, unquoted paths, avoiding core.quotePath's
+    # C-style escaping entirely (spaces and non-ASCII stay literal).
+    result = run_git("status", "--porcelain", "-z", "--", WORKSPACE)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise SystemExit(f"error: git status failed for {WORKSPACE}{suffix}")
     journals = []
-    for line in result.stdout.splitlines():
-        path_text = line[3:].strip()
+    tokens = result.stdout.split("\0")
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if len(token) < 4:
+            continue
+        status_code = token[:2]
+        path_text = token[3:]
+        if "R" in status_code or "C" in status_code:
+            # Rename/copy entries carry a second NUL-delimited token for the
+            # other side of the move; the first token is the current path.
+            if index < len(tokens):
+                index += 1
         if path_text.endswith(".md") and "/journal-" in path_text:
             journals.append(Path(path_text))
     return journals

@@ -130,10 +130,20 @@ is_trellis_runtime_path() {
   path="$(normalize_repo_path "$1")"
 
   case "$path" in
-    .trellis/scripts/*|.trellis/agents/*|.cursor/hooks.json|.cursor/hooks/*|.github/hooks/trellis.json|.opencode/lib/trellis-context.js|\
-    .agents/skills/trellis-*/*|.claude/skills/trellis-*/*|.cursor/skills/trellis-*/*|.gemini/skills/trellis-*/*|.github/skills/trellis-*/*|.opencode/skills/trellis-*/*|\
-    .cursor/commands/trellis-*.md|.claude/commands/trellis/*|.gemini/commands/trellis/*|.opencode/commands/trellis/*|\
-    .claude/agents/trellis-*.md|.cursor/agents/trellis-*.md|.gemini/agents/trellis-*.md|.opencode/agents/trellis-*.md|\
+    .trellis/scripts/*|.trellis/agents/*|.cursor/hooks.json|.cursor/hooks/*|.github/hooks/trellis.json|.github/copilot/hooks.json|.github/copilot/hooks/*|.opencode/lib/trellis-context.js|\
+    .agent/skills/trellis-*/*|.agents/skills/trellis-*/*|.claude/skills/trellis-*/*|.codebuddy/skills/trellis-*/*|.cursor/skills/trellis-*/*|.devin/skills/trellis-*/*|\
+    .factory/skills/trellis-*/*|.gemini/skills/trellis-*/*|.github/skills/trellis-*/*|.kilocode/skills/trellis-*/*|.kiro/skills/trellis-*/*|.opencode/skills/trellis-*/*|\
+    .pi/skills/trellis-*/*|.qoder/skills/trellis-*/*|.reasonix/skills/trellis-*/*|.trae/skills/trellis-*/*|.zcode/skills/trellis-*/*|\
+    .cursor/commands/trellis-*.md|.qoder/commands/trellis-*.md|.trae/commands/trellis-*.md|\
+    .claude/commands/trellis/*|.codebuddy/commands/trellis/*|.factory/commands/trellis/*|.gemini/commands/trellis/*|.opencode/commands/trellis/*|.zcode/commands/trellis/*|\
+    .agent/workflows/start.md|.agent/workflows/continue.md|.agent/workflows/finish-work.md|\
+    .kilocode/workflows/start.md|.kilocode/workflows/continue.md|.kilocode/workflows/finish-work.md|\
+    .devin/workflows/trellis-*.md|.pi/prompts/trellis-*.md|.pi/extensions/trellis/*|\
+    .claude/hooks/*|.codebuddy/hooks/*|.factory/hooks/*|.gemini/hooks/*|.kiro/hooks/*|.qoder/hooks/*|.trae/hooks/*|.trae/hooks.json|\
+    .claude/agents/trellis-*.md|.codebuddy/agents/trellis-*.md|.cursor/agents/trellis-*.md|.factory/droids/trellis-*.md|.gemini/agents/trellis-*.md|\
+    .kiro/agents/trellis*.json|.opencode/agents/trellis-*.md|.pi/agents/trellis-*.md|.qoder/agents/trellis-*.md|.trae/agents/trellis-*.md|\
+    .zcode/agents/trellis-*.md|.zcode/cli/agents/trellis-*.md|.codex/agents/trellis-*.toml|.codex/config.toml|.codex/hooks.json|.codex/hooks/*|\
+    .codebuddy/settings.json|.factory/settings.json|.pi/settings.json|.qoder/settings.json|\
     .github/agents/trellis-*.agent.md)
       return 0
       ;;

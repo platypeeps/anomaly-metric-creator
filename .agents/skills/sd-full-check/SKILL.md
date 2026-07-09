@@ -88,6 +88,9 @@ paths, and deprecated fallbacks.
 - `SD_AI_COMMAND_PACK_INSTALL_AUDIT=required`: fail if the audit helper or
   `python3` is unavailable. By default those availability problems warn and
   continue.
+- `SD_AI_COMMAND_PACK_FULL_CHECK_KB=0` / `=required`: skip the Obsidian KB
+  freshness check, or fail when it cannot run. Default `auto` checks only
+  when a generated `.obsidian-kb/` folder exists.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_SKIP_PACKAGE_SCRIPTS=1`: skip all package-script
   checks.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` / `=required`: skip Prism, or fail when

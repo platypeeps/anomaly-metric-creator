@@ -188,7 +188,9 @@ review_filter_csv_from_paths() {
   done < <(sort -u "$patterns_file")
 
   rm -f "$patterns_file"
-  join_by_comma "${patterns[@]}"
+  # ${arr[@]+...} guards the empty-array case: bash < 4.4 (macOS ships 3.2)
+  # treats "${arr[@]}" of an empty array as unbound under set -u.
+  join_by_comma ${patterns[@]+"${patterns[@]}"}
 }
 
 reviewable_tracked_filter_csv() {
@@ -726,7 +728,11 @@ run_prism_reviews() {
         local_paths+=("$path")
       done < <(collect_reviewable_local_paths)
       ran=1
-      run_prism_codebase_paths "Prism review: local changed files" "${local_paths[@]}"
+      if [ "${#local_paths[@]}" -eq 0 ]; then
+        warn "No reviewable local changed files remain after exclusions; skipping Prism local review."
+      else
+        run_prism_codebase_paths "Prism review: local changed files" "${local_paths[@]}"
+      fi
     fi
   else
     local merge_base

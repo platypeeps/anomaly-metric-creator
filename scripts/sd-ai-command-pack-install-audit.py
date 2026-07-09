@@ -28,12 +28,31 @@ SOURCE_REPO_MARKERS = (
 )
 
 PACK_FILE_PATTERNS = [
+    ".agent/skills/sd-*/*",
+    ".agent/workflows/sd-*",
     ".agents/skills/sd-*/*",
     ".claude/commands/sd/*",
+    ".codebuddy/commands/sd/*",
+    ".codebuddy/skills/sd-*/*",
     ".cursor/commands/sd-*",
+    ".devin/skills/sd-*/*",
+    ".devin/workflows/sd-*",
+    ".factory/commands/sd/*",
+    ".factory/skills/sd-*/*",
     ".gemini/commands/sd/*",
     ".github/prompts/sd-*.prompt.md",
+    ".kilocode/skills/sd-*/*",
+    ".kilocode/workflows/sd-*",
+    ".kiro/skills/sd-*/*",
     ".opencode/commands/sd-*.md",
+    ".pi/prompts/sd-*",
+    ".pi/skills/sd-*/*",
+    ".qoder/commands/sd-*",
+    ".qoder/skills/sd-*/*",
+    ".reasonix/skills/sd-*/*",
+    ".trae/commands/sd-*",
+    ".trae/skills/sd-*/*",
+    ".zcode/commands/sd/*",
     ".gito/config.toml",
     ".gito/sd-ai-command-pack.env",
     ".prism/rules.json",
@@ -59,6 +78,43 @@ LEGACY_PACK_PATHS = {
     ".opencode/commands/sd-refresh-specs.md": "use .opencode/commands/sd-update-spec.md",
     "scripts/trellis-full-check.sh": "use scripts/sd-ai-command-pack-full-check.sh",
     "scripts/trellis-housekeeping.sh": "use scripts/sd-ai-command-pack-housekeeping.sh",
+    # Pack rename era (trellis-review-pr-pack / sd-command-pack -> sd-ai-command-pack):
+    "docs/TRELLIS_REVIEW_PR_PACK.md": "use docs/SD_AI_COMMAND_PACK.md",
+    **{
+        f".opencode/commands/sd/{command}.md": (
+            f"use .opencode/commands/sd-{command}.md"
+        )
+        for command in (
+            "start",
+            "continue",
+            "finish-work",
+            "create-pr",
+            "full-check",
+            "housekeeping",
+            "review-learnings",
+            "review-local",
+            "review-local-all",
+            "review-pr",
+            "update-spec",
+        )
+    },
+    **{
+        f"scripts/sd-command-pack-{name}": (
+            f"use scripts/sd-ai-command-pack-{name}"
+        )
+        for name in (
+            "full-check.sh",
+            "housekeeping.sh",
+            "install-audit.py",
+            "pr-body-scope.py",
+            "record-session.py",
+            "review-learnings.py",
+            "review-local.sh",
+            "review-preflight.mjs",
+            "review-scope.sh",
+            "update-spec-kb.py",
+        )
+    },
 }
 
 LEGACY_PACK_REFERENCES = {
@@ -70,6 +126,24 @@ LEGACY_PACK_REFERENCES = {
     "sd-refresh-specs": "sd-update-spec",
     "TRELLIS_FULL_CHECK": "SD_AI_COMMAND_PACK_FULL_CHECK",
     "TRELLIS_HOUSEKEEPING": "SD_AI_COMMAND_PACK_HOUSEKEEPING",
+    # Pack rename era: needles are full tokens because the boundary class
+    # treats "-" and "." as word characters.
+    "TRELLIS_REVIEW_PR_PACK.md": "SD_AI_COMMAND_PACK.md",
+    **{
+        f"sd-command-pack-{name}": f"sd-ai-command-pack-{name}"
+        for name in (
+            "full-check.sh",
+            "housekeeping.sh",
+            "install-audit.py",
+            "pr-body-scope.py",
+            "record-session.py",
+            "review-learnings.py",
+            "review-local.sh",
+            "review-preflight.mjs",
+            "review-scope.sh",
+            "update-spec-kb.py",
+        )
+    },
 }
 LEGACY_REFERENCE_BOUNDARY = r"[A-Za-z0-9_.-]"
 LEGACY_PACK_REFERENCE_PATTERNS = {
@@ -83,12 +157,24 @@ REFERENCE_SCAN_BASES = (
     "AGENTS.md",
     "CLAUDE.md",
     "README.md",
+    ".agent",
     ".agents",
     ".claude",
+    ".codebuddy",
+    ".codex",
     ".cursor",
+    ".devin",
+    ".factory",
     ".gemini",
     ".github",
+    ".kilocode",
+    ".kiro",
     ".opencode",
+    ".pi",
+    ".qoder",
+    ".reasonix",
+    ".trae",
+    ".zcode",
     ".trellis/spec",
     "docs",
     "scripts",
@@ -164,6 +250,20 @@ def load_installed_targets(root: Path) -> tuple[set[str], list[str]]:
     return targets, failures
 
 
+def inspect_target_presence(root: Path, relative_path: Path) -> str:
+    """Return "present", "missing", or the OS error detail for unreadable
+    targets, so permission problems are never misreported as missing files."""
+    try:
+        os.lstat(root / relative_path)
+    except FileNotFoundError:
+        return "missing"
+    except OSError as error:
+        # Stable, path-free detail: the failure line already names the
+        # relative target, and absolute paths do not belong in shared logs.
+        return error.strerror or error.__class__.__name__
+    return "present"
+
+
 def path_exists(root: Path, relative_path: Path) -> bool:
     # lstat-based: Path.exists() swallows OSErrors on some Python versions
     # and raises on others (observed crashing on 3.9 under an unreadable
@@ -181,24 +281,26 @@ def matches_pack_file(relative_path: str) -> bool:
     return any(fnmatch.fnmatchcase(relative_path, pattern) for pattern in PACK_FILE_PATTERNS)
 
 
+def pack_scan_bases() -> tuple[str, ...]:
+    """Derive walk roots from PACK_FILE_PATTERNS so pattern and scan coverage
+    cannot drift apart: each base is a pattern's longest glob-free directory
+    prefix."""
+    bases: set[str] = set()
+    for pattern in PACK_FILE_PATTERNS:
+        prefix: list[str] = []
+        for part in pattern.split("/")[:-1]:
+            if any(character in part for character in "*?["):
+                break
+            prefix.append(part)
+        if prefix:
+            bases.add("/".join(prefix))
+    return tuple(sorted(bases))
+
+
 def collect_pack_like_files(root: Path) -> list[str]:
     """Return installed-pack-shaped files that exist under known pack locations."""
-    bases = [
-        ".agents/skills",
-        ".claude/commands",
-        ".cursor/commands",
-        ".gemini/commands",
-        ".github/prompts",
-        ".gito",
-        ".opencode/commands",
-        ".prism",
-        ".sd-ai-command-pack",
-        "docs",
-        "scripts",
-    ]
-
     pack_like: list[str] = []
-    for base in bases:
+    for base in pack_scan_bases():
         base_path = root / base
         if not base_path.exists():
             continue
@@ -234,7 +336,13 @@ def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], li
     warnings: list[str] = []
 
     for target in sorted(targets):
-        if path_exists(root, Path(target)):
+        target_state = inspect_target_presence(root, Path(target))
+        if target_state == "present":
+            continue
+        if target_state != "missing":
+            failures.append(
+                f"installed target cannot be inspected: {target} ({target_state})"
+            )
             continue
         # Platform adapters may be recorded by a checkout that has them
         # while being gitignored (e.g. repos ignoring .claude/): absence
@@ -453,11 +561,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    args = parse_args()
     if is_disabled(os.environ.get("SD_AI_COMMAND_PACK_INSTALL_AUDIT")):
         print("warning: skipping install audit because SD_AI_COMMAND_PACK_INSTALL_AUDIT is disabled")
         return 0
 
-    args = parse_args()
     root = Path(args.repo).resolve()
 
     if is_pack_source_checkout(root) and not (root / INSTALLED_TARGETS_FILE).exists():
@@ -476,13 +584,15 @@ def main() -> int:
     failures.extend(provenance_failures)
     warnings = [*structural_warnings, *audit_migration_advisories(root, targets)]
 
+    # Advisory warnings print even when the audit fails: the operator
+    # debugging a failed audit is exactly who needs them.
+    for warning in warnings:
+        print(f"warning: {warning}")
+
     if failures:
         for failure in failures:
             print(f"error: {failure}")
         return 1
-
-    for warning in warnings:
-        print(f"warning: {warning}")
 
     print(f"SD AI command pack install audit passed: {len(targets)} targets checked.")
     if provenance_version is not None:

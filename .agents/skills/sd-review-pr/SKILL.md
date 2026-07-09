@@ -270,6 +270,22 @@ For custom remote-review triggers that do not expose a GitHub reviewer request,
 use `REMOTE_REVIEW_AUTHOR_MATCH` plus new activity after the trigger timestamp
 as the completion signal.
 
+The completion signal can fire BEFORE the reviewer's inline review-thread
+comments are queryable: some reviewers (GitHub Copilot in particular) post the
+review event first and attach the per-line threads a few seconds later. So a
+thread read taken the instant completion is detected can report zero unresolved
+threads prematurely — a false "clean". Guard against it two ways:
+
+- After detecting completion, wait a short settle interval (about 30–45s) before
+  the one-time full fetch and the Step 5 thread read, so late-attached inline
+  comments are present.
+- Treat the completion signal as necessary but NOT sufficient. The authoritative
+  clean check is the thread state re-read immediately before merge (the same
+  unresolved-thread guard the housekeeping merge step enforces), not a single
+  post-completion read. Never declare the loop clean or attempt a merge off one
+  early read; if the merge guard reports unresolved threads after you saw zero,
+  that is this race — fetch the now-present threads and address them.
+
 If review status is ambiguous for more than 20 minutes, report the state and ask
 whether to keep waiting.
 
