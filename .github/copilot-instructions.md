@@ -61,7 +61,7 @@ Use the local-first review cycle:
     legacy `.zcode/cli/agents/`
   - `scripts/sd-ai-command-pack-*`, legacy `scripts/trellis-*.sh`, and
     `scripts/update_repomix*`
-  - `.gito/**`, `.prism/**`, `.sd-ai-command-pack/**`,
+  - The `.gito/`, `.prism/`, and `.sd-ai-command-pack/` directories,
     `docs/SD_AI_COMMAND_PACK.md`, and legacy `docs/TRELLIS_REVIEW_PR_PACK.md`
 - Original Trellis-owned runtime/template copies are not valid modification
   targets for target-repo or sd-ai-command-pack PRs, and should not be reviewed

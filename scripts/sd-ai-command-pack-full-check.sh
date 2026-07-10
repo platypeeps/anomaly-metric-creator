@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090,SC2129
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,38 +11,6 @@ if [ -z "$REPO_ROOT" ] || ! cd -- "$REPO_ROOT"; then
   exit 1
 fi
 
-# sd-ai-command-pack review-scan-excludes start
-REVIEW_SCAN_EXCLUDE_DIRS=(
-  ".agent"
-  ".agents"
-  ".claude"
-  ".codex"
-  ".codebuddy"
-  ".cursor"
-  ".devin"
-  ".factory"
-  ".gemini"
-  ".github"
-  ".kiro"
-  ".kilocode"
-  ".opencode"
-  ".pi"
-  ".qoder"
-  ".reasonix"
-  ".trae"
-  ".zcode"
-  ".build"
-  ".git"
-  ".pytest_cache"
-  ".obsidian-kb"
-  ".trellis"
-  ".ruff_cache"
-  ".venv"
-  ".sd-ai-command-pack"
-  "node_modules"
-)
-# sd-ai-command-pack review-scan-excludes end
-
 section() {
   printf '\n==> %s\n' "$*"
 }
@@ -49,6 +18,17 @@ section() {
 warn() {
   printf 'warning: %s\n' "$*" >&2
 }
+
+source_sd_ai_command_pack_shell_lib() {
+  local lib="$SCRIPT_DIR/sd-ai-command-pack-shell-lib.sh"
+  if [ ! -r "$lib" ]; then
+    printf 'sd-ai-command-pack-full-check: missing shared helper library: %s\n' "$lib" >&2
+    exit 1
+  fi
+  . "$lib"
+}
+
+source_sd_ai_command_pack_shell_lib
 
 is_enabled() {
   case "${1:-}" in
@@ -68,71 +48,22 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
+warn_unarmed_pack_source_hook() {
+  [ -f "$REPO_ROOT/manifest.json" ] || return 0
+  [ -f "$REPO_ROOT/install.py" ] || return 0
+  [ -d "$REPO_ROOT/.githooks" ] || return 0
+
+  local hooks_path
+  hooks_path="$(git config --get core.hooksPath 2>/dev/null || true)"
+  if [ "$hooks_path" != ".githooks" ]; then
+    warn "pre-push chore-scope guard is not armed; run: git config core.hooksPath .githooks"
+  fi
+}
+
 run() {
   section "$1"
   shift
   "$@"
-}
-
-positive_int_or_default() {
-  local value="$1"
-  local fallback="$2"
-  case "$value" in
-    ''|*[!0-9]*|0) printf '%s' "$fallback" ;;
-    *) printf '%s' "$value" ;;
-  esac
-}
-
-load_gito_pack_env() {
-  local env_file="$REPO_ROOT/.gito/sd-ai-command-pack.env"
-  [ -f "$env_file" ] || return 0
-
-  local line value
-  while IFS= read -r line || [ -n "$line" ]; do
-    line="${line%$'\r'}"
-    case "$line" in
-      ''|'#'*)
-        continue
-        ;;
-      export\ *)
-        line="${line#export }"
-        ;;
-    esac
-
-    case "$line" in
-      MAX_CONCURRENT_TASKS=*)
-        value="${line#MAX_CONCURRENT_TASKS=}"
-        case "$value" in
-          ''|*[!0-9]*|0)
-            warn "Ignoring invalid MAX_CONCURRENT_TASKS in $env_file."
-            ;;
-          *)
-            if [ -z "${MAX_CONCURRENT_TASKS:-}" ]; then
-              export MAX_CONCURRENT_TASKS="$value"
-            fi
-            ;;
-        esac
-        ;;
-    esac
-  done <"$env_file"
-}
-
-gito_output_indicates_rate_limit() {
-  local output_file="$1"
-  local recent_output
-  recent_output="$(tail -n 200 "$output_file")"
-  local status_lines
-  status_lines="$(
-    printf '%s\n' "$recent_output" \
-      | grep -Ei '(^|[^[:alnum:]])(clienterror|apierror|httperror|http status|status code|status|error|exception):?[[:space:]]*[0-9]{3}([^0-9]|$)|(^|[^[:alnum:]])[0-9]{3}[[:space:]]+(too many requests|resource exhausted|rate[ -]?limit(ed)?|slow down)([^[:alnum:]]|$)' \
-      || true
-  )"
-  if [ -z "$status_lines" ]; then
-    return 1
-  fi
-  printf '%s\n' "$status_lines" \
-    | tail -n 1 \
-    | grep -Eiq '(^|[^[:alnum:]])(clienterror|apierror|httperror|http status|status code|status|error|exception):?[[:space:]]*429([^0-9]|$)|(^|[^[:alnum:]])429[[:space:]]+(too many requests|resource exhausted|rate[ -]?limit(ed)?|slow down)([^[:alnum:]]|$)'
 }
 
 gito_max_attempts() {
@@ -140,62 +71,11 @@ gito_max_attempts() {
 }
 
 gito_initial_retry_delay() {
-  positive_int_or_default "${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_RETRY_DELAY_SECONDS:-${SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_RETRY_DELAY_SECONDS:-30}}" 30
+  nonnegative_int_or_default "${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_RETRY_DELAY_SECONDS:-${SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_RETRY_DELAY_SECONDS:-30}}" 30
 }
 
 gito_max_retry_delay() {
-  positive_int_or_default "${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_RETRY_MAX_DELAY_SECONDS:-${SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_RETRY_MAX_DELAY_SECONDS:-120}}" 120
-}
-
-run_gito_command() {
-  local label="$1"
-  shift
-  local max_attempts
-  max_attempts="$(gito_max_attempts)"
-  local delay
-  delay="$(gito_initial_retry_delay)"
-  local max_delay
-  max_delay="$(gito_max_retry_delay)"
-  if [ "$max_delay" -lt "$delay" ]; then
-    max_delay="$delay"
-  fi
-
-  local attempt=1
-  local output_file
-  while :; do
-    section "$label"
-    if [ "$max_attempts" -gt 1 ]; then
-      printf 'Gito attempt %s/%s\n' "$attempt" "$max_attempts"
-    fi
-
-    output_file="$(mktemp "${TMPDIR:-/tmp}/sd-ai-command-pack-gito.XXXXXX")"
-    set +e
-    "$@" >"$output_file" 2>&1
-    local status=$?
-    set -e
-    cat "$output_file"
-
-    if [ "$status" -eq 0 ]; then
-      rm -f "$output_file"
-      return 0
-    fi
-
-    if [ "$attempt" -ge "$max_attempts" ] || ! gito_output_indicates_rate_limit "$output_file"; then
-      rm -f "$output_file"
-      return "$status"
-    fi
-
-    rm -f "$output_file"
-    warn "Gito appears rate-limited; retrying in ${delay}s after HTTP 429 / slow-down response."
-    if [ "$delay" -gt 0 ]; then
-      sleep "$delay"
-    fi
-    attempt=$((attempt + 1))
-    delay=$((delay * 2))
-    if [ "$delay" -gt "$max_delay" ]; then
-      delay="$max_delay"
-    fi
-  done
+  nonnegative_int_or_default "${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_RETRY_MAX_DELAY_SECONDS:-${SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_RETRY_MAX_DELAY_SECONDS:-120}}" 120
 }
 
 package_has_script() {
@@ -207,66 +87,6 @@ const scriptName = process.env.SCRIPT_NAME;
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 process.exit(pkg.scripts && Object.prototype.hasOwnProperty.call(pkg.scripts, scriptName) ? 0 : 1);
 ' >/dev/null 2>&1
-}
-
-has_ref() {
-  local ref="${1:-}"
-  if [ -z "$ref" ]; then
-    return 1
-  fi
-  case "$ref" in
-    -*) return 1 ;;
-  esac
-  git rev-parse --verify --quiet "$ref^{commit}" >/dev/null
-}
-
-default_review_base_ref() {
-  local ref
-
-  ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return
-  fi
-
-  ref="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return
-  fi
-
-  ref="$(
-    git for-each-ref --format='%(refname:short)' refs/remotes 2>/dev/null \
-      | grep -v '/HEAD$' \
-      | LC_ALL=C sort \
-      | while IFS= read -r candidate; do
-          if has_ref "$candidate"; then
-            printf '%s\n' "$candidate"
-            break
-          fi
-        done \
-      || true
-  )"
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return
-  fi
-
-  printf 'HEAD'
-}
-
-configured_review_base_ref() {
-  local var_name="$1"
-  local ref="${!var_name:-}"
-  if [ -z "$ref" ]; then
-    return 1
-  fi
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return 0
-  fi
-  warn "$var_name=$ref does not resolve to a commit; falling back to discovered default branch."
-  return 1
 }
 
 full_check_base_ref() {
@@ -287,31 +107,6 @@ detect_merge_base() {
   local base_ref
   base_ref="$(full_check_base_ref)"
   git merge-base "$base_ref" HEAD 2>/dev/null || true
-}
-
-join_by_comma() {
-  local IFS=,
-  printf '%s' "$*"
-}
-
-path_is_standard_review_scan_excluded() {
-  local path="${1#./}"
-  local dir
-  for dir in "${REVIEW_SCAN_EXCLUDE_DIRS[@]}"; do
-    if [ "$path" = "$dir" ] || [[ "$path" == "$dir/"* ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-review_scan_exclude_globs_csv() {
-  local globs=()
-  local dir
-  for dir in "${REVIEW_SCAN_EXCLUDE_DIRS[@]}"; do
-    globs+=("$dir" "$dir/**")
-  done
-  join_by_comma "${globs[@]}"
 }
 
 collect_reviewable_changed_paths() {
@@ -502,6 +297,7 @@ run_gito_review() {
   fi
 
   load_gito_pack_env
+  prepare_gito_uv_env
 
   local base_ref
   base_ref="$(full_check_gito_base_ref)"
@@ -783,9 +579,9 @@ for path in Path("templates/.agents/skills").glob("*/SKILL.md"):
 documented = set(
     var_re.findall(Path("docs/SD_AI_COMMAND_PACK.md").read_text(encoding="utf-8"))
 )
-for name in sorted(script_vars - documented - exempt):
+for name in sorted((script_vars | skill_vars) - documented - exempt):
     errors.append(
-        f"undocumented env var: {name} is read by scripts/ but missing "
+        f"undocumented env var: {name} is read by shipped scripts or skills but missing "
         "from docs/SD_AI_COMMAND_PACK.md"
     )
 for name in sorted(documented - script_vars - skill_vars):
@@ -793,7 +589,10 @@ for name in sorted(documented - script_vars - skill_vars):
         f"stale documented env var: {name} is documented but no shipped "
         "script or skill consumes it"
     )
-print(f"env vars checked: {len(script_vars)} in scripts, {len(documented)} documented")
+print(
+    f"env vars checked: {len(script_vars)} in scripts, "
+    f"{len(skill_vars)} in skills, {len(documented)} documented"
+)
 
 if errors:
     for error in errors:
@@ -913,7 +712,7 @@ run_review_preflight() {
   fi
 
   if [ -n "$command" ]; then
-    run "Review preflight" bash -lc "$command"
+    run "Review preflight" bash -c "$command"
     return 0
   fi
 
@@ -952,6 +751,7 @@ run_review_preflight() {
 main() {
   section "SD AI command pack full check"
   git status -sb
+  warn_unarmed_pack_source_hook
 
   run "Whitespace check: unstaged diff" git diff --check
   run "Whitespace check: staged diff" git diff --cached --check

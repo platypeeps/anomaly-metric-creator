@@ -13,9 +13,9 @@ Quick links:
 
 - [What is installed](#what-is-installed)
 - [Recommended review loop](#recommended-review-loop)
-- [Local commands](#local-commands)
+- [Commands](#commands)
 - [Configuration](#configuration)
-- [Install or refresh this pack](#install-or-refresh-this-pack)
+- [Updating the pack](#updating-the-pack)
 - [Troubleshooting](#troubleshooting)
 
 ## What is installed
@@ -27,6 +27,9 @@ Quick links:
   creation/reuse, and PR-review orchestration workflow.
 - `.agents/skills/sd-work-backlog/SKILL.md`: sequential Trellis backlog work
   loop that delegates PR/review/cleanup to the existing SD commands.
+- `.agents/skills/sd-work-designs/SKILL.md`: Trellis planning loop that adds
+  `design.md` and `implement.md` proposals for tasks that need design before
+  implementation.
 - `.agents/skills/sd-review-pr/SKILL.md`: deterministic local gate plus remote
   PR review workflow.
 - `.agents/skills/sd-review-local/SKILL.md`: local review provider fix loop.
@@ -39,12 +42,16 @@ Quick links:
 - `.agents/skills/sd-update-spec/SKILL.md`: Trellis update-spec workflow plus
   pack-managed repository knowledge refresh.
 - `scripts/sd-ai-command-pack-full-check.sh`: canonical full-check script.
+- `scripts/sd-ai-command-pack-shell-lib.sh`: shared Bash helpers sourced by
+  the full-check, review-local, and review-scope scripts.
 - `scripts/sd-ai-command-pack-housekeeping.sh`: canonical post-merge housekeeping script.
 - `scripts/sd-ai-command-pack-record-session.py`: one-shot session journal
   recorder — wraps Trellis' `add_session.py`, resolving commit subjects
   from git (failing fast on unknown hashes), filling the Main Changes and
   Testing sections from `--change`/`--test` flags, and refusing to commit
-  an entry that still contains template placeholders.
+  an entry that still contains template placeholders. If a previous run
+  appended the entry but failed while staging or committing, a retry reuses
+  the modified latest session instead of appending a duplicate.
 - `scripts/sd-ai-command-pack-review-scope.sh`: copied/generated file scope
   preflight for mixed PRs.
 - `scripts/sd-ai-command-pack-review-preflight.mjs`: generic dependency-free
@@ -88,10 +95,11 @@ Trellis-provided `trellis-update-spec` skill as-is, refreshes repo-owned
 repospec artifacts through existing maintenance infrastructure when available,
 and then performs the architecture-overview check.
 Codex exposes the pack entry points as skills named `sd-start`, `sd-continue`,
-`sd-finish-work`, `sd-create-pr`, `sd-work-backlog`, `sd-full-check`,
-`sd-housekeeping`, `sd-review-pr`, `sd-review-local`, `sd-review-local-all`,
-`sd-review-learnings`, and `sd-update-spec`; type `/sd` in Codex command
-completion or invoke them with `$sd-review-pr`-style skill mentions.
+`sd-finish-work`, `sd-create-pr`, `sd-work-backlog`, `sd-work-designs`,
+`sd-full-check`, `sd-housekeeping`, `sd-review-pr`, `sd-review-local`,
+`sd-review-local-all`, `sd-review-learnings`, and `sd-update-spec`; type
+`/sd` in Codex command completion or invoke them with
+`$sd-review-pr`-style skill mentions.
 The start, continue, and finish-work wrappers run Trellis' existing
 `trellis-start`, `trellis-continue`, and `trellis-finish-work` skills as-is.
 On Claude Code — where Trellis ships a SessionStart hook instead of a
@@ -135,29 +143,33 @@ loaded project command files.
    through create-pr, review-pr, housekeeping, and an extra housekeeping
    verification, then addresses or records follow-ups and learnings before
    selecting the next task.
-9. Use the review-pr command for an existing PR loop. It should run the deterministic
+9. Use the work-designs command when existing Trellis tasks have real PRDs but
+   still need `design.md` or `implement.md`. It adds implementation proposals
+   and execution guidance to those task artifacts, parks tasks that need user
+   input, and reports links to every planning document it created or updated.
+10. Use the review-pr command for an existing PR loop. It should run the deterministic
    local full-check path with Prism/Gito disabled before requesting remote
    review. Run `sd-full-check`, `sd-review-local`, or `sd-review-local-all`
    explicitly when you want Prism/Gito.
-10. Request the configured remote reviewer, defaulting to GitHub Copilot, after
+11. Request the configured remote reviewer, defaulting to GitHub Copilot, after
    a clean local pass and again after every pushed review-fix commit made
    during the loop, unless the user explicitly asked for local-only review.
-11. Let the review-pr command reply to and resolve review threads as part of the
+12. Let the review-pr command reply to and resolve review threads as part of the
    normal loop once findings are fixed, rebutted with evidence, or confirmed
    already addressed.
-12. Use the review-learnings command when review comments repeat across PRs and
+13. Use the review-learnings command when review comments repeat across PRs and
    you want to capture repo-specific preventive guidance.
-13. Run the update-spec command when the work taught you a durable
+14. Run the update-spec command when the work taught you a durable
    implementation contract or convention. It runs the existing update-spec skill
    and also checks whether an existing architectural overview needs to be
    updated.
-14. Run the finish-work command when the coding session is complete and you need
+15. Run the finish-work command when the coding session is complete and you need
    the Trellis finish-work skill's quality gate, archive, journal, and commit
    reminder behavior.
-15. After the PR merges, run the housekeeping command to get back to the default
+16. After the PR merges, run the housekeeping command to get back to the default
    branch, prune/delete the merged development stream, and see the condensed
    clean-state/anomaly report.
-16. If the review-pr command sees the PR is already merged or becomes merged
+17. If the review-pr command sees the PR is already merged or becomes merged
    while the command is running, it stops the review loop and runs post-merge
    housekeeping before the final report. This does not wake inactive sessions;
    it only runs when the active agent observes the merge.
@@ -192,6 +204,13 @@ to the next actionable task. It stops when no active tasks remain, all remaining
 tasks are parked or require input, or a delegated SD/Trellis gate reports a
 blocker.
 
+The work-designs command is a planning-artifact runner. It inventories active
+Trellis tasks with real PRDs, selects tasks that still need `design.md` or
+`implement.md`, writes grounded implementation proposals and execution
+guidance without starting implementation, parks tasks that need user input,
+and ends with numbered links to every planning document it created or
+updated.
+
 ## Commands
 
 Use the platform-native command when available.
@@ -204,6 +223,7 @@ Claude Code and Gemini CLI:
 /sd:finish-work
 /sd:create-pr
 /sd:work-backlog
+/sd:work-designs
 /sd:full-check
 /sd:housekeeping
 /sd:review-pr
@@ -222,6 +242,7 @@ Qoder commands, Trae commands, Pi prompts, workflow adapters, and Codex skills:
 /sd-finish-work
 /sd-create-pr
 /sd-work-backlog
+/sd-work-designs
 /sd-full-check
 /sd-housekeeping
 /sd-review-pr
@@ -305,6 +326,12 @@ The install audit checks
 pack-like files that are not listed in the installed-targets snapshot, and warns
 when legacy pack names such as `trellis-full-check`, `trellis-housekeeping`,
 `trellis-review-pr`, or `sd-refresh-specs` still appear in target files.
+Current installs also write `.sd-ai-command-pack/manifest.json`; the audit uses
+that manifest snapshot to derive the expected installed target set for shared
+files and detected platforms. Fleet or scripted refreshes should pass explicit
+platforms, for example `--expected-platform claude --expected-platform gemini`,
+so a selected-platform file cannot disappear from disk, receipts, and
+provenance without the audit failing.
 Missing targets that are gitignored in the current checkout downgrade to
 warnings with a reinstall hint, and the installer keeps receipt entries
 (reported as `kept-in-receipt`) for platforms skipped only because their
@@ -348,7 +375,9 @@ skip remote AI review. Target repos can tune roots, path-reference prefixes,
 integration paths, optional paths, copied-template paths, and warning thresholds
 with `.sd-ai-command-pack/review-preflight.json`. Repos that intentionally
 document service-user paths under `/home/<user>/` can add those service users to
-`allowedLinuxHomeUsers` in that config.
+`allowedLinuxHomeUsers` in that config. The script requires Node 16.9 or newer
+and scans regular documentation files only; symlinked docs are skipped
+intentionally so local/generated links do not expand outside the repository.
 
 The review-local script is intentionally tool-stack aware. In this pack version
 its runner-owned default toolset is Prism and Gito. Its default scope is
@@ -401,9 +430,9 @@ AI/tooling/cache directories:
 node_modules/
 ```
 
-For `uvx`-based Gito wrappers, the
-runner sets `UV_CACHE_DIR` and `UV_TOOL_DIR` to writable temp directories when
-they are unset. When Gito reports provider rate limiting through an explicit
+For `uvx`-based Gito wrappers, the full-check and review-local runners set
+`UV_CACHE_DIR` and `UV_TOOL_DIR` to writable temp directories when they are
+unset. When Gito reports provider rate limiting through an explicit
 HTTP 429 status such as `ClientError: 429` or a 429 slow-down response, the
 runner retries with bounded exponential backoff. Tune attempts and delays with
 `SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_MAX_ATTEMPTS`,
@@ -679,7 +708,7 @@ ephemeral tool state and do not change what the checks validate.
   review preflight command can run and the shared or legacy review preflight is
   unavailable.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT_COMMAND`: repo-specific review
-  preflight command to run with `bash -lc`.
+  preflight command to run with `bash -c`.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT_SCRIPT`: custom JavaScript
   review preflight script to run before the legacy repo-local
   `scripts/check-review-preflight.mjs` fallback.
@@ -780,16 +809,22 @@ ephemeral tool state and do not change what the checks validate.
   installed `.gito/sd-ai-command-pack.env` default of `4` when this variable is
   unset.
 - `SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_CACHE_DIR`: fallback `UV_CACHE_DIR` for
-  Gito when `UV_CACHE_DIR` is unset. Defaults to a temp
+  full-check and review-local Gito when `UV_CACHE_DIR` is unset. Defaults to a temp
   `sd-ai-command-pack-uv-cache` directory.
 - `SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_TOOL_DIR`: fallback `UV_TOOL_DIR` for
-  Gito when `UV_TOOL_DIR` is unset. Defaults to a temp
+  full-check and review-local Gito when `UV_TOOL_DIR` is unset. Defaults to a temp
   `sd-ai-command-pack-uv-tools` directory.
 - `SD_AI_COMMAND_PACK_REVIEW_LOCAL_<TOOL>_COMMAND`: command for a repo-specific
   or third-party local review tool, run with `bash -c`.
 - `SD_AI_COMMAND_PACK_REVIEW_LOCAL_ALL_<TOOL>_COMMAND`: full-codebase command
   for a repo-specific or third-party local review tool. Takes precedence over
   `SD_AI_COMMAND_PACK_REVIEW_LOCAL_<TOOL>_COMMAND` when scope is `all`.
+- `SD_AI_COMMAND_PACK_REVIEW_LOCAL_SEMGREP_COMMAND`: example Semgrep custom
+  provider command for `sd-review-local`; follows the generic `<TOOL>` command
+  naming pattern.
+- `SD_AI_COMMAND_PACK_REVIEW_LOCAL_ALL_SEMGREP_COMMAND`: example Semgrep custom
+  provider command for `sd-review-local-all`; falls back to the non-`ALL`
+  Semgrep command when unset.
 - `SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_BASE_REF`: base ref for review-local Gito
   review. Defaults to `SD_AI_COMMAND_PACK_FULL_CHECK_GITO_BASE_REF`, then
   `SD_AI_COMMAND_PACK_FULL_CHECK_BASE_REF`, then the discovered branch-diff
@@ -815,6 +850,8 @@ ephemeral tool state and do not change what the checks validate.
 - `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`: explicit PR body text for tooling/generated
   scope checks when `gh pr view` should not be used. Deprecated fallback:
   `REVIEW_PREFLIGHT_PR_BODY`.
+- `SD_AI_COMMAND_PACK_REVIEW_PR_SELECTOR`: PR number or URL for `sd-review-pr`
+  when the command cannot resolve the pull request from the current branch.
 - `SD_AI_COMMAND_PACK_CREATE_PR_BRANCH`: explicit feature branch name for
   `sd-create-pr` when it starts on the repository default branch. When unset,
   `sd-create-pr` derives a `codex/<slug>` branch from
@@ -897,6 +934,11 @@ To remove the pack from a target checkout:
 ```bash
 python3 /path/to/sd-ai-command-pack/install.py /path/to/target/repo --remove
 ```
+
+Remove mode treats receipts and provenance as candidate discovery only. It
+deletes only manifest-recognized pack artifacts and generated pack state;
+tampered entries under `.git/` or arbitrary repo files are reported as
+`ignored`, even with `--force`.
 
 Normal shared installs maintain a managed `sd-ai-command-pack
 trellis-gitignore` block in the repo root `.gitignore`. The block ignores
@@ -1103,6 +1145,9 @@ files, files that still match the bundled template, generated pack state under
 symlinks, directories, and user-owned policy files are preserved by default;
 add `--force` to delete drifted regular pack files too, and add `--backup` to
 keep `.bak` copies of deleted files.
+Receipt and provenance entries do not by themselves authorize deletion:
+remove mode ignores paths under `.git/` and non-manifest paths instead of deleting them,
+even when their recorded hashes match and `--force` is set.
 
 After installing or refreshing a target repo, a quick smoke test is:
 
@@ -1115,6 +1160,7 @@ export UV_TOOL_DIR="${UV_TOOL_DIR:-$SANDBOX_TMP/sd-ai-command-pack-uv-tools}"
 export RUFF_CACHE_DIR="${RUFF_CACHE_DIR:-$SANDBOX_TMP/sd-ai-command-pack-ruff-cache}"
 python3 scripts/sd-ai-command-pack-install-audit.py
 bash -n scripts/sd-ai-command-pack-full-check.sh
+bash -n scripts/sd-ai-command-pack-shell-lib.sh
 bash -n scripts/sd-ai-command-pack-review-local.sh
 bash -n scripts/sd-ai-command-pack-review-scope.sh
 python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run
@@ -1145,11 +1191,12 @@ python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run
   `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` to skip it, or set
   `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=required` when review must be mandatory.
 - Gito fails due to cache, network sandboxing, or provider rate limiting:
-  `sd-review-local` and `sd-review-local-all` set writable `UV_CACHE_DIR` and
-  `UV_TOOL_DIR` defaults and retry HTTP 429 / slow-down responses with bounded
-  backoff. If the failure is network or credential related, run from an
-  environment with the needed access. For `sd-full-check`, leave
-  `SD_AI_COMMAND_PACK_FULL_CHECK_GITO` unset unless Gito is configured locally.
+  `sd-full-check` when Gito is explicitly enabled, `sd-review-local`, and
+  `sd-review-local-all` set writable `UV_CACHE_DIR` and `UV_TOOL_DIR` defaults
+  and retry HTTP 429 / slow-down responses with bounded backoff. If the failure
+  is network or credential related, run from an environment with the needed
+  access. Leave `SD_AI_COMMAND_PACK_FULL_CHECK_GITO` unset unless Gito is
+  configured locally.
 - `uvx`, Ruff, Python compile/coverage, preflight, or full-check fail with
   `Operation not permitted` while creating cache or temporary files: export the
   sandbox-local `PYTHONPYCACHEPREFIX`, `UV_CACHE_DIR`, `UV_TOOL_DIR`, and

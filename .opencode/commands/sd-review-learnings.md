@@ -1,12 +1,12 @@
 ---
-description: Analyze recurring code-review feedback and update repository-specific review learnings.
+description: Detect or update repository review learnings.
 ---
 
 # SD Review Learnings
 
 In this pack, SD means Software Delivery. A skill is a project-installed Markdown instruction bundle resolved by the agent's trusted installed-skill resolver.
 
-Detect recurring review feedback patterns from GitHub review comments, local review output, and the working tree; optionally update the repository learning file, usually `docs/review-learnings.md`, so future reviews can avoid repeated mechanical issues.
+Detect recurring review feedback patterns and optionally update the repository learning file.
 
 1. Resolve the `sd-review-learnings` skill by name using the agent's trusted skill discovery mechanism for installed skills.
 2. Verify that `scripts/sd-ai-command-pack-review-learnings.py` exists relative to the repository root. If the skill or script is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, requires unavailable tools, or cannot execute, stop and report the exact blocker.
