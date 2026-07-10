@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +18,17 @@ fail() {
   exit 1
 }
 
+source_sd_ai_command_pack_shell_lib() {
+  local lib="$SCRIPT_DIR/sd-ai-command-pack-shell-lib.sh"
+  if [ ! -r "$lib" ]; then
+    printf 'sd-ai-command-pack-review-scope: missing shared helper library: %s\n' "$lib" >&2
+    exit 1
+  fi
+  . "$lib"
+}
+
+source_sd_ai_command_pack_shell_lib
+
 is_disabled() {
   case "${1:-}" in
     0|false|FALSE|no|NO|skip|none) return 0 ;;
@@ -33,66 +45,6 @@ is_required() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
-}
-
-has_ref() {
-  local ref="${1:-}"
-  if [ -z "$ref" ]; then
-    return 1
-  fi
-  case "$ref" in
-    -*) return 1 ;;
-  esac
-  git rev-parse --verify --quiet "$ref^{commit}" >/dev/null
-}
-
-default_review_base_ref() {
-  local ref
-
-  ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return
-  fi
-
-  ref="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return
-  fi
-
-  ref="$(
-    git for-each-ref --format='%(refname:short)' refs/remotes 2>/dev/null \
-      | grep -v '/HEAD$' \
-      | LC_ALL=C sort \
-      | while IFS= read -r candidate; do
-          if has_ref "$candidate"; then
-            printf '%s\n' "$candidate"
-            break
-          fi
-        done \
-      || true
-  )"
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return
-  fi
-
-  printf 'HEAD'
-}
-
-configured_review_base_ref() {
-  local var_name="$1"
-  local ref="${!var_name:-}"
-  if [ -z "$ref" ]; then
-    return 1
-  fi
-  if has_ref "$ref"; then
-    printf '%s' "$ref"
-    return 0
-  fi
-  warn "$var_name=$ref does not resolve to a commit; falling back to discovered default branch."
-  return 1
 }
 
 scope_base_ref() {

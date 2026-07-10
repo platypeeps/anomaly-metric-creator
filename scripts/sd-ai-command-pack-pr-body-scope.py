@@ -213,6 +213,7 @@ DEFAULT_RULES = (
             "scripts/sd-ai-command-pack-install-audit.py",
             "scripts/sd-ai-command-pack-pr-body-scope.py",
             "scripts/sd-ai-command-pack-full-check.sh",
+            "scripts/sd-ai-command-pack-shell-lib.sh",
         ),
     ),
 )

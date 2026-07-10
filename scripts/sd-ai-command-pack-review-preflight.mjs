@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -13,6 +13,7 @@ let passes = [];
 let installedTargetsCache;
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const MIN_NODE_VERSION = { major: 16, minor: 9, label: '16.9.0' };
 
 export function runReviewPreflight(options = {}) {
   rootDir = resolve(options.rootDir || defaultRootDir);
@@ -187,13 +188,47 @@ function printReviewPreflightResult(result) {
   console.log(`\nReview preflight: ${result.failures.length} failure(s), ${result.warnings.length} warning(s).`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isMainModule()) {
+  const unsupportedNode = unsupportedNodeVersionMessage(process.version);
+  if (unsupportedNode) {
+    console.error(`error: ${unsupportedNode}`);
+    process.exit(2);
+  }
+
   const result = runReviewPreflight();
   printReviewPreflightResult(result);
 
   if (result.failures.length > 0) {
     process.exit(1);
   }
+}
+
+function isMainModule() {
+  const argvPath = process.argv[1];
+  if (!argvPath) {
+    return false;
+  }
+
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(argvPath);
+  } catch {
+    return import.meta.url === pathToFileURL(argvPath).href;
+  }
+}
+
+export function unsupportedNodeVersionMessage(version) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version || '');
+  if (!match) {
+    return `scripts/sd-ai-command-pack-review-preflight.mjs requires Node >= ${MIN_NODE_VERSION.label}; could not parse ${version || 'unknown version'}.`;
+  }
+
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major > MIN_NODE_VERSION.major || (major === MIN_NODE_VERSION.major && minor >= MIN_NODE_VERSION.minor)) {
+    return '';
+  }
+
+  return `scripts/sd-ai-command-pack-review-preflight.mjs requires Node >= ${MIN_NODE_VERSION.label}; current ${version}.`;
 }
 
 function runCheck(label, check) {
@@ -225,7 +260,7 @@ function checkPackageOverrides() {
 
   for (const [selector, value] of Object.entries(overrides)) {
     if (isPlainObject(value)) {
-      if (Object.hasOwn(value, '.')) {
+      if (Object.prototype.hasOwnProperty.call(value, '.')) {
         directOverrides.add(packageNameFromOverrideSelector(selector));
       }
 
@@ -837,7 +872,13 @@ function currentDiffStats() {
 }
 
 function currentChangedPaths() {
-  const sources = currentDiffSources('--name-only');
+  const sources = [
+    ...currentDiffSources('--name-only'),
+    { args: ['ls-files', '--others', '--exclude-standard'], label: 'untracked files' },
+  ];
+  const paths = new Set();
+  const labels = [];
+  let inspected = false;
 
   for (const source of sources) {
     const result = spawnSync('git', source.args, {
@@ -849,18 +890,30 @@ function currentChangedPaths() {
       continue;
     }
 
-    const paths = result.stdout
+    inspected = true;
+    const sourcePaths = result.stdout
       .trim()
       .split('\n')
       .map((path) => path.trim())
       .filter(Boolean);
 
-    if (paths.length > 0 || source.label === 'working tree diff') {
-      return { ...source, paths };
+    if (sourcePaths.length > 0) {
+      labels.push(source.label);
+      for (const path of sourcePaths) {
+        paths.add(path);
+      }
     }
   }
 
-  return null;
+  if (!inspected) {
+    return null;
+  }
+
+  return {
+    args: sources.flatMap((source) => source.args),
+    label: labels.length > 0 ? labels.join(' + ') : 'current diff',
+    paths: [...paths],
+  };
 }
 
 export function parseNumstat(output) {
@@ -916,7 +969,9 @@ export function validateTrellisJournalSessions({
   indexSessions,
   journalSessions,
 }) {
-  developerRelative ||= dirname((journalSessions || [])[0]?.file || '.');
+  if (!developerRelative) {
+    developerRelative = dirname((journalSessions || [])[0]?.file || '.');
+  }
 
   const validationFailures = [];
   const sessions = new Map();
@@ -1010,7 +1065,7 @@ export function parseWorkspaceIndexSessionsFromText(file, text, options = {}) {
   const onDuplicate = options.onDuplicate || (() => {});
   const sessions = new Map();
 
-  for (const match of text.matchAll(/^\|\s*(\d+)\s*\|[^|]*\|[^|]*\|\s*([^|]*?)\s*\|[^|]*\|$/gm)) {
+  for (const match of text.matchAll(/^\|\s*(\d+)\s*\|[^|]*\|[^|]*\|\s*([^|]*?)\s*\|[^|]*\|[ \t]*$/gm)) {
     const number = Number(match[1]);
     const line = lineNumberAt(text, match.index ?? 0);
 

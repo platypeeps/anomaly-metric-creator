@@ -9,9 +9,12 @@ the legacy gap in one shot: it resolves each commit's subject from git
 (failing fast on unknown hashes), passes the Main Changes body through
 ``--content-file``, patches the Testing section and commit table in the
 freshly written entry, verifies no placeholders remain, and only then
-commits the journal. It also passes the current git branch explicitly when the
-caller does not provide ``--branch`` so stale Trellis task metadata cannot
-override the checked-out branch in older ``add_session.py`` versions.
+commits the journal. If a previous run appended the session but failed later
+while staging or committing, a retry patches the modified latest session
+instead of calling ``add_session.py`` again and duplicating the entry. It also
+passes the current git branch explicitly when the caller does not provide
+``--branch`` so stale Trellis task metadata cannot override the checked-out
+branch in older ``add_session.py`` versions.
 
 Trellis versions drift across repos: some seed placeholder commit cells
 and ``- [OK] (Add test results)``, while newer variants may resolve subjects
@@ -42,6 +45,7 @@ from pathlib import Path
 ADD_SESSION = Path(".trellis/scripts/add_session.py")
 WORKSPACE = ".trellis/workspace"
 PLACEHOLDERS = ("(Add details)", "(Add test results)", "(see git log)")
+SESSION_HEADING_RE = re.compile(r"^## Session \d+: (.+)$", re.MULTILINE)
 
 
 def run_git(*args: str) -> subprocess.CompletedProcess:
@@ -80,7 +84,14 @@ def current_git_branch() -> str | None:
 def modified_workspace_journals() -> list[Path]:
     # -z gives NUL-delimited, unquoted paths, avoiding core.quotePath's
     # C-style escaping entirely (spaces and non-ASCII stay literal).
-    result = run_git("status", "--porcelain", "-z", "--", WORKSPACE)
+    result = run_git(
+        "status",
+        "--porcelain",
+        "-z",
+        "--untracked-files=all",
+        "--",
+        WORKSPACE,
+    )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         suffix = f": {detail}" if detail else ""
@@ -103,6 +114,20 @@ def modified_workspace_journals() -> list[Path]:
         if path_text.endswith(".md") and "/journal-" in path_text:
             journals.append(Path(path_text))
     return journals
+
+
+def existing_session_journals(journals: list[Path], title: str) -> list[Path]:
+    """Return modified journals whose latest session has the retry title."""
+    matches: list[Path] = []
+    for journal in journals:
+        try:
+            text = journal.read_text(encoding="utf-8", errors="strict")
+        except (OSError, UnicodeError):
+            continue
+        headings = list(SESSION_HEADING_RE.finditer(text))
+        if headings and headings[-1].group(1) == title:
+            matches.append(journal)
+    return matches
 
 
 def replace_section(block: str, heading: str, lines: list[str]) -> str | None:
@@ -266,57 +291,69 @@ def main(argv: list[str]) -> int:
     tests = [as_test_line(t) for t in args.tests]
     next_steps = [as_bullet(n) for n in args.next_steps]
 
-    before = set(modified_workspace_journals())
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".md", delete=False, encoding="utf-8", errors="strict"
-    ) as handle:
-        handle.write("\n".join(changes) + "\n")
-        content_file = Path(handle.name)
-    try:
-        command = [
-            sys.executable,
-            str(ADD_SESSION),
-            "--title",
-            args.title,
-            "--summary",
-            args.summary,
-            "--content-file",
-            str(content_file),
-            "--no-commit",
-        ]
-        if hashes:
-            command.extend(["--commit", ",".join(hashes)])
-        # Older Trellis add_session.py prefers task.json.branch over git's
-        # current branch. Supplying the current branch as an explicit arg keeps
-        # recorded sessions tied to the checkout that actually did the work.
-        branch = args.branch or current_git_branch()
-        if branch:
-            command.extend(["--branch", branch])
-        result = subprocess.run(
-            command,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
+    before_journals = modified_workspace_journals()
+    retry_journals = existing_session_journals(before_journals, args.title)
+    if len(retry_journals) > 1:
+        print(
+            "error: multiple modified journals already contain a session titled "
+            f"{args.title!r}; refusing to append another entry",
+            file=sys.stderr,
         )
-        if result.returncode != 0:
-            # Operator-facing tool: surface the Trellis script's own output
-            # (missing developer init, index marker issues, ...).
-            if result.stdout:
-                print(result.stdout, file=sys.stderr)
-            print(
-                f"error: add_session.py exited {result.returncode}",
-                file=sys.stderr,
+        return 1
+    if retry_journals:
+        journals = retry_journals
+    else:
+        before = set(before_journals)
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".md", delete=False, encoding="utf-8", errors="strict"
+        ) as handle:
+            handle.write("\n".join(changes) + "\n")
+            content_file = Path(handle.name)
+        try:
+            command = [
+                sys.executable,
+                str(ADD_SESSION),
+                "--title",
+                args.title,
+                "--summary",
+                args.summary,
+                "--content-file",
+                str(content_file),
+                "--no-commit",
+            ]
+            if hashes:
+                command.extend(["--commit", ",".join(hashes)])
+            # Older Trellis add_session.py prefers task.json.branch over git's
+            # current branch. Supplying the current branch as an explicit arg keeps
+            # recorded sessions tied to the checkout that actually did the work.
+            branch = args.branch or current_git_branch()
+            if branch:
+                command.extend(["--branch", branch])
+            result = subprocess.run(
+                command,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
             )
-            return 1
-    finally:
-        content_file.unlink(missing_ok=True)
+            if result.returncode != 0:
+                # Operator-facing tool: surface the Trellis script's own output
+                # (missing developer init, index marker issues, ...).
+                if result.stdout:
+                    print(result.stdout, file=sys.stderr)
+                print(
+                    f"error: add_session.py exited {result.returncode}",
+                    file=sys.stderr,
+                )
+                return 1
+        finally:
+            content_file.unlink(missing_ok=True)
 
-    journals = [j for j in modified_workspace_journals() if j not in before] or (
-        modified_workspace_journals()
-    )
+        journals = [j for j in modified_workspace_journals() if j not in before] or (
+            modified_workspace_journals()
+        )
     if len(journals) != 1:
         # A journal dirtied before the run makes the before/after set
         # ambiguous; the entry we just wrote is the one carrying the title.

@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
 PROVENANCE_FILE = Path(".sd-ai-command-pack/provenance.json")
+PACK_MANIFEST_FILE = Path(".sd-ai-command-pack/manifest.json")
 
 # Files unique to the sd-ai-command-pack source checkout. A consumer repo never
 # has all three (it receives shipped scripts, but not the installer, manifest, or
@@ -66,6 +67,10 @@ LOCAL_ALLOWED_PACK_FILES = {
     ".sd-ai-command-pack/review-preflight.json",
 }
 
+SOURCE_ONLY_ALLOWED_PACK_FILES = {
+    "scripts/sd-ai-command-pack-fleet-preflight.py",
+}
+
 LEGACY_PACK_PATHS = {
     ".agents/skills/sd-refresh-specs": "use .agents/skills/sd-update-spec",
     ".agents/skills/trellis-full-check": "use .agents/skills/sd-full-check",
@@ -112,6 +117,7 @@ LEGACY_PACK_PATHS = {
             "review-local.sh",
             "review-preflight.mjs",
             "review-scope.sh",
+            "shell-lib.sh",
             "update-spec-kb.py",
         )
     },
@@ -250,6 +256,173 @@ def load_installed_targets(root: Path) -> tuple[set[str], list[str]]:
     return targets, failures
 
 
+def load_pack_manifest(root: Path) -> tuple[dict | None, list[str]]:
+    manifest_path = root / PACK_MANIFEST_FILE
+    try:
+        raw_text = manifest_path.read_text(encoding="utf-8", errors="strict")
+    except FileNotFoundError:
+        return None, []
+    except OSError as exc:
+        return None, [f"{PACK_MANIFEST_FILE} cannot be read: {exc}"]
+    except UnicodeError as exc:
+        return None, [f"{PACK_MANIFEST_FILE} is not valid UTF-8: {exc}"]
+
+    try:
+        payload = json.loads(raw_text)
+    except ValueError as exc:
+        return None, [f"{PACK_MANIFEST_FILE} is not valid JSON: {exc}"]
+    if not isinstance(payload, dict):
+        return None, [f"{PACK_MANIFEST_FILE} must be a JSON object"]
+    files = payload.get("files")
+    if not isinstance(files, list):
+        return None, [f"{PACK_MANIFEST_FILE} has no files list"]
+    return payload, []
+
+
+def manifest_file_records(manifest: dict) -> tuple[list[dict[str, str]], list[str]]:
+    records: list[dict[str, str]] = []
+    failures: list[str] = []
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        return records, [f"{PACK_MANIFEST_FILE} has no files list"]
+    for index, item in enumerate(files):
+        if not isinstance(item, dict):
+            failures.append(f"{PACK_MANIFEST_FILE}: files[{index}] must be an object")
+            continue
+        raw_platform = item.get("platform")
+        raw_target = item.get("target")
+        raw_install = item.get("install", "if-anchor-exists")
+        if not isinstance(raw_platform, str) or not raw_platform:
+            failures.append(
+                f"{PACK_MANIFEST_FILE}: files[{index}] has invalid platform"
+            )
+            continue
+        if not isinstance(raw_target, str) or not raw_target:
+            failures.append(f"{PACK_MANIFEST_FILE}: files[{index}] has invalid target")
+            continue
+        target = raw_target.replace("\\", "/")
+        if is_unsafe_installed_target(target):
+            failures.append(
+                f"{PACK_MANIFEST_FILE}: files[{index}] contains unsafe target "
+                f"{raw_target!r}"
+            )
+            continue
+        install_mode = raw_install if isinstance(raw_install, str) else ""
+        records.append(
+            {
+                "platform": raw_platform,
+                "target": target,
+                "install": install_mode or "if-anchor-exists",
+            }
+        )
+    return records, failures
+
+
+def inferred_platforms_from_targets(
+    targets: set[str],
+    manifest_records: list[dict[str, str]],
+) -> set[str]:
+    return {
+        record["platform"]
+        for record in manifest_records
+        if record["platform"] != "shared" and record["target"] in targets
+    }
+
+
+def expected_targets_from_manifest(
+    manifest: dict,
+    targets: set[str],
+    explicit_platforms: Iterable[str],
+) -> tuple[set[str], set[str], list[str]]:
+    records, failures = manifest_file_records(manifest)
+    if failures:
+        return set(), set(), failures
+
+    known_platforms = {
+        record["platform"]
+        for record in records
+        if record["platform"] != "shared"
+    }
+    selected_platforms = inferred_platforms_from_targets(targets, records)
+    for platform in explicit_platforms:
+        if platform not in known_platforms:
+            failures.append(f"unknown expected platform: {platform}")
+        else:
+            selected_platforms.add(platform)
+    if failures:
+        return set(), selected_platforms, failures
+
+    expected = {
+        record["target"]
+        for record in records
+        if record["platform"] == "shared"
+        or record["install"] in {"always", "if-not-exists"}
+        or record["platform"] in selected_platforms
+    }
+    expected.update(
+        {
+            INSTALLED_TARGETS_FILE.as_posix(),
+            PACK_MANIFEST_FILE.as_posix(),
+            PROVENANCE_FILE.as_posix(),
+        }
+    )
+    if ".gitignore" in targets:
+        expected.add(".gitignore")
+    return expected, selected_platforms, []
+
+
+def audit_expected_targets(
+    root: Path,
+    targets: set[str],
+    manifest: dict | None,
+    *,
+    explicit_platforms: Iterable[str],
+) -> tuple[list[str], list[str], int | None, set[str]]:
+    if manifest is None:
+        return (
+            [],
+            [
+                f"{PACK_MANIFEST_FILE} is absent; skipping expected-target "
+                "completeness check until the pack is reinstalled or updated"
+            ],
+            None,
+            set(),
+        )
+
+    expected, selected_platforms, failures = expected_targets_from_manifest(
+        manifest,
+        targets,
+        explicit_platforms,
+    )
+    warnings: list[str] = []
+    if failures:
+        return failures, warnings, None, selected_platforms
+
+    for target in sorted(expected - targets):
+        failures.append(f"expected installed target is missing from receipt: {target}")
+
+    for target in sorted(expected):
+        target_state = inspect_target_presence(root, Path(target))
+        if target_state == "present":
+            continue
+        if target_state != "missing":
+            failures.append(
+                f"expected installed target cannot be inspected: {target} "
+                f"({target_state})"
+            )
+            continue
+        if is_gitignored(root, target):
+            warnings.append(
+                "expected installed target is gitignored and absent in this "
+                f"checkout: {target}; re-run the pack installer here to "
+                "materialize local-only adapters"
+            )
+        else:
+            failures.append(f"expected installed target is missing: {target}")
+
+    return failures, warnings, len(expected), selected_platforms
+
+
 def inspect_target_presence(root: Path, relative_path: Path) -> str:
     """Return "present", "missing", or the OS error detail for unreadable
     targets, so permission problems are never misreported as missing files."""
@@ -357,6 +530,8 @@ def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], li
             failures.append(f"installed target is missing: {target}")
 
     allowed = set(targets) | LOCAL_ALLOWED_PACK_FILES
+    if is_pack_source_checkout(root):
+        allowed |= SOURCE_ONLY_ALLOWED_PACK_FILES
     for relative_path in collect_pack_like_files(root):
         if relative_path in allowed:
             continue
@@ -557,6 +732,16 @@ def parse_args() -> argparse.Namespace:
         default=".",
         help="target repository root to audit; defaults to the current directory",
     )
+    parser.add_argument(
+        "--expected-platform",
+        action="append",
+        default=[],
+        help=(
+            "Require this platform's manifest targets to be installed even if "
+            "the current receipt does not already imply the platform. Repeat "
+            "for fleet manifest checks."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -580,9 +765,31 @@ def main() -> int:
     if targets:
         structural_failures, structural_warnings = audit_structural_state(root, targets)
         failures.extend(structural_failures)
+    pack_manifest, manifest_failures = load_pack_manifest(root)
+    failures.extend(manifest_failures)
+    expected_count: int | None = None
+    expected_platforms: set[str] = set()
+    expected_warnings: list[str] = []
+    if targets and not manifest_failures:
+        (
+            expected_failures,
+            expected_warnings,
+            expected_count,
+            expected_platforms,
+        ) = audit_expected_targets(
+            root,
+            targets,
+            pack_manifest,
+            explicit_platforms=args.expected_platform,
+        )
+        failures.extend(expected_failures)
     provenance_failures, provenance_version = audit_provenance(root)
     failures.extend(provenance_failures)
-    warnings = [*structural_warnings, *audit_migration_advisories(root, targets)]
+    warnings = [
+        *structural_warnings,
+        *expected_warnings,
+        *audit_migration_advisories(root, targets),
+    ]
 
     # Advisory warnings print even when the audit fails: the operator
     # debugging a failed audit is exactly who needs them.
@@ -595,6 +802,12 @@ def main() -> int:
         return 1
 
     print(f"SD AI command pack install audit passed: {len(targets)} targets checked.")
+    if expected_count is not None:
+        platforms = ", ".join(sorted(expected_platforms)) or "shared-only"
+        print(
+            "Expected target completeness: "
+            f"{expected_count} manifest targets for {platforms}."
+        )
     if provenance_version is not None:
         print(
             "Installed payload provenance: "
