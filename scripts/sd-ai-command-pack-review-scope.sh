@@ -111,6 +111,12 @@ is_pack_target_path() {
   local path
   path="$(normalize_repo_path "$1")"
 
+  case "$path" in
+    .sd-ai-command-pack/installed-targets.txt|.sd-ai-command-pack/manifest.json|.sd-ai-command-pack/provenance.json)
+      return 0
+      ;;
+  esac
+
   [[ -f "$TARGETS_FILE" ]] || return 1
   grep -Fxq -- "$path" "$TARGETS_FILE"
 }

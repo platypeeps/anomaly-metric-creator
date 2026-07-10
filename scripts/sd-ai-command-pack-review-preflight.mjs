@@ -106,6 +106,7 @@ function defaultConfig() {
     optionalReferencePaths: [
       '.sd-ai-command-pack/installed-targets.txt',
       '.sd-ai-command-pack/local-only.txt',
+      '.sd-ai-command-pack/manifest.json',
       '.sd-ai-command-pack/pr-body-scope.json',
       '.sd-ai-command-pack/provenance.json',
       '.sd-ai-command-pack/review-preflight.json',
@@ -545,6 +546,7 @@ function isSdCommandPackCopiedPath(path) {
   return (
     packInstalledTargets().has(path) ||
     path === '.sd-ai-command-pack/installed-targets.txt' ||
+    path === '.sd-ai-command-pack/manifest.json' ||
     path === '.sd-ai-command-pack/provenance.json' ||
     config.copiedTemplateExtraPaths.includes(path) ||
     /^\.(agent|agents|claude|codebuddy|codex|cursor|devin|factory|gemini|github|kiro|kilocode|opencode|pi|qoder|reasonix|trae|zcode)\/skills\/sd-[^/]+\//.test(path) ||
