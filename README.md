@@ -1192,9 +1192,10 @@ table in this file.
 
 ### Agent skill sync
 
-The tracked `.agents/skills/security-best-practices` copy is the canonical
-repo-local source for that curated skill. Synchronize it into every supported
-platform root after cloning or updating the skill:
+The tracked `.agents/skills/security-best-practices` and
+`.agents/skills/amc-server-compatibility` copies are the canonical repo-local
+sources for the approved curated and project-specific skills. Synchronize them
+into every supported platform root after cloning or updating either skill:
 
 ```bash
 python3 scripts/sync-agent-skills.py

@@ -179,6 +179,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     inject-workflow-state.py
     session-start.py
   skills/
+    amc-server-compatibility/
+      agents/
+        openai.yaml
+      references/
+        server-compatibility-map.md
+      SKILL.md
     security-best-practices/
       agents/
         openai.yaml
@@ -224,6 +230,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     inject-workflow-state.py
     session-start.py
   skills/
+    amc-server-compatibility/
+      agents/
+        openai.yaml
+      references/
+        server-compatibility-map.md
+      SKILL.md
     security-best-practices/
       agents/
         openai.yaml
@@ -272,6 +284,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-work-backlog.prompt.md
     sd-work-designs.prompt.md
   skills/
+    amc-server-compatibility/
+      agents/
+        openai.yaml
+      references/
+        server-compatibility-map.md
+      SKILL.md
     security-best-practices/
       agents/
         openai.yaml
@@ -388,6 +406,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     inject-workflow-state.js
     session-start.js
   skills/
+    amc-server-compatibility/
+      agents/
+        openai.yaml
+      references/
+        server-compatibility-map.md
+      SKILL.md
     security-best-practices/
       agents/
         openai.yaml
