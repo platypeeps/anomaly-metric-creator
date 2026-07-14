@@ -80,6 +80,24 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                   echo "selected lane: lightweight readiness"
                   echo "selected lane: quick test"
                   echo "selected lane: full matrix"
+          socket:
+            name: socket
+            needs: changes
+            if: ${{{{ !cancelled() && github.event_name == 'pull_request' }}}}
+            steps:
+              - run: |
+                  echo "No dependency/security-relevant changes"
+                  if [ "$PR_LABEL" = "full-ci" ]; then true; fi
+                  echo "$SOCKET_SECURITY_API_KEY"
+          ci_result:
+            name: CI Result
+            needs: [test, socket]
+            if: ${{{{ !cancelled() }}}}
+            steps:
+              - run: echo "CI Result passed."
+                env:
+                  APP_RESULT: ${{{{ needs.test.result }}}}
+                  SOCKET_RESULT: ${{{{ needs.socket.result }}}}
         {ci_extra}
         """,
     )
@@ -94,22 +112,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         jobs:
           analyze:
             if: (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'full-ci')) || github.event.label.name == 'full-ci'
-        """,
-    )
-    _write(
-        root / ".github/workflows/socket.yml",
-        """
-        on:
-          pull_request:
-            types: [opened, synchronize, reopened, ready_for_review, labeled]
-        jobs:
-          socket:
-            steps:
-              - run: bash scripts/classify-ci-changes.sh --github-output changed-files.txt
-              - run: |
-                  echo "No dependency/security-relevant changes"
-                  if [ "$PR_LABEL" = "full-ci" ]; then true; fi
-                  echo "$SOCKET_SECURITY_API_KEY"
         """,
     )
     _write(
@@ -264,6 +266,36 @@ def test_reverting_aggregate_guard_to_always_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "cancellation-safe" in result.stderr
+
+
+def test_missing_stable_ci_result_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace("name: CI Result", "name: CI Summary"),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "stable aggregate name" in result.stderr
+
+
+def test_ci_result_must_include_socket(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "needs: [test, socket]", "needs: [test]"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "stable aggregate dependencies" in result.stderr
 
 
 def test_removing_locked_sync_flag_fails(tmp_path: Path) -> None:

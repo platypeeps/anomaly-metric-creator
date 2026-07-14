@@ -408,13 +408,95 @@ jobs:
           path: coverage.xml
           if-no-files-found: warn
 
+  socket:
+    name: socket
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    timeout-minutes: 15
+    steps:
+      - name: Decide whether to scan
+        id: scan
+        shell: bash
+        env:
+          PR_ACTION: ${{ github.event.action }}
+          PR_DRAFT: ${{ github.event.pull_request.draft || false }}
+          PR_LABEL: ${{ github.event.label.name || '' }}
+          DEPENDENCY_CHANGED: ${{ needs.changes.outputs.dependency_changed }}
+          WORKFLOW_CHANGED: ${{ needs.changes.outputs.workflow_changed }}
+        run: |
+          set -euo pipefail
+          scan=false
+
+          case "$PR_ACTION" in
+            opened|reopened|ready_for_review)
+              if [ "$PR_DRAFT" != "true" ]; then
+                scan=true
+              fi
+              ;;
+            labeled)
+              if [ "$PR_LABEL" = "full-ci" ]; then
+                scan=true
+              fi
+              ;;
+          esac
+
+          if [ "$DEPENDENCY_CHANGED" = "true" ] || [ "$WORKFLOW_CHANGED" = "true" ]; then
+            scan=true
+          fi
+
+          echo "scan=$scan" >> "$GITHUB_OUTPUT"
+          echo "scan=$scan"
+          if [ "$scan" != "true" ]; then
+            echo "::notice::No dependency/security-relevant changes and full CI was not requested; skipping Socket scan."
+          fi
+
+      - name: Check for Socket API key
+        id: key
+        if: steps.scan.outputs.scan == 'true'
+        env:
+          SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+        run: |
+          if [ -n "$SOCKET_SECURITY_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SOCKET_SECURITY_API_KEY not set; skipping scan. Add the secret to enable the Socket gate."
+          fi
+
+      - name: Checkout
+        if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Python
+        if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Socket CLI
+        if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
+        run: python -m pip install socketsecurity==2.1.0
+
+      - name: Run Socket scan
+        if: steps.scan.outputs.scan == 'true' && steps.key.outputs.present == 'true'
+        env:
+          SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: socketcli --target-path "$GITHUB_WORKSPACE" --scm github --pr-number "$PR_NUMBER"
+
   test:
     name: test
     needs: [changes, lightweight_readiness, quick_check, test_matrix]
     # !cancelled(), not always(): when concurrency cancel-in-progress
     # supersedes this run — e.g. arming auto-merge triggers a fresh full run
     # on the same head — this aggregate is cancelled WITH the run, so the
-    # required `test` context reports "cancelled", not a spurious FAILURE.
+    # application aggregate reports "cancelled", not a spurious FAILURE.
     # always() would run this job even during cancellation and evaluate
     # `test "cancelled" = "success"` -> exit 1, flashing a transient red on
     # every auto-merge-armed PR (07-03-ci-cadence-churn-refinement, symptom
@@ -425,12 +507,11 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Trivial gate job (echoes + one status check); a hang here holds the
-    # required branch-protection context, so cap it well under the default.
+    # application result that feeds CI Result, so cap it well under the default.
     timeout-minutes: 5
     steps:
-      # Branch protection requires a stable `test` context. Keep the
-      # path-selected jobs above for visibility, then fail this aggregate
-      # unless the selected lane completed successfully.
+      # Keep the path-selected jobs above for visibility, then fail this
+      # application aggregate unless the selected lane completed successfully.
       - name: Check selected CI lane
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
@@ -461,3 +542,30 @@ jobs:
             echo "no CI lane selected"
             exit 1
           fi
+
+  ci_result:
+    name: CI Result
+    needs: [test, socket]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify required jobs
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          APP_RESULT: ${{ needs.test.result }}
+          SOCKET_RESULT: ${{ needs.socket.result }}
+        run: |
+          set -euo pipefail
+          echo "application=$APP_RESULT"
+          echo "socket=$SOCKET_RESULT"
+
+          test "$APP_RESULT" = "success"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            test "$SOCKET_RESULT" = "success"
+          else
+            test "$SOCKET_RESULT" = "skipped"
+          fi
+
+          echo "CI Result passed."

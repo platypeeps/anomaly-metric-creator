@@ -71,6 +71,24 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     sd-work-backlog/
       SKILL.md
+    sd-work-designs/
+      SKILL.md
+    security-best-practices/
+      agents/
+        openai.yaml
+      references/
+        golang-general-backend-security.md
+        javascript-express-web-server-security.md
+        javascript-general-web-frontend-security.md
+        javascript-jquery-web-frontend-security.md
+        javascript-typescript-nextjs-web-server-security.md
+        javascript-typescript-react-web-frontend-security.md
+        javascript-typescript-vue-web-frontend-security.md
+        python-django-web-server-security.md
+        python-fastapi-web-server-security.md
+        python-flask-web-server-security.md
+      LICENSE.txt
+      SKILL.md
     trellis-before-dev/
       SKILL.md
     trellis-brainstorm/
@@ -151,6 +169,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       start.md
       update-spec.md
       work-backlog.md
+      work-designs.md
 .codex/
   agents/
     trellis-check.toml
@@ -159,6 +178,23 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   hooks/
     inject-workflow-state.py
     session-start.py
+  skills/
+    security-best-practices/
+      agents/
+        openai.yaml
+      references/
+        golang-general-backend-security.md
+        javascript-express-web-server-security.md
+        javascript-general-web-frontend-security.md
+        javascript-jquery-web-frontend-security.md
+        javascript-typescript-nextjs-web-server-security.md
+        javascript-typescript-react-web-frontend-security.md
+        javascript-typescript-vue-web-frontend-security.md
+        python-django-web-server-security.md
+        python-fastapi-web-server-security.md
+        python-flask-web-server-security.md
+      LICENSE.txt
+      SKILL.md
   config.toml
   hooks.json
 .gemini/
@@ -180,12 +216,30 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       start.toml
       update-spec.toml
       work-backlog.toml
+      work-designs.toml
     trellis/
       continue.toml
       finish-work.toml
   hooks/
     inject-workflow-state.py
     session-start.py
+  skills/
+    security-best-practices/
+      agents/
+        openai.yaml
+      references/
+        golang-general-backend-security.md
+        javascript-express-web-server-security.md
+        javascript-general-web-frontend-security.md
+        javascript-jquery-web-frontend-security.md
+        javascript-typescript-nextjs-web-server-security.md
+        javascript-typescript-react-web-frontend-security.md
+        javascript-typescript-vue-web-frontend-security.md
+        python-django-web-server-security.md
+        python-fastapi-web-server-security.md
+        python-flask-web-server-security.md
+      LICENSE.txt
+      SKILL.md
   settings.json
 .github/
   agents/
@@ -216,7 +270,24 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-start.prompt.md
     sd-update-spec.prompt.md
     sd-work-backlog.prompt.md
+    sd-work-designs.prompt.md
   skills/
+    security-best-practices/
+      agents/
+        openai.yaml
+      references/
+        golang-general-backend-security.md
+        javascript-express-web-server-security.md
+        javascript-general-web-frontend-security.md
+        javascript-jquery-web-frontend-security.md
+        javascript-typescript-nextjs-web-server-security.md
+        javascript-typescript-react-web-frontend-security.md
+        javascript-typescript-vue-web-frontend-security.md
+        python-django-web-server-security.md
+        python-fastapi-web-server-security.md
+        python-flask-web-server-security.md
+      LICENSE.txt
+      SKILL.md
     trellis-before-dev/
       SKILL.md
     trellis-brainstorm/
@@ -280,7 +351,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     ci.yml
     codeql.yml
     dependabot-auto-merge.yml
-    socket.yml
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
@@ -309,6 +379,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-start.md
     sd-update-spec.md
     sd-work-backlog.md
+    sd-work-designs.md
   lib/
     session-utils.js
     trellis-context.js
@@ -317,6 +388,22 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     inject-workflow-state.js
     session-start.js
   skills/
+    security-best-practices/
+      agents/
+        openai.yaml
+      references/
+        golang-general-backend-security.md
+        javascript-express-web-server-security.md
+        javascript-general-web-frontend-security.md
+        javascript-jquery-web-frontend-security.md
+        javascript-typescript-nextjs-web-server-security.md
+        javascript-typescript-react-web-frontend-security.md
+        javascript-typescript-vue-web-frontend-security.md
+        python-django-web-server-security.md
+        python-fastapi-web-server-security.md
+        python-flask-web-server-security.md
+      LICENSE.txt
+      SKILL.md
     trellis-before-dev/
       SKILL.md
     trellis-brainstorm/
@@ -382,6 +469,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   rules.schema.json
 .sd-ai-command-pack/
   installed-targets.txt
+  manifest.json
   pr-body-scope.json
   provenance.json
   review-preflight.json
@@ -761,7 +849,9 @@ scripts/
   sd-ai-command-pack-review-local.sh
   sd-ai-command-pack-review-preflight.mjs
   sd-ai-command-pack-review-scope.sh
+  sd-ai-command-pack-shell-lib.sh
   sd-ai-command-pack-update-spec-kb.py
+  sync-agent-skills.py
   update_repomix
 src/
   anomaly_metric_creator/
@@ -845,6 +935,7 @@ tests/
   test_server_ops_fuzz.py
   test_server.py
   test_shapes.py
+  test_sync_agent_skills.py
   test_topology_fanout.py
   test_topology_finite.py
   test_topology_llm.py

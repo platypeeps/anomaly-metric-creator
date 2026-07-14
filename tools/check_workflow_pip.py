@@ -7,8 +7,9 @@ install can land in the wrong environment. The robust form is
 ``python -m pip install``, which always targets the selected interpreter;
 ``uv pip install`` (uv-managed) is also fine. Direct third-party installs
 must use exact ``==`` pins so CI tooling is reproducible. PR #118 shipped a
-bare ``pip install`` in ``socket.yml``; this lint catches the pattern
-structurally instead of relying on Copilot to flag it on each new workflow.
+bare ``pip install`` in the former standalone Socket workflow; this lint
+catches the pattern structurally instead of relying on Copilot to flag it on
+each new workflow.
 
 Invoked by the ``workflow-pip`` pre-commit hook with the staged
 ``.github/workflows/*.yml`` files as arguments (``pass_filenames: true``),

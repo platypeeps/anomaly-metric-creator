@@ -5,8 +5,8 @@ The workflow cadence is intentionally spread across a few files:
 
 * ``scripts/classify-ci-changes.sh`` owns path classification.
 * ``.github/workflows/ci.yml`` chooses the lightweight, quick, or full lane.
-* CodeQL, Socket, and Dependabot workflows follow the same review-economy
-  policy.
+* The Socket job, CodeQL workflow, and Dependabot workflow follow the same
+  review-economy policy.
 * ``scripts/sd-ai-command-pack-full-check.sh`` mirrors the local quick/full gate.
 
 This checker is deliberately text-based and stdlib-only so pre-commit can run it
@@ -30,7 +30,6 @@ from pathlib import Path
 REQUIRED_FILES = {
     "ci": Path(".github/workflows/ci.yml"),
     "codeql": Path(".github/workflows/codeql.yml"),
-    "socket": Path(".github/workflows/socket.yml"),
     "dependabot": Path(".github/workflows/dependabot-auto-merge.yml"),
     "precommit": Path(".pre-commit-config.yaml"),
     "classifier": Path("scripts/classify-ci-changes.sh"),
@@ -82,11 +81,16 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ("lightweight lane", "lightweight_readiness:"),
         ("quick lane", "quick_check:"),
         ("full matrix lane", "test_matrix:"),
-        ("stable aggregate", "  test:"),
+        ("application aggregate", "  test:"),
         (
             "aggregate lane dependencies",
             "needs: [changes, lightweight_readiness, quick_check, test_matrix]",
         ),
+        ("stable aggregate", "  ci_result:"),
+        ("stable aggregate name", "name: CI Result"),
+        ("stable aggregate dependencies", "needs: [test, socket]"),
+        ("application result input", "APP_RESULT: ${{ needs.test.result }}"),
+        ("Socket result input", "SOCKET_RESULT: ${{ needs.socket.result }}"),
         (
             "classifier invocation",
             "bash scripts/classify-ci-changes.sh --github-output changed-files.txt",
@@ -201,8 +205,8 @@ def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
         ("synchronize trigger", "github.event.action == 'synchronize'"),
         ("full-ci label trigger", "github.event.label.name == 'full-ci'"),
         # CodeQL honors full-ci PERSISTENTLY: the synchronize arm re-reads the
-        # label set on every push (contains(...labels...)), unlike ci.yml /
-        # socket.yml which are one-shot at the `labeled` event. This anchor
+        # label set on every push (contains(...labels...)), unlike the Socket
+        # job in ci.yml which is one-shot at the `labeled` event. This anchor
         # pins that intentional asymmetry so a "unify to one-shot" edit (which
         # would cut security coverage) breaks the contract instead.
         (
@@ -215,14 +219,9 @@ def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
 
 def _check_socket(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
-        (
-            "visible PR check events",
-            "types: [opened, synchronize, reopened, ready_for_review, labeled]",
-        ),
-        (
-            "classifier invocation",
-            "bash scripts/classify-ci-changes.sh --github-output changed-files.txt",
-        ),
+        ("Socket job", "  socket:"),
+        ("centralized classification dependency", "needs: changes"),
+        ("PR-only Socket execution", "github.event_name == 'pull_request'"),
         ("fast-skip notice", "No dependency/security-relevant changes"),
         ("Socket secret gate", "SOCKET_SECURITY_API_KEY"),
         ("full-ci label trigger", 'PR_LABEL" = "full-ci"'),
@@ -354,7 +353,7 @@ def check(root: Path) -> tuple[int, list[str]]:
     violations: list[str] = []
     _check_ci(root / REQUIRED_FILES["ci"], texts["ci"], violations)
     _check_codeql(root / REQUIRED_FILES["codeql"], texts["codeql"], violations)
-    _check_socket(root / REQUIRED_FILES["socket"], texts["socket"], violations)
+    _check_socket(root / REQUIRED_FILES["ci"], texts["ci"], violations)
     _check_dependabot(root / REQUIRED_FILES["dependabot"], texts["dependabot"], violations)
     _check_precommit(root / REQUIRED_FILES["precommit"], texts["precommit"], violations)
     _check_classifier(root / REQUIRED_FILES["classifier"], texts["classifier"], violations)

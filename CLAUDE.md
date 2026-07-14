@@ -2531,20 +2531,21 @@ run in CI):
 - `.github/workflows/dependabot-auto-merge.yml` — enables GitHub
   auto-merge (squash) on Dependabot **patch + minor** PRs via
   `dependabot/fetch-metadata`; majors stay manual. The merge waits on the
-  required checks, so a bump that breaks `test`, the lockstep guard, or
-  Socket never lands. Needs repo `allow_auto_merge` plus branch protection
-  requiring those checks.
+  required `CI Result`, so a bump that breaks the application gate, the
+  lockstep guard, or Socket never lands. Needs repo `allow_auto_merge` plus
+  branch protection requiring that aggregate check.
 - `.github/workflows/codeql.yml` — explicit CodeQL analysis for both
   `python` and `actions`, advisory on PRs (not a required branch-protection
-  context; `test` and `socket` are the required checks). Analysis runs on
+  context; `CI Result` is the required check). Analysis runs on
   opened/reopened/ready PRs and `full-ci`-labeled updates, skips on plain
   synchronize events, and always runs on push to `main`. A skipped analysis
   produces no code-scanning summary check, so `CodeQL` must not be made a
   required context while this gating is in place. The `full-ci` label's
-  lifetime is intentionally asymmetric: ci.yml and socket.yml honor it
-  **one-shot** (only at the `labeled` event; a later plain synchronize drops
-  the cost-gated full matrix/scan back to the quick lane unless auto-merge is
-  armed or dependency/workflow files changed), while codeql.yml honors it
+  lifetime is intentionally asymmetric: the application and Socket jobs in
+  ci.yml honor it **one-shot** (only at the `labeled` event; a later plain
+  synchronize drops the cost-gated full matrix/scan back to the quick lane
+  unless auto-merge is armed or dependency/workflow files changed), while
+  codeql.yml honors it
   **persistently** — its synchronize arm re-checks the label set
   (`contains(github.event.pull_request.labels.*.name, 'full-ci')`) on every
   push, so security analysis runs for the life of a flagged PR. Do not unify
@@ -2552,8 +2553,8 @@ run in CI):
   semantics are pinned in `tools/check_ci_review_contract.py` (a positive
   anchor on codeql's persistent re-check; a `_require_not_contains` guard
   keeping that form out of ci.yml) so neither drifts silently.
-- `.github/workflows/socket.yml` — a Socket supply-chain scan run as a
-  sidecar `socket` check (`socketcli`), flagging risky dependency
+- `.github/workflows/ci.yml` includes a Socket supply-chain job (`socketcli`)
+  that flags risky dependency
   *changes* (install scripts, new capabilities, typosquats, compromised
   releases) that Dependabot's CVE scanning misses. It no-ops to success
   until the `SOCKET_SECURITY_API_KEY` repo secret is set, so it never
@@ -2570,8 +2571,9 @@ can resolve to a different interpreter than the one just selected, so the
 install lands in the wrong environment. The robust form is
 `python -m pip install PACKAGE==VERSION` (`uv pip install PACKAGE==VERSION`
 is also accepted), with direct third-party installs exactly pinned so
-workflow tooling is reproducible. PR #118 shipped a bare `pip install` in
-`socket.yml`; this lint — the one cleanly-mechanical pattern surfaced by the
+workflow tooling is reproducible. PR #118 shipped a bare `pip install` in the
+former standalone Socket workflow; this lint — the one cleanly-mechanical
+pattern surfaced by the
 all-PR review sweep (the higher-recurrence patterns like doc-drift and the
 heavy-read test-resource rule are size/context-dependent and live as
 checklist prose, not lints) — catches it structurally instead of relying on
