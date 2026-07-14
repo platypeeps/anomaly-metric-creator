@@ -19,14 +19,15 @@ specifics.
 ## Local-first review cadence
 
 Prefer local evidence before asking for another remote review or broad GitHub
-Actions run. The repo's stable branch-protection check is the aggregate `test`
-job; `.github/workflows/ci.yml` chooses a lightweight, quick, or full lane via
+Actions run. The repo's stable branch-protection check is `CI Result`, which
+aggregates the application and Socket jobs; `.github/workflows/ci.yml` chooses
+a lightweight, quick, or full application lane via
 `scripts/classify-ci-changes.sh`. `tools/check_ci_review_contract.py` guards
 the workflow/script/doc anchors that keep that cadence from drifting. CodeQL is
-advisory on PRs and not a required branch-protection context (`test` and
-`socket` are the required checks): opened/reopened/ready_for_review PRs and
-`full-ci`-labeled updates are analyzed, plain synchronize events report a
-skipped analysis, and merged code is always analyzed by the push-to-main run.
+advisory on PRs and not a required branch-protection context:
+opened/reopened/ready_for_review PRs and `full-ci`-labeled updates are analyzed,
+plain synchronize events report a skipped analysis, and merged code is always
+analyzed by the push-to-main run.
 CodeQL keeps its `synchronize` trigger so pushes after the `full-ci` label is
 applied re-analyze automatically. A skipped analysis produces no code-scanning
 summary check, so `CodeQL` must not be re-added as a required context while
@@ -39,7 +40,7 @@ this gating is in place.
   review-churn lint tests, and focused server compatibility tests.
 - For app-required opened/reopened/ready PRs, the `full-ci` label,
   workflow/dependency changes, workflow dispatch, and `main` pushes, expect the
-  py3.12 test lane and heavy/non-heavy pytest split (Python 3.12 is the only
+  py3.14 test lane and heavy/non-heavy pytest split (Python 3.14 is the only
   CI-tested version).
 - Before a final remote Copilot pass, prefer a local
   `bash scripts/sd-ai-command-pack-full-check.sh` run. During iteration, use

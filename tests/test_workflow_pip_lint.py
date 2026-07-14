@@ -5,7 +5,8 @@ form is `python -m pip install`, which targets the interpreter
 `actions/setup-python` selected). `uv pip install` is also allowed. Direct
 third-party installs must use exact `==` pins so security tooling and other
 workflow dependencies are reproducible. PR #118 shipped a bare `pip install`
-in `socket.yml`; this guard catches the pattern structurally.
+in the former standalone Socket workflow; this guard catches the pattern
+structurally.
 
 Pin the behaviors the script promises in its docstring:
 

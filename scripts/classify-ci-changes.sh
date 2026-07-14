@@ -42,7 +42,7 @@ is_dependency_path() {
     pyproject.toml|uv.lock|requirements*.txt|.pre-commit-config.yaml|.github/dependabot.yml)
       return 0
       ;;
-    .github/workflows/socket.yml|.github/workflows/dependabot-auto-merge.yml)
+    .github/workflows/dependabot-auto-merge.yml)
       return 0
       ;;
     # npm manifests anywhere (e.g. .opencode/package.json, managed by the

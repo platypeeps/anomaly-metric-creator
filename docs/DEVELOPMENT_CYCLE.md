@@ -65,8 +65,9 @@ For high-risk runtime changes, also run the full heavy/non-heavy pytest split:
 
 ## GitHub CI Cadence
 
-The workflow uses `scripts/classify-ci-changes.sh` to select one lane while
-keeping the stable aggregate check named `test`.
+The workflow uses `scripts/classify-ci-changes.sh` to select one application
+lane, runs Socket as a sibling job, and combines both in the stable aggregate
+check named `CI Result`.
 
 | Lane | Runs When | Purpose |
 | --- | --- | --- |
@@ -75,7 +76,7 @@ keeping the stable aggregate check named `test`.
 | `test (py3.14)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, auto-merge is armed (the `auto_merge_enabled` event and every later push to the armed PR), workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the py3.14 test lane (latest-stable-CPython-only policy) and heavy/non-heavy pytest split. |
 
 CodeQL is advisory on PRs and not a required branch-protection context
-(`test` and `socket` are the required checks): it analyzes
+(`CI Result` is the only required check): it analyzes
 opened/reopened/ready_for_review PRs and `full-ci`-labeled updates, skips on
 plain synchronize events, and always analyzes merged code on the push-to-main
 run. A skipped analysis produces no code-scanning summary check, so `CodeQL`
@@ -83,7 +84,8 @@ must not be re-added as a required context while this gating is in place.
 
 The `full-ci` label's lifetime is deliberately asymmetric across the
 workflows, and the split is pinned in `tools/check_ci_review_contract.py` so it
-cannot drift silently. `ci.yml` and `socket.yml` honor the label **one-shot**
+cannot drift silently. The application and Socket jobs in `ci.yml` honor the
+label **one-shot**
 — only at the `labeled` event; a later plain `synchronize` drops the cost-gated
 full matrix / Socket scan back to the quick lane or skip unless auto-merge is
 armed or dependency/workflow files changed. `codeql.yml` honors it
@@ -129,7 +131,7 @@ lanes; that is deliberately not wired today.
 
 ## Review Economy Rules
 
-- Keep branch protection on `test`, not lane-specific job names.
+- Keep branch protection on `CI Result`, not lane-specific job names.
 - Apply `full-ci` after substantial runtime changes, before merge if the last
   remote full matrix is stale, or whenever the quick lane is not enough
   evidence for the risk.

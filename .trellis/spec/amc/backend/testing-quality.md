@@ -157,7 +157,8 @@ Sources: `scripts/sd-ai-command-pack-full-check.sh`;
 `docs/DEVELOPMENT_CYCLE.md`.
 
 GitHub CI must keep the stable aggregate branch-protection context named
-`test`, while `scripts/classify-ci-changes.sh` selects the cheapest safe lane:
+`CI Result`, while `scripts/classify-ci-changes.sh` selects the cheapest safe
+application lane:
 lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
 test for ordinary PR update churn that still touches app paths, and the full
 Python 3.14 test lane for app-required opened/reopened/ready PRs,
@@ -178,14 +179,15 @@ there is no older declared floor and no multi-version lane. Sources:
 CodeQL analyzes opened/reopened/ready_for_review PRs and `full-ci`-labeled
 updates; plain `synchronize` events keep the trigger but report a skipped
 analysis job, and merged code is always analyzed by the push-to-main run.
-CodeQL is advisory on PRs: branch protection requires only the `test` and
-`socket` contexts (a skipped analysis produces no code-scanning summary
+CodeQL is advisory on PRs: branch protection requires only the `CI Result`
+context, which aggregates the application and Socket jobs (a skipped analysis
+produces no code-scanning summary
 check, so `CodeQL` must not be a required context while this gating is in
 place). Keep the `synchronize` trigger itself: once `full-ci` is applied,
 later pushes to the PR re-analyze automatically.
 Socket should keep a visible PR check but fast-skip unless
 dependency/security-relevant files changed or full CI was requested. Sources:
-`.github/workflows/codeql.yml`; `.github/workflows/socket.yml`;
+`.github/workflows/codeql.yml`; `.github/workflows/ci.yml`;
 `scripts/classify-ci-changes.sh`; `tools/check_ci_review_contract.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
 
