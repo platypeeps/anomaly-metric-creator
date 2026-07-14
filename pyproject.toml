@@ -50,7 +50,7 @@ dev = [
   # Pinned exactly: must match `rev: vX.Y.Z` in `.pre-commit-config.yaml`
   # so a local `ruff check` and the `ruff-pre-commit` hook resolve the
   # same binary. Bump both lines together.
-  "ruff==0.15.20",
+  "ruff==0.15.21",
   "pre-commit>=3.7.0",
   # Pinned exactly: the CI type-check step is report-only, so its finding
   # count is only comparable across runs when every run resolves the same
