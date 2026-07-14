@@ -1190,6 +1190,21 @@ coverage for `--scenarios` / `--exclude-scenarios` lives in
 interaction); the canonical slug catalog is the [scenario catalog](#scenario-catalog)
 table in this file.
 
+### Agent skill sync
+
+The tracked `.agents/skills/security-best-practices` copy is the canonical
+repo-local source for that curated skill. Synchronize it into every supported
+platform root after cloning or updating the skill:
+
+```bash
+python3 scripts/sync-agent-skills.py
+python3 scripts/sync-agent-skills.py --check
+```
+
+The command always covers `.agents`, `.claude`, `.codex`, `.gemini`, `.github`,
+and `.opencode`. The `.claude` copy remains local and ignored by Git, but is a
+required sync destination so Claude Code receives the same guidance.
+
 ### Parallel execution
 
 `pyproject.toml` sets `addopts = "-ra --dist loadfile -n 4"` and declares
