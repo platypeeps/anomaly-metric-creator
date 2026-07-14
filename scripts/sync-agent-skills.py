@@ -19,7 +19,7 @@ PLATFORM_ROOTS = (
     Path(".github/skills"),
     Path(".opencode/skills"),
 )
-DEFAULT_SKILLS = ("security-best-practices",)
+DEFAULT_SKILLS = ("security-best-practices", "amc-server-compatibility")
 IGNORED_NAMES = {"__pycache__", ".DS_Store"}
 
 
