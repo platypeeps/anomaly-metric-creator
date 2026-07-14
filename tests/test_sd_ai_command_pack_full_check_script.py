@@ -11,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "sd-ai-command-pack-full-check.sh"
+SHELL_LIB = REPO_ROOT / "scripts" / "sd-ai-command-pack-shell-lib.sh"
 
 
 def _write(path: Path, text: str, *, executable: bool = False) -> None:
@@ -30,6 +31,7 @@ def _make_full_check_repo(tmp_path: Path, *, prism_statuses: str) -> tuple[Path,
 
     (repo / "scripts").mkdir()
     shutil.copy2(SCRIPT, repo / "scripts" / "sd-ai-command-pack-full-check.sh")
+    shutil.copy2(SHELL_LIB, repo / "scripts" / "sd-ai-command-pack-shell-lib.sh")
     _write(
         repo / "scripts" / "classify-ci-changes.sh",
         """
