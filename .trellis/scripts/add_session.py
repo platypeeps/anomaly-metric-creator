@@ -14,7 +14,7 @@ Usage:
 
 Branch resolution order:
     1. --branch CLI arg (explicit)
-    2. task.json branch field (from active task)
+    2. task.json branch field (from active task, if still exists)
     3. git branch --show-current (auto-detect)
     4. None (omitted gracefully)
 """
@@ -44,6 +44,7 @@ from common.safe_commit import (
     safe_trellis_paths_to_add,
 )
 from common.tasks import load_task
+from common.types import TaskInfo
 from common.config import (
     get_packages,
     get_session_auto_commit,
@@ -130,6 +131,56 @@ def count_journal_files(dev_dir: Path, active_num: int) -> str:
         result_lines.append(f"| `{filename}` | ~{lines} | {status} |")
 
     return "\n".join(result_lines)
+
+
+def get_current_git_branch(repo_root: Path) -> str | None:
+    """Return the current checkout branch, or None for detached/non-git states."""
+    rc, branch_out, _ = run_git(["branch", "--show-current"], cwd=repo_root)
+    if rc != 0:
+        return None
+    detected = branch_out.strip()
+    return detected or None
+
+
+def branch_ref_exists(repo_root: Path, branch: str) -> bool:
+    """Return True when branch exists locally or as the local origin ref."""
+    for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+        rc, _, _ = run_git(["show-ref", "--verify", "--quiet", ref], cwd=repo_root)
+        if rc == 0:
+            return True
+    return False
+
+
+def resolve_session_branch(
+    repo_root: Path,
+    cli_branch: str | None,
+    task_data: TaskInfo | None,
+) -> str | None:
+    """Resolve journal branch without trusting stale task.json branch fields."""
+    if cli_branch:
+        return cli_branch
+
+    current_branch = get_current_git_branch(repo_root)
+    raw_task_branch = task_data.raw.get("branch") if task_data else None
+    task_branch = raw_task_branch.strip() if isinstance(raw_task_branch, str) else ""
+    if not task_branch:
+        return current_branch
+
+    if branch_ref_exists(repo_root, task_branch):
+        return task_branch
+
+    if current_branch:
+        print(
+            f"Warning: task.json branch '{task_branch}' no longer exists locally or as origin/{task_branch}; using current branch '{current_branch}'.",
+            file=sys.stderr,
+        )
+        return current_branch
+
+    print(
+        f"Warning: task.json branch '{task_branch}' no longer exists locally or as origin/{task_branch}; omitting branch.",
+        file=sys.stderr,
+    )
+    return None
 
 
 def create_new_journal_file(
@@ -402,7 +453,7 @@ def _auto_commit_workspace(repo_root: Path) -> None:
 def add_session(
     title: str,
     commit: str = "-",
-    summary: str = "(Add summary)",
+    summary: str = "Session summary was not supplied.",
     extra_content: str = DEFAULT_MAIN_CHANGES,
     auto_commit: bool = True,
     package: str | None = None,
@@ -510,7 +561,7 @@ def main() -> int:
     )
     parser.add_argument("--title", required=True, help="Session title")
     parser.add_argument("--commit", default="-", help="Comma-separated commit hashes")
-    parser.add_argument("--summary", default="(Add summary)", help="Brief summary")
+    parser.add_argument("--summary", default="Session summary was not supplied.", help="Brief summary")
     parser.add_argument("--content-file", help="Path to file with detailed content")
     parser.add_argument("--package", help="Package name tag (e.g., cli, docs-site)")
     parser.add_argument("--branch", help="Branch name (auto-detected if omitted)")
@@ -550,17 +601,7 @@ def main() -> int:
         task_package = task_data.package if task_data else None
         package = resolve_package(task_package, repo_root)
 
-    # Resolve branch: CLI → task.json → git auto-detect → None
-    branch = args.branch
-
-    if not branch:
-        if task_data and task_data.raw.get("branch"):
-            branch = task_data.raw["branch"]
-        else:
-            _, branch_out, _ = run_git(["branch", "--show-current"], cwd=repo_root)
-            detected = branch_out.strip()
-            if detected:
-                branch = detected
+    branch = resolve_session_branch(repo_root, args.branch, task_data)
 
     return add_session(
         args.title, args.commit, args.summary, extra_content,
