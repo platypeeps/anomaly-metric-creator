@@ -44,7 +44,7 @@ In both modes, JSONL files in the task directory are the manifest for spec/resea
 `implement.jsonl` and `check.jsonl` contain one JSON object per line:
 
 ```jsonl
-{"file": ".trellis/spec/amc/backend/index.md", "reason": "Backend rules"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend rules"}
 ```
 
 Readers should skip seed rows without a `file` field. When configuring JSONL, the AI should include only spec/research files, not pre-register code files that will be modified.
