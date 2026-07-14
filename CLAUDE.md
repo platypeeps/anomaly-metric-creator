@@ -2466,9 +2466,9 @@ run in CI):
   cancel-in-progress. The aggregate `test` job is guarded with
   `if: ${{ !cancelled() }}` (never `always()`): when arming auto-merge
   triggers a fresh full run that cancels the in-progress lane, the aggregate
-  is cancelled *with* the run — its required `test` context reports
-  `cancelled` (which does not satisfy branch protection, so auto-merge waits
-  for the superseding run's real verdict) rather than a spurious `FAILURE`.
+  is cancelled *with* the run. Its `test` context reports `cancelled`, and the
+  required `CI Result` aggregate cannot pass, so auto-merge waits for the
+  superseding run's real verdict rather than observing a spurious `FAILURE`.
   `always()` would run the aggregate during cancellation and evaluate
   `test "cancelled" = "success"` → a transient red on every auto-merge-armed
   PR; `check_ci_review_contract.py` pins the `!cancelled()` guard so a revert

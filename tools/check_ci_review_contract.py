@@ -37,6 +37,9 @@ REQUIRED_FILES = {
     "development_cycle": Path("docs/DEVELOPMENT_CYCLE.md"),
     "review_pack": Path("docs/SD_AI_COMMAND_PACK.md"),
     "testing_spec": Path(".trellis/spec/amc/backend/testing-quality.md"),
+    "copilot_ci": Path(
+        ".github/instructions/anomaly-metric-creator.instructions.md"
+    ),
 }
 
 
@@ -336,6 +339,27 @@ def _check_review_pack_docs(path: Path, text: str, violations: list[str]) -> Non
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
 
+def _check_copilot_ci_guidance(
+    path: Path, text: str, violations: list[str]
+) -> None:
+    for label, needle in [
+        ("stable aggregate", "CI Result"),
+        ("latest stable Python lane", "py3.14 test lane"),
+        (
+            "latest stable Python policy",
+            "Python 3.14 is the only CI-tested version",
+        ),
+    ]:
+        _require_contains(text, needle, path=path, label=label, violations=violations)
+    for label, needle in [
+        ("legacy required contexts", "`socket` are the required checks"),
+        ("stale Python lane", "py3.12 test lane"),
+    ]:
+        _require_not_contains(
+            text, needle, path=path, label=label, violations=violations
+        )
+
+
 def check(root: Path) -> tuple[int, list[str]]:
     texts: dict[str, str] = {}
     errors: list[str] = []
@@ -361,6 +385,9 @@ def check(root: Path) -> tuple[int, list[str]]:
     _check_docs(root / REQUIRED_FILES["development_cycle"], texts["development_cycle"], violations)
     _check_review_pack_docs(root / REQUIRED_FILES["review_pack"], texts["review_pack"], violations)
     _check_docs(root / REQUIRED_FILES["testing_spec"], texts["testing_spec"], violations)
+    _check_copilot_ci_guidance(
+        root / REQUIRED_FILES["copilot_ci"], texts["copilot_ci"], violations
+    )
 
     if violations:
         return 1, violations

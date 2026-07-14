@@ -219,6 +219,14 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         full-ci
         """,
     )
+    _write(
+        root / ".github/instructions/anomaly-metric-creator.instructions.md",
+        """
+        CI Result
+        py3.14 test lane
+        Python 3.14 is the only CI-tested version
+        """,
+    )
 
 
 def test_real_repo_contract_is_clean() -> None:
@@ -296,6 +304,23 @@ def test_ci_result_must_include_socket(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "stable aggregate dependencies" in result.stderr
+
+
+def test_stale_copilot_ci_context_guidance_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    guidance = (
+        tmp_path / ".github/instructions/anomaly-metric-creator.instructions.md"
+    )
+    guidance.write_text(
+        guidance.read_text(encoding="utf-8")
+        + "`test` and `socket` are the required checks\n",
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "legacy required contexts" in result.stderr
 
 
 def test_removing_locked_sync_flag_fails(tmp_path: Path) -> None:

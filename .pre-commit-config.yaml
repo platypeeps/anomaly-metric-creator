@@ -101,7 +101,8 @@ repos:
       # `==` pins so workflow tooling is reproducible. Use
       # `python -m pip install PACKAGE==VERSION` (`uv pip install
       # PACKAGE==VERSION` is also fine). PR #118 shipped a bare `pip install`
-      # in socket.yml; this catches the pattern structurally. Exempt a line
+      # in the former standalone Socket workflow; this catches the pattern
+      # structurally. Exempt a line
       # with a trailing `# pip-lint: allow`. See CLAUDE.md "Workflow pip lint".
       - id: workflow-pip
         name: forbid bare or unpinned 'pip install' in workflows
