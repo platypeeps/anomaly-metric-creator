@@ -889,7 +889,9 @@ def version_update_advisory(
     if reference_path.is_dir():
         reference_path = reference_path / "manifest.json"
     try:
-        payload = json.loads(reference_path.read_text(encoding="utf-8"))
+        payload = json.loads(
+            reference_path.read_text(encoding="utf-8", errors="strict")
+        )
     except (OSError, UnicodeError, ValueError) as error:
         return (
             "Pack version update check: could not determine upstream version "

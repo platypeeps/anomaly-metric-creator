@@ -47,27 +47,55 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       references/
         server-compatibility-map.md
       SKILL.md
+    sd-audit-repo/
+      charters/
+        accessibility-i18n.md
+        architecture.md
+        bloat.md
+        consumer-impact.md
+        correctness.md
+        dependencies.md
+        design.md
+        documentation.md
+        improvements.md
+        observability.md
+        performance.md
+        release-hygiene.md
+        security.md
+        testing.md
+        tooling.md
+      SKILL.md
     sd-continue/
       SKILL.md
     sd-create-pr/
       SKILL.md
     sd-finish-work/
       SKILL.md
+    sd-fix-ci/
+      SKILL.md
     sd-full-check/
       SKILL.md
     sd-housekeeping/
+      SKILL.md
+    sd-retro/
       SKILL.md
     sd-review-learnings/
       SKILL.md
     sd-review-local/
       SKILL.md
-    sd-review-local-all/
-      SKILL.md
     sd-review-pr/
+      SKILL.md
+    sd-ship/
       SKILL.md
     sd-start/
       SKILL.md
+    sd-test-gaps/
+      SKILL.md
+    sd-update-deps/
+      SKILL.md
     sd-update-spec/
+      SKILL.md
+    sd-watch-pr/
       SKILL.md
     sd-work-backlog/
       SKILL.md
@@ -157,17 +185,23 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
 .claude/
   commands/
     sd/
+      audit-repo.md
       continue.md
       create-pr.md
       finish-work.md
+      fix-ci.md
       full-check.md
       housekeeping.md
+      retro.md
       review-learnings.md
-      review-local-all.md
       review-local.md
       review-pr.md
+      ship.md
       start.md
+      test-gaps.md
+      update-deps.md
       update-spec.md
+      watch-pr.md
       work-backlog.md
       work-designs.md
 .codex/
@@ -210,17 +244,23 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     trellis-research.md
   commands/
     sd/
+      audit-repo.toml
       continue.toml
       create-pr.toml
       finish-work.toml
+      fix-ci.toml
       full-check.toml
       housekeeping.toml
+      retro.toml
       review-learnings.toml
-      review-local-all.toml
       review-local.toml
       review-pr.toml
+      ship.toml
       start.toml
+      test-gaps.toml
+      update-deps.toml
       update-spec.toml
+      watch-pr.toml
       work-backlog.toml
       work-designs.toml
     trellis/
@@ -270,17 +310,23 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   prompts/
     continue.prompt.md
     finish-work.prompt.md
+    sd-audit-repo.prompt.md
     sd-continue.prompt.md
     sd-create-pr.prompt.md
     sd-finish-work.prompt.md
+    sd-fix-ci.prompt.md
     sd-full-check.prompt.md
     sd-housekeeping.prompt.md
+    sd-retro.prompt.md
     sd-review-learnings.prompt.md
-    sd-review-local-all.prompt.md
     sd-review-local.prompt.md
     sd-review-pr.prompt.md
+    sd-ship.prompt.md
     sd-start.prompt.md
+    sd-test-gaps.prompt.md
+    sd-update-deps.prompt.md
     sd-update-spec.prompt.md
+    sd-watch-pr.prompt.md
     sd-work-backlog.prompt.md
     sd-work-designs.prompt.md
   skills/
@@ -385,17 +431,23 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       continue.md
       finish-work.md
       start.md
+    sd-audit-repo.md
     sd-continue.md
     sd-create-pr.md
     sd-finish-work.md
+    sd-fix-ci.md
     sd-full-check.md
     sd-housekeeping.md
+    sd-retro.md
     sd-review-learnings.md
-    sd-review-local-all.md
     sd-review-local.md
     sd-review-pr.md
+    sd-ship.md
     sd-start.md
+    sd-test-gaps.md
+    sd-update-deps.md
     sd-update-spec.md
+    sd-watch-pr.md
     sd-work-backlog.md
     sd-work-designs.md
   lib/
@@ -864,6 +916,7 @@ scripts/
   check-review-preflight.mjs
   classify_ci_changes.sh
   classify-ci-changes.sh
+  sd_ai_command_pack_lib.py
   sd-ai-command-pack-full-check.sh
   sd-ai-command-pack-housekeeping.sh
   sd-ai-command-pack-install-audit.py
@@ -874,6 +927,7 @@ scripts/
   sd-ai-command-pack-review-preflight.mjs
   sd-ai-command-pack-review-scope.sh
   sd-ai-command-pack-shell-lib.sh
+  sd-ai-command-pack-toolchain.sh
   sd-ai-command-pack-update-spec-kb.py
   sync-agent-skills.py
   update_repomix

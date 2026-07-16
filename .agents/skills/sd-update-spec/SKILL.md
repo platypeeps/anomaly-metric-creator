@@ -53,10 +53,11 @@ portable Obsidian knowledge-base workflows.
      intended scope.
    - Refresh the repo-local Obsidian knowledge-base folder through the pack
      helper:
-     - Run `python3 scripts/sd-ai-command-pack-update-spec-kb.py` from the repo
-       root. If the helper is missing or exits nonzero, stop and report the
-       command, exit status, and complete stdout/stderr output; do not rebuild
-       `.obsidian-kb/` manually from this wrapper.
+     - Run
+       `bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py`
+       from the repo root. If the helper is missing or exits nonzero, stop and
+       report the command, exit status, and complete stdout/stderr output; do
+       not rebuild `.obsidian-kb/` manually from this wrapper.
      - Treat the helper as the source of truth for `.obsidian-kb/`: it owns the
        managed entry in the repo root `.gitignore`, creates or refreshes the
        generated folder, copies repo-knowledge files into visible semantic
@@ -72,8 +73,9 @@ portable Obsidian knowledge-base workflows.
        Do not
        manually edit `.gitignore`, create KB copies, remove stale generated
        entries, or overwrite dashboard conflicts from this wrapper.
-     - Use `python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run` when
-       the user wants a preview before changing generated KB state.
+     - Use
+       `bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py --dry-run`
+       when the user wants a preview before changing generated KB state.
 5. Final report:
    - `Update-spec skill`: path read
    - `Spec updates`: paths changed, or `none`

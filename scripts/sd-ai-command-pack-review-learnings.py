@@ -22,6 +22,9 @@ from subprocess import CompletedProcess
 from typing import Any
 
 from sd_ai_command_pack_lib import (
+    CommandError,
+)
+from sd_ai_command_pack_lib import (
     run_gh as run_gh_command,
 )
 from sd_ai_command_pack_lib import (
@@ -895,6 +898,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         findings = extract_findings(diff_text, repo_root, env_prefixes=env_prefixes)
     except (
+        CommandError,
         OSError,
         RuntimeError,
         json.JSONDecodeError,
@@ -914,6 +918,7 @@ def main(argv: list[str] | None = None) -> int:
             else []
         )
     except (
+        CommandError,
         OSError,
         RuntimeError,
         TypeError,
