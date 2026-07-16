@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "${BASH_SOURCE[0]}" in
+  */*) SCRIPT_DIR="${BASH_SOURCE[0]%/*}" ;;
+  *) SCRIPT_DIR="." ;;
+esac
 REMOTE="origin"
 DRY_RUN=0
 SELF_TEST=0
 DELETE_REMOTE_BRANCH=1
 AUTO_MERGE=1
 MERGE_STRATEGY="${SD_AI_COMMAND_PACK_HOUSEKEEPING_MERGE_STRATEGY:-merge}"
+HOUSEKEEPING_GIT_TIMEOUT_SECONDS=60
+HOUSEKEEPING_GH_TIMEOUT_SECONDS=120
 
 ACTIONS=()
 EXPECTED=()
@@ -16,6 +22,7 @@ DEFAULT_BRANCH=""
 START_BRANCH=""
 GITHUB_REPO_SLUG=""
 GH_REPO_ARGS=()
+FIELD_SEPARATOR=$'\x1f'
 
 usage() {
   cat <<'EOF'
@@ -40,12 +47,34 @@ Environment:
 EOF
 }
 
-section() {
-  printf '\n==> %s\n' "$*"
+warn() {
+  printf 'warning: %s\n' "$*" >&2
 }
 
-have() {
-  command -v "$1" >/dev/null 2>&1
+source_sd_ai_command_pack_shell_lib() {
+  local lib="$SCRIPT_DIR/sd-ai-command-pack-shell-lib.sh"
+  if [ ! -r "$lib" ]; then
+    case " $* " in
+      *" --self-test "*)
+        have() { command -v "$1" >/dev/null 2>&1; }
+        run_command_with_timeout() {
+          shift
+          "$@"
+        }
+        return 0
+        ;;
+    esac
+    printf 'sd-ai-command-pack-housekeeping: missing shared helper library: %s\n' "$lib" >&2
+    exit 1
+  fi
+  # shellcheck source=scripts/sd-ai-command-pack-shell-lib.sh
+  . "$lib"
+}
+
+source_sd_ai_command_pack_shell_lib "$@"
+
+section() {
+  printf '\n==> %s\n' "$*"
 }
 
 add_action() {
@@ -183,13 +212,25 @@ run_mutating_git() {
   git "$@"
 }
 
+run_network_git() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    add_action "would run: git $*"
+    return 0
+  fi
+  run_command_with_timeout "$HOUSEKEEPING_GIT_TIMEOUT_SECONDS" git "$@"
+}
+
+run_gh() {
+  run_command_with_timeout "$HOUSEKEEPING_GH_TIMEOUT_SECONDS" gh "$@"
+}
+
 fetch_and_prune() {
   if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
     add_anomaly "remote $REMOTE is not configured; skipped fetch/prune and remote checks"
     return 0
   fi
 
-  if run_mutating_git fetch --prune "$REMOTE"; then
+  if run_network_git fetch --prune "$REMOTE"; then
     if [ "$DRY_RUN" -eq 1 ]; then
       return 0
     fi
@@ -224,33 +265,33 @@ configure_github_repo_scope() {
 
 gh_pr_view() {
   if [ -n "$GITHUB_REPO_SLUG" ]; then
-    gh pr view "${GH_REPO_ARGS[@]}" "$@"
+    run_gh pr view "${GH_REPO_ARGS[@]}" "$@"
   else
-    gh pr view "$@"
+    run_gh pr view "$@"
   fi
 }
 
 gh_pr_list() {
   if [ -n "$GITHUB_REPO_SLUG" ]; then
-    gh pr list "${GH_REPO_ARGS[@]}" "$@"
+    run_gh pr list "${GH_REPO_ARGS[@]}" "$@"
   else
-    gh pr list "$@"
+    run_gh pr list "$@"
   fi
 }
 
 gh_issue_list() {
   if [ -n "$GITHUB_REPO_SLUG" ]; then
-    gh issue list "${GH_REPO_ARGS[@]}" "$@"
+    run_gh issue list "${GH_REPO_ARGS[@]}" "$@"
   else
-    gh issue list "$@"
+    run_gh issue list "$@"
   fi
 }
 
 gh_pr_merge() {
   if [ -n "$GITHUB_REPO_SLUG" ]; then
-    gh pr merge "${GH_REPO_ARGS[@]}" "$@"
+    run_gh pr merge "${GH_REPO_ARGS[@]}" "$@"
   else
-    gh pr merge "$@"
+    run_gh pr merge "$@"
   fi
 }
 
@@ -264,9 +305,9 @@ detect_default_branch() {
 
   if have gh; then
     if [ -n "$GITHUB_REPO_SLUG" ]; then
-      DEFAULT_BRANCH="$(gh repo view "$GITHUB_REPO_SLUG" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
+      DEFAULT_BRANCH="$(run_gh repo view "$GITHUB_REPO_SLUG" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
     else
-      DEFAULT_BRANCH="$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
+      DEFAULT_BRANCH="$(run_gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
     fi
     if [ "$DEFAULT_BRANCH" = "null" ]; then
       # gh prints the literal string "null" with exit 0 for repos without
@@ -371,7 +412,7 @@ fast_forward_default_branch() {
     return 0
   fi
 
-  if run_mutating_git pull --ff-only "$REMOTE" "$DEFAULT_BRANCH"; then
+  if run_network_git pull --ff-only "$REMOTE" "$DEFAULT_BRANCH"; then
     if [ "$DRY_RUN" -eq 1 ]; then
       return 0
     fi
@@ -387,7 +428,7 @@ view_pr_for_branch() {
   pr_data="$(
     gh_pr_view \
       --json number,state,mergedAt,url,headRefName,headRefOid \
-      --jq '[.number, .state, .mergedAt, .url, .headRefName, .headRefOid] | @tsv' \
+      --jq '[.number, .state, .mergedAt, .url, .headRefName, .headRefOid] | map(if . == null then "" else tostring end) | join("\u001f")' \
       -- "$branch" \
       2>/dev/null ||
       true
@@ -399,7 +440,7 @@ view_pr_for_branch() {
 
   gh_pr_list --state merged --head="$branch" --limit 1 \
     --json number,state,mergedAt,url,headRefName,headRefOid \
-    --jq '.[0] | select(. != null) | [.number, .state, .mergedAt, .url, .headRefName, .headRefOid] | @tsv' \
+    --jq '.[0] | select(. != null) | [.number, .state, .mergedAt, .url, .headRefName, .headRefOid] | map(if . == null then "" else tostring end) | join("\u001f")' \
     2>/dev/null ||
     true
 }
@@ -408,7 +449,7 @@ view_open_pr_readiness_for_branch() {
   local branch="$1"
   gh_pr_view \
     --json number,state,isDraft,url,headRefName,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup \
-    --jq '[.number, .state, .isDraft, .url, .headRefName, .headRefOid, .baseRefName, .mergeStateStatus, ([.statusCheckRollup[]? | select((.__typename == "CheckRun" and (.status != "COMPLETED" or (.conclusion != "SUCCESS" and .conclusion != "SKIPPED" and .conclusion != "NEUTRAL"))) or (.__typename == "StatusContext" and .state != "SUCCESS"))] | length), ([.statusCheckRollup[]? | select((.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion == "SUCCESS") or (.__typename == "StatusContext" and .state == "SUCCESS"))] | length)] | @tsv' \
+    --jq '[.number, .state, .isDraft, .url, .headRefName, .headRefOid, .baseRefName, .mergeStateStatus, ([.statusCheckRollup[]? | select((.__typename == "CheckRun" and (.status != "COMPLETED" or (.conclusion != "SUCCESS" and .conclusion != "SKIPPED" and .conclusion != "NEUTRAL"))) or (.__typename == "StatusContext" and .state != "SUCCESS"))] | length), ([.statusCheckRollup[]? | select((.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion == "SUCCESS") or (.__typename == "StatusContext" and .state == "SUCCESS"))] | length)] | map(if . == null then "" else tostring end) | join("\u001f")' \
     -- "$branch" \
     2>/dev/null ||
     true
@@ -442,10 +483,10 @@ unresolved_review_thread_count() {
 
     set +e
     page_data="$(
-      gh api graphql \
+      run_gh api graphql \
         "${graphql_args[@]}" \
         -f query='query($owner:String!, $name:String!, $number:Int!, $cursor:String) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first: 100, after: $cursor) { nodes { isResolved } pageInfo { hasNextPage endCursor } } } } }' \
-        --jq '[([.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length), (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false), (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "")] | @tsv' \
+        --jq '[([.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length), (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false), (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "")] | map(if . == null then "" else tostring end) | join("\u001f")' \
         2>/dev/null
     )"
     gh_status=$?
@@ -454,7 +495,7 @@ unresolved_review_thread_count() {
       return 1
     fi
 
-    IFS=$'\t' read -r page_unresolved has_next_page cursor <<<"$page_data"
+    IFS="$FIELD_SEPARATOR" read -r page_unresolved has_next_page cursor <<<"$page_data"
     if ! [[ "$page_unresolved" =~ ^[0-9]+$ ]]; then
       return 1
     fi
@@ -470,7 +511,7 @@ unresolved_review_thread_count() {
 remote_branch_head_oid() {
   local branch="$1"
   local output
-  if ! output="$(git ls-remote --exit-code "$REMOTE" "refs/heads/$branch" 2>/dev/null)"; then
+  if ! output="$(run_network_git ls-remote --exit-code "$REMOTE" "refs/heads/$branch" 2>/dev/null)"; then
     return 1
   fi
   output="${output%%$'\n'*}"
@@ -551,10 +592,13 @@ maybe_merge_ready_open_pr() {
 
   pr_data="$(view_open_pr_readiness_for_branch "$branch")"
   if [ -z "$pr_data" ]; then
+    if ! run_gh auth status >/dev/null 2>&1; then
+      add_anomaly "gh is unauthenticated; could not inspect an open PR for $branch; skipped auto-merge"
+    fi
     return 0
   fi
 
-  IFS=$'\t' read -r pr_number pr_state pr_is_draft pr_url pr_head pr_head_oid pr_base pr_merge_state blocking_check_count successful_check_count <<<"$pr_data"
+  IFS="$FIELD_SEPARATOR" read -r pr_number pr_state pr_is_draft pr_url pr_head pr_head_oid pr_base pr_merge_state blocking_check_count successful_check_count <<<"$pr_data"
   if [ "$pr_state" != "OPEN" ]; then
     return 0
   fi
@@ -566,7 +610,11 @@ maybe_merge_ready_open_pr() {
     add_anomaly "PR #$pr_number head is $pr_head, not $branch; skipped auto-merge"
     return 0
   fi
-  if [ -n "$DEFAULT_BRANCH" ] && [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
+  if [ -z "$DEFAULT_BRANCH" ]; then
+    add_anomaly "default branch is unknown; skipped auto-merge"
+    return 0
+  fi
+  if [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
     add_anomaly "PR #$pr_number base is $pr_base, expected $DEFAULT_BRANCH; skipped auto-merge"
     return 0
   fi
@@ -660,7 +708,7 @@ cleanup_current_branch_if_merged() {
     return 0
   fi
 
-  IFS=$'\t' read -r pr_number pr_state pr_merged_at pr_url pr_head pr_head_oid <<<"$pr_data"
+  IFS="$FIELD_SEPARATOR" read -r pr_number pr_state pr_merged_at pr_url pr_head pr_head_oid <<<"$pr_data"
   if [ "$pr_state" != "MERGED" ]; then
     add_anomaly "PR #$pr_number for $branch is $pr_state, not MERGED; left the branch untouched"
     return 0
@@ -699,8 +747,13 @@ cleanup_current_branch_if_merged() {
     return 0
   fi
 
+  if [ "$DRY_RUN" -eq 1 ]; then
+    add_action "would delete remote branch $REMOTE/$branch"
+    return 0
+  fi
+
   set +e
-  ls_remote_output="$(git ls-remote --exit-code "$REMOTE" "refs/heads/$branch" 2>/dev/null)"
+  ls_remote_output="$(run_network_git ls-remote --exit-code "$REMOTE" "refs/heads/$branch" 2>/dev/null)"
   local ls_remote_status=$?
   set -e
 
@@ -715,11 +768,9 @@ cleanup_current_branch_if_merged() {
       add_anomaly "remote branch $REMOTE/$branch is at $remote_head_oid, but merged PR #$pr_number ended at $pr_head_oid; left the remote branch untouched"
       return 0
     fi
-    if [ "$DRY_RUN" -eq 1 ]; then
-      add_action "would delete remote branch $REMOTE/$branch"
-    elif git push "$REMOTE" ":refs/heads/$branch"; then
+    if run_network_git push "$REMOTE" ":refs/heads/$branch"; then
       add_action "deleted remote branch $REMOTE/$branch"
-      if git fetch --prune "$REMOTE"; then
+      if run_network_git fetch --prune "$REMOTE"; then
         add_action "pruned $REMOTE after remote branch deletion"
       else
         add_anomaly "deleted remote branch $REMOTE/$branch, but git fetch --prune $REMOTE failed"
@@ -907,6 +958,8 @@ print_report() {
 self_test_scenario() {
   local name="$1" expectation="$2" is_draft="$3" merge_state="$4"
   local blocking="$5" successful="$6" unresolved="$7"
+  local default_branch="${8-main}" fixture_pr_url="${9-https://example.test/pr/153}"
+  local readiness_present="${10-1}" auth_ok="${11-1}"
   local output merged=0 subshell_status=0
 
   # Capture the subshell status explicitly so a scenario that dies (for
@@ -918,7 +971,7 @@ self_test_scenario() {
     # future gate logic cannot silently reach GitHub even if PATH leaks.
     # shellcheck disable=SC2123  # emptying the search path is the point
     PATH=''
-    DEFAULT_BRANCH=main
+    DEFAULT_BRANCH="$default_branch"
     AUTO_MERGE=1
     MERGE_STRATEGY=merge
     GITHUB_REPO_SLUG=owner/repo
@@ -926,12 +979,17 @@ self_test_scenario() {
     working_tree_is_clean() { return 0; }
     have() { return 0; }
     gh() {
+      if [ "$1" = auth ] && [ "${2:-}" = status ]; then
+        [ "$auth_ok" -eq 1 ]
+        return
+      fi
       printf 'self-test: unexpected gh call: %s\n' "$*" >&2
       return 1
     }
     view_open_pr_readiness_for_branch() {
-      printf '153\tOPEN\t%s\thttps://example.test/pr/153\tfeature\theadoid\tmain\t%s\t%s\t%s\n' \
-        "$is_draft" "$merge_state" "$blocking" "$successful"
+      [ "$readiness_present" -eq 1 ] || return 0
+      printf '153\037OPEN\037%s\037%s\037feature\037headoid\037main\037%s\037%s\037%s\n' \
+        "$is_draft" "$fixture_pr_url" "$merge_state" "$blocking" "$successful"
     }
     remote_branch_head_oid() { printf 'headoid\n'; }
     unresolved_review_thread_count() { printf '%s\n' "$unresolved"; }
@@ -1004,6 +1062,9 @@ run_self_test() {
   self_test_scenario "non-clean merge state refuses" refuse false BLOCKED 0 2 0 || failures=$((failures + 1))
   self_test_scenario "draft PR refuses" refuse true CLEAN 0 2 0 || failures=$((failures + 1))
   self_test_scenario "unresolved review threads refuse" refuse false CLEAN 0 2 1 || failures=$((failures + 1))
+  self_test_scenario "empty middle field remains aligned" merge false CLEAN 0 2 0 main "" || failures=$((failures + 1))
+  self_test_scenario "unknown default branch refuses" refuse false CLEAN 0 2 0 "" || failures=$((failures + 1))
+  self_test_scenario "unauthenticated gh is reported" refuse false CLEAN 0 2 0 main https://example.test/pr/153 0 0 || failures=$((failures + 1))
 
   if [ "$failures" -ne 0 ]; then
     printf 'self-test: %s scenario(s) FAILED\n' "$failures" >&2

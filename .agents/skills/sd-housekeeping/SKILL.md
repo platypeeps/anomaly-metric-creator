@@ -122,13 +122,15 @@ Remote branches: origin/HEAD, origin/<default>
 PR #<number>: merged at <timestamp>
 Open PRs: <none|summary>
 Open issues: <none|summary>
-Current Trellis task: <none|summary>
+Current Trellis task: <none active|task id + status>
+PR review rounds: <n submitted reviewer review(s)|n/a — no PR in this run>
 Anomalies: none
 
 Insight:
 <One short evidence-backed observation about what housekeeping proved or surfaced; omit this section when there is nothing useful beyond the final state.>
 
-No follow-up needed for this cleanup stream.
+Next Steps:
+<Always present, even on a verification-only clean run. A short numbered list covering, in order: open follow-up items discovered this session, any in-progress Trellis task to resume, then the next high-value Trellis task candidates / roadmap items to tackle (planning tasks assigned to the current developer first, then other high-value repo-local tasks). If the backlog is genuinely empty, write "No open or planned Trellis work — backlog is clear." Never omit this section.>
 ```
 
 If cleanup is not clean, keep the same top-level shape, change the first line
@@ -139,13 +141,22 @@ supports a useful observation, such as the PR lifecycle being healthy, cleanup
 being verification-only because the PR was already merged, stale refs being
 pruned, the repo being ready for the next work stream, or a process improvement
 being worth tracking. Do not add filler insights that merely restate `clean`.
-If there are follow-up items, replace the final no-follow-up sentence with a
-numbered `Next Steps` list covering, in order: open follow-up items discovered
-during this session, existing Trellis tasks that are already `in_progress`, and
-high-value Trellis task candidates that are not started yet. Do not include
-speculative work: if a category has no evidence, say so plainly. When there are
-multiple items in a category, order them by urgency and practical value, and
-keep the list concise.
+Always end with the numbered `Next Steps` section, even when the current stream
+needs no follow-up: a clean run still reports the current Trellis task and the
+next high-value work. It covers, in order: open follow-up items discovered
+during this session, any Trellis task already `in_progress` (the current task)
+to resume, and the next high-value Trellis task candidates / roadmap items that
+are not started yet (planning tasks assigned to the current developer first,
+then other clearly high-value repo-local tasks). Also state the current task in
+the final-state rows (`Current Trellis task: <none active|id + status>`), and
+the review-cycle cost: when this run merged or confirmed a PR, count its
+submitted reviewer reviews (one `gh api .../pulls/<n>/reviews` read) and fill
+`PR review rounds:`; on verification-only runs write `n/a — no PR in this
+run`. Do not
+include speculative work: if a category has no evidence, say so plainly, and if
+the whole backlog is empty, write that the backlog is clear rather than dropping
+the section. When there are multiple items in a category, order them by urgency
+and practical value, and keep the list concise.
 
 ## Safety Rules
 
@@ -196,7 +207,11 @@ Report:
 - Any brief evidence-backed insight from the cleanup, only when it adds signal
   beyond the final-state rows.
 - Whether follow-up manual action is needed.
-- Either `No follow-up needed for this cleanup stream.` or a final numbered
-  `Next Steps` section covering, in order, open session follow-ups, existing
-  in-progress Trellis tasks, and high-value Trellis task candidates to start
-  next.
+- The current Trellis task (its id + status, or `none active`).
+- PR review rounds for the merged/confirmed PR (submitted reviewer review
+  count), or `n/a` when the run had no PR.
+- A final numbered `Next Steps` section — always present, including on a
+  verification-only clean run — covering, in order: open session follow-ups, any
+  in-progress Trellis task to resume, and the next high-value Trellis task
+  candidates / roadmap items to tackle. Say the backlog is clear only when it
+  genuinely has no open or planned work; never omit this section.

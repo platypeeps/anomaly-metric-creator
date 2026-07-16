@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
 # Shared helpers for shipped sd-ai-command-pack shell entry points. Callers
-# define REPO_ROOT before sourcing; helpers that emit warnings expect warn(),
-# and run_gito_command expects section().
+# define REPO_ROOT before calling helpers that need it; helpers that emit
+# warnings expect warn(), and run_gito_command expects section(), gito_max_attempts(),
+# gito_initial_retry_delay(), gito_max_retry_delay(), and
+# gito_command_timeout_seconds(). Callers that define the optional
+# REVIEW_LOCAL_TEMP_FILES array must install an EXIT/INT/TERM cleanup trap;
+# run_gito_command registers each temporary output file in that array.
 
 # sd-ai-command-pack review-scan-excludes start
 REVIEW_SCAN_EXCLUDE_DIRS=(
@@ -54,6 +58,70 @@ nonnegative_int_or_default() {
   esac
 }
 
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+run_command_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+  if [ "$timeout_seconds" -eq 0 ]; then
+    "$@"
+    return
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn "python3 not found; command timeout is disabled for $1."
+    "$@"
+    return
+  fi
+
+  python3 - "$timeout_seconds" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout_seconds = int(sys.argv[1])
+command = sys.argv[2:]
+process = subprocess.Popen(command, start_new_session=True)
+
+
+def terminate_process_group(sig: signal.Signals) -> None:
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+try:
+    returncode = process.wait(timeout=timeout_seconds)
+except subprocess.TimeoutExpired:
+    print(
+        f"command timed out after {timeout_seconds}s: {command[0]}",
+        file=sys.stderr,
+    )
+    terminate_process_group(signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        terminate_process_group(signal.SIGKILL)
+        process.wait()
+    raise SystemExit(124)
+except KeyboardInterrupt:
+    terminate_process_group(signal.SIGINT)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        terminate_process_group(signal.SIGKILL)
+        process.wait()
+    raise SystemExit(130)
+
+if returncode < 0:
+    raise SystemExit(128 - returncode)
+raise SystemExit(returncode)
+PY
+}
+
 load_gito_pack_env() {
   local env_file="$REPO_ROOT/.gito/sd-ai-command-pack.env"
   [ -f "$env_file" ] || return 0
@@ -90,11 +158,17 @@ load_gito_pack_env() {
 
 prepare_gito_uv_env() {
   local default_tmp="${TMPDIR:-/tmp}"
+  local cache_root="${XDG_CACHE_HOME:-}"
+  if [ -n "$cache_root" ]; then
+    cache_root="${cache_root%/}/sd-ai-command-pack"
+  else
+    cache_root="${default_tmp%/}/sd-ai-command-pack-${UID:-unknown}"
+  fi
   if [ -z "${UV_CACHE_DIR:-}" ]; then
-    export UV_CACHE_DIR="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_CACHE_DIR:-${default_tmp%/}/sd-ai-command-pack-uv-cache}"
+    export UV_CACHE_DIR="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_CACHE_DIR:-$cache_root/uv-cache}"
   fi
   if [ -z "${UV_TOOL_DIR:-}" ]; then
-    export UV_TOOL_DIR="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_TOOL_DIR:-${default_tmp%/}/sd-ai-command-pack-uv-tools}"
+    export UV_TOOL_DIR="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_TOOL_DIR:-$cache_root/uv-tools}"
   fi
   mkdir -p "$UV_CACHE_DIR" "$UV_TOOL_DIR"
 }
@@ -241,7 +315,9 @@ run_gito_command() {
       *e*) had_errexit=1 ;;
     esac
     set +e
-    "$@" >"$output_file" 2>&1
+    local timeout_seconds
+    timeout_seconds="$(gito_command_timeout_seconds)"
+    run_command_with_timeout "$timeout_seconds" "$@" >"$output_file" 2>&1
     local status=$?
     if [ "$had_errexit" -eq 1 ]; then
       set -e
@@ -250,17 +326,23 @@ run_gito_command() {
     fi
     cat "$output_file"
 
+    if [ "$status" -eq 124 ]; then
+      warn "$label timed out after ${timeout_seconds}s."
+      rm -f -- "$output_file"
+      return 124
+    fi
+
     if [ "$status" -eq 0 ]; then
-      rm -f "$output_file"
+      rm -f -- "$output_file"
       return 0
     fi
 
     if [ "$attempt" -ge "$max_attempts" ] || ! gito_output_indicates_rate_limit "$output_file"; then
-      rm -f "$output_file"
+      rm -f -- "$output_file"
       return "$status"
     fi
 
-    rm -f "$output_file"
+    rm -f -- "$output_file"
     warn "Gito appears rate-limited; retrying in ${delay}s after HTTP 429 / slow-down response."
     if [ "$delay" -gt 0 ]; then
       sleep "$delay"

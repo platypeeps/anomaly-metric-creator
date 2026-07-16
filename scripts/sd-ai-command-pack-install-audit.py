@@ -14,10 +14,11 @@ import subprocess
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
 PROVENANCE_FILE = Path(".sd-ai-command-pack/provenance.json")
 PACK_MANIFEST_FILE = Path(".sd-ai-command-pack/manifest.json")
+GIT_TIMEOUT_SECONDS = 60
+STABLE_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 # Files unique to the sd-ai-command-pack source checkout. A consumer repo never
 # has all three (it receives shipped scripts, but not the installer, manifest, or
@@ -54,12 +55,15 @@ PACK_FILE_PATTERNS = [
     ".trae/commands/sd-*",
     ".trae/skills/sd-*/*",
     ".zcode/commands/sd/*",
+    ".github/PULL_REQUEST_TEMPLATE.md",
     ".gito/config.toml",
     ".gito/sd-ai-command-pack.env",
     ".prism/rules.json",
+    ".prism/rules.schema.json",
     ".sd-ai-command-pack/*",
     "docs/SD_AI_COMMAND_PACK.md",
     "scripts/sd-ai-command-pack-*",
+    "scripts/sd_ai_command_pack_lib.py",
 ]
 
 LOCAL_ALLOWED_PACK_FILES = {
@@ -68,7 +72,43 @@ LOCAL_ALLOWED_PACK_FILES = {
 }
 
 SOURCE_ONLY_ALLOWED_PACK_FILES = {
+    ".agent/skills/sd-fleet-refresh/SKILL.md",
+    ".agent/workflows/sd-fleet-refresh.md",
+    ".agents/skills/sd-fleet-refresh/SKILL.md",
+    ".claude/commands/sd/fleet-refresh.md",
+    ".codebuddy/commands/sd/fleet-refresh.md",
+    ".codebuddy/skills/sd-fleet-refresh/SKILL.md",
+    ".cursor/commands/sd-fleet-refresh.md",
+    ".devin/skills/sd-fleet-refresh/SKILL.md",
+    ".devin/workflows/sd-fleet-refresh.md",
+    ".factory/commands/sd/fleet-refresh.md",
+    ".factory/skills/sd-fleet-refresh/SKILL.md",
+    ".gemini/commands/sd/fleet-refresh.toml",
+    ".github/prompts/sd-fleet-refresh.prompt.md",
+    ".kilocode/skills/sd-fleet-refresh/SKILL.md",
+    ".kilocode/workflows/sd-fleet-refresh.md",
+    ".kiro/skills/sd-fleet-refresh/SKILL.md",
+    ".opencode/commands/sd-fleet-refresh.md",
+    ".pi/prompts/sd-fleet-refresh.md",
+    ".pi/skills/sd-fleet-refresh/SKILL.md",
+    ".qoder/commands/sd-fleet-refresh.md",
+    ".qoder/skills/sd-fleet-refresh/SKILL.md",
+    ".reasonix/skills/sd-fleet-refresh/SKILL.md",
+    ".trae/commands/sd-fleet-refresh.md",
+    ".trae/skills/sd-fleet-refresh/SKILL.md",
+    ".zcode/commands/sd/fleet-refresh.md",
     "scripts/sd-ai-command-pack-fleet-preflight.py",
+}
+
+PROVENANCE_NEVER_VOUCHED_TARGETS = {
+    ".gitignore",
+    ".gito/config.toml",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/copilot-instructions.md",
+    ".prism/rules.json",
+    INSTALLED_TARGETS_FILE.as_posix(),
+    PACK_MANIFEST_FILE.as_posix(),
+    PROVENANCE_FILE.as_posix(),
 }
 
 LEGACY_PACK_PATHS = {
@@ -195,6 +235,7 @@ REFERENCE_SCAN_EXCLUDED_PARTS = {
     "__pycache__",
     "node_modules",
 }
+REFERENCE_SCAN_EXCLUDED_NAMES = {"repomix-map.md"}
 
 MAX_REFERENCE_SCAN_BYTES = 1_000_000
 
@@ -401,17 +442,36 @@ def audit_expected_targets(
     for target in sorted(expected - targets):
         failures.append(f"expected installed target is missing from receipt: {target}")
 
+    target_events: list[tuple[str, str]] = []
     for target in sorted(expected):
         target_state = inspect_target_presence(root, Path(target))
         if target_state == "present":
             continue
         if target_state != "missing":
-            failures.append(
-                f"expected installed target cannot be inspected: {target} "
-                f"({target_state})"
+            target_events.append(
+                (
+                    "failure",
+                    (
+                        f"expected installed target cannot be inspected: {target} "
+                        f"({target_state})"
+                    ),
+                )
             )
             continue
-        if is_gitignored(root, target):
+        target_events.append(("missing", target))
+
+    ignored_targets = gitignored_paths(
+        root,
+        (
+            target
+            for event_type, target in target_events
+            if event_type == "missing"
+        ),
+    )
+    for event_type, target in target_events:
+        if event_type == "failure":
+            failures.append(target)
+        elif target in ignored_targets:
             warnings.append(
                 "expected installed target is gitignored and absent in this "
                 f"checkout: {target}; re-run the pack installer here to "
@@ -486,48 +546,62 @@ def collect_pack_like_files(root: Path) -> list[str]:
     return sorted(set(pack_like))
 
 
-def is_gitignored(root: Path, relative_path: str) -> bool:
-    """True when git confirms the path is ignored; False otherwise.
+def gitignored_paths(root: Path, relative_paths: Iterable[str]) -> set[str]:
+    """Return paths git confirms as ignored, using one check-ignore process.
 
-    Missing git, a non-repo root, and git errors all return False, so the
-    caller keeps the fail-closed error behavior for those cases.
+    Missing git, a non-repo root, and git errors all return an empty set, so
+    callers keep the fail-closed error behavior for those cases.
     """
+    candidates = sorted(set(relative_paths))
+    if not candidates:
+        return set()
+    input_payload = b"".join(os.fsencode(path) + b"\0" for path in candidates)
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "-q", "--", relative_path],
-            stdout=subprocess.DEVNULL,
+            ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
+            input=input_payload,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
         )
-    except OSError:
-        return False
-    return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if result.returncode not in {0, 1}:
+        return set()
+    return {
+        os.fsdecode(raw_path)
+        for raw_path in result.stdout.split(b"\0")
+        if raw_path
+    }
+
+
+def is_gitignored(root: Path, relative_path: str) -> bool:
+    """True when git confirms the path is ignored; False otherwise."""
+    return relative_path in gitignored_paths(root, [relative_path])
 
 
 def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], list[str]]:
     failures: list[str] = []
     warnings: list[str] = []
+    target_events: list[tuple[str, str]] = []
 
     for target in sorted(targets):
         target_state = inspect_target_presence(root, Path(target))
         if target_state == "present":
             continue
         if target_state != "missing":
-            failures.append(
-                f"installed target cannot be inspected: {target} ({target_state})"
+            target_events.append(
+                (
+                    "failure",
+                    f"installed target cannot be inspected: {target} ({target_state})",
+                )
             )
             continue
         # Platform adapters may be recorded by a checkout that has them
         # while being gitignored (e.g. repos ignoring .claude/): absence
         # here is a local-only gap, not receipt drift.
-        if is_gitignored(root, target):
-            warnings.append(
-                "installed target is gitignored and absent in this "
-                f"checkout: {target}; re-run the pack installer here to "
-                "materialize local-only adapters"
-            )
-        else:
-            failures.append(f"installed target is missing: {target}")
+        target_events.append(("missing-target", target))
 
     allowed = set(targets) | LOCAL_ALLOWED_PACK_FILES
     if is_pack_source_checkout(root):
@@ -537,16 +611,38 @@ def audit_structural_state(root: Path, targets: set[str]) -> tuple[list[str], li
             continue
         # Repos may deliberately keep gitignored local-only adapters out of
         # the tracked receipt (the exclude-and-warn policy); tolerate that.
-        if is_gitignored(root, relative_path):
+        target_events.append(("unlisted-pack-like", relative_path))
+
+    ignored_targets = gitignored_paths(
+        root,
+        (
+            target
+            for event_type, target in target_events
+            if event_type != "failure"
+        ),
+    )
+    for event_type, target in target_events:
+        if event_type == "failure":
+            failures.append(target)
+        elif event_type == "missing-target":
+            if target in ignored_targets:
+                warnings.append(
+                    "installed target is gitignored and absent in this "
+                    f"checkout: {target}; re-run the pack installer here to "
+                    "materialize local-only adapters"
+                )
+            else:
+                failures.append(f"installed target is missing: {target}")
+        elif target in ignored_targets:
             warnings.append(
                 "local-only pack-like file is not recorded in installed "
-                f"targets: {relative_path} (gitignored; repo receipt policy "
+                f"targets: {target} (gitignored; repo receipt policy "
                 "may exclude local-only adapters)"
             )
         else:
             failures.append(
                 "pack-like file is not listed in installed targets: "
-                f"{relative_path}"
+                f"{target}"
             )
 
     return failures, warnings
@@ -588,15 +684,21 @@ def audit_provenance(root: Path) -> tuple[list[str], str | None]:
     if not files:
         return [f"{PROVENANCE_FILE} has an empty files map"], None
 
-    failures: list[str] = []
+    provenance_events: list[tuple[str, str]] = []
     root_real = os.path.realpath(root)
     for raw_target, expected in sorted(files.items()):
         if not isinstance(raw_target, str) or not isinstance(expected, str):
-            failures.append(f"{PROVENANCE_FILE} has a malformed entry: {raw_target!r}")
+            provenance_events.append(
+                ("failure", f"{PROVENANCE_FILE} has a malformed entry: {raw_target!r}")
+            )
             continue
         target = raw_target.replace("\\", "/")
         if is_unsafe_installed_target(target):
-            failures.append(f"{PROVENANCE_FILE} contains unsafe target {raw_target!r}")
+            provenance_events.append(
+                ("failure", f"{PROVENANCE_FILE} contains unsafe target {raw_target!r}")
+            )
+            continue
+        if target in PROVENANCE_NEVER_VOUCHED_TARGETS:
             continue
         path = root / target
         # Per-target lstat mirrors the provenance-file gate: missing,
@@ -610,19 +712,20 @@ def audit_provenance(root: Path) -> tuple[list[str], str | None]:
             # Local-only adapters may be legitimately absent (gitignored);
             # anything else vouched-but-gone is tampering even when the
             # receipt no longer lists it.
-            if not is_gitignored(root, target):
-                failures.append(f"vouched target is missing: {target}")
+            provenance_events.append(("missing", target))
             continue
         except OSError as exc:
-            failures.append(
-                f"vouched target cannot be inspected: {target}: {exc}"
+            provenance_events.append(
+                ("failure", f"vouched target cannot be inspected: {target}: {exc}")
             )
             continue
         if not stat.S_ISREG(target_mode):
             # Provenance vouches plain regular files; a symlink (even to a
             # matching file), directory, or other node at a vouched path is
             # tampering, not absence.
-            failures.append(f"vouched target is not a regular file: {target}")
+            provenance_events.append(
+                ("failure", f"vouched target is not a regular file: {target}")
+            )
             continue
         # Symlinked parent directories could route the hash check outside
         # the repository; fail closed when the real path escapes root.
@@ -634,25 +737,50 @@ def audit_provenance(root: Path) -> tuple[list[str], str | None]:
         except ValueError:
             inside = False
         if not inside:
-            failures.append(
-                f"vouched target escapes the repository root: {target}"
+            provenance_events.append(
+                (
+                    "failure",
+                    f"vouched target escapes the repository root: {target}",
+                )
             )
             continue
         try:
             content = path.read_bytes()
         except OSError as exc:
-            failures.append(f"vouched target is unreadable: {target}: {exc}")
+            provenance_events.append(
+                ("failure", f"vouched target is unreadable: {target}: {exc}")
+            )
             continue
         digest = "sha256:" + hashlib.sha256(content).hexdigest()
         if digest != expected:
-            failures.append(
-                f"installed target drifted from pack {version} content: "
-                f"{target} (re-run the pack installer or review the local edit)"
+            provenance_events.append(
+                (
+                    "failure",
+                    f"installed target drifted from pack {version} content: "
+                    f"{target} (re-run the pack installer or review the local edit)",
+                )
             )
+
+    ignored_targets = gitignored_paths(
+        root,
+        (
+            target
+            for event_type, target in provenance_events
+            if event_type == "missing"
+        ),
+    )
+    failures: list[str] = []
+    for event_type, target in provenance_events:
+        if event_type == "failure":
+            failures.append(target)
+        elif target not in ignored_targets:
+            failures.append(f"vouched target is missing: {target}")
     return failures, version
 
 
 def _is_excluded_scan_path(relative_path: Path) -> bool:
+    if relative_path.name in REFERENCE_SCAN_EXCLUDED_NAMES:
+        return True
     path_text = relative_path.as_posix()
     for excluded in REFERENCE_SCAN_EXCLUDED_PARTS:
         if "/" in excluded:
@@ -704,8 +832,8 @@ def audit_migration_advisories(root: Path, targets: set[str]) -> list[str]:
                 f"legacy pack target remains: {relative_path}; {replacement}"
             )
 
-    for relative_path in _iter_reference_scan_files(root, targets):
-        path = root / relative_path
+    for scan_path in _iter_reference_scan_files(root, targets):
+        path = root / scan_path
         try:
             if path.stat().st_size > MAX_REFERENCE_SCAN_BYTES:
                 continue
@@ -716,7 +844,7 @@ def audit_migration_advisories(root: Path, targets: set[str]) -> list[str]:
             if LEGACY_PACK_REFERENCE_PATTERNS[needle].search(text):
                 warnings.append(
                     "legacy pack reference remains: "
-                    f"{relative_path.as_posix()} contains {needle!r}; "
+                    f"{scan_path.as_posix()} contains {needle!r}; "
                     f"prefer {replacement}"
                 )
 
@@ -742,7 +870,61 @@ def parse_args() -> argparse.Namespace:
             "for fleet manifest checks."
         ),
     )
+    parser.add_argument(
+        "--upstream-manifest",
+        help=(
+            "advisory-only comparison against an upstream manifest.json or "
+            "pack checkout directory; unavailable or incomparable versions "
+            "do not change the audit exit code"
+        ),
+    )
     return parser.parse_args()
+
+
+def version_update_advisory(
+    installed_version: str | None,
+    reference: str,
+) -> str:
+    reference_path = Path(reference).expanduser()
+    if reference_path.is_dir():
+        reference_path = reference_path / "manifest.json"
+    try:
+        payload = json.loads(reference_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as error:
+        return (
+            "Pack version update check: could not determine upstream version "
+            f"from {reference_path}: {error}"
+        )
+
+    upstream_version = payload.get("version") if isinstance(payload, dict) else None
+    if not isinstance(installed_version, str) or not installed_version:
+        return "Pack version update check: could not determine installed version."
+    if not isinstance(upstream_version, str) or not upstream_version:
+        return (
+            "Pack version update check: could not determine upstream version "
+            f"from {reference_path}: missing string version"
+        )
+    if not STABLE_VERSION_PATTERN.fullmatch(installed_version) or not (
+        STABLE_VERSION_PATTERN.fullmatch(upstream_version)
+    ):
+        return (
+            "Pack version update check: could not compare installed "
+            f"{installed_version} with upstream {upstream_version}; "
+            "expected stable MAJOR.MINOR.PATCH versions."
+        )
+
+    installed_key = tuple(int(part) for part in installed_version.split("."))
+    upstream_key = tuple(int(part) for part in upstream_version.split("."))
+    if installed_key < upstream_key:
+        relation = "behind"
+    elif installed_key > upstream_key:
+        relation = "ahead of"
+    else:
+        relation = "current with"
+    return (
+        f"Pack version update check: installed {installed_version} is "
+        f"{relation} upstream {upstream_version}."
+    )
 
 
 def main() -> int:
@@ -795,6 +977,14 @@ def main() -> int:
     # debugging a failed audit is exactly who needs them.
     for warning in warnings:
         print(f"warning: {warning}")
+
+    if args.upstream_manifest:
+        installed_version = provenance_version
+        if installed_version is None and isinstance(pack_manifest, dict):
+            candidate = pack_manifest.get("version")
+            if isinstance(candidate, str):
+                installed_version = candidate
+        print(version_update_advisory(installed_version, args.upstream_manifest))
 
     if failures:
         for failure in failures:

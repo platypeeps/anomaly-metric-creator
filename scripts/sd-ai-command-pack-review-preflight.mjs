@@ -11,9 +11,19 @@ let failures = [];
 let warnings = [];
 let passes = [];
 let installedTargetsCache;
+let documentationGuardFilesCache;
+const readTextCache = new Map();
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const MIN_NODE_VERSION = { major: 16, minor: 9, label: '16.9.0' };
+// Git output ceiling for spawnSync calls that read diffs; Node's 1 MiB
+// default truncates large diffs and surfaces as a spawn error.
+const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+// Declared before the module-level main run below: unlike function
+// declarations, class bindings are not hoisted out of the temporal dead
+// zone, and runCheck consults this class while checks execute.
+class GitCommandError extends Error {}
 
 export function runReviewPreflight(options = {}) {
   rootDir = resolve(options.rootDir || defaultRootDir);
@@ -21,6 +31,8 @@ export function runReviewPreflight(options = {}) {
   warnings = [];
   passes = [];
   installedTargetsCache = undefined;
+  documentationGuardFilesCache = undefined;
+  readTextCache.clear();
   // Load config only after the result buffers are reset so a malformed config
   // file's fail() entry is reported instead of being wiped by the reset.
   config = loadConfig(rootDir, options.configPath);
@@ -112,6 +124,7 @@ function defaultConfig() {
       '.sd-ai-command-pack/review-preflight.json',
       '.trellis/.developer',
       '.trellis/.template-hashes.json',
+      '.trellis/audit/ledger.md',
       'ARCHITECTURE.md',
       'ARCHITECTURE_OVERVIEW.md',
       'docs/ARCHITECTURE.md',
@@ -236,6 +249,13 @@ function runCheck(label, check) {
   try {
     check();
   } catch (error) {
+    if (error instanceof GitCommandError) {
+      // A git invocation that could not run (missing binary, spawn or
+      // buffer failure) must fail the preflight instead of letting the
+      // check proceed with an empty diff.
+      fail(`${label}: ${error.message}`);
+      return;
+    }
     const reason = error instanceof Error ? error.message : String(error);
     fail(`${label} check crashed: ${reason}`);
   }
@@ -382,30 +402,64 @@ function checkDocumentationPathHygiene() {
 function checkTrellisJournalRecords() {
   const failureStart = failures.length;
   const workspaceRoot = resolve(rootDir, '.trellis/workspace');
+  const baselineRef = journalBaselineRef();
+  const baselineJournalFiles = baselineRef
+    ? gitFilesAtRef(baselineRef, '.trellis/workspace').filter((file) =>
+        /^\.trellis\/workspace\/[^/]+\/journal-\d+\.md$/.test(file),
+      )
+    : [];
+  const workspacePresent = exists('.trellis/workspace');
 
-  if (!exists('.trellis/workspace')) {
-    pass('.trellis/workspace is not present; Trellis journal checks skipped.');
+  if (!workspacePresent && baselineJournalFiles.length === 0) {
+    pass('.trellis/workspace is not present in the working tree or review base; Trellis journal checks skipped.');
     return;
   }
 
-  const developerDirs = readdirSync(workspaceRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => resolve(workspaceRoot, entry.name))
-    .sort();
+  const currentDeveloperDirs = workspacePresent
+    ? readdirSync(workspaceRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => resolve(workspaceRoot, entry.name))
+    : [];
+  const developerRelatives = [...new Set([
+    ...currentDeveloperDirs.map(absoluteToRelative),
+    ...baselineJournalFiles.map((file) => dirname(file)),
+  ])].sort();
   let completedSessions = 0;
   let comparedSessions = 0;
+  let baselineSessionsCompared = 0;
 
-  for (const developerDir of developerDirs) {
-    const developerRelative = absoluteToRelative(developerDir);
+  for (const developerRelative of developerRelatives) {
+    const developerDir = resolve(rootDir, developerRelative);
     const indexFile = `${developerRelative}/index.md`;
-    const journalFiles = readdirSync(developerDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && /^journal-\d+\.md$/.test(entry.name))
-      .map((entry) => `${developerRelative}/${entry.name}`)
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const journalFiles = exists(developerRelative)
+      ? readdirSync(developerDir, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && /^journal-\d+\.md$/.test(entry.name))
+          .map((entry) => `${developerRelative}/${entry.name}`)
+          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      : [];
     const journalSessions = [];
+    const baselineJournalSessions = [];
 
     for (const journalFile of journalFiles) {
       journalSessions.push(...parseJournalSessions(journalFile));
+    }
+
+    for (const journalFile of baselineJournalFiles.filter((file) => dirname(file) === developerRelative)) {
+      baselineJournalSessions.push(
+        ...parseJournalSessionsFromText(journalFile, gitFileAtRef(baselineRef, journalFile)),
+      );
+    }
+
+    baselineSessionsCompared += baselineJournalSessions.length;
+    for (const issue of findHistoricalTrellisJournalSessionEdits(
+      baselineJournalSessions,
+      journalSessions,
+    )) {
+      const action = issue.kind === 'removed' ? 'removes' : 'modifies';
+      fail(
+        `${issue.session.file}:${issue.session.startLine} ${action} historical Session ${issue.session.number} from ${baselineRef}; ` +
+          'Trellis journal history is append-only. Restore that session and edit the intended current session by heading.',
+      );
     }
 
     if (journalSessions.length === 0) {
@@ -432,13 +486,17 @@ function checkTrellisJournalRecords() {
     for (const message of validation.failures) {
       fail(message);
     }
+
   }
 
   if (failures.length > failureStart) {
     return;
   }
 
-  pass(`checked ${completedSessions} completed Trellis journal session(s) for placeholders and ${comparedSessions} journal/index commit list(s).`);
+  pass(
+    `checked ${completedSessions} completed Trellis journal session(s) for placeholders, ` +
+      `${comparedSessions} journal/index commit list(s), and ${baselineSessionsCompared} baseline session(s) for historical edits.`,
+  );
 }
 
 function checkDiffSize() {
@@ -756,6 +814,10 @@ function resolveDocumentationReference(file, target, kind, options = {}) {
 }
 
 function documentationGuardFiles() {
+  if (documentationGuardFilesCache !== undefined) {
+    return documentationGuardFilesCache;
+  }
+
   const files = [];
 
   for (const root of config.documentationRoots) {
@@ -772,20 +834,62 @@ function documentationGuardFiles() {
     }
   }
 
-  return [...new Set(files)].sort();
+  documentationGuardFilesCache = [...new Set(files)].sort();
+  return documentationGuardFilesCache;
 }
 
-function gitStdout(args) {
+// Runs git with an explicit output ceiling. A nonzero exit status is the
+// caller's decision (many call sites legitimately tolerate absent refs or
+// diffs), but result.error means git never ran or its output was cut off,
+// so tolerating it would silently degrade to an empty diff — throw instead
+// and let runCheck turn it into a hard failure.
+function runGit(args) {
   const result = spawnSync('git', args, {
     cwd: rootDir,
     encoding: 'utf8',
+    maxBuffer: GIT_MAX_BUFFER_BYTES,
   });
 
-  if (result.error || result.status !== 0) {
+  if (result.error) {
+    throw new GitCommandError(`git ${args.join(' ')} could not run: ${result.error.message}`);
+  }
+
+  if (result.signal || result.status === null) {
+    const reason = result.signal
+      ? `terminated by signal ${result.signal}`
+      : 'exited without a status';
+    throw new GitCommandError(`git ${args.join(' ')} did not complete: ${reason}`);
+  }
+
+  return result;
+}
+
+function gitStdout(args) {
+  const result = runGit(args);
+
+  if (result.status !== 0) {
     return '';
   }
 
   return result.stdout.trim();
+}
+
+function gitFileAtRef(ref, file) {
+  const result = runGit(['show', `${ref}:${file}`]);
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout).trim() || `exit status ${result.status}`;
+    throw new GitCommandError(`git show ${ref}:${file} failed: ${detail}`);
+  }
+  return result.stdout;
+}
+
+function gitFilesAtRef(ref, directory) {
+  const result = runGit(['ls-tree', '-r', '--name-only', '-z', ref, '--', directory]);
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout).trim() || `exit status ${result.status}`;
+    throw new GitCommandError(`git ls-tree ${ref} -- ${directory} failed: ${detail}`);
+  }
+  return result.stdout.split('\0').filter(Boolean);
 }
 
 function gitRefExists(ref) {
@@ -836,6 +940,14 @@ function defaultReviewBaseRef() {
   return remoteRefs[0] || '';
 }
 
+function journalBaselineRef() {
+  const baseRef = defaultReviewBaseRef();
+  if (baseRef) {
+    return baseRef;
+  }
+  return gitRefExists('HEAD') ? 'HEAD' : '';
+}
+
 function currentDiffSources(...kindArgs) {
   const baseRef = defaultReviewBaseRef();
   const sources = [
@@ -854,12 +966,9 @@ function currentDiffStats() {
   const sources = currentDiffSources('--numstat', '-z');
 
   for (const source of sources) {
-    const result = spawnSync('git', source.args, {
-      cwd: rootDir,
-      encoding: 'utf8',
-    });
+    const result = runGit(source.args);
 
-    if (result.error || result.status !== 0) {
+    if (result.status !== 0) {
       continue;
     }
 
@@ -883,12 +992,9 @@ function currentChangedPaths() {
   let inspected = false;
 
   for (const source of sources) {
-    const result = spawnSync('git', source.args, {
-      cwd: rootDir,
-      encoding: 'utf8',
-    });
+    const result = runGit(source.args);
 
-    if (result.error || result.status !== 0) {
+    if (result.status !== 0) {
       continue;
     }
 
@@ -1059,6 +1165,48 @@ export function parseJournalSessionsFromText(file, text) {
   });
 }
 
+export function findHistoricalTrellisJournalSessionEdits(baselineSessions, currentSessions) {
+  if (baselineSessions.length === 0) {
+    return [];
+  }
+
+  const currentByNumber = new Map();
+  for (const session of currentSessions) {
+    if (!currentByNumber.has(session.number)) {
+      currentByNumber.set(session.number, session);
+    }
+  }
+
+  const newestCurrentSession = currentByNumber.size > 0
+    ? Math.max(...currentByNumber.keys())
+    : Number.NEGATIVE_INFINITY;
+  const issues = [];
+
+  for (const baselineSession of baselineSessions) {
+    const currentSession = currentByNumber.get(baselineSession.number);
+    if (!currentSession) {
+      issues.push({ kind: 'removed', session: baselineSession });
+    } else if (
+      currentSession.number < newestCurrentSession &&
+      normalizeJournalSessionContent(currentSession.content) !==
+        normalizeJournalSessionContent(baselineSession.content)
+    ) {
+      issues.push({ kind: 'modified', session: currentSession });
+    }
+  }
+
+  return issues;
+}
+
+function normalizeJournalSessionContent(content) {
+  return content
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trimEnd();
+}
+
 function parseWorkspaceIndexSessions(file) {
   return parseWorkspaceIndexSessionsFromText(file, readText(file), { onDuplicate: fail });
 }
@@ -1197,7 +1345,15 @@ function readJson(file) {
 }
 
 function readText(file) {
-  return readFileSync(resolve(rootDir, file), 'utf8');
+  const path = resolve(rootDir, file);
+  const cached = readTextCache.get(path);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const text = readFileSync(path, 'utf8');
+  readTextCache.set(path, text);
+  return text;
 }
 
 function absoluteToRelative(file) {

@@ -41,6 +41,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+from sd_ai_command_pack_lib import (
+    DEFAULT_TRELLIS_TIMEOUT,
+    CommandError,
+    run_command,
+)
+from sd_ai_command_pack_lib import (
+    run_git as run_git_command,
+)
 
 ADD_SESSION = Path(".trellis/scripts/add_session.py")
 WORKSPACE = ".trellis/workspace"
@@ -48,16 +56,49 @@ PLACEHOLDERS = ("(Add details)", "(Add test results)", "(see git log)")
 SESSION_HEADING_RE = re.compile(r"^## Session \d+: (.+)$", re.MULTILINE)
 
 
+def default_text_file_mode(destination: Path) -> int:
+    if destination.exists():
+        return destination.stat().st_mode & 0o777
+    current_umask = os.umask(0)
+    try:
+        return 0o666 & ~current_umask
+    finally:
+        os.umask(current_umask)
+
+
+def atomic_write_text(
+    destination: Path,
+    content: str,
+    *,
+    errors: str = "strict",
+) -> None:
+    if destination.is_symlink():
+        raise OSError("target is a symlink")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(content.encode("utf-8", errors=errors))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.chmod(temporary_path, default_text_file_mode(destination))
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 def run_git(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args],
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_git_command(list(args), context="run git")
 
 
 def commit_subject(commit_hash: str) -> str | None:
@@ -176,7 +217,14 @@ def patch_last_session(
         )
         if not row_re.search(block):
             return f"missing commit table row for {commit_hash} in {journal}"
-        block = row_re.sub(lambda _match: row, block, count=1)
+
+        def _row_replacement(_match: re.Match[str], replacement: str = row) -> str:
+            # A callable replacement keeps backslashes in the resolved
+            # subject literal instead of letting re.sub expand them as
+            # escapes; the default argument binds this iteration's row.
+            return replacement
+
+        block = row_re.sub(_row_replacement, block, count=1)
 
     patched = replace_section(block, "### Testing", tests)
     if patched is None:
@@ -194,9 +242,7 @@ def patch_last_session(
         return f"placeholders remain after patching {journal}: {', '.join(remaining)}"
 
     try:
-        journal.write_text(
-            text[:block_start] + block, encoding="utf-8", errors="strict"
-        )
+        atomic_write_text(journal, text[:block_start] + block, errors="strict")
     except OSError as exc:
         return f"cannot write {journal}: {exc}"
     return None
@@ -329,14 +375,13 @@ def main(argv: list[str]) -> int:
             branch = args.branch or current_git_branch()
             if branch:
                 command.extend(["--branch", branch])
-            result = subprocess.run(
+            result = run_command(
                 command,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                timeout=DEFAULT_TRELLIS_TIMEOUT,
+                capture_output=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                check=False,
+                context="record the Trellis session journal",
             )
             if result.returncode != 0:
                 # Operator-facing tool: surface the Trellis script's own output
@@ -351,9 +396,8 @@ def main(argv: list[str]) -> int:
         finally:
             content_file.unlink(missing_ok=True)
 
-        journals = [j for j in modified_workspace_journals() if j not in before] or (
-            modified_workspace_journals()
-        )
+        after = modified_workspace_journals()
+        journals = [j for j in after if j not in before] or after
     if len(journals) != 1:
         # A journal dirtied before the run makes the before/after set
         # ambiguous; the entry we just wrote is the one carrying the title.
@@ -400,14 +444,12 @@ def main(argv: list[str]) -> int:
                 print(stream, file=sys.stderr)
         print("error: git add failed", file=sys.stderr)
         return 1
-    commit = subprocess.run(
+    commit = run_command(
         ["git", "commit", "-m", "chore: record journal", "--", *stage_args],
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        capture_output=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        check=False,
+        context="commit the session journal",
     )
     if commit.returncode != 0:
         print(commit.stdout, file=sys.stderr)
@@ -419,4 +461,8 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    try:
+        raise SystemExit(main(sys.argv))
+    except CommandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
