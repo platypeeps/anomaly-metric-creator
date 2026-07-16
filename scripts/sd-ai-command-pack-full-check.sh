@@ -175,7 +175,7 @@ collect_reviewable_changed_paths() {
     fi
   done
 
-  rm -f "$paths_file"
+  rm -f -- "$paths_file"
 }
 
 review_filter_pattern_for_path() {
@@ -202,7 +202,7 @@ review_filter_csv_from_paths() {
     patterns+=("$pattern")
   done < <(sort -u "$patterns_file")
 
-  rm -f "$patterns_file"
+  rm -f -- "$patterns_file"
   # ${arr[@]+...} guards the empty-array case: bash < 4.4 (macOS ships 3.2)
   # treats "${arr[@]}" of an empty array as unbound under set -u.
   join_by_comma ${patterns[@]+"${patterns[@]}"}
@@ -215,7 +215,7 @@ reviewable_changed_filter_csv() {
   REVIEW_LOCAL_TEMP_FILES+=("$changed_paths_file")
   collect_reviewable_changed_paths "$base_ref" >"$changed_paths_file"
   review_filter_csv_from_paths <"$changed_paths_file"
-  rm -f "$changed_paths_file"
+  rm -f -- "$changed_paths_file"
 }
 
 build_prism_args() {
@@ -357,7 +357,7 @@ run_gito_review() {
   REVIEW_LOCAL_TEMP_FILES+=("$filters_file")
   reviewable_changed_filter_csv "$base_ref" >"$filters_file"
   IFS= read -r filters <"$filters_file" || true
-  rm -f "$filters_file"
+  rm -f -- "$filters_file"
   if [ -z "$filters" ]; then
     warn "No changed files remain after standard review-scan exclusions; skipping Gito review."
     return 0
@@ -779,7 +779,7 @@ run_ci_classification_report() {
   done <"$paths_file"
 
   if [ "${#changed_paths[@]}" -eq 0 ]; then
-    rm -f "$paths_file"
+    rm -f -- "$paths_file"
     warn "No current changed paths; skipping current-diff CI classification report."
     return 0
   fi
@@ -795,7 +795,7 @@ run_ci_classification_report() {
     bash "$script" -- "${changed_paths[@]}" || status=$?
   fi
 
-  rm -f "$paths_file"
+  rm -f -- "$paths_file"
   return "$status"
 }
 

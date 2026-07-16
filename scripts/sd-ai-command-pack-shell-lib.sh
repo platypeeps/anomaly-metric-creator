@@ -328,21 +328,21 @@ run_gito_command() {
 
     if [ "$status" -eq 124 ]; then
       warn "$label timed out after ${timeout_seconds}s."
-      rm -f "$output_file"
+      rm -f -- "$output_file"
       return 124
     fi
 
     if [ "$status" -eq 0 ]; then
-      rm -f "$output_file"
+      rm -f -- "$output_file"
       return 0
     fi
 
     if [ "$attempt" -ge "$max_attempts" ] || ! gito_output_indicates_rate_limit "$output_file"; then
-      rm -f "$output_file"
+      rm -f -- "$output_file"
       return "$status"
     fi
 
-    rm -f "$output_file"
+    rm -f -- "$output_file"
     warn "Gito appears rate-limited; retrying in ${delay}s after HTTP 429 / slow-down response."
     if [ "$delay" -gt 0 ]; then
       sleep "$delay"

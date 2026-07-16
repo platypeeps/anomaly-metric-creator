@@ -22,7 +22,7 @@ cleanup_review_local_temp_files() {
   local file
   for file in "${REVIEW_LOCAL_TEMP_FILES[@]}"; do
     [ -n "$file" ] || continue
-    rm -f "$file"
+    rm -f -- "$file"
   done
   set -u
 }
@@ -86,7 +86,7 @@ collect_reviewable_local_paths() {
     fi
   done
 
-  rm -f "$paths_file"
+  rm -f -- "$paths_file"
 }
 
 reviewable_local_paths_present() {
@@ -145,7 +145,7 @@ review_filter_csv_from_paths() {
     patterns+=("$pattern")
   done < <(sort -u "$patterns_file")
 
-  rm -f "$patterns_file"
+  rm -f -- "$patterns_file"
   # ${arr[@]+...} guards the empty-array case: bash < 4.4 (macOS ships 3.2)
   # treats "${arr[@]}" of an empty array as unbound under set -u.
   join_by_comma ${patterns[@]+"${patterns[@]}"}
@@ -367,12 +367,12 @@ run_prism_command() {
   local status=$?
   cat "$output_file"
   if [ "$status" -eq 4 ] && prism_output_indicates_empty_chunk "$output_file"; then
-    rm -f "$output_file"
+    rm -f -- "$output_file"
     warn "$label returned an empty or malformed provider response."
     mark_overall_failure
     return
   fi
-  rm -f "$output_file"
+  rm -f -- "$output_file"
   handle_prism_status "$label" "$status"
 }
 
@@ -438,7 +438,7 @@ run_prism_codebase_paths() {
   cat "$output_file"
 
   if [ "$status" -eq 4 ] && [ "${#paths[@]}" -gt 1 ] && prism_output_indicates_empty_chunk "$output_file"; then
-    rm -f "$output_file"
+    rm -f -- "$output_file"
     warn "$label returned an empty chunk response; retrying each path individually."
     local path
     local path_index=1
@@ -453,11 +453,11 @@ run_prism_codebase_paths() {
   fi
 
   if [ "$status" -eq 4 ] && prism_output_indicates_empty_chunk "$output_file"; then
-    rm -f "$output_file"
+    rm -f -- "$output_file"
     record_prism_empty_chunk_failure "$label"
     return
   fi
-  rm -f "$output_file"
+  rm -f -- "$output_file"
   handle_prism_status "$label" "$status"
 }
 
@@ -510,7 +510,7 @@ run_prism_codebase_review() {
   cat "$output_file"
 
   if [ "$status" -eq 4 ] && prism_output_indicates_empty_chunk "$output_file"; then
-    rm -f "$output_file"
+    rm -f -- "$output_file"
     if is_disabled "${SD_AI_COMMAND_PACK_REVIEW_LOCAL_PRISM_CODEBASE_FALLBACK:-1}"; then
       warn "Prism full-codebase batch fallback is disabled because SD_AI_COMMAND_PACK_REVIEW_LOCAL_PRISM_CODEBASE_FALLBACK=${SD_AI_COMMAND_PACK_REVIEW_LOCAL_PRISM_CODEBASE_FALLBACK:-}."
       warn "$label returned an empty chunk response."
@@ -522,7 +522,7 @@ run_prism_codebase_review() {
     return
   fi
 
-  rm -f "$output_file"
+  rm -f -- "$output_file"
   handle_prism_status "$label" "$status"
 }
 
