@@ -62,7 +62,8 @@ environment variables; arguments are the only tuning surface.
    `Retro: <topic>`, mapping the retro shape onto the recorder flags:
 
    ```bash
-   python3 scripts/sd-ai-command-pack-record-session.py \
+   bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+     scripts/sd-ai-command-pack-record-session.py \
      --title "Retro: <topic>" \
      --summary "<one line: what broke + root cause>" \
      --change "What broke: <field>" \

@@ -20,20 +20,23 @@ the repo wrapper.
 1. Run a local scan first:
 
    ```bash
-   python3 scripts/sd-ai-command-pack-review-learnings.py --include-working-tree
+   bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+     scripts/sd-ai-command-pack-review-learnings.py --include-working-tree
    ```
 
 2. When the user asks to record or refresh learnings, update the repo learning
    file:
 
    ```bash
-   python3 scripts/sd-ai-command-pack-review-learnings.py --include-working-tree --update
+   bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+     scripts/sd-ai-command-pack-review-learnings.py --include-working-tree --update
    ```
 
 3. To include recent Copilot review comments, add a window:
 
    ```bash
-   python3 scripts/sd-ai-command-pack-review-learnings.py --github-days 2 --update
+   bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+     scripts/sd-ai-command-pack-review-learnings.py --github-days 2 --update
    ```
 
 4. If the repository already has a preferred review-learning file, use
