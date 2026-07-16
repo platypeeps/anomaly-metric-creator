@@ -5,8 +5,9 @@ The checker is repo-safe by default: it reports detected categories, but only
 fails when a PR body is supplied through ``--body-file``,
 ``SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY``, or
 ``SD_AI_COMMAND_PACK_SCOPE_PR_BODY``, or the deprecated compatibility fallback
-``REVIEW_PREFLIGHT_PR_BODY``. Repos can add project-specific categories with a
-JSON config file rather than editing this copied script.
+``REVIEW_PREFLIGHT_PR_BODY`` (honored through ``0.15.x`` and scheduled for
+removal in ``0.16.0``). Repos can add project-specific categories with a JSON
+config file rather than editing this copied script.
 
 Automated authors are exempt. When the PR author is passed via ``--actor`` or
 ``SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR`` and the login is a bot (GitHub bot
@@ -43,12 +44,13 @@ import fnmatch
 import json
 import os
 import re
-import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sd_ai_command_pack_lib import CommandError
+from sd_ai_command_pack_lib import run_git as run_git_command
 
 BODY_ENV_VARS = (
     "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY",
@@ -67,12 +69,32 @@ DEFAULT_CONFIG_PATH = Path(".sd-ai-command-pack/pr-body-scope.json")
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
 
 
+def _normalize_path(path: str) -> str:
+    return _remove_dot_slash(path.replace("\\", "/"))
+
+
+def _remove_dot_slash(path: str) -> str:
+    return path[2:] if path.startswith("./") else path
+
+
 @dataclass(frozen=True)
 class ScopeRule:
     label: str
     headings: tuple[str, ...]
     patterns: tuple[str, ...]
     include_installed_targets: bool = False
+    normalized_patterns: tuple[str, ...] = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Precompute the normalized match globs once per rule so the
+        # path x rule x pattern classify loop never re-normalizes a static
+        # pattern. Rebuilt automatically whenever patterns change (merge,
+        # installed-target injection), since every construction runs this.
+        object.__setattr__(
+            self,
+            "normalized_patterns",
+            tuple(_normalize_path(pattern) for pattern in self.patterns),
+        )
 
 
 DEFAULT_RULES = (
@@ -94,6 +116,8 @@ DEFAULT_RULES = (
             ".github/prompts/**",
             ".github/skills/trellis-*/**",
             ".github/skills/sd-*/**",
+            ".gito/**",
+            ".prism/**",
             ".agent/skills/trellis-*/**",
             ".agent/skills/sd-*/**",
             ".agent/workflows/start.md",
@@ -161,6 +185,8 @@ DEFAULT_RULES = (
             "docs/repomix-map.md",
             "scripts/sd-ai-command-pack-*.sh",
             "scripts/sd-ai-command-pack-*.py",
+            "scripts/sd-ai-command-pack-*.mjs",
+            "scripts/sd_ai_command_pack_lib.py",
             "scripts/sd-ai-command-pack-full-check.sh",
             "scripts/sd-ai-command-pack-housekeeping.sh",
         ),
@@ -202,6 +228,7 @@ DEFAULT_RULES = (
         label="CI/review scope",
         headings=("CI/review scope:", "CI scope:", "Workflow scope:"),
         patterns=(
+            ".github/PULL_REQUEST_TEMPLATE.md",
             ".github/workflows/**",
             ".pre-commit-config.yaml",
             "scripts/classify-ci-changes.sh",
@@ -214,17 +241,10 @@ DEFAULT_RULES = (
             "scripts/sd-ai-command-pack-pr-body-scope.py",
             "scripts/sd-ai-command-pack-full-check.sh",
             "scripts/sd-ai-command-pack-shell-lib.sh",
+            "scripts/sd_ai_command_pack_lib.py",
         ),
     ),
 )
-
-
-def _normalize_path(path: str) -> str:
-    return _remove_dot_slash(path.replace("\\", "/"))
-
-
-def _remove_dot_slash(path: str) -> str:
-    return path[2:] if path.startswith("./") else path
 
 
 def _split_changed_files(text: str) -> list[str]:
@@ -242,15 +262,14 @@ def _split_changed_files(text: str) -> list[str]:
 
 
 def _run_git(root: Path, *args: str) -> tuple[int, str, str]:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    try:
+        result = run_git_command(
+            list(args),
+            cwd=root,
+            context=f"run git {' '.join(args)}",
+        )
+    except CommandError as exc:
+        return 124, "", str(exc)
     return result.returncode, result.stdout, result.stderr
 
 
@@ -309,7 +328,11 @@ def _load_body(body_file: Path | None) -> tuple[str | None, str | None]:
 
 def _matches_pattern(normalized_path: str, pattern: str) -> bool:
     """Match a normalized repository path against a PR-body scope glob."""
-    normalized_pattern = _remove_dot_slash(pattern.replace("\\", "/"))
+    return _matches_normalized_pattern(normalized_path, _normalize_path(pattern))
+
+
+def _matches_normalized_pattern(normalized_path: str, normalized_pattern: str) -> bool:
+    """Match a normalized path against an already-normalized scope glob."""
     if normalized_pattern.endswith("/**"):
         # fnmatch expands glob characters in the base (e.g. sd-*), and its
         # "*" crosses "/" so f"{base}/*" covers arbitrary depth under it.
@@ -472,7 +495,10 @@ def _classify(paths: list[str], rules: tuple[ScopeRule, ...]) -> dict[ScopeRule,
     matches: dict[ScopeRule, list[str]] = {}
     for path in paths:
         for rule in rules:
-            if any(_matches_pattern(path, pattern) for pattern in rule.patterns):
+            if any(
+                _matches_normalized_pattern(path, pattern)
+                for pattern in rule.normalized_patterns
+            ):
                 matches.setdefault(rule, []).append(path)
     return matches
 
@@ -565,8 +591,8 @@ def check(
             *detected,
             "warning: PR body not provided; skipping strict PR-body scope validation. "
             "Set SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY, "
-            "SD_AI_COMMAND_PACK_SCOPE_PR_BODY, REVIEW_PREFLIGHT_PR_BODY, or "
-            "--body-file.",
+            "SD_AI_COMMAND_PACK_SCOPE_PR_BODY, REVIEW_PREFLIGHT_PR_BODY "
+            "(deprecated; removal in sd-ai-command-pack 0.16.0), or --body-file.",
         ]
 
     # Any-of coverage: a changed path is covered when the body documents at

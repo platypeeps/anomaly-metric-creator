@@ -16,6 +16,9 @@ GitHub Copilot is the default remote reviewer unless a repo overrides it.
 
 - Require `gh` and an authenticated GitHub session before starting:
   `gh --version` and `gh auth status`.
+- Run the pack toolchain doctor once before dependency-sensitive work. Reuse
+  that selected Python for the command run and do not probe raw interpreters in
+  sequence after an authoritative candidate fails.
 - Resolve the pull request from the current branch unless the user supplies a
   PR number or URL. Stop if no PR is found.
 - Do not stage unrelated work. If the working tree is dirty before the first
@@ -24,7 +27,7 @@ GitHub Copilot is the default remote reviewer unless a repo overrides it.
 - Run the deterministic local full-check before requesting a paid/remote
   review. Disable Prism and Gito for this command-owned gate; those local
   review tools run only when the user explicitly invokes `sd-full-check`,
-  `sd-review-local`, or `sd-review-local-all`.
+  or `sd-review-local` (optionally with `all`).
 - Treat `sd-review-pr` as a bounded remote-review convergence loop by default.
   Unless the user explicitly asks for local-only review, request the configured
   remote reviewer after the local gate passes and again after each pushed
@@ -57,6 +60,7 @@ GitHub Copilot is the default remote reviewer unless a repo overrides it.
 ## Step 1: Resolve PR And Local State
 
 ```bash
+bash scripts/sd-ai-command-pack-toolchain.sh doctor
 gh --version
 gh auth status
 git status -sb
@@ -83,6 +87,11 @@ LOCAL_HEAD=$(git rev-parse HEAD)
 test -n "$PR_NUMBER" && test "$PR_NUMBER" != "null"
 gh_pr_view_checked --json number,url,isDraft,headRefName,headRefOid,baseRefName,state,reviewRequests,latestReviews,statusCheckRollup
 ```
+
+If the toolchain helper is missing, stop and report that the pack should be
+reinstalled. Route ad hoc Python validations through
+`bash scripts/sd-ai-command-pack-toolchain.sh run-python --require-module
+<name> -- <arguments>` so dependency failures are reported once.
 
 Capture:
 
@@ -158,19 +167,30 @@ unless the user explicitly asks for a remote diagnostic despite local failures.
 Configure the remote reviewer before making any remote-review decision:
 
 ```bash
-REMOTE_REVIEWER="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_REVIEWER:-copilot-pull-request-reviewer}"
+REMOTE_REVIEWER="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_REVIEWER:-@copilot}"
 REMOTE_REVIEWER_LABEL="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_REVIEWER_LABEL:-GitHub Copilot}"
-REMOTE_REVIEW_AUTHOR_MATCH="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_AUTHOR_MATCH:-$REMOTE_REVIEWER}"
+REMOTE_REVIEW_AUTHOR_MATCH="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_AUTHOR_MATCH:-}"
 REMOTE_REVIEW_REQUEST_COMMAND="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_REQUEST_COMMAND:-}"
 REMOTE_REVIEW_ROUND_LIMIT="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_ROUND_LIMIT:-5}"
+REMOTE_REVIEW_SETTLE_POLLS="${SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_SETTLE_POLLS:-40}"
+
+if [ -z "$REMOTE_REVIEW_AUTHOR_MATCH" ]; then
+  if [ "$REMOTE_REVIEWER" = "@copilot" ]; then
+    REMOTE_REVIEW_AUTHOR_MATCH="copilot-pull-request-reviewer[bot]"
+  else
+    REMOTE_REVIEW_AUTHOR_MATCH="$REMOTE_REVIEWER"
+  fi
+fi
 ```
 
-Use `REMOTE_REVIEWER` as the GitHub reviewer login or slug, and
-`REMOTE_REVIEWER_LABEL` in user-facing status and reports. Use
-`REMOTE_REVIEW_AUTHOR_MATCH` to recognize the review author when the request
-slug and comment/review author differ. If the provider is not triggered by a
-standard GitHub reviewer request, set `REMOTE_REVIEW_REQUEST_COMMAND` in the
-target repo's documented environment and run that command instead.
+Use `REMOTE_REVIEWER` as the GitHub request identity and
+`REMOTE_REVIEWER_LABEL` in user-facing status and reports. Copilot deliberately
+uses different identities: `@copilot` for the documented CLI request and
+`copilot-pull-request-reviewer[bot]` for review/comment author matching. For
+other GitHub reviewers, the configured reviewer is also the default author
+matcher. If the provider is not triggered by a standard GitHub reviewer
+request, set `REMOTE_REVIEW_REQUEST_COMMAND` in the target repo's documented
+environment and run that command instead.
 
 If both `REMOTE_REVIEWER` and `REMOTE_REVIEW_REQUEST_COMMAND` are empty, skip
 remote-review requests, report that no remote reviewer is configured, and
@@ -198,8 +218,8 @@ After deterministic local full-check passes:
   has not pushed any fixes, inspect existing comments and CI before deciding
   whether another remote request is needed.
 
-Record a remote review round only when the configured remote reviewer is
-actually requested.
+Record a remote review round only when the configured request command succeeds.
+That records a **request attempted** state, not a completed remote review.
 
 Record a UTC trigger timestamp before requesting a review. Use the `HEAD_SHA`
 captured in Step 1 for the review round; if that value may be stale, return to
@@ -214,6 +234,8 @@ Primary request path:
 ```bash
 if [ -n "$REMOTE_REVIEW_REQUEST_COMMAND" ]; then
   bash -c "$REMOTE_REVIEW_REQUEST_COMMAND"
+elif [ "$REMOTE_REVIEWER" = "@copilot" ]; then
+  gh pr edit "$PR_NUMBER" --add-reviewer @copilot
 elif [ -n "$REMOTE_REVIEWER" ]; then
   gh api -X POST \
     "repos/$OWNER/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
@@ -223,23 +245,27 @@ else
 fi
 ```
 
-If the standard GitHub reviewer request fails because the reviewer is
-unavailable or the slug changed, try the equivalent high-level command:
+For a non-Copilot GitHub reviewer, if the REST request fails because the
+reviewer is unavailable or the slug changed, try the equivalent high-level
+command:
 
 ```bash
 gh pr edit "$PR_NUMBER" --add-reviewer "$REMOTE_REVIEWER"
 ```
 
-If both standard GitHub reviewer request paths fail, stop and report the exact
-GitHub error. If a custom `REMOTE_REVIEW_REQUEST_COMMAND` fails, stop and report
-that exact error. Do not assume a magic trigger comment such as
-`@copilot review` works unless the repository or organization docs say that
-trigger is enabled.
+If the documented Copilot CLI request fails, stop and report whether the error
+indicates repository policy, reviewer availability, or another GitHub failure;
+do not retry it through the generic collaborator REST path. If both generic
+GitHub reviewer request paths fail, stop and report the exact GitHub error. If a
+custom `REMOTE_REVIEW_REQUEST_COMMAND` fails, stop and report that exact error.
+Do not assume a magic trigger comment such as `@copilot review` works unless the
+repository or organization docs say that trigger is enabled.
 
 ## Step 4: Wait For Review Completion
 
 Skip this step if no remote review was requested. Otherwise, poll every 30
-seconds with lightweight PR metadata only. Keep updates short.
+seconds with lightweight PR metadata only, for at most
+`REMOTE_REVIEW_SETTLE_POLLS` polls. Keep updates short.
 
 ```bash
 gh pr view "$PR_NUMBER" --json reviewRequests,latestReviews,headRefOid,updatedAt
@@ -256,19 +282,28 @@ gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate
 gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate
 ```
 
-Consider the remote review complete when:
+Track these states separately:
 
-- `REMOTE_REVIEWER` is no longer present in review requests when using the
-  standard GitHub reviewer request path; and
-- `latestReviews` or the one-time full fetch confirms a review, review comment,
-  or top-level PR comment from `REMOTE_REVIEW_AUTHOR_MATCH` after the trigger
-  timestamp for the head SHA; or
-- the review request disappears and remains absent through two polling
-  intervals.
+- **Request attempted:** the request command returned success for the recorded
+  trigger timestamp and head SHA.
+- **Request pending:** the reviewer is still requested, or the bounded settle
+  window has not expired and no author-matched activity is visible yet.
+- **Review materialized:** the one-time full fetch confirms a review, review
+  comment, or top-level PR comment from `REMOTE_REVIEW_AUTHOR_MATCH` after the
+  trigger timestamp for the recorded head SHA. Re-read the PR head before
+  accepting the evidence; use review/comment commit ids where available, and
+  accept a top-level comment only when the head remained unchanged.
+- **Ambiguous/no materialization:** the bounded polls and one-time full fetch
+  found no qualifying author-matched activity, even if the reviewer request
+  disappeared.
+
+Only **review materialized** completes the remote-review wait. A successful
+request command, `updatedAt` change, or cleared reviewer request is a polling
+hint, never completion evidence by itself.
 
 For custom remote-review triggers that do not expose a GitHub reviewer request,
-use `REMOTE_REVIEW_AUTHOR_MATCH` plus new activity after the trigger timestamp
-as the completion signal.
+use the same author-matched activity requirement after the trigger timestamp on
+the unchanged recorded head.
 
 The completion signal can fire BEFORE the reviewer's inline review-thread
 comments are queryable: some reviewers (GitHub Copilot in particular) post the
@@ -286,8 +321,13 @@ threads prematurely — a false "clean". Guard against it two ways:
   early read; if the merge guard reports unresolved threads after you saw zero,
   that is this race — fetch the now-present threads and address them.
 
-If review status is ambiguous for more than 20 minutes, report the state and ask
-whether to keep waiting.
+If the bounded polls expire without materialization, perform the one-time full
+fetch, then stop with a diagnostic rather than counting a round as completed.
+Report the request path, reviewer, author matcher, trigger timestamp, head SHA,
+poll count/duration, and the
+`SD_AI_COMMAND_PACK_REVIEW_PR_REMOTE_REQUEST_COMMAND` override. Distinguish an
+accepted request with no observable activity from a policy/availability
+rejection.
 
 ## Step 5: Inspect Comments, Prior Threads, And CI
 
@@ -355,7 +395,7 @@ gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate
 Also check CI:
 
 ```bash
-gh pr checks "$PR_NUMBER" --json name,workflow,status,conclusion,bucket,link,completedAt
+gh pr checks "$PR_NUMBER" --json name,workflow,state,bucket,link,completedAt
 ```
 
 If checks fail, inspect failed logs with `gh run view --log-failed` or the
@@ -510,9 +550,14 @@ handoff.
 Report:
 
 - PR number and URL.
-- Whether deterministic local full-check passed with Prism/Gito disabled for
-  the `sd-review-pr` cycle.
-- Number of remote review rounds completed and reviewer label/slug used.
+- Project checks: configured command or reported candidates, and which project
+  checks actually ran.
+- Pack full-check: whether the deterministic local gate passed with Prism/Gito
+  disabled for the `sd-review-pr` cycle.
+- Remote review rounds used: <n> of <limit> — mandatory in every report;
+  write `0 of <limit>` with the skip reason when no remote review ran.
+- Optional AI review: reviewer label/slug used, or why remote review was
+  skipped.
 - Comments fixed, rebutted, or left for user decision.
 - Commits pushed during the loop.
 - Finish-work actions and any archive/journal commits pushed.

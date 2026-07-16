@@ -11,6 +11,31 @@ if [ -z "$REPO_ROOT" ] || ! cd -- "$REPO_ROOT"; then
   exit 1
 fi
 
+REVIEW_LOCAL_TEMP_FILES=()
+
+cleanup_full_check_temp_files() {
+  local status=$?
+  local file
+  if [ "${#REVIEW_LOCAL_TEMP_FILES[@]}" -gt 0 ]; then
+    for file in "${REVIEW_LOCAL_TEMP_FILES[@]}"; do
+      [ -n "$file" ] && rm -f -- "$file"
+    done
+  fi
+  return "$status"
+}
+
+full_check_mktemp() {
+  local pattern="$1"
+  local temp_dir="${TMPDIR:-/tmp}"
+  mkdir -p -- "$temp_dir"
+  mktemp "$temp_dir/$pattern"
+}
+
+trap cleanup_full_check_temp_files EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 section() {
   printf '\n==> %s\n' "$*"
 }
@@ -44,10 +69,6 @@ is_disabled() {
   esac
 }
 
-have() {
-  command -v "$1" >/dev/null 2>&1
-}
-
 warn_unarmed_pack_source_hook() {
   [ -f "$REPO_ROOT/manifest.json" ] || return 0
   [ -f "$REPO_ROOT/install.py" ] || return 0
@@ -76,6 +97,10 @@ gito_initial_retry_delay() {
 
 gito_max_retry_delay() {
   nonnegative_int_or_default "${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_RETRY_MAX_DELAY_SECONDS:-${SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_RETRY_MAX_DELAY_SECONDS:-120}}" 120
+}
+
+gito_command_timeout_seconds() {
+  nonnegative_int_or_default "${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_TIMEOUT_SECONDS:-${SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_TIMEOUT_SECONDS:-600}}" 600
 }
 
 package_has_script() {
@@ -112,11 +137,29 @@ detect_merge_base() {
 collect_reviewable_changed_paths() {
   local base_ref="$1"
   local paths_file
-  paths_file="$(mktemp "${TMPDIR:-/tmp}/sd-ai-command-pack-review-paths.XXXXXX")"
+  local merge_base_status=0
+  paths_file="$(full_check_mktemp "sd-ai-command-pack-review-paths.XXXXXX")"
+  REVIEW_LOCAL_TEMP_FILES+=("$paths_file")
   : >"$paths_file"
 
   if git rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null; then
-    git diff --name-only "$base_ref"...HEAD >>"$paths_file"
+    set +e
+    git merge-base "$base_ref" HEAD >/dev/null 2>&1
+    merge_base_status=$?
+    set -e
+    case "$merge_base_status" in
+      0)
+        git diff --name-only "$base_ref"...HEAD >>"$paths_file"
+        ;;
+      1)
+        warn "Could not find a merge base for $base_ref and HEAD; review filter will include all tracked files."
+        git ls-files >>"$paths_file"
+        ;;
+      *)
+        warn "git merge-base failed for $base_ref and HEAD with status $merge_base_status."
+        return "$merge_base_status"
+        ;;
+    esac
   else
     warn "Could not resolve $base_ref; Gito review filter will use local changes only."
   fi
@@ -142,7 +185,8 @@ review_filter_pattern_for_path() {
 
 review_filter_csv_from_paths() {
   local patterns_file
-  patterns_file="$(mktemp "${TMPDIR:-/tmp}/sd-ai-command-pack-review-filters.XXXXXX")"
+  patterns_file="$(full_check_mktemp "sd-ai-command-pack-review-filters.XXXXXX")"
+  REVIEW_LOCAL_TEMP_FILES+=("$patterns_file")
   : >"$patterns_file"
 
   local path
@@ -166,7 +210,12 @@ review_filter_csv_from_paths() {
 
 reviewable_changed_filter_csv() {
   local base_ref="$1"
-  collect_reviewable_changed_paths "$base_ref" | review_filter_csv_from_paths
+  local changed_paths_file
+  changed_paths_file="$(full_check_mktemp "sd-ai-command-pack-reviewable-paths.XXXXXX")"
+  REVIEW_LOCAL_TEMP_FILES+=("$changed_paths_file")
+  collect_reviewable_changed_paths "$base_ref" >"$changed_paths_file"
+  review_filter_csv_from_paths <"$changed_paths_file"
+  rm -f "$changed_paths_file"
 }
 
 build_prism_args() {
@@ -302,8 +351,13 @@ run_gito_review() {
   local base_ref
   base_ref="$(full_check_gito_base_ref)"
   local out_dir="${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_OUT_DIR:-.build/review/gito}"
+  local filters_file
   local filters
-  filters="$(reviewable_changed_filter_csv "$base_ref")"
+  filters_file="$(full_check_mktemp "sd-ai-command-pack-review-filter-csv.XXXXXX")"
+  REVIEW_LOCAL_TEMP_FILES+=("$filters_file")
+  reviewable_changed_filter_csv "$base_ref" >"$filters_file"
+  IFS= read -r filters <"$filters_file" || true
+  rm -f "$filters_file"
   if [ -z "$filters" ]; then
     warn "No changed files remain after standard review-scan exclusions; skipping Gito review."
     return 0
@@ -410,7 +464,7 @@ run_pack_source_drift_gates() {
     return 0
   fi
 
-  section "Pack source drift gates: template twins, release version, and env-var docs"
+  section "Pack source drift gates: template twins, release ledger, and env-var docs"
   local release_base_ref
   release_base_ref="$(full_check_base_ref)"
   SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF="${SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF:-$release_base_ref}" python3 - <<'PACK_SOURCE_DRIFT_GATES'
@@ -445,7 +499,13 @@ def git_output(args, *, allow_fail=False):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=60,
         )
+    except subprocess.TimeoutExpired:
+        if allow_fail:
+            return None
+        errors.append(f"git command timed out after 60s: git {' '.join(args)}")
+        return None
     except OSError as exc:
         if allow_fail:
             return None
@@ -477,6 +537,12 @@ def git_ref_status(ref):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return False, (
+            f"release version gate cannot resolve base ref {ref!r}: "
+            "git timed out after 60s"
         )
     except OSError as exc:
         return False, (
@@ -560,6 +626,38 @@ if payload_changed:
         )
 else:
     print("release version gate: no shipped payload changes detected")
+
+if version_bumped:
+    changelog_path = Path("CHANGELOG.md")
+    top_release_heading = None
+    if changelog_path.is_file():
+        top_release_heading = next(
+            (
+                line.strip()
+                for line in changelog_path.read_text(encoding="utf-8").splitlines()
+                if line.startswith("## ")
+            ),
+            None,
+        )
+    expected_heading = re.compile(
+        rf"^## {re.escape(current_version)} - \d{{4}}-\d{{2}}-\d{{2}}$"
+    )
+    if not current_version or not top_release_heading or not expected_heading.fullmatch(
+        top_release_heading
+    ):
+        found = repr(top_release_heading) if top_release_heading else "no release heading"
+        errors.append(
+            "release changelog drift: manifest version bump to "
+            f"{current_version!r} requires the top CHANGELOG.md release heading "
+            f"'## {current_version} - YYYY-MM-DD'; found {found}"
+        )
+    else:
+        print(
+            "release changelog gate: manifest version bump has matching top heading "
+            f"{top_release_heading!r}"
+        )
+else:
+    print("release changelog gate: manifest version unchanged")
 
 var_re = re.compile(r"SD_AI_COMMAND_PACK_[A-Z0-9_]+")
 exempt = {
@@ -670,7 +768,8 @@ run_ci_classification_report() {
   fi
 
   local paths_file
-  paths_file="$(mktemp "${TMPDIR:-/tmp}/sd-ai-command-pack-ci-paths.XXXXXX")"
+  paths_file="$(full_check_mktemp "sd-ai-command-pack-ci-paths.XXXXXX")"
+  REVIEW_LOCAL_TEMP_FILES+=("$paths_file")
   collect_current_changed_paths "$paths_file"
 
   local -a changed_paths=()

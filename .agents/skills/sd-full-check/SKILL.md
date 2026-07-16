@@ -12,8 +12,16 @@ every-edit requirement.
 The canonical implementation is:
 
 ```bash
+bash scripts/sd-ai-command-pack-toolchain.sh doctor
 bash scripts/sd-ai-command-pack-full-check.sh
 ```
+
+Run the toolchain doctor once and retain its selected Python and project-check
+report. The doctor does not execute inferred project checks. If the helper is
+missing, report that the pack should be reinstalled instead of trying raw
+interpreters in sequence. Route dependency-sensitive ad hoc Python checks
+through `bash scripts/sd-ai-command-pack-toolchain.sh run-python
+--require-module <name> -- <arguments>`.
 
 ## What It Does
 
@@ -99,12 +107,17 @@ paths, and deprecated fallbacks.
 - `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`: explicit PR body text for tooling/generated
   and PR-body scope checks in local or CI contexts where `gh pr view` should not
   be used.
+- `REVIEW_PREFLIGHT_PR_BODY`: deprecated compatibility fallback for older
+  repos; honored through `0.15.x` and scheduled for removal in `0.16.0`.
 
 ## Expected Report
 
 Report:
 
-- Whether deterministic checks passed.
+- Project checks: configured command or reported candidates, and which project
+  checks actually ran.
+- Pack full-check: whether deterministic checks passed.
+- Optional AI review: whether Prism and Gito ran, skipped, or failed.
 - Whether repo-local review preflight ran, skipped, or failed.
 - Whether the post-install audit ran, skipped, or failed.
 - Which package-script checks ran or were skipped.

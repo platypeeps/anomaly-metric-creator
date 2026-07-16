@@ -1,0 +1,12 @@
+# SD Retro
+
+In this pack, SD means Software Delivery. A skill is a project-installed Markdown instruction bundle resolved by the agent's trusted installed-skill resolver.
+
+Run the Software Delivery (SD) retro workflow. Gather evidence from the session context, journal entries, and recent git history, compose a structured retrospective covering what broke, the root cause, why existing gates and tests missed it, and what limited the blast radius, record it as a journal entry via the session recorder, and present prevention candidates as consent-gated Trellis task proposals.
+
+1. Resolve the `sd-retro` skill by name using the agent's trusted skill discovery mechanism for installed skills.
+2. If that skill is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, or requires unavailable tools, stop and report the exact blocker.
+3. Use the skill as the primary instructions. It defines the fixed retrospective pipeline: evidence gathering, the fixed retro shape, the journal entry recorded via the session recorder with a `Retro: <topic>` title, prevention-candidate derivation, and the optional handoff of repeated patterns toward `sd-review-learnings`. Pass the `topic=...` argument through to the skill.
+4. Make no code changes, record the journal entry only via the session recorder, and never auto-create Trellis tasks: each prevention proposal requires explicit user consent before any task is created.
+5. If any evidence read, session recorder run, journal write, git command, or final validation fails, stop and report the command, exit status, and complete stdout/stderr output.
+6. End with the retrospective report in the skill's mandatory final-report format, with every mandatory section present.

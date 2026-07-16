@@ -15,11 +15,18 @@ import functools
 import json
 import os
 import re
-import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from subprocess import CompletedProcess
 from typing import Any
 
+from sd_ai_command_pack_lib import (
+    run_gh as run_gh_command,
+)
+from sd_ai_command_pack_lib import (
+    run_git as run_git_command,
+)
 
 DEFAULT_TARGET = Path("docs/review-learnings.md")
 MANAGED_START = "<!-- sd-review-learnings:start -->"
@@ -61,6 +68,47 @@ _CLASSIFY_WITH_DELIMITER_RE = re.compile(
 )
 _ALL_ZERO_GREP_RE = re.compile(r"grep\b[^#\n]*-qv\b[^#\n]*\^0\*\$")
 _LONG_OPTION_CASE_RE = re.compile(r"^\s*(--[a-z][a-z0-9-]*)\)")
+
+
+def default_text_file_mode(destination: Path) -> int:
+    if destination.exists():
+        return destination.stat().st_mode & 0o777
+    current_umask = os.umask(0)
+    try:
+        return 0o666 & ~current_umask
+    finally:
+        os.umask(current_umask)
+
+
+def atomic_write_text(
+    destination: Path,
+    content: str,
+    *,
+    errors: str = "strict",
+) -> None:
+    if destination.is_symlink():
+        raise OSError("target is a symlink")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(content.encode("utf-8", errors=errors))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.chmod(temporary_path, default_text_file_mode(destination))
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 @dataclasses.dataclass(frozen=True)
@@ -171,7 +219,7 @@ def _is_shell_like(path: str, repo_root: Path) -> bool:
     if not path.startswith(("scripts/", "benchmarks/", ".github/actions/")):
         return False
     text = _read_text(repo_root, path)
-    first_line = text.splitlines()[0] if text.splitlines() else ""
+    first_line = next(iter(text.splitlines()), "")
     return "bash" in first_line or " sh" in first_line or first_line.endswith("/sh")
 
 
@@ -217,9 +265,12 @@ def _scan_shell_and_workflow_lines(
 ) -> list[Finding]:
     findings: list[Finding] = []
     file_text_cache: dict[str, str] = {}
+    shell_like_cache: dict[str, bool] = {}
 
     for line in added_lines:
-        shell_like = _is_shell_like(line.path, repo_root)
+        if line.path not in shell_like_cache:
+            shell_like_cache[line.path] = _is_shell_like(line.path, repo_root)
+        shell_like = shell_like_cache[line.path]
         workflow = _is_workflow(line.path)
         if not shell_like and not workflow:
             continue
@@ -418,51 +469,41 @@ def extract_findings(
     return findings
 
 
-def _run_git(args: list[str], repo_root: Path, *, accept_one: bool = False) -> str:
-    result = subprocess.run(
-        ["git", *args],
+def _run_git(
+    args: list[str],
+    repo_root: Path,
+    *,
+    check: bool = True,
+    accept_one: bool = False,
+) -> CompletedProcess[str]:
+    result = run_git_command(
+        args,
         cwd=repo_root,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=60,
+        context=f"run git {' '.join(args)}",
     )
-    allowed = {0, 1} if accept_one else {0}
-    if result.returncode not in allowed:
-        raise RuntimeError(result.stderr.strip() or "git command failed")
-    return result.stdout
+    if check:
+        allowed = {0, 1} if accept_one else {0}
+        if result.returncode not in allowed:
+            raise RuntimeError(result.stderr.strip() or "git command failed")
+    return result
 
 
 def _git_diff(base_ref: str, repo_root: Path) -> str:
-    return _run_git(["diff", "--no-ext-diff", f"{base_ref}...HEAD"], repo_root)
+    return _run_git(["diff", "--no-ext-diff", f"{base_ref}...HEAD"], repo_root).stdout
 
 
 def _run_git_optional(args: list[str], repo_root: Path) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo_root,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=60,
-    )
+    result = _run_git(args, repo_root, check=False)
     if result.returncode != 0:
         return ""
     return result.stdout.strip()
 
 
 def _git_ref_exists(ref: str, repo_root: Path) -> bool:
-    result = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        cwd=repo_root,
+    result = _run_git(
+        ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        repo_root,
         check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=60,
     )
     return result.returncode == 0
 
@@ -490,24 +531,20 @@ def default_base_ref(repo_root: Path) -> str:
 
 
 def _git_untracked_paths(repo_root: Path) -> list[str]:
-    result = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    result = run_git_command(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
         cwd=repo_root,
-        check=False,
-        capture_output=True,
-        timeout=60,
+        context="run git ls-files for untracked paths",
     )
     if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="replace")
-        raise RuntimeError(stderr.strip() or "git ls-files failed")
-    decoded = result.stdout.decode("utf-8", errors="replace")
-    return [path for path in decoded.split("\0") if path]
+        raise RuntimeError(result.stderr.strip() or "git ls-files failed")
+    return [path for path in result.stdout.split("\0") if path]
 
 
 def _git_working_tree_diff(repo_root: Path) -> str:
     chunks = [
-        _run_git(["diff", "--no-ext-diff", "--cached"], repo_root),
-        _run_git(["diff", "--no-ext-diff"], repo_root),
+        _run_git(["diff", "--no-ext-diff", "--cached"], repo_root).stdout,
+        _run_git(["diff", "--no-ext-diff"], repo_root).stdout,
     ]
     for path in _git_untracked_paths(repo_root):
         target = repo_root / path
@@ -518,7 +555,7 @@ def _git_working_tree_diff(repo_root: Path) -> str:
                 ["diff", "--no-ext-diff", "--no-index", "--", os.devnull, path],
                 repo_root,
                 accept_one=True,
-            )
+            ).stdout
         )
     return "\n".join(chunk for chunk in chunks if chunk)
 
@@ -545,23 +582,39 @@ def _as_list(value: Any) -> list[Any]:
     return value
 
 
+def _dig(obj: Any, *keys: str) -> Any:
+    """Walk nested dict keys, returning None on any shape mismatch.
+
+    Skip-not-raise: an unexpected payload shape yields None so callers can
+    silently skip it, matching the tolerant GraphQL-descent contract.
+    """
+    for key in keys:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(key)
+    return obj
+
+
 def _one_line(text: str, *, limit: int = 220) -> str:
     collapsed = " ".join(text.split())
     if len(collapsed) <= limit:
         return collapsed
-    return collapsed[: limit - 1] + "..."
+    if limit <= 3:
+        return "." * limit
+
+    budget = limit - 3
+    candidate = collapsed[:budget].rstrip()
+    word_boundary = candidate.rfind(" ")
+    if word_boundary > 0:
+        candidate = candidate[:word_boundary].rstrip()
+    return candidate + "..."
 
 
 def _run_gh_stdout(args: list[str], repo_root: Path) -> str:
-    result = subprocess.run(
-        ["gh", *args],
+    result = run_gh_command(
+        args,
         cwd=repo_root,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=120,
+        context=f"run gh {' '.join(args)}",
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "gh command failed")
@@ -655,21 +708,14 @@ query($owner:String!, $name:String!, $number:Int!) {
             ],
             repo_root,
         )
-        if not isinstance(payload, dict):
-            continue
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            continue
-        repository = data.get("repository")
-        if not isinstance(repository, dict):
-            continue
-        pull_request = repository.get("pullRequest")
-        if not isinstance(pull_request, dict):
-            continue
-        threads = pull_request.get("reviewThreads")
-        if not isinstance(threads, dict):
-            continue
-        thread_nodes = threads.get("nodes")
+        thread_nodes = _dig(
+            payload,
+            "data",
+            "repository",
+            "pullRequest",
+            "reviewThreads",
+            "nodes",
+        )
         if not isinstance(thread_nodes, list):
             continue
         for thread in thread_nodes:
@@ -767,7 +813,7 @@ def update_target(target: Path, block: str, *, dry_run: bool) -> str:
     if dry_run:
         return updated
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(updated, encoding="utf-8", errors="strict")
+    atomic_write_text(target, updated, errors="strict")
     return updated
 
 
@@ -851,7 +897,6 @@ def main(argv: list[str] | None = None) -> int:
     except (
         OSError,
         RuntimeError,
-        subprocess.TimeoutExpired,
         json.JSONDecodeError,
     ) as exc:
         print(f"[sd-review-learnings:findings] {exc}", file=sys.stderr)
@@ -872,7 +917,6 @@ def main(argv: list[str] | None = None) -> int:
         OSError,
         RuntimeError,
         TypeError,
-        subprocess.TimeoutExpired,
         json.JSONDecodeError,
     ) as exc:
         print(f"[sd-review-learnings:github] {exc}", file=sys.stderr)

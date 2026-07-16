@@ -3,7 +3,7 @@
   "title": "SD AI Command Pack Prism Rules",
   "type": "object",
   "required": ["focus", "severityOverrides", "required"],
-  "additionalProperties": true,
+  "additionalProperties": false,
   "properties": {
     "$schema": {
       "type": "string"
@@ -30,7 +30,7 @@
       "items": {
         "type": "object",
         "required": ["id", "text"],
-        "additionalProperties": true,
+        "additionalProperties": false,
         "properties": {
           "id": {
             "type": "string",

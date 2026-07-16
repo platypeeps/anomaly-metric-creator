@@ -17,6 +17,9 @@ review loop.
 
 - Require `gh` and an authenticated GitHub session before creating or resolving
   a pull request: `gh --version` and `gh auth status`.
+- Run the pack toolchain doctor once before dependency-sensitive work. Keep its
+  selected Python and project-check report for this command run; do not retry
+  raw interpreters in sequence after an authoritative candidate fails.
 - Resolve both `sd-update-spec` and `sd-review-pr` by name using the agent's
   trusted installed-skill resolver before starting. Stop if either skill is
   missing, unreadable, empty, resolves to more than one candidate, fails
@@ -28,7 +31,7 @@ review loop.
   loops, CI handling, and final finish-work behavior.
 - Do not run Prism, Gito, or other local review providers directly from this
   command. Those tools run only when the user explicitly invokes
-  `sd-full-check`, `sd-review-local`, or `sd-review-local-all`; `sd-review-pr`
+  `sd-full-check` or `sd-review-local` (optionally with `all`); `sd-review-pr`
   disables Prism and Gito for its command-owned local gate.
 - Do not create a PR from the repository default branch. If the current branch
   is the default branch, create a feature branch before continuing. Prefer
@@ -51,11 +54,18 @@ review loop.
 ## Step 1: Resolve Prerequisites And Branch State
 
 ```bash
+bash scripts/sd-ai-command-pack-toolchain.sh doctor
 gh --version
 gh auth status
 git status -sb
 CURRENT_BRANCH=$(git branch --show-current)
 ```
+
+If the toolchain helper is missing, stop and report that the pack should be
+reinstalled. When an ad hoc Python validation needs project modules, invoke it
+through `bash scripts/sd-ai-command-pack-toolchain.sh run-python
+--require-module <name> -- <arguments>` instead of trying multiple Python
+executables.
 
 Resolve the base branch without hardcoding `origin/main`:
 
@@ -229,6 +239,9 @@ Report:
 - Push target and result.
 - PR number, URL, base branch, and whether the PR was created or reused.
 - Confirmation that the workflow handed off to `sd-review-pr`.
-- `sd-review-pr` outcome: local full-check result, configured remote reviewer
-  rounds, comments fixed or rebutted, CI status, finish-work actions, and final
+- Project checks: configured command or reported candidates, and which project
+  checks actually ran.
+- Pack full-check: deterministic gate result with Prism/Gito disabled.
+- Optional AI review: configured remote-review rounds and outcome.
+- Comments fixed or rebutted, CI status, finish-work actions, and final
   working-tree state.

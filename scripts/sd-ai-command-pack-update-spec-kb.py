@@ -15,15 +15,19 @@ state stay out.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import filecmp
+import functools
 import os
 import shlex
 import shutil
-import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+from sd_ai_command_pack_lib import CommandError
+from sd_ai_command_pack_lib import git_stdout as run_git_stdout
 
 KB_DIR = Path(".obsidian-kb")
 LEGACY_KB_DASHBOARD = Path("Dashboard.md")
@@ -131,18 +135,22 @@ EXCLUDED_PARTS = {
 }
 
 
+def _git_stdout(root: Path | None, *args: str) -> str | None:
+    try:
+        return run_git_stdout(
+            list(args),
+            cwd=root,
+            errors="surrogateescape",
+            context=f"run git {' '.join(args)}",
+        )
+    except CommandError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
 def repo_root() -> Path:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        text=True,
-        encoding="utf-8",
-        errors="surrogateescape",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        return Path(result.stdout.strip()).resolve()
+    toplevel = _git_stdout(None, "rev-parse", "--show-toplevel")
+    if toplevel is not None:
+        return Path(toplevel).resolve()
     print(
         "warning: not inside a git repository; using the current directory as "
         "the repo root.",
@@ -152,20 +160,7 @@ def repo_root() -> Path:
 
 
 def git_remote_url(root: Path) -> str | None:
-    result = subprocess.run(
-        ["git", "config", "--get", "remote.origin.url"],
-        cwd=root,
-        text=True,
-        encoding="utf-8",
-        errors="surrogateescape",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    remote = result.stdout.strip()
-    return remote or None
+    return _git_stdout(root, "config", "--get", "remote.origin.url")
 
 
 def github_repository_url_from_remote(remote_url: str | None) -> str | None:
@@ -224,9 +219,7 @@ def legacy_generated_marker(path: Path) -> str | None:
 
 
 def is_managed_kb_category_path(path: Path) -> bool:
-    return bool(path.parts) and path.parts[0] in {
-        title for _, title, _ in KB_CATEGORIES
-    }
+    return bool(path.parts) and path.parts[0] in KB_CATEGORY_TITLES
 
 
 def is_legacy_source_parent(path: Path, legacy_sources: set[Path]) -> bool:
@@ -364,6 +357,47 @@ def is_project_manifest(path: Path) -> bool:
     return path.name in PROJECT_MANIFESTS
 
 
+def default_text_file_mode(destination: Path) -> int:
+    if destination.exists():
+        return destination.stat().st_mode & 0o777
+    current_umask = os.umask(0)
+    try:
+        return 0o666 & ~current_umask
+    finally:
+        os.umask(current_umask)
+
+
+def atomic_write_text(
+    destination: Path,
+    content: str,
+    *,
+    errors: str = "strict",
+) -> None:
+    if destination.is_symlink():
+        raise OSError("target is a symlink")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(content.encode("utf-8", errors=errors))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.chmod(temporary_path, default_text_file_mode(destination))
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 def is_relevant(path: Path) -> bool:
     return (
         is_named_doc(path)
@@ -481,31 +515,29 @@ def ignore_change_state(*, local: bool, had_existing_entry: bool) -> str:
     return f"local-exclude {status}" if local else status
 
 
+def ignore_conflict_state(path: Path, *, local: bool) -> str:
+    status = "local-exclude conflict" if local else "conflict"
+    return f"{status}: {path.name} is a symlink"
+
+
 def ensure_ignore_file(path: Path, *, local: bool) -> str:
+    if path.is_symlink():
+        return ignore_conflict_state(path, local=local)
     original = read_text_if_present(path) or ""
     merged, had_existing_entry = merge_kb_ignore_block(original)
     if merged == original:
         return ignore_present_state(local=local)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(merged, encoding="utf-8", errors="surrogateescape")
+    atomic_write_text(path, merged, errors="surrogateescape")
     return ignore_change_state(local=local, had_existing_entry=had_existing_entry)
 
 
 def git_info_exclude_path(root: Path) -> Path | None:
-    result = subprocess.run(
-        ["git", "rev-parse", "--git-path", "info/exclude"],
-        cwd=root,
-        text=True,
-        encoding="utf-8",
-        errors="surrogateescape",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
+    stdout = _git_stdout(root, "rev-parse", "--git-path", "info/exclude")
+    if stdout is None:
         return None
-    path = Path(result.stdout.strip())
+    path = Path(stdout)
     if not path.is_absolute():
         path = root / path
     return path
@@ -529,6 +561,8 @@ def ensure_gitignore(root: Path) -> str:
 
 
 def planned_ignore_file_state(path: Path, *, local: bool) -> str:
+    if path.is_symlink():
+        return ignore_conflict_state(path, local=local)
     original = read_text_if_present(path) or ""
     merged, had_existing_entry = merge_kb_ignore_block(original)
     if merged == original:
@@ -572,7 +606,27 @@ def legacy_generated_symlink_count(root: Path) -> int:
     return count
 
 
-def collect_copy_state(root: Path, sources: list[Path]) -> tuple[int, int, list[str]]:
+# KB copy-state deviation kinds. `dry-run` previews surface only `conflict`
+# entries — refresh cannot auto-resolve user-owned symlinks, wrong link
+# targets, or occupied non-files — while it would bring missing/stale/legacy
+# entries current on its own; `--check` reports every kind. Classifying by
+# `kind` instead of matching the human-readable message suffix keeps the
+# displayed text free to change without silently shifting classification.
+ISSUE_CONFLICT = "conflict"
+ISSUE_MISSING = "missing"
+ISSUE_STALE = "stale"
+ISSUE_LEGACY_SYMLINK = "legacy_symlink"
+
+
+@dataclasses.dataclass(frozen=True)
+class CopyIssue:
+    kind: str
+    message: str
+
+
+def collect_copy_state(
+    root: Path, sources: list[Path]
+) -> tuple[int, int, list[CopyIssue]]:
     kb_root = root / KB_DIR
     entries = source_destination_entries(sources)
     wanted = {destination for _, destination in entries}
@@ -580,7 +634,7 @@ def collect_copy_state(root: Path, sources: list[Path]) -> tuple[int, int, list[
     generated = generated_kb_files(root)
     present = 0
     stale = 0
-    issues: list[str] = []
+    issues: list[CopyIssue] = []
 
     if kb_root.exists():
         for candidate in sorted(kb_root.rglob("*"), reverse=True):
@@ -601,24 +655,52 @@ def collect_copy_state(root: Path, sources: list[Path]) -> tuple[int, int, list[
         if copy.is_symlink():
             current = os.readlink(copy)
             if os.path.isabs(current) or not is_within(copy.parent / current, root):
-                issues.append(f"{relative_destination.as_posix()} has a user-owned symlink")
+                issues.append(
+                    CopyIssue(
+                        ISSUE_CONFLICT,
+                        f"{relative_destination.as_posix()} has a user-owned symlink",
+                    )
+                )
                 continue
             target = expected_link_target(root, relative_source, relative_destination)
             if current == target:
                 issues.append(
-                    f"{relative_destination.as_posix()} is a legacy generated symlink"
+                    CopyIssue(
+                        ISSUE_LEGACY_SYMLINK,
+                        f"{relative_destination.as_posix()} is a legacy generated symlink",
+                    )
                 )
             else:
-                issues.append(f"{relative_destination.as_posix()} points at {current!r}")
+                issues.append(
+                    CopyIssue(
+                        ISSUE_CONFLICT,
+                        f"{relative_destination.as_posix()} points at {current!r}",
+                    )
+                )
         elif copy.exists():
             if not copy.is_file():
-                issues.append(f"{relative_destination.as_posix()} is occupied by a non-file")
+                issues.append(
+                    CopyIssue(
+                        ISSUE_CONFLICT,
+                        f"{relative_destination.as_posix()} is occupied by a non-file",
+                    )
+                )
             elif filecmp.cmp(source, copy, shallow=False):
                 present += 1
             else:
-                issues.append(f"{relative_destination.as_posix()} is not current")
+                issues.append(
+                    CopyIssue(
+                        ISSUE_STALE,
+                        f"{relative_destination.as_posix()} is not current",
+                    )
+                )
         else:
-            issues.append(f"{relative_destination.as_posix()} is missing")
+            issues.append(
+                CopyIssue(
+                    ISSUE_MISSING,
+                    f"{relative_destination.as_posix()} is missing",
+                )
+            )
 
     return present, stale, issues
 
@@ -795,6 +877,7 @@ KB_CATEGORY_BY_KEY = {
     key: (title, description) for key, title, description in KB_CATEGORIES
 }
 KB_CATEGORY_ORDER = {key: index for index, (key, _, _) in enumerate(KB_CATEGORIES)}
+KB_CATEGORY_TITLES = frozenset(title for _, title, _ in KB_CATEGORIES)
 PLATFORM_DESTINATION_PREFIXES = {
     ".agent": "antigravity",
     ".agents": "codex",
@@ -928,7 +1011,10 @@ def kb_destination_for_source(source: Path) -> Path:
     return Path(category_folder_for_source(source)) / destination_filename_for_source(source)
 
 
-def source_destination_entries(sources: list[Path]) -> list[tuple[Path, Path]]:
+@functools.lru_cache(maxsize=1)
+def _source_destination_entries_cached(
+    sources: tuple[Path, ...],
+) -> tuple[tuple[Path, Path], ...]:
     used: set[Path] = set()
     entries: list[tuple[Path, Path]] = []
     for source in sources:
@@ -942,7 +1028,14 @@ def source_destination_entries(sources: list[Path]) -> list[tuple[Path, Path]]:
             counter += 1
         used.add(candidate)
         entries.append((source, candidate))
-    return entries
+    return tuple(entries)
+
+
+def source_destination_entries(sources: list[Path]) -> list[tuple[Path, Path]]:
+    # Pure in `sources`; memoized so the dashboard/overview/copy paths that each
+    # recompute it per run share one computation. Return a fresh list so callers
+    # can never mutate the cached tuple.
+    return list(_source_destination_entries_cached(tuple(sources)))
 
 
 def source_destination_map(sources: list[Path]) -> dict[Path, Path]:
@@ -1109,10 +1202,11 @@ def write_generated_markdown(
                 "conflict",
                 f"{relative_path.as_posix()} exists and is not generated by this tool",
             )
-        destination.write_text(content, encoding="utf-8", errors="surrogateescape")
+        atomic_write_text(destination, content, errors="surrogateescape")
         return "updated", None
 
-    destination.write_text(content, encoding="utf-8", errors="surrogateescape")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(destination, content, errors="surrogateescape")
     return "created", None
 
 
@@ -1309,11 +1403,7 @@ def dry_run(root: Path) -> int:
         sources,
     )
     conflicts = [
-        issue
-        for issue in copy_issues
-        if not issue.endswith(" is missing")
-        and not issue.endswith(" is not current")
-        and not issue.endswith(" is a legacy generated symlink")
+        issue.message for issue in copy_issues if issue.kind == ISSUE_CONFLICT
     ]
     if dashboard_conflict is not None:
         conflicts.append(dashboard_conflict)
@@ -1351,7 +1441,7 @@ def check_current(root: Path) -> int:
         sources,
     )
 
-    conflicts = list(copy_issues)
+    conflicts = [issue.message for issue in copy_issues]
     if dashboard_conflict is not None:
         conflicts.append(dashboard_conflict)
     if overview_conflict is not None:
@@ -1396,6 +1486,8 @@ def refresh(root: Path) -> int:
             root,
             sources,
         )
+        if "conflict" in gitignore_state:
+            conflicts.append(f"ignore entry could not be updated: {gitignore_state}")
         if dashboard_conflict is not None:
             conflicts.append(dashboard_conflict)
         if overview_conflict is not None:
