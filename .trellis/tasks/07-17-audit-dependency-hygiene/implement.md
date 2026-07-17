@@ -1,0 +1,48 @@
+# Dependency hygiene — Implementation Plan
+
+## Execution Order
+
+1. Branch from `main`. A-043 verification first (it decides the diff):
+   scratch-remove the npm dependency, launch OpenCode against the repo,
+   record tolerate/require. Apply the matching branch (remove dependency
+   and drop the npm Dependabot entry, or pin the exact dependency, commit
+   the lockfile, and keep the entry).
+2. A-044: "Pinned tools bump" checklist subsection in
+   docs/DEVELOPMENT_CYCLE.md; cross-reference from the pre-PR CI-hygiene
+   heading (CLAUDE.md + template stay untouched unless a heading is
+   added — it is not; this is body guidance under the existing heading).
+3. A-045: identify the canonical security-skill copy; add the provenance
+   header (upstream URL, vendored ref, refresh procedure); fan out to the
+   five copies; README sentence. If pack-owned → repo-docs note and
+   paste-ready upstream suggestion instead.
+4. Flip A-043/A-044/A-045 → `fixed` in the ledger (same PR).
+5. Draft PR → checklist (dependency-hygiene heading) → ready → merge.
+
+## Validation Plan
+
+```bash
+grep -rn "opencode-ai/plugin" . --exclude-dir=.git      # per chosen branch
+ls .opencode/*lock* 2>/dev/null                          # pin branch only
+# full-tree hash per copy dir (SKILL.md + agents/*, LICENSE.txt, references/* …), not just SKILL.md:
+rg --files -g 'SKILL.md' | rg security-best-practices | xargs -n1 dirname | sort -u | while IFS= read -r d; do
+  hash="$(cd "$d" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+  printf '%s  %s\n' "$hash" "$d"
+done   # all 5 aggregate hashes identical; NUL-delimited hashing keeps path handling robust
+.venv/bin/pytest -m "not heavy" -n 2   # cheap sanity; no code paths touched
+.venv/bin/pre-commit run --all-files
+```
+
+## Documentation And Spec Updates
+
+- docs/DEVELOPMENT_CYCLE.md (bump checklist), README (skill provenance
+  sentence + none/updated npm mention).
+
+## Review Notes
+
+- Lead the PR description with the OpenCode verification transcript — the
+  whole A-043 decision hangs on it.
+
+## Follow-Ups
+
+- If the pin-branch was taken: consider folding the lockfile into the
+  pack-sync automation (ci-cadence PR 3) later.
