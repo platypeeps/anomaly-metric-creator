@@ -24,7 +24,8 @@ Quick links:
 - `.agents/skills/sd-continue/SKILL.md`: Codex-visible Trellis continue wrapper.
 - `.agents/skills/sd-finish-work/SKILL.md`: Codex-visible Trellis finish-work wrapper.
 - `.agents/skills/sd-create-pr/SKILL.md`: spec-refresh, commit, push, PR
-  creation/reuse, and PR-review orchestration workflow.
+  creation/reuse, and PR-review orchestration workflow; custom Markdown bodies
+  are materialized literally and passed to GitHub CLI with `--body-file`.
 - `.agents/skills/sd-work-backlog/SKILL.md`: sequential Trellis backlog work
   loop that delegates PR/review/cleanup to the existing SD commands.
 - `.agents/skills/sd-work-designs/SKILL.md`: Trellis planning loop that adds

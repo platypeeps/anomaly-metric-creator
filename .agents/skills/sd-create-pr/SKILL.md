@@ -44,6 +44,11 @@ review loop.
   files; in non-interactive sessions, stop by default.
 - Do not create a duplicate PR. If the current branch already has an open PR,
   reuse it and continue into `sd-review-pr`.
+- Never pass generated or user-provided Markdown through `gh pr create --body`
+  or `gh pr edit --body` in a shell command. Markdown commonly contains
+  backticks, dollar signs, and command-substitution syntax. Materialize the
+  exact body in a temporary regular file with a literal file-writing API, pass
+  it through `--body-file`, and remove the file after the GitHub command.
 - Do not assume the base branch is `main`. Detect the repository default branch
   with GitHub metadata when available, and let
   `SD_AI_COMMAND_PACK_CREATE_PR_BASE` override it when the target repo needs a
@@ -197,9 +202,23 @@ gh pr view --json number,url,headRefName,baseRefName,state
 ```
 
 If an open PR exists, reuse it. If no PR exists, create one against the detected
-base branch. Prefer a user-provided title/body when supplied; otherwise let
-GitHub CLI fill from the branch commits and then review the generated PR text
-for placeholders or misleading scope before submitting.
+base branch. Prefer a user-provided title/body when supplied. For a custom or
+generated body, write the exact Markdown to a temporary file without shell
+evaluation: do not use `eval`, command substitution, an unquoted heredoc, or an
+inline `--body` argument. Then pass only the temporary path to GitHub CLI:
+
+```bash
+PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/sd-ai-command-pack-pr-body.XXXXXX")
+cleanup_pr_body() { rm -f -- "$PR_BODY_FILE"; }
+trap cleanup_pr_body EXIT HUP INT TERM
+
+# Populate "$PR_BODY_FILE" through the agent or platform's literal file API.
+gh pr create --base "$BASE_BRANCH" --title "$PR_TITLE" --body-file "$PR_BODY_FILE"
+```
+
+Use the same `--body-file` rule when editing an existing PR body. If no custom
+body is needed, let GitHub CLI fill from the branch commits and review the
+generated PR text for placeholders or misleading scope after creation:
 
 ```bash
 gh pr create --base "$BASE_BRANCH" --fill

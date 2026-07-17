@@ -64,6 +64,7 @@ PACK_FILE_PATTERNS = [
     "docs/SD_AI_COMMAND_PACK.md",
     "scripts/sd-ai-command-pack-*",
     "scripts/sd_ai_command_pack_lib.py",
+    "scripts/sd_ai_command_pack_fleet_lib.py",
 ]
 
 LOCAL_ALLOWED_PACK_FILES = {
@@ -97,7 +98,9 @@ SOURCE_ONLY_ALLOWED_PACK_FILES = {
     ".trae/commands/sd-fleet-refresh.md",
     ".trae/skills/sd-fleet-refresh/SKILL.md",
     ".zcode/commands/sd/fleet-refresh.md",
+    "scripts/sd-ai-command-pack-fleet-candidate-check.py",
     "scripts/sd-ai-command-pack-fleet-preflight.py",
+    "scripts/sd_ai_command_pack_fleet_lib.py",
 }
 
 PROVENANCE_NEVER_VOUCHED_TARGETS = {
