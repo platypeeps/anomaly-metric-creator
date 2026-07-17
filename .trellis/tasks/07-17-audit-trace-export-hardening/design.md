@@ -13,16 +13,24 @@ rejection with no compat story (trace_bundle.py:57-67).
 
 ## Proposal
 
-- **A-018 — formula neutralization:** in `write_trace_bundle_csv`,
-  apostrophe-prefix any cell in the four free-text columns (`raw_input`,
-  stdout preview, stderr preview, `guessed_intent`) whose first char is
-  `=`, `+`, `-`, `@`, tab, or CR (the OWASP CSV-injection set). Helper
-  `_neutralize_csv_cell(value)` with a docstring naming the threat;
-  applied at the export boundary only — stored traces stay verbatim
-  (the store is data; the CSV is the attack surface). Structured columns
-  (timestamps, exit codes, fingerprints) are shape-constrained and stay
-  raw. Note: `-` prefixed negative-number-looking strings in free-text
-  columns get prefixed too — correctness over cosmetics; document it.
+- **A-018 — formula neutralization:** apply `_neutralize_csv_cell(value)`
+  (apostrophe-prefix any value whose first char is `=`, `+`, `-`, `@`,
+  tab, or CR — the OWASP CSV-injection set) to **every** cell
+  `write_trace_bundle_csv` writes, not a named subset. The review flagged
+  that many written fields beyond the obvious free-text ones are
+  user-influenced — `raw_input`, argv / parsed_flags JSON, resource
+  identifiers, `fingerprint`, `matched_rule_id`, stdout/stderr previews,
+  `guessed_intent` (see `trace_bundle.py:185-234`) — and injection
+  triggers from any cell, so universal neutralization at the writer
+  boundary is the only enumeration-proof posture (a subset allowlist
+  rots the moment a new user-influenced column is added). The helper is
+  idempotent and cheap; genuinely constrained numeric cells (`0`/`1`
+  exit codes, epoch-ms timestamps) never start with a trigger char and
+  pass through unchanged, while a legitimately `-`-prefixed value (a
+  negative exit code, a `-`-leading fingerprint) getting an apostrophe
+  is harmless in a debug export — correctness over cosmetics. Applied at
+  the export boundary only; stored traces stay verbatim (the store is
+  data; the CSV is the attack surface).
 - **A-019 — refuse `*`-without-auth:** `serve_main` (and
   `start_test_server` for parity) hard-errors on
   `--cors-allow-origin '*'` with no `--auth-token`. Rationale for
@@ -69,9 +77,11 @@ SECURITY.md, README, `.trellis/audit/ledger.md` flips
 
 ## Validation
 
-- A-018 tests: one trace per trigger char × four columns → all cells
-  prefixed; benign cells untouched; round-trip re-import unaffected
-  (import path reads JSON, not CSV — assert that stays true).
+- A-018 tests: one trace per trigger char across the user-influenced
+  columns (`raw_input`, argv/parsed_flags, resource ids, `fingerprint`,
+  `matched_rule_id`, stdout/stderr previews, `guessed_intent`) → all such
+  cells prefixed; genuinely-numeric cells untouched; round-trip re-import
+  unaffected (import path reads JSON, not CSV — assert that stays true).
 - A-019 tests: `*`+no-auth → parser error naming the remedy; `*`+token
   OK; explicit origin+no-auth OK.
 - `pytest tests/test_trace_bundle.py tests/test_server.py -n 0` + full
