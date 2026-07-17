@@ -13,7 +13,7 @@
   "createdAt": "2026-07-17",
   "completedAt": null,
   "branch": null,
-  "base_branch": "chore/audit-2026-07-17-backlog",
+  "base_branch": "main",
   "worktree_path": null,
   "commit": null,
   "pr_url": null,
