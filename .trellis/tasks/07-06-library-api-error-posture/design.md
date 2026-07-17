@@ -25,10 +25,15 @@ the implementing session is mechanical.
      carries it).
    - The three facades (`combine.py`, `otel.py`, `schema.py`) — one
      sentence each pointing at the posture.
-2. **Spec:** fill the `.trellis/spec/amc/backend/error-handling.md`
-   stub with the posture + rationale + the revisit trigger (a real
+2. **Spec:** record the posture + rationale + the revisit trigger (a real
    embedder requirement flips this to library-grade *inside* the
-   typed-boundaries work, A-008/009/010 — the PRD records why).
+   typed-boundaries work, A-008/009/010 — the PRD records why) in the
+   focused CLI-error spec `.trellis/spec/amc/backend/api-cli-server.md`.
+   `error-handling.md` is a compatibility **pointer** that forbids new
+   conventions ("Do not add new conventions here. Update the focused
+   specs above instead."), so it stays untouched — this corrects the
+   PRD's "fill the error-handling stub" phrasing, which predates that
+   stub's conversion to a pointer.
 3. **CLAUDE.md:** one short paragraph in the facade section stating the
    posture (so the next facade export follows the rule).
 
@@ -43,7 +48,8 @@ the implementing session is mechanical.
 
 `combine_impl.py`, `otel_stream.py`, `gauges_impl.py`, `otlp.py`,
 `csv_layout.py`, the three facade modules (docstrings only),
-`.trellis/spec/amc/backend/error-handling.md`, CLAUDE.md.
+`.trellis/spec/amc/backend/api-cli-server.md` (posture; `error-handling.md`
+stays a pointer, untouched), CLAUDE.md.
 
 ## Risks And Edge Cases
 

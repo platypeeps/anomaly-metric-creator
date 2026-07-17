@@ -22,7 +22,7 @@
 ```bash
 grep -rn "opencode-ai/plugin" . --exclude-dir=.git      # per chosen branch
 ls .opencode/*lock* 2>/dev/null                          # pin branch only
-shasum -a 256 $(rg --files -g 'SKILL.md' | rg security-best-practices)  # 5 identical
+sha256sum $(rg --files -g 'SKILL.md' | rg security-best-practices)  # 5 identical
 .venv/bin/pytest -m "not heavy" -n 2   # cheap sanity; no code paths touched
 .venv/bin/pre-commit run --all-files
 ```
