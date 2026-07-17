@@ -63,3 +63,22 @@ cleanups in the same pass.
 
 - Linked as a child of the decomposition epic so the epic cannot close
   with its own acceptance criterion silently unmet.
+
+## Added by 2026-07-17 audit (ledger items A-011, A-068)
+
+Two validator-posture findings from the 2026-07-17 repo audit
+(`.trellis/audit/ledger.md`) fold into this task's cleanup scope:
+
+- **A-011 (P3·M)** — `validate_output` returns bare prose strings; tests and
+  any machine consumer substring-parse sentences (38 `in`-assertions in
+  `tests/test_validate_output.py`). Introduce a frozen
+  `Violation(component, metric, kind, message)` whose `__str__` reproduces
+  today's prose byte-for-byte; CLI output unchanged; migrate tests to field
+  assertions incrementally.
+- **A-068 (P3·S)** — `_validate_no_unknown_files` hard-fails on foreign files
+  (`.DS_Store`, CI sidecars) that generation's pre-clean deliberately
+  tolerates. Exempt dotfiles / document a sidecar pattern, or downgrade
+  unknown-file to a warning in default mode; document the chosen posture next
+  to the pre-clean tolerance note.
+
+Closing this task should flip A-011 and A-068 to `fixed` in the audit ledger.
