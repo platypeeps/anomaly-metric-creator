@@ -63,5 +63,7 @@ docs, README, `.trellis/audit/ledger.md` flips (A-043/A-044/A-045).
 - OpenCode launch transcript (A-043 branch decision evidence).
 - `grep -rn "opencode-ai/plugin"` returns nothing (remove branch) or a
   pinned entry + lockfile (pin branch).
-- Five-copy identity check: `sha256sum` over the copies in the PR.
+- Five-copy identity check: a full-tree `sha256sum` aggregate per copy
+  directory (every file — SKILL.md, `agents/*`, `LICENSE.txt`,
+  `references/*` — not just SKILL.md), asserting all five aggregates match.
 - Full suite + pre-commit (docs-only otherwise).

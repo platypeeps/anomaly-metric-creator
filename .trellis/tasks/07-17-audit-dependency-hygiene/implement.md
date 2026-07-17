@@ -22,7 +22,10 @@
 ```bash
 grep -rn "opencode-ai/plugin" . --exclude-dir=.git      # per chosen branch
 ls .opencode/*lock* 2>/dev/null                          # pin branch only
-sha256sum $(rg --files -g 'SKILL.md' | rg security-best-practices)  # 5 identical
+# full-tree hash per copy dir (SKILL.md + agents/*, LICENSE.txt, references/* …), not just SKILL.md:
+for d in $(rg --files -g 'SKILL.md' | rg security-best-practices | xargs -n1 dirname | sort -u); do
+  printf '%s  %s\n' "$(cd "$d" && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)" "$d"
+done   # all 5 aggregate hashes identical
 .venv/bin/pytest -m "not heavy" -n 2   # cheap sanity; no code paths touched
 .venv/bin/pre-commit run --all-files
 ```
