@@ -5,8 +5,8 @@
 1. Branch from `main`. A-018: `_neutralize_csv_cell` helper (idempotent,
    OWASP char set) applied to **every** cell `write_trace_bundle_csv`
    writes (enumeration-proof; not a named subset — see design.md for why
-   the subset allowlist was rejected); tests per trigger-char × column matrix +
-   benign-cell and idempotency cases. Check the debug UI for client-side
+   the subset allowlist was rejected); tests per trigger-char × column
+   matrix, plus benign-cell and idempotency cases. Check the debug UI for client-side
    CSV building; file a follow-up chip if found, do not widen.
 2. A-019: `serve_main` + `start_test_server` gate on `*`-without-auth
    (grep suite callers first); parser-error wording per design; tests

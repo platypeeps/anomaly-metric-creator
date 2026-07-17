@@ -12,7 +12,7 @@
    added — it is not; this is body guidance under the existing heading).
 3. A-045: identify the canonical security-skill copy; add the provenance
    header (upstream URL, vendored ref, refresh procedure); fan out to the
-   five copies; README sentence. If pack-owned → repo-docs note +
+   five copies; README sentence. If pack-owned → repo-docs note and
    paste-ready upstream suggestion instead.
 4. Flip A-043/A-044/A-045 → `fixed` in the ledger (same PR).
 5. Draft PR → checklist (dependency-hygiene heading) → ready → merge.
