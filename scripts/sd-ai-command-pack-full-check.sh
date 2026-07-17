@@ -656,6 +656,36 @@ if version_bumped:
             "release changelog gate: manifest version bump has matching top heading "
             f"{top_release_heading!r}"
         )
+
+    candidate_command = [
+        sys.executable,
+        "scripts/sd-ai-command-pack-fleet-candidate-check.py",
+        "--check-ledger",
+    ]
+    try:
+        candidate_result = subprocess.run(
+            candidate_command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
+        errors.append(f"release candidate ledger check could not run: {exc}")
+    else:
+        candidate_detail = candidate_result.stdout.strip()
+        if candidate_result.returncode != 0:
+            suffix = f": {candidate_detail}" if candidate_detail else ""
+            errors.append(
+                "release candidate ledger drift: run "
+                "scripts/sd-ai-command-pack-fleet-candidate-check.py before "
+                f"merging the release{suffix}"
+            )
+        else:
+            print(candidate_detail)
 else:
     print("release changelog gate: manifest version unchanged")
 
@@ -663,6 +693,8 @@ var_re = re.compile(r"SD_AI_COMMAND_PACK_[A-Z0-9_]+")
 exempt = {
     # Internal test hook, intentionally undocumented.
     "SD_AI_COMMAND_PACK_FULL_CHECK_TEST_SOURCE",
+    # Source-only fleet candidate marker, never read by consumer payloads.
+    "SD_AI_COMMAND_PACK_CANDIDATE_CHECK",
     # Legacy rename hint prefixes emitted by the install audit, not env vars.
     "SD_AI_COMMAND_PACK_FULL_CHECK",
     "SD_AI_COMMAND_PACK_HOUSEKEEPING",
