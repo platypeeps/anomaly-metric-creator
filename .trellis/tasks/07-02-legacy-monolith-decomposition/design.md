@@ -133,6 +133,63 @@ early extractions touch this list.
 10. **Last:** `generation.py` + `topology_impl.py` — the RNG-order-critical
     core. Only after every hash has survived steps 1–9.
 
+## SD Work Designs Proposal — 2026-07-17
+
+Two decisions the Status section left open, now proposed (recorded here per
+the Status section's own instruction to "decide seam-vs-reorder here"):
+
+### Decision 1: step-8 seam-vs-reorder → **callback seam; keep sequence 8 → 9 → 10**
+
+Reordering step 9 before step 8 does **not** remove the need for a seam, so
+the reorder buys nothing:
+
+- Tests patch the registries on the **legacy namespace** (`amc.COMPONENTS`,
+  `amc.SCENARIOS`, …) and then call `parse_args`. If `cli_args.py` imported
+  a future `catalog.py` directly (`from .catalog import COMPONENTS`), the
+  name would bind at import time and a patch on `legacy.COMPONENTS` would be
+  invisible — `tests/test_cli_surface.py` would need edits, violating the
+  step-8 acceptance criterion ("passes unchanged, no test edits").
+- The callback seam (`_configure_cli_runtime(get_components=lambda:
+  COMPONENTS, …)` called from `legacy.py` at import) resolves the names in
+  legacy's namespace **at call time**, so monkeypatches stay visible with
+  zero test edits. This is byte-for-byte the precedent `schema_impl.py` /
+  `validate_impl.py` already established (documented in CLAUDE.md).
+- The ~14 plain config constants (`DEFAULT_*`, `MAX_*`, `SECONDS_PER_DAY`,
+  `START`, `SIGNAL_LEVELS`, `PREFLIGHT_CELL_CAP`, …) are never
+  monkeypatched (verify with one grep over `tests/` before relying on it at
+  implementation time) — pass them by value at configure time or move them
+  to a small shared leaf; either satisfies the one-way rule.
+
+Consequence: step 8 stays before step 9 and the two steps stay decoupled —
+step 9 landing later does not require revisiting the seam (the seam keeps
+pointing at legacy's namespace, which is where tests patch).
+
+### Decision 2 (recommendation, needs maintainer sign-off at epic close): end-state = **"dispatch + wiring only" with a recorded waiver**
+
+After steps 8–10, `legacy.py` retains `main()` (~590), `RunContext`,
+constants + emit registry + re-import wiring, and the resolution cluster
+(~395, destination unassigned). Proposal:
+
+- Assign the resolution cluster: scenario-resolution helpers
+  (`_resolve_scenarios`, `_apply_scenarios`,
+  `_apply_signal_level_and_count`) move to `scenarios_impl.py` in step 9
+  (they are scenario machinery; the section map already assigns that family
+  there); `_load_instance_config` moves with `models_impl.py` (it constructs
+  and validates `Instance` objects).
+- Even so, `main()` + `RunContext` + constants + the re-import wiring block
+  land around ~1,000 lines. Forcing <800 would require splitting `main()`
+  itself — a behavior-risky refactor outside this epic's verbatim-move
+  mandate. Recommend: keep the <800 cap for every **new** module, record an
+  explicit waiver for `legacy.py` as the dispatch/wiring root, and state the
+  accepted size in CLAUDE.md when the epic closes. Revisit only if a later
+  epic wants to decompose `main()` behaviorally.
+
+Child-task planning artifacts (design.md + implement.md for
+`07-02-decomp-cli-args`, `07-02-decomp-catalog-data`,
+`07-02-decomp-generation-topology`, `07-06-validate-impl-split-and-cleanup`)
+are being filled by the same 2026-07-17 planning pass; the epic-level
+execution order lives in this task's `implement.md`.
+
 ## Import-time validator ordering
 
 Validators that run at module import (`_validate_topology`,
