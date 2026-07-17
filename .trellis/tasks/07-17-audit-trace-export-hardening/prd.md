@@ -16,7 +16,7 @@ cross-origin reads; archived trace bundles have no version-compat story.
 ## Scope (ledger items)
 
 - A-018 — neutralize leading = + - @ tab CR in every user-influenced cell write_trace_bundle_csv emits (raw_input, argv/parsed_flags JSON, resource identifiers, fingerprint, matched_rule_id, stdout/stderr previews, guessed_intent — not just the obvious free-text ones); universal writer-boundary neutralization is enumeration-proof.
-- A-019 — refuse or warn on --cors-allow-origin '*' without --auth-token (or never emit * for rubric//v1/debug surfaces).
+- A-019 — refuse or warn on --cors-allow-origin '*' without --auth-token (or never emit `*` for rubric-bearing endpoints and the `/v1/debug/*` surfaces).
 - A-070 — decide + document trace-bundle version policy: N-1 compat reader or matching-tool-version archival guidance.
 
 ## Acceptance criteria
