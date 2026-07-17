@@ -70,7 +70,7 @@ refusing.
 `legacy.py` (emit token + writer call), a new `symptom_log.py` leaf
 (writer; reads CSVs via `csv_layout` primitives), registries,
 `server_mcp.py` + `server.py` (eval log-source dispatch),
-`tests/test_symptom_log.py` (+ hash locks), eval sweep updates,
+a new `test_symptom_log.py` (+ hash locks), eval sweep updates,
 README (+ artifact table), CLAUDE.md.
 
 ## Risks And Edge Cases

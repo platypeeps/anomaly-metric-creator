@@ -21,7 +21,7 @@ that assumes per-instance wiring fails loudly.
    shape.
 2. **CLAUDE.md:** extend the existing callback-wiring paragraph with
    two sentences (constraint + where the pin test lives).
-3. **The guard test** (`tests/test_registry_callback_singleton.py`):
+3. **The guard test** (new `test_registry_callback_singleton.py`):
    using the session `amc` fixture plus `conftest._load_amc()`'s
    fresh-copy mechanics (the documented pattern from
    test_correctness/test_determinism):
@@ -49,7 +49,7 @@ that assumes per-instance wiring fails loudly.
 
 `src/anomaly_metric_creator/schema_impl.py`,
 `src/anomaly_metric_creator/validate_impl.py` (docstrings), CLAUDE.md,
-new `tests/test_registry_callback_singleton.py`.
+the new `test_registry_callback_singleton.py`.
 
 ## Risks And Edge Cases
 

@@ -15,7 +15,7 @@
 4. Command mode: in the `kubectl get` renderer, when `--watch`/`-w` is
    set, append the note line and classify the trace `partial` with a
    matched-rule note.
-5. Tests (`tests/test_server_watch.py`, using `start_test_server` +
+5. Tests (new `test_server_watch.py`, using `start_test_server` +
    patched `_WATCH_POLL_SECONDS`): the six cases in design.md Validation.
 6. Docs: CLAUDE.md server paragraph, README kubectl notes (including the
    no-resume/resourceVersion caveat), spec file update.

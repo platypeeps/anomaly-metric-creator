@@ -13,7 +13,7 @@ disable the ground-truth wall.
 
 ## Proposal
 
-New focused file `tests/test_serve_main_wiring.py` (small-files rule; uses
+New focused file `test_serve_main_wiring.py` under `tests/` (small-files rule; uses
 the session `amc` fixture). Three tests, each running the real `serve_main`
 with patch points *below* the code under test:
 
@@ -61,7 +61,7 @@ via `amc.main(["--output-dir", d, "--interval-seconds", "3600", "--seed",
 
 ## Affected Files
 
-- `tests/test_serve_main_wiring.py` (new),
+- `test_serve_main_wiring.py` (new, under `tests/`),
 - `.trellis/audit/ledger.md` (flip A-020 → fixed).
 
 ## Risks And Edge Cases

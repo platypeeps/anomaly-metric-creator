@@ -2,7 +2,7 @@
 
 ## Execution Order
 
-1. Branch from `main`. Create `tests/test_serve_main_wiring.py` with a
+1. Branch from `main`. Create a new `test_serve_main_wiring.py` (under `tests/`) with a
    module-scoped tiny-artifacts fixture (`--interval-seconds 3600`, 24
    rows/component) built via `tmp_path_factory` + the session `amc`
    fixture.

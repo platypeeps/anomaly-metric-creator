@@ -61,7 +61,7 @@ Work items:
 
 ## Affected Files
 
-- `tests/test_server.py` (or a focused `tests/test_server_reset.py` —
+- `tests/test_server.py` (or a focused new `test_server_reset.py` —
   prefer the focused file; reuse `start_test_server`),
 - `src/anomaly_metric_creator/server.py` (only the additive `scope` field
   in the reset response, if absent),

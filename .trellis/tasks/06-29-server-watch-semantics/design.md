@@ -67,7 +67,7 @@ Two halves, both backed strictly by `resource_snapshot()` +
 - `src/anomaly_metric_creator/server_ops.py` (command-mode partial note +
   classification; possibly a tiny helper exposing per-object identity for
   diffing),
-- `tests/test_server.py` (or focused `tests/test_server_watch.py`),
+- `tests/test_server.py` (or focused new `test_server_watch.py`),
 - CLAUDE.md server section (one paragraph), README serve/kubectl notes,
   `.trellis/spec/amc/backend/api-cli-server.md`.
 

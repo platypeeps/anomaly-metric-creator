@@ -48,7 +48,7 @@ unsupported subresources stay rejected.
 `src/anomaly_metric_creator/server.py` (flag + load wiring),
 `src/anomaly_metric_creator/server_mutations.py` (serialize/hydrate +
 write hook), `tests/test_server.py` or a focused
-`tests/test_server_mutation_persistence.py`, README serve docs,
+`test_server_mutation_persistence.py` (new), README serve docs,
 `.trellis/spec/amc/backend/operations-security-logging.md`.
 
 ## Risks And Edge Cases

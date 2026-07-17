@@ -18,7 +18,7 @@ deterministic pacing test.
   role-name lint's exact `rstrip().endswith(...)` semantics. Exit
   contract 0/1/2 with wrapped IO (`path.exists()` before read → 2 on
   structural failure). Acceptance tests file
-  (`tests/test_test_resource_cost_lint.py`) mirroring the sibling lint
+  (a new `test_test_resource_cost_lint.py`) mirroring the sibling lint
   tests. Triage pass: fix or `allow`-annotate the two known in-tree
   sites (test_instances_per_component.py:144, test_combine.py:384) in
   the same PR. Wire: `.pre-commit-config.yaml` (tests/ file filter) —

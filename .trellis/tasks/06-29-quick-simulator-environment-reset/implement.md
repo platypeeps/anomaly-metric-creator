@@ -5,7 +5,7 @@
 1. Branch from `main`. Inspect the current reset handler response body and
    `resource_snapshot()` renders for clock-derived fields (design.md risk);
    pick byte-equality vs normalized comparison accordingly.
-2. Create `tests/test_server_reset.py` on `start_test_server`. Write the
+2. Create a new `test_server_reset.py` on `start_test_server`. Write the
    per-family contract tests (workload, created/deleted resources, events,
    Helm overlay, deleted pods) as mutate → reset → baseline-equal.
 3. Add the not-reset assertions (traces survive, clock/generation counters
