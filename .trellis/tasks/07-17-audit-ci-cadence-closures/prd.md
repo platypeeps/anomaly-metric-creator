@@ -35,3 +35,25 @@ several lints have no CI mirror; and the guards lane runs unpinned Python.
 - [ ] Each added mirror/lint has a test or contract anchor.
 - [ ] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).
+
+## Added by 2026-07-17 audit follow-up (session-discovered, no ledger id)
+
+`scripts/classify-ci-changes.sh` `is_lightweight_path()` lightweight-classifies
+`.trellis/spec/*`, `.trellis/tasks/*`, and `.trellis/workspace/*` (line ~106)
+but **not** `.trellis/audit/*`. Audit-artifact-only PRs (the report + ledger
+this audit produced) therefore fall out of the lightweight lane on path
+classification alone. This rides alongside A-049 (the sibling classifier gap
+for `.sd-ai-command-pack/*`): add `.trellis/audit/*` to the same
+lightweight-path case in the same pass.
+
+Note the diagnostic subtlety this correction records: an *auto-merge-armed* PR
+runs the full matrix regardless of paths (ci.yml `PR_AUTO_MERGE` / the
+`auto_merge_enabled` event force `full_ci_requested=true` — "auto-merge never
+lands on quick-lane evidence"), so this classifier line only changes the cost
+of an audit-doc PR that is **not** armed for auto-merge. It is a correctness
+tidy of the classifier, not the reason any armed PR paid the full matrix.
+
+Acceptance addendum:
+- [ ] `.trellis/audit/*` is lightweight-classified alongside the other
+      `.trellis/*` non-code paths, with a `tests/` assertion mirroring the
+      existing classifier cases.

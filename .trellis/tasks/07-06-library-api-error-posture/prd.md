@@ -71,3 +71,29 @@ through the package facades (`combine.py`, `otel.py`, `schema.py`):
 - Interacts with `07-02-structured-logging-in-generator` (both touch the
   "library code talking to the terminal" theme) — sequence them together
   or one after the other.
+
+## Decision (2026-07-17, sdelmas)
+
+**Chosen posture: CLI-internal.** The facade-exported functions are a
+CLI-internal surface, not a supported programmatic API. `SystemExit` deep
+in importable modules, unconditional combine-path stdout, and silent
+missing-CSV skips are all acceptable and will be *documented as such*
+rather than reworked.
+
+Rationale: this is a CLI-first tool (`Private :: Do Not Upload`, git-only
+install, `main()` is the only real entry point); there is no known
+programmatic embedder, so library-grade error handling is YAGNI at LOW
+severity. If a supported `import`-and-call API becomes a real requirement,
+revisit as library-grade — and do it inside the typed-boundaries audit
+work (`07-17-audit-typed-boundaries`, A-008/A-009/A-010), which already
+reshapes these exact signatures, to avoid double-churn.
+
+Execution now reduces to the CLI-internal arm of the requirements:
+- Document the process-oriented semantics in CLAUDE.md and in the
+  docstrings of the affected facade exports (`combine_logs_unified`,
+  `stream_otel_gauges`/`write_gauges_csv`, the `otlp`/`csv_layout`/
+  `combine_impl` SystemExit sites).
+- Fill the `.trellis/spec/amc/backend/error-handling.md` stub with this
+  posture + rationale so the next surface follows the same rule.
+- No code change; no golden-hash impact. The library-grade acceptance
+  bullet is now N/A.
