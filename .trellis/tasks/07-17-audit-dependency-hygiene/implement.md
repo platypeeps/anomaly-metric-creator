@@ -4,8 +4,9 @@
 
 1. Branch from `main`. A-043 verification first (it decides the diff):
    scratch-remove the npm dependency, launch OpenCode against the repo,
-   record tolerate/require. Apply the matching branch (remove + drop npm
-   Dependabot entry | pin exact + commit lockfile + keep entry).
+   record tolerate/require. Apply the matching branch (remove dependency
+   and drop the npm Dependabot entry, or pin the exact dependency, commit
+   the lockfile, and keep the entry).
 2. A-044: "Pinned tools bump" checklist subsection in
    docs/DEVELOPMENT_CYCLE.md; cross-reference from the pre-PR CI-hygiene
    heading (CLAUDE.md + template stay untouched unless a heading is
@@ -23,9 +24,10 @@
 grep -rn "opencode-ai/plugin" . --exclude-dir=.git      # per chosen branch
 ls .opencode/*lock* 2>/dev/null                          # pin branch only
 # full-tree hash per copy dir (SKILL.md + agents/*, LICENSE.txt, references/* …), not just SKILL.md:
-for d in $(rg --files -g 'SKILL.md' | rg security-best-practices | xargs -n1 dirname | sort -u); do
-  printf '%s  %s\n' "$(cd "$d" && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)" "$d"
-done   # all 5 aggregate hashes identical
+rg --files -g 'SKILL.md' | rg security-best-practices | xargs -n1 dirname | sort -u | while IFS= read -r d; do
+  hash="$(cd "$d" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+  printf '%s  %s\n' "$hash" "$d"
+done   # all 5 aggregate hashes identical; NUL-delimited hashing keeps path handling robust
 .venv/bin/pytest -m "not heavy" -n 2   # cheap sanity; no code paths touched
 .venv/bin/pre-commit run --all-files
 ```
