@@ -64,3 +64,30 @@ only because the fresh copies' registries are identical unless patched.
 
 - Surfaced while verifying the decomposition's callback pattern; the
   pattern itself was a good call — this task is about its one sharp edge.
+
+## Decision (2026-07-17, sdelmas)
+
+**Chosen posture: document + guard with a test** (not instance-keyed
+hardening). Keep the single last-writer-wins callback singleton; make its
+single-instance constraint explicit and pin the behavior so a future
+per-instance-dependent refactor fails loudly.
+
+Rationale: the hazard is latent (it only bites if a test monkeypatches
+`amc.TOPOLOGY` on the original module *after* a fresh-copy loader
+re-points the singleton, and today the fresh copies' registries are
+identical, so nothing diverges). The instance-keyed fix would thread a
+handle through `write_schema_json` / `validate_output`'s public
+signatures — the exact surface `07-17-audit-typed-boundaries` (A-002) is
+already reshaping — so hardening now means editing those signatures twice.
+Flip to instance-keying only if a future test/feature genuinely needs two
+live legacy instances with *different* registries.
+
+Execution now reduces to the document-and-guard arm:
+- State the single-instance constraint in the `schema_impl` /
+  `validate_impl` module docstrings and the CLAUDE.md callback-wiring
+  paragraph.
+- Add one focused test that demonstrates the last-writer-wins re-point
+  (fresh-copy loader re-points the shared instance) so a refactor
+  assuming per-instance wiring trips it.
+- `--dist loadfile` + memoized `conftest._load_amc()` unchanged; golden
+  hashes unchanged. The instance-keyed acceptance bullet is now N/A.
