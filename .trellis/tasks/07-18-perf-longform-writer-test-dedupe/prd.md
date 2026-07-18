@@ -5,9 +5,12 @@
 At N=3 the combine writer and the gauge writer produce **byte-identical**
 output — both route through `csv_layout.write_long_form_merge`. The suite
 proves this with two identical hash constants, then spends ~105s locally
-(~200s in CI) writing a second 1.5 GB file and re-checking the same
-structural invariants over it. Once the two hashes are asserted equal,
-every structural property of one file transfers to the other for free.
+writing a second 1.5 GB file and re-checking the same structural invariants
+over it. Once the two hashes are asserted equal, every structural property
+of one file transfers to the other for free.
+
+Of that ~105s, **~74s is recoverable** — the ~31s write itself must stay
+(see the table below). The recoverable figure is the one to track.
 
 ## Measurement context
 

@@ -9,11 +9,13 @@ structural invariants by scanning the second 1.5 GB copy three more times.
 
 ## Correction to the PRD estimate
 
-The PRD claims ~105s local / ~200s CI. **That over-counts.** It includes the
-30.84s `n3_one_day_combine_run` setup, which is the `combine_logs` call that
-produces the file — and that call is irreducible if the suite is to keep
-asserting the combine writer's own output bytes, which it should (combine is
-a separate entry point with its own dispatch and autodiscovery).
+An earlier draft of this PRD claimed ~105s local / ~200s CI as the saving.
+**That over-counted.** It included the 30.84s `n3_one_day_combine_run`
+setup, which is the `combine_logs` call that produces the file — and that
+call is irreducible if the suite is to keep asserting the combine writer's
+own output bytes, which it should (combine is a separate entry point with
+its own dispatch and autodiscovery). The PRD now carries the corrected
+figure; this section records why it changed.
 
 The recoverable cost is the three redundant full-file scans:
 
