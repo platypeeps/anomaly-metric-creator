@@ -761,13 +761,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-06-validate-impl-split-and-cleanup/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-09-multi-instance-dst-splice-boundary/
       check.jsonl
       design.md
@@ -1137,6 +1130,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         07-06-uv-locked-ci-enforcement/
           check.jsonl
           implement.jsonl
+          prd.md
+          task.json
+        07-06-validate-impl-split-and-cleanup/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
           prd.md
           task.json
   workspace/

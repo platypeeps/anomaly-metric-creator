@@ -1486,6 +1486,49 @@ def test_filter_windows_for_pair_keeps_only_relevant(amc):
     )
 
 
+def test_filter_windows_for_pair_uses_schema_topology_snapshot(amc):
+    """Validation filters against schema topology, not later live edges."""
+    import datetime
+
+    from anomaly_metric_creator.validate_topology import (
+        _filter_windows_for_pair as filter_windows_for_pair,
+    )
+
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    delta = datetime.timedelta(seconds=60)
+    source_window = (base, base + delta, "apigateway", "requests_per_sec")
+    target_window = (
+        base + delta,
+        base + 2 * delta,
+        "database",
+        "queries_per_sec",
+    )
+    live_only_upstream_window = (
+        base + 2 * delta,
+        base + 3 * delta,
+        "cacheservice",
+        "cache_hits",
+    )
+    windows = [source_window, target_window, live_only_upstream_window]
+    schema_topology = {
+        "apigateway": [{"target": "database"}],
+        "cacheservice": [],
+    }
+
+    kept = filter_windows_for_pair(
+        windows,
+        "apigateway", "requests_per_sec",
+        "database", "queries_per_sec",
+        topology=schema_topology,
+        topology_load_metrics=amc._TOPOLOGY_LOAD_METRICS,
+    )
+
+    assert kept == [
+        (source_window[0], source_window[1]),
+        (target_window[0], target_window[1]),
+    ]
+
+
 # ------------------------------------------------------------------
 # Dimensions integration (phase 8)
 # ------------------------------------------------------------------

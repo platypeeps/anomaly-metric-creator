@@ -183,14 +183,18 @@ def _filter_windows_for_pair(
         (source_component, source_metric),
         (target_component, target_metric),
     }
-    # Walk reverse-adjacency of the live TOPOLOGY restricted to the
+    # Walk reverse-adjacency of the provided topology restricted to the
     # target: every component with an outgoing edge to the target is an
     # upstream contributor whose captured load columns can shift the
-    # target's baseline.
+    # target's baseline. During output validation this is the topology
+    # snapshot from schema.json, so filtering matches the artifacts even
+    # if the live TOPOLOGY registry changes later.
     for upstream, edges in topology.items():
         if upstream == source_component:
             continue
-        if not any(edge.target == target_component for edge in edges):
+        if not isinstance(edges, list):
+            continue
+        if not any(_edge_target(edge) == target_component for edge in edges):
             continue
         ups_entry = topology_load_metrics.get(upstream)
         if ups_entry is None:
@@ -206,6 +210,16 @@ def _filter_windows_for_pair(
         for start, end, comp, metric in windows
         if (comp, metric) in targets
     ]
+
+
+def _edge_target(edge: object) -> str | None:
+    """Return the target from a live Edge or serialized schema edge."""
+
+    if isinstance(edge, dict):
+        target = edge.get("target")
+        return target if isinstance(target, str) else None
+    target = getattr(edge, "target", None)
+    return target if isinstance(target, str) else None
 
 
 def _compute_anomaly_keep_mask(
@@ -492,7 +506,7 @@ def _validate_topology_coupling(
                 anomaly_windows,
                 source, source_canonical,
                 target, target_canonical,
-                topology=live_topology,
+                topology=topology,
                 topology_load_metrics=live_topology_load_metrics,
             )
             # Source and target share ``common_ts`` and ``pair_windows``,

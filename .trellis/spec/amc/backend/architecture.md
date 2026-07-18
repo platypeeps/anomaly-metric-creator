@@ -70,7 +70,11 @@ extracted module must read a registry that still lives in `legacy.py`, configure
 live callbacks from `legacy.py` and pass the current registry view into leaf
 helpers rather than importing `legacy.py` from the extracted module or copying a
 registry snapshot; this preserves monkeypatch-sensitive tests while keeping
-dependency direction one-way. Sources: `CLAUDE.md`;
+dependency direction one-way. Output validation is the exception for persisted
+topology shape: `validate_topology.py` must iterate and filter anomaly windows
+against the `schema.json` topology snapshot because that is the graph used by
+the artifacts being validated, while current load-metric name mapping may still
+come from the live registry. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/otel.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
@@ -79,7 +83,7 @@ dependency direction one-way. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/validate_cells.py`;
 `src/anomaly_metric_creator/validate_topology.py`;
 `src/anomaly_metric_creator/validate_topology_instances.py`;
-`tests/test_package_facades.py`.
+`tests/test_package_facades.py`; `tests/test_validate_output.py`.
 
 Keep `server.py` as the stdlib HTTP facade for `amc serve`. Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
