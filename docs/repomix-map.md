@@ -761,13 +761,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-06-validate-impl-split-and-cleanup/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-09-multi-instance-dst-splice-boundary/
       check.jsonl
       design.md
@@ -888,6 +881,69 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     07-17-audit-typed-boundaries/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-fix-ci-classifier-script-paths/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-fix-heavy-marker-and-fixture-docs/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-perf-ci-lane-parallelization/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-perf-ci-worker-counts/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-perf-heavy-fixture-trim/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-perf-local-gate-dedupe/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-perf-local-test-split/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-perf-longform-writer-test-dedupe/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-18-perf-suite-runtime/
       check.jsonl
       design.md
       implement.jsonl
@@ -1076,6 +1132,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        07-06-validate-impl-split-and-cleanup/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
   workspace/
     sdelmas/
       index.md
@@ -1141,7 +1204,10 @@ src/
     server.py
     timeutil.py
     trace_bundle.py
+    validate_cells.py
     validate_impl.py
+    validate_topology_instances.py
+    validate_topology.py
 tests/
   conftest.py
   test_add_session_journal_content.py

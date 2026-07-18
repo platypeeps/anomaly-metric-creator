@@ -23,6 +23,15 @@ def _run(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _run_in(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        cwd=cwd,
+        text=True,
+    )
+
+
 def _artifact(tmp_path: Path, text: str) -> str:
     path = tmp_path / "journal.md"
     path.write_text(text, encoding="utf-8")
@@ -448,6 +457,94 @@ def test_index_without_journal_input_exits_one(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "workspace journal files are missing from input" in result.stderr
     assert "index.md" in result.stderr
+
+
+def test_tracked_journal_is_discovered_for_index_only_git_batch(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    index_path, journal_path = _workspace_artifacts(
+        repo,
+        index_history_row=(
+            "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |"
+        ),
+        journal_text="""# Journal - sdelmas
+
+## Session 1: Finish thing
+
+### Main Changes
+
+- Finished the task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abc1234` | (see git log) |
+
+### Testing
+
+- [OK] smoke
+
+### Status
+
+[OK] **Completed**
+""",
+    )
+    subprocess.run(["git", "init"], capture_output=True, check=True, cwd=repo, text=True)
+    subprocess.run(
+        [
+            "git",
+            "add",
+            str(Path(index_path).relative_to(repo)),
+            str(Path(journal_path).relative_to(repo)),
+        ],
+        capture_output=True,
+        check=True,
+        cwd=repo,
+        text=True,
+    )
+
+    result = _run_in(repo, str(Path(index_path).relative_to(repo)))
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_untracked_journal_is_not_discovered_for_index_only_git_batch(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    index_path, _journal_path = _workspace_artifacts(
+        repo,
+        index_history_row=(
+            "| 1 | 2026-06-27 | Finish thing | `abc1234` | `codex/example` |"
+        ),
+        journal_text="""# Journal - sdelmas
+
+## Session 1: Finish thing
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abc1234` | (see git log) |
+""",
+    )
+    subprocess.run(["git", "init"], capture_output=True, check=True, cwd=repo, text=True)
+    subprocess.run(
+        ["git", "add", str(Path(index_path).relative_to(repo))],
+        capture_output=True,
+        check=True,
+        cwd=repo,
+        text=True,
+    )
+
+    result = _run_in(repo, str(Path(index_path).relative_to(repo)))
+
+    assert result.returncode == 1
+    assert "workspace journal files are missing from input" in result.stderr
 
 
 def test_unpassed_journal_file_is_not_included_in_consistency_check(

@@ -89,9 +89,17 @@ subcommand. Sources: `README.md`; `CLAUDE.md`;
 `validate DIR` must read back `schema.json` as untrusted input, validate file
 presence, row counts, timestamps, cell types/ranges, dimensions, derived
 metrics, anomaly ordering, and topology coupling, and return nonzero on hard
-violations unless `--warn` is passed. Sources: `README.md`; `CLAUDE.md`;
+violations unless `--warn` is passed. `validate_output` returns structured
+`Violation` objects whose string form preserves the historic prose output.
+Unknown-file validation tolerates dot-prefixed sidecars such as `.DS_Store` but
+continues to hard-fail undeclared non-dot artifact files, including stale
+`*.tmp` debris. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`;
-`src/anomaly_metric_creator/validate_impl.py`; `tests/test_validate_output.py`;
+`src/anomaly_metric_creator/validate_impl.py`;
+`src/anomaly_metric_creator/validate_cells.py`;
+`src/anomaly_metric_creator/validate_topology.py`;
+`src/anomaly_metric_creator/validate_topology_instances.py`;
+`tests/test_validate_output.py`;
 `tests/test_schema_file.py`.
 
 `combine DIR` reads existing per-component CSVs and writes

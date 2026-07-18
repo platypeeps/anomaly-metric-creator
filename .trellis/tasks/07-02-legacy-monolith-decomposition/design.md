@@ -203,11 +203,11 @@ at the same relative position, preserving the documented order.
 
 - All locked SHA-256 golden hashes unchanged (full suite).
 - `python anomaly-metric-creator.py --help` and `amc --help` work.
-- Every new module < 800 lines. **[2026-07-06] Known deviation:**
-  `validate_impl.py` shipped at 1,684 lines in step 6 (the validator moved
-  wholesale). Either a follow-up split restores the invariant or the
-  waiver is recorded explicitly — tracked as a proposed follow-up task
-  from the 2026-07-06 architecture review.
+- Every new module < 800 lines. **[2026-07-18] Resolved deviation:**
+  `validate_impl.py` shipped at 1,684 lines in step 6, then
+  `07-06-validate-impl-split-and-cleanup` split it into
+  `validate_impl.py` (603), `validate_cells.py` (389),
+  `validate_topology.py` (617), and `validate_topology_instances.py` (254).
 - `conftest._load_amc()` still yields a module exposing the full historic
   namespace.
 - mypy finding count does not increase (CI report-only step).

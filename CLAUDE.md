@@ -50,14 +50,19 @@ them), and `combine_impl.py` (the wide + long-form combine writers,
 `_EMIT_ARTIFACT_FILES` stays in `legacy.py` as a core emit registry),
 `schema_impl.py` (`SCHEMA_DOCUMENT_VERSION`, schema document serializers,
 topology snapshot serialization, and `write_schema_json`),
-`validate_impl.py` (schema read-back shape validation, artifact validators,
-derivation checks, topology coupling checks, long-form dimension checks, and
-`validate_output`), and `otel_stream.py` (`stream_otel_signals`,
+`validate_impl.py` (schema read-back shape validation, file-set / row-count /
+timestamp orchestration, `Violation`, and `validate_output`),
+`validate_cells.py` (cell/range checks, derivation recomputers, and long-form
+dimension checks), `validate_topology.py` (aggregate topology coupling), and
+`validate_topology_instances.py` (per-instance topology coupling), and
+`otel_stream.py` (`stream_otel_signals`,
 `stream_otel_gauges`, `_write_activity`, `_verbose_body_repr`, and
-`_http_error_activity_fields`). `schema_impl.py` and `validate_impl.py` access
-live topology registries through callbacks configured by `legacy.py` so tests
-that patch `legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS` still exercise the
-current registry state without introducing a reverse import. `otel.py` imports
+`_http_error_activity_fields`). `schema_impl.py` and the validator
+orchestrator access live topology registries through callbacks configured by
+`legacy.py`; topology leaf modules receive those registries as explicit
+arguments so tests that patch `legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS`
+still exercise the current registry state without introducing a reverse import.
+`otel.py` imports
 its public streamers from `otel_stream.py`; `legacy.py` re-imports the same
 objects so facade/legacy identity remains stable.
 **Monkeypatch note:** `_wide_component_rows_are_monotonic` is called only
@@ -949,8 +954,8 @@ generator's index-based 1:1 routing) so a regression that
 mis-routes one pod's load to a sibling surfaces as a dedicated
 violation. Skipped silently for dimensionless schemas,
 mismatched cardinalities (uniform fan-out doesn't promise
-per-pod isolation), single-instance runs, or fewer than 100
-aligned rows per pod pair.
+per-pod isolation), single-instance runs, or fewer than
+`_TOPOLOGY_MIN_ALIGNED_ROWS` aligned rows per pod pair.
 
 ### MetricSpec schema metadata
 
@@ -994,14 +999,20 @@ both default runs.
 
 ### Output validator (the `validate` subcommand)
 
-`validate PATH` runs the `validate_impl.py` validator in a standalone mode (peer of the
-`combine` subcommand) that loads `PATH/schema.json` and runs every check
-the validator knows about against the artifacts in `PATH`:
+`validate PATH` runs the `validate_impl.py` validator orchestrator in a
+standalone mode (peer of the `combine` subcommand) that loads
+`PATH/schema.json` and runs every check the validator knows about against the
+artifacts in `PATH`. `validate_output` returns `list[Violation]`; each
+violation has `component`, `metric`, `kind`, and `message` fields, and
+`str(violation)` reproduces the historic prose byte-for-byte so CLI output and
+existing substring consumers stay compatible.
 
 - `_validate_required_files_present` — every declared file is on disk.
 - `_validate_no_unknown_files` — every file on disk is declared (mirrors
-  `_pre_clean_output_dir`'s registry intent; `schema.json` is always
-  allowed even if undeclared so the validator can bootstrap).
+  `_pre_clean_output_dir`'s registry intent; dot-prefixed sidecars such as
+  `.DS_Store` are tolerated, non-dot artifact-like files such as `*.tmp` still
+  hard-fail, and `schema.json` is always allowed even if undeclared so the
+  validator can bootstrap).
 - `_validate_anomalies_sorted` — `anomalies.csv` rows are non-decreasing
   by `timestamp`.
 - `_validate_component_row_count` — data rows ≤ `rows_per_component`
@@ -1061,8 +1072,8 @@ the validator knows about against the artifacts in `PATH`:
   construction), when the schema has no `topology` block (older v1
   docs), on callable-weight edges (the per-row weight signal is the
   dominant contributor, not the upstream load), and when the aligned
-  row count falls below 100 (narrow `--components` or coarse
-  `--interval-seconds`). Anomaly windows from `anomalies.csv` are
+  row count falls below `_TOPOLOGY_MIN_ALIGNED_ROWS` (narrow `--components` or
+  coarse `--interval-seconds`). Anomaly windows from `anomalies.csv` are
   excluded via `_read_anomaly_exclusion_windows` and
   `_filter_windows_for_pair`: each `[span_start, span_end]` is padded
   by `_TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS = 30` and applied

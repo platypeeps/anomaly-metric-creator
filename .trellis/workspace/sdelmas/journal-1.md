@@ -710,3 +710,72 @@ Stabilized the generated Repomix repository map by disabling Git change-count so
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Split validate_impl and cleanup validator review feedback
+
+**Date**: 2026-07-18
+**Task**: Split validate_impl and cleanup validator review feedback
+**Package**: amc
+**Branch**: `refactor/validate-impl-split-cleanup`
+
+### Summary
+
+Split validate_impl into focused validator leaf modules, added string-compatible structured validation violations and dotfile sidecar tolerance, fixed Trellis artifact-hygiene batching, addressed unused-import review feedback, and validated the PR through local gates plus CI/review.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1fa990a` | (see git log) |
+| `9834d70` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 18: Address schema topology validation review
+
+**Date**: 2026-07-18
+**Task**: Address schema topology validation review
+**Package**: amc
+**Branch**: `refactor/validate-impl-split-cleanup`
+
+### Summary
+
+Addressed late Copilot review feedback by making topology anomaly-window filtering use the schema.json topology snapshot while preserving live load-metric name mapping, with focused regression coverage and synced spec/task evidence.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f0c0260` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

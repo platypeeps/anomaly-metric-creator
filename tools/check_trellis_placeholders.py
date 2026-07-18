@@ -22,6 +22,7 @@ Exit codes:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -222,7 +223,7 @@ def _parse_journal_commits(path: Path) -> list[tuple[int, JournalEntry]]:
 
 
 def _workspace_journal_paths(root: Path, paths: list[Path]) -> list[Path]:
-    return sorted(
+    journal_paths = sorted(
         {
             path
             for path in paths
@@ -232,6 +233,48 @@ def _workspace_journal_paths(root: Path, paths: list[Path]) -> list[Path]:
             and path.name.startswith("journal-")
         }
     )
+    if journal_paths or root / "index.md" not in paths:
+        return journal_paths
+    return _tracked_workspace_journal_paths(root)
+
+
+def _tracked_workspace_journal_paths(root: Path) -> list[Path]:
+    """Return tracked sibling journals when pre-commit batches index.md alone."""
+
+    try:
+        repo_result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError:
+        return []
+    if repo_result.returncode != 0:
+        return []
+
+    repo_root = Path(repo_result.stdout.strip())
+    try:
+        relative_root = root.resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return []
+
+    pathspec = f":/{relative_root.as_posix()}/journal-*.md"
+    try:
+        files_result = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "--", pathspec],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError:
+        return []
+    if files_result.returncode != 0:
+        return []
+
+    if root.is_absolute():
+        return sorted(repo_root / path for path in files_result.stdout.splitlines())
+    return sorted(Path(path) for path in files_result.stdout.splitlines())
 
 
 def _check_workspace_journal_commit_consistency(

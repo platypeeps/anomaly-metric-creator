@@ -203,6 +203,19 @@ def test_unknown_files_flags_stray_artifact(amc, schema_run):
     assert any("stray.txt" in v for v in violations)
 
 
+def test_unknown_files_allows_dotfile_sidecar(amc, schema_run):
+    (schema_run / ".DS_Store").write_text("sidecar")
+    schema = _load_schema(schema_run)
+    assert amc._validate_no_unknown_files(schema_run, schema) == []
+
+
+def test_unknown_files_still_flags_tmp_debris(amc, schema_run):
+    (schema_run / "apigateway.csv.tmp").write_text("partial")
+    schema = _load_schema(schema_run)
+    violations = amc._validate_no_unknown_files(schema_run, schema)
+    assert any("apigateway.csv.tmp" in v for v in violations)
+
+
 def test_unknown_files_allows_schema_json_when_undeclared(amc, schema_run):
     """schema.json is always allowed in the directory even if a buggy run
     omitted it from the declared file list — otherwise the validator could
@@ -564,6 +577,15 @@ def test_validate_output_returns_violation_list(amc, schema_run):
     assert isinstance(violations, list)
 
 
+def test_validate_output_returns_structured_violations(amc, schema_run):
+    (schema_run / "stray.txt").write_text("hello")
+    violations = amc.validate_output(schema_run)
+    violation = next(v for v in violations if "stray.txt" in v)
+    assert isinstance(violation, amc.Violation)
+    assert violation.kind == "unknown_file"
+    assert str(violation) == "unknown file in output dir: 'stray.txt'"
+
+
 def test_validate_subcommand_exits_nonzero_on_violation(amc, tmp_path, capsys):
     """End-to-end: a run with an injected bad cell must exit 1 under
     the ``validate`` subcommand in default (hard-fail) mode."""
@@ -672,6 +694,7 @@ def _classify(line: str) -> tuple[str, str, str] | None:
     """Parse one validator line into ``(file, metric, kind)``. Returns
     None for sentence-style violations that don't fit the standard
     ``<file> line N: <metric>=<value> <verb>...`` format."""
+    line = str(line)
     m = re.match(
         r"(?P<file>\S+\.csv)\s+line\s+\d+:\s+(?P<metric>\S+?)="
         r".+?\s+(?P<verb>is fractional|is negative|below min_value"
@@ -1461,6 +1484,49 @@ def test_filter_windows_for_pair_keeps_only_relevant(amc):
         f"expected 3 windows on apigateway->database pair "
         f"(source + target + cacheservice upstream); got {len(kept)}"
     )
+
+
+def test_filter_windows_for_pair_uses_schema_topology_snapshot(amc):
+    """Validation filters against schema topology, not later live edges."""
+    import datetime
+
+    from anomaly_metric_creator.validate_topology import (
+        _filter_windows_for_pair as filter_windows_for_pair,
+    )
+
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    delta = datetime.timedelta(seconds=60)
+    source_window = (base, base + delta, "apigateway", "requests_per_sec")
+    target_window = (
+        base + delta,
+        base + 2 * delta,
+        "database",
+        "queries_per_sec",
+    )
+    live_only_upstream_window = (
+        base + 2 * delta,
+        base + 3 * delta,
+        "cacheservice",
+        "cache_hits",
+    )
+    windows = [source_window, target_window, live_only_upstream_window]
+    schema_topology = {
+        "apigateway": [{"target": "database"}],
+        "cacheservice": [],
+    }
+
+    kept = filter_windows_for_pair(
+        windows,
+        "apigateway", "requests_per_sec",
+        "database", "queries_per_sec",
+        topology=schema_topology,
+        topology_load_metrics=amc._TOPOLOGY_LOAD_METRICS,
+    )
+
+    assert kept == [
+        (source_window[0], source_window[1]),
+        (target_window[0], target_window[1]),
+    ]
 
 
 # ------------------------------------------------------------------

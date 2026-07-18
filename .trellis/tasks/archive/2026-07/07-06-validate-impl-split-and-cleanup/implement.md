@@ -33,8 +33,29 @@ wc -l src/anomaly_metric_creator/validate_*.py
 
 ## Documentation And Spec Updates
 
-- CLAUDE.md validator section (three-module layout, Violation type,
+- CLAUDE.md validator section (four-module layout, Violation type,
   dotfile tolerance); epic design.md deviation note; spec index.
+
+## Implementation Notes — 2026-07-18
+
+- Actual split: `validate_impl.py` (603 lines), `validate_cells.py`
+  (389), `validate_topology.py` (617), and
+  `validate_topology_instances.py` (254).
+- The topology runtime seam remains configured once through
+  `_configure_validate_runtime`; leaf topology helpers receive the live
+  registry data explicitly from `validate_impl`.
+- Review follow-up: topology anomaly-window filtering now walks the
+  `schema.json` topology snapshot while keeping live load-metric name mapping,
+  so validation remains consistent with older artifacts if the live registry
+  later changes.
+- `pre-commit run --all-files` exposed a Trellis artifact hygiene batching
+  edge where the workspace index and tracked journal could be split across
+  hook invocations; `tools/check_trellis_placeholders.py` now discovers tracked
+  sibling journals for that index-only Git batch while still ignoring untracked
+  scratch journals.
+- Focused validation passed:
+  `.venv/bin/pytest tests/test_validate_output.py tests/test_package_facades.py -n 0`
+  (99 passed).
 
 ## Review Notes
 

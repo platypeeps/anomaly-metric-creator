@@ -112,16 +112,17 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: public aliases + __all__; underscore names stay compat bindings.
 
 ## A-011 — validate_output failure model is prose strings that consumers substring-parse
-- status: open
+- status: fixed
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: design
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-18 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/validate_impl.py:1658 — list[str]; 38 substring assertions in tests
-- why: rewording breaks consumers; no field filtering.
-- fix: frozen Violation whose __str__ reproduces prose byte-for-byte.
-- notes: tracked by existing task 07-06-validate-impl-split-and-cleanup (updated 2026-07-17)
+  - src/anomaly_metric_creator/validate_impl.py — `Violation` carries component/metric/kind/message and `validate_output` returns `list[Violation]`
+  - tests/test_validate_output.py — structured violation coverage and string-compatible classifier path
+- why: fixed; consumers can inspect fields while CLI/string output stays byte-compatible.
+- fix: frozen `Violation` whose `__str__` reproduces prose byte-for-byte.
+- notes: fixed by task 07-06-validate-impl-split-and-cleanup (2026-07-18)
 
 ## A-012 — SimulationClock.resume() on a running clock silently rewinds simulated time
 - status: open
@@ -742,16 +743,17 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: single version constant, bump, re-run real-client smokes.
 
 ## A-068 — amc validate hard-fails on foreign files generation tolerates
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: consumer-impact
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-18 @ pending-pr
 - evidence:
-  - validate_impl.py:302-320 vs the pre-clean tolerance contract (.DS_Store → exit 1)
-- why: the two pipeline halves disagree about the same directory.
-- fix: dotfile exemption / sidecar pattern, or warning-level unknown-file.
-- notes: tracked by existing task 07-06-validate-impl-split-and-cleanup (updated 2026-07-17)
+  - src/anomaly_metric_creator/validate_impl.py — `_validate_no_unknown_files` skips dot-prefixed sidecars but still flags undeclared non-dot files
+  - tests/test_validate_output.py — `.DS_Store` passes; `apigateway.csv.tmp` still fails
+- why: fixed; generation pre-clean and validator unknown-file policy now agree on dotfile sidecars.
+- fix: dotfile exemption with hard-fail retained for non-dot unknown files.
+- notes: fixed by task 07-06-validate-impl-split-and-cleanup (2026-07-18)
 
 ## A-069 — MEZMO_OTEL_STREAM_AUTH_SCHEME missing from the README env contract
 - status: open
