@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -19,6 +19,12 @@ const MIN_NODE_VERSION = { major: 16, minor: 9, label: '16.9.0' };
 // Git output ceiling for spawnSync calls that read diffs; Node's 1 MiB
 // default truncates large diffs and surfaces as a spawn error.
 const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+const REVIEW_CODE_PATH_PATTERN = /\.(?:cjs|js|mjs|py|sh|ts|tsx)$/;
+const GENERATED_REVIEW_PATHS = new Set([
+  'docs/fleet/candidate-validation.json',
+  'docs/repomix-map.md',
+  'templates/.agents/skills/sd-help/references/command-catalog.md',
+]);
 
 // Declared before the module-level main run below: unlike function
 // declarations, class bindings are not hoisted out of the temporal dead
@@ -41,8 +47,11 @@ export function runReviewPreflight(options = {}) {
   runCheck('copied template diff disclosure', checkCopiedTemplateDiffDisclosure);
   runCheck('documentation path hygiene', checkDocumentationPathHygiene);
   runCheck('documentation path references', checkDocumentationPathReferences);
+  runCheck('Trellis task context seeds', checkTrellisTaskContextSeeds);
   runCheck('Trellis journal records', checkTrellisJournalRecords);
+  runCheck('first-review risk sweep', checkReviewRiskSweep);
   runCheck('diff size warning', checkDiffSize);
+  runCheck('tooling/generated scope advisory', checkScopeAdvisory);
 
   return {
     failures: [...failures],
@@ -141,6 +150,8 @@ function defaultConfig() {
     allowedLinuxHomeUsers: [],
     diffSizeWarningLines: 20000,
     largeFileWarningLines: 5000,
+    sourceReviewWarningLines: 1000,
+    untrackedFileReadLimitBytes: 1048576,
   };
 }
 
@@ -177,7 +188,7 @@ function loadConfig(root, explicitPath) {
     }
   }
 
-  for (const key of ['diffSizeWarningLines', 'largeFileWarningLines']) {
+  for (const key of ['diffSizeWarningLines', 'largeFileWarningLines', 'sourceReviewWarningLines', 'untrackedFileReadLimitBytes']) {
     if (Number.isFinite(raw[key])) {
       merged[key] = raw[key];
     }
@@ -256,9 +267,13 @@ function runCheck(label, check) {
       fail(`${label}: ${error.message}`);
       return;
     }
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = thrownValueMessage(error);
     fail(`${label} check crashed: ${reason}`);
   }
+}
+
+export function thrownValueMessage(value) {
+  return value instanceof Error ? value.message : String(value);
 }
 
 function checkPackageOverrides() {
@@ -344,10 +359,16 @@ function checkDocumentationPathReferences() {
   const missing = [];
 
   for (const file of documentationGuardFiles()) {
+    const basename = file.split('/').pop();
     if (
       file === 'docs/SD_AI_COMMAND_PACK.md' ||
       file === 'docs/repomix-map.md' ||
-      file.startsWith('.trellis/tasks/archive/')
+      file.startsWith('.trellis/tasks/archive/') ||
+      // Design/implement artifacts are forward-looking: they reference files
+      // the task proposes to CREATE, so a path-existence check is wrong for
+      // them. PRDs/specs describe current state and keep the check.
+      ((basename === 'design.md' || basename === 'implement.md') &&
+        file.startsWith('.trellis/tasks/'))
     ) {
       continue;
     }
@@ -397,6 +418,125 @@ function checkDocumentationPathHygiene() {
   }
 
   pass(`checked ${scanned} documentation/prompt/spec file(s) for personal absolute paths.`);
+}
+
+function checkTrellisTaskContextSeeds() {
+  const failureStart = failures.length;
+  const diff = currentChangedPaths();
+  if (diff === null) {
+    warn('could not inspect current diff for Trellis task context seeds.');
+    return;
+  }
+
+  const taskChanges = new Map();
+  for (const path of diff.paths) {
+    const artifact = parseTrellisTaskArtifactPath(path);
+    if (!artifact) {
+      continue;
+    }
+
+    const entry = taskChanges.get(artifact.taskDir) || {
+      archived: artifact.archived,
+      artifacts: new Set(),
+    };
+    entry.artifacts.add(artifact.artifact);
+    taskChanges.set(artifact.taskDir, entry);
+  }
+
+  let inspectedFiles = 0;
+  for (const [taskDir, change] of taskChanges) {
+    const taskFile = `${taskDir}/task.json`;
+    const requiresContext = change.archived || trellisTaskRequiresGroundedContext(taskFile);
+    if (!requiresContext) {
+      continue;
+    }
+
+    const contextFiles = new Set(
+      [...change.artifacts]
+        .filter((artifact) => artifact === 'implement.jsonl' || artifact === 'check.jsonl')
+        .map((artifact) => `${taskDir}/${artifact}`),
+    );
+    if (change.artifacts.has('task.json')) {
+      contextFiles.add(`${taskDir}/implement.jsonl`);
+      contextFiles.add(`${taskDir}/check.jsonl`);
+    }
+
+    for (const file of contextFiles) {
+      if (!isRegularFile(file)) {
+        continue;
+      }
+
+      inspectedFiles += 1;
+      for (const seed of findTrellisTaskContextSeedRows(file, readText(file))) {
+        fail(
+          `${seed.file}:${seed.line} still contains a generated _example seed after the task entered implementation; ` +
+            'replace it with grounded {"file": "<path>", "reason": "<why>"} context or remove the seed row.',
+        );
+      }
+    }
+  }
+
+  if (inspectedFiles === 0) {
+    if (failures.length === failureStart) {
+      pass('no changed in-progress, completed, or archived Trellis task context files require seed checks.');
+    }
+    return;
+  }
+
+  if (failures.length === failureStart) {
+    pass(`checked ${inspectedFiles} changed in-progress, completed, or archived Trellis task context file(s) for generated _example seeds.`);
+  }
+}
+
+function trellisTaskRequiresGroundedContext(taskFile) {
+  if (!isRegularFile(taskFile)) {
+    return false;
+  }
+
+  try {
+    const status = readJson(taskFile)?.status;
+    return status === 'in_progress' || status === 'completed';
+  } catch (error) {
+    fail(`${taskFile} could not be parsed as JSON while checking task context state: ${thrownValueMessage(error)}`);
+    return false;
+  }
+}
+
+export function parseTrellisTaskArtifactPath(path) {
+  const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+  const match = /^\.trellis\/tasks\/((?:archive\/[^/]+\/[^/]+)|[^/]+)\/(task\.json|implement\.jsonl|check\.jsonl)$/.exec(normalized);
+  if (!match || match[1] === 'archive') {
+    return null;
+  }
+
+  return {
+    taskDir: `.trellis/tasks/${match[1]}`,
+    artifact: match[2],
+    archived: match[1].startsWith('archive/'),
+  };
+}
+
+export function findTrellisTaskContextSeedRows(file, text) {
+  const seeds = [];
+
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (isPlainObject(record) && Object.prototype.hasOwnProperty.call(record, '_example')) {
+      seeds.push({ file, line: index + 1 });
+    }
+  }
+
+  return seeds;
 }
 
 function checkTrellisJournalRecords() {
@@ -499,8 +639,84 @@ function checkTrellisJournalRecords() {
   );
 }
 
+export function reviewRiskCategories(text) {
+  const categories = [];
+  const rules = [
+    ['parser/structured input', /(?:JSON\.parse|json\.(?:load|loads)|yaml\.(?:load|safe_load)|argparse|parse_[A-Za-z0-9_]+|\.split\s*\()/],
+    ['subprocess/external command', /(?:\bspawn(?:Sync)?\s*\(|\bexec(?:File|Sync)?\s*\(|subprocess\.(?:run|Popen|check_call|check_output)|os\.system\s*\()/],
+    ['path/filesystem boundary', /(?:\bPath\s*\(|\bresolve\s*\(|\brealpath|\blstat|\bsymlink|readFileSync|writeFileSync|os\.path|pathlib)/],
+    ['environment/global state', /(?:process\.env|os\.environ|\bgetenv\s*\(|\bsetenv\s*\(|\bglobal\s+[A-Za-z_]|\bglobals\s*\()/],
+    ['digest/integrity framing', /(?:hashlib|createHash\s*\(|\bsha(?:1|224|256|384|512)\b|\bdigest\s*\(|\bhexdigest\s*\(|\bchecksum\b|\bintegrity\b)/i],
+  ];
+
+  for (const [category, pattern] of rules) {
+    if (pattern.test(text)) {
+      categories.push(category);
+    }
+  }
+
+  return categories;
+}
+
+export function trellisTaskDirectory(path) {
+  const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+  const match = /^\.trellis\/tasks\/((?:archive\/[^/]+\/[^/]+)|[^/]+)(?:\/|$)/.exec(normalized);
+  return match ? `.trellis/tasks/${match[1]}` : '';
+}
+
+export function isSourceReviewPath(path) {
+  const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+  return (
+    !copiedTemplateKind(normalized) &&
+    !normalized.startsWith('.trellis/tasks/') &&
+    !normalized.startsWith('.trellis/workspace/') &&
+    !GENERATED_REVIEW_PATHS.has(normalized)
+  );
+}
+
+function checkReviewRiskSweep() {
+  const changed = currentChangedPaths();
+  if (!changed) {
+    warn('could not read changed paths; first-review risk sweep skipped.');
+    return;
+  }
+
+  const codePaths = changed.paths.filter((path) => REVIEW_CODE_PATH_PATTERN.test(path));
+  if (codePaths.length === 0) {
+    pass('no changed code paths require a first-review boundary-risk sweep.');
+    return;
+  }
+
+  const addedCode = currentAddedCodeText(codePaths);
+  if (addedCode.oversizedUntrackedPaths.length > 0) {
+    warn(
+      `first-review boundary-risk content scan skipped ${addedCode.oversizedUntrackedPaths.length} oversized untracked code file(s) above ` +
+        `${config.untrackedFileReadLimitBytes} bytes: ${addedCode.oversizedUntrackedPaths.join(', ')}`,
+    );
+  }
+  if (addedCode.unreadableUntrackedPaths.length > 0) {
+    warn(
+      `first-review boundary-risk content scan skipped ${addedCode.unreadableUntrackedPaths.length} unreadable untracked code file(s): ` +
+        addedCode.unreadableUntrackedPaths.join(', '),
+    );
+  }
+  const categories = reviewRiskCategories(addedCode.text);
+  if (categories.length === 0) {
+    if (addedCode.oversizedUntrackedPaths.length === 0 && addedCode.unreadableUntrackedPaths.length === 0) {
+      pass(`checked ${codePaths.length} changed code path(s); no boundary-risk trigger was added.`);
+    }
+    return;
+  }
+
+  warn(
+    `changed code adds ${categories.join(', ')} behavior; before the first remote review, cover the applicable boundary matrix: ` +
+      'malformed or unhashable input; missing commands or timeouts; option-like or traversal path values; empty env/PATH; ' +
+      'symlink/TOCTOU behavior; global-state cleanup; and multiline syntax or extension variants.',
+  );
+}
+
 function checkDiffSize() {
-  const diff = currentDiffStats();
+  const diff = currentReviewDiffStats();
 
   if (!diff) {
     warn('could not read git diff stats; PR-size warning skipped.');
@@ -524,6 +740,60 @@ function checkDiffSize() {
 
   for (const file of largeFiles) {
     warn(`${diff.label} includes a large file diff (${file.added + file.deleted} lines): ${file.path}`);
+  }
+
+  const sourceFiles = diff.files.filter((file) => isSourceReviewPath(file.path));
+  const sourceLines = sourceFiles.reduce((total, file) => total + file.added + file.deleted, 0);
+  if (sourceLines > config.sourceReviewWarningLines) {
+    warn(
+      `${diff.label} changes ${sourceLines} authored source line(s) across ${sourceFiles.length} file(s); ` +
+        'split the PR or record focused first-review risk evidence before requesting remote review.',
+    );
+  } else {
+    pass(`${diff.label} changes ${sourceLines} authored source line(s), below the focused-review warning threshold.`);
+  }
+
+  const taskDirectories = new Set(diff.files.map((file) => trellisTaskDirectory(file.path)).filter(Boolean));
+  if (taskDirectories.size > 1) {
+    warn(
+      `${diff.label} changes ${taskDirectories.size} Trellis task directories; ` +
+        'confirm they form one reviewable outcome or split the work before remote review.',
+    );
+  } else {
+    pass(`${diff.label} changes at most one Trellis task directory.`);
+  }
+}
+
+function checkScopeAdvisory() {
+  // Author-time soft signal: shell out to the pack's scope classifier in
+  // advisory mode so the required PR-body scope section is named before any
+  // PR exists. All file-classification and heading policy lives in the bash
+  // script; this only surfaces its warning and never fails the preflight.
+  const ambient = process.env.SD_AI_COMMAND_PACK_SCOPE_CHECK;
+  if (ambient && /^(0|false|FALSE|no|NO|skip|none|off|OFF|disabled|DISABLED)$/.test(ambient)) {
+    return;
+  }
+  const script = resolve(rootDir, 'scripts', 'sd-ai-command-pack-review-scope.sh');
+  if (!existsSync(script)) {
+    return;
+  }
+  const result = spawnSync('bash', [script], {
+    cwd: rootDir,
+    encoding: 'utf8',
+    maxBuffer: GIT_MAX_BUFFER_BYTES,
+    env: { ...process.env, SD_AI_COMMAND_PACK_SCOPE_CHECK: 'advisory' },
+  });
+  if (result.error) {
+    // Advisory only: a missing bash or spawn failure must not fail the gate.
+    return;
+  }
+  const output = `${result.stdout || ''}${result.stderr || ''}`;
+  // Match the stable machine marker, not the human wording, so the bash
+  // advisory text can change without silently dropping this warning.
+  const marker = 'sd-ai-command-pack-scope-advisory: ';
+  const advisoryLine = output.split('\n').find((line) => line.includes(marker));
+  if (advisoryLine) {
+    warn(advisoryLine.slice(advisoryLine.indexOf(marker) + marker.length).trim());
   }
 }
 
@@ -691,10 +961,11 @@ export function findMissingDocumentationPathReferences(file, text, existsPath, o
 
 function resolvesToLineSuffixedPath(resolved, existsPath) {
   // Documentation commonly cites line anchors — `path.md:42`, `path:12-34`,
-  // `path:12:5`, `path:12-34:5` — so a target with trailing line/column
-  // suffixes resolves against its base path. Files literally named with
-  // `:digits` were already matched by the direct existence check above.
-  const base = resolved.replace(/(?::\d+(?:-\d+)?)+$/, '');
+  // `path:12:5`, `path:12-34:5`, `path:1-2,3-4`, `path:~145` — so a target with
+  // trailing line/column suffixes (including comma-joined multi-ranges and `~`
+  // approximate markers) resolves against its base path. Files literally named
+  // with `:digits` were already matched by the direct existence check above.
+  const base = resolved.replace(/(?::~?\d+(?:-\d+)?(?:,~?\d+(?:-\d+)?)*)+$/, '');
   return base !== resolved && existsPath(base);
 }
 
@@ -962,24 +1233,185 @@ function currentDiffSources(...kindArgs) {
   return sources;
 }
 
-function currentDiffStats() {
-  const sources = currentDiffSources('--numstat', '-z');
+function reviewBaselineRef() {
+  const baseRef = defaultReviewBaseRef();
+  if (!baseRef) {
+    return gitRefExists('HEAD') ? 'HEAD' : '';
+  }
+  if (!gitRefExists('HEAD')) {
+    return baseRef;
+  }
 
-  for (const source of sources) {
-    const result = runGit(source.args);
+  const mergeBase = gitStdout(['merge-base', baseRef, 'HEAD']);
+  if (gitRefExists(mergeBase)) {
+    return mergeBase;
+  }
 
-    if (result.status !== 0) {
+  warn(`could not resolve the merge base of ${baseRef} and HEAD; falling back to ${baseRef}.`);
+  return baseRef;
+}
+
+function currentUntrackedPaths() {
+  const result = runGit(['ls-files', '--others', '--exclude-standard', '-z']);
+  if (result.status !== 0) {
+    return [];
+  }
+  return result.stdout.split('\0').filter(Boolean);
+}
+
+function textLineCount(text) {
+  if (!text) {
+    return 0;
+  }
+  const lines = text.split(/\r?\n/);
+  return lines.at(-1) === '' ? lines.length - 1 : lines.length;
+}
+
+function currentReviewDiffStats() {
+  const baseline = reviewBaselineRef();
+  const args = ['diff', '--numstat', '-z'];
+  if (baseline) {
+    args.push(baseline);
+  }
+  args.push('--');
+
+  const result = runGit(args);
+  if (result.status !== 0) {
+    return null;
+  }
+
+  const files = parseNumstat(result.stdout);
+  const seen = new Set(files.map((file) => file.path));
+  for (const path of currentUntrackedPaths()) {
+    if (seen.has(path)) {
       continue;
     }
+    const added = untrackedAddedLineEstimate(path);
+    if (added === null) {
+      continue;
+    }
+    files.push({ added, deleted: 0, path });
+  }
 
-    const files = parseNumstat(result.stdout);
+  return {
+    args,
+    label: baseline ? `${baseline} to working tree` : 'working tree diff',
+    files,
+  };
+}
 
-    if (files.length > 0 || source.label === 'working tree diff') {
-      return { ...source, files };
+function untrackedAddedLineEstimate(path) {
+  const content = boundedUntrackedFileText(path);
+  if (!content) {
+    return null;
+  }
+
+  if (content.status === 'oversized') {
+    return Math.max(config.largeFileWarningLines + 1, 1);
+  }
+
+  if (content.status === 'unreadable') {
+    return null;
+  }
+
+  return textLineCount(content.text);
+}
+
+function boundedUntrackedFileText(path) {
+  let pathEntry;
+  try {
+    pathEntry = lstatSync(resolve(rootDir, path));
+  } catch {
+    return null;
+  }
+  if (!pathEntry.isFile()) {
+    return null;
+  }
+  if (pathEntry.size > config.untrackedFileReadLimitBytes) {
+    return { status: 'oversized', text: '' };
+  }
+
+  let descriptor;
+  try {
+    descriptor = openSync(resolve(rootDir, path), 'r');
+    const openedEntry = fstatSync(descriptor);
+    if (!openedEntry.isFile()) {
+      return { status: 'unreadable', text: '' };
+    }
+    if (openedEntry.size > config.untrackedFileReadLimitBytes) {
+      return { status: 'oversized', text: '' };
+    }
+
+    const buffer = Buffer.alloc(openedEntry.size);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const count = readSync(descriptor, buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (count === 0) {
+        break;
+      }
+      bytesRead += count;
+    }
+    return { status: 'read', text: buffer.toString('utf8', 0, bytesRead) };
+  } catch {
+    return { status: 'unreadable', text: '' };
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // The scan is advisory; a failed close must not hide its result.
+      }
+    }
+  }
+}
+
+function addedLinesFromDiff(output) {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+    .map((line) => line.slice(1))
+    .join('\n');
+}
+
+function currentAddedCodeText(codePaths) {
+  const baseline = reviewBaselineRef();
+  const outputs = [];
+  const oversizedUntrackedPaths = [];
+  const unreadableUntrackedPaths = [];
+  const diffArgs = ['diff', '--unified=0', '--no-ext-diff', '--no-color'];
+  if (baseline) {
+    const result = runGit([...diffArgs, baseline, '--', ...codePaths]);
+    if (result.status === 0) {
+      outputs.push(addedLinesFromDiff(result.stdout));
+    }
+  } else {
+    for (const extraArgs of [['--cached'], []]) {
+      const result = runGit([...diffArgs, ...extraArgs, '--', ...codePaths]);
+      if (result.status === 0) {
+        outputs.push(addedLinesFromDiff(result.stdout));
+      }
     }
   }
 
-  return null;
+  const untracked = new Set(currentUntrackedPaths());
+  for (const path of codePaths) {
+    if (!untracked.has(path)) {
+      continue;
+    }
+    const content = boundedUntrackedFileText(path);
+    if (!content) {
+      continue;
+    }
+    if (content.status === 'oversized') {
+      oversizedUntrackedPaths.push(path);
+    } else if (content.status === 'unreadable') {
+      unreadableUntrackedPaths.push(path);
+    } else {
+      outputs.push(content.text);
+    }
+  }
+
+  return { text: outputs.join('\n'), oversizedUntrackedPaths, unreadableUntrackedPaths };
 }
 
 function currentChangedPaths() {
@@ -1338,6 +1770,14 @@ function listFiles(directory) {
 
 function exists(file) {
   return existsSync(resolve(rootDir, file));
+}
+
+function isRegularFile(file) {
+  try {
+    return lstatSync(resolve(rootDir, file)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function readJson(file) {

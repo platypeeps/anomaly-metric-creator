@@ -4,10 +4,8 @@
 The checker is repo-safe by default: it reports detected categories, but only
 fails when a PR body is supplied through ``--body-file``,
 ``SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY``, or
-``SD_AI_COMMAND_PACK_SCOPE_PR_BODY``, or the deprecated compatibility fallback
-``REVIEW_PREFLIGHT_PR_BODY`` (honored through ``0.15.x`` and scheduled for
-removal in ``0.16.0``). Repos can add project-specific categories with a JSON
-config file rather than editing this copied script.
+``SD_AI_COMMAND_PACK_SCOPE_PR_BODY``. Repos can add project-specific categories
+with a JSON config file rather than editing this copied script.
 
 Automated authors are exempt. When the PR author is passed via ``--actor`` or
 ``SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR`` and the login is a bot (GitHub bot
@@ -55,7 +53,6 @@ from sd_ai_command_pack_lib import run_git as run_git_command
 BODY_ENV_VARS = (
     "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY",
     "SD_AI_COMMAND_PACK_SCOPE_PR_BODY",
-    "REVIEW_PREFLIGHT_PR_BODY",
 )
 CHANGED_FILES_ENV_VARS = (
     "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHANGED_FILES",
@@ -186,7 +183,7 @@ DEFAULT_RULES = (
             "scripts/sd-ai-command-pack-*.sh",
             "scripts/sd-ai-command-pack-*.py",
             "scripts/sd-ai-command-pack-*.mjs",
-            "scripts/sd_ai_command_pack_lib.py",
+            "scripts/sd_ai_command_pack_*.py",
             "scripts/sd-ai-command-pack-full-check.sh",
             "scripts/sd-ai-command-pack-housekeeping.sh",
         ),
@@ -591,8 +588,7 @@ def check(
             *detected,
             "warning: PR body not provided; skipping strict PR-body scope validation. "
             "Set SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY, "
-            "SD_AI_COMMAND_PACK_SCOPE_PR_BODY, REVIEW_PREFLIGHT_PR_BODY "
-            "(deprecated; removal in sd-ai-command-pack 0.16.0), or --body-file.",
+            "SD_AI_COMMAND_PACK_SCOPE_PR_BODY, or --body-file.",
         ]
 
     # Any-of coverage: a changed path is covered when the body documents at

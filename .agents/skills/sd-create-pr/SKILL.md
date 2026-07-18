@@ -20,11 +20,14 @@ review loop.
 - Run the pack toolchain doctor once before dependency-sensitive work. Keep its
   selected Python and project-check report for this command run; do not retry
   raw interpreters in sequence after an authoritative candidate fails.
-- Resolve both `sd-update-spec` and `sd-review-pr` by name using the agent's
-  trusted installed-skill resolver before starting. Stop if either skill is
-  missing, unreadable, empty, resolves to more than one candidate, fails
-  validation, defines contradictory steps that violate this command's safety
-  rules, or requires unavailable tools.
+- Resolve `sd-update-spec` by name using the agent's trusted installed-skill
+  resolver before starting. In standalone mode, also resolve `sd-review-pr`
+  before starting. In verified `sd-ship` Stage 1 mode, the composite owns
+  `sd-review-pr` resolution for its separate Stage 2; this skill must not
+  resolve or invoke it. Stop if a required skill is missing, unreadable, empty,
+  resolves to more than one candidate, fails validation, defines contradictory
+  steps that violate this command's safety rules, or requires unavailable
+  tools.
 - Do not duplicate the detailed update-spec or review-pr workflows. Use
   `sd-update-spec` for repository knowledge refreshes and `sd-review-pr` for
   local full-check, configured remote reviewer requests, review polling, fix
@@ -55,6 +58,26 @@ review loop.
   different base.
 - If a command, provider call, push, PR creation, or delegated skill step fails,
   stop and report the command, exit status, and complete stdout/stderr output.
+
+## Invocation Modes
+
+Standalone mode is the only public `sd-create-pr` behavior: publish or reuse
+the pull request, then enter `sd-review-pr` in Step 6.
+
+`sd-ship` may delegate its Stage 1 with this exact internal orchestration
+context:
+
+- caller: `sd-ship`
+- stage: `1`
+- return-after: `pr`
+
+Accept that context only while the current session is actively executing
+`sd-ship` Stage 1 and the composite supplied all three values. It is not an
+environment variable or a public argument. If the user invokes `sd-create-pr`
+with `publish-only`, `caller=`, `stage=`, `return-after=`, or otherwise asks it
+to skip review, reject the request before Step 1 and make no update-spec,
+branch, commit, push, or PR changes. Never infer the internal context merely
+because a PR already exists or the user mentions `sd-ship`.
 
 ## Step 1: Resolve Prerequisites And Branch State
 
@@ -233,7 +256,16 @@ After creation or reuse, capture:
 - head branch and head SHA
 - base branch
 
-## Step 6: Enter The SD Review PR Loop
+## Step 6: Return To SD Ship Or Enter The SD Review PR Loop
+
+When and only when the verified internal orchestration context is active,
+return the Step 5 PR number, URL, base branch, head branch, head SHA, and
+created/reused result to the active `sd-ship` Stage 1. Do not resolve or invoke
+`sd-review-pr`, run finish-work, or run housekeeping from this branch. The
+composite owns its separate Stage 2 and decides whether review is normal or
+uses `defer-finish-work`.
+
+For every standalone invocation, preserve the normal handoff below.
 
 Set the PR selector for the handoff, then resolve and follow the `sd-review-pr`
 skill as the source of truth:
@@ -257,7 +289,9 @@ Report:
 - Staged/committed paths and commit SHA, or why no commit was needed.
 - Push target and result.
 - PR number, URL, base branch, and whether the PR was created or reused.
-- Confirmation that the workflow handed off to `sd-review-pr`.
+- Handoff outcome: either confirmation that standalone mode entered
+  `sd-review-pr`, or confirmation that verified `sd-ship` Stage 1 received the
+  publish result without review.
 - Project checks: configured command or reported candidates, and which project
   checks actually ran.
 - Pack full-check: deterministic gate result with Prism/Gito disabled.

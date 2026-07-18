@@ -39,6 +39,16 @@ the repo wrapper.
      scripts/sd-ai-command-pack-review-learnings.py --github-days 2 --update
    ```
 
+   The default `--github-limit 0` inspects the complete UTC time window. A
+   positive limit is an explicit truncation and the report says when more PRs
+   existed. For one completed PR review cycle, scope the read-only pass
+   directly instead:
+
+   ```bash
+   bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+     scripts/sd-ai-command-pack-review-learnings.py --github-pr 123 --dry-run
+   ```
+
 4. If the repository already has a preferred review-learning file, use
    `--target PATH`. Otherwise the default is `docs/review-learnings.md`.
 
@@ -59,6 +69,9 @@ the repo wrapper.
 - `--github-days` uses `gh`; authenticate first with `gh auth status`. For
   private repositories, the token needs permission to read pull requests and
   review comments, such as the classic `repo` scope.
+- Repeat `--github-pr` to inspect specific PRs. It is mutually exclusive with
+  `--github-days`; `sd-review-pr` uses one PR-scoped dry run only after its
+  overall review loop completes, never after each remote-review round.
 - `--update` replaces only the managed `sd-review-learnings` block in the
   target file and preserves surrounding human-written content.
 - The default repository learning file is `docs/review-learnings.md`; use

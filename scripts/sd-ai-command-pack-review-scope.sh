@@ -8,6 +8,9 @@ TARGETS_FILE="${SD_AI_COMMAND_PACK_TARGETS_FILE:-$REPO_ROOT/.sd-ai-command-pack/
 MODE="${SD_AI_COMMAND_PACK_SCOPE_CHECK:-auto}"
 GH_MODE="${SD_AI_COMMAND_PACK_SCOPE_CHECK_GH:-auto}"
 scope_categories=()
+# Recognized tooling/generated PR-body scope sections, named in author-time
+# advisories so the section gets written before the PR exists.
+SCOPE_SECTION_HINT="a recognized tooling/generated scope section (for example 'Tooling/generated scope:')"
 
 warn() {
   printf 'warning: %s\n' "$*" >&2
@@ -31,7 +34,7 @@ source_sd_ai_command_pack_shell_lib
 
 is_disabled() {
   case "${1:-}" in
-    0|false|FALSE|no|NO|skip|none) return 0 ;;
+    0|false|FALSE|no|NO|skip|none|off|OFF|disabled|DISABLED) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -39,6 +42,13 @@ is_disabled() {
 is_required() {
   case "${1:-}" in
     required|1|true|TRUE|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_advisory() {
+  case "${1:-}" in
+    advisory|advise|warn|soft) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -178,14 +188,6 @@ check_pr_body_scope() {
     return 0
   fi
 
-  if [ "${REVIEW_PREFLIGHT_PR_BODY+x}" ]; then
-    warn "REVIEW_PREFLIGHT_PR_BODY is deprecated and will be removed in sd-ai-command-pack 0.16.0; prefer SD_AI_COMMAND_PACK_SCOPE_PR_BODY."
-    if ! github_pr_body_mentions_scope "$REVIEW_PREFLIGHT_PR_BODY"; then
-      fail "tooling/generated files changed, but the provided PR body does not include a recognized tooling/generated scope section"
-    fi
-    return 0
-  fi
-
   if ! have gh; then
     if is_required "$GH_MODE"; then
       fail "gh is required for tooling/generated PR scope checks but is not on PATH"
@@ -199,7 +201,7 @@ check_pr_body_scope() {
     if is_required "$GH_MODE"; then
       fail "gh could not resolve the current PR for tooling/generated scope checks"
     fi
-    warn "No current PR found; skipping tooling/generated PR scope body check."
+    warn "No current PR found; when you open it, the PR body must include $SCOPE_SECTION_HINT."
     return 0
   fi
 
@@ -284,6 +286,15 @@ main() {
   for scoped_file in "${scoped_changes[@]}"; do
     printf '  - %s\n' "$scoped_file"
   done
+
+  if is_advisory "$MODE"; then
+    local advisory_message="This branch changes tooling/generated files; the PR body must include $SCOPE_SECTION_HINT. Add it before opening the PR."
+    warn "$advisory_message"
+    # Stable machine marker so callers (e.g. the review preflight) surface this
+    # advisory by token rather than matching the human-readable wording above.
+    printf 'sd-ai-command-pack-scope-advisory: %s\n' "$advisory_message"
+    return 0
+  fi
 
   check_pr_body_scope "${#scoped_changes[@]}"
 }

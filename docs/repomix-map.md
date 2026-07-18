@@ -74,6 +74,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     sd-full-check/
       SKILL.md
+    sd-help/
+      references/
+        command-catalog.md
+        examples.md
+      SKILL.md
     sd-housekeeping/
       SKILL.md
     sd-retro/
@@ -87,6 +92,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-ship/
       SKILL.md
     sd-start/
+      SKILL.md
+    sd-status/
       SKILL.md
     sd-test-gaps/
       SKILL.md
@@ -190,6 +197,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       finish-work.md
       fix-ci.md
       full-check.md
+      help.md
       housekeeping.md
       retro.md
       review-learnings.md
@@ -197,6 +205,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       review-pr.md
       ship.md
       start.md
+      status.md
       test-gaps.md
       update-deps.md
       update-spec.md
@@ -249,6 +258,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       finish-work.toml
       fix-ci.toml
       full-check.toml
+      help.toml
       housekeeping.toml
       retro.toml
       review-learnings.toml
@@ -256,6 +266,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       review-pr.toml
       ship.toml
       start.toml
+      status.toml
       test-gaps.toml
       update-deps.toml
       update-spec.toml
@@ -315,6 +326,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-finish-work.prompt.md
     sd-fix-ci.prompt.md
     sd-full-check.prompt.md
+    sd-help.prompt.md
     sd-housekeeping.prompt.md
     sd-retro.prompt.md
     sd-review-learnings.prompt.md
@@ -322,6 +334,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review-pr.prompt.md
     sd-ship.prompt.md
     sd-start.prompt.md
+    sd-status.prompt.md
     sd-test-gaps.prompt.md
     sd-update-deps.prompt.md
     sd-update-spec.prompt.md
@@ -436,6 +449,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-finish-work.md
     sd-fix-ci.md
     sd-full-check.md
+    sd-help.md
     sd-housekeeping.md
     sd-retro.md
     sd-review-learnings.md
@@ -443,6 +457,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review-pr.md
     sd-ship.md
     sd-start.md
+    sd-status.md
     sd-test-gaps.md
     sd-update-deps.md
     sd-update-spec.md
@@ -1080,6 +1095,7 @@ scripts/
   check-review-preflight.mjs
   classify_ci_changes.sh
   classify-ci-changes.sh
+  sd_ai_command_pack_fleet_lib.py
   sd_ai_command_pack_lib.py
   sd-ai-command-pack-full-check.sh
   sd-ai-command-pack-housekeeping.sh
@@ -1091,6 +1107,7 @@ scripts/
   sd-ai-command-pack-review-preflight.mjs
   sd-ai-command-pack-review-scope.sh
   sd-ai-command-pack-shell-lib.sh
+  sd-ai-command-pack-status.py
   sd-ai-command-pack-toolchain.sh
   sd-ai-command-pack-update-spec-kb.py
   sync-agent-skills.py
