@@ -38,8 +38,8 @@ wc -l src/anomaly_metric_creator/validate_*.py
 
 ## Implementation Notes — 2026-07-18
 
-- Actual split: `validate_impl.py` (613 lines), `validate_cells.py`
-  (389), `validate_topology.py` (605), and
+- Actual split: `validate_impl.py` (603 lines), `validate_cells.py`
+  (389), `validate_topology.py` (603), and
   `validate_topology_instances.py` (254).
 - The topology runtime seam remains configured once through
   `_configure_validate_runtime`; leaf topology helpers receive the live

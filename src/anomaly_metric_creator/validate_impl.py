@@ -48,28 +48,18 @@ def _live_topology_load_metrics() -> dict[str, tuple[str, tuple[str, ...]]]:
 
 
 from .validate_cells import (
-    _RECOMPUTERS as _RECOMPUTERS,
-    _VALIDATE_DERIVATION_TOLERANCE as _VALIDATE_DERIVATION_TOLERANCE,
-    _VALIDATE_INT_TOLERANCE as _VALIDATE_INT_TOLERANCE,
-    _recompute_cacheservice as _recompute_cacheservice,
-    _schema_has_any_dimensions as _schema_has_any_dimensions,
     _validate_component_cells as _validate_component_cells,
     _validate_component_derivations as _validate_component_derivations,
     _validate_long_form_dimensions as _validate_long_form_dimensions,
 )
 from .validate_topology import (
-    _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS as _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS,
-    _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD as _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD,
     _TOPOLOGY_MIN_ALIGNED_ROWS as _TOPOLOGY_MIN_ALIGNED_ROWS,
     _compute_anomaly_keep_mask as _compute_anomaly_keep_mask,
     _filter_windows_for_pair as _filter_windows_for_pair_impl,
-    _read_anomaly_exclusion_windows as _read_anomaly_exclusion_windows,
-    _read_component_metric_column as _read_component_metric_column,
     _resolve_edge_correlation_threshold as _resolve_edge_correlation_threshold_impl,
     _validate_topology_coupling as _validate_topology_coupling_impl,
 )
 from .validate_topology_instances import (
-    _read_component_metric_column_per_instance as _read_component_metric_column_per_instance,
     _validate_topology_coupling_per_instance as _validate_topology_coupling_per_instance_impl,
 )
 

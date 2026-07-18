@@ -206,7 +206,7 @@ at the same relative position, preserving the documented order.
 - Every new module < 800 lines. **[2026-07-18] Resolved deviation:**
   `validate_impl.py` shipped at 1,684 lines in step 6, then
   `07-06-validate-impl-split-and-cleanup` split it into
-  `validate_impl.py` (610), `validate_cells.py` (389),
+  `validate_impl.py` (603), `validate_cells.py` (389),
   `validate_topology.py` (603), and `validate_topology_instances.py` (254).
 - `conftest._load_amc()` still yields a module exposing the full historic
   namespace.

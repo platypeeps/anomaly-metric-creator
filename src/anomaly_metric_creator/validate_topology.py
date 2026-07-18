@@ -11,7 +11,6 @@ import numpy as np
 
 from .timeutil import _parse_csv_timestamp
 from .validate_topology_instances import (
-    _read_component_metric_column_per_instance as _read_component_metric_column_per_instance,
     _validate_topology_coupling_per_instance as _validate_topology_coupling_per_instance,
 )
 
@@ -602,4 +601,3 @@ def _resolve_edge_correlation_threshold(
                 return float(edge.correlation_threshold)
             break
     return _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD
-

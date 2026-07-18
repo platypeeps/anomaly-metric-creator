@@ -8575,13 +8575,15 @@ from .schema_impl import (
 )
 _configure_schema_runtime(get_topology=lambda: TOPOLOGY)
 
-from .validate_impl import (
-    _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD as _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD,
-    _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS as _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS,
-    _TOPOLOGY_MIN_ALIGNED_ROWS as _TOPOLOGY_MIN_ALIGNED_ROWS,
-    _configure_validate_runtime as _configure_validate_runtime,
+from .validate_cells import (
     _VALIDATE_DERIVATION_TOLERANCE as _VALIDATE_DERIVATION_TOLERANCE,
     _VALIDATE_INT_TOLERANCE as _VALIDATE_INT_TOLERANCE,
+    _recompute_cacheservice as _recompute_cacheservice,
+    _RECOMPUTERS as _RECOMPUTERS,
+    _schema_has_any_dimensions as _schema_has_any_dimensions,
+)
+from .validate_impl import (
+    _configure_validate_runtime as _configure_validate_runtime,
     Violation as Violation,
     _json_path as _json_path,
     _schema_shape_error as _schema_shape_error,
@@ -8599,19 +8601,23 @@ from .validate_impl import (
     _validate_component_timestamp_coverage as _validate_component_timestamp_coverage,
     _validate_component_cells as _validate_component_cells,
     _validate_component_derivations as _validate_component_derivations,
-    _recompute_cacheservice as _recompute_cacheservice,
-    _RECOMPUTERS as _RECOMPUTERS,
-    _read_component_metric_column as _read_component_metric_column,
-    _read_component_metric_column_per_instance as _read_component_metric_column_per_instance,
-    _read_anomaly_exclusion_windows as _read_anomaly_exclusion_windows,
     _filter_windows_for_pair as _filter_windows_for_pair,
-    _compute_anomaly_keep_mask as _compute_anomaly_keep_mask,
     _validate_topology_coupling as _validate_topology_coupling,
     _validate_topology_coupling_per_instance as _validate_topology_coupling_per_instance,
     _resolve_edge_correlation_threshold as _resolve_edge_correlation_threshold,
-    _schema_has_any_dimensions as _schema_has_any_dimensions,
     _validate_long_form_dimensions as _validate_long_form_dimensions,
     validate_output as validate_output,
+)
+from .validate_topology import (
+    _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD as _TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD,
+    _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS as _TOPOLOGY_CORRELATION_EXCLUSION_PAD_SECONDS,
+    _TOPOLOGY_MIN_ALIGNED_ROWS as _TOPOLOGY_MIN_ALIGNED_ROWS,
+    _read_component_metric_column as _read_component_metric_column,
+    _read_anomaly_exclusion_windows as _read_anomaly_exclusion_windows,
+    _compute_anomaly_keep_mask as _compute_anomaly_keep_mask,
+)
+from .validate_topology_instances import (
+    _read_component_metric_column_per_instance as _read_component_metric_column_per_instance,
 )
 _configure_validate_runtime(
     get_topology=lambda: TOPOLOGY,
