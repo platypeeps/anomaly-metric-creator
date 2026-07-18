@@ -52,8 +52,9 @@ evidence of a safe setting.
 ### Part C — correct the premise
 
 `CLAUDE.md` states a 7 GB standard runner. The repo is public
-(`gh api repos/<slug> --jq .private` -> `false`) and GitHub's standard
-`ubuntu-latest` for public repositories is 4 vCPU / 16 GB / 14 GB SSD.
+(`gh api repos/platypeeps/anomaly-metric-creator --jq .private` -> `false`)
+and GitHub's standard `ubuntu-latest` for public repositories is
+4 vCPU / 16 GB / 14 GB SSD.
 Correct the figure, and add the consequence that makes it actionable:
 standard-runner minutes are free on public repos, so wall clock — not
 billed minutes — is the optimization target.

@@ -11,9 +11,10 @@
    one to `tests/conftest.py` or co-locating the new test. Confirm the
    `heavy` marker still applies after any promotion:
    ```bash
-   .venv/bin/pytest -m heavy --collect-only -q | grep -c .
+   .venv/bin/pytest -m heavy --collect-only -q | tail -1
    ```
-   The count must not drop.
+   The collected count must not drop. (`tail -1` reads pytest's summary
+   line; `grep -c .` would count that line too and report N+1.)
 3. Add `test_n3_combined_matches_gauges_bytes` using `conftest.sha256_path`
    for both sides (streaming; the resource-cost rule forbids whole-file
    reads). Run it alone and confirm it passes.

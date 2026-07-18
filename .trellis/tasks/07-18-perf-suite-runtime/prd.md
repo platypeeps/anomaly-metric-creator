@@ -27,8 +27,9 @@ That step runs two sequential pytest invocations
 ### The stale premise
 
 `CLAUDE.md` sizes the whole heavy/light split against "the 7 GB standard
-runner". **This repository is public** (`gh api repos/<slug> --jq .private`
-returns `false`), and GitHub's standard `ubuntu-latest` runner for public
+runner". **This repository is public**
+(`gh api repos/platypeeps/anomaly-metric-creator --jq .private` returns
+`false`), and GitHub's standard `ubuntu-latest` runner for public
 repositories is **4 vCPU / 16 GB RAM / 14 GB SSD** — double the private
 tier the 7 GB figure describes. Consequences:
 
