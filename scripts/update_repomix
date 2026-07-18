@@ -18,6 +18,7 @@ repomix . \
   --quiet \
   --style markdown \
   --no-files \
+  --no-git-sort-by-changes \
   --include-full-directory-structure \
   --output "$ARTIFACT" \
   --ignore "$ARTIFACT" \

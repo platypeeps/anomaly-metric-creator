@@ -32,7 +32,6 @@ The content is organized as follows:
 - Files matching these patterns are excluded: docs/repomix-map.md
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
-- Files are sorted by Git change count (files with more changes are at the bottom)
 
 # User Provided Header
 Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
@@ -553,6 +552,9 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   agents/
     check.md
     implement.md
+  audit/
+    ledger.md
+    report-2026-07-17.md
   scripts/
     common/
       __init__.py
@@ -606,113 +608,275 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   tasks/
     06-29-helm-incident-command-coverage/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-interactive-failure-mode-launcher/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-kubectl-events-compatibility/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-kubectl-exec-outputs/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-kubectl-logs-refinements/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-kubectl-port-forward-lifecycle/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-persisted-server-mutation-state/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-quick-simulator-environment-reset/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     06-29-server-watch-semantics/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-02-config-generate-key-validation/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-02-decomp-catalog-data/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-02-decomp-cli-args/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-02-decomp-generation-topology/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-02-legacy-monolith-decomposition/
       check.jsonl
       design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-02-otel-exporter-target-policy/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-02-structured-logging-in-generator/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-06-eval-mode-symptom-log-artifact/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-06-library-api-error-posture/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-06-registry-callback-wiring-hardening/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-06-server-ops-decomposition/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-06-validate-impl-split-and-cleanup/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
       prd.md
       task.json
     07-09-multi-instance-dst-splice-boundary/
       check.jsonl
+      design.md
       implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-approval-gate-wire-or-retire/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-ci-cadence-closures/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-cut-release-0-4-0/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-debris-cleanup/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-dependency-hygiene/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-doc-accuracy-sweep/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-eval-harness-trace-retrieval/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-mcp-query-performance/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-mcp-wall-registry-guard/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-real-client-smoke-ci/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-serve-error-visibility/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-serve-main-wiring-tests/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-sim-mutation-correctness/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-test-guard-lints/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-test-harness-dedupe/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-trace-export-hardening/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-17-audit-typed-boundaries/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
       prd.md
       task.json
     archive/
