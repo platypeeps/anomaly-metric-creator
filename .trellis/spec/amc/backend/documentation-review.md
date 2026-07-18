@@ -89,7 +89,9 @@ tests, docs, and Trellis specs before making changes. Sources:
 
 Refresh the map with `scripts/update_repomix` whenever code, docs, tests,
 scripts, or platform-adapter tree changes make the artifact stale. The script
-is the canonical refresh command and writes `docs/repomix-map.md` in place.
+is the canonical refresh command, writes `docs/repomix-map.md` in place, and
+passes `--no-git-sort-by-changes` so identical repository contents retain
+stable ordering instead of producing change-recency churn.
 Sources: `scripts/update_repomix`; `README.md`; `docs/repomix-map.md`.
 
 ## PR and Review Surfaces

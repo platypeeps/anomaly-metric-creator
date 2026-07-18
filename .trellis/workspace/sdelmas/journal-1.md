@@ -668,3 +668,45 @@ Consolidated prior planning follow-ups into Trellis task records, added the rema
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Stabilize Repomix map ordering
+
+**Date**: 2026-07-17
+**Task**: Stabilize Repomix map ordering
+**Package**: amc
+**Branch**: `codex/stabilize-repomix-map-order`
+
+### Summary
+
+Stabilized the generated Repomix repository map by disabling Git change-count sorting, refreshed the map and Obsidian KB, updated the Trellis documentation-review spec, opened PR #249, passed the local full-check, and requested Copilot review.
+
+### Main Changes
+
+- Added `--no-git-sort-by-changes` to `scripts/update_repomix` so regenerated repository maps keep stable ordering.
+- Refreshed `docs/repomix-map.md` on top of the latest `origin/main` Trellis audit/task additions.
+- Documented the stable Repomix invocation in `.trellis/spec/amc/backend/documentation-review.md`.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cce94c6` | (see git log) |
+
+### Testing
+
+- `bash scripts/update_repomix`
+- `bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py`
+- `git diff --check`
+- `shellcheck scripts/update_repomix`
+- `python3 ./.trellis/scripts/get_context.py`
+- `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh` (passed before and after the finish-work journal commit)
+- PR #249 CI passed on the final pushed head: `CI Result`, `quick test`, `socket`, and CodeQL.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
