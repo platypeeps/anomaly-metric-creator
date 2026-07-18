@@ -50,27 +50,36 @@ parallel maps. Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 ## Module Boundaries
 
 Keep generation and registries in `legacy.py` unless a focused extraction
-preserves the same public surface through facades. Ten focused modules have
-been extracted so far (decomposition epic `07-02-legacy-monolith-decomposition`,
-steps 1–7): `redaction.py` (sensitive HTTP-header masking), `timeutil.py`
+preserves the same public surface through facades. Focused modules extracted
+so far through decomposition epic `07-02-legacy-monolith-decomposition`:
+`redaction.py` (sensitive HTTP-header masking), `timeutil.py`
 (CSV-timestamp parsing / unix-nano conversion), `otlp.py` (the `_build_otlp_*`
 JSON/protobuf payload builders), `csv_layout.py` (shared per-component CSV
 scan/iteration primitives + `_INSTANCE_DIMENSION_COLUMNS`), `gauges_impl.py`
 (`write_gauges_csv`), `artifacts.py` (atomic-publication helpers),
 `combine_impl.py` (wide + long-form combine writers), `schema_impl.py`
 (schema.json writers), `validate_impl.py` (schema read-back / output
-validation), and `otel_stream.py` (OTEL HTTP streaming). All are re-imported by
+validation orchestration and `Violation`), `validate_cells.py` (cell,
+derivation, and long-form dimension validation), `validate_topology.py`
+(aggregate topology coupling validation), `validate_topology_instances.py`
+(per-instance topology coupling validation), and `otel_stream.py` (OTEL HTTP
+streaming). All are re-imported by
 `legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
-`scenarios.py`, `schema.py`) preserve historic object identity. When an extracted module must read a registry that
-still lives in `legacy.py`, configure live callbacks from `legacy.py` rather
-than importing `legacy.py` from the extracted module or copying a registry
-snapshot; this preserves monkeypatch-sensitive tests while keeping dependency
-direction one-way. Sources: `CLAUDE.md`;
+`scenarios.py`, `schema.py`) preserve historic object identity. When an
+extracted module must read a registry that still lives in `legacy.py`, configure
+live callbacks from `legacy.py` and pass the current registry view into leaf
+helpers rather than importing `legacy.py` from the extracted module or copying a
+registry snapshot; this preserves monkeypatch-sensitive tests while keeping
+dependency direction one-way. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/otel.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
-`src/anomaly_metric_creator/validate_impl.py`; `tests/test_package_facades.py`.
+`src/anomaly_metric_creator/validate_impl.py`;
+`src/anomaly_metric_creator/validate_cells.py`;
+`src/anomaly_metric_creator/validate_topology.py`;
+`src/anomaly_metric_creator/validate_topology_instances.py`;
+`tests/test_package_facades.py`.
 
 Keep `server.py` as the stdlib HTTP facade for `amc serve`. Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,

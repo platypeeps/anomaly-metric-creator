@@ -203,6 +203,19 @@ def test_unknown_files_flags_stray_artifact(amc, schema_run):
     assert any("stray.txt" in v for v in violations)
 
 
+def test_unknown_files_allows_dotfile_sidecar(amc, schema_run):
+    (schema_run / ".DS_Store").write_text("sidecar")
+    schema = _load_schema(schema_run)
+    assert amc._validate_no_unknown_files(schema_run, schema) == []
+
+
+def test_unknown_files_still_flags_tmp_debris(amc, schema_run):
+    (schema_run / "apigateway.csv.tmp").write_text("partial")
+    schema = _load_schema(schema_run)
+    violations = amc._validate_no_unknown_files(schema_run, schema)
+    assert any("apigateway.csv.tmp" in v for v in violations)
+
+
 def test_unknown_files_allows_schema_json_when_undeclared(amc, schema_run):
     """schema.json is always allowed in the directory even if a buggy run
     omitted it from the declared file list — otherwise the validator could
@@ -564,6 +577,15 @@ def test_validate_output_returns_violation_list(amc, schema_run):
     assert isinstance(violations, list)
 
 
+def test_validate_output_returns_structured_violations(amc, schema_run):
+    (schema_run / "stray.txt").write_text("hello")
+    violations = amc.validate_output(schema_run)
+    violation = next(v for v in violations if "stray.txt" in v)
+    assert isinstance(violation, amc.Violation)
+    assert violation.kind == "unknown_file"
+    assert str(violation) == "unknown file in output dir: 'stray.txt'"
+
+
 def test_validate_subcommand_exits_nonzero_on_violation(amc, tmp_path, capsys):
     """End-to-end: a run with an injected bad cell must exit 1 under
     the ``validate`` subcommand in default (hard-fail) mode."""
@@ -672,6 +694,7 @@ def _classify(line: str) -> tuple[str, str, str] | None:
     """Parse one validator line into ``(file, metric, kind)``. Returns
     None for sentence-style violations that don't fit the standard
     ``<file> line N: <metric>=<value> <verb>...`` format."""
+    line = str(line)
     m = re.match(
         r"(?P<file>\S+\.csv)\s+line\s+\d+:\s+(?P<metric>\S+?)="
         r".+?\s+(?P<verb>is fractional|is negative|below min_value"

@@ -11,7 +11,9 @@ return type).
 
 ## Proposal
 
-**The cohesive cut (PRD asks for it here):** three modules, all <800:
+**The cohesive cut (PRD asks for it here):** four modules, all <800. The
+implementation splits the original three-module sketch's topology leaf in two
+so the aggregate and per-instance coupling helpers both stay below the cap:
 
 - `validate_impl.py` (keeps the name = keeps the facade/legacy surface
   and the `_configure_validate_runtime` seam): document
@@ -20,8 +22,10 @@ return type).
   timestamp-coverage checks. ~600 lines.
 - `validate_cells.py`: header/cell checks, derivation recomputers +
   `_RECOMPUTERS`, long-form dimension checks. ~450.
-- `validate_topology.py`: coupling checks (aggregate + per-instance),
-  anomaly-exclusion windows, `_read_component_metric_column`. ~550.
+- `validate_topology.py`: aggregate topology coupling checks,
+  anomaly-exclusion windows, `_read_component_metric_column`. ~600.
+- `validate_topology_instances.py`: per-instance topology column reader +
+  per-pod Pearson check. ~250.
 
 One-way imports: the two leaves never import `validate_impl`; anything
 they need from the configured runtime arrives **as function arguments**
@@ -67,7 +71,7 @@ is purely structural.
 
 ## Affected Files
 
-`validate_impl.py` (+ two new leaf modules), `legacy.py` (dead stub
+`validate_impl.py` (+ three new leaf modules), `legacy.py` (dead stub
 removal only), `tests/test_validate_output.py` (mechanical wraps),
 CLAUDE.md (validator section + pre-clean tolerance note + module map),
 `.trellis/audit/ledger.md` (flip A-011, A-068).

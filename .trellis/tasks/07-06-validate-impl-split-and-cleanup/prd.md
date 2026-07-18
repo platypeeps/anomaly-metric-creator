@@ -52,12 +52,12 @@ cleanups in the same pass.
 
 ## Acceptance Criteria
 
-- [ ] Either every validator module is < 800 lines, or the waiver is
+- [x] Either every validator module is < 800 lines, or the waiver is
       recorded in the epic design.md + CLAUDE.md.
-- [ ] `validate` subcommand behavior identical
+- [x] `validate` subcommand behavior identical
       (`tests/test_validate_output.py` green without behavioral edits).
-- [ ] No bare `100` threshold literals remain in the coupling validators.
-- [ ] Dead helper removed; facade identity tests stay green.
+- [x] No bare `100` threshold literals remain in the coupling validators.
+- [x] Dead helper removed; facade identity tests stay green.
 
 ## Notes
 

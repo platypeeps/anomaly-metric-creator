@@ -39,6 +39,9 @@ config files, command trace imports, and trace bundles must be validated on the
 reader side even when the local writer normally creates them. Sources:
 `README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
+`src/anomaly_metric_creator/validate_cells.py`;
+`src/anomaly_metric_creator/validate_topology.py`;
+`src/anomaly_metric_creator/validate_topology_instances.py`;
 `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_instance_config.py`;
