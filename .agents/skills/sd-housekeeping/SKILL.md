@@ -63,41 +63,48 @@ This command performs this end-of-stream flow:
 9. Delete the merged local feature branch.
 10. Delete the merged remote feature branch unless
    `--keep-remote-branch` is passed.
-11. Verify the expected final state:
-   - default branch checked out
-   - working tree clean
-   - default branch matches `origin/default`
-   - no extra local branches
-   - the just-merged feature branch's remote-tracking ref is absent, or is
-     explicitly kept because `--keep-remote-branch` was used
-12. Report repo-wide open PRs, open issues, and active Trellis tasks as
-    inventory, not as blockers for the current stream cleanup.
-13. Before the final answer, gather next-step candidates:
-   - open follow-up items discovered during this session
-   - existing Trellis tasks that are already `in_progress`
-   - high-value Trellis task candidates that are not started yet, prioritizing
-     `planning` tasks assigned to the current developer, then clearly important
-     repo-local tasks surfaced by `python3 ./.trellis/scripts/task.py list`
+11. The housekeeping script delegates final verification to the installed
+    `sd-status` collector in strict mode. It passes the default/source branch,
+    remote-branch policy, whether refs were refreshed, and every cleanup
+    anomaly; do not run a parallel final-state collector.
+12. Treat the delegated status report as authoritative for the expected clean
+    state, pack/Trellis versions, relevant PR and review rounds, repo-wide open
+    PRs/issues, Trellis inventory, anomalies, and numbered next steps. Inventory
+    alone does not block current-stream cleanup.
+13. Preserve session-only follow-up context in the concise chat summary when it
+    is not observable from repository state, but do not replace or contradict
+    the status report's evidence-backed next steps.
 
 ## Expected Output
 
-A clean current-stream cleanup should condense to:
+A clean current-stream cleanup ends with the shared status report:
 
 ```text
+SD status: healthy
+Ref freshness: refreshed
+
 ==> Expected clean state
 - branch: <default>
 - working tree: clean
-- <default> matches origin/<default>
-- local branches: only <default>
+- upstream: origin/<default>; synchronized
+- local branches (1): <default>
 - remote source branch absent: origin/<feature>
 
+==> Delivery
+- SD pack: <installed version>
+- Trellis: <installed version>
+- relevant PR: #<number> MERGED
+
 ==> Inventory
-- open PRs: <summary>
-- open issues: <summary>
-- Trellis active tasks: <summary>
+- open PRs (<count>): <summary>
+- open issues (<count>): <summary>
+- current Trellis task: <summary>
 
 ==> Anomalies
 none
+
+==> Next Steps
+1. <highest-value evidence-backed next action>
 ```
 
 If current-stream cleanup differs from that expected state, the script prints
@@ -141,22 +148,12 @@ supports a useful observation, such as the PR lifecycle being healthy, cleanup
 being verification-only because the PR was already merged, stale refs being
 pruned, the repo being ready for the next work stream, or a process improvement
 being worth tracking. Do not add filler insights that merely restate `clean`.
-Always end with the numbered `Next Steps` section, even when the current stream
-needs no follow-up: a clean run still reports the current Trellis task and the
-next high-value work. It covers, in order: open follow-up items discovered
-during this session, any Trellis task already `in_progress` (the current task)
-to resume, and the next high-value Trellis task candidates / roadmap items that
-are not started yet (planning tasks assigned to the current developer first,
-then other clearly high-value repo-local tasks). Also state the current task in
-the final-state rows (`Current Trellis task: <none active|id + status>`), and
-the review-cycle cost: when this run merged or confirmed a PR, count its
-submitted reviewer reviews (one `gh api .../pulls/<n>/reviews` read) and fill
-`PR review rounds:`; on verification-only runs write `n/a — no PR in this
-run`. Do not
-include speculative work: if a category has no evidence, say so plainly, and if
-the whole backlog is empty, write that the backlog is clear rather than dropping
-the section. When there are multiple items in a category, order them by urgency
-and practical value, and keep the list concise.
+Always end with the numbered `Next Steps` section delegated by status, even
+when the current stream needs no follow-up. Also state the current task and review-cycle
+cost from the status report in the final-state rows. Do not rerun `gh`, Trellis,
+or Git commands solely to reconstruct those values. Do not include speculative
+work: if a category has no evidence, say so plainly, and if the whole backlog is
+empty, write that the backlog is clear rather than dropping the section.
 
 ## Safety Rules
 
@@ -203,15 +200,16 @@ Report:
 - Whether finish-work ran or blocked the command.
 - Whether a ready open PR was merged, or why it was skipped.
 - Which branch was cleaned up, if any.
-- Any anomalies exactly as the script printed them.
+- Any anomalies exactly as the delegated status report printed them.
 - Any brief evidence-backed insight from the cleanup, only when it adds signal
   beyond the final-state rows.
 - Whether follow-up manual action is needed.
 - The current Trellis task (its id + status, or `none active`).
-- PR review rounds for the merged/confirmed PR (submitted reviewer review
-  count), or `n/a` when the run had no PR.
+- PR review rounds for the merged/confirmed PR as reported by status, or
+  `unavailable` when the optional GitHub query failed.
 - A final numbered `Next Steps` section — always present, including on a
-  verification-only clean run — covering, in order: open session follow-ups, any
-  in-progress Trellis task to resume, and the next high-value Trellis task
-  candidates / roadmap items to tackle. Say the backlog is clear only when it
-  genuinely has no open or planned work; never omit this section.
+  verification-only clean run — covering, in order: open follow-up items
+  discovered during this session, existing Trellis tasks that are already
+  `in_progress`, and high-value Trellis task candidates / roadmap items to
+  tackle. Say the backlog is clear only when it genuinely has no open or
+  planned work; never omit this section.

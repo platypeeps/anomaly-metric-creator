@@ -19,6 +19,9 @@
 .agents/skills/sd-finish-work/SKILL.md
 .agents/skills/sd-fix-ci/SKILL.md
 .agents/skills/sd-full-check/SKILL.md
+.agents/skills/sd-help/SKILL.md
+.agents/skills/sd-help/references/command-catalog.md
+.agents/skills/sd-help/references/examples.md
 .agents/skills/sd-housekeeping/SKILL.md
 .agents/skills/sd-retro/SKILL.md
 .agents/skills/sd-review-learnings/SKILL.md
@@ -26,6 +29,7 @@
 .agents/skills/sd-review-pr/SKILL.md
 .agents/skills/sd-ship/SKILL.md
 .agents/skills/sd-start/SKILL.md
+.agents/skills/sd-status/SKILL.md
 .agents/skills/sd-test-gaps/SKILL.md
 .agents/skills/sd-update-deps/SKILL.md
 .agents/skills/sd-update-spec/SKILL.md
@@ -38,6 +42,7 @@
 .claude/commands/sd/finish-work.md
 .claude/commands/sd/fix-ci.md
 .claude/commands/sd/full-check.md
+.claude/commands/sd/help.md
 .claude/commands/sd/housekeeping.md
 .claude/commands/sd/retro.md
 .claude/commands/sd/review-learnings.md
@@ -45,6 +50,7 @@
 .claude/commands/sd/review-pr.md
 .claude/commands/sd/ship.md
 .claude/commands/sd/start.md
+.claude/commands/sd/status.md
 .claude/commands/sd/test-gaps.md
 .claude/commands/sd/update-deps.md
 .claude/commands/sd/update-spec.md
@@ -57,6 +63,7 @@
 .gemini/commands/sd/finish-work.toml
 .gemini/commands/sd/fix-ci.toml
 .gemini/commands/sd/full-check.toml
+.gemini/commands/sd/help.toml
 .gemini/commands/sd/housekeeping.toml
 .gemini/commands/sd/retro.toml
 .gemini/commands/sd/review-learnings.toml
@@ -64,6 +71,7 @@
 .gemini/commands/sd/review-pr.toml
 .gemini/commands/sd/ship.toml
 .gemini/commands/sd/start.toml
+.gemini/commands/sd/status.toml
 .gemini/commands/sd/test-gaps.toml
 .gemini/commands/sd/update-deps.toml
 .gemini/commands/sd/update-spec.toml
@@ -78,6 +86,7 @@
 .github/prompts/sd-finish-work.prompt.md
 .github/prompts/sd-fix-ci.prompt.md
 .github/prompts/sd-full-check.prompt.md
+.github/prompts/sd-help.prompt.md
 .github/prompts/sd-housekeeping.prompt.md
 .github/prompts/sd-retro.prompt.md
 .github/prompts/sd-review-learnings.prompt.md
@@ -85,6 +94,7 @@
 .github/prompts/sd-review-pr.prompt.md
 .github/prompts/sd-ship.prompt.md
 .github/prompts/sd-start.prompt.md
+.github/prompts/sd-status.prompt.md
 .github/prompts/sd-test-gaps.prompt.md
 .github/prompts/sd-update-deps.prompt.md
 .github/prompts/sd-update-spec.prompt.md
@@ -100,6 +110,7 @@
 .opencode/commands/sd-finish-work.md
 .opencode/commands/sd-fix-ci.md
 .opencode/commands/sd-full-check.md
+.opencode/commands/sd-help.md
 .opencode/commands/sd-housekeeping.md
 .opencode/commands/sd-retro.md
 .opencode/commands/sd-review-learnings.md
@@ -107,6 +118,7 @@
 .opencode/commands/sd-review-pr.md
 .opencode/commands/sd-ship.md
 .opencode/commands/sd-start.md
+.opencode/commands/sd-status.md
 .opencode/commands/sd-test-gaps.md
 .opencode/commands/sd-update-deps.md
 .opencode/commands/sd-update-spec.md
@@ -129,6 +141,8 @@ scripts/sd-ai-command-pack-review-local.sh
 scripts/sd-ai-command-pack-review-preflight.mjs
 scripts/sd-ai-command-pack-review-scope.sh
 scripts/sd-ai-command-pack-shell-lib.sh
+scripts/sd-ai-command-pack-status.py
 scripts/sd-ai-command-pack-toolchain.sh
 scripts/sd-ai-command-pack-update-spec-kb.py
+scripts/sd_ai_command_pack_fleet_lib.py
 scripts/sd_ai_command_pack_lib.py

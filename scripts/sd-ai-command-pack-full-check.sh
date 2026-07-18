@@ -69,10 +69,85 @@ is_disabled() {
   esac
 }
 
+sd_ai_command_pack_source_identity() {
+  if [ ! -f "$REPO_ROOT/install.py" ] || [ ! -f "$REPO_ROOT/manifest.json" ] || [ ! -d "$REPO_ROOT/templates" ]; then
+    printf 'absent\n'
+    return 0
+  fi
+  if ! have python3; then
+    return 3
+  fi
+
+  python3 - <<'PACK_SOURCE_IDENTITY'
+import json
+import re
+import sys
+from pathlib import Path
+
+expected_name = "sd-ai-command-pack"
+manifest_path = Path("manifest.json")
+
+try:
+    raw = manifest_path.read_bytes()
+except OSError as exc:
+    print(f"pack source identity error: cannot read manifest.json: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+asserted_identity = bool(
+    re.search(br'"name"\s*:\s*"sd-ai-command-pack"', raw)
+)
+try:
+    text = raw.decode("utf-8")
+    manifest = json.loads(text)
+except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    if asserted_identity:
+        print(
+            "pack source identity error: manifest.json asserts "
+            f"{expected_name!r} but is malformed: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    print("other")
+    raise SystemExit(0)
+
+if not isinstance(manifest, dict) or manifest.get("name") != expected_name:
+    print("other")
+    raise SystemExit(0)
+
+identity_errors = []
+version = manifest.get("version")
+if not isinstance(version, str) or not version.strip():
+    identity_errors.append("version must be a non-empty string")
+if not isinstance(manifest.get("files"), list):
+    identity_errors.append("files must be a list")
+if identity_errors:
+    print(
+        "pack source identity error: manifest.json asserts "
+        f"{expected_name!r} but is malformed: {'; '.join(identity_errors)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+print(expected_name)
+PACK_SOURCE_IDENTITY
+}
+
 warn_unarmed_pack_source_hook() {
-  [ -f "$REPO_ROOT/manifest.json" ] || return 0
-  [ -f "$REPO_ROOT/install.py" ] || return 0
   [ -d "$REPO_ROOT/.githooks" ] || return 0
+
+  local identity=""
+  local identity_status=0
+  identity="$(sd_ai_command_pack_source_identity)" || identity_status=$?
+  if [ "$identity_status" -eq 2 ]; then
+    return 1
+  fi
+  if [ "$identity_status" -eq 3 ]; then
+    warn "python3 not found on PATH; cannot verify pack source identity for the source-hook advisory, so pre-push hook configuration is not checked."
+    return 0
+  fi
+  if [ "$identity_status" -ne 0 ] || [ "$identity" != "sd-ai-command-pack" ]; then
+    return 0
+  fi
 
   local hooks_path
   hooks_path="$(git config --get core.hooksPath 2>/dev/null || true)"
@@ -456,11 +531,21 @@ run_pack_source_drift_gates() {
     warn "Skipping pack source drift gates because SD_AI_COMMAND_PACK_FULL_CHECK_PACK_DRIFT=$mode."
     return 0
   fi
-  if [ ! -f "install.py" ] || [ ! -f "manifest.json" ] || [ ! -d "templates" ]; then
+  local identity=""
+  local identity_status=0
+  identity="$(sd_ai_command_pack_source_identity)" || identity_status=$?
+  if [ "$identity_status" -eq 2 ]; then
+    return 1
+  fi
+  if [ "$identity_status" -eq 3 ]; then
+    warn "python3 not found on PATH; cannot verify pack source identity, so pack source drift gates are skipped."
     return 0
   fi
-  if ! have python3; then
-    warn "python3 not found on PATH; skipping pack source drift gates."
+  if [ "$identity" = "absent" ]; then
+    return 0
+  fi
+  if [ "$identity" != "sd-ai-command-pack" ]; then
+    printf 'Pack source drift gates: manifest identity is not sd-ai-command-pack; skipping SD-specific source checks.\n'
     return 0
   fi
 

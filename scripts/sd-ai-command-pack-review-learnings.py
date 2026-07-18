@@ -172,6 +172,14 @@ class PullRequestComment:
         return f"- **{state}** PR #{self.pr_number} `{path}`: {body} ({url})"
 
 
+@dataclasses.dataclass(frozen=True)
+class CopilotReviewWindow:
+    comments: tuple[PullRequestComment, ...]
+    prs_inspected: int
+    cutoff: str | None
+    truncated: bool
+
+
 def _parse_diff(diff_text: str) -> tuple[set[str], list[AddedLine]]:
     changed: set[str] = set()
     added: list[AddedLine] = []
@@ -643,32 +651,92 @@ def github_repo_slug(repo_root: Path, override: str | None = None) -> tuple[str,
     return owner, name
 
 
-def fetch_recent_copilot_comments(
+def _recent_pull_requests(
     repo_root: Path,
     *,
     days: int,
     limit: int,
-    github_repo: str | None = None,
+    owner: str,
+    name: str,
+) -> tuple[list[dict[str, Any]], str, bool]:
+    cutoff_dt = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+    cutoff = cutoff_dt.isoformat().replace("+00:00", "Z")
+    query = """
+query($owner:String!, $name:String!, $endCursor:String) {
+  repository(owner:$owner, name:$name) {
+    pullRequests(first:100, after:$endCursor, states:[OPEN,MERGED,CLOSED], orderBy:{field:UPDATED_AT, direction:DESC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number title url updatedAt }
+    }
+  }
+}
+""".strip()
+    prs: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        args = [
+            "api",
+            "graphql",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-f",
+            f"query={query}",
+        ]
+        if cursor:
+            args.extend(["-F", f"endCursor={cursor}"])
+        payload = _run_gh_json(args, repo_root)
+        connection = _dig(
+            payload,
+            "data",
+            "repository",
+            "pullRequests",
+        )
+        if not isinstance(connection, dict):
+            break
+        nodes = connection.get("nodes")
+        if not isinstance(nodes, list):
+            break
+
+        reached_cutoff = False
+        for value in nodes:
+            pr = _as_dict(value)
+            updated_at = pr.get("updatedAt")
+            if not isinstance(updated_at, str):
+                continue
+            try:
+                updated_dt = dt.datetime.fromisoformat(
+                    updated_at.replace("Z", "+00:00")
+                )
+            except ValueError:
+                continue
+            if updated_dt < cutoff_dt:
+                reached_cutoff = True
+                break
+            if limit and len(prs) >= limit:
+                return prs, cutoff, True
+            prs.append(pr)
+
+        page_info = connection.get("pageInfo")
+        if reached_cutoff or not isinstance(page_info, dict):
+            break
+        if not page_info.get("hasNextPage"):
+            break
+        next_cursor = page_info.get("endCursor")
+        if not isinstance(next_cursor, str) or not next_cursor:
+            break
+        cursor = next_cursor
+    return prs, cutoff, False
+
+
+def _copilot_comments_for_prs(
+    repo_root: Path,
+    *,
+    owner: str,
+    name: str,
+    prs: list[dict[str, Any]],
 ) -> list[PullRequestComment]:
-    since = (
-        dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
-    ).date().isoformat()
-    owner, name = github_repo_slug(repo_root, github_repo)
-    prs = _run_gh_json(
-        [
-            "pr",
-            "list",
-            "--state",
-            "all",
-            "--limit",
-            str(limit),
-            "--search",
-            f"updated:>={since}",
-            "--json",
-            "number,title,url",
-        ],
-        repo_root,
-    )
     query = """
 query($owner:String!, $name:String!, $number:Int!) {
   repository(owner:$owner, name:$name) {
@@ -691,7 +759,7 @@ query($owner:String!, $name:String!, $number:Int!) {
 }
 """.strip()
     comments: list[PullRequestComment] = []
-    for pr in _as_list(prs):
+    for pr in prs:
         pr_obj = _as_dict(pr)
         number = pr_obj.get("number")
         if not isinstance(number, int):
@@ -748,6 +816,73 @@ query($owner:String!, $name:String!, $number:Int!) {
                     )
                 )
     return comments
+
+
+def fetch_recent_copilot_review_window(
+    repo_root: Path,
+    *,
+    days: int,
+    limit: int = 0,
+    github_repo: str | None = None,
+) -> CopilotReviewWindow:
+    owner, name = github_repo_slug(repo_root, github_repo)
+    prs, cutoff, truncated = _recent_pull_requests(
+        repo_root,
+        days=days,
+        limit=limit,
+        owner=owner,
+        name=name,
+    )
+    comments = _copilot_comments_for_prs(
+        repo_root,
+        owner=owner,
+        name=name,
+        prs=prs,
+    )
+    return CopilotReviewWindow(tuple(comments), len(prs), cutoff, truncated)
+
+
+def fetch_copilot_review_for_prs(
+    repo_root: Path,
+    *,
+    pr_numbers: list[int],
+    github_repo: str | None = None,
+) -> CopilotReviewWindow:
+    owner, name = github_repo_slug(repo_root, github_repo)
+    unique_numbers = list(dict.fromkeys(pr_numbers))
+    prs = [
+        {
+            "number": number,
+            "title": "",
+            "url": f"https://github.com/{owner}/{name}/pull/{number}",
+        }
+        for number in unique_numbers
+    ]
+    comments = _copilot_comments_for_prs(
+        repo_root,
+        owner=owner,
+        name=name,
+        prs=prs,
+    )
+    return CopilotReviewWindow(tuple(comments), len(prs), None, False)
+
+
+def fetch_recent_copilot_comments(
+    repo_root: Path,
+    *,
+    days: int,
+    limit: int,
+    github_repo: str | None = None,
+) -> list[PullRequestComment]:
+    """Compatibility helper for callers that need only comment rows."""
+    return list(
+        fetch_recent_copilot_review_window(
+            repo_root,
+            days=days,
+            limit=limit,
+            github_repo=github_repo,
+        ).comments
+    )
 
 
 def render_managed_block(findings: list[Finding], comments: list[PullRequestComment]) -> str:
@@ -848,8 +983,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--github-limit",
         type=int,
-        default=20,
-        help="Maximum PRs to inspect when --github-days is set.",
+        default=0,
+        help=(
+            "Maximum PRs to inspect when --github-days is set; zero (the "
+            "default) pages through the complete time window."
+        ),
+    )
+    parser.add_argument(
+        "--github-pr",
+        type=int,
+        action="append",
+        default=[],
+        help=(
+            "Inspect one PR instead of a date window. Repeat for multiple PRs; "
+            "intended for the single post-cycle learning pass."
+        ),
     )
     parser.add_argument(
         "--github-repo",
@@ -873,8 +1021,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.github_days < 0:
         print("[sd-review-learnings:setup] --github-days must be non-negative", file=sys.stderr)
         return 2
-    if args.github_limit < 1:
-        print("[sd-review-learnings:setup] --github-limit must be positive", file=sys.stderr)
+    if args.github_limit < 0:
+        print("[sd-review-learnings:setup] --github-limit must be non-negative", file=sys.stderr)
+        return 2
+    if args.github_days and args.github_pr:
+        print(
+            "[sd-review-learnings:setup] --github-days and --github-pr are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 2
+    if any(number < 1 for number in args.github_pr):
+        print("[sd-review-learnings:setup] --github-pr must be positive", file=sys.stderr)
         return 2
 
     repo_root = args.repo_root.resolve()
@@ -907,16 +1064,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        comments = (
-            fetch_recent_copilot_comments(
+        if args.github_pr:
+            review_window = fetch_copilot_review_for_prs(
+                repo_root,
+                pr_numbers=args.github_pr,
+                github_repo=args.github_repo,
+            )
+        elif args.github_days:
+            review_window = fetch_recent_copilot_review_window(
                 repo_root,
                 days=args.github_days,
                 limit=args.github_limit,
                 github_repo=args.github_repo,
             )
-            if args.github_days
-            else []
-        )
+        else:
+            review_window = CopilotReviewWindow((), 0, None, False)
     except (
         CommandError,
         OSError,
@@ -929,8 +1091,24 @@ def main(argv: list[str] | None = None) -> int:
 
     for finding in findings:
         print(finding.render())
-    if comments:
-        print(f"[sd-review-learnings:github] captured {len(comments)} Copilot review comment(s)")
+    comments = list(review_window.comments)
+    if args.github_days or args.github_pr:
+        window_label = (
+            f" updated since {review_window.cutoff}"
+            if review_window.cutoff
+            else " from the requested PR set"
+        )
+        print(
+            "[sd-review-learnings:github] inspected "
+            f"{review_window.prs_inspected} PR(s){window_label}; captured "
+            f"{len(comments)} Copilot review comment(s)"
+        )
+        if review_window.truncated:
+            print(
+                "[sd-review-learnings:github] warning: --github-limit truncated "
+                "the requested PR window",
+                file=sys.stderr,
+            )
 
     if args.update or args.dry_run:
         block = render_managed_block(findings, comments)

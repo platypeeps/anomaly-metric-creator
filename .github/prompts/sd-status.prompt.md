@@ -1,0 +1,27 @@
+---
+# description is shown by GitHub prompt pickers; mode: agent means the prompt can use tools and run an interactive workflow.
+description: Report read-only local repository or configured fleet status with actionable next steps.
+mode: agent
+---
+
+# SD Status
+
+Run the read-only Software Delivery status workflow for the user's complete
+request.
+
+1. Resolve the `sd-status` skill by name using the agent's trusted skill
+   discovery mechanism for installed skills.
+2. If the skill is missing, unreadable, empty, duplicated, malformed, defines
+   contradictory safety rules, or requires unavailable tools, stop and report
+   the exact blocker.
+3. Use that skill as the primary instructions for this workflow. Pass through
+   the optional positional `fleet` argument and supported flags unchanged.
+4. Run the installed status collector through
+   `scripts/sd-ai-command-pack-toolchain.sh`; do not recreate its report from
+   ad hoc commands.
+5. Keep the workflow read-only. Do not fetch, pull, switch, stage, commit,
+   push, merge, delete branches, update tasks, refresh generated files, or run
+   a recommended follow-up command.
+6. Relay the bounded report, explicit freshness and availability labels,
+   anomalies, and numbered next steps. A follow-up requires a separate user
+   request.
