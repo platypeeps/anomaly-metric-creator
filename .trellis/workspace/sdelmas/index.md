@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-07-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~747 | Active |
+| `journal-1.md` | ~781 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-07-18 | Address schema topology validation review | `f0c0260` | `refactor/validate-impl-split-cleanup` |
 | 17 | 2026-07-18 | Split validate_impl and cleanup validator review feedback | `1fa990a`, `9834d70` | `refactor/validate-impl-split-cleanup` |
 | 16 | 2026-07-17 | Stabilize Repomix map ordering | `cce94c6` | `codex/stabilize-repomix-map-order` |
 | 15 | 2026-07-09 | Consolidate planning follow-ups into Trellis | `8045f0d` | `codex/consolidate-roadmap-tasks` |

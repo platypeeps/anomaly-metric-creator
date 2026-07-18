@@ -745,3 +745,37 @@ Split validate_impl into focused validator leaf modules, added string-compatible
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Address schema topology validation review
+
+**Date**: 2026-07-18
+**Task**: Address schema topology validation review
+**Package**: amc
+**Branch**: `refactor/validate-impl-split-cleanup`
+
+### Summary
+
+Addressed late Copilot review feedback by making topology anomaly-window filtering use the schema.json topology snapshot while preserving live load-metric name mapping, with focused regression coverage and synced spec/task evidence.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f0c0260` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
