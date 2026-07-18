@@ -668,3 +668,37 @@ Consolidated prior planning follow-ups into Trellis task records, added the rema
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Stabilize Repomix map ordering
+
+**Date**: 2026-07-17
+**Task**: Stabilize Repomix map ordering
+**Package**: amc
+**Branch**: `codex/stabilize-repomix-map-order`
+
+### Summary
+
+Stabilized the generated Repomix repository map by disabling Git change-count sorting, refreshed the map and Obsidian KB, updated the Trellis documentation-review spec, opened PR #249, passed the local full-check, and requested Copilot review.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cce94c6` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

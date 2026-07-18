@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-07-09
+- **Total Sessions**: 16
+- **Last Active**: 2026-07-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~661 | Active |
+| `journal-1.md` | ~704 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-07-17 | Stabilize Repomix map ordering | `cce94c6` | `codex/stabilize-repomix-map-order` |
 | 15 | 2026-07-09 | Consolidate planning follow-ups into Trellis | `8045f0d` | `codex/consolidate-roadmap-tasks` |
 | 14 | 2026-07-06 | Extract OTEL stream helpers | `21ad963`, `22e6644` | `codex/extract-otel-stream` |
 | 13 | 2026-07-05 | Address PR review feedback for schema extraction | `1d8d464` | `codex/decomp-schema-validate` |
