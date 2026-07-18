@@ -683,7 +683,9 @@ Stabilized the generated Repomix repository map by disabling Git change-count so
 
 ### Main Changes
 
-- Detailed change bullets were not supplied; see the summary above.
+- Added `--no-git-sort-by-changes` to `scripts/update_repomix` so regenerated repository maps keep stable ordering.
+- Refreshed `docs/repomix-map.md` on top of the latest `origin/main` Trellis audit/task additions.
+- Documented the stable Repomix invocation in `.trellis/spec/amc/backend/documentation-review.md`.
 
 ### Git Commits
 
@@ -693,7 +695,13 @@ Stabilized the generated Repomix repository map by disabling Git change-count so
 
 ### Testing
 
-- Validation was not recorded for this session.
+- `bash scripts/update_repomix`
+- `bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py`
+- `git diff --check`
+- `shellcheck scripts/update_repomix`
+- `python3 ./.trellis/scripts/get_context.py`
+- `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh` (passed before and after the finish-work journal commit)
+- PR #249 CI passed on the final pushed head: `CI Result`, `quick test`, `socket`, and CodeQL.
 
 ### Status
 
