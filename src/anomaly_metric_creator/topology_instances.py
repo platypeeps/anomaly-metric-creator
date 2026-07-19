@@ -135,7 +135,7 @@ def _per_instance_upstream_view(
     metric_keys = set()
     for entry in upstream_arrays_by_instance:
         metric_keys.update(entry.keys())
-    for metric in metric_keys:
+    for metric in sorted(metric_keys):
         arrays = [
             entry[metric] for entry in upstream_arrays_by_instance
             if metric in entry

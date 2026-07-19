@@ -1199,6 +1199,7 @@ src/
     otel.py
     otlp.py
     redaction.py
+    runtime_defaults.py
     scenarios.py
     schema_impl.py
     schema.py

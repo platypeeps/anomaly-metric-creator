@@ -27,8 +27,7 @@ except ModuleNotFoundError as exc:
 from .artifacts import _atomic_artifact_open
 from .csv_layout import _INSTANCE_DIMENSION_COLUMNS
 from .models_impl import Instance
-
-START = datetime.datetime(2026, 3, 10, 0, 0, 0)
+from .runtime_defaults import START
 
 
 def _emit_component_metrics(

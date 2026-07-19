@@ -59,8 +59,9 @@ dedicated modules when `legacy.py` preserves the historic public surface.
 Focused modules extracted so far through decomposition epic
 `07-02-legacy-monolith-decomposition`:
 `redaction.py` (sensitive HTTP-header masking), `timeutil.py`
-(CSV-timestamp parsing / unix-nano conversion), `otlp.py` (the `_build_otlp_*`
-JSON/protobuf payload builders), `csv_layout.py` (shared per-component CSV
+(CSV-timestamp parsing / unix-nano conversion), `runtime_defaults.py` (shared
+timestamp/day defaults), `otlp.py` (the `_build_otlp_*` JSON/protobuf payload
+builders), `csv_layout.py` (shared per-component CSV
 scan/iteration primitives + `_INSTANCE_DIMENSION_COLUMNS`), `gauges_impl.py`
 (`write_gauges_csv`), `artifacts.py` (atomic-publication helpers),
 `combine_impl.py` (wide + long-form combine writers), `schema_impl.py`

@@ -22,6 +22,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .runtime_defaults import SECONDS_PER_DAY, START
+
 try:
     import numpy as np
 except ModuleNotFoundError as exc:
@@ -41,8 +43,6 @@ except ModuleNotFoundError as exc:
 # ------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------
-START = datetime.datetime(2026, 3, 10, 0, 0, 0)
-SECONDS_PER_DAY = 86_400
 DEFAULT_ROW_COUNT = 50_000
 DEFAULT_SEED = 42
 DEFAULT_OUTPUT_DIR = Path("iot_logs")

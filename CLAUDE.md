@@ -36,8 +36,10 @@ surface (shim, facades, tests, `state.legacy` lookups) is unchanged, and new
 modules never import `legacy` (one-way dependency). Extracted so far:
 `redaction.py` (sensitive HTTP-header masking for OTEL transport
 diagnostics), `timeutil.py` (CSV-timestamp parsing + unix-nano conversion,
-shared by the merge writers, OTLP builders, and `server_mcp`), and
-`otlp.py` (the eight `_build_otlp_*` JSON/protobuf payload builders plus
+shared by the merge writers, OTLP builders, and `server_mcp`),
+`runtime_defaults.py` (`START` and `SECONDS_PER_DAY` shared by legacy and
+extracted generation helpers), and `otlp.py` (the eight `_build_otlp_*`
+JSON/protobuf payload builders plus
 `_anomaly_event_id`; protobuf imports stay lazy per-function),
 `csv_layout.py` (the shared per-component CSV header-scan / row-iteration
 primitives — `_scan_component_csv_headers`, `_iter_component_rows`,
@@ -114,7 +116,7 @@ step-2 `from .otlp import` block); after any extraction, grep the moved
 range for `^from \.` re-imports and confirm every leaf re-import
 (`redaction`, `timeutil`, `otlp`, `csv_layout`, `artifacts`, `combine_impl`,
 `schema_impl`, `validate_impl`, `otel_stream`, `cli_args`, `cli_subcommands`,
-`models_impl`, `catalog`, `anomaly_dispatch`, `generation`,
+`models_impl`, `catalog`, `runtime_defaults`, `anomaly_dispatch`, `generation`,
 `generation_derivations`, `generation_helpers`, `generation_emit`,
 `topology_models`, `topology_registry`, `topology_impl`, `topology_compose`,
 `topology_instances`, `topology_support`)

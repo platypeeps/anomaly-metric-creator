@@ -39,11 +39,9 @@ from .generation_derivations import (
 )
 from .csv_layout import _is_anonymous_instance_list
 from .models_impl import Instance, MetricSpec, _validate_instance_list
+from .runtime_defaults import SECONDS_PER_DAY, START
 from .topology_compose import _arrays_equal_dict, _sat_tuples_equal_dict
 from . import topology_impl as _topology_impl
-
-START = datetime.datetime(2026, 3, 10, 0, 0, 0)
-SECONDS_PER_DAY = 86_400
 
 _DEFAULT_RUNTIME_KEY = "__default__"
 _generation_runtimes = {}
