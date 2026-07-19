@@ -779,3 +779,38 @@ Addressed late Copilot review feedback by making topology anomaly-window filteri
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: Extract CLI argument parsing
+
+**Date**: 2026-07-18
+**Task**: Extract CLI argument parsing
+**Package**: amc
+**Branch**: `refactor/extract-cli-args`
+
+### Summary
+
+Extracted CLI parsing and subcommand dispatch from legacy.py into cli_args.py and cli_subcommands.py with keyed runtime seams; refreshed specs/docs/task context; validated help parity, focused suites, full pytest, pack full-check, CI, and review threads.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `47289f8` | (see git log) |
+| `445fd72` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
