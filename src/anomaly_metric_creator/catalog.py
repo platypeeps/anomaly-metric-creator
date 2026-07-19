@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import weakref
 from typing import Callable
 
 try:
@@ -570,6 +571,17 @@ _DEFAULT_RUNTIME_KEY = "__default__"
 _catalog_runtimes = {}
 
 
+def _weak_runtime_getter(getter: Callable, *, runtime_key: str) -> weakref.ReferenceType:
+    """Keep extracted-module runtime hooks from retaining legacy module copies."""
+    def discard_runtime(_ref, key=runtime_key):
+        _catalog_runtimes.pop(key, None)
+
+    try:
+        return weakref.ref(getter, discard_runtime)
+    except TypeError as exc:
+        raise TypeError("catalog runtime getters must be weak-referenceable") from exc
+
+
 def _configure_catalog_runtime(
     *,
     get_components: Callable[[], dict[str, list[MetricSpec]]],
@@ -579,14 +591,27 @@ def _configure_catalog_runtime(
 ) -> None:
     """Wire live registry access from ``legacy.py`` without importing it."""
     _catalog_runtimes[runtime_key] = {
-        "get_components": get_components,
-        "get_instances": get_instances,
-        "get_default_metrics_per_component": get_default_metrics_per_component,
+        "get_components": _weak_runtime_getter(get_components, runtime_key=runtime_key),
+        "get_instances": _weak_runtime_getter(get_instances, runtime_key=runtime_key),
+        "get_default_metrics_per_component": _weak_runtime_getter(
+            get_default_metrics_per_component,
+            runtime_key=runtime_key,
+        ),
     }
 
 
 def _catalog_runtime(runtime_key: str) -> dict | None:
-    return _catalog_runtimes.get(runtime_key)
+    runtime = _catalog_runtimes.get(runtime_key)
+    if runtime is None:
+        return None
+    getters = {}
+    for key, getter_ref in runtime.items():
+        getter = getter_ref()
+        if getter is None:
+            _catalog_runtimes.pop(runtime_key, None)
+            raise RuntimeError("catalog runtime is no longer available")
+        getters[key] = getter
+    return getters
 
 
 def _runtime_components(runtime_key: str) -> dict[str, list[MetricSpec]]:
@@ -656,11 +681,6 @@ def _validate_metric_spec_schema_metadata(
                 raise ValueError(
                     f"{ctx}.derivation={spec.derivation!r} must be a string or None"
                 )
-
-
-
-_validate_metric_spec_schema_metadata()
-
 
 def _validate_instances_registry(
     *, runtime_key: str = _DEFAULT_RUNTIME_KEY

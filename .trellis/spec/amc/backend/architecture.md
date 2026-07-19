@@ -73,19 +73,21 @@ generate-flag validation), `cli_subcommands.py` (dedicated `combine`,
 `models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
 `_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
-catalog/instance metadata validators). All are
+catalog/instance metadata validator implementations). All are
 re-imported by `legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) preserve historic object identity. `models.py`
 now imports `MetricSpec` and `Instance` from `models_impl.py` while the
 topology dataclasses and `RunContext` still route through `legacy.py`. When an
 extracted module must read a registry that still lives in `legacy.py`, configure
-live callbacks from `legacy.py` and pass the current registry view into leaf
-helpers rather than importing `legacy.py` from the extracted module or copying a
-registry snapshot; this preserves monkeypatch-sensitive tests while keeping
-dependency direction one-way. The moved model/catalog readers use those
-callbacks for patched `legacy.COMPONENTS` and `legacy.INSTANCES`, while
-`catalog.py` remains the source of truth for the shipped component and
-instance registries. Output validation is the exception for persisted
+named, weak-referenceable live callbacks from `legacy.py` and pass the current
+registry view into leaf helpers rather than importing `legacy.py` from the
+extracted module or copying a registry snapshot; this preserves
+monkeypatch-sensitive tests without retaining isolated legacy module copies, and
+keeps dependency direction one-way. The moved model/catalog readers use those
+callbacks for patched `legacy.COMPONENTS` and `legacy.INSTANCES`; `legacy.py`
+still invokes catalog metadata validation at the historical import-time call
+site, while `catalog.py` remains the source of truth for the shipped component
+and instance registries. Output validation is the exception for persisted
 topology shape: `validate_topology.py` must iterate and filter anomaly windows
 against the `schema.json` topology snapshot because that is the graph used by
 the artifacts being validated, while current load-metric name mapping may still

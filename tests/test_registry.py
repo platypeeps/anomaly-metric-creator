@@ -1,3 +1,6 @@
+import gc
+import weakref
+
 import pytest
 from conftest import COMPONENT_FIELDS
 
@@ -34,6 +37,62 @@ def test_default_metrics_per_component_keys_match_components(amc):
             f"DEFAULT_METRICS_PER_COMPONENT[{component!r}] = {default} is "
             f"outside [1, {catalog_size}]"
         )
+
+
+def test_extracted_runtime_registries_release_module_callbacks():
+    """Runtime seams must not retain isolated legacy module copies."""
+    from anomaly_metric_creator import catalog, models_impl
+
+    model_key = "test-model-runtime-release"
+    catalog_key = "test-catalog-runtime-release"
+
+    def build_runtime():
+        components = {"authservice": []}
+        instances = {"authservice": [models_impl.Instance()]}
+        defaults = {"authservice": 1}
+        keepalive = {}
+
+        def get_components():
+            return components
+
+        def get_instances():
+            return instances
+
+        def get_defaults():
+            return defaults
+
+        def get_max_instances():
+            return 1
+
+        keepalive["components"] = get_components
+        keepalive["instances"] = get_instances
+        keepalive["defaults"] = get_defaults
+        keepalive["max_instances"] = get_max_instances
+        models_impl._configure_models_runtime(
+            get_components=keepalive["components"],
+            get_max_instances_per_component=keepalive["max_instances"],
+            runtime_key=model_key,
+        )
+        catalog._configure_catalog_runtime(
+            get_components=keepalive["components"],
+            get_instances=keepalive["instances"],
+            get_default_metrics_per_component=keepalive["defaults"],
+            runtime_key=catalog_key,
+        )
+        return keepalive, [weakref.ref(fn) for fn in keepalive.values()]
+
+    keepalive, callback_refs = build_runtime()
+    assert all(ref() is not None for ref in callback_refs)
+    assert model_key in models_impl._models_runtimes
+    assert catalog_key in catalog._catalog_runtimes
+
+    del keepalive
+    for _ in range(3):
+        gc.collect()
+
+    assert all(ref() is None for ref in callback_refs)
+    assert model_key not in models_impl._models_runtimes
+    assert catalog_key not in catalog._catalog_runtimes
 
 
 def test_scenarios_registry_completeness(amc):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -75,6 +76,17 @@ _DEFAULT_RUNTIME_KEY = "__default__"
 _models_runtimes = {}
 
 
+def _weak_runtime_getter(getter: Callable, *, runtime_key: str) -> weakref.ReferenceType:
+    """Keep extracted-module runtime hooks from retaining legacy module copies."""
+    def discard_runtime(_ref, key=runtime_key):
+        _models_runtimes.pop(key, None)
+
+    try:
+        return weakref.ref(getter, discard_runtime)
+    except TypeError as exc:
+        raise TypeError("models_impl runtime getters must be weak-referenceable") from exc
+
+
 def _configure_models_runtime(
     *,
     get_components: Callable[[], dict[str, list[MetricSpec]]],
@@ -83,24 +95,31 @@ def _configure_models_runtime(
 ) -> None:
     """Wire live catalog access from ``legacy.py`` without importing it."""
     _models_runtimes[runtime_key] = {
-        "get_components": get_components,
-        "get_max_instances_per_component": get_max_instances_per_component,
+        "get_components": _weak_runtime_getter(get_components, runtime_key=runtime_key),
+        "get_max_instances_per_component": _weak_runtime_getter(
+            get_max_instances_per_component,
+            runtime_key=runtime_key,
+        ),
     }
 
 
-def _models_runtime(runtime_key: str) -> dict:
+def _models_runtime_getter(runtime_key: str, key: str) -> Callable:
     runtime = _models_runtimes.get(runtime_key)
     if runtime is None:
         raise RuntimeError("models_impl runtime is not configured")
-    return runtime
+    getter = runtime[key]()
+    if getter is None:
+        _models_runtimes.pop(runtime_key, None)
+        raise RuntimeError("models_impl runtime is no longer available")
+    return getter
 
 
 def _runtime_components(runtime_key: str) -> dict[str, list[MetricSpec]]:
-    return _models_runtime(runtime_key)["get_components"]()
+    return _models_runtime_getter(runtime_key, "get_components")()
 
 
 def _runtime_max_instances_per_component(runtime_key: str) -> int:
-    return _models_runtime(runtime_key)["get_max_instances_per_component"]()
+    return _models_runtime_getter(runtime_key, "get_max_instances_per_component")()
 
 
 def _validate_instance_list(instances, *, where: str) -> None:

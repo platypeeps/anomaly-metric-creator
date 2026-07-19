@@ -2307,21 +2307,41 @@ from .catalog import (
     _validate_metric_spec_schema_metadata as _catalog_validate_metric_spec_schema_metadata,
 )
 
+
+def _catalog_runtime_components():
+    return COMPONENTS
+
+
+def _catalog_runtime_instances():
+    return INSTANCES
+
+
+def _catalog_runtime_default_metrics_per_component():
+    return DEFAULT_METRICS_PER_COMPONENT
+
+
+def _catalog_runtime_max_instances_per_component():
+    return MAX_INSTANCES_PER_COMPONENT
+
+
 _configure_models_runtime(
-    get_components=lambda: COMPONENTS,
-    get_max_instances_per_component=lambda: MAX_INSTANCES_PER_COMPONENT,
+    get_components=_catalog_runtime_components,
+    get_max_instances_per_component=_catalog_runtime_max_instances_per_component,
     runtime_key=__name__,
 )
 _configure_catalog_runtime(
-    get_components=lambda: COMPONENTS,
-    get_instances=lambda: INSTANCES,
-    get_default_metrics_per_component=lambda: DEFAULT_METRICS_PER_COMPONENT,
+    get_components=_catalog_runtime_components,
+    get_instances=_catalog_runtime_instances,
+    get_default_metrics_per_component=_catalog_runtime_default_metrics_per_component,
     runtime_key=__name__,
 )
 
 
 def _validate_metric_spec_schema_metadata() -> None:
     return _catalog_validate_metric_spec_schema_metadata(runtime_key=__name__)
+
+
+_validate_metric_spec_schema_metadata()
 
 
 

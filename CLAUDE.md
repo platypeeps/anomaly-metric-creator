@@ -67,14 +67,17 @@ generate-flag validation), and `cli_subcommands.py`
 `models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
 `_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
-catalog/instance metadata validators).
+catalog/instance metadata validator implementations).
 `schema_impl.py`, `cli_args.py`, and the validator orchestrator access live
 registries through callbacks configured by `legacy.py`; `cli_args.py` refreshes
 live `COMPONENTS`, `SCENARIOS`, and `DEFAULT_METRICS_PER_COMPONENT` before
 parsing so monkeypatched registry tests see the current state. The moved model
 and catalog helpers use the same callback pattern for `legacy.COMPONENTS` and
-`legacy.INSTANCES` so patched registry validation and `--instance-config`
-loading still observe the legacy namespace. Topology leaf
+`legacy.INSTANCES`; these callbacks must be named and weak-referenceable so
+isolated `legacy.py` test loads can be garbage-collected after use. `legacy.py`
+keeps the catalog metadata validator call at its historical import-time
+position so the implementation can move without changing validation order.
+Topology leaf
 modules receive those registries as explicit arguments so tests that patch
 `legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS` still exercise the current
 registry state without introducing a reverse import.

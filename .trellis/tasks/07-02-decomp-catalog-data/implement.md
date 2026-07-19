@@ -13,9 +13,9 @@
    /`DEFAULT_METRICS_PER_COMPONENT`/`DERIVATIONS` over `tests/`; runtime-
    reader audit for `_load_instance_config` (seam vs parameter per
    design rule).
-2. [x] Create `models_impl.py` then `catalog.py` (verbatim; validators move
-   with registries at the same execution position); re-import blocks;
-   splice-hazard grep.
+2. [x] Create `models_impl.py` then `catalog.py` (validator implementations
+   move with registries; `legacy.py` preserves the historical import-time call
+   position); weak-referenceable re-import/callback blocks; splice-hazard grep.
 3. [x] Re-point `models.py` facade; run facade identity + registry tests;
    update CLAUDE.md/spec module maps.
 4. [x] Full suite and local `sd-ai-command-pack-full-check` gate.
