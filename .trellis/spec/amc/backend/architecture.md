@@ -53,9 +53,11 @@ parallel maps. Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 
 ## Module Boundaries
 
-Keep generation and registries in `legacy.py` unless a focused extraction
-preserves the same public surface through facades. Focused modules extracted
-so far through decomposition epic `07-02-legacy-monolith-decomposition`:
+Keep `main()`, `RunContext`, the scenario registry, and compatibility wrappers
+in `legacy.py`; focused generation, topology, and artifact helpers may live in
+dedicated modules when `legacy.py` preserves the historic public surface.
+Focused modules extracted so far through decomposition epic
+`07-02-legacy-monolith-decomposition`:
 `redaction.py` (sensitive HTTP-header masking), `timeutil.py`
 (CSV-timestamp parsing / unix-nano conversion), `otlp.py` (the `_build_otlp_*`
 JSON/protobuf payload builders), `csv_layout.py` (shared per-component CSV
@@ -71,13 +73,25 @@ streaming), `cli_args.py` (parser construction, CLI reconciliation, and
 generate-flag validation), `cli_subcommands.py` (dedicated `combine`,
 `validate`, `serve`, and `trace-bundle` subcommand dispatch helpers),
 `models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
-`_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
+`_load_instance_config`), `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
-catalog/instance metadata validator implementations). All are
+catalog/instance metadata validator implementations), `anomaly_dispatch.py`
+(shape vocabulary and generator-arity dispatch), `generation.py`
+(`generate_component` and live generation callbacks),
+`generation_derivations.py` (derived-metric recomputation registry),
+`generation_helpers.py` (`_natural_column` and instance-filter helpers),
+`generation_emit.py` (CSV row formatting, DST splice, and timestamp-array
+helpers), `topology_models.py` (`Edge` and `SaturationParams`),
+`topology_registry.py` (topology metric registries and tuning constants),
+`topology_impl.py` (`TOPOLOGY`, callback runtime, topology generation order, and
+topology validators), `topology_compose.py` (aggregate coupling and saturation
+composition), `topology_instances.py` (per-instance topology composition), and
+`topology_support.py` (shared saturation/equality helpers). All are
 re-imported by `legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) preserve historic object identity. `models.py`
-now imports `MetricSpec` and `Instance` from `models_impl.py` while the
-topology dataclasses and `RunContext` still route through `legacy.py`. When an
+imports `MetricSpec` and `Instance` from `models_impl.py`; `Edge` and
+`SaturationParams` are imported by `legacy.py` from `topology_impl.py`, while
+`RunContext` remains in `legacy.py`. When an
 extracted module must read a registry that still lives in `legacy.py`, configure
 named, weak-referenceable live callbacks from `legacy.py` and pass the current
 registry view into leaf helpers rather than importing `legacy.py` from the
@@ -87,11 +101,15 @@ keeps dependency direction one-way. The moved model/catalog readers use those
 callbacks for patched `legacy.COMPONENTS` and `legacy.INSTANCES`; `legacy.py`
 still invokes catalog metadata validation at the historical import-time call
 site, while `catalog.py` remains the source of truth for the shipped component
-and instance registries. Output validation is the exception for persisted
-topology shape: `validate_topology.py` must iterate and filter anomaly windows
-against the `schema.json` topology snapshot because that is the graph used by
-the artifacts being validated, while current load-metric name mapping may still
-come from the live registry. Sources: `CLAUDE.md`;
+and instance registries. The moved generation and topology helpers use the same
+callback pattern for `legacy.DERIVATIONS`, `legacy._format_fixed3`,
+`legacy.TOPOLOGY`, `legacy._TOPOLOGY_LOAD_METRICS`, and
+`legacy._TOPOLOGY_SATURATION_TARGETS`, with direct module callers falling back
+to the canonical registries in their extracted homes. Output validation is the
+exception for persisted topology shape: `validate_topology.py` must iterate and
+filter anomaly windows against the `schema.json` topology snapshot because that
+is the graph used by the artifacts being validated, while current load-metric
+name mapping may still come from the live registry. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/otel.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
@@ -99,6 +117,17 @@ come from the live registry. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/models_impl.py`;
 `src/anomaly_metric_creator/catalog.py`;
+`src/anomaly_metric_creator/anomaly_dispatch.py`;
+`src/anomaly_metric_creator/generation.py`;
+`src/anomaly_metric_creator/generation_derivations.py`;
+`src/anomaly_metric_creator/generation_helpers.py`;
+`src/anomaly_metric_creator/generation_emit.py`;
+`src/anomaly_metric_creator/topology_models.py`;
+`src/anomaly_metric_creator/topology_registry.py`;
+`src/anomaly_metric_creator/topology_impl.py`;
+`src/anomaly_metric_creator/topology_compose.py`;
+`src/anomaly_metric_creator/topology_instances.py`;
+`src/anomaly_metric_creator/topology_support.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
 `src/anomaly_metric_creator/validate_cells.py`;

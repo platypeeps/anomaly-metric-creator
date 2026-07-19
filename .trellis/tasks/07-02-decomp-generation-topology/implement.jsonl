@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/07-02-decomp-generation-topology/prd.md", "reason": "Defines the generation/topology extraction requirements, deterministic-hash acceptance criteria, and monkeypatch-sensitive names."}
+{"file": ".trellis/tasks/07-02-decomp-generation-topology/design.md", "reason": "Records the module-boundary plan, callback strategy, RNG safety constraints, and follow-up boundaries for the extraction."}
+{"file": ".trellis/spec/amc/backend/architecture.md", "reason": "Owns package-shape and module-boundary guidance for extracted helpers that preserve the legacy surface through callbacks."}

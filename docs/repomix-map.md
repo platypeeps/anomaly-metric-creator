@@ -1178,6 +1178,7 @@ scripts/
 src/
   anomaly_metric_creator/
     __init__.py
+    anomaly_dispatch.py
     artifacts.py
     catalog.py
     cli_args.py
@@ -1187,6 +1188,10 @@ src/
     combine.py
     csv_layout.py
     gauges_impl.py
+    generation_derivations.py
+    generation_emit.py
+    generation_helpers.py
+    generation.py
     legacy.py
     models_impl.py
     models.py
@@ -1207,6 +1212,12 @@ src/
     server_traces.py
     server.py
     timeutil.py
+    topology_compose.py
+    topology_impl.py
+    topology_instances.py
+    topology_models.py
+    topology_registry.py
+    topology_support.py
     trace_bundle.py
     validate_cells.py
     validate_impl.py

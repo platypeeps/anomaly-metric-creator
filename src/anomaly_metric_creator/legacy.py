@@ -16,15 +16,11 @@ import contextlib
 import csv
 import datetime
 import hashlib
-import heapq
 import json
-import inspect
 import math
 import sys
-import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 try:
     import numpy as np
@@ -80,12 +76,18 @@ SIGNAL_LEVELS: dict[str, set[str]] = {
 }
 DEFAULT_SEVERITY = "medium"
 
-# Anomaly shape vocabulary recognised by ``_resolve_anomaly_value``. Specs that
-# declare an unknown ``shape`` are rejected at import time by
-# ``_validate_scenario_spec``.
-_VALID_ANOMALY_SHAPES = frozenset({
-    "step", "sustained", "ramp_linear", "ramp_exp", "sawtooth", "sine",
-})
+# Anomaly shape vocabulary and generator-call dispatch moved to
+# anomaly_dispatch.py (decomposition final step). Re-imported here so
+# scenario validation, tests, and the historic ``legacy.<name>`` surface stay
+# unchanged.
+from .anomaly_dispatch import (
+    _VALID_ANOMALY_SHAPES as _VALID_ANOMALY_SHAPES,
+    _cached_generator_meta as _cached_generator_meta,
+    _call_generator_within_span as _call_generator_within_span,
+    _generator_meta as _generator_meta,
+    _resolve_anomaly_value as _resolve_anomaly_value,
+    _span_fraction as _span_fraction,
+)
 
 # Stable named sub-seed for the --anomaly-count sampling RNG. Derived from
 # sha256(b"anomaly_count_cap") and fixed at import time so the cap RNG stream
@@ -124,56 +126,17 @@ class RunContext:
     cascading_anomalies: dict = field(default_factory=dict)
     instances: dict = field(default_factory=dict)
 
-# Derived-metric registry. Each entry maps a component to (derivation_fn,
-# tuple_of_derived_metric_names). generate_component() looks the component
-# up in this dict after the natural-value pass and the anomaly override
-# loop; if a function is registered, it recomputes the derived column(s)
-# from their sibling columns so the emitted CSV stays self-consistent.
-# Anomalies that want to influence a derived column must therefore target
-# its source column(s), not the derived column itself.
-#
-# DERIVATIONS is the single source of truth: ``DERIVED_METRICS`` is
-# computed from it below, so the test-side exemption set and the
-# derivation pass can never drift apart. A new derived column requires
-# registering both the function and the column name here in lockstep.
-def _derive_cacheservice(values: "np.ndarray", name_to_col: dict[str, int]) -> None:
-    """Recompute ``hit_ratio`` from ``cache_hits`` / ``cache_misses``.
+# Derived-metric recomputation moved with generate_component() to generation.py
+# (decomposition final step). Re-imported here so tests and validators keep the
+# historic ``legacy.<name>`` surface.
+from . import generation as _generation_module
+from .generation import (
+    DERIVED_METRICS as DERIVED_METRICS,
+    DERIVATIONS as DERIVATIONS,
+    _derive_cacheservice as _derive_cacheservice,
+)
 
-    Clamps the source columns to ``>= 0`` in place first so the emitted CSV
-    values agree with the derived ratio. Anomaly generators bypass
-    ``MetricSpec.clip_min``, so without the in-place clamp a future
-    generator that drove the counters negative would yield emitted source
-    values < 0 alongside a derivation computed from clamped intermediates —
-    breaking the very consistency invariant this pass exists to enforce.
-    """
-    hits_col = name_to_col.get("cache_hits")
-    misses_col = name_to_col.get("cache_misses")
-    ratio_col = name_to_col.get("hit_ratio")
-    if hits_col is None or misses_col is None or ratio_col is None:
-        return
-    np.maximum(values[:, hits_col], 0.0, out=values[:, hits_col])
-    np.maximum(values[:, misses_col], 0.0, out=values[:, misses_col])
-    hits = values[:, hits_col]
-    misses = values[:, misses_col]
-    denom = hits + misses
-    with np.errstate(divide="ignore", invalid="ignore"):
-        values[:, ratio_col] = np.where(
-            denom > 0, 100.0 * hits / denom, 0.0
-        )
-
-
-DERIVATIONS: dict[
-    str,
-    tuple[Callable[["np.ndarray", dict[str, int]], None], tuple[str, ...]],
-] = {
-    "cacheservice": (_derive_cacheservice, ("hit_ratio",)),
-}
-
-DERIVED_METRICS: set[tuple[str, str]] = {
-    (component, metric)
-    for component, (_, metrics) in DERIVATIONS.items()
-    for metric in metrics
-}
+_GENERATION_DERIVATIONS_BINDING = DERIVATIONS
 
 # ------------------------------------------------------------------
 # Per-metric and instance models.
@@ -202,78 +165,13 @@ from .csv_layout import (
 )
 
 
-# ------------------------------------------------------------------
-# Topology graph dataclasses (phase 1 — structural-only).
-# ------------------------------------------------------------------
-# The ``TOPOLOGY`` constant below declares directed service-to-service edges
-# alongside ``COMPONENTS``. The dataclasses landed first (phase 1)
-# so the structural shape stays stable across the two-pass coupling
-# generator (phase 2, phase 3) and the saturation
-# feedback layer (phase 4, phase 5).
-@dataclass(frozen=True)
-class SaturationParams:
-    """Sigmoid-style saturation parameters attached to a topology edge.
-
-    Read by ``_apply_saturation`` as the parameters of a logistic
-    response curve on the source's load metric: latency and error gains
-    are added to the target's natural latency / error rate columns once
-    load crosses ``midpoint`` at ``steepness``. Zero-gain (the default)
-    means the edge declares the saturation point structurally but does
-    not contribute to the target's metrics — handy for placeholder
-    edges declared at phase 1 that have not been wired up to gains yet.
-    """
-    midpoint: float
-    steepness: float
-    latency_gain: float = 0.0
-    error_gain: float = 0.0
-
-
-@dataclass(frozen=True)
-class Edge:
-    """A directed edge in the service-call ``TOPOLOGY`` graph.
-
-    ``weight`` is either a constant fan-out share (``float`` in ``[0, 1]``
-    for routing fractions, or any non-negative scalar for amplification
-    edges) or a callable ``(np.ndarray) -> np.ndarray`` that computes the
-    per-row weight from a numpy column (e.g. cache-miss rate driving the
-    cache→database fan-out). The import-time ``_validate_topology``
-    validator enforces both branches: constant weights must be a finite
-    non-negative ``int``/``float`` (``bool`` is rejected); callable
-    weights must accept a numpy array and return a numpy array.
-
-    ``signal`` is the per-edge derivation that feeds a callable ``weight``.
-    It receives a ``dict[str, np.ndarray]`` of the upstream component's
-    captured load columns (the canonical metric plus any supplementary
-    metrics declared in ``_TOPOLOGY_LOAD_METRICS``) and returns either an
-    ``np.ndarray`` of per-row signal values (passed verbatim into
-    ``weight(signal)``) or ``None`` to skip the edge entirely (e.g. when
-    ``--metrics-per-component`` has trimmed a required input column).
-    Required iff ``weight`` is callable; must be ``None`` for constant
-    ``weight``. The validator probes the callable with a tiny captured-
-    column dict so a mis-shaped signal fails at import time.
-
-    ``saturation`` is optional; when set, the phase-4 saturation feedback
-    layer adds a sigmoid-shaped latency/error contribution to the target
-    component once the source's load metric crosses the configured
-    midpoint.
-
-    ``correlation_threshold`` is the minimum Pearson correlation the phase-7 ``_validate_topology_coupling`` check requires between this
-    edge's source canonical load metric and its target canonical load
-    metric under realistic topology coupling. ``None`` (the default)
-    means "use the registry-level default
-    ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD``". The field is read by the
-    validator only and does not affect generation. Callable-weight edges
-    skip the check regardless (the correlation is dominated by the per-row
-    weight signal rather than the upstream load), so the field is ignored
-    for them.
-    """
-    target: str
-    weight: float | Callable[[np.ndarray], np.ndarray] = 1.0
-    saturation: SaturationParams | None = None
-    signal: Callable[[dict[str, np.ndarray]], "np.ndarray | None"] | None = None
-    correlation_threshold: float | None = None
-
-
+# Topology dataclasses moved to topology_impl.py (decomposition final step).
+# Re-imported here so tests, package facades, and the historic
+# ``legacy.<name>`` surface stay unchanged.
+from .topology_impl import (
+    Edge as Edge,
+    SaturationParams as SaturationParams,
+)
 # ------------------------------------------------------------------
 # Scenario helper builders
 # ------------------------------------------------------------------
@@ -948,116 +846,6 @@ class Scenario:
     cascade_specs: tuple[tuple[str, dict], ...]
 
 
-def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
-                    rng: "np.random.RandomState",
-                    *,
-                    noise: np.ndarray | None = None,
-                    latency_factor: np.ndarray | None = None,
-                    error_offset: np.ndarray | None = None,
-                    baseline_override: np.ndarray | None = None) -> np.ndarray:
-    """Vectorized natural-value column. Multiplier/additive must accept arrays.
-
-    The optional kwargs decouple two pieces of state that were previously
-    baked into ``MetricSpec.multiplier`` / ``MetricSpec.additive`` lambdas
-    by ``_compose_topology_*_specs``. Called with ``latency_factor`` and
-    ``error_offset`` equal to what the lambdas would have computed, the
-    result matches the lambda-baked path byte-for-byte on the locked
-    baselines (pinned by the N=3 golden hashes; IEEE-754 multiplication
-    and addition are not associative, so the equality is an empirical
-    property of the shipped seeds holding through the 3-decimal CSV
-    rounding, not a mathematical guarantee), and they unlock the
-    per-instance saturation path where each instance's curve depends on
-    its own upstream view:
-
-    * ``noise`` — pre-drawn ``rng.normal(0, spec.std, n_rows)`` array.
-      When provided, the function uses it instead of drawing fresh
-      noise so multiple call sites (e.g. one per instance) can share
-      the same noise floor without advancing the RNG more than once.
-      Pass ``None`` to keep the historic single-call draw.
-    * ``latency_factor`` — per-row multiplicative array applied
-      *between* the natural multiplier and the natural additive,
-      matching where ``_compose_topology_saturation_specs`` baked the
-      saturation latency multiplier into ``MetricSpec.multiplier``.
-    * ``error_offset`` — per-row additive array applied *after* the
-      natural additive and *before* ``clip_min``, matching where the
-      saturation error offset was baked into ``MetricSpec.additive``.
-    * ``baseline_override`` — per-row array that REPLACES the natural
-      baseline (used by per-instance coupling where the downstream
-      load metric is fully baked from upstream views). Composes with
-      ``latency_factor`` / ``error_offset`` after the replacement.
-      Mirrors what ``_compose_topology_coupled_specs`` produces by
-      replacing ``base=0, std=0, multiplier=None,
-      additive=lambda: coupled`` on the spec — the override is the
-      ``coupled`` array exactly.
-    """
-    if baseline_override is not None:
-        col = np.array(baseline_override, dtype=np.float64, copy=True)
-    else:
-        col = np.full(elapsed.shape, spec.base, dtype=np.float64)
-        if spec.std > 0:
-            if noise is None:
-                noise = rng.normal(0.0, spec.std, elapsed.shape[0])
-            col += noise
-        if spec.multiplier is not None:
-            col *= spec.multiplier(ts_array, elapsed)
-    if latency_factor is not None:
-        col *= latency_factor
-    if baseline_override is None and spec.additive is not None:
-        col += spec.additive(ts_array, elapsed)
-    if error_offset is not None:
-        col += error_offset
-    if spec.clip_min is not None:
-        np.maximum(col, spec.clip_min, out=col)
-    return col
-
-
-# Sentinel returned by ``_resolve_instance_filter`` when an ``instance_filter``
-# matches zero active instances. Distinct from ``None`` (which means "no
-# filter / matches every instance"); the caller emits a single WARNING per
-# skipped spec and drops it from the override pipeline.
-_INSTANCE_FILTER_NO_MATCH = object()
-
-
-def _resolve_instance_filter(spec_filter, instances: list["Instance"]):
-    """Resolve a spec's ``instance_filter`` against the active instance list.
-
-    Returns ``None`` when every active instance matches (no filter declared
-    or filter matches everyone) — the caller takes the shared-values fast
-    path and preserves the single-shared-buffer behavior.
-
-    Returns ``_INSTANCE_FILTER_NO_MATCH`` when the filter matches zero
-    active instances — the caller emits one WARNING per spec and drops it.
-
-    Returns a ``bool`` ``np.ndarray`` of length ``len(instances)`` for
-    partial matches — the caller applies overrides only to selected
-    per-instance buffers.
-
-    ``spec_filter`` must already have passed the structural validation in
-    ``_validate_scenario_spec`` (``None``, iterable of ``str``, or
-    callable). Membership against ``INSTANCES`` is not checked at import
-    time because ``--instance-config`` (a later phase) will register
-    runtime ids; this function compares against the per-run ``instances``
-    list and warns on no-match instead.
-    """
-    if spec_filter is None:
-        return None
-    if callable(spec_filter):
-        mask = np.array(
-            [bool(spec_filter(inst)) for inst in instances], dtype=bool
-        )
-    else:
-        id_set = frozenset(spec_filter)
-        mask = np.array(
-            [inst.id is not None and inst.id in id_set for inst in instances],
-            dtype=bool,
-        )
-    if not mask.any():
-        return _INSTANCE_FILTER_NO_MATCH
-    if mask.all():
-        return None
-    return mask
-
-
 # ------------------------------------------------------------------
 # Atomic artifact publication
 # ------------------------------------------------------------------
@@ -1076,6 +864,55 @@ from .artifacts import (
 # ------------------------------------------------------------------
 # Core generator
 # ------------------------------------------------------------------
+# The vectorized generation path moved to generation.py. Wrappers below keep
+# legacy-level monkeypatches visible for tests and state.legacy consumers.
+from .generation import (
+    _INSTANCE_FILTER_NO_MATCH as _INSTANCE_FILTER_NO_MATCH,
+    _build_timestamp_arrays as _generation_build_timestamp_arrays,
+    _configure_generation_runtime as _configure_generation_runtime,
+    _format_csv_row_block as _generation_format_csv_row_block,
+    _format_metric_suffix as _generation_format_metric_suffix,
+    _natural_column as _generation_natural_column,
+    _resolve_instance_filter as _generation_resolve_instance_filter,
+    _splice_dst_artifact as _generation_splice_dst_artifact,
+    generate_component as _generation_generate_component,
+)
+
+
+def _generation_runtime_derivations():
+    if DERIVATIONS is _GENERATION_DERIVATIONS_BINDING:
+        return _generation_module.DERIVATIONS
+    return DERIVATIONS
+
+
+def _generation_runtime_topology_load_metrics():
+    return _TOPOLOGY_LOAD_METRICS
+
+
+def _generation_runtime_format_fixed3():
+    return _format_fixed3
+
+
+def _natural_column(spec: MetricSpec, ts_array: np.ndarray, elapsed: np.ndarray,
+                    rng: "np.random.RandomState",
+                    *,
+                    noise: np.ndarray | None = None,
+                    latency_factor: np.ndarray | None = None,
+                    error_offset: np.ndarray | None = None,
+                    baseline_override: np.ndarray | None = None) -> np.ndarray:
+    return _generation_natural_column(
+        spec, ts_array, elapsed, rng,
+        noise=noise,
+        latency_factor=latency_factor,
+        error_offset=error_offset,
+        baseline_override=baseline_override,
+    )
+
+
+def _resolve_instance_filter(spec_filter, instances: list["Instance"]):
+    return _generation_resolve_instance_filter(spec_filter, instances)
+
+
 def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        *, base_dir, total_seconds, drop_rate,
                        ctx: "RunContext",
@@ -1088,1135 +925,53 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
                        coupling_arrays_per_instance: list[dict[str, np.ndarray]] | None = None,
                        saturation_arrays_per_instance: list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]] | None = None,
                        apply_dtype_int_cast: bool = True):
-    """
-    specs: list of MetricSpec (one per CSV column, in column order)
-    anomaly_specs: list of {'time_offset': int, 'metric': str, 'description': str, 'generator': fn}
-    instances: optional list of ``Instance`` carrying the per-component
-        dimension topology (Phase 1). ``None`` resolves to a single
-        anonymous ``Instance()`` so today's output stays byte-identical;
-        dimension columns are emitted when ``len > 1`` or any instance
-        has non-None dimension fields (the Phase 2 long-form CSV layout).
-    apply_dtype_int_cast: if True (default), round columns with ``dtype="int"``
-        to whole numbers via ``np.rint`` before derivations. ``main()``
-        always passes True; programmatic callers may pass False to keep
-        the pre-cast fractional contrast.
-
-    Vectorized: natural-value math is one numpy op per metric; anomaly overrides
-    are masked writes on the column arrays; packet loss is a single boolean mask
-    decided up front so a dropped row emits neither a CSV row nor a manifest
-    entry. A shaped span whose *leading* row(s) are dropped still records its
-    manifest entry, anchored at the span's first kept row (a span dropped in
-    its entirety records none). ``ts_array``/``ts_strings`` are optional so
-    callers can share them across components (main() does this). The drop mask
-    is drawn per call so each component keeps its independent drop pattern.
-
-    ``interval`` controls sampling density (seconds between rows). Timeline
-    coverage stays ``total_seconds`` seconds; row count is
-    ``floor(total_seconds / interval)``. Each anomaly's ``time_offset`` is
-    mapped to the nearest row via ``round(time_offset / interval)``; specs
-    that fall outside ``[0, n_rows)`` are skipped with the existing
-    stderr warning.
-    """
-    file_path = base_dir / f"{component_name}.csv"
-    fieldnames = [s.name for s in specs]
-    n_rows = int(total_seconds // interval)
-
-    # ctx is the sole entry point for per-run state. It carries the RNG
-    # (ctx.rng), the anomaly manifest accumulator (ctx.anomalies), and the
-    # cascade registry (ctx.cascading_anomalies). Callers that need to read
-    # the manifest after generation must own the RunContext; constructing
-    # one inside this function would discard the appended entries.
-    if ctx is None:
-        raise TypeError(
-            "generate_component() requires an explicit ctx= argument; "
-            "pass RunContext(rng=np.random.RandomState(seed))."
-        )
-    rng = ctx.rng
-
-    # Resolve the active per-component instance topology. Phase 1 only
-    # validates the shape and falls back to a single anonymous ``Instance()``
-    # so today's dimensionless CSV output is preserved. Phases 2–8 wire the
-    # dimension columns, anomaly filtering, and OTEL attributes.
-    if instances is None:
-        instances = [Instance()]
-    if not instances:
-        raise ValueError(
-            f"generate_component({component_name!r}) requires at least one "
-            f"Instance; got an empty list."
-        )
-    # Per-entry shape checks mirror _validate_instances_registry so a caller
-    # bypassing the registry (test fixtures, ad-hoc reuse) gets a clear
-    # ValueError naming the call site, not a downstream AttributeError /
-    # TypeError once Phases 2–4 start consuming Instance metadata.
-    _validate_instance_list(
-        instances, where=f"generate_component({component_name!r}) instances"
+    return _generation_generate_component(
+        component_name, specs, anomaly_specs,
+        base_dir=base_dir,
+        total_seconds=total_seconds,
+        drop_rate=drop_rate,
+        ctx=ctx,
+        interval=interval,
+        ts_array=ts_array,
+        ts_strings=ts_strings,
+        emit_metrics=emit_metrics,
+        dst_inject_day=dst_inject_day,
+        start_time=start_time,
+        instances=instances,
+        topology_capture=topology_capture,
+        topology_capture_by_instance=topology_capture_by_instance,
+        coupling_arrays_per_instance=coupling_arrays_per_instance,
+        saturation_arrays_per_instance=saturation_arrays_per_instance,
+        apply_dtype_int_cast=apply_dtype_int_cast,
+        runtime_key=__name__,
     )
-
-    # Defense-in-depth: ``parse_args`` rejects ``--inject-dst-artifact-day``
-    # paired with multi-instance at the CLI; this guard mirrors the
-    # rejection for direct callers (tests, future consumers) that bypass
-    # the CLI. The original rationale was correctness — the long-form
-    # writer rebuilt rows from pre-splice timestamps and silently dropped
-    # the duplicated hour. The long-form path now routes through
-    # ``_format_csv_row_block``, which applies the splice per-instance,
-    # so the guard now stands on design grounds: the multi-instance
-    # long-form CSV emits per-instance row blocks, and per-block splicing
-    # surfaces non-monotonic timestamps inside each block that
-    # ``heapq.merge`` (``gauges.csv`` / ``combined_metrics_unified.csv``)
-    # cannot resolve.
-    _is_anonymous = _is_anonymous_instance_list(instances)
-    if not _is_anonymous and dst_inject_day > 0:
-        raise ValueError(
-            f"generate_component({component_name!r}): dst_inject_day > 0 "
-            f"is incompatible with a non-anonymous instance list by design — "
-            f"per-instance DST splicing would surface non-monotonic "
-            f"timestamps inside each row block that downstream long-form "
-            f"merges (gauges.csv / combined_metrics_unified.csv) cannot "
-            f"resolve. Pass instances=[Instance()] or dst_inject_day=0."
-        )
-
-    # Merge primary anomalies with cascading anomalies
-    all_anomalies = list(anomaly_specs)
-    if component_name in ctx.cascading_anomalies:
-        all_anomalies.extend(ctx.cascading_anomalies[component_name])
-
-    # Phase 4: resolve each spec's ``instance_filter`` against the
-    # active ``instances`` list before expansion. Specs whose filter matches
-    # zero instances are dropped here (one WARNING per skipped spec) so they
-    # never produce manifest entries or value writes. Specs with no filter
-    # or whose filter matches every instance are mapped to ``None`` so the
-    # shared-values fast path stays byte-identical to Phase 2 (locked
-    # built-in hashes do not move). ``resolved_filters`` is keyed by
-    # ``id(spec_dict)`` so the override loop below can look up the per-spec
-    # mask in O(1).
-    resolved_filters: dict[int, "np.ndarray | None"] = {}
-    filter_skips: list[tuple[str, str]] = []
-    kept_anomalies: list[dict] = []
-    for s in all_anomalies:
-        resolved = _resolve_instance_filter(s.get("instance_filter"), instances)
-        if resolved is _INSTANCE_FILTER_NO_MATCH:
-            filter_skips.append((s["metric"], s["description"]))
-            continue
-        resolved_filters[id(s)] = resolved
-        kept_anomalies.append(s)
-    all_anomalies = kept_anomalies
-    if filter_skips:
-        # Sorted by (metric, description) so WARNING order is deterministic
-        # regardless of dict iteration order; mirrors the convention in
-        # ``_resolve_scenarios``.
-        for metric, desc in sorted(filter_skips):
-            print(
-                f"WARNING: {component_name}: skipping anomaly spec "
-                f"metric={metric!r} description={desc!r} — instance_filter "
-                f"matched zero active instances.",
-                file=sys.stderr,
-            )
-
-    # Keep in-range anomaly spans compact here. The override loop below merges
-    # these ranges lazily so long sustained scenarios do not materialize one
-    # Python tuple per affected row before vectorized generation starts.
-    override_spans: list[tuple[int, int, dict, int]] = []
-    out_of_range: list[dict] = []
-    for spec_order, s in enumerate(all_anomalies):
-        if s["time_offset"] < 0:
-            out_of_range.append(s)
-            continue
-        start_idx = int(round(s["time_offset"] / interval))
-        duration_seconds = float(s.get("duration_seconds", 0) or 0)
-        duration_rows = max(1, int(np.ceil(duration_seconds / interval)))
-        end_idx_exclusive = min(n_rows, start_idx + duration_rows)
-        if start_idx >= n_rows or end_idx_exclusive <= start_idx:
-            out_of_range.append(s)
-            continue
-        override_spans.append((start_idx, end_idx_exclusive, s, spec_order))
-    if out_of_range:
-        non_negative_offsets = [
-            s["time_offset"] for s in out_of_range
-            if s["time_offset"] >= 0
-        ]
-        if non_negative_offsets:
-            max_start_idx = max(
-                int(round(offset / interval))
-                for offset in non_negative_offsets
-            )
-            needed_seconds = (max_start_idx + 1) * interval
-            needed_days = max(
-                1.0,
-                math.nextafter(needed_seconds / SECONDS_PER_DAY, math.inf),
-            )
-            include_hint = (
-                f"Run with --duration-days {needed_days!r} to include them."
-            )
-        else:
-            include_hint = "Check anomaly specs for negative time_offset values."
-        print(
-            f"WARNING: {component_name}: skipping {len(out_of_range)} anomaly spec(s) "
-            f"with time_offset outside [0, {total_seconds}). "
-            f"{include_hint}",
-            file=sys.stderr,
-        )
-
-    # Fail loudly on identical (metric, time_offset) specs — the previous
-    # ``metric_overrides = {spec["metric"]: spec["generator"] for spec in specs}``
-    # silently kept only the last one.
-    seen_specs: dict[tuple[str, int], dict] = {}
-    duplicates: list[tuple[str, str, int]] = []
-    for s in all_anomalies:
-        key = (s["metric"], s["time_offset"])
-        if key in seen_specs:
-            duplicates.append((component_name, s["metric"], s["time_offset"]))
-        else:
-            seen_specs[key] = s
-    if duplicates:
-        raise ValueError(
-            f"Overlapping anomaly specs (component, metric, time_offset): {duplicates}"
-        )
-
-    def iter_sorted_overrides():
-        """Yield concrete overrides in row/metric/spec order without a row list."""
-        heap = [
-            (start_idx, aspec["metric"], spec_order, start_idx, end_idx, aspec)
-            for start_idx, end_idx, aspec, spec_order in override_spans
-        ]
-        heapq.heapify(heap)
-        while heap:
-            row_idx, metric, spec_order, start_idx, end_idx, aspec = heapq.heappop(heap)
-            span_idx = row_idx - start_idx
-            yield row_idx, aspec, span_idx * interval, span_idx
-            next_row_idx = row_idx + 1
-            if next_row_idx < end_idx:
-                heapq.heappush(
-                    heap,
-                    (next_row_idx, metric, spec_order, start_idx, end_idx, aspec),
-                )
-
-    if ts_array is None or ts_strings is None:
-        ts_array, ts_strings = _build_timestamp_arrays(
-            total_seconds, interval, start_time=start_time
-        )
-    drop_mask = rng.random(n_rows) < drop_rate
-
-    # Elapsed seconds (not row index) so daily/hourly seasonality generators
-    # produce the same wall-clock shape at any sampling interval.
-    elapsed = np.arange(n_rows, dtype=np.float64) * interval
-
-    # Natural values: one column array per metric, computed in a single numpy op.
-    n_cols = len(specs)
-    values = np.empty((n_rows, n_cols), dtype=np.float64)
-
-    # phase 8: per-instance topology dispatch. When the caller
-    # passes per-instance coupling / saturation arrays (under
-    # realistic topology coupling with N>1 or a non-default
-    # instance config), each instance K consumes its own arrays via
-    # ``_natural_column``'s ``baseline_override`` / ``latency_factor``
-    # / ``error_offset`` kwargs. Under symmetric upstream (no
-    # ``instance_filter`` on an upstream load metric) the arrays are
-    # byte-identical across instances → fast-path single draw shared
-    # across all instances preserves today's locked N=3 hashes.
-    # Under asymmetric upstream the arrays diverge → per-instance
-    # natural-column draws (with shared noise via the ``noise=``
-    # kwarg so the noise floor matches the symmetric case).
-    use_per_instance_topology = (
-        coupling_arrays_per_instance is not None
-        and saturation_arrays_per_instance is not None
-    )
-    # Reject the half-passed shape up front so programmatic callers
-    # see a clear error rather than a silent fall-back to the legacy
-    # shared-arrays path that would emit wrong per-instance values.
-    if (
-        (coupling_arrays_per_instance is None)
-        != (saturation_arrays_per_instance is None)
-    ):
-        raise ValueError(
-            f"generate_component({component_name!r}) requires both "
-            "coupling_arrays_per_instance and saturation_arrays_per_instance "
-            "or neither; got "
-            f"coupling={'present' if coupling_arrays_per_instance is not None else 'None'} "
-            f"saturation={'present' if saturation_arrays_per_instance is not None else 'None'}."
-        )
-    pre_populated_per_instance_eager: dict[int, np.ndarray] = {}
-    if use_per_instance_topology:
-        n_inst_local = len(instances)
-        # Defensive shape check: the per-instance arrays are indexed by
-        # instance position below ([0] for the fast path, range() for
-        # the divergent loop). A mismatched length would surface as a
-        # confusing IndexError mid-loop; raise a clear ValueError up
-        # front so programmatic callers see exactly which list is the
-        # wrong shape. ``main()`` always passes lists built from
-        # ``_compute_topology_arrays_per_instance`` with this length,
-        # so this branch only catches third-party or test misuse.
-        if (
-            len(coupling_arrays_per_instance) != n_inst_local
-            or len(saturation_arrays_per_instance) != n_inst_local
-        ):
-            raise ValueError(
-                f"generate_component({component_name!r}) per-instance "
-                f"topology arrays must match len(instances)={n_inst_local}; "
-                f"got coupling_arrays_per_instance="
-                f"{len(coupling_arrays_per_instance)} and "
-                f"saturation_arrays_per_instance="
-                f"{len(saturation_arrays_per_instance)}."
-            )
-        # Identify which specific instances diverge from instance 0 so
-        # the divergent path only allocates per-instance buffers for
-        # the instances that actually need them. At N=20 with a single
-        # asymmetric upstream pod, this saves 18 full (n_rows × n_cols)
-        # buffers compared to the previous "allocate-N-up-front" shape
-        # (~9.7 GB at 7d / 1s / N=20 / 10 metrics).
-        #
-        # Divergence is always re-derived from the passed arrays so
-        # correctness does not depend on any caller-supplied hint.
-        divergent_instances: set[int] = set()
-        if n_inst_local > 1:
-            ref_coupling = coupling_arrays_per_instance[0]
-            ref_saturation = saturation_arrays_per_instance[0]
-            for inst_idx_k in range(1, n_inst_local):
-                if not _arrays_equal_dict(
-                    coupling_arrays_per_instance[inst_idx_k], ref_coupling
-                ) or not _sat_tuples_equal_dict(
-                    saturation_arrays_per_instance[inst_idx_k], ref_saturation
-                ):
-                    divergent_instances.add(inst_idx_k)
-
-        if not divergent_instances:
-            # Shared fast path — one draw per metric, reusable across instances.
-            coupling = coupling_arrays_per_instance[0]
-            saturation = saturation_arrays_per_instance[0]
-            for col, spec in enumerate(specs):
-                baseline_override = coupling.get(spec.name)
-                lf, eo = saturation.get(spec.name, (None, None))
-                values[:, col] = _natural_column(
-                    spec, ts_array, elapsed, rng,
-                    latency_factor=lf, error_offset=eo,
-                    baseline_override=baseline_override,
-                )
-        else:
-            # Divergent — write instance 0 into ``values`` (already
-            # allocated) and allocate per-instance buffers only for
-            # the instances that diverge. Noise per metric is drawn
-            # once and shared so the only divergence flows through
-            # topology arrays. Non-divergent instances stay on
-            # ``values`` via the missing-key lookup in
-            # ``per_instance_values`` below.
-            divergent_buffers: dict[int, np.ndarray] = {
-                inst_idx_k: np.empty((n_rows, n_cols), dtype=np.float64)
-                for inst_idx_k in divergent_instances
-            }
-            for col, spec in enumerate(specs):
-                shared_noise = None
-                if spec.std > 0 and (
-                    coupling_arrays_per_instance[0].get(spec.name) is None
-                ):
-                    # Coupled metrics have a baseline_override that replaces the
-                    # natural draw entirely — drawing noise would advance the RNG
-                    # without producing any output difference. Probe instance 0
-                    # only: the per-instance composer assigns a coupling
-                    # baseline_override consistently across instances for a
-                    # given metric (either all instances get an override or
-                    # none do — the existence of an override per metric is
-                    # gated on whether any incoming edge contributed, which
-                    # is decided once per metric in
-                    # ``_compute_topology_arrays_per_instance``), so instance
-                    # 0's presence is a faithful proxy for whether *any*
-                    # instance will use the natural baseline path.
-                    shared_noise = rng.normal(0.0, spec.std, n_rows)
-                # Instance 0 always writes into ``values`` (the shared
-                # buffer).
-                coupling0 = coupling_arrays_per_instance[0]
-                saturation0 = saturation_arrays_per_instance[0]
-                baseline_override0 = coupling0.get(spec.name)
-                lf0, eo0 = saturation0.get(spec.name, (None, None))
-                values[:, col] = _natural_column(
-                    spec, ts_array, elapsed, rng,
-                    noise=shared_noise,
-                    latency_factor=lf0, error_offset=eo0,
-                    baseline_override=baseline_override0,
-                )
-                for inst_idx_k in divergent_instances:
-                    coupling = coupling_arrays_per_instance[inst_idx_k]
-                    saturation = saturation_arrays_per_instance[inst_idx_k]
-                    baseline_override = coupling.get(spec.name)
-                    lf, eo = saturation.get(spec.name, (None, None))
-                    divergent_buffers[inst_idx_k][:, col] = _natural_column(
-                        spec, ts_array, elapsed, rng,
-                        noise=shared_noise,
-                        latency_factor=lf, error_offset=eo,
-                        baseline_override=baseline_override,
-                    )
-            for inst_idx_k, buf in divergent_buffers.items():
-                pre_populated_per_instance_eager[inst_idx_k] = buf
-    else:
-        # Today's path: shared lambda-baked specs, single natural draw per column.
-        for col, spec in enumerate(specs):
-            values[:, col] = _natural_column(spec, ts_array, elapsed, rng)
-
-    # Apply anomaly overrides. Skip overrides at dropped rows so manifest and
-    # CSV stay coherent: a dropped row has no CSV entry, so it must have no
-    # manifest entry either. For shaped spans the manifest entry is recorded
-    # at the spec's first kept row (see ``manifest_emitted`` below), so a
-    # span whose leading rows are dropped still surfaces in the manifest.
-    #
-    # Phase 4: per-instance value buffers are materialized lazily
-    # for any instance touched by a partial ``instance_filter``. An
-    # unfiltered override writes to shared ``values`` AND propagates the
-    # same write to every already-materialized per-instance buffer (so a
-    # later unfiltered spec stays visible to instances whose buffer was
-    # forked by an earlier filtered spec). Built-in scenarios omit
-    # ``instance_filter``, so this dict stays empty for the default run
-    # and the shared-values fast path is preserved — locked Phase 2 hashes
-    # do not move. RNG draw order is identical to today's path because
-    # ``_resolve_anomaly_value`` is still called exactly once per
-    # ``(row_idx, span_idx, aspec)`` triple in row/metric/spec order,
-    # regardless of filter resolution.
-    name_to_col = {s.name: i for i, s in enumerate(specs)}
-    per_instance_values: dict[int, np.ndarray] = dict(pre_populated_per_instance_eager)
-    # Manifest bookkeeping: one entry per spec, recorded at the spec's first
-    # *kept* row. Historically the entry was gated on ``span_idx == 0``, which
-    # silently lost the manifest entry for a shaped span whose first row was
-    # dropped — the CSV still carried the anomalous values for the span's
-    # surviving rows, but ``anomalies.csv`` (and every consumer of it, e.g.
-    # the topology-coupling validator's exclusion windows) never saw the
-    # event. Keyed by ``id(aspec)``; spec dicts are alive for the whole loop
-    # and the duplicate-spec guard above ensures one entry per spec.
-    manifest_emitted: set[int] = set()
-    for row_idx, aspec, t_within, span_idx in iter_sorted_overrides():
-        if drop_mask[row_idx]:
-            continue
-        col = name_to_col[aspec["metric"]]
-        ts_py = start_time + datetime.timedelta(seconds=float(row_idx * interval))
-        override_value = _resolve_anomaly_value(
-            aspec, ts_py, col, t_within, span_idx, rng
-        )
-        inst_mask = resolved_filters.get(id(aspec))
-        if inst_mask is None:
-            # No filter, or filter matches every instance — write to the
-            # shared ``values`` (Phase 2 fast path) AND propagate the
-            # write to every already-forked per-instance buffer. The
-            # propagation is for *different* rows than the row that
-            # forked the buffer: e.g. a filtered spec at t=60 forks
-            # pod-0's buffer; a later unfiltered spec at t=120 must
-            # apply to pod-0 too, not stay stuck on its forked baseline
-            # from t=60. Same-cell collisions CAN occur here — the
-            # duplicate-spec guard above only rejects *identical*
-            # ``(metric, time_offset)`` pairs, while two specs with
-            # different offsets can round to the same row at a coarse
-            # ``--interval-seconds`` (or a cascade can land inside a
-            # shaped span). Colliding specs resolve last-writer-wins per
-            # buffer in ``(row_idx, metric, spec_order)`` order — the
-            # documented contract in CLAUDE.md's RNG-ordering section.
-            values[row_idx, col] = override_value
-            for buf in per_instance_values.values():
-                buf[row_idx, col] = override_value
-        else:
-            # Partial filter — only matched instances see the override.
-            # Unmatched instances continue to read ``values`` (or their
-            # own forked buffer if a prior spec already diverged them).
-            for inst_idx in np.flatnonzero(inst_mask):
-                inst_idx = int(inst_idx)
-                buf = per_instance_values.get(inst_idx)
-                if buf is None:
-                    # Snapshot shared values (including any unfiltered
-                    # writes applied so far this loop) before diverging.
-                    buf = values.copy()
-                    per_instance_values[inst_idx] = buf
-                buf[row_idx, col] = override_value
-        if id(aspec) not in manifest_emitted:
-            manifest_emitted.add(id(aspec))
-            # timestamp / span_start equal the spec's first *kept* row —
-            # historically always the span's first row, but under
-            # ``--drop-rate`` the leading row(s) of a shaped span can be
-            # dropped and the entry must anchor at the first row that
-            # actually appears in the component CSV. span_end equals
-            # timestamp for single-row specs and the formatted
-            # end-of-span timestamp for shaped specs with
-            # ``duration_seconds``. The end row is the last row index
-            # covered by the span — computed from the spec's *nominal*
-            # start row ``row_idx - span_idx``, clipped to ``n_rows - 1``
-            # so specs whose tail spills past the run window still produce
-            # a valid in-range end timestamp — then walked back to the last
-            # non-dropped row in the span so span_end always names a
-            # timestamp that actually appears in the component CSV.
-            # ``row_idx`` itself is non-dropped (checked above), so the
-            # slice is guaranteed to contain at least one kept row.
-            duration_seconds = float(aspec.get("duration_seconds", 0) or 0)
-            duration_rows = max(1, int(np.ceil(duration_seconds / interval)))
-            start_idx_nominal = row_idx - span_idx
-            end_idx_nominal = min(start_idx_nominal + duration_rows - 1, n_rows - 1)
-            span_kept = ~drop_mask[row_idx:end_idx_nominal + 1]
-            end_idx = row_idx + int(np.flatnonzero(span_kept)[-1])
-            ts_str = str(ts_strings[row_idx])
-            ctx.anomalies.append({
-                "timestamp": ts_str,
-                "component": component_name,
-                "metric": aspec["metric"],
-                "description": aspec["description"],
-                "scenario_id": aspec.get("_scenario_id", ""),
-                "severity": aspec.get("_severity", ""),
-                "is_cascade": "true" if aspec.get("_is_cascade") else "false",
-                "span_start": ts_str,
-                "span_end": str(ts_strings[end_idx]),
-                "shape": aspec.get("shape", "step"),
-            })
-
-    # Phase 6 integer-cast bundle. Every MetricSpec declared with
-    # ``dtype="int"`` must render as a whole-integer CSV cell so the
-    # validator's ``_validate_component_cells`` ``dtype="int"``
-    # check passes. The cast runs *before* derivations so derived columns
-    # (e.g. ``cacheservice.hit_ratio``) are recomputed from the rounded
-    # integer source cells and stay self-consistent with what the CSV
-    # actually writes — otherwise the validator's
-    # ``_validate_component_derivations`` recompute step would flag the
-    # derived cell as drifting from the recomputed value. ``np.rint``
-    # rounds half-to-even into floats, which is consistent with
-    # ``_format_fixed3`` printing "1235.000" for an underlying float of
-    # ``1235.0``. ``apply_dtype_int_cast=False`` skips the cast for
-    # programmatic callers that need the pre-cast fractional contrast;
-    # main() always passes ``True`` (the phase-9 flag day removed the
-    # ``--topology-mode independent`` alias that used to skip it).
-    if apply_dtype_int_cast:
-        for col_idx, spec in enumerate(specs):
-            if spec.dtype == "int":
-                np.rint(values[:, col_idx], out=values[:, col_idx])
-                for buf in per_instance_values.values():
-                    np.rint(buf[:, col_idx], out=buf[:, col_idx])
-
-    # Derived metrics: rebuild self-consistent relationships after natural and
-    # anomaly values have settled (and after the integer-cast bundle above
-    # so derivations consume the same values the CSV emits). The registered
-    # function recomputes the derived column(s) from their sibling columns;
-    # without this pass, anomalies that drove only a source column (or that
-    # overrode a derived column in isolation) would leave the columns
-    # internally inconsistent — exactly the consistency anomaly real
-    # telemetry would flag.
-    derivation = DERIVATIONS.get(component_name)
-    if derivation is not None:
-        derive_fn, _ = derivation
-        derive_fn(values, name_to_col)
-        # Phase 4: per-instance buffers diverged in source columns, so
-        # rebuild their derived columns independently from the shared run.
-        for buf in per_instance_values.values():
-            derive_fn(buf, name_to_col)
-
-    # Topology phase 2/3: expose post-natural /
-    # post-anomaly / post-derivation load-metric columns to downstream
-    # components via the ``topology_capture`` dict. Phase 3 extends the
-    # capture from a single ``requests_per_sec`` column to all metrics
-    # listed in ``_TOPOLOGY_LOAD_METRICS[component_name]`` (the canonical
-    # load metric plus any supplementary columns) so per-edge ``signal``
-    # callables (e.g. the cacheservice -> database miss-ratio derivation)
-    # can read the full upstream state. Capturing pre-round (before the
-    # ``np.round(values, 3, ...)`` below) keeps the signal at full
-    # 3+-decimal float precision *for ``dtype="float"`` columns*. After
-    # the phase 6 integer-cast bundle, ``dtype="int"`` upstream
-    # load metrics (notably ``cache_hits`` / ``cache_misses`` driving the
-    # cacheservice -> database miss-ratio signal) are captured at their
-    # post-cast whole-integer values, which matches what the CSV emits
-    # and what the validator's derivation recompute reads — the
-    # downstream coupling signal therefore stays self-consistent with
-    # the on-disk row. ``None`` short-circuits so direct callers that
-    # skip topology capture (e.g. the natural-baseline test fixtures)
-    # see zero topology work.
-    if topology_capture is not None:
-        entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
-        if entry is not None:
-            canonical_up, supplementary_up = entry
-            load_metrics = (canonical_up, *supplementary_up)
-            captured: dict[str, np.ndarray] = {}
-            # When per-instance buffers diverged from the shared
-            # ``values`` (an ``instance_filter`` partial override on a
-            # load metric, or per-instance topology produced divergent
-            # baselines), an instance-0-only capture biases every
-            # downstream consumer of the aggregate ``topology_capture``
-            # view. Mirror the documented "uniform fan-out — mean
-            # across upstream pods" contract by averaging across all
-            # instance buffers (instance 0 is ``values``; the rest
-            # live in ``per_instance_values``). When no buffer
-            # diverged, the average equals ``values`` exactly and
-            # the captured bytes are unchanged.
-            inst_count = len(instances)
-            may_diverge = bool(per_instance_values) and inst_count > 1
-            for lm in load_metrics:
-                if lm and lm in name_to_col:
-                    col_idx = name_to_col[lm]
-                    shared_col = values[:, col_idx]
-                    captured_col: np.ndarray | None = None
-                    if may_diverge:
-                        # ``per_instance_values`` may be populated by a
-                        # filter on a *non-load* metric, in which case
-                        # the load column is byte-identical across all
-                        # instances and the historic ``shared_col.copy()``
-                        # capture stays byte-exact. Only switch to the
-                        # equal-weight mean when at least one
-                        # per-instance buffer actually diverged on
-                        # this load column.
-                        any_diverged = False
-                        for buf in per_instance_values.values():
-                            if not np.array_equal(
-                                buf[:, col_idx], shared_col
-                            ):
-                                any_diverged = True
-                                break
-                        if any_diverged:
-                            # Incremental sum-then-divide avoids the
-                            # ``(N_instances × n_rows)`` temporary
-                            # ``np.stack`` would allocate. Same
-                            # equal-weight mean as ``np.mean`` over the
-                            # stacked array but at O(n_rows) extra
-                            # memory instead of O(N_instances × n_rows).
-                            #
-                            # Use ``per_instance_values.get(k, values)``
-                            # for *every* k including 0 so an
-                            # ``instance_filter`` that targets pod 0
-                            # (forking only ``per_instance_values[0]``
-                            # while other pods stay on the shared
-                            # ``values`` baseline) still contributes
-                            # pod-0's forked buffer to the aggregate.
-                            # ``shared_col`` is ``values[:, col_idx]``
-                            # and would silently skip pod 0's diverged
-                            # buffer if used as the initial accumulator.
-                            buf0 = per_instance_values.get(0, values)
-                            captured_col = buf0[:, col_idx].astype(
-                                np.float64, copy=True
-                            )
-                            for inst_idx_k in range(1, inst_count):
-                                buf = per_instance_values.get(
-                                    inst_idx_k, values
-                                )
-                                captured_col += buf[:, col_idx]
-                            captured_col /= inst_count
-                    if captured_col is None:
-                        captured_col = shared_col.copy()
-                    captured[lm] = captured_col
-            if captured:
-                topology_capture[component_name] = captured
-
-    # phase 8: per-instance load-metric capture for downstream
-    # consumers. Mirrors ``topology_capture`` above but produces one
-    # entry per instance. Under symmetric upstream (no
-    # ``instance_filter`` on load metrics) every entry references a
-    # copy of the same underlying column, so downstream composers
-    # collapse back to the shared-arrays fast path and N=3 byte
-    # parity holds.
-    if topology_capture_by_instance is not None:
-        entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
-        if entry is not None:
-            canonical_up, supplementary_up = entry
-            load_metrics = (canonical_up, *supplementary_up)
-            per_inst_caps: list[dict[str, np.ndarray]] = []
-            for inst_idx_k in range(len(instances)):
-                buf = per_instance_values.get(inst_idx_k, values)
-                inst_captured: dict[str, np.ndarray] = {}
-                for lm in load_metrics:
-                    if lm and lm in name_to_col:
-                        inst_captured[lm] = buf[:, name_to_col[lm]].copy()
-                per_inst_caps.append(inst_captured)
-            # Only record when at least one entry has captures; aligns
-            # with the shared ``topology_capture`` guard above.
-            if any(per_inst_caps):
-                topology_capture_by_instance[component_name] = per_inst_caps
-
-    # Multi-instance fan-out (Phase 2/4). When the active instance list
-    # is a single anonymous Instance() (all fields None), emit today's
-    # byte-identical format: ``timestamp,m0,m1,...``. When the list carries
-    # named instances (len > 1, or any non-None dimension field), prepend
-    # ``id,host,pod,az,region,tenant`` columns and repeat the row block for
-    # each instance sequentially (all rows for instance 0, then instance 1,
-    # …). ``_is_anonymous`` was already computed above for the DST
-    # defense-in-depth guard via the shared ``_is_anonymous_instance_list``
-    # helper.
-    #
-    # Phase 4 (instance_filter): instances touched by a partial filter use
-    # their own ``per_instance_str_vals`` buffer (post-override,
-    # post-derive); other instances reuse the shared ``str_vals`` so the
-    # all-instances-unfiltered case stays byte-identical to Phase 2.
-    #
-    # both branches now flow through the shared ``_format_metric_suffix``
-    # / ``_format_csv_row_block`` helpers. The dimensionless branch is the
-    # degenerate ``dim_prefix=""`` case of the long-form path, so the DST
-    # splice — applied inside ``_format_csv_row_block`` — fires regardless
-    # of the writer branch. Before the refactor the long-form path
-    # rebuilt rows from pre-splice timestamps and silently dropped the
-    # duplicate hour (the PR #63 long-form DST drop).
-
-    if emit_metrics:
-        # Rounding and fixed-3 string formatting exist only to produce
-        # the CSV bytes, so they run inside the emit guard: a run whose
-        # ``--emit`` omits ``metrics`` previously paid the
-        # full formatting cost (historically ~80% of generation
-        # runtime, per the comment below) and threw the result away.
-        # Safe to skip when not emitting: the ``topology_capture``
-        # snapshots above were taken pre-round by design, and nothing
-        # after this block reads ``values`` / the per-instance buffers.
-        # No RNG is consumed here, so draw order — and therefore every
-        # locked hash — is unchanged for runs that do emit metrics.
-        np.round(values, 3, out=values)
-        for buf in per_instance_values.values():
-            np.round(buf, 3, out=buf)
-
-        keep_mask = ~drop_mask
-        kept_ts = ts_strings[keep_mask]
-        kept_vals = values[keep_mask]
-
-        # Format values to fixed 3 decimals. ``np.char.mod("%.3f", ...)`` is correct
-        # but spends ~80% of the run inside ``_vec_string``. Scaling to int + numpy
-        # string ops produces the same output ~2x faster.
-        str_vals = _format_fixed3(kept_vals)
-        # Phase 4: per-instance string buffers for instances that diverged from
-        # the shared baseline via a partial ``instance_filter``. Other instances
-        # reuse ``str_vals`` directly.
-        per_instance_str_vals: dict[int, np.ndarray] = {
-            inst_idx: _format_fixed3(buf[keep_mask])
-            for inst_idx, buf in per_instance_values.items()
-        }
-
-        with _atomic_artifact_open(file_path) as f:
-            # Precompute the shared metric suffix once per component. Every
-            # instance not in ``per_instance_str_vals`` reuses this array,
-            # preserving Phase 2's "precompute once, reuse per instance"
-            # optimization. The anonymous branch is a single-instance
-            # degenerate case so reuse is a no-op there.
-            shared_metric_suffix = _format_metric_suffix(str_vals)
-            if _is_anonymous:
-                # Dimensionless default — byte-identical to pre-Phase-2 output.
-                f.write("timestamp," + ",".join(fieldnames) + "\n")
-                rows = _format_csv_row_block(
-                    kept_ts, shared_metric_suffix,
-                    dim_prefix="", dst_inject_day=dst_inject_day,
-                    start_time=start_time,
-                )
-                f.write("\n".join(rows.tolist()))
-                f.write("\n")
-            else:
-                # Long form: timestamp,id,host,pod,az,region,tenant,<metrics>
-                # ``_INSTANCE_DIMENSION_COLUMNS`` is the single source of
-                # truth for the column order; ``_iter_component_rows`` lifts
-                # the same prefix back into the per-row dimensions dict
-                # consumed by the OTEL gauge attributes path (Phase 6).
-                dim_header = "timestamp," + ",".join(_INSTANCE_DIMENSION_COLUMNS)
-                f.write(dim_header + "," + ",".join(fieldnames) + "\n")
-                # Materialize per-instance suffixes for forked buffers only;
-                # other instances reuse ``shared_metric_suffix`` so the
-                # all-instances-unfiltered case stays byte-identical to
-                # Phase 2.
-                per_instance_metric_suffixes: dict[int, np.ndarray] = {
-                    inst_idx: _format_metric_suffix(buf)
-                    for inst_idx, buf in per_instance_str_vals.items()
-                }
-                for inst_idx, inst in enumerate(instances):
-                    # Build the dimension prefix string once per instance.
-                    # Reads fields off ``Instance`` in canonical column order
-                    # so adding/removing a field touches only
-                    # ``_INSTANCE_DIMENSION_COLUMNS``. The leading comma
-                    # lets ``_format_csv_row_block`` concatenate as
-                    # ``ts + dim_prefix + "," + metric_suffix`` regardless
-                    # of branch.
-                    dim_vals = ",".join(
-                        getattr(inst, field) if getattr(inst, field) is not None else ""
-                        for field in _INSTANCE_DIMENSION_COLUMNS
-                    )
-                    inst_suffix = per_instance_metric_suffixes.get(
-                        inst_idx, shared_metric_suffix
-                    )
-                    inst_rows = _format_csv_row_block(
-                        kept_ts, inst_suffix,
-                        dim_prefix=f",{dim_vals}",
-                        dst_inject_day=dst_inject_day,
-                        start_time=start_time,
-                    )
-                    f.write("\n".join(inst_rows.tolist()))
-                    f.write("\n")
 
 
 def _format_metric_suffix(str_vals: np.ndarray) -> np.ndarray:
-    """Return ``,``-joined metric values as a 1-D string array.
-
-    ``str_vals`` is the post-format ``(n_rows, n_cols)`` array produced by
-    ``_format_fixed3``; the returned array carries one ``v0,v1,...,vk``
-    string per row, with no leading comma. Callers prepend the
-    ``timestamp,<optional_dims>,`` head via ``_format_csv_row_block``.
-
-    Aliasing safety: when ``n_cols >= 2`` the first ``np.char.add`` call
-    returns a fresh array, so we can start from a view of column 0 and
-    rely on the loop to allocate. When ``n_cols == 1`` the loop never
-    runs, so we must explicitly copy column 0 to avoid the caller's
-    downstream ``np.char.add`` mutating the source array.
-    """
-    n_cols = str_vals.shape[1]
-    if n_cols == 1:
-        return str_vals[:, 0].copy()
-    suffix = str_vals[:, 0]
-    for col in range(1, n_cols):
-        suffix = np.char.add(suffix, ",")
-        suffix = np.char.add(suffix, str_vals[:, col])
-    return suffix
+    return _generation_format_metric_suffix(str_vals)
 
 
 def _format_csv_row_block(kept_ts: np.ndarray, metric_suffix: np.ndarray,
                           *, dim_prefix: str, dst_inject_day: int,
                           start_time: datetime.datetime = START) -> np.ndarray:
-    """Concatenate ``timestamp + dim_prefix + ',' + metric_suffix`` per row.
-
-    ``dim_prefix`` is the empty string for the dimensionless / single-anonymous-
-    instance CSV layout, or one instance's comma-prefixed dimension
-    *values* (e.g. ``",i0,,pod-0,,,"`` — leading comma, then the six
-    ``_INSTANCE_DIMENSION_COLUMNS`` values with empty cells for unset
-    fields) for one long-form instance block. The shared shape lets
-    the same DST splice apply regardless of which branch produced the
-    block — fixing a prior failure of the long-form writer to call
-    ``_splice_dst_artifact`` after rebuilding rows from raw timestamps. The helper itself does not gate which combinations
-    are reachable: ``_splice_dst_artifact`` runs unconditionally when
-    ``dst_inject_day > 0`` regardless of ``dim_prefix``. ``parse_args``
-    and the matching ``generate_component`` defense-in-depth check
-    still reject ``--inject-dst-artifact-day > 0`` paired with a
-    multi-instance run by design (per-instance non-monotonic timestamps
-    break downstream ``heapq.merge`` in ``gauges.csv`` /
-    ``combined_metrics_unified.csv``), so today every production caller
-    that reaches the long-form branch has ``dst_inject_day == 0``; the
-    helper would handle the long-form splice correctly under any
-    future caller that relaxes the guard.
-    """
-    rows = np.char.add(kept_ts, f"{dim_prefix},")
-    rows = np.char.add(rows, metric_suffix)
-    if dst_inject_day > 0:
-        rows = _splice_dst_artifact(rows, kept_ts, dst_inject_day, start_time)
-    return rows
+    return _generation_format_csv_row_block(
+        kept_ts, metric_suffix,
+        dim_prefix=dim_prefix,
+        dst_inject_day=dst_inject_day,
+        start_time=start_time,
+    )
 
 
 def _splice_dst_artifact(rows: np.ndarray, kept_ts: np.ndarray,
                          dst_day: int,
                          start_time: datetime.datetime = START) -> np.ndarray:
-    """Duplicate the 02:00–02:59 hour on ``dst_day`` (1-based) inside ``rows``.
-
-    ``rows`` is the formatted ``ts,v0,...,vk`` string array; ``kept_ts`` is the
-    matching ``YYYY-MM-DD HH:MM:SS`` timestamps used to locate the window. The
-    returned array has 3,600 / interval extra rows for the targeted day. The
-    duplicate hour reuses the same timestamp prefix, so the resulting CSV has
-    non-monotonic timestamps — the realistic fall-DST quirk.
-    """
-    day_date = (start_time + datetime.timedelta(days=dst_day - 1)).strftime("%Y-%m-%d")
-    dst_start = f"{day_date} 02:00:00"
-    dst_end = f"{day_date} 03:00:00"
-    mask = (kept_ts >= dst_start) & (kept_ts < dst_end)
-    indices = np.flatnonzero(mask)
-    if indices.size == 0:
-        return rows
-    first = int(indices[0])
-    last = int(indices[-1])
-    return np.concatenate([rows[:last + 1], rows[first:last + 1], rows[last + 1:]])
-
-
-
-def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
-                           t_within: float, span_idx: int,
-                           rng: "np.random.RandomState" = None) -> float:
-    """Resolve one anomaly value at one row, honoring shape/duration fields."""
-    duration_seconds = float(spec.get("duration_seconds", 0) or 0)
-    shape = spec.get("shape", "step")
-    shape_params = spec.get("shape_params", {}) or {}
-
-    if duration_seconds <= 0 and shape == "step":
-        # Dispatch by REQUIRED positional count, not by maximum callability.
-        # A generator like (ts, col, scale=1.0) accepts a 3-arg call at the
-        # Python language level, but the author marked the 3rd positional
-        # as optional with a non-rng name — calling 3-arg would silently
-        # bind the RNG object to ``scale``. Required-based dispatch keeps
-        # the default and avoids the misbind. Only generators that
-        # explicitly opt into the RNG (required=3 or *args) receive it.
-        meta = _cached_generator_meta(spec["generator"])
-        if not meta["inspectable"]:
-            # Conservative fallback: try only the two canonical shapes
-            # (3-arg first, then 2-arg). No intermediate calls. Retry
-            # only on a call-*binding* TypeError (arity mismatch raised
-            # at the call site: the traceback has no frame beyond this
-            # one). A TypeError raised *inside* the generator body has a
-            # deeper traceback; retrying it with 2 args would mask the
-            # real bug and — if the body drew from ``rng`` before
-            # raising — double-advance the RNG stream. (A C-extension
-            # body raising TypeError without Python frames is
-            # indistinguishable from a binding failure and still
-            # retries; that is the best the fallback can do.)
-            try:
-                value = spec["generator"](ts, col, rng)
-            except TypeError as exc:
-                if exc.__traceback__.tb_next is not None:
-                    raise
-                value = spec["generator"](ts, col)
-            return float(value)
-        required = meta["required_positional"]
-        fixed = meta["fixed_positional_count"]
-        if meta["has_var_positional"]:
-            # Mirror the validator's *args misbind check so direct callers
-            # (e.g., tests bypassing _validate_scenario_spec) cannot silently
-            # bind the RNG to a default-having fixed positional like
-            # ``scale`` in ``(ts, col, scale=1.0, *args)``.
-            if required <= 2 and fixed > 2:
-                # Step path calls 3-arg, so the only position the dispatcher
-                # could misbind onto is fixed position 3. Positions 4+ are
-                # left at their declared defaults (not bound by the 3-arg
-                # call), so name the actual offender — position 3 — rather
-                # than the count of fixed params.
-                raise TypeError(
-                    f"Generator {spec['generator']!r} has *args with "
-                    f"fixed_positional_count={fixed} > 2 and required <= 2; "
-                    f"the 3-arg step call would overwrite the default-having "
-                    f"fixed positional at position 3. Use (ts, col) or "
-                    f"(ts, col, rng) instead."
-                )
-            return float(spec["generator"](ts, col, rng))
-        if required == 3:
-            return float(spec["generator"](ts, col, rng))
-        if required <= 2:
-            return float(spec["generator"](ts, col))
-        raise TypeError(
-            f"Generator {spec['generator']!r} requires {required} positional "
-            f"args; step-path specs must use a 2-arg or 3-arg required shape."
-        )
-
-    if shape in ("step", "sustained"):
-        return float(_call_generator_within_span(spec["generator"], ts, col, t_within, span_idx, rng))
-
-    start = shape_params.get("start")
-    if start is None:
-        start = _call_generator_within_span(spec["generator"], ts, col, 0.0, 0, rng)
-    start = float(start)
-
-    if shape == "ramp_linear":
-        end = float(shape_params.get("end", start))
-        frac = _span_fraction(t_within, duration_seconds)
-        return start + (end - start) * frac
-
-    if shape == "ramp_exp":
-        end = float(shape_params.get("end", start))
-        exponent = float(shape_params.get("exponent", 3.0))
-        frac = _span_fraction(t_within, duration_seconds) ** exponent
-        return start + (end - start) * frac
-
-    if shape == "sawtooth":
-        period = float(shape_params.get("period_s", max(duration_seconds, 1.0)))
-        amplitude = float(shape_params.get("amplitude", 0.0))
-        midline = float(shape_params.get("midline", start))
-        phase = float(shape_params.get("phase_s", 0.0))
-        cycle = ((t_within + phase) / max(period, 1e-9)) % 1.0
-        return midline - amplitude + (2.0 * amplitude * cycle)
-
-    if shape == "sine":
-        period = float(shape_params.get("period_s", max(duration_seconds, 1.0)))
-        amplitude = float(shape_params.get("amplitude", 0.0))
-        midline = float(shape_params.get("midline", start))
-        phase = float(shape_params.get("phase_s", 0.0))
-        angle = 2.0 * np.pi * ((t_within + phase) / max(period, 1e-9))
-        return midline + amplitude * np.sin(angle)
-
-    raise ValueError(f"Unsupported anomaly shape: {shape}")
-
-
-class _IdentityKey:
-    """Dict key with identity-based equality, used by the generator-meta
-    cache. Two distinct callables that compare equal via custom ``__eq__``
-    must not share cached metadata; keying by identity avoids that.
-    Storing the object inside the key also keeps a strong reference,
-    so Python can't recycle ``id(obj)`` for a different generator after
-    garbage collection."""
-    __slots__ = ("obj",)
-
-    def __init__(self, obj):
-        self.obj = obj
-
-    def __hash__(self):
-        return id(self.obj)
-
-    def __eq__(self, other):
-        return isinstance(other, _IdentityKey) and self.obj is other.obj
-
-
-_GENERATOR_META_CACHE: "dict[_IdentityKey, dict]" = {}
-_GENERATOR_META_CACHE_MAX = 1024
-
-
-def _generator_meta(gen) -> dict:
-    """Return introspection metadata for a generator callable.
-
-    Tracking *required* and *maximum* positional separately matters because
-    a generator like ``(ts, col, rng=None, extra=None)`` has 2 required +
-    2 optional positional params (4 max), so the runtime can call it with
-    2, 3, or 4 positional args. The validator and dispatcher both consult
-    this metadata to pick a safe call shape.
-
-    Keys returned:
-    - ``required_positional``: count of positional-only or
-      positional-or-keyword params with no default. The minimum positional
-      arity the callable accepts.
-    - ``fixed_positional_count``: count of positional-only or
-      positional-or-keyword params total (with or without defaults).
-      Preserved even when ``*args`` is present, because a fixed-positional
-      prefix BEFORE ``*args`` still receives the first N positional args
-      of a call before the rest flow into ``*args``.
-    - ``max_positional``: total positional capacity. Equals
-      ``fixed_positional_count`` when ``*args`` is absent; ``None`` when
-      ``*args`` is present (unbounded).
-    - ``has_var_positional``: True iff ``*args`` is in the signature. The
-      validator and both dispatchers consult this flag to decide whether
-      to call the canonical target-arity shape.
-    - ``has_required_kwargs``: True iff any ``KEYWORD_ONLY`` param has no
-      default. Such generators cannot be called positionally by our runtime.
-    - ``inspectable``: True iff ``inspect.signature()`` succeeded. When
-      False, callers must fall back to a try/except call chain.
-    """
-    try:
-        sig = inspect.signature(gen)
-    except (TypeError, ValueError):
-        return {"required_positional": 0,
-                "fixed_positional_count": 0,
-                "max_positional": None,
-                "has_var_positional": False,
-                "has_required_kwargs": False,
-                "inspectable": False}
-    required = 0
-    fixed = 0
-    has_var_positional = False
-    has_required_kw = False
-    for p in sig.parameters.values():
-        if p.kind is inspect.Parameter.VAR_POSITIONAL:
-            has_var_positional = True
-        elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            fixed += 1
-            if p.default is inspect.Parameter.empty:
-                required += 1
-        elif p.kind is inspect.Parameter.KEYWORD_ONLY:
-            if p.default is inspect.Parameter.empty:
-                has_required_kw = True
-    return {"required_positional": required,
-            "fixed_positional_count": fixed,
-            "max_positional": None if has_var_positional else fixed,
-            "has_var_positional": has_var_positional,
-            "has_required_kwargs": has_required_kw,
-            "inspectable": True}
-
-
-def _cached_generator_meta(gen) -> dict:
-    """Cached introspection lookup keyed by callable identity.
-
-    - Identity keying (not object equality) prevents two distinct
-      callables that compare equal via custom ``__eq__`` from sharing
-      stale metadata.
-    - The ``_IdentityKey`` wrapper holds a strong reference, so Python
-      can't recycle ``id(gen)`` for a different callable after garbage
-      collection.
-    - Bounded size with simple insertion-order eviction keeps the cache
-      from growing without bound in long-lived processes that create
-      many fresh callables (e.g., test sessions building lambdas in
-      loops). Dropped wrappers release their callables for gc.
-    """
-    key = _IdentityKey(gen)
-    cached = _GENERATOR_META_CACHE.get(key)
-    if cached is not None:
-        return cached
-    meta = _generator_meta(gen)
-    if len(_GENERATOR_META_CACHE) >= _GENERATOR_META_CACHE_MAX:
-        for stale in list(_GENERATOR_META_CACHE)[: _GENERATOR_META_CACHE_MAX // 2]:
-            del _GENERATOR_META_CACHE[stale]
-    _GENERATOR_META_CACHE[key] = meta
-    return meta
-
-
-def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
-                                t_within: float, span_idx: int,
-                                rng: "np.random.RandomState" = None):
-    """Call a span-path generator with either the 5-arg or 2-arg shape.
-
-    Dispatch by REQUIRED positional count, not by maximum callability. A
-    generator like ``(ts, col, scale=1.0, factor=2.0, baseline=0.0)`` is
-    callable with 5 args at the Python language level, but the author named
-    the 3rd–5th positions for their own values, not for runtime internals.
-    Calling 5-arg would silently bind ``t_within``/``span_idx``/``rng`` to
-    those parameters. Required-based dispatch instead calls 2-arg, keeps
-    the defaults, and avoids the misbind. Only generators that explicitly
-    opt into the runtime internals (``required=5`` or ``*args``) receive
-    the 5-arg call.
-
-    Uninspectable callables (e.g., C extensions) fall back to a try/except
-    chain that tries only the two canonical shapes (5-arg then 2-arg) — no
-    intermediate 3- or 4-arg attempts, because those would themselves be
-    misbinding vectors. The fallback retries only on a call-*binding*
-    TypeError; a TypeError raised inside the generator body propagates
-    (see the step-path fallback in ``_resolve_anomaly_value``).
-    """
-    meta = _cached_generator_meta(generator)
-    if not meta["inspectable"]:
-        # See the matching step-path fallback in ``_resolve_anomaly_value``
-        # for the binding-vs-body TypeError distinction.
-        try:
-            return generator(ts, col, t_within, span_idx, rng)
-        except TypeError as exc:
-            if exc.__traceback__.tb_next is not None:
-                raise
-            return generator(ts, col)
-    required = meta["required_positional"]
-    fixed = meta["fixed_positional_count"]
-    if meta["has_var_positional"]:
-        # Mirror the validator's *args misbind checks for direct callers.
-        # Two distinct misbind cases:
-        #   (a) required <= 2 with default-having fixed positions beyond
-        #       (ts, col): the 5-arg call overwrites declared defaults at
-        #       positions 3 through min(fixed, 5).
-        #   (b) required ∈ {3, 4}: the 5-arg call binds t_within (and
-        #       possibly span_idx) into REQUIRED positional slots the
-        #       author intended for other values (e.g. (ts, col, rng,
-        #       *args) where rng would receive t_within).
-        if required <= 2 and fixed > 2:
-            misbind_end = min(fixed, 5)
-            misbind_range = (
-                f"position 3" if misbind_end == 3
-                else f"positions 3 through {misbind_end}"
-            )
-            raise TypeError(
-                f"Generator {generator!r} has *args with "
-                f"fixed_positional_count={fixed} > 2 and required <= 2; "
-                f"the 5-arg span call would overwrite the default-having "
-                f"fixed positional at {misbind_range}. Use (ts, col) or "
-                f"(ts, col, *args) instead."
-            )
-        if required > 2 and required != 5:
-            raise TypeError(
-                f"Generator {generator!r} has *args with "
-                f"required_positional={required} (neither 2 nor 5); "
-                f"the 5-arg span call would bind t_within/span_idx into "
-                f"the required positions the author intended for other "
-                f"values. Use (ts, col, t_within, span_idx, rng) for full "
-                f"control or (ts, col) for the legacy form."
-            )
-        return generator(ts, col, t_within, span_idx, rng)
-    if required == 5:
-        return generator(ts, col, t_within, span_idx, rng)
-    if required <= 2:
-        return generator(ts, col)
-    raise TypeError(
-        f"Generator {generator!r} requires {required} positional args; "
-        f"span-path specs must use a 2-arg or 5-arg required shape. "
-        f"_validate_scenario_spec should have rejected this at import time."
+    return _generation_splice_dst_artifact(
+        rows, kept_ts, dst_day, start_time=start_time
     )
 
 
-def _span_fraction(t_within: float, duration_seconds: float) -> float:
-    if duration_seconds <= 0:
-        return 1.0
-    return min(max(t_within / duration_seconds, 0.0), 1.0)
-
-
 def _format_fixed3(arr: np.ndarray) -> np.ndarray:
-    """Format a float array as ``%.3f``-equivalent strings ~2x faster than
-    ``np.char.mod``. Scales to int64, then assembles ``sign + int + '.' + frac``
-    via vectorized numpy string ops.
-    """
-    scaled = np.round(arr * 1000).astype(np.int64)
-    sign = np.where(scaled < 0, "-", "")
-    absolute = np.abs(scaled)
-    int_part = (absolute // 1000).astype("<U16")
-    frac_part = np.char.zfill((absolute % 1000).astype("<U3"), 3)
-    out = np.char.add(sign, int_part)
-    out = np.char.add(out, ".")
-    return np.char.add(out, frac_part)
+    return _generation_module._format_fixed3(arr)
 
 
 def _build_timestamp_arrays(
@@ -2225,29 +980,9 @@ def _build_timestamp_arrays(
     *,
     start_time: datetime.datetime = START,
 ):
-    """Pre-compute the shared per-run timestamp arrays (numpy + formatted str).
-
-    Built once per run and reused across every component — they're identical
-    by construction, so re-computing them per component is pure waste.
-    Row ``i`` is at ``start_time + i * interval`` seconds; row count is
-    ``floor(total_seconds / interval)``. Strings are rendered at second
-    precision when ``interval >= 1.0`` and at millisecond precision otherwise
-    so adjacent sub-second rows never share a timestamp string.
-    """
-    n_rows = int(total_seconds // interval)
-    step_us = int(round(interval * 1_000_000))
-    ts_array = (
-        np.datetime64(start_time) + np.arange(n_rows) * np.timedelta64(step_us, "us")
+    return _generation_build_timestamp_arrays(
+        total_seconds, interval, start_time=start_time
     )
-    if interval < 1.0:
-        ts_strings = np.char.replace(
-            np.datetime_as_string(ts_array, unit="ms"), "T", " "
-        )
-    else:
-        ts_strings = np.char.replace(
-            np.datetime_as_string(ts_array, unit="s"), "T", " "
-        )
-    return ts_array, ts_strings
 
 # ------------------------------------------------------------------
 # Cascade helper function
@@ -2347,546 +1082,86 @@ _validate_metric_spec_schema_metadata()
 
 
 # ------------------------------------------------------------------
-# Topology graph (phase 1 — structural-only).
+# Topology graph and composition helpers
 # ------------------------------------------------------------------
-# Directed service-call graph. ``TOPOLOGY[source]`` lists the ``Edge``
-# instances downstream of ``source``; both source keys and ``Edge.target``
-# values are component names from ``COMPONENTS``. Under the default
-# ``--topology-mode realistic`` (phase 6 flag day) the graph
-# is consumed by ``_compose_topology_coupled_specs`` (phase 2/3:
-# rewrites downstream load-metric baselines from upstream RPS/token
-# columns) and ``_compose_topology_saturation_specs`` (phase 4/5:
-# lifts downstream latency/error specs via the logistic saturation
-# curve). The graph is always read: the phase-9 flag day removed the
-# ``--topology-mode independent`` no-topology contrast alias.
-#
-# v1 graph (per design):
-#   loadbalancer -> apigateway                   (constant weight 1.0)
-#   apigateway   -> authservice (0.3),           (request fan-out shares;
-#                   cacheservice (0.4),           the weights here sum to 1
-#                   database (0.3)                so the phase-2 two-pass
-#                                                 generation can treat them
-#                                                 as routing fractions)
-#   cacheservice -> database                     (weight = callable on
-#                                                 cache_miss / total rate)
-#   apigateway   -> llm_analytics                (phase 5 token-
-#                                                 throttle: positive
-#                                                 weight couples
-#                                                 input_tokens_per_sec to
-#                                                 apigateway RPS; non-
-#                                                 zero gains lift LLM
-#                                                 latency / error as
-#                                                 apigateway saturates)
-#
-# Cascade-vs-topology overlap: several SCENARIOS already encode pairwise
-# blast-radius (e.g. auth -> gateway, cache -> DB) via cascade_specs. The
-# topology graph is a structural orthogonal view — it describes *normal*
-# request flow, not anomaly propagation — so the two are intentionally
-# allowed to overlap. The realistic-mode pipeline applies topology
-# coupling and saturation to the natural baseline before the per-row
-# anomaly override loop runs, so a cascade write at row i still wins at
-# exactly that row regardless of the topology-derived baseline.
+# Topology models/registries/validators moved to topology_impl.py and the
+# coupling/saturation math moved to topology_compose.py. The wrappers preserve
+# legacy's patch-visible runtime view and keep import-time validation at this
+# historical call site.
+from .topology_impl import (
+    TOPOLOGY as TOPOLOGY,
+    _TOPOLOGY_COUPLE_NOISE_STD as _TOPOLOGY_COUPLE_NOISE_STD,
+    _TOPOLOGY_LOAD_METRICS as _TOPOLOGY_LOAD_METRICS,
+    _TOPOLOGY_SATURATION_TARGETS as _TOPOLOGY_SATURATION_TARGETS,
+    _cache_miss_ratio_signal as _cache_miss_ratio_signal,
+    _component_metric_base as _topology_component_metric_base,
+    _configure_topology_runtime as _configure_topology_runtime,
+    _topology_generation_order as _topology_generation_order_impl,
+    _validate_saturation_params as _topology_validate_saturation_params,
+    _validate_topology as _topology_validate_topology,
+    _validate_topology_metric_registries as _topology_validate_topology_metric_registries,
+)
+from .topology_compose import (
+    _apply_saturation as _topology_apply_saturation,
+    _arrays_equal_dict as _arrays_equal_dict,
+    _compose_topology_coupled_specs as _topology_compose_topology_coupled_specs,
+    _compose_topology_saturation_specs as _topology_compose_topology_saturation_specs,
+    _compute_topology_arrays_per_instance as _topology_compute_topology_arrays_per_instance,
+    _matched_cardinality as _matched_cardinality,
+    _per_instance_upstream_view as _per_instance_upstream_view,
+    _sat_tuples_equal_dict as _sat_tuples_equal_dict,
+)
+
+
+def _topology_runtime_components():
+    return COMPONENTS
+
+
+def _topology_runtime_topology():
+    return TOPOLOGY
+
+
+def _topology_runtime_load_metrics():
+    return _TOPOLOGY_LOAD_METRICS
+
+
+def _topology_runtime_saturation_targets():
+    return _TOPOLOGY_SATURATION_TARGETS
+
+
+_configure_topology_runtime(
+    get_components=_topology_runtime_components,
+    get_topology=_topology_runtime_topology,
+    get_topology_load_metrics=_topology_runtime_load_metrics,
+    get_topology_saturation_targets=_topology_runtime_saturation_targets,
+    runtime_key=__name__,
+    activate=True,
+)
+_configure_generation_runtime(
+    get_derivations=_generation_runtime_derivations,
+    get_topology_load_metrics=_generation_runtime_topology_load_metrics,
+    get_format_fixed3=_generation_runtime_format_fixed3,
+    runtime_key=__name__,
+)
+
+
 def _component_metric_base(component: str, metric: str) -> float:
-    """Look up the natural ``MetricSpec.base`` for ``component[metric]``.
-
-    Returns ``0.0`` when the metric is not in the component's catalog so
-    callers can branch on the falsy value without raising. Coupling uses
-    the natural baseline to map upstream load (in upstream units) to the
-    downstream metric's scale (e.g. apigateway's ~800 rps to database's
-    ~25k qps). Defined above ``TOPOLOGY`` so the cacheservice → database
-    callable lambda can reference it at the import-time smoke test in
-    ``_validate_topology``.
-    """
-    for spec in COMPONENTS.get(component, ()):
-        if spec.name == metric:
-            return float(spec.base)
-    return 0.0
-
-
-# Phase 3: per-component "load metrics" the topology coupling
-# operates on. Each entry maps a component to a
-# ``(canonical, supplementary)`` tuple where:
-#
-# * ``canonical`` is the single MetricSpec.name a constant-weight edge
-#   from this component reads to produce its contribution. Required;
-#   must be a captured MetricSpec on the component.
-# * ``supplementary`` is the (possibly empty) tuple of additional
-#   MetricSpec.name values captured alongside the canonical metric so
-#   ``Edge.signal`` callables on outgoing edges can derive a per-row
-#   scalar from multiple columns (e.g. cacheservice exposes both
-#   ``cache_hits`` and ``cache_misses`` so the cache→database miss-ratio
-#   signal can compute ``misses / (hits + misses)``).
-#
-# Components with a single load metric have ``supplementary = ()``.
-# Constant-weight edges always read ``canonical``; the capture loop
-# captures ``(canonical, *supplementary)`` into ``topology_capture``;
-# ``_compose_topology_coupled_specs`` rewrites both canonical and
-# supplementary metrics on downstream components that have incoming
-# edges. Declared above ``TOPOLOGY`` so ``_validate_topology()`` (which
-# runs at import time) can build a captured-column probe for callable-
-# weight edges' ``signal`` callables.
-_TOPOLOGY_LOAD_METRICS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "loadbalancer": ("requests_per_sec", ()),
-    "apigateway": ("requests_per_sec", ()),
-    "authservice": ("login_attempts", ()),
-    "cacheservice": ("cache_hits", ("cache_misses",)),
-    "database": ("queries_per_sec", ()),
-    # phase 5: llm_analytics couples its token throughput to
-    # apigateway under realistic mode. ``input_tokens_per_sec`` is the
-    # canonical "load" metric here because the token budget governs
-    # tokens/second (not requests/second) — pinning the load metric to
-    # tokens also gives the coupling enough signal-to-noise to clear
-    # the >= 0.85 Pearson correlation gate, given the noise floor at
-    # ``_TOPOLOGY_COUPLE_NOISE_STD`` is fixed in absolute units.
-    # No downstream consumes llm_analytics in the v1 graph, so there
-    # are no supplementary columns.
-    "llm_analytics": ("input_tokens_per_sec", ()),
-}
-
-
-def _cache_miss_ratio_signal(
-    cols: dict[str, np.ndarray],
-) -> "np.ndarray | None":
-    """Per-edge ``Edge.signal`` for the ``cacheservice -> database`` edge.
-
-    Receives ``cacheservice``'s captured load columns and returns the
-    per-row cache-miss ratio ``cache_misses / (cache_hits + cache_misses)``
-    (0.0 where the combined total is non-positive). Returns ``None`` when
-    either required column is missing — the composer treats this as
-    "skip this edge" so a ``--metrics-per-component`` selection that
-    trims a required column degrades gracefully instead of raising.
-    """
-    hits = cols.get("cache_hits")
-    misses = cols.get("cache_misses")
-    if hits is None or misses is None:
-        return None
-    total = hits + misses
-    return np.divide(
-        misses, total,
-        out=np.zeros_like(misses, dtype=np.float64),
-        where=total > 0,
-    )
-
-
-TOPOLOGY: dict[str, list[Edge]] = {
-    "loadbalancer": [
-        # phase 4: saturation feedback. ``midpoint`` is the
-        # upstream's load value at which the logistic curve sits at 0.5
-        # (~80% of the natural peak of ~1080 rps for loadbalancer). The
-        # gains shape latency and error responses as the gateway nears
-        # capacity. See ``_apply_saturation`` for the exact formula and
-        # ``_TOPOLOGY_SATURATION_TARGETS`` for the affected downstream
-        # latency/error columns.
-        Edge(
-            target="apigateway", weight=1.0,
-            saturation=SaturationParams(
-                midpoint=860.0, steepness=6.0,
-                latency_gain=0.4, error_gain=0.010,
-            ),
-        ),
-    ],
-    "apigateway": [
-        # phase 4: saturation feedback on the three fan-out
-        # downstreams. ``midpoint`` is ~80% of the apigateway natural
-        # peak (~950 rps). ``latency_gain`` scales with each downstream's
-        # sensitivity to upstream load: database is most sensitive
-        # (heavy I/O), authservice next (per-request crypto work),
-        # cacheservice least (in-memory ops). ``error_gain`` follows the
-        # same ordering, kept inside the issue's [0.005, 0.02] band.
-        Edge(
-            target="authservice", weight=0.3,
-            saturation=SaturationParams(
-                midpoint=760.0, steepness=6.0,
-                latency_gain=0.5, error_gain=0.012,
-            ),
-        ),
-        Edge(
-            target="cacheservice", weight=0.4,
-            saturation=SaturationParams(
-                midpoint=760.0, steepness=6.0,
-                latency_gain=0.3, error_gain=0.008,
-            ),
-        ),
-        Edge(
-            target="database", weight=0.3,
-            saturation=SaturationParams(
-                midpoint=760.0, steepness=6.0,
-                latency_gain=0.6, error_gain=0.015,
-            ),
-        ),
-        # phase 5: LLM token-throttle. Apigateway serves as the
-        # token-budget metering authority for LLM-bound traffic, so this
-        # edge couples ``llm_analytics.input_tokens_per_sec`` to
-        # ``apigateway.requests_per_sec`` (the renormalization in
-        # ``_compose_topology_coupled_specs`` reproduces the natural
-        # LLM baseline at natural apigateway load regardless of the
-        # raw weight magnitude — any positive weight makes the edge
-        # active). ``midpoint`` is expressed in apigateway RPS units
-        # (same scale as the other apigateway -> * edges) so the
-        # saturation curve shifts the LLM-side response in lockstep
-        # with the rest of the front-half fan-out. ``latency_gain``
-        # sits between authservice (0.5) and database (0.6); the LLM
-        # is moderately sensitive to upstream throttle because every
-        # token call queues behind the budget. ``error_gain`` follows
-        # the same band as the other downstream edges.
-        Edge(
-            target="llm_analytics",
-            weight=1.0,
-            saturation=SaturationParams(
-                midpoint=760.0, steepness=6.0,
-                latency_gain=0.55, error_gain=0.015,
-            ),
-        ),
-    ],
-    # Cache miss rate drives extra database load on top of apigateway's
-    # routing fraction. ``signal`` is the module-level
-    # ``_cache_miss_ratio_signal`` which derives the per-row cache-miss
-    # ratio (``cache_misses / (cache_hits + cache_misses)``) from
-    # cacheservice's captured columns; the callable ``weight`` then
-    # maps that ratio onto the additive QPS contribution to the
-    # database baseline: ``weight(miss_ratio) = miss_ratio * base_qps``.
-    # At the natural baseline (~4% miss rate, ~25k base QPS) this is
-    # ~1000 QPS on top of the apigateway-driven contribution.
-    # ``base_qps`` is resolved lazily via ``_component_metric_base`` so
-    # the lambda always reads the live ``COMPONENTS`` catalog — matching
-    # the constant-weight path's behavior under monkeypatched / test-
-    # injected baselines.
-    "cacheservice": [
-        Edge(
-            target="database",
-            signal=_cache_miss_ratio_signal,
-            weight=lambda miss_ratio: (
-                np.asarray(miss_ratio, dtype=np.float64)
-                * _component_metric_base("database", "queries_per_sec")
-            ),
-        ),
-    ],
-}
+    return _topology_component_metric_base(component, metric, runtime_key=__name__)
 
 
 def _validate_saturation_params(sat: SaturationParams, *, context: str) -> None:
-    """Field-level invariants for a ``SaturationParams`` instance.
-
-    Used by ``_validate_topology()`` at import time on every edge that
-    carries saturation, and re-checked at call time inside
-    ``_apply_saturation()`` so direct callers (tests, future consumers)
-    cannot smuggle in bad params. ``context`` is a short string naming
-    the source of the params (an edge identifier or the function name)
-    so the raised ``ValueError`` points at the offending site.
-
-    Rejected inputs per field:
-
-    - ``midpoint`` — must be a finite positive non-``bool``
-      ``int``/``float``. Zero divides; negative or non-finite
-      contaminates ``utilization`` with non-finite values; ``bool`` is
-      an ``int`` subtype so ``True`` would otherwise slip through.
-    - ``steepness`` — must be a finite positive non-``bool``
-      ``int``/``float``. Zero collapses the logistic to a constant
-      0.5; negative inverts the curve.
-    - ``latency_gain`` / ``error_gain`` — must be finite non-negative
-      non-``bool`` ``int``/``float``. The saturation curve models
-      load-driven *degradation*: a positive gain raises latency and
-      error rate as upstream load climbs. Negative gains would invert
-      that physics (saturation reducing latency / pushing
-      ``error_offset`` below zero) and, when multiplied across two
-      saturating edges into the same downstream, could flip
-      ``latency_multiplier`` past zero into negative latency.
-    """
-    def _check(name: str, value, *, positive: bool) -> None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(
-                f"{context}: SaturationParams.{name}={value!r} must be a "
-                f"finite {'positive' if positive else 'non-negative'} "
-                f"int/float; got {type(value).__name__}."
-            )
-        if not math.isfinite(value):
-            raise ValueError(
-                f"{context}: SaturationParams.{name}={value!r} must be "
-                f"finite."
-            )
-        if positive and value <= 0:
-            raise ValueError(
-                f"{context}: SaturationParams.{name}={value!r} must be > 0."
-            )
-        if not positive and value < 0:
-            raise ValueError(
-                f"{context}: SaturationParams.{name}={value!r} must be "
-                f">= 0."
-            )
-
-    _check("midpoint", sat.midpoint, positive=True)
-    _check("steepness", sat.steepness, positive=True)
-    _check("latency_gain", sat.latency_gain, positive=False)
-    _check("error_gain", sat.error_gain, positive=False)
+    return _topology_validate_saturation_params(sat, context=context)
 
 
 def _validate_topology() -> None:
-    """Import-time invariants for ``TOPOLOGY``.
-
-    Catches drift between the topology graph and ``COMPONENTS`` at module
-    load so phase 2's two-pass generator can rely on every source and
-    target being a real component. Callable weights are smoke-tested with
-    a tiny ``np.ndarray`` so a mis-shaped lambda (e.g. zero-arg or scalar-
-    only) fails here instead of corrupting the generator's vectorized
-    column writes downstream. Each non-``None`` ``Edge.saturation`` has
-    its ``SaturationParams`` field invariants enforced via
-    ``_validate_saturation_params`` so phase 4's saturation feedback
-    cannot silently consume ``NaN``/``inf``/``bool``/negative values.
-    """
-    known_components = set(COMPONENTS.keys())
-    for source, edges in TOPOLOGY.items():
-        if source not in known_components:
-            raise ValueError(
-                f"TOPOLOGY source {source!r} is not in COMPONENTS; "
-                f"known components: {sorted(known_components)}"
-            )
-        if not isinstance(edges, list):
-            raise ValueError(
-                f"TOPOLOGY[{source!r}] must be a list of Edge, got "
-                f"{type(edges).__name__}"
-            )
-        for edge in edges:
-            if not isinstance(edge, Edge):
-                raise ValueError(
-                    f"TOPOLOGY[{source!r}] contains a non-Edge entry "
-                    f"{edge!r} (type {type(edge).__name__}); every entry "
-                    f"must be an Edge instance."
-                )
-            if edge.target not in known_components:
-                raise ValueError(
-                    f"TOPOLOGY[{source!r}] -> Edge.target={edge.target!r} "
-                    f"is not in COMPONENTS; known components: "
-                    f"{sorted(known_components)}"
-                )
-            if edge.saturation is not None:
-                if not isinstance(edge.saturation, SaturationParams):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} "
-                        f"Edge.saturation={edge.saturation!r} must be a "
-                        f"SaturationParams instance or None; got "
-                        f"{type(edge.saturation).__name__}."
-                    )
-                _validate_saturation_params(
-                    edge.saturation,
-                    context=f"TOPOLOGY[{source!r}] -> {edge.target!r}",
-                )
-            if edge.correlation_threshold is not None:
-                # phase 7: validator-only per-edge override of the
-                # default Pearson coupling threshold. ``bool`` is an ``int``
-                # subtype so reject it explicitly before the numeric check.
-                if (isinstance(edge.correlation_threshold, bool)
-                        or not isinstance(
-                            edge.correlation_threshold, (int, float)
-                        )):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} "
-                        f"correlation_threshold="
-                        f"{edge.correlation_threshold!r} must be a finite "
-                        f"float in (-1, 1] or None; got "
-                        f"{type(edge.correlation_threshold).__name__}."
-                    )
-                if not math.isfinite(edge.correlation_threshold):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} "
-                        f"correlation_threshold="
-                        f"{edge.correlation_threshold!r} must be finite."
-                    )
-                if not -1.0 < edge.correlation_threshold <= 1.0:
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} "
-                        f"correlation_threshold="
-                        f"{edge.correlation_threshold!r} must be in the "
-                        f"half-open interval (-1, 1]."
-                    )
-            if callable(edge.weight):
-                probe = np.array([0.0, 0.5, 1.0], dtype=np.float64)
-                try:
-                    result = edge.weight(probe)
-                except Exception as exc:
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} callable "
-                        f"weight {edge.weight!r} raised "
-                        f"{type(exc).__name__}({exc!r}) when called with a "
-                        f"numpy array; callable weights must accept an "
-                        f"ndarray and return an ndarray."
-                    ) from exc
-                if not isinstance(result, np.ndarray):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} callable "
-                        f"weight {edge.weight!r} returned "
-                        f"{type(result).__name__}; callable weights must "
-                        f"return a numpy array."
-                    )
-                # Callable weights require a per-edge signal: the composer
-                # feeds ``edge.signal(upstream_cols)``'s return value
-                # straight into ``edge.weight(signal)``. Without a signal
-                # the composer has no per-row input and would silently
-                # skip the edge — exactly the soft footgun this refactor
-                # is removing.
-                if edge.signal is None:
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} has "
-                        f"callable weight but signal=None; callable "
-                        f"weights require a per-edge signal callable."
-                    )
-                if not callable(edge.signal):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} signal="
-                        f"{edge.signal!r} must be callable; got "
-                        f"{type(edge.signal).__name__}."
-                    )
-                ups_entry = _TOPOLOGY_LOAD_METRICS.get(source)
-                if ups_entry is None:
-                    probe_cols: dict[str, np.ndarray] = {}
-                else:
-                    canonical_src, supplementary_src = ups_entry
-                    # Distinct array per key: real captured columns are
-                    # always per-column buffers, and a future signal that
-                    # mutates an input in-place (e.g. via ``out=``) must
-                    # not silently alias other "columns" in the probe.
-                    probe_template = np.array(
-                        [0.0, 0.5, 1.0], dtype=np.float64
-                    )
-                    probe_cols = {
-                        name: probe_template.copy()
-                        for name in (canonical_src, *supplementary_src)
-                        if name
-                    }
-                try:
-                    sig_result = edge.signal(probe_cols)
-                except Exception as exc:
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} signal "
-                        f"{edge.signal!r} raised {exc!r} when called with "
-                        f"the upstream's captured-column probe; signal "
-                        f"callables must accept a dict[str, np.ndarray] "
-                        f"and return np.ndarray or None."
-                    ) from exc
-                if sig_result is not None and not isinstance(
-                    sig_result, np.ndarray
-                ):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} signal "
-                        f"returned {type(sig_result).__name__}; signal "
-                        f"callables must return np.ndarray or None."
-                    )
-            else:
-                # Constant weight: must be a finite, non-negative scalar.
-                # ``bool`` is a subclass of ``int`` so ``isinstance(True,
-                # (int, float))`` is True; reject it explicitly before the
-                # numeric check.
-                if (isinstance(edge.weight, bool)
-                        or not isinstance(edge.weight, (int, float))):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
-                        f"{edge.weight!r} must be a finite non-negative "
-                        f"int/float or a callable (np.ndarray) -> "
-                        f"np.ndarray; got {type(edge.weight).__name__}."
-                    )
-                if not math.isfinite(edge.weight):
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
-                        f"{edge.weight!r} must be finite."
-                    )
-                if edge.weight < 0:
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} weight="
-                        f"{edge.weight!r} must be non-negative."
-                    )
-                # Constant weight: signal is meaningless because the
-                # composer never reads it. Reject up-front so an edge
-                # author cannot stash a stale signal on a constant edge
-                # and assume it will fire.
-                if edge.signal is not None:
-                    raise ValueError(
-                        f"TOPOLOGY[{source!r}] -> {edge.target!r} has "
-                        f"constant weight={edge.weight!r} but signal is "
-                        f"set; signal is only valid with a callable "
-                        f"weight."
-                    )
-
-    # Cycle detection (phase 3): the two-pass realistic-mode
-    # generator walks TOPOLOGY in Kahn order and expects a DAG. Reject
-    # any cycle (including self-loops) at import time so a cyclic edit
-    # fails fast instead of silently falling back to COMPONENTS order.
-    incoming: dict[str, set[str]] = {}
-    for source, edges in TOPOLOGY.items():
-        incoming.setdefault(source, set())
-        for edge in edges:
-            incoming.setdefault(edge.target, set()).add(source)
-    remaining = {node: set(deps) for node, deps in incoming.items()}
-    while remaining:
-        ready = [n for n, deps in remaining.items() if not deps]
-        if not ready:
-            cycle_nodes = sorted(remaining.keys())
-            raise ValueError(
-                f"TOPOLOGY must be acyclic; cycle detected among "
-                f"nodes {cycle_nodes}"
-            )
-        for n in ready:
-            del remaining[n]
-            for deps in remaining.values():
-                deps.discard(n)
+    return _topology_validate_topology(runtime_key=__name__)
 
 
 _validate_topology()
 
 
-# Phase 2/3: standard deviation of the additive noise
-# injected on top of the coupled upstream signal under realistic
-# topology coupling. Kept small (5.0) relative to the typical
-# coupling signal std (~15–1600 depending on component) so the Pearson
-# correlation between upstream and downstream stays well above every
-# gate that reads it — the 0.95 phase-2 acceptance threshold in
-# ``tests/test_topology_loadbalancer_gateway.py``, the 0.9 phase-3
-# thresholds in ``tests/test_topology_fanout.py``, and the validator's
-# ``_TOPOLOGY_DEFAULT_CORRELATION_THRESHOLD = 0.85`` — while the
-# column still looks like a noisy signal rather than a perfect copy
-# of the upstream.
-_TOPOLOGY_COUPLE_NOISE_STD = 5.0
-
-
 def _topology_generation_order(active_components: set[str]) -> list[str]:
-    """Return ``active_components`` in topological generation order.
-
-    Roots (no incoming TOPOLOGY edges from any other active component) come
-    first; downstream components come after their upstream(s). Only edges
-    where both endpoints are in ``active_components`` are considered, so
-    ``--components`` filtering naturally restricts the dependency graph.
-    Cycles are not expected in TOPOLOGY (``_validate_topology`` rejects
-    them at import time, so this branch is defensive dead code); if one
-    ever appeared, the fallback flushes *all* remaining nodes — cycle
-    members and their not-yet-ready downstreams alike — in one
-    ``COMPONENTS``-insertion-order pass so the walk always makes
-    forward progress.
-
-    Ties (multiple roots / multiple ready nodes at the same Kahn step)
-    break on ``COMPONENTS`` insertion order so the result is deterministic
-    regardless of how the caller iterates ``args.components``.
-    """
-    incoming: dict[str, set[str]] = {c: set() for c in active_components}
-    for source, edges in TOPOLOGY.items():
-        if source not in active_components:
-            continue
-        for edge in edges:
-            if edge.target in incoming and edge.target != source:
-                incoming[edge.target].add(source)
-    component_index = {name: i for i, name in enumerate(COMPONENTS.keys())}
-    ordered: list[str] = []
-    remaining = {c: set(deps) for c, deps in incoming.items()}
-    while remaining:
-        ready = sorted(
-            (c for c, deps in remaining.items() if not deps),
-            key=lambda c: component_index[c],
-        )
-        if not ready:
-            ready = sorted(remaining.keys(), key=lambda c: component_index[c])
-        for c in ready:
-            ordered.append(c)
-            del remaining[c]
-            for deps in remaining.values():
-                deps.discard(c)
-    return ordered
+    return _topology_generation_order_impl(active_components, runtime_key=__name__)
 
 
 def _compose_topology_coupled_specs(
@@ -2896,391 +1171,20 @@ def _compose_topology_coupled_specs(
     rng: "np.random.RandomState",
     n_rows: int,
 ) -> list[MetricSpec]:
-    """Return a possibly-modified spec list with the downstream's load
-    metric(s) coupled to upstream component(s) via the TOPOLOGY graph.
-
-    Phase 3 extends the coupling to every constant-weight
-    edge in the v1 graph plus the ``cacheservice -> database`` callable
-    edge:
-
-    * Constant-weight edges scale the upstream's captured load column to
-      the downstream metric's natural baseline:
-      ``contribution = (upstream / upstream_base) * downstream_base *
-      w_norm`` where ``w_norm = w / Σw`` across all active constant edges
-      to this downstream. The normalization makes the combined constant
-      term equal ``downstream_base`` at natural upstream load *regardless*
-      of the raw weights' sum — relative weights set the fan-out shares,
-      but the absolute values do not leave any "uncoupled" residue at
-      the natural baseline. (Today the v1 graph's three apigateway fan-
-      out weights already sum to 1.0; the renormalization keeps the
-      formula well-defined if that invariant is ever relaxed.)
-
-      Side-effect under ``--components`` subsetting: the normalization
-      is computed over the *active* edges only, not the full declared
-      fan-out. If a run drops one of apigateway's three fan-out targets
-      (say ``--components apigateway,authservice,database``), the
-      surviving fan-out edges renormalize so each carries its full
-      ``downstream_base`` at natural upstream load — not the routing-
-      fraction-weighted share the raw weights imply. This is intentional
-      (subsetting should not leave the surviving downstreams running at
-      a fraction of their natural baseline), but it does mean the
-      effective per-edge contribution depends on which components are
-      active; pin a full ``--components all`` baseline when comparing
-      coupling magnitudes across runs.
-    * Callable-weight edges call ``edge.weight(signal)`` with a per-row
-      scalar signal derived from the upstream's captured columns by
-      ``edge.signal(upstream_cols)``. The signal callable is paired
-      with the callable weight on the same ``Edge`` (the import-time
-      validator enforces the pairing); ``signal`` returning ``None``
-      means "skip this edge" (e.g. a ``--metrics-per-component``
-      selection trimmed a required input column). The weight's return
-      value is added to the downstream baseline directly (in
-      downstream-metric units) — e.g. the ``cacheservice -> database``
-      callable returns the per-row cache-miss QPS contribution.
-
-    When neither path delivers any signal (no upstream captured, all
-    constant weights are zero, callable signal absent) the spec list is
-    returned unchanged so the downstream falls back to its natural
-    Gaussian baseline.
-
-    The natural per-metric ``MetricSpec`` (multiplier, additive,
-    clip_min, declarative schema metadata) is preserved via
-    ``dataclasses.replace``; only ``base``, ``std``, ``multiplier``,
-    and ``additive`` change so the coupled column writes the baked
-    coupled column verbatim.
-    """
-    coupled_entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
-    if coupled_entry is None:
-        return specs
-    canonical_down, supplementary_down = coupled_entry
-    coupled_metric_names = (canonical_down, *supplementary_down)
-    name_to_idx = {s.name: i for i, s in enumerate(specs)}
-    if not any(m in name_to_idx for m in coupled_metric_names):
-        return specs
-    incoming: list[tuple[str, Edge]] = []
-    for upstream, edges in TOPOLOGY.items():
-        if upstream not in upstream_arrays:
-            continue
-        for edge in edges:
-            if edge.target == component_name:
-                incoming.append((upstream, edge))
-    if not incoming:
-        return specs
-
-    # Callable-weight contributions are computed once per component —
-    # ``edge.signal`` / ``edge.weight`` are metric-invariant, so
-    # re-evaluating them per coupled metric was redundant — and applied
-    # only to the *canonical* load metric below: the weight callable
-    # returns values in the downstream's canonical-metric units (e.g.
-    # ``_cache_miss_ratio_signal``'s weight scales to
-    # ``database.queries_per_sec``'s natural base), so adding the same
-    # array to a supplementary metric with a different base would inject
-    # a wrong-unit contribution. Inert today — no callable-edge target
-    # declares supplementary captures — but the first one added would
-    # have silently mixed units. Track whether any callable signal was
-    # successfully evaluated separately from the numeric contribution —
-    # a callable that happens to be exactly zero everywhere (e.g. a
-    # cache with a 0% miss rate for the whole run) is still a valid
-    # coupling signal, not an absent one, and must not silently fall
-    # back to the natural Gaussian baseline.
-    callable_active = False
-    callable_contrib = np.zeros(n_rows, dtype=np.float64)
-    for upstream, edge in incoming:
-        if not callable(edge.weight):
-            continue
-        if edge.signal is None:
-            # Defence-in-depth: the validator rejects callable-weight
-            # edges without ``signal`` at import-time. A missing
-            # ``signal`` here means a future contributor bypassed the
-            # validator (e.g. via a monkeypatched TOPOLOGY in a test);
-            # skip the edge rather than crashing the generator.
-            continue
-        ups_cols = upstream_arrays.get(upstream, {})
-        signal = edge.signal(ups_cols)
-        if signal is None:
-            continue
-        callable_contrib = callable_contrib + np.asarray(
-            edge.weight(signal), dtype=np.float64
-        )
-        callable_active = True
-
-    new_specs = list(specs)
-    for metric_name in coupled_metric_names:
-        if metric_name not in name_to_idx:
-            continue
-        original = specs[name_to_idx[metric_name]]
-        downstream_base = float(original.base)
-        if downstream_base <= 0:
-            continue
-        # Canonical-only: see the callable-contribution comment above.
-        metric_callable_active = (
-            callable_active and metric_name == canonical_down
-        )
-
-        # First pass: collect all active constant-weight edges to compute
-        # the normalization factor that maps ``sum(weight)`` to 1.0 so the
-        # combined contribution equals ``downstream_base`` at natural
-        # upstream load.
-        active_constant: list[tuple[np.ndarray, float, float]] = []  # (arr, base, w)
-        for upstream, edge in incoming:
-            if callable(edge.weight):
-                continue
-            if isinstance(edge.weight, bool) or not isinstance(
-                edge.weight, (int, float)
-            ):
-                continue
-            w = float(edge.weight)
-            if w == 0.0:
-                continue
-            ups_cols = upstream_arrays.get(upstream, {})
-            ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
-            if ups_entry is None:
-                continue
-            ups_canonical, _ = ups_entry
-            if ups_canonical and ups_canonical in ups_cols:
-                ups_base = _component_metric_base(upstream, ups_canonical)
-                if ups_base > 0:
-                    active_constant.append(
-                        (ups_cols[ups_canonical], ups_base, w)
-                    )
-
-        if not active_constant and not metric_callable_active:
-            continue
-
-        # Constant contributions: normalize by sum(w) so the constant term
-        # equals ``downstream_base`` at natural upstream load regardless of
-        # how many contributing edges exist. Each upstream's array is scaled
-        # by ``(upstream / upstream_base) * downstream_base * w_normalized``
-        # so variation in the upstream flows through at a proportional scale
-        # to the downstream metric's natural magnitude.
-        constant_contrib = np.zeros(n_rows, dtype=np.float64)
-        if active_constant:
-            sum_w = sum(w for _, _, w in active_constant)
-            # sum_w > 0 in the shipped graph (constant weights are positive),
-            # but a monkeypatched/programmatic TOPOLOGY whose active constant
-            # weights sum to 0 would divide by zero here. Zero total weight
-            # means no constant coupling, so leave constant_contrib at zeros
-            # (07-02-verify-topology-divzero).
-            if sum_w > 0:
-                for ups_arr, ups_base, w in active_constant:
-                    w_norm = w / sum_w  # normalise so contributions sum to 1.0
-                    constant_contrib = constant_contrib + (
-                        ups_arr / ups_base * downstream_base * w_norm
-                    )
-
-        coupled = (
-            constant_contrib
-            + (callable_contrib if metric_callable_active else 0.0)
-            + rng.normal(0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows)
-        )
-        new_specs[name_to_idx[metric_name]] = dataclasses.replace(
-            original,
-            base=0.0,
-            std=0.0,
-            multiplier=None,
-            additive=lambda ts, elapsed, baked=coupled: baked,
-        )
-    return new_specs
-
-
-# Phase 4: Maximum utilization clamp before the logistic. Keeps
-# ``np.exp`` numerically stable for arbitrary load magnitudes; the logistic
-# is already > 0.99 at utilization = 2 with the smallest planned steepness
-# (5), so a cap at 5x has no practical effect on the shape.
-_SATURATION_MAX_UTILIZATION = 5.0
+    return _topology_compose_topology_coupled_specs(
+        component_name, specs, upstream_arrays, rng, n_rows,
+        runtime_key=__name__,
+    )
 
 
 def _apply_saturation(
     upstream_load: np.ndarray, sat: SaturationParams,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute the per-row ``(latency_multiplier, error_offset)`` arrays
-    for one saturating TOPOLOGY edge.
-
-    The logistic response curve:
-
-        utilization = upstream_load / sat.midpoint
-                       (clamped to ``[0, _SATURATION_MAX_UTILIZATION]`` so
-                       ``np.exp`` stays finite for any input)
-        logistic    = 1 / (1 + exp(-sat.steepness * (utilization - 1)))
-        latency_multiplier = 1 + sat.latency_gain * logistic
-        error_offset       = sat.error_gain * logistic
-
-    Bounds: ``latency_multiplier`` ∈ ``[1, 1 + latency_gain]`` (always
-    positive given non-negative gains); ``error_offset`` ∈
-    ``[0, error_gain]`` (capped by the gain itself).
-
-    ``upstream_load`` is the captured load metric of the saturating edge's
-    *source* component (e.g. ``loadbalancer.requests_per_sec`` for the
-    ``loadbalancer -> apigateway`` edge). Phase 4 drives the curve from
-    upstream load — which Kahn ordering guarantees is already captured
-    in ``upstream_arrays`` when the downstream is composed — rather
-    than the downstream's own load column, which is still being
-    constructed at composition time.
-    """
-    _validate_saturation_params(sat, context="_apply_saturation")
-    upstream_arr = np.asarray(upstream_load, dtype=np.float64)
-    # Generated captures are finite by construction (Kahn ordering feeds this
-    # only post-round load columns), so this never fires on real output; it
-    # fails loud for direct/programmatic callers rather than letting a
-    # NaN/inf propagate silently through the logistic into a metric cell
-    # (07-02-verify-topology-divzero). np.maximum/np.minimum do not filter
-    # NaN, so the utilization clamp below cannot catch it.
-    if not np.all(np.isfinite(upstream_arr)):
-        raise ValueError(
-            "_apply_saturation: upstream_load must be finite; "
-            "got NaN/inf values"
-        )
-    utilization = np.maximum(upstream_arr, 0.0) / float(sat.midpoint)
-    np.minimum(utilization, _SATURATION_MAX_UTILIZATION, out=utilization)
-    logistic = 1.0 / (1.0 + np.exp(-sat.steepness * (utilization - 1.0)))
-    latency_multiplier = 1.0 + sat.latency_gain * logistic
-    error_offset = sat.error_gain * logistic
-    return latency_multiplier, error_offset
-
-
-# Per-component map of ``(latency_metrics, error_metrics)`` that
-# incoming saturating TOPOLOGY edges modulate. The latency metrics get
-# the per-edge ``latency_multiplier`` composed multiplicatively into
-# their ``MetricSpec.multiplier``; the error metrics get the per-edge
-# ``error_offset`` added to their ``MetricSpec.additive``. Components
-# absent from this map are saturation-inert even when they have
-# incoming saturating edges, so additional downstream targets can be
-# added here without touching the front-half wiring. Phase 4
-# wired the four front-half targets (apigateway and its three fan-out
-# downstreams); phase 5 added ``llm_analytics`` for the
-# token-throttle response.
-_TOPOLOGY_SATURATION_TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    "apigateway": (
-        ("avg_response_time_ms", "backend_latency_ms"),
-        ("error_rate",),
-    ),
-    "authservice": (
-        ("avg_auth_latency_ms",),
-        ("error_rate",),
-    ),
-    "cacheservice": (
-        ("avg_cache_latency_ms",),
-        ("error_rate",),
-    ),
-    "database": (
-        ("read_latency_ms", "write_latency_ms"),
-        ("error_rate",),
-    ),
-    # phase 5: under apigateway saturation (the LLM token
-    # budget), the llm_analytics latency family lifts via the logistic
-    # multiplier and the LLM-specific error rate lifts via the additive
-    # offset. The catalog exposes ``llm_api_error_rate`` (not the
-    # generic ``error_rate``) so the LLM error column is the right
-    # additive target.
-    "llm_analytics": (
-        ("avg_llm_latency_ms", "p95_llm_latency_ms"),
-        ("llm_api_error_rate",),
-    ),
-}
+    return _topology_apply_saturation(upstream_load, sat)
 
 
 def _validate_topology_metric_registries() -> None:
-    """Import-time validation of the topology *metric* registries.
-
-    ``_validate_topology()`` exhaustively validates ``TOPOLOGY`` itself,
-    but the two companion registries that name actual metric columns —
-    ``_TOPOLOGY_LOAD_METRICS`` and ``_TOPOLOGY_SATURATION_TARGETS`` —
-    were previously unchecked, and every runtime consumer degrades
-    *silently* on a miss: a typo'd canonical load metric makes
-    ``_component_metric_base`` return 0.0 so the coupling edge is
-    skipped; an unregistered saturating source falls through
-    ``ups_entry is None``; a typo'd saturation target falls through
-    ``name_to_idx.get(...)``. Those soft fallbacks exist to tolerate
-    legitimate runtime states (``--metrics-per-component`` trims,
-    ``--components`` subsets) — but they also swallowed registry typos,
-    so a new edge with a misspelled metric would pass import, generate
-    fully decoupled output, and surface only at the opt-in
-    ``validate`` subcommand's Pearson check. This validator fails the typo
-    at import time instead. Checks:
-
-    * every ``_TOPOLOGY_LOAD_METRICS`` key is a ``COMPONENTS`` key, and
-      its canonical + supplementary names all exist in that component's
-      *full* metric catalog (the un-trimmed list — trimming is a
-      runtime state, not a registry property);
-    * every ``_TOPOLOGY_SATURATION_TARGETS`` key is a ``COMPONENTS``
-      key, and every latency-family / error-family name exists in that
-      component's full catalog;
-    * every ``TOPOLOGY`` source with at least one constant-weight or
-      saturating outgoing edge has a ``_TOPOLOGY_LOAD_METRICS`` entry
-      (the constant-weight composer and the saturation driver both
-      read the source's canonical column);
-    * every constant-weight edge's *target* has a
-      ``_TOPOLOGY_LOAD_METRICS`` entry (the composer rewrites the
-      target's own load metrics — a missing entry makes the edge
-      silently inert);
-    * every saturating edge's target has a
-      ``_TOPOLOGY_SATURATION_TARGETS`` entry.
-
-    Mirrored by ``tests/test_topology_registry.py``.
-    """
-    catalog_names = {
-        comp: {s.name for s in specs} for comp, specs in COMPONENTS.items()
-    }
-    for comp, entry in _TOPOLOGY_LOAD_METRICS.items():
-        if comp not in COMPONENTS:
-            raise ValueError(
-                f"_TOPOLOGY_LOAD_METRICS key {comp!r} is not a COMPONENTS key"
-            )
-        canonical, supplementary = entry
-        for metric in (canonical, *supplementary):
-            if metric not in catalog_names[comp]:
-                raise ValueError(
-                    f"_TOPOLOGY_LOAD_METRICS[{comp!r}] names metric "
-                    f"{metric!r} which is not in COMPONENTS[{comp!r}]"
-                )
-    for comp, (latency_metrics, error_metrics) in _TOPOLOGY_SATURATION_TARGETS.items():
-        if comp not in COMPONENTS:
-            raise ValueError(
-                f"_TOPOLOGY_SATURATION_TARGETS key {comp!r} is not a "
-                "COMPONENTS key"
-            )
-        for metric in (*latency_metrics, *error_metrics):
-            if metric not in catalog_names[comp]:
-                raise ValueError(
-                    f"_TOPOLOGY_SATURATION_TARGETS[{comp!r}] names metric "
-                    f"{metric!r} which is not in COMPONENTS[{comp!r}]"
-                )
-    for source, edges in TOPOLOGY.items():
-        for edge in edges:
-            saturating = edge.saturation is not None and (
-                edge.saturation.latency_gain != 0.0
-                or edge.saturation.error_gain != 0.0
-            )
-            if callable(edge.weight) and not saturating:
-                # Callable-weight edges read the source's captured
-                # columns through their own ``signal``, which
-                # ``_validate_topology`` already probes against
-                # ``_TOPOLOGY_LOAD_METRICS`` — but only a non-callable
-                # weight or a saturating edge *requires* the canonical
-                # column below.
-                continue
-            if source not in _TOPOLOGY_LOAD_METRICS:
-                raise ValueError(
-                    f"TOPOLOGY source {source!r} has a constant-weight or "
-                    f"saturating edge to {edge.target!r} but no "
-                    "_TOPOLOGY_LOAD_METRICS entry; the coupling composer "
-                    "and saturation driver would silently skip the edge"
-                )
-            if not callable(edge.weight) and edge.target not in _TOPOLOGY_LOAD_METRICS:
-                raise ValueError(
-                    f"TOPOLOGY constant-weight edge {source!r} -> "
-                    f"{edge.target!r} targets a component with no "
-                    "_TOPOLOGY_LOAD_METRICS entry; the composer rewrites "
-                    "the target's load metrics, so the edge would be "
-                    "silently inert"
-                )
-            if saturating and edge.target not in _TOPOLOGY_SATURATION_TARGETS:
-                raise ValueError(
-                    f"TOPOLOGY saturating edge {source!r} -> {edge.target!r} "
-                    "targets a component with no _TOPOLOGY_SATURATION_TARGETS "
-                    "entry; the saturation contribution would be silently "
-                    "dropped"
-                )
+    return _topology_validate_topology_metric_registries(runtime_key=__name__)
 
 
 _validate_topology_metric_registries()
@@ -3292,246 +1196,10 @@ def _compose_topology_saturation_specs(
     upstream_arrays: dict[str, dict[str, np.ndarray]],
     n_rows: int,
 ) -> list[MetricSpec]:
-    """Apply saturation feedback from every incoming TOPOLOGY edge with
-    non-None ``SaturationParams`` to the downstream's latency-family and
-    error-family ``MetricSpec`` entries (as declared in
-    ``_TOPOLOGY_SATURATION_TARGETS``).
-
-    For each saturating incoming edge the upstream's primary captured
-    load metric drives ``_apply_saturation`` once. Multiple incoming
-    saturating edges to the same downstream compose multiplicatively for
-    the latency factor (each edge layers an additional load-dependent
-    slowdown) and additively for the error offset (each edge contributes
-    its own failure surface).
-
-    The natural ``MetricSpec.multiplier`` / ``MetricSpec.additive`` (e.g.
-    a ``_daily_sine`` envelope) is preserved by closing over the
-    saturation array and composing on top of the existing callable — so
-    seasonal patterns remain visible underneath the saturation curve.
-    Only ``multiplier`` and ``additive`` change; ``std``, ``clip_min``,
-    and the declarative schema metadata pass through unchanged.
-
-    Returns ``specs`` unchanged when:
-
-    * the component is not in ``_TOPOLOGY_SATURATION_TARGETS``;
-    * no incoming saturating edge has its upstream captured (e.g. a
-      ``--components`` subset that removes the upstream);
-    * every incoming saturating edge declares zero ``latency_gain`` and
-      zero ``error_gain`` (no v1 edges sit in this state after
-      phase 5 promoted the LLM placeholder).
-    """
-    targets = _TOPOLOGY_SATURATION_TARGETS.get(component_name)
-    if targets is None:
-        return specs
-    latency_metrics, error_metrics = targets
-    if not latency_metrics and not error_metrics:
-        return specs
-
-    name_to_idx = {s.name: i for i, s in enumerate(specs)}
-    latency_factor = np.ones(n_rows, dtype=np.float64)
-    error_offset = np.zeros(n_rows, dtype=np.float64)
-    any_active = False
-    for upstream, edges in TOPOLOGY.items():
-        ups_cols = upstream_arrays.get(upstream)
-        if not ups_cols:
-            continue
-        for edge in edges:
-            if edge.target != component_name or edge.saturation is None:
-                continue
-            sat = edge.saturation
-            if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
-                continue  # structurally-declared but inert edge.
-            ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
-            if ups_entry is None:
-                continue
-            ups_canonical, _ups_supplementary = ups_entry
-            # Canonical-only driver: ``sat.midpoint`` is tuned in the
-            # upstream's canonical load-metric units, so a supplementary
-            # column (different units — e.g. cacheservice's
-            # ``cache_misses``) must never drive the logistic. When the
-            # canonical column is absent (``--metrics-per-component``
-            # trim) the edge is skipped, matching the constant-weight
-            # coupling path's posture.
-            driver = ups_cols.get(ups_canonical)
-            if driver is None or driver.shape[0] != n_rows:
-                continue
-            lat_mult, err_off = _apply_saturation(driver, sat)
-            latency_factor *= lat_mult
-            error_offset += err_off
-            any_active = True
-
-    if not any_active:
-        return specs
-
-    # Both loops read (and replace into) ``new_specs`` rather than the
-    # pristine ``specs`` so a metric that appears in BOTH the latency and
-    # error tuples composes both effects. Reading ``specs[idx]`` in the
-    # second loop would rebuild the spec from the original and silently
-    # discard the multiplier wrap the first loop installed — diverging
-    # from the per-instance path, which applies both sides of the
-    # ``(latency_factor, error_offset)`` tuple to an overlap target. No
-    # v1 registry entry overlaps today; this keeps the two paths aligned
-    # for the first one that does.
-    new_specs = list(specs)
-    for metric_name in latency_metrics:
-        idx = name_to_idx.get(metric_name)
-        if idx is None:
-            continue
-        original = new_specs[idx]
-        old_mult = original.multiplier
-        if old_mult is None:
-            new_mult = lambda ts, elapsed, baked=latency_factor: baked
-        else:
-            new_mult = (
-                lambda ts, elapsed, baked=latency_factor, base=old_mult:
-                base(ts, elapsed) * baked
-            )
-        new_specs[idx] = dataclasses.replace(original, multiplier=new_mult)
-    for metric_name in error_metrics:
-        idx = name_to_idx.get(metric_name)
-        if idx is None:
-            continue
-        original = new_specs[idx]
-        old_add = original.additive
-        if old_add is None:
-            new_add = lambda ts, elapsed, baked=error_offset: baked
-        else:
-            new_add = (
-                lambda ts, elapsed, baked=error_offset, base=old_add:
-                base(ts, elapsed) + baked
-            )
-        new_specs[idx] = dataclasses.replace(original, additive=new_add)
-
-    return new_specs
-
-
-# ------------------------------------------------------------------
-# Per-instance topology (phase 8).
-# ------------------------------------------------------------------
-# When ``--instances-per-component N > 1`` (or any non-default
-# ``--instance-config``), the topology two-pass generation runs against
-# each downstream instance's *matching* upstream view rather than the
-# shared aggregate. The matching rule depends on the per-edge upstream
-# vs. downstream cardinality:
-#
-# * **1:1 routing (matched cardinalities, ``len(upstream_instances) ==
-#   len(downstream_instances)``).** Downstream instance ``K`` sees
-#   upstream instance ``K`` exclusively for that edge. This is the
-#   "matching instance set" branch from the issue scope; it
-#   delivers the per-pod isolation the test verifies (a slow upstream
-#   pod only saturates the corresponding downstream pod).
-# * **Uniform fan-out (mismatched cardinalities).** Downstream instance
-#   ``K`` sees the mean of all upstream instances' load — equivalent to
-#   the issue's "edge weight divided by downstream cardinality" formula
-#   averaged over ``N_up`` upstream pods. This is the fallback when the
-#   1:1 mapping is undefined and matches the existing N=1-vs-N=1
-#   aggregate behavior at the limit.
-#
-# Under symmetric upstream (no ``instance_filter`` on an upstream load
-# metric, the default for every shipped scenario), every per-instance
-# upstream view equals the shared aggregate view, so the per-instance
-# saturation / coupling arrays collapse to the shared arrays and the
-# CSV bytes are byte-identical to the pre-existing default-N=3 run. The
-# locked ``N3_ONE_DAY_HASHES`` and ``N3_SEVEN_DAY_HASHES`` in
-# ``tests/test_instances_per_component.py`` continue to hold without
-# re-baselining.
-
-def _matched_cardinality(upstream_inst_count: int, downstream_inst_count: int) -> bool:
-    """Return True when 1:1 routing applies between source and target.
-
-    Routes via ``upstream_instances[K] -> downstream_instances[K]``
-    when both sides have the same number of instances. Otherwise the
-    composer falls back to uniform fan-out (averaging across upstream
-    pods) — see the module-level comment above.
-
-    Only ``N == N`` matched lengths are 1:1; the helper treats any
-    other shape (including ``N_up == 1`` against ``N_down > 1`` or vice
-    versa) as the uniform-fan-out fallback so per-instance views are
-    well-defined for any combination.
-    """
-    return (
-        upstream_inst_count == downstream_inst_count
-        and upstream_inst_count > 0
+    return _topology_compose_topology_saturation_specs(
+        component_name, specs, upstream_arrays, n_rows,
+        runtime_key=__name__,
     )
-
-
-def _per_instance_upstream_view(
-    upstream_name: str,
-    upstream_arrays_by_instance: list[dict[str, np.ndarray]] | None,
-    upstream_arrays_shared: dict[str, np.ndarray] | None,
-    downstream_inst_count: int,
-    downstream_inst_idx: int,
-    *,
-    uniform_fanout_cache: dict[str, dict[str, np.ndarray]] | None = None,
-) -> dict[str, np.ndarray] | None:
-    """Return the captured-column dict that downstream instance K should
-    consume from ``upstream_name``.
-
-    Dispatches between the matched-cardinality 1:1 branch and the
-    uniform fan-out branch, both producing a ``dict[metric_name,
-    np.ndarray]`` shaped identically to ``upstream_arrays_shared`` so
-    the existing ``_compose_topology_coupled_specs`` /
-    ``_compose_topology_saturation_specs`` math can be re-used per
-    instance.
-
-    Returns ``None`` when no upstream capture is available — the
-    composer skips this edge so a ``--components`` subset that drops
-    the upstream degrades gracefully (identical to the N=1 path's
-    ``upstream not in upstream_arrays`` guard).
-
-    ``uniform_fanout_cache`` (optional) memoizes the averaged upstream
-    dict by ``upstream_name``. Under mismatched cardinality the
-    averaged view is identical for every downstream instance, so
-    callers that loop across downstream instances pass a shared dict
-    to avoid repeating the incremental sum-then-divide averaging work
-    (O(N_down * N_up * n_rows) → O(N_up * n_rows)). Pass ``None`` for
-    one-shot callers.
-    """
-    if upstream_arrays_by_instance is None:
-        # No per-instance capture available for the upstream — fall
-        # back to the shared aggregate view, equivalent to today's
-        # N=1 path. This branch fires for N=1 upstream components in
-        # mixed-N scenarios (the only mixed-N entry path is
-        # ``--instance-config`` with a partial ``components`` map).
-        return upstream_arrays_shared
-    if not upstream_arrays_by_instance:
-        return None
-    n_up = len(upstream_arrays_by_instance)
-    if _matched_cardinality(n_up, downstream_inst_count):
-        return upstream_arrays_by_instance[downstream_inst_idx]
-    if uniform_fanout_cache is not None:
-        cached = uniform_fanout_cache.get(upstream_name)
-        if cached is not None:
-            return cached
-    # Uniform fan-out: average across upstream pods. Each downstream
-    # pod sees the same averaged view, so per-pod variation under this
-    # branch only emerges from local saturation noise / coupling math
-    # rather than from upstream asymmetry. The upstream instances
-    # share the same metric-key set because they came from the same
-    # MetricSpec list in ``generate_component``.
-    averaged: dict[str, np.ndarray] = {}
-    metric_keys = set()
-    for entry in upstream_arrays_by_instance:
-        metric_keys.update(entry.keys())
-    for metric in metric_keys:
-        arrays = [
-            entry[metric] for entry in upstream_arrays_by_instance
-            if metric in entry
-        ]
-        if not arrays:
-            continue
-        # Incremental sum-then-divide. Equal-weight mean as ``np.mean``
-        # over the stacked array, but at O(n_rows) extra memory instead
-        # of O(N_up × n_rows) — the ``np.stack`` allocation can become
-        # multi-MB per metric for large ``N_up`` and 7-day runs.
-        acc = arrays[0].astype(np.float64, copy=True)
-        for arr in arrays[1:]:
-            acc += arr
-        acc /= len(arrays)
-        averaged[metric] = acc
-    if uniform_fanout_cache is not None:
-        uniform_fanout_cache[upstream_name] = averaged
-    return averaged
 
 
 def _compute_topology_arrays_per_instance(
@@ -3546,331 +1214,11 @@ def _compute_topology_arrays_per_instance(
     list[dict[str, np.ndarray]],
     list[dict[str, tuple[np.ndarray | None, np.ndarray | None]]],
 ]:
-    """Compute per-instance coupling and saturation arrays for ``component_name``.
-
-    Returns ``(coupling_by_instance, saturation_by_instance)``:
-
-    * ``coupling_by_instance[K][metric_name]`` is the per-row coupled
-      baseline array for downstream instance ``K``'s coupled load
-      metrics (replaces the natural baseline in ``_natural_column``
-      via ``baseline_override``). Absent metrics fall back to the
-      natural draw.
-    * ``saturation_by_instance[K][metric_name]`` is the
-      ``(latency_factor, error_offset)`` tuple applied to instance
-      ``K``'s saturation-target metrics (composes with
-      ``MetricSpec.multiplier`` / ``MetricSpec.additive`` via the
-      ``_natural_column`` kwargs).
-
-    Divergence detection (which instances diverge from instance 0)
-    is intentionally not returned. ``generate_component`` re-derives
-    it directly from the passed arrays via ``_arrays_equal_dict`` /
-    ``_sat_tuples_equal_dict`` so correctness does not depend on a
-    caller-supplied hint that could drift from the actual array
-    contents.
-
-    Shared ``rng.normal`` noise for callable+constant coupling is
-    drawn once and reused across all instances so the
-    ``_TOPOLOGY_COUPLE_NOISE_STD`` floor sits at the same magnitude
-    today's shared draw produces under symmetric upstream — that
-    keeps per-instance arrays under symmetric upstream byte-identical
-    to the shared array a single ``_compose_topology_coupled_specs``
-    call would produce.
-    """
-    n_inst = len(instances)
-    coupling_by_instance: list[dict[str, np.ndarray]] = [{} for _ in range(n_inst)]
-    saturation_by_instance: list[
-        dict[str, tuple[np.ndarray | None, np.ndarray | None]]
-    ] = [{} for _ in range(n_inst)]
-
-    coupled_entry = _TOPOLOGY_LOAD_METRICS.get(component_name)
-    sat_targets = _TOPOLOGY_SATURATION_TARGETS.get(component_name)
-
-    # Determine which downstream metrics need either coupling or
-    # saturation arrays.
-    coupled_metric_names: tuple[str, ...] = ()
-    canonical_down: str | None = None
-    if coupled_entry is not None:
-        canonical_down = coupled_entry[0]
-        coupled_metric_names = (canonical_down, *coupled_entry[1])
-    latency_metrics: tuple[str, ...] = ()
-    error_metrics: tuple[str, ...] = ()
-    if sat_targets is not None:
-        latency_metrics, error_metrics = sat_targets
-
-    name_to_idx = {s.name: i for i, s in enumerate(specs)}
-
-    # Collect incoming edges once. Each entry is (upstream_name, Edge).
-    # Filter to upstreams that actually have captured load arrays —
-    # mirrors ``_compose_topology_coupled_specs``'s
-    # ``if upstream not in upstream_arrays: continue`` guard so a
-    # ``--components`` subset that drops an upstream (or a
-    # ``--metrics-per-component`` trim that removes the canonical load
-    # column) degrades gracefully *and* keeps the RNG draw schedule
-    # aligned with the legacy path: ``shared_coupling_noise`` below
-    # advances ``rng`` only when at least one upstream is actually
-    # contributing, exactly as the lambda-baked composer does.
-    incoming: list[tuple[str, Edge]] = []
-    for upstream, edges in TOPOLOGY.items():
-        if (
-            upstream not in upstream_arrays_shared
-            and upstream not in upstream_arrays_by_instance
-        ):
-            continue
-        for edge in edges:
-            if edge.target == component_name:
-                incoming.append((upstream, edge))
-    if not incoming:
-        return coupling_by_instance, saturation_by_instance
-
-    # Shared callable+constant noise per coupled metric — drawn lazily
-    # the *first* time a metric produces an active contribution, then
-    # cached across instances so symmetric upstream stays byte-identical
-    # to today's shared draw. Lazy initialization (instead of an upfront
-    # pre-draw over ``coupled_metric_names``) matches
-    # ``_compose_topology_coupled_specs``'s RNG schedule: that legacy
-    # path draws noise inside the active branch only, so a coupled
-    # metric whose contributions all get skipped (e.g.
-    # ``--metrics-per-component`` trimmed the canonical upstream
-    # column, or every callable ``signal`` returned ``None``) consumes
-    # zero RNG draws there. Pre-drawing here would have advanced
-    # ``rng`` for those skipped metrics, shifting every subsequent
-    # downstream's draws.
-    shared_coupling_noise: dict[str, np.ndarray] = {}
-
-    # Compute per-instance arrays.
-    # Cache shared across downstream instances: under mismatched
-    # cardinality, ``_per_instance_upstream_view`` averages every
-    # upstream pod into a single dict that is identical for every
-    # downstream pod. Without the cache the same incremental
-    # sum-then-divide averaging runs N_down times per upstream
-    # (O(N_down * N_up * n_rows)); with the cache it runs once
-    # (O(N_up * n_rows)).
-    uniform_fanout_cache: dict[str, dict[str, np.ndarray]] = {}
-    for inst_idx in range(n_inst):
-        # Build the per-instance upstream view dict keyed by upstream name.
-        per_instance_upstream_cols: dict[str, dict[str, np.ndarray]] = {}
-        for upstream, _edge in incoming:
-            per_instance_upstream_cols[upstream] = (
-                _per_instance_upstream_view(
-                    upstream,
-                    upstream_arrays_by_instance.get(upstream),
-                    upstream_arrays_shared.get(upstream),
-                    n_inst,
-                    inst_idx,
-                    uniform_fanout_cache=uniform_fanout_cache,
-                )
-                or {}
-            )
-
-        # ------------------------------------------------------------
-        # Coupling arrays (one per coupled metric on this component).
-        #
-        # Callable-weight contributions are computed once per instance
-        # (``edge.signal`` / ``edge.weight`` are metric-invariant) and
-        # applied only to the canonical load metric — the weight
-        # callable returns canonical-metric units, so a supplementary
-        # metric with a different base must not receive it. Mirrors the
-        # shared-path rule in ``_compose_topology_coupled_specs``.
-        # ------------------------------------------------------------
-        callable_active = False
-        callable_contrib = np.zeros(n_rows, dtype=np.float64)
-        for upstream, edge in incoming:
-            if not callable(edge.weight):
-                continue
-            if edge.signal is None:
-                continue
-            ups_cols = per_instance_upstream_cols.get(upstream, {})
-            signal = edge.signal(ups_cols)
-            if signal is None:
-                continue
-            callable_contrib = callable_contrib + np.asarray(
-                edge.weight(signal), dtype=np.float64
-            )
-            callable_active = True
-
-        for metric_name in coupled_metric_names:
-            if metric_name not in name_to_idx:
-                continue
-            original = specs[name_to_idx[metric_name]]
-            downstream_base = float(original.base)
-            if downstream_base <= 0:
-                continue
-            metric_callable_active = (
-                callable_active and metric_name == canonical_down
-            )
-
-            # First: active constant-weight edges for normalization.
-            active_constant: list[tuple[np.ndarray, float, float]] = []
-            for upstream, edge in incoming:
-                if callable(edge.weight):
-                    continue
-                if isinstance(edge.weight, bool) or not isinstance(
-                    edge.weight, (int, float)
-                ):
-                    continue
-                w = float(edge.weight)
-                if w == 0.0:
-                    continue
-                ups_cols = per_instance_upstream_cols.get(upstream, {})
-                ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
-                if ups_entry is None:
-                    continue
-                ups_canonical, _ = ups_entry
-                if ups_canonical and ups_canonical in ups_cols:
-                    ups_base = _component_metric_base(upstream, ups_canonical)
-                    if ups_base > 0:
-                        active_constant.append(
-                            (ups_cols[ups_canonical], ups_base, w)
-                        )
-
-            if not active_constant and not metric_callable_active:
-                continue
-
-            constant_contrib = np.zeros(n_rows, dtype=np.float64)
-            if active_constant:
-                sum_w = sum(w for _, _, w in active_constant)
-                # Guard sum_w == 0 as in the aggregate path above
-                # (07-02-verify-topology-divzero): zero total constant weight
-                # means no coupling contribution, not a divide-by-zero.
-                if sum_w > 0:
-                    for ups_arr, ups_base, w in active_constant:
-                        w_norm = w / sum_w
-                        constant_contrib = constant_contrib + (
-                            ups_arr / ups_base * downstream_base * w_norm
-                        )
-
-            # Lazy noise draw: only after we know this metric has an
-            # active contribution. ``setdefault`` keeps the noise
-            # shared across instances — instance 0 (first iteration)
-            # draws, later instances reuse the cached array — so
-            # symmetric upstream still produces byte-identical
-            # coupling arrays across pods.
-            noise = shared_coupling_noise.get(metric_name)
-            if noise is None:
-                noise = rng.normal(
-                    0.0, _TOPOLOGY_COUPLE_NOISE_STD, n_rows
-                )
-                shared_coupling_noise[metric_name] = noise
-            coupling_by_instance[inst_idx][metric_name] = (
-                constant_contrib
-                + (callable_contrib if metric_callable_active else 0.0)
-                + noise
-            )
-
-        # ------------------------------------------------------------
-        # Saturation arrays.
-        # ------------------------------------------------------------
-        if sat_targets is None:
-            continue
-        latency_factor = np.ones(n_rows, dtype=np.float64)
-        error_offset = np.zeros(n_rows, dtype=np.float64)
-        any_active = False
-        for upstream, edge in incoming:
-            if edge.saturation is None:
-                continue
-            sat = edge.saturation
-            if sat.latency_gain == 0.0 and sat.error_gain == 0.0:
-                continue
-            ups_cols = per_instance_upstream_cols.get(upstream, {})
-            ups_entry = _TOPOLOGY_LOAD_METRICS.get(upstream)
-            if ups_entry is None:
-                continue
-            ups_canonical, _ups_supplementary = ups_entry
-            # Canonical-only driver: ``sat.midpoint`` is tuned in the
-            # upstream's canonical load-metric units, so a supplementary
-            # column (different units — e.g. cacheservice's
-            # ``cache_misses``) must never drive the logistic. When the
-            # canonical column is absent (``--metrics-per-component``
-            # trim) the edge is skipped, matching the constant-weight
-            # coupling path's posture.
-            driver = ups_cols.get(ups_canonical)
-            if driver is None or driver.shape[0] != n_rows:
-                continue
-            lat_mult, err_off = _apply_saturation(driver, sat)
-            latency_factor *= lat_mult
-            error_offset += err_off
-            any_active = True
-        if not any_active:
-            continue
-        # Latency targets receive ONLY the multiplicative
-        # ``latency_factor`` (mirrors today's
-        # ``_compose_topology_saturation_specs`` wrapping
-        # ``MetricSpec.multiplier``); error targets receive ONLY the
-        # additive ``error_offset`` (mirrors wrapping
-        # ``MetricSpec.additive``). A metric appearing in both lists
-        # — rare; only triggered by future overlapping targets — gets
-        # both effects applied.
-        for metric_name in latency_metrics:
-            saturation_by_instance[inst_idx][metric_name] = (
-                latency_factor, None
-            )
-        for metric_name in error_metrics:
-            existing = saturation_by_instance[inst_idx].get(metric_name)
-            if existing is not None:
-                lf_old, _ = existing
-                saturation_by_instance[inst_idx][metric_name] = (
-                    lf_old, error_offset
-                )
-            else:
-                saturation_by_instance[inst_idx][metric_name] = (
-                    None, error_offset
-                )
-
-    return coupling_by_instance, saturation_by_instance
-
-
-def _arrays_equal_dict(
-    a: dict[str, np.ndarray], b: dict[str, np.ndarray],
-) -> bool:
-    """Byte-comparison of two ``dict[str, np.ndarray]`` entries.
-
-    Used by ``generate_component`` to detect whether the
-    per-instance topology arrays returned by
-    ``_compute_topology_arrays_per_instance`` diverge from instance
-    0. Equality is element-wise via ``np.array_equal`` with its
-    default ``equal_nan=False`` — two byte-identical arrays that
-    contain NaN therefore compare *unequal* and force the divergent
-    per-instance path. That is fail-safe (the divergent path still
-    produces correct, identical output with an unchanged RNG schedule
-    since coupling noise is pre-drawn and shared; only memory is
-    wasted on redundant per-instance buffers), and NaN never reaches
-    these arrays from the catalog generators today.
-    """
-    if a.keys() != b.keys():
-        return False
-    for key, arr in a.items():
-        if not np.array_equal(arr, b[key]):
-            return False
-    return True
-
-
-def _sat_tuples_equal_dict(
-    a: dict[str, tuple["np.ndarray | None", "np.ndarray | None"]],
-    b: dict[str, tuple["np.ndarray | None", "np.ndarray | None"]],
-) -> bool:
-    """Byte-comparison of two saturation-tuple dicts.
-
-    Mirrors ``_arrays_equal_dict`` but unpacks the
-    ``(latency_factor, error_offset)`` pair from each entry. Either
-    side of the tuple may be ``None`` — saturation populates only
-    one side per metric depending on whether the metric is a
-    latency target or an error target.
-    """
-    if a.keys() != b.keys():
-        return False
-    for key, (lf_a, eo_a) in a.items():
-        lf_b, eo_b = b[key]
-        if (lf_a is None) != (lf_b is None):
-            return False
-        if lf_a is not None and not np.array_equal(lf_a, lf_b):
-            return False
-        if (eo_a is None) != (eo_b is None):
-            return False
-        if eo_a is not None and not np.array_equal(eo_a, eo_b):
-            return False
-    return True
-
-
+    return _topology_compute_topology_arrays_per_instance(
+        component_name, specs, upstream_arrays_shared,
+        upstream_arrays_by_instance, instances, rng, n_rows,
+        runtime_key=__name__,
+    )
 # ------------------------------------------------------------------
 # Anomaly specifications — migrated to SCENARIOS registry.
 # All anomaly and cascade specs now live in the SCENARIOS dict below.
@@ -6345,7 +3693,8 @@ def _validate_derivations_registry() -> None:
     these to stay in lockstep.
     """
     known_components = set(COMPONENTS.keys())
-    for component, (_, metrics) in DERIVATIONS.items():
+    derivations = _generation_runtime_derivations()
+    for component, (_, metrics) in derivations.items():
         if component not in known_components:
             raise ValueError(
                 f"DERIVATIONS references unknown component {component!r}; "
@@ -6371,7 +3720,7 @@ def _validate_derivations_registry() -> None:
     # validator to check it.
     for component, specs in COMPONENTS.items():
         declared = {s.name for s in specs if s.derivation is not None}
-        registered = set(DERIVATIONS.get(component, (None, ()))[1])
+        registered = set(derivations.get(component, (None, ()))[1])
         unregistered = sorted(declared - registered)
         if unregistered:
             raise ValueError(
