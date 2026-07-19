@@ -10,7 +10,9 @@ simulator facade. The canonical generation implementation remains
 wiring/import-stability surfaces, not behavior forks. Sources: `CLAUDE.md`;
 `anomaly-metric-creator.py`; `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/cli.py`; `src/anomaly_metric_creator/combine.py`;
-`src/anomaly_metric_creator/models.py`; `src/anomaly_metric_creator/otel.py`;
+`src/anomaly_metric_creator/models.py`;
+`src/anomaly_metric_creator/models_impl.py`;
+`src/anomaly_metric_creator/catalog.py`; `src/anomaly_metric_creator/otel.py`;
 `src/anomaly_metric_creator/scenarios.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
@@ -66,15 +68,24 @@ derivation, and long-form dimension validation), `validate_topology.py`
 (aggregate topology coupling validation), `validate_topology_instances.py`
 (per-instance topology coupling validation), `otel_stream.py` (OTEL HTTP
 streaming), `cli_args.py` (parser construction, CLI reconciliation, and
-generate-flag validation), and `cli_subcommands.py` (dedicated `combine`,
-`validate`, `serve`, and `trace-bundle` subcommand dispatch helpers). All are
+generate-flag validation), `cli_subcommands.py` (dedicated `combine`,
+`validate`, `serve`, and `trace-bundle` subcommand dispatch helpers),
+`models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
+`_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
+`DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
+catalog/instance metadata validators). All are
 re-imported by `legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
-`scenarios.py`, `schema.py`) preserve historic object identity. When an
+`scenarios.py`, `schema.py`) preserve historic object identity. `models.py`
+now imports `MetricSpec` and `Instance` from `models_impl.py` while the
+topology dataclasses and `RunContext` still route through `legacy.py`. When an
 extracted module must read a registry that still lives in `legacy.py`, configure
 live callbacks from `legacy.py` and pass the current registry view into leaf
 helpers rather than importing `legacy.py` from the extracted module or copying a
 registry snapshot; this preserves monkeypatch-sensitive tests while keeping
-dependency direction one-way. Output validation is the exception for persisted
+dependency direction one-way. The moved model/catalog readers use those
+callbacks for patched `legacy.COMPONENTS` and `legacy.INSTANCES`, while
+`catalog.py` remains the source of truth for the shipped component and
+instance registries. Output validation is the exception for persisted
 topology shape: `validate_topology.py` must iterate and filter anomaly windows
 against the `schema.json` topology snapshot because that is the graph used by
 the artifacts being validated, while current load-metric name mapping may still
@@ -84,6 +95,8 @@ come from the live registry. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/otel_stream.py`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
+`src/anomaly_metric_creator/models_impl.py`;
+`src/anomaly_metric_creator/catalog.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
 `src/anomaly_metric_creator/validate_cells.py`;

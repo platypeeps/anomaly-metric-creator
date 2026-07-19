@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Focused-regression, full-suite, full-check, determinism, and PR-review gate expectations."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "CLAUDE.md, Trellis spec, generated repo-map, and PR-body sync requirements."}
+{"file": ".trellis/spec/amc/backend/architecture.md", "reason": "Facade identity and monkeypatch-visible callback contracts to recheck after extraction."}

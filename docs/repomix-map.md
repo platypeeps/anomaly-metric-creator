@@ -698,13 +698,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-02-decomp-cli-args/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-02-decomp-generation-topology/
       check.jsonl
       design.md
@@ -995,6 +988,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        07-02-decomp-cli-args/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         07-02-decomp-combine-impl/
           check.jsonl
           implement.jsonl
@@ -1179,6 +1179,7 @@ src/
   anomaly_metric_creator/
     __init__.py
     artifacts.py
+    catalog.py
     cli_args.py
     cli_subcommands.py
     cli.py
@@ -1187,6 +1188,7 @@ src/
     csv_layout.py
     gauges_impl.py
     legacy.py
+    models_impl.py
     models.py
     otel_stream.py
     otel.py
