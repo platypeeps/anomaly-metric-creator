@@ -35,10 +35,11 @@ Quick links:
   creation/reuse, and PR-review orchestration workflow; custom Markdown bodies
   are materialized literally and passed to GitHub CLI with `--body-file`.
 - `.agents/skills/sd-work-backlog/SKILL.md`: sequential Trellis backlog work
-  loop that delegates PR/review/cleanup to the existing SD commands.
-- `.agents/skills/sd-work-designs/SKILL.md`: Trellis planning loop that adds
-  `design.md` and `implement.md` proposals for tasks that need design before
-  implementation.
+  loop and canonical resumable controller for planning through clean merge.
+- `.agents/skills/sd-work-backlog/references/autonomous-loop.md`: shared
+  planning-quality and artifact-exit contract used by both work selectors.
+- `.agents/skills/sd-work-designs/SKILL.md`: thin `needs-design` selector for
+  the canonical full-cycle controller, with `until=design` planning-only mode.
 - `.agents/skills/sd-review-pr/SKILL.md`: deterministic local gate plus remote
   PR review workflow.
 - `.agents/skills/sd-review-local/SKILL.md`: local review provider fix loop.
@@ -72,6 +73,8 @@ Quick links:
 - `scripts/sd-ai-command-pack-housekeeping.sh`: canonical post-merge housekeeping script.
 - `scripts/sd-ai-command-pack-status.py`: read-only local/fleet status collector
   and schema-versioned JSON reporter used by housekeeping final verification.
+- `scripts/sd-ai-command-pack-work-loop.py`: standard-library user-local loop
+  ledger, lock, focus ranking, transition, reconciliation, and resume helper.
 - `scripts/sd_ai_command_pack_fleet_lib.py`: shared fleet-manifest validation,
   machine-profile resolution, checkout override, and release-ledger contracts.
 - `scripts/sd-ai-command-pack-record-session.py`: one-shot session journal
@@ -242,25 +245,31 @@ a commit without a user-provided message, and
 It still delegates the actual review loop to review-pr after PR creation or
 reuse.
 
-The work-backlog command is a sequential backlog runner. It inventories active
-Trellis tasks, selects the highest-value implementation-ready task, works only
-that task through the normal Trellis and SD PR flow, runs housekeeping plus one
-extra housekeeping verification, then handles follow-ups before selecting
-another task. Small, unblocked follow-ups are addressed immediately; larger or
-separate items are recorded as Trellis tasks; durable learnings go into specs,
-docs, or review-learnings. If a task needs user input, the command asks one
-blocking question, waits up to 15 minutes when the platform can wait, then
-parks the task with a dated `Parked by sd-work-backlog` PRD note and continues
-to the next actionable task. It stops when no active tasks remain, all remaining
-tasks are parked or require input, or a delegated SD/Trellis gate reports a
-blocker.
+The work-backlog command is the canonical resumable autonomous controller. It
+inventories live Trellis state, optionally applies ordered `focus=` preference
+bands or strict `focus-only=` filtering, completes missing design artifacts,
+implements and validates exactly one task, then delegates the entire
+publish/review/watch/finish/merge/cleanup lifecycle to `sd-ship until=merge`.
+The nested ship result returns to the controller, which processes follow-ups,
+verifies a clean default branch, records compact counters, and re-inventories.
+Bare text is one preferred focus expression, so `sd-work-backlog CI pipeline`
+is equivalent to `focus="CI pipeline"`. Structured selectors include
+`priority:`, `package:`, `task:`, `status:`, and `scope:`.
 
-The work-designs command is a planning-artifact runner. It inventories active
-Trellis tasks with real PRDs, selects tasks that still need `design.md` or
-`implement.md`, writes grounded implementation proposals and execution
-guidance without starting implementation, parks tasks that need user input,
-and ends with numbered links to every planning document it created or
-updated.
+The loop persists only coordination metadata in an atomic user-local ledger;
+it stores no tokens, raw logs, PR bodies, or review payloads. It uses one lock
+per repository, reconciles every phase with Trellis/Git/GitHub evidence, and
+classifies context health as green, amber, or red. Near a clean boundary around
+ten iterations it offers a non-blocking stop, but continues unless the user
+asks to stop. Task-local pre-mutation blockers can be parked; contradictory or
+dirty repository-wide state stops safely. Unavoidable user input gets one
+recommended question and a wait of up to 15 minutes when supported.
+
+The work-designs command is a thin `needs-design` selector for that same
+controller. Its default now carries selected tasks from planning through a
+green merge. `sd-work-designs until=design` preserves planning-only behavior
+and ends with numbered links to every planning artifact it created or updated.
+Focus composes with the selector rather than replacing it.
 
 The help command is a read-only orientation surface. Use bare help for a
 compact lifecycle tour, `all` for the complete catalog, an exact command for
@@ -404,9 +413,14 @@ bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
 `sd-status` is the read-only delivery snapshot for a repository. It reports the
 branch, staged/unstaged/untracked counts, Git stash count, upstream ahead/behind state, default
 and local/remote branches, installed SD pack and Trellis versions, relevant PR,
-open PRs/issues, current/in-progress/planned Trellis work, anomalies, and
-numbered next steps. `--no-network` suppresses GitHub calls, `--repo PATH`
-selects another checkout, and `--json` emits schema version 1. Ordinary runs do
+open PRs/issues, current/in-progress/planned Trellis work, user-local autonomous
+loop state, anomalies, and numbered next steps. Loop state includes run ID,
+mode/selector/focus, iteration, phase, task/PR, counters, heartbeat, context
+health, checkpoint, lock, and stop reason. Reading it never refreshes the
+ledger or lock. A positional path selects another checkout, so
+`sd-status /path/to/repo` is equivalent to
+`sd-status --repo /path/to/repo`.
+`--no-network` suppresses GitHub calls and `--json` emits schema version 1. Ordinary runs do
 not fetch and label ref-derived values `cached`. Relevant-PR review totals use
 GitHub's GraphQL `reviews.totalCount`, so repositories with more than one REST
 page of review events are reported accurately without fetching every review.
@@ -829,8 +843,8 @@ dimensions plus consumer-impact, observability, and accessibility-i18n when
 the fingerprint stage selects them). The pipeline is fixed and ordered:
 fingerprint → dimension reviews → adversarial verification → synthesis → Trellis reconciliation → report + ledger.
 
-Arguments: `dimensions=<a,b,c>` restricts the run to the named charters
-(unknown names are an error, not a silent skip); `depth=quick|standard|deep`
+Arguments: bare exact charter names such as `security testing`, or the explicit
+`dimensions=<a,b,c>` form, restrict the run to the named charters; unknown names are an error, not a silent skip. `depth=quick|standard|deep`
 controls verification (quick skips it, standard refutes P0/P1 findings, deep
 refutes P0–P2 with 2-of-3 votes on P0); `follow-up` re-verifies open ledger
 items against the current tree instead of sweeping the whole repository.
@@ -893,15 +907,17 @@ with the
 deciding which consumers are stale. It processes one consumer at a time: verify a clean tree (dirty
 trees are skipped and reported, never touched), branch, install the
 release, run the consumer's full-check, open the consumer PR, watch it to
-settled, and merge through the consumer's housekeeping gate (`no-merge`
-stops before merging; `consumer=a,b` filters; `dry-run` reports preflight
-only). The report is a per-consumer status table plus a fleet version
-summary.
+settled, and merge through the consumer's housekeeping gate. Bare consumer
+names such as `loadsmith rwbp-website`, or `consumer=a,b`, filter the run;
+`no-merge` stops before merging and `dry-run` reports preflight only. Unknown
+consumer names fail before mutation rather than broadening to the whole fleet.
+The report is a per-consumer status table plus a fleet version summary.
 
 The `sd-test-gaps` command closes the worst coverage gaps with targeted
 tests. It runs the repository's coverage flow as a baseline (aborting if
-the baseline itself fails), ranks shipped files by per-file coverage
-ascending (`file=<path>` targets one file), and for the top `max-gaps=N`
+the baseline itself fails), ranks shipped files by per-file coverage ascending
+(a bare path such as `scripts/example.py`, or `file=<path>`, targets one file),
+and for the top `max-gaps=N`
 files (default 3) authors focused tests through the normal implement/check
 flow, then re-runs coverage and reports per-file before/after numbers. It
 writes test files and fixtures only — never product code — and never
@@ -933,13 +949,22 @@ watches with `no-merge` in Stage 3, and invokes housekeeping exactly once in
 Stage 4. A blocked or timed-out watch therefore leaves the active Trellis task
 available for a later resume instead of archiving it before the PR settles.
 
+When the canonical backlog controller invokes the merge-through chain, it adds
+a trusted internal `caller: sd-work-backlog` context bound to the active run,
+iteration, selected task, branch, and lock. After Stage 4, `sd-ship` returns a
+bounded `SD_SHIP_MERGE_RESULT` with PR/merge, finish-work, housekeeping, review
+rounds, final branch/HEAD, and anomalies. This changes only report ownership:
+all four stages and safety gates still run exactly as in standalone shipping,
+and the parent loop remains the only owner of the overall final response.
+
 The `sd-retro` command captures a structured retrospective after a
 debugging stream or incident: what broke, the root cause, why existing
 gates and tests missed it, and what limited the blast radius. It records
 the retrospective as a journal entry through the session recorder
-(`Retro: <topic>`), then derives prevention candidates and presents them
-as Trellis task proposals that wait for explicit user consent — it never
-auto-creates tasks and makes no code changes.
+(`Retro: <topic>`). Bare text such as `deployment timeout`, or the explicit
+`topic="deployment timeout"` form, supplies that topic. It then derives
+prevention candidates and presents them as Trellis task proposals that wait
+for explicit user consent — it never auto-creates tasks and makes no code changes.
 
 ## Configuration
 
@@ -981,6 +1006,23 @@ profile. `sd-status` reads but never writes it.
 - `SD_AI_COMMAND_PACK_FLEET_MANIFEST`: override the canonical fleet manifest
   for one environment. The public `--fleet-manifest` option has higher
   precedence; both take precedence over the machine profile.
+
+### Autonomous Work-Loop State
+
+`sd-work-backlog` and `sd-work-designs` store resumable coordination state
+outside the repository. Resolution order is:
+
+1. absolute `SD_AI_COMMAND_PACK_STATE_HOME`;
+2. absolute `$XDG_STATE_HOME/sd-ai-command-pack`;
+3. `%LOCALAPPDATA%/sd-ai-command-pack/state` on Windows; then
+4. `~/.local/state/sd-ai-command-pack`.
+
+Each repository gets a digest derived from its normalized root and canonical
+Git remote. The schema-versioned JSON ledger and lock use atomic replacement,
+user-only permissions where supported, bounded history, and no credentials or
+raw command/review output. A relative explicit state path is rejected. Use
+`sd-status --json` for read-only loop visibility; use the work-loop command to
+resume, reconcile, checkpoint, or stop it.
 
 ### Full Check And Preflight
 

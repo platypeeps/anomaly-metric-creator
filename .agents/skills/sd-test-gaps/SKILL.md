@@ -31,17 +31,23 @@ pass before any gap work starts.
 
 ## Arguments
 
-Arguments arrive as free text with the invocation, as `key=value` pairs and
-bare flags. Unknown argument names are an error, not a silent skip: stop
-and report them before running the baseline. This command reads no
-environment variables; arguments are the only tuning surface.
+Arguments arrive as free text with the invocation. Parse recognized
+`key=value` arguments before treating a remaining bare non-option value as the
+positional primary subject. Unknown option-shaped arguments are an error, not
+a silent skip: stop and report them before running the baseline. This command
+reads no environment variables; arguments are the only tuning surface.
 
 - `file=<path>` — skip the ranking and close gaps in exactly this one
   shipped file. Error if the path does not appear in the coverage report.
 - `max-gaps=N` — how many worst-covered files to work, default `3`.
   Ignored when `file=` is passed.
+- One bare value is a target file path. `sd-test-gaps scripts/example.py` is
+  equivalent to `file=scripts/example.py`; preserve a quoted path containing
+  spaces as one path and apply the same coverage-report validation as `file=`.
 
-This command defines no bare flags; both recognized arguments take values.
+Reject a positional file combined with `file=` before running the baseline.
+Keep `max-gaps=` explicit and preserve its existing interaction with a selected
+file. Reject additional bare values and unknown option-shaped input.
 
 ## Workflow
 

@@ -10,7 +10,7 @@ Run the Software Delivery (SD) retro workflow. Gather evidence from the session 
 
 1. Resolve the `sd-retro` skill by name using the agent's trusted skill discovery mechanism for installed skills.
 2. If that skill is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, or requires unavailable tools, stop and report the exact blocker.
-3. Use the skill as the primary instructions. It defines the fixed retrospective pipeline: evidence gathering, the fixed retro shape, the journal entry recorded via the session recorder with a `Retro: <topic>` title, prevention-candidate derivation, and the optional handoff of repeated patterns toward `sd-review-learnings`. Pass the `topic=...` argument through to the skill.
+3. Use the skill as the primary instructions. It defines the fixed retrospective pipeline: evidence gathering, the fixed retro shape, the journal entry recorded via the session recorder with a `Retro: <topic>` title, prevention-candidate derivation, and the optional handoff of repeated patterns toward `sd-review-learnings`. Pass the user's invocation arguments through unchanged; the skill accepts either a bare topic phrase or `topic=...`.
 4. Make no code changes, record the journal entry only via the session recorder, and never auto-create Trellis tasks: each prevention proposal requires explicit user consent before any task is created.
 5. If any evidence read, session recorder run, journal write, git command, or final validation fails, stop and report the command, exit status, and complete stdout/stderr output.
 6. End with the retrospective report in the skill's mandatory final-report format, with every mandatory section present.

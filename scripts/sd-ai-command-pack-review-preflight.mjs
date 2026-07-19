@@ -25,6 +25,15 @@ const GENERATED_REVIEW_PATHS = new Set([
   'docs/repomix-map.md',
   'templates/.agents/skills/sd-help/references/command-catalog.md',
 ]);
+const STRUCTURED_INPUT_PATTERN =
+  /(?:JSON\.parse|json\.(?:load|loads)|yaml\.(?:load|safe_load)|argparse|parse_[A-Za-z0-9_]+)/;
+const DIRECT_BOUNDARY_SPLIT_PATTERNS = [
+  /\b(?:process|sys)\.argv(?:\[[^\]\r\n]+\])?\s*\.\s*split\s*\(/,
+  /\bprocess\.env(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]\r\n]+\])\s*(?:\?\.|\.)\s*split\s*\(/,
+  /\b(?:os\.environ(?:\.get\s*\([^\r\n]*\)|\[[^\]\r\n]+\])|(?:os\.)?getenv\s*\([^\r\n]*\))\s*\.\s*split\s*\(/,
+  /\b(?:[A-Za-z_$][A-Za-z0-9_$]*\.)?(?:readFileSync|readFile)\s*\([^\r\n]*\)\s*(?:\?\.|\.)\s*split\s*\(/,
+  /\.\s*read_text\s*\([^\r\n]*\)\s*\.\s*split\s*\(/,
+];
 
 // Declared before the module-level main run below: unlike function
 // declarations, class bindings are not hoisted out of the temporal dead
@@ -639,10 +648,20 @@ function checkTrellisJournalRecords() {
   );
 }
 
+function addsStructuredInputRisk(text) {
+  return (
+    STRUCTURED_INPUT_PATTERN.test(text) ||
+    DIRECT_BOUNDARY_SPLIT_PATTERNS.some((pattern) => pattern.test(text))
+  );
+}
+
 export function reviewRiskCategories(text) {
   const categories = [];
+  if (addsStructuredInputRisk(text)) {
+    categories.push('parser/structured input');
+  }
+
   const rules = [
-    ['parser/structured input', /(?:JSON\.parse|json\.(?:load|loads)|yaml\.(?:load|safe_load)|argparse|parse_[A-Za-z0-9_]+|\.split\s*\()/],
     ['subprocess/external command', /(?:\bspawn(?:Sync)?\s*\(|\bexec(?:File|Sync)?\s*\(|subprocess\.(?:run|Popen|check_call|check_output)|os\.system\s*\()/],
     ['path/filesystem boundary', /(?:\bPath\s*\(|\bresolve\s*\(|\brealpath|\blstat|\bsymlink|readFileSync|writeFileSync|os\.path|pathlib)/],
     ['environment/global state', /(?:process\.env|os\.environ|\bgetenv\s*\(|\bsetenv\s*\(|\bglobal\s+[A-Za-z_]|\bglobals\s*\()/],

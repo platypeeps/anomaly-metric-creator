@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "sd-ai-command-pack",
-  "version": "0.19.11",
+  "version": "0.21.4",
   "license": "MIT",
   "description": "Install project-local SD AI command workflows, Prism/Gito defaults, usage guide, and platform adapters into Trellis repos.",
   "requiresTrellis": true,
@@ -158,6 +158,13 @@
       "kind": "script",
       "source": "templates/scripts/sd-ai-command-pack-status.py",
       "target": "scripts/sd-ai-command-pack-status.py",
+      "install": "always"
+    },
+    {
+      "platform": "shared",
+      "kind": "script",
+      "source": "templates/scripts/sd-ai-command-pack-work-loop.py",
+      "target": "scripts/sd-ai-command-pack-work-loop.py",
       "install": "always"
     },
     {
@@ -1642,6 +1649,83 @@
       "kind": "skill",
       "source": "templates/.agents/skills/sd-work-backlog/SKILL.md",
       "target": ".trae/skills/sd-work-backlog/SKILL.md",
+      "anchor": ".trae"
+    },
+    {
+      "platform": "shared",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "install": "always"
+    },
+    {
+      "platform": "antigravity",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".agent/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".agent"
+    },
+    {
+      "platform": "codebuddy",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".codebuddy/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".codebuddy"
+    },
+    {
+      "platform": "devin",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".devin/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".devin"
+    },
+    {
+      "platform": "droid",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".factory/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".factory"
+    },
+    {
+      "platform": "kilo",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".kilocode/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".kilocode"
+    },
+    {
+      "platform": "kiro",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".kiro/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".kiro"
+    },
+    {
+      "platform": "pi",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".pi/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".pi"
+    },
+    {
+      "platform": "qoder",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".qoder/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".qoder"
+    },
+    {
+      "platform": "reasonix",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".reasonix/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".reasonix"
+    },
+    {
+      "platform": "trae",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".trae/skills/sd-work-backlog/references/autonomous-loop.md",
       "anchor": ".trae"
     },
     {

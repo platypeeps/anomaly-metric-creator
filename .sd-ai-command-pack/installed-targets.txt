@@ -35,6 +35,7 @@
 .agents/skills/sd-update-spec/SKILL.md
 .agents/skills/sd-watch-pr/SKILL.md
 .agents/skills/sd-work-backlog/SKILL.md
+.agents/skills/sd-work-backlog/references/autonomous-loop.md
 .agents/skills/sd-work-designs/SKILL.md
 .claude/commands/sd/audit-repo.md
 .claude/commands/sd/continue.md
@@ -144,5 +145,6 @@ scripts/sd-ai-command-pack-shell-lib.sh
 scripts/sd-ai-command-pack-status.py
 scripts/sd-ai-command-pack-toolchain.sh
 scripts/sd-ai-command-pack-update-spec-kb.py
+scripts/sd-ai-command-pack-work-loop.py
 scripts/sd_ai_command_pack_fleet_lib.py
 scripts/sd_ai_command_pack_lib.py

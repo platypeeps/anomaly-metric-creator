@@ -162,6 +162,7 @@ LEGACY_PACK_PATHS = {
             "review-scope.sh",
             "shell-lib.sh",
             "update-spec-kb.py",
+            "work-loop.py",
         )
     },
 }
