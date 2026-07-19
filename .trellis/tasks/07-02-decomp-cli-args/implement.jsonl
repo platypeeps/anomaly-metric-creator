@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/architecture.md", "reason": "Owns extracted module boundaries, one-way imports, and callback seam conventions for the CLI parser split."}
+{"file": ".trellis/spec/amc/backend/api-cli-server.md", "reason": "Owns CLI/subcommand parser behavior, flag reconciliation, and serve forwarding contracts."}
