@@ -39,7 +39,9 @@ should be reinstalled. The charter roster:
 
 ## Arguments
 
-Arguments arrive as free text with the invocation. Recognize these forms:
+Arguments arrive as free text with the invocation. Parse recognized options
+and the reserved `follow-up` flag before treating remaining bare values as the
+positional primary subject. Recognize these forms:
 
 - `dimensions=<a,b,c>` — run only the named charters. Names are the charter
   file stems from the roster above. Unknown names are an error, not a
@@ -54,6 +56,16 @@ Arguments arrive as free text with the invocation. Recognize these forms:
   against the current tree (fixed / still-open / regressed), then run a
   quick regression sweep of the areas touched since the items' `last-seen`
   commits.
+- Remaining bare values are exact charter names. `sd-audit-repo security
+  testing` is equivalent to `dimensions=security,testing`. Split names on
+  whitespace or commas, preserve their order, and de-duplicate exact repeats.
+
+Reject bare dimensions combined with `dimensions=` before fingerprinting.
+Reject `follow-up` combined with either dimension form because follow-up is a
+different audit mode. Validate every normalized dimension against the charter
+roster before reviewer dispatch; an unknown name or option-shaped token is an
+error and must never broaden the run to a full audit. Before fingerprinting,
+report the normalized mode, depth, and dimension set.
 
 ## Pipeline
 

@@ -31,14 +31,22 @@ replace the normal finish-work journal entry for a feature stream.
 
 ## Arguments
 
-Arguments arrive as free text with the invocation, as `key=value` pairs
-and bare flags. Unknown argument names are an error, not a silent skip:
-stop and report them before gathering evidence. This command reads no
-environment variables; arguments are the only tuning surface.
+Arguments arrive as free text with the invocation. Parse recognized
+`key=value` arguments before treating remaining bare non-option text as the
+positional primary subject. Unknown option-shaped arguments are an error, not
+a silent skip: stop and report them before gathering evidence. This command
+reads no environment variables; arguments are the only tuning surface.
 
 - `topic=<text>` — the retro topic, used verbatim in the journal title
   `Retro: <topic>`. When omitted, derive a short topic from the debugging
   stream under retrospective and state the derived topic in the report.
+- Bare non-option text is one topic phrase. `sd-retro deployment timeout` is
+  equivalent to `topic="deployment timeout"`; preserve the complete phrase
+  rather than splitting it into several topics.
+
+Reject positional topic text combined with `topic=` before gathering evidence.
+Before writing the journal, state the normalized topic and whether it was
+positional, explicit, or derived from the current stream.
 
 ## Workflow
 

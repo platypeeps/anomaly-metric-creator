@@ -11,14 +11,19 @@ changing repository, GitHub, Trellis, or fleet state.
 
 ## Arguments
 
-The optional positional argument `fleet` switches from the current repository
-to every consumer in the source-owned fleet registry. The following flags are
-also supported:
+The reserved positional argument `fleet` switches from the current repository
+to every consumer in the source-owned fleet registry. Any other single
+positional value is the primary repository-path subject. The following flags
+are also supported:
 
 - `--repo PATH` reports a specific local checkout instead of the current one.
 - `--fleet-manifest PATH` explicitly selects the canonical fleet manifest.
 - `--json` returns schema-versioned machine-readable output.
 - `--no-network` skips GitHub queries and labels that inventory unavailable.
+
+`sd-status /path/to/repo` is equivalent to
+`sd-status --repo /path/to/repo`. Preserve a quoted path containing spaces as
+one path and validate it exactly as `--repo` does.
 
 `fleet` resolves its manifest from `--fleet-manifest`,
 `SD_AI_COMMAND_PACK_FLEET_MANIFEST`, the machine-local fleet profile, or the
@@ -27,8 +32,10 @@ normally created once with `install.py TARGET --configure-fleet`; status never
 creates or modifies it. A missing or stale profile is a configuration blocker,
 not an invitation to guess fleet members.
 
-Reject unknown positional arguments or flags. Do not reinterpret them as
-shell text.
+Reject a positional repository path combined with `--repo`, more than one
+positional value, `fleet` combined with a repository path or `--repo`, and
+unknown flags. Reject these conflicts before running the collector. Do not
+reinterpret them as shell text.
 
 ## Workflow
 
@@ -37,7 +44,11 @@ shell text.
 
    ```bash
    bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
-     scripts/sd-ai-command-pack-status.py [fleet] [--repo PATH] \
+     scripts/sd-ai-command-pack-status.py [fleet|REPO_PATH] \
+       [--fleet-manifest PATH] [--json] [--no-network]
+   # Or, for explicit local repository selection:
+   bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+     scripts/sd-ai-command-pack-status.py --repo PATH \
        [--fleet-manifest PATH] [--json] [--no-network]
    ```
 
@@ -45,9 +56,12 @@ shell text.
    local refs and reports them as `cached`; do not fetch merely to make the
    report fresher.
 4. For local mode, report repository identity, branch and working-tree counts,
-   Git stash count, cached upstream divergence, default/local/remote branches, installed pack
-   and Trellis versions, relevant PR, open PRs/issues, current and queued
-   Trellis work, anomalies, and numbered next steps.
+   Git stash count, cached upstream divergence, default/local/remote branches,
+   installed pack and Trellis versions, relevant PR, open PRs/issues, current
+   and queued Trellis work, the user-local autonomous work-loop state,
+   anomalies, and numbered next steps. Loop state includes run ID, mode,
+   selector/focus, iteration, phase, task, PR, counters, heartbeat, context
+   health, checkpoint, lock status, and stop reason when present.
 5. For fleet mode, preserve registry rollout order and show one bounded row per
    consumer with checkout availability, branch/tree/upstream state, stash count, installed
    versus target pack version, PR counts, and task counts. Put missing, dirty,
@@ -65,6 +79,9 @@ shell text.
   a status request. Recommend a separate next invocation when action is useful.
 - Do not expose credentials or raw authenticated remote URLs. Repository
   identity is limited to a validated GitHub owner/name slug.
+- Read work-loop state through the installed helper's read-only snapshot. Do
+  not acquire or refresh its lock, heartbeat, checkpoint, or ledger. Invalid
+  loop state is an explicit anomaly; absent state is `none`, not an error.
 - Report unavailable optional sources explicitly. Do not silently convert
   failed GitHub or version discovery into an empty healthy result.
 - Keep human output bounded. Use `--json` when the caller needs the complete

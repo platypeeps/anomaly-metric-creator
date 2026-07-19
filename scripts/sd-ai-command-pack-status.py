@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -33,6 +36,17 @@ REVIEW_TOTAL_COUNT_QUERY = (
 class CommandResult:
     returncode: int
     stdout: str
+
+
+@contextlib.contextmanager
+def suppress_bytecode_writes() -> Iterator[None]:
+    """Keep read-only status imports from creating repository-local caches."""
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        yield
+    finally:
+        sys.dont_write_bytecode = previous
 
 
 def run_command(
@@ -96,8 +110,10 @@ def resolve_repo(path: Path) -> Path | None:
     git_path = path.expanduser()
     if not git_path.is_absolute():
         git_path = Path.cwd() / git_path
-    if not git_path.is_dir():
+    if git_path.is_file():
         git_path = git_path.parent
+    elif not git_path.is_dir():
+        return None
     result = run_command(
         ["git", "-C", str(git_path), "rev-parse", "--show-toplevel"],
         cwd=git_path,
@@ -397,6 +413,37 @@ def collect_trellis(repo: Path) -> dict[str, Any]:
     }
 
 
+def collect_work_loop(repo: Path) -> dict[str, Any]:
+    """Read the shared user-local loop ledger without mutating it."""
+    helper = Path(__file__).resolve().with_name("sd-ai-command-pack-work-loop.py")
+    if not helper.is_file():
+        return {"status": "unavailable", "error": "work-loop helper is not installed"}
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "sd_ai_command_pack_status_work_loop", helper
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot construct work-loop helper loader")
+        module = importlib.util.module_from_spec(spec)
+        with suppress_bytecode_writes():
+            spec.loader.exec_module(module)
+        snapshot = module.status_snapshot(repo)
+    except (
+        AttributeError,
+        ImportError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        SyntaxError,
+        TypeError,
+        ValueError,
+    ) as error:
+        return {"status": "invalid", "error": safe_text(error, limit=500)}
+    if not isinstance(snapshot, dict):
+        return {"status": "invalid", "error": "work-loop helper returned invalid data"}
+    return snapshot
+
+
 def parse_gh_lines(output: str, *, kind: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for line in output.splitlines()[:MAX_ITEMS]:
@@ -674,6 +721,25 @@ def next_steps(report: Mapping[str, Any]) -> list[str]:
         pr = github["currentPr"]
         if pr.get("state") == "OPEN":
             steps.append(f"Continue PR #{pr.get('number')} through sd-watch-pr or sd-housekeeping.")
+    work_loop = report.get("workLoop")
+    if isinstance(work_loop, dict):
+        loop_status = work_loop.get("status")
+        run_id = work_loop.get("runId")
+        if loop_status == "active":
+            steps.append(
+                f"Resume active SD work loop {run_id} at iteration "
+                f"{work_loop.get('iteration')} phase {work_loop.get('phase')}."
+            )
+        elif loop_status == "paused":
+            steps.append(
+                f"Resume paused SD work loop {run_id} from its recorded checkpoint."
+            )
+        if isinstance(work_loop.get("contextHealth"), dict) and work_loop[
+            "contextHealth"
+        ].get("level") == "red":
+            steps.append(
+                "Reconcile the red SD work-loop checkpoint with live Trellis, Git, and PR state."
+            )
     trellis = report.get("trellis")
     if isinstance(trellis, dict):
         active = trellis.get("activeTask")
@@ -729,6 +795,7 @@ def collect_local(
     relevant_branch = source_branch
     if relevant_branch is None and git.get("branch") != default:
         relevant_branch = git.get("branch")
+    work_loop = collect_work_loop(repo)
     report: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "mode": "local",
@@ -746,6 +813,7 @@ def collect_local(
             network=network,
         ),
         "trellis": collect_trellis(repo),
+        "workLoop": work_loop,
         "cleanupContext": {
             "sourceBranch": source_branch,
             "keepRemoteBranch": keep_remote_branch,
@@ -757,6 +825,11 @@ def collect_local(
         + anomalies,
         "nextSteps": [],
     }
+    if work_loop.get("status") == "invalid":
+        report["anomalies"].append(
+            "work-loop state is invalid: "
+            + safe_text(work_loop.get("error") or "unknown error", limit=400)
+        )
     if expect_clean:
         report["anomalies"].extend(
             strict_anomalies(
@@ -867,6 +940,43 @@ def render_local(report: Mapping[str, Any], *, dry_run: bool) -> None:
     else:
         print("- relevant PR: none")
 
+    work_loop = report.get("workLoop")
+    print("\n==> Work Loop")
+    if not isinstance(work_loop, dict) or work_loop.get("status") == "none":
+        print("- state: none")
+    elif work_loop.get("status") in {"invalid", "unavailable"}:
+        print(f"- state: {work_loop.get('status')}")
+        print(f"- detail: {work_loop.get('error') or 'unavailable'}")
+    else:
+        print(
+            f"- run: {work_loop.get('runId')} [{work_loop.get('status')}] "
+            f"mode {work_loop.get('mode')}; selector {work_loop.get('selector')}"
+        )
+        print(
+            f"- progress: iteration {work_loop.get('iteration')}; "
+            f"phase {work_loop.get('phase')}; task {work_loop.get('task') or 'none'}; "
+            f"PR {work_loop.get('prNumber') or 'none'}"
+        )
+        focus_values = work_loop.get("focus")
+        focus_text = ", ".join(focus_values) if isinstance(focus_values, list) else ""
+        print(
+            f"- focus: {work_loop.get('focusMode') or 'none'}"
+            f"{f' ({focus_text})' if focus_text else ''}"
+        )
+        health = work_loop.get("contextHealth")
+        health_level = health.get("level") if isinstance(health, dict) else "unknown"
+        checkpoint = work_loop.get("checkpoint")
+        checkpoint_state = (
+            checkpoint.get("state") if isinstance(checkpoint, dict) else "unknown"
+        )
+        print(
+            f"- heartbeat: {work_loop.get('heartbeatAt') or 'unknown'}; "
+            f"context health {health_level}; checkpoint {checkpoint_state}"
+        )
+        print(f"- counters: {work_loop.get('counters') or {}}")
+        if work_loop.get("stopReason"):
+            print(f"- stop reason: {work_loop.get('stopReason')}")
+
     github = report["github"]
     trellis = report["trellis"]
     print("\n==> Inventory")
@@ -909,7 +1019,8 @@ def fleet_api() -> Any:
     if inserted:
         sys.path.insert(0, scripts_path)
     try:
-        import sd_ai_command_pack_fleet_lib as fleet
+        with suppress_bytecode_writes():
+            import sd_ai_command_pack_fleet_lib as fleet
     except ImportError as error:
         raise RuntimeError(
             "installed fleet helper is missing; refresh sd-ai-command-pack"
@@ -1124,8 +1235,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Report read-only SD repository or fleet status."
     )
-    parser.add_argument("mode", nargs="?", choices=("fleet",))
-    parser.add_argument("--repo", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "target",
+        nargs="?",
+        help="Reserved word 'fleet' or a local repository path.",
+    )
+    parser.add_argument("--repo", type=Path)
     parser.add_argument(
         "--fleet-manifest",
         type=Path,
@@ -1150,7 +1265,21 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=[],
         help=argparse.SUPPRESS,
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.target == "fleet":
+        if args.repo is not None:
+            parser.error("fleet cannot be combined with --repo")
+        args.mode = "fleet"
+        args.repo = Path.cwd()
+    elif args.target is not None:
+        if args.repo is not None:
+            parser.error("a positional repository path cannot be combined with --repo")
+        args.mode = None
+        args.repo = Path(args.target)
+    else:
+        args.mode = None
+        args.repo = args.repo if args.repo is not None else Path.cwd()
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:

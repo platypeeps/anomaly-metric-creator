@@ -65,6 +65,22 @@ The composite supplies them only as described below so review and lifecycle
 side effects each have one owner. Reject user-supplied `publish-only`,
 `caller=`, `stage=`, or `return-after=` controls as unknown arguments.
 
+The autonomous work-loop controller may supply one additional trusted internal
+context after resolving this skill directly:
+
+```text
+caller: sd-work-backlog
+run-id: <active work-loop run ID>
+iteration: <positive iteration number>
+return-after: merge-result
+```
+
+Accept it only while already executing the resolved `sd-work-backlog` skill and
+only when the run ID, iteration, selected task, branch, and work-loop lock match
+the user-local ledger and live repository state. It is not a public argument,
+environment variable, or adapter surface. Reject a user-supplied imitation
+before Stage 1.
+
 ## Workflow
 
 1. Validate the arguments and the preconditions above, and record the
@@ -99,6 +115,10 @@ side effects each have one owner. Reject user-supplied `publish-only`,
    runs finish-work, pushes any resulting task/journal commits and waits for
    their checks, performs the merge, and reports the post-merge state;
    `sd-ship` relays that outcome.
+   Under the trusted `sd-work-backlog` context, convert that report into the
+   compact nested result below and return control to the parent controller.
+   Do not emit the parent session's final response and do not start another
+   task from inside sd-ship.
 6. A failed or blocked stage stops the chain immediately with that
    stage's report; later stages do not run and appear in the stage table
    as skipped. Stopping — at a stop-point, a failed stage, or a blocked
@@ -132,6 +152,34 @@ side effects each have one owner. Reject user-supplied `publish-only`,
   or re-run a stage that stopped itself, and never continue past a failed
   or blocked stage.
 - Unknown arguments stop the run before Stage 1 starts.
+- Trusted nested mode changes only report ownership. It does not change stage
+  order, retries, checks, review-learning ownership, finish-work, merge gates,
+  or cleanup behavior.
+
+## Nested return contract
+
+After a trusted work-loop `until=merge` run, return this compact result to the
+controller using values from the authoritative stage reports:
+
+```text
+SD_SHIP_MERGE_RESULT
+run-id: <run ID>
+iteration: <number>
+pr: <number and URL>
+merge-state: <merged|open|closed|blocked>
+finish-work: <completed|blocked|not-run>
+housekeeping: <healthy|attention|blocked>
+review-rounds: <non-negative count|unavailable>
+final-branch: <branch|unknown>
+final-head: <SHA|unknown>
+anomalies: <none|compact list>
+END_SD_SHIP_MERGE_RESULT
+```
+
+Missing or contradictory required values make the nested result blocked. The
+outer controller reconciles the result with Git, Trellis, GitHub, and the
+ledger before recording the iteration; sd-ship must not claim that the parent
+loop is complete.
 
 ## Final report
 
@@ -158,3 +206,7 @@ bullets, one point per line, no paragraph blobs.
 - Next step: the single most useful follow-up — the next stage command
   after a stop-point, the stopping stage's own recommendation after a
   failure or blocker, or nothing further after a clean merge.
+
+In trusted nested mode, return the nested contract instead of this standalone
+final response. The parent `sd-work-backlog` report remains the only final
+response for the autonomous run.

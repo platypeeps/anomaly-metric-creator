@@ -12,8 +12,9 @@ request.
 2. If the skill is missing, unreadable, empty, duplicated, malformed, defines
    contradictory safety rules, or requires unavailable tools, stop and report
    the exact blocker.
-3. Use that skill as the primary instructions for this workflow. Pass through
-   the optional positional `fleet` argument and supported flags unchanged.
+3. Use that skill as the primary instructions for this workflow. Pass the
+   user's invocation arguments through unchanged; the skill accepts positional
+   `fleet`, a positional repository path, and the documented flags.
 4. Run the installed status collector through
    `scripts/sd-ai-command-pack-toolchain.sh`; do not recreate its report from
    ad hoc commands.

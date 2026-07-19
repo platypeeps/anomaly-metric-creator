@@ -104,6 +104,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-watch-pr/
       SKILL.md
     sd-work-backlog/
+      references/
+        autonomous-loop.md
       SKILL.md
     sd-work-designs/
       SKILL.md
@@ -691,13 +693,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-02-decomp-generation-topology/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-02-legacy-monolith-decomposition/
       check.jsonl
       design.md
@@ -1005,6 +1000,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        07-02-decomp-generation-topology/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         07-02-decomp-otel-stream/
           check.jsonl
           implement.jsonl
@@ -1173,6 +1175,7 @@ scripts/
   sd-ai-command-pack-status.py
   sd-ai-command-pack-toolchain.sh
   sd-ai-command-pack-update-spec-kb.py
+  sd-ai-command-pack-work-loop.py
   sync-agent-skills.py
   update_repomix
 src/

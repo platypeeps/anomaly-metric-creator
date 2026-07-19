@@ -1,16 +1,16 @@
 ---
-description: Add Trellis design and implementation-plan artifacts for tasks that need planning before implementation.
+description: Run the autonomous work loop for Trellis tasks that still need design or implementation planning, optionally stopping after design.
 ---
 
 # SD Work Designs
 
 In this pack, SD means Software Delivery. A skill is a project-installed Markdown instruction bundle resolved by the agent's trusted installed-skill resolver.
 
-Run the Software Delivery (SD) work-designs workflow. Review existing Trellis tasks, find tasks with real PRDs that still need `design.md` and/or `implement.md`, add implementation proposals and execution guidance to those task artifacts, then continue until no design-ready tasks remain.
+Run the Software Delivery (SD) work-designs workflow. Pass all invocation arguments unchanged to the resolved skill, including bare focus text, repeatable `focus=` or `focus-only=`, and `until=design|merge`.
 
 1. Resolve the `sd-work-designs` skill by name using the agent's trusted skill discovery mechanism for installed skills.
 2. If that skill is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, or requires unavailable tools, stop and report the exact blocker.
-3. Use the skill as the primary instructions. It ranks Trellis tasks that still need planning artifacts, creates or updates `design.md` and `implement.md`, preserves existing task content, parks tasks that need user input, and repeats until no design candidates remain.
-4. Do not start implementation tasks, write product/code changes, create multiple unrelated planning streams, create PRs, merge branches, or create upstream `Trellis` PRs without explicit user approval for that specific PR.
-5. If any task inspection, artifact write, git command, parking step, or final validation fails, stop and report the command, exit status, and complete stdout/stderr output.
-6. End with a numbered list linking every created or updated `design.md` and `implement.md`, with a one-line summary of the proposal or guidance added.
+3. Use the skill as the primary instructions. It delegates to the canonical `sd-work-backlog` controller with the trusted `needs-design` selector. By default each selected task continues from planning through implementation and green merge; `until=design` preserves a planning-only stop.
+4. Preserve existing task content, the user-local work-loop state and lock, one-task/branch/PR sequencing, focus semantics, context-health reconciliation, follow-up handling, operator controls, and the canonical controller's verified stop conditions.
+5. Do not start a second loop, bypass SD review/housekeeping gates, reinterpret malformed arguments, or create upstream `Trellis` PRs without explicit approval for that specific PR.
+6. The final controller report must include a numbered list linking every created or updated `design.md` and `implement.md`, with a one-line summary.
