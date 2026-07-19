@@ -35,7 +35,7 @@ _VALID_ANOMALY_SHAPES = frozenset({
 
 def _resolve_anomaly_value(spec: dict, ts: datetime.datetime, col: int,
                            t_within: float, span_idx: int,
-                           rng: "np.random.RandomState" = None) -> float:
+                           rng: "np.random.RandomState | None" = None) -> float:
     """Resolve one anomaly value at one row, honoring shape/duration fields."""
     duration_seconds = float(spec.get("duration_seconds", 0) or 0)
     shape = spec.get("shape", "step")
@@ -249,7 +249,7 @@ def _cached_generator_meta(gen) -> dict:
 
 def _call_generator_within_span(generator: Callable, ts: datetime.datetime, col: int,
                                 t_within: float, span_idx: int,
-                                rng: "np.random.RandomState" = None):
+                                rng: "np.random.RandomState | None" = None):
     """Call a span-path generator with either the 5-arg or 2-arg shape.
 
     Dispatch by REQUIRED positional count, not by maximum callability. A
