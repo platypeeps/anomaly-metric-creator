@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
-from .legacy import Edge, Instance, MetricSpec, RunContext, SaturationParams
+from .legacy import Edge, RunContext, SaturationParams
+from .models_impl import Instance, MetricSpec
 
 __all__ = ["Edge", "Instance", "MetricSpec", "RunContext", "SaturationParams"]

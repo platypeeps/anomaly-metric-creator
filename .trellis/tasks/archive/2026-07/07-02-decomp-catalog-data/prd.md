@@ -52,3 +52,10 @@ Move the SCENARIOS registry (~3k lines of data) to scenario_catalog.py, COMPONEN
 - For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
 - 2026-07-06: `base_branch` in task.json corrected from the merged/deleted
   `refactor/extract-redaction` stacking branch to `main`.
+- 2026-07-18 PR A status: `models_impl.py` + `catalog.py` extraction is
+  implemented on `refactor/extract-catalog-data`. It moves `MetricSpec`,
+  `Instance`, `COMPONENTS`, `INSTANCES`, `DEFAULT_METRICS_PER_COMPONENT`,
+  metric caps, catalog seasonality helpers, and component/instance metadata
+  validators while preserving the `legacy.<name>` surface and
+  monkeypatch-visible runtime callbacks. PR B still owns
+  `scenarios_impl.py` + `scenario_catalog.py` and the `scenarios.py` facade.

@@ -176,80 +176,19 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 }
 
 # ------------------------------------------------------------------
-# Per-metric schema. One MetricSpec per CSV column per component.
+# Per-metric and instance models.
 # ------------------------------------------------------------------
-# Vocabulary for ``MetricSpec.semantic_type``. Drives both the ``schema.json``
-# emitter and the ``validate`` subcommand's checks (e.g. ``counter`` / ``rate``
-# columns must be non-negative). Values map onto the OTLP semantic instrument
-# kinds the generator uses elsewhere (``stream_otel_signals`` Sum data points
-# for counters, ``stream_otel_gauges`` Gauge data points for gauges).
-_VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
+# MetricSpec / Instance moved to models_impl.py (decomposition step 9A).
+# Re-imported here so tests, package facades, and the historic
+# ``legacy.<name>`` surface stay unchanged.
+from .models_impl import (
+    Instance as Instance,
+    MetricSpec as MetricSpec,
+    _configure_models_runtime as _configure_models_runtime,
+    _load_instance_config as _models_load_instance_config,
+    _validate_instance_list as _validate_instance_list,
+)
 
-# Vocabulary for ``MetricSpec.dtype``. ``int`` here means "values are
-# expected to be whole numbers"; ``generate_component`` rounds
-# int-typed columns via ``np.rint`` before derivations run (the
-# default since the phase 6 flag day; the phase-9 flag day removed the
-# last CLI opt-out, and programmatic callers can still opt out via
-# ``apply_dtype_int_cast=False``), so the CSV
-# cell is a whole-integer string. The validator surfaces any remaining
-# fractional values as schema violations.
-_VALID_DTYPES = frozenset({"float", "int"})
-
-
-@dataclass(frozen=True)
-class MetricSpec:
-    """Config for one synthetic metric column.
-
-    Natural value is ``(base + N(0, std)) * multiplier(ts, sec) + additive(ts, sec)``,
-    optionally clipped at ``clip_min``. ``std=0`` skips the RNG draw entirely so
-    deterministic series do not perturb the shared numpy random stream.
-
-    Schema fields (``unit``, ``semantic_type``, ``min_value``, ``max_value``,
-    ``dtype``, ``derivation``) are declarative metadata only — they do not
-    affect generation. They flow into ``schema.json`` and the
-    ``validate`` subcommand's checks. Defaults preserve existing behavior for
-    catalog entries that have not been backfilled yet (the generator still
-    emits the same bytes whether or not these fields are populated).
-    """
-    name: str
-    base: float
-    std: float = 0.0
-    multiplier: Callable[[datetime.datetime, int], float] | None = None
-    additive: Callable[[datetime.datetime, int], float] | None = None
-    clip_min: float | None = None
-    # --- schema metadata ------------------------------------
-    unit: str | None = None
-    semantic_type: str | None = None
-    min_value: float | None = None
-    max_value: float | None = None
-    dtype: str = "float"
-    derivation: str | None = None
-
-
-# ------------------------------------------------------------------
-# Instance dimensions (Phase 1)
-# ------------------------------------------------------------------
-@dataclass(frozen=True)
-class Instance:
-    """One emitting instance of a component.
-
-    Phase 1 introduces this dataclass as the foundational dimension model for
-    multi-instance output. The CSV writer still emits one anonymous
-    ``Instance()`` per component, so default byte output is unchanged; later
-    phases plug ``--instances-per-component`` / ``--instance-config`` into the
-    same shape and surface the dimensions as CSV columns, anomaly
-    ``instance_filter`` selectors, OTEL resource attributes, and
-    ``schema.json`` dimension declarations.
-
-    All fields default to ``None`` so today's catalog can build the registry
-    in lockstep with ``COMPONENTS`` without naming dimensions yet.
-    """
-    id: str | None = None
-    host: str | None = None
-    pod: str | None = None
-    az: str | None = None
-    region: str | None = None
-    tenant: str | None = None
 
 
 # _INSTANCE_DIMENSION_COLUMNS (the canonical long-form dimension column
@@ -2350,581 +2289,61 @@ def register_cascade(target_component, time_offset, metric, description, generat
     })
 
 # ------------------------------------------------------------------
-# Shared seasonality / shaping helpers used by COMPONENTS specs
 # ------------------------------------------------------------------
-def _llm_business_hours(ts, _elapsed):
-    """Daily business-hours load multiplier for LLM analytics.
-
-    Works on a single ``datetime.datetime`` (used by tests' natural_band helper)
-    and on a ``datetime64`` numpy array (used by the vectorized generator).
-    """
-    if isinstance(ts, np.ndarray):
-        hours = ((ts - ts.astype("datetime64[D]")) // np.timedelta64(1, "h")).astype(np.int64)
-        return np.select(
-            [(hours >= 8) & (hours < 18), (hours >= 18) & (hours < 22)],
-            [1.4, 1.1],
-            default=0.6,
-        )
-    h = ts.hour
-    if 8 <= h < 18:
-        return 1.4
-    if 18 <= h < 22:
-        return 1.1
-    return 0.6
-
-
-def _daily_sine(amplitude: float) -> Callable:
-    """Additive 24h sine shaped by the elapsed second so the curve has real
-    daily seasonality. ``elapsed`` may be a scalar int or a numpy array."""
-    def fn(_ts, elapsed):
-        return amplitude * np.sin(2 * np.pi * elapsed / SECONDS_PER_DAY)
-    return fn
-
-
+# Component and instance catalogs.
 # ------------------------------------------------------------------
-# Per-component metric schemas. Add a metric by editing exactly one list.
-# ------------------------------------------------------------------
-# Each component lists up to ``MAX_METRICS_PER_COMPONENT`` MetricSpecs in
-# descending importance. The first ``DEFAULT_METRICS_PER_COMPONENT[component]``
-# entries are emitted by default; the remainder are supplemental and emitted
-# only when ``--metrics-per-component N`` selects past the default tail.
-# Order matters: existing default metrics keep their historic positions to
-# preserve byte-for-byte CSV output at default arguments.
-COMPONENTS: dict[str, list[MetricSpec]] = {
-    "authservice": [
-        MetricSpec("active_sessions", 200, additive=_daily_sine(20),
-                   unit="sessions", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("login_attempts", 250, 15,
-                   unit="attempts/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("login_success_rate", 97.0, 0.5,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("avg_auth_latency_ms", 110, 5,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("cpu_util_pct", 20, 3,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("error_rate", 0.2, 0.05, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # Supplemental metrics
-        MetricSpec("avg_session_duration_s", 900, 30, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-        MetricSpec("password_reset_per_min", 3, 1, clip_min=0,
-                   unit="events/min", semantic_type="rate",
-                   min_value=0, dtype="int"),
-        MetricSpec("admin_actions_per_min", 8, 2, clip_min=0,
-                   unit="events/min", semantic_type="rate",
-                   min_value=0, dtype="int"),
-        MetricSpec("memory_util_pct", 45, 4,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-    ],
-    "cacheservice": [
-        MetricSpec("cache_hits", 5000, 200, clip_min=0,
-                   unit="hits/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("cache_misses", 200, 20, clip_min=0,
-                   unit="misses/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("hit_ratio", 95.0, 0.3,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100,
-                   derivation="100 * cache_hits / (cache_hits + cache_misses)"),
-        MetricSpec("avg_cache_latency_ms", 15, 1,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("memory_util_pct", 70, 5,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("error_rate", 0.05, 0.02, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # Supplemental metrics
-        MetricSpec("evictions_per_sec", 8, 3, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("expired_keys_per_sec", 12, 4, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("cpu_util_pct", 15, 3, clip_min=0,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("connected_clients", 400, 30, clip_min=0,
-                   unit="clients", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-    ],
-    "apigateway": [
-        MetricSpec("requests_per_sec", 800, 50,
-                   unit="requests/s", semantic_type="rate", min_value=0),
-        MetricSpec("avg_response_time_ms", 180, 10,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("backend_latency_ms", 90, 8,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("active_connections", 1200, 60,
-                   unit="connections", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("cpu_util_pct", 22, 4,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("error_rate", 0.15, 0.04, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # Supplemental metrics
-        MetricSpec("rate_limited_per_sec", 4, 2, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("tls_handshakes_per_sec", 140, 15, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("memory_util_pct", 55, 4,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("upstream_unhealthy_count", 0.2, 0.4, clip_min=0,
-                   unit="hosts", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-    ],
-    "database": [
-        MetricSpec("connections", 3000, 400,
-                   unit="connections", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("read_latency_ms", 10, 2, clip_min=0,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("write_latency_ms", 12, 3, clip_min=0,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("queries_per_sec", 25000, 2000,
-                   unit="queries/s", semantic_type="rate", min_value=0),
-        MetricSpec("cpu_util_pct", 18, 3,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("error_rate", 0.1, 0.05, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # disk_used_pct trends slightly upward across the day under natural
-        # conditions; the disk-exhaustion ramp anomaly drives it to 100%.
-        # ``std=0`` keeps this column out of the shared RNG stream so adding
-        # it doesn't shift draws on later components.
-        MetricSpec("disk_used_pct", 8.0,
-                   additive=lambda _ts, elapsed: 2e-5 * elapsed,
-                   clip_min=0,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        # Supplemental metrics
-        MetricSpec("replication_lag_s", 0.4, 0.1, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-        MetricSpec("buffer_cache_hit_ratio", 98.0, 0.3,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("deadlocks_per_min", 0.05, 0.05, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-    ],
-    "mqservice": [
-        MetricSpec("pending_messages", 45000, 3000,
-                   unit="messages", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("processed_messages", 43000, 2500,
-                   unit="messages/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("avg_latency_ms", 70, 5,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("dead_letter_queue", 5, 1, clip_min=0,
-                   unit="messages", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("mem_util_pct", 55, 4,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("error_rate", 0.08, 0.02, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # Supplemental metrics
-        MetricSpec("publish_rate_per_sec", 4500, 200, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("consumer_lag", 300, 80, clip_min=0,
-                   unit="messages", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("unacked_messages", 120, 25, clip_min=0,
-                   unit="messages", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("broker_disk_used_pct", 42.0, 2.0,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-    ],
-    "llm_analytics": [
-        MetricSpec("input_tokens_per_sec", 25000, 2000, multiplier=_llm_business_hours,
-                   unit="tokens/s", semantic_type="rate", min_value=0),
-        MetricSpec("output_tokens_per_sec", 8000, 800, multiplier=_llm_business_hours,
-                   unit="tokens/s", semantic_type="rate", min_value=0),
-        MetricSpec("avg_context_window_size", 4500, 500,
-                   unit="tokens", semantic_type="gauge", min_value=0),
-        MetricSpec("llm_requests_per_sec", 45, 5, multiplier=_llm_business_hours,
-                   unit="requests/s", semantic_type="rate", min_value=0),
-        MetricSpec("avg_llm_latency_ms", 850, 80,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("token_limit_hits_per_min", 2, 0.5,
-                   multiplier=_llm_business_hours, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-        MetricSpec("context_overflow_rate", 0.3, 0.1, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("llm_api_error_rate", 0.05, 0.02, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # Supplemental metrics
-        MetricSpec("p95_llm_latency_ms", 1400, 80,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("prompt_cache_hit_ratio", 55.0, 2.0, clip_min=0,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-    ],
-    "loadbalancer": [
-        MetricSpec("requests_per_sec", 900, 60,
-                   unit="requests/s", semantic_type="rate", min_value=0),
-        MetricSpec("healthcheck_failures", 0, 0.1, clip_min=0,
-                   unit="events/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("active_tls_handshakes", 120, 10,
-                   unit="handshakes", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("tls_handshake_errors", 0.5, 0.2, clip_min=0,
-                   unit="errors/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("backend_5xx_per_sec", 1.5, 0.5, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("connection_resets", 5, 2, clip_min=0,
-                   unit="events/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("cpu_util_pct", 18, 3,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        # Supplemental metrics
-        MetricSpec("healthy_backends", 12, 0.3,
-                   unit="hosts", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("avg_request_duration_ms", 210, 12,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("dropped_connections", 0.2, 0.3, clip_min=0,
-                   unit="events/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-    ],
-    "objectstore": [
-        MetricSpec("get_latency_ms", 45, 5,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("put_latency_ms", 60, 8,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("5xx_rate", 0.1, 0.05, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("bandwidth_mbps", 180, 20,
-                   unit="Mbps", semantic_type="gauge", min_value=0),
-        MetricSpec("requests_per_sec", 1200, 80,
-                   unit="requests/s", semantic_type="rate", min_value=0),
-        # Supplemental metrics
-        MetricSpec("p99_get_latency_ms", 140, 10,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("avg_object_size_kb", 320, 15, clip_min=0,
-                   unit="kB", semantic_type="gauge", min_value=0),
-        MetricSpec("error_rate", 0.05, 0.02, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("throttled_requests_per_sec", 0.3, 0.2, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("multipart_upload_rate", 2.0, 0.5, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-    ],
-    "vectorstore": [
-        MetricSpec("ann_query_latency_ms", 25, 4,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("embeddings_per_sec", 80, 10, multiplier=_llm_business_hours,
-                   unit="embeddings/s", semantic_type="rate", min_value=0),
-        MetricSpec("recall_at_10", 0.91, 0.01,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("cache_hit_ratio", 88, 2,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("error_rate", 0.1, 0.05, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # Supplemental metrics. ``std=0`` skips the RNG draw for near-constant
-        # metrics so adding them doesn't perturb downstream column noise.
-        MetricSpec("index_size_gb", 42.0, 0.0, clip_min=0,
-                   unit="GB", semantic_type="gauge", min_value=0),
-        MetricSpec("queries_per_sec", 140, 12, multiplier=_llm_business_hours, clip_min=0,
-                   unit="queries/s", semantic_type="rate", min_value=0),
-        MetricSpec("avg_vector_dim", 1536.0, 0.0,
-                   unit="dimensions", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("shard_skew_pct", 3.0, 0.8, clip_min=0,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-        MetricSpec("compaction_lag_s", 2.5, 0.5, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-    ],
-    "scheduler": [
-        MetricSpec("jobs_running", 20, 3, clip_min=0,
-                   unit="jobs", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("jobs_queued", 50, 8, clip_min=0,
-                   unit="jobs", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("jobs_failed_per_min", 0.5, 0.15, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-        MetricSpec("avg_job_duration_s", 120, 12, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-        MetricSpec("missed_schedules", 0.02, 0.05, clip_min=0,
-                   unit="events/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        # Supplemental metrics
-        MetricSpec("retries_per_min", 4, 1, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-        MetricSpec("workers_available", 24, 2, clip_min=0,
-                   unit="workers", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("job_throughput_per_min", 140, 10, clip_min=0,
-                   unit="jobs/min", semantic_type="rate", min_value=0),
-        MetricSpec("queue_age_seconds_p95", 85, 10, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-        MetricSpec("cpu_util_pct", 18, 3,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-    ],
-    "paymentservice": [
-        MetricSpec("txn_per_sec", 80, 6,
-                   multiplier=_llm_business_hours, clip_min=0,
-                   unit="transactions/s", semantic_type="rate", min_value=0),
-        MetricSpec("provider_5xx_rate", 0.01, 0.005, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("webhook_delivery_lag_s", 2.0, 0.4, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-        MetricSpec("auth_decline_rate", 0.04, 0.01, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("avg_txn_latency_ms", 180, 12,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        # Supplemental metrics
-        MetricSpec("chargebacks_per_min", 0.3, 0.1, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-        MetricSpec("settlement_lag_s", 180, 12, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-        MetricSpec("fraud_score_avg", 0.05, 0.01, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("retry_rate", 0.02, 0.01, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("error_rate", 0.08, 0.02, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-    ],
-    "identityprovider": [
-        MetricSpec("token_issuance_per_sec", 150, 12, clip_min=0,
-                   unit="tokens/s", semantic_type="rate", min_value=0),
-        MetricSpec("jwks_fetch_latency_ms", 25, 3, clip_min=0,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("mfa_challenges_per_min", 20, 4,
-                   multiplier=_llm_business_hours, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-        MetricSpec("failed_oidc_flows", 2, 0.6, clip_min=0,
-                   unit="events/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        MetricSpec("key_rotation_events", 0.0, 0.0, clip_min=0,
-                   unit="events/interval", semantic_type="counter",
-                   min_value=0, dtype="int"),
-        # Supplemental metrics
-        MetricSpec("avg_token_size_bytes", 1200, 40, clip_min=0,
-                   unit="bytes", semantic_type="gauge", min_value=0),
-        MetricSpec("revoked_tokens_per_min", 1.5, 0.5, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-        MetricSpec("session_introspection_rate", 22, 3, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("password_reset_rate", 0.5, 0.2, clip_min=0,
-                   unit="events/s", semantic_type="rate", min_value=0),
-        MetricSpec("error_rate", 0.04, 0.02, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-    ],
-    # Self-referential: when this degrades, every other component's telemetry
-    # becomes suspect — anomalies fire on the pipeline itself.
-    "observabilitypipeline": [
-        MetricSpec("metrics_ingested_per_sec", 50000, 2500, clip_min=0,
-                   unit="metrics/s", semantic_type="rate", min_value=0),
-        MetricSpec("dropped_metrics_per_sec", 5, 1.5, clip_min=0,
-                   unit="metrics/s", semantic_type="rate", min_value=0),
-        MetricSpec("ingest_lag_s", 1.0, 0.2, clip_min=0,
-                   unit="s", semantic_type="gauge", min_value=0),
-        MetricSpec("pipeline_error_rate", 0.001, 0.0005, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        # Supplemental metrics
-        MetricSpec("cardinality_count", 120000, 4000, clip_min=0,
-                   unit="series", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("retention_hours", 72.0, 0.0, clip_min=0,
-                   unit="h", semantic_type="gauge", min_value=0),
-        MetricSpec("compactions_per_min", 1.5, 0.5, clip_min=0,
-                   unit="events/min", semantic_type="rate", min_value=0),
-        MetricSpec("shard_count", 12.0, 0.0, clip_min=0,
-                   unit="shards", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("flush_latency_ms", 22, 3, clip_min=0,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("cpu_util_pct", 12, 2,
-                   unit="pct", semantic_type="ratio",
-                   min_value=0, max_value=100),
-    ],
-    "gpu_inference": [
-        MetricSpec("batch_size", 10.8, 7.0, clip_min=1,
-                   unit="requests", semantic_type="gauge",
-                   min_value=1, dtype="int"),
-        MetricSpec("model_size_b", 30.0, 14.0, clip_min=7,
-                   unit="B parameters", semantic_type="gauge",
-                   min_value=0, dtype="int"),
-        MetricSpec("gpu_memory_pressure", 0.625, 0.07, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("kv_cache_usage", 0.835, 0.03, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("memory_fragmentation", 0.50, 0.08, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("gpu_utilization", 0.75, 0.04, clip_min=0,
-                   unit="ratio", semantic_type="ratio",
-                   min_value=0, max_value=1),
-        MetricSpec("throughput_tps", 25.4, 10.0, clip_min=0,
-                   unit="tokens/s", semantic_type="rate", min_value=0),
-        MetricSpec("latency_p50_ms", 109.0, 28.0, clip_min=0,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("latency_p99_ms", 383.0, 110.0, clip_min=0,
-                   unit="ms", semantic_type="gauge", min_value=0),
-        MetricSpec("failure", 0.0, 0.0, clip_min=0,
-                   unit="bool", semantic_type="gauge",
-                   min_value=0, max_value=1, dtype="int"),
-    ],
-}
-
-# Maximum metrics any component can expose. Caps both the catalog above and
-# the --metrics-per-component CLI flag.
-MAX_METRICS_PER_COMPONENT = 10
-
-# Maximum instances any component can fan out to via --instances-per-component.
-# Combined with PREFLIGHT_CELL_CAP this prevents accidental memory explosions
-# (20 instances * 10 metrics * 86400 rows ~ 17M cells per component).
-MAX_INSTANCES_PER_COMPONENT = 20
-
-# Default emitted metrics per component when ``--metrics-per-component`` is
-# not provided. Matches the historic catalog so default CSVs remain
-# byte-for-byte stable. Keys MUST match COMPONENTS exactly — adding a new
-# component requires a new entry here. Drift is rejected at import time by
-# the assertion below.
-DEFAULT_METRICS_PER_COMPONENT: dict[str, int] = {
-    "authservice": 6,
-    "cacheservice": 6,
-    "apigateway": 6,
-    "database": 7,
-    "mqservice": 6,
-    "llm_analytics": 8,
-    "loadbalancer": 7,
-    "objectstore": 5,
-    "vectorstore": 5,
-    "scheduler": 5,
-    "paymentservice": 5,
-    "identityprovider": 5,
-    "observabilitypipeline": 4,
-    "gpu_inference": 10,
-}
-
-_components_keys = set(COMPONENTS.keys())
-_defaults_keys = set(DEFAULT_METRICS_PER_COMPONENT.keys())
-if _components_keys != _defaults_keys:
-    missing = _components_keys - _defaults_keys
-    extra = _defaults_keys - _components_keys
-    raise ValueError(
-        "DEFAULT_METRICS_PER_COMPONENT and COMPONENTS keys must match. "
-        f"Missing from DEFAULT_METRICS_PER_COMPONENT: {sorted(missing)}. "
-        f"Extra in DEFAULT_METRICS_PER_COMPONENT: {sorted(extra)}."
-    )
-_overflowed = {
-    name: len(specs)
-    for name, specs in COMPONENTS.items()
-    if len(specs) > MAX_METRICS_PER_COMPONENT
-}
-if _overflowed:
-    raise ValueError(
-        f"COMPONENTS entries exceed MAX_METRICS_PER_COMPONENT={MAX_METRICS_PER_COMPONENT}: "
-        f"{_overflowed}. An accidental extra MetricSpec would be unreachable "
-        f"via --metrics-per-component; trim the catalog or raise the cap."
-    )
-for _name, _default in DEFAULT_METRICS_PER_COMPONENT.items():
-    if not 1 <= _default <= len(COMPONENTS[_name]):
-        raise ValueError(
-            f"DEFAULT_METRICS_PER_COMPONENT[{_name!r}] = {_default} is outside "
-            f"[1, {len(COMPONENTS[_name])}]"
-        )
-del _components_keys, _defaults_keys, _overflowed, _name, _default
+# COMPONENTS / INSTANCES and their catalog metadata validators moved to
+# catalog.py (decomposition step 9A). legacy.py keeps the public binding and
+# configures live callbacks so monkeypatches against legacy.COMPONENTS or
+# legacy.INSTANCES remain visible to moved validation/config-reader helpers.
+from .catalog import (
+    COMPONENTS as COMPONENTS,
+    DEFAULT_METRICS_PER_COMPONENT as DEFAULT_METRICS_PER_COMPONENT,
+    INSTANCES as INSTANCES,
+    MAX_INSTANCES_PER_COMPONENT as MAX_INSTANCES_PER_COMPONENT,
+    MAX_METRICS_PER_COMPONENT as MAX_METRICS_PER_COMPONENT,
+    _configure_catalog_runtime as _configure_catalog_runtime,
+    _validate_instances_registry as _catalog_validate_instances_registry,
+    _validate_metric_spec_schema_metadata as _catalog_validate_metric_spec_schema_metadata,
+)
 
 
-# Per-component instance topology registry (Phase 1). Default = one
-# anonymous ``Instance()`` per component, which keeps the emitted CSVs
-# byte-identical to today: ``Instance()`` carries no dimension labels, so
-# Phase 2's CSV writer treats the run as "no dimension columns" and falls
-# back to today's ``timestamp, m0, m1, ...`` header. Keys MUST match
-# ``COMPONENTS`` exactly — drift is rejected at import time by
-# ``_validate_instances_registry``.
-INSTANCES: dict[str, list["Instance"]] = {
-    name: [Instance()] for name in COMPONENTS
-}
+def _catalog_runtime_components():
+    return COMPONENTS
+
+
+def _catalog_runtime_instances():
+    return INSTANCES
+
+
+def _catalog_runtime_default_metrics_per_component():
+    return DEFAULT_METRICS_PER_COMPONENT
+
+
+def _catalog_runtime_max_instances_per_component():
+    return MAX_INSTANCES_PER_COMPONENT
+
+
+_configure_models_runtime(
+    get_components=_catalog_runtime_components,
+    get_max_instances_per_component=_catalog_runtime_max_instances_per_component,
+    runtime_key=__name__,
+)
+_configure_catalog_runtime(
+    get_components=_catalog_runtime_components,
+    get_instances=_catalog_runtime_instances,
+    get_default_metrics_per_component=_catalog_runtime_default_metrics_per_component,
+    runtime_key=__name__,
+)
 
 
 def _validate_metric_spec_schema_metadata() -> None:
-    """Import-time invariants for the schema metadata fields on ``MetricSpec``.
-
-    Rejects nonsense vocabulary (unknown ``semantic_type`` / ``dtype``) and
-    obvious shape errors (``min_value`` > ``max_value``, non-finite bounds)
-    before ``main()`` runs, so ``write_schema_json`` and the validator can
-    rely on the declared metadata being consistent. Backfill is incremental:
-    a spec with all schema fields left at their defaults is still valid
-    (semantic_type is None, dtype defaults to ``float``, bounds default to
-    None). Once a field is populated, it must be sensible.
-    """
-    for component, specs in COMPONENTS.items():
-        for spec in specs:
-            ctx = f"COMPONENTS[{component!r}].{spec.name!r}"
-            if spec.semantic_type is not None and spec.semantic_type not in _VALID_SEMANTIC_TYPES:
-                raise ValueError(
-                    f"{ctx}.semantic_type={spec.semantic_type!r} must be one of "
-                    f"{sorted(_VALID_SEMANTIC_TYPES)} or None"
-                )
-            if spec.dtype not in _VALID_DTYPES:
-                raise ValueError(
-                    f"{ctx}.dtype={spec.dtype!r} must be one of {sorted(_VALID_DTYPES)}"
-                )
-            for bound_name, bound in (("min_value", spec.min_value),
-                                       ("max_value", spec.max_value)):
-                if bound is None:
-                    continue
-                if isinstance(bound, bool) or not isinstance(bound, (int, float)):
-                    raise ValueError(
-                        f"{ctx}.{bound_name}={bound!r} must be a finite int or float"
-                    )
-                if not math.isfinite(bound):
-                    raise ValueError(
-                        f"{ctx}.{bound_name}={bound!r} must be finite"
-                    )
-            if (spec.min_value is not None and spec.max_value is not None
-                    and spec.min_value > spec.max_value):
-                raise ValueError(
-                    f"{ctx}.min_value={spec.min_value} > max_value={spec.max_value}"
-                )
-            if spec.unit is not None and not isinstance(spec.unit, str):
-                raise ValueError(
-                    f"{ctx}.unit={spec.unit!r} must be a string or None"
-                )
-            if spec.derivation is not None and not isinstance(spec.derivation, str):
-                raise ValueError(
-                    f"{ctx}.derivation={spec.derivation!r} must be a string or None"
-                )
+    return _catalog_validate_metric_spec_schema_metadata(runtime_key=__name__)
 
 
 _validate_metric_spec_schema_metadata()
+
+
 
 
 # ------------------------------------------------------------------
@@ -6976,279 +6395,20 @@ def _validate_derivations_registry() -> None:
 _validate_derivations_registry()
 
 
-def _validate_instance_list(instances, *, where: str) -> None:
-    """Per-entry invariants shared by ``_validate_instances_registry`` and
-    ``generate_component`` (Phase 1, expanded in Phase 2).
-
-    Rejects four classes of drift in ``instances`` (a non-empty iterable
-    of ``Instance``):
-
-    1. Non-``Instance`` entries: would raise a bare ``AttributeError`` on
-       ``.id`` access at the next caller rather than a clear ``ValueError``.
-       Mirrors ``_validate_scenarios_registry``'s isinstance-first pattern.
-    2. Non-string (and non-``None``) ``Instance.id`` values: would raise a
-       bare ``TypeError`` on set-membership lookup; Phase 4's
-       ``instance_filter`` expects string ids.
-    3. Duplicate non-None ``id`` values, or more than one anonymous
-       (``id=None``) entry. Phase 4's ``instance_filter=["..."]`` looks up
-       instances by id, so collisions would silently target multiple rows;
-       multiple anonymous entries would be indistinguishable.
-    4. Non-string (and non-``None``) dimension fields
-       (``host``, ``pod``, ``az``, ``region``, ``tenant``): the Phase 2
-       long-form CSV writer joins them with ``","`` directly. A non-string
-       would raise a bare ``TypeError`` in the writer, and a value
-       containing a comma or newline would silently corrupt the emitted
-       CSV. Phase 3 (``--instance-config``) will surface this same
-       constraint to file-loaded instance maps.
-
-    ``where`` is the descriptor prefix used in raised error messages
-    (e.g. ``"INSTANCES['authservice']"`` from the registry validator or
-    ``"generate_component('authservice') instances"`` from the call site).
-    Empty-list rejection lives at each call site so it can use a
-    site-specific message.
-    """
-    seen_ids: set[str] = set()
-    anon_count = 0
-    for inst in instances:
-        if not isinstance(inst, Instance):
-            raise ValueError(
-                f"{where} contains non-Instance entry {inst!r} "
-                f"(type {type(inst).__name__}); every entry must be an "
-                f"Instance dataclass."
-            )
-        if inst.id is not None:
-            if not isinstance(inst.id, str):
-                raise ValueError(
-                    f"{where} entry has Instance.id={inst.id!r} "
-                    f"(type {type(inst.id).__name__}); id must be None or a "
-                    f"string (instance_filter looks up ids by string equality)."
-                )
-            if "," in inst.id or "\n" in inst.id or "\r" in inst.id:
-                raise ValueError(
-                    f"{where} entry has Instance.id={inst.id!r} containing "
-                    f"a comma or newline; ids must not contain CSV-significant "
-                    f"characters (the long-form writer does not quote id cells)."
-                )
-        for field_name in _INSTANCE_DIMENSION_FIELDS:
-            value = getattr(inst, field_name)
-            if value is None:
-                continue
-            if not isinstance(value, str):
-                raise ValueError(
-                    f"{where} entry has Instance.{field_name}={value!r} "
-                    f"(type {type(value).__name__}); dimension fields must "
-                    f"be None or a string (the long-form CSV writer joins "
-                    f"them with ',' directly)."
-                )
-            if "," in value or "\n" in value or "\r" in value:
-                raise ValueError(
-                    f"{where} entry has Instance.{field_name}={value!r} "
-                    f"containing a comma or newline; dimension values "
-                    f"must not contain CSV-significant characters "
-                    f"(the long-form writer does not quote dimension cells)."
-                )
-        if inst.id is None:
-            anon_count += 1
-            continue
-        if inst.id in seen_ids:
-            raise ValueError(
-                f"{where} declares duplicate Instance.id={inst.id!r}; "
-                f"ids must be unique per component for instance_filter "
-                f"lookups (Phase 4)."
-            )
-        seen_ids.add(inst.id)
-    if anon_count > 1:
-        raise ValueError(
-            f"{where} contains {anon_count} anonymous Instance(id=None) "
-            f"entries; at most one anonymous instance is allowed per "
-            f"component."
-        )
-
-
+# Instance registry validation moved to catalog.py; _validate_instance_list and
+# _load_instance_config live in models_impl.py. The wrappers keep legacy's
+# patch-visible runtime view and preserve the old import-time call position.
 def _validate_instances_registry() -> None:
-    """Import-time invariants for ``INSTANCES`` (Phase 1).
-
-    Rejects five classes of drift:
-
-    1. Key drift between ``INSTANCES`` and ``COMPONENTS``: ``main()``
-       seeds ``ctx.instances`` via ``{name: list(INSTANCES[name]) for
-       name in COMPONENTS}``, so a missing key would raise ``KeyError``
-       mid-run on the first generated component. The symmetric case
-       (extra ``INSTANCES`` key not in ``COMPONENTS``) would silently
-       be ignored. Failing fast at import time surfaces both.
-    2. Empty per-component lists: ``generate_component()`` needs at
-       least one ``Instance`` to broadcast values into, even the
-       anonymous default.
-    3. Non-``Instance`` entries in a per-component list (delegated to
-       ``_validate_instance_list``).
-    4. Non-string (and non-``None``) ``Instance.id`` values (delegated to
-       ``_validate_instance_list``).
-    5. Duplicate non-None ``id`` within one component's instance list, or
-       multiple anonymous ``id=None`` entries (delegated to
-       ``_validate_instance_list``).
-    """
-    known = set(COMPONENTS.keys())
-    declared = set(INSTANCES.keys())
-    if declared != known:
-        missing = sorted(known - declared)
-        extra = sorted(declared - known)
-        raise ValueError(
-            "INSTANCES and COMPONENTS keys must match. "
-            f"Missing from INSTANCES: {missing}. "
-            f"Extra in INSTANCES: {extra}."
-        )
-    for component, instance_list in INSTANCES.items():
-        if not instance_list:
-            raise ValueError(
-                f"INSTANCES[{component!r}] is empty; needs at least one "
-                f"Instance (Instance() preserves the dimensionless default)."
-            )
-        _validate_instance_list(
-            instance_list, where=f"INSTANCES[{component!r}]"
-        )
+    return _catalog_validate_instances_registry(runtime_key=__name__)
 
 
 _validate_instances_registry()
 
 
 def _load_instance_config(path: "Path") -> dict[str, list["Instance"]]:
-    """Parse a YAML or JSON --instance-config file into a per-component Instance map.
+    return _models_load_instance_config(path, runtime_key=__name__)
 
-    File schema::
 
-        components:
-          authservice:
-            - {id: auth-east, region: us-east-1, pod: auth-1}
-            - {id: auth-west, region: us-west-2, pod: auth-2}
-
-    Every listed component must be a key of COMPONENTS. Each instance dict may
-    only contain Instance field names (id, host, pod, az, region, tenant).
-    Per-component instance counts are capped at MAX_INSTANCES_PER_COMPONENT.
-    The id-uniqueness and shape rules from _validate_instance_list apply after
-    construction.
-
-    Returns a partial map: only components explicitly listed in the file appear
-    as keys. ``main()`` fills the remaining components from the module-level
-    ``INSTANCES`` registry (defaulting to ``[Instance()]``).
-
-    Raises ``ValueError`` (caught in ``main()`` and re-raised via ``sys.exit``)
-    for every schema violation: unknown components, unknown fields, empty
-    component lists, duplicate ids, count exceeding the cap, missing or
-    malformed top-level structure, IO errors on the file, and YAML/JSON parse
-    errors.
-    """
-    suffix = path.suffix.lower()
-    is_yaml = suffix in {".yaml", ".yml"}
-    if is_yaml:
-        try:
-            import yaml  # PyYAML; optional dependency
-        except ImportError:
-            raise ValueError(
-                f"--instance-config {path}: PyYAML is required to parse YAML files "
-                "but is not installed. Install it with 'pip install pyyaml' or "
-                "use a .json file instead."
-            )
-        # PyYAML's YAMLError is the parent of every parse / scanner /
-        # composer error it raises.
-        parse_exc_types: tuple[type[Exception], ...] = (
-            yaml.YAMLError, UnicodeDecodeError,
-        )
-    else:
-        import json
-        parse_exc_types = (json.JSONDecodeError, UnicodeDecodeError)
-    try:
-        with open(path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f) if is_yaml else json.load(f)
-    except OSError as exc:
-        raise ValueError(
-            f"--instance-config {path}: failed to read file: {exc}"
-        ) from exc
-    except parse_exc_types as exc:
-        # Narrowed from ``except Exception`` so KeyboardInterrupt /
-        # SystemExit (they inherit from BaseException, not Exception, but
-        # being explicit avoids accidentally swallowing programming-error
-        # exceptions like AttributeError if the parser were ever swapped).
-        raise ValueError(
-            f"--instance-config {path}: failed to parse "
-            f"{'YAML' if is_yaml else 'JSON'}: {exc}"
-        ) from exc
-
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"--instance-config {path}: top-level value must be a mapping, "
-            f"got {type(raw).__name__}"
-        )
-    # Distinguish "key absent" from "key present but explicitly null" so
-    # ``components: null`` in YAML reports the more accurate
-    # "must be a mapping" error rather than the misleading "missing key"
-    # error.
-    if "components" not in raw:
-        raise ValueError(
-            f"--instance-config {path}: missing required top-level key 'components'"
-        )
-    components_raw = raw["components"]
-    if not isinstance(components_raw, dict):
-        raise ValueError(
-            f"--instance-config {path}: 'components' must be a mapping, "
-            f"got {type(components_raw).__name__}"
-        )
-
-    # Derived from the canonical column list so a future Instance field
-    # added to ``_INSTANCE_DIMENSION_COLUMNS`` is immediately accepted by
-    # the config loader without a second edit.
-    _valid_instance_fields = frozenset(_INSTANCE_DIMENSION_COLUMNS)
-    result: dict[str, list[Instance]] = {}
-    for component, inst_list in components_raw.items():
-        if component not in COMPONENTS:
-            raise ValueError(
-                f"--instance-config {path}: unknown component {component!r}; "
-                f"valid components: {sorted(COMPONENTS.keys())}"
-            )
-        if not isinstance(inst_list, list):
-            raise ValueError(
-                f"--instance-config {path}: {component!r} value must be a list, "
-                f"got {type(inst_list).__name__}"
-            )
-        if not inst_list:
-            raise ValueError(
-                f"--instance-config {path}: {component!r} has an empty instance list; "
-                "omit the key to fall back to a single anonymous Instance()"
-            )
-        if len(inst_list) > MAX_INSTANCES_PER_COMPONENT:
-            raise ValueError(
-                f"--instance-config {path}: {component!r} declares {len(inst_list)} "
-                f"instances but MAX_INSTANCES_PER_COMPONENT={MAX_INSTANCES_PER_COMPONENT}"
-            )
-        instances = []
-        for i, entry in enumerate(inst_list):
-            if not isinstance(entry, dict):
-                raise ValueError(
-                    f"--instance-config {path}: {component!r}[{i}] must be a dict, "
-                    f"got {type(entry).__name__}"
-                )
-            # Compare keys against the valid set after coercing to repr so a
-            # YAML mapping with non-string keys (e.g. ``{1: 'x'}``) still
-            # surfaces as an unknown-field ValueError rather than a TypeError
-            # from sorting heterogeneous keys.
-            unknown = [k for k in entry if k not in _valid_instance_fields]
-            if unknown:
-                raise ValueError(
-                    f"--instance-config {path}: {component!r}[{i}] contains unknown "
-                    f"field(s) {sorted(unknown, key=repr)}; valid fields: "
-                    f"{sorted(_valid_instance_fields)}"
-                )
-            # Build the Instance kwargs from the same canonical tuple
-            # used by the validator above, so a future field added to
-            # _INSTANCE_DIMENSION_COLUMNS lands in both places at once
-            # (validator accepts the key + constructor populates the
-            # attribute) and can't be accepted-and-silently-dropped.
-            instances.append(Instance(**{
-                field: entry.get(field) for field in _INSTANCE_DIMENSION_COLUMNS
-            }))
-        _validate_instance_list(instances, where=f"--instance-config {path} {component!r}")
-        result[component] = instances
-
-    return result
 
 
 def _resolve_effective_specs(metrics_per_component: int | None) -> dict[str, list[MetricSpec]]:

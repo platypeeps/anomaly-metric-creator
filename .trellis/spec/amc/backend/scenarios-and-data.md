@@ -65,13 +65,15 @@ catalog rows, ops profiles, and focused tests in the same change. Sources:
 New metrics belong in the ordered `COMPONENTS` catalog. Preserve the historic
 default metric zone unless intentionally changing default CSV bytes; append or
 replace supplemental metrics by default and respect `MAX_METRICS_PER_COMPONENT`.
-Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
-`tests/conftest.py`; `tests/test_registry.py`; `tests/test_correctness.py`.
+Sources: `CLAUDE.md`; `src/anomaly_metric_creator/catalog.py`;
+`src/anomaly_metric_creator/legacy.py`; `tests/conftest.py`;
+`tests/test_registry.py`; `tests/test_correctness.py`.
 
 New components require lockstep updates to `COMPONENTS`,
 `DEFAULT_METRICS_PER_COMPONENT`, `tests/conftest.py` component field fixtures,
 and any scenario/ops/topology docs that reference the component set. Sources:
 `CLAUDE.md`; `README.md`; `docs/topology.md`;
+`src/anomaly_metric_creator/catalog.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/conftest.py`;
 `tests/test_registry.py`; `tests/test_correctness.py`.
 

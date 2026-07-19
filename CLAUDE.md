@@ -7,7 +7,7 @@ the focused Trellis spec first when a durable rule changes. The canonical implem
 thin compatibility shim that re-exports it and runs `main()`, and the installed `amc` /
 `anomaly-metric-creator` console scripts dispatch through `anomaly_metric_creator.cli`.
 Edit the focused implementation module for behavior changes (`legacy.py` still
-owns generation and registries; extracted modules own their named surfaces) —
+owns generation and scenario/topology wiring; extracted modules own their named surfaces) —
 the shim and `cli.py` are wiring only, so
 `python anomaly-metric-creator.py …`, a `pip install .` console script, and the test
 suite all drive the same code. User-facing usage, install, CLI reference, output files,
@@ -17,12 +17,12 @@ Small package facade modules (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) are import-stability points for focused surfaces,
 not parallel behavior copies. Three now re-export from their extracted
 implementations (`combine.py`→`combine_impl.py`, `otel.py`→`otel_stream.py`,
-`schema.py`→`schema_impl.py`/`validate_impl.py`); `models.py` and
-`scenarios.py` still route through `legacy.py` because their dataclasses and
-registries have not been extracted yet. The schema facade imports the focused
-schema/validator implementations after loading `legacy.py` for live registry
-wiring, so object identity with the historic `legacy.<name>` surface remains
-stable.
+`schema.py`→`schema_impl.py`/`validate_impl.py`, and `models.py`→
+`models_impl.py` for `MetricSpec`/`Instance` while `Edge`, `RunContext`, and
+`SaturationParams` remain in `legacy.py` until the topology split). The schema
+facade imports the focused schema/validator implementations after loading
+`legacy.py` for live registry wiring, so object identity with the historic
+`legacy.<name>` surface remains stable.
 That split is now underway (the `07-02-legacy-monolith-decomposition` epic;
 boundaries and sequencing fixed in that task's `design.md`). Extraction
 pattern: code moves **verbatim** to a new module, `legacy.py` re-imports every
@@ -63,11 +63,21 @@ dimension checks), `validate_topology.py` (aggregate topology coupling),
 `_parse_start_time_arg`, `_reconcile_cli_surface`, `_ADVANCED_DESTS`, and
 generate-flag validation), and `cli_subcommands.py`
 (`_SUBCOMMANDS`, `_main_combine_subcommand`, `_main_validate_subcommand`,
-`_main_serve_subcommand`, and `_main_trace_bundle_subcommand`).
+`_main_serve_subcommand`, and `_main_trace_bundle_subcommand`),
+`models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
+`_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
+`DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
+catalog/instance metadata validator implementations).
 `schema_impl.py`, `cli_args.py`, and the validator orchestrator access live
 registries through callbacks configured by `legacy.py`; `cli_args.py` refreshes
 live `COMPONENTS`, `SCENARIOS`, and `DEFAULT_METRICS_PER_COMPONENT` before
-parsing so monkeypatched registry tests see the current state. Topology leaf
+parsing so monkeypatched registry tests see the current state. The moved model
+and catalog helpers use the same callback pattern for `legacy.COMPONENTS` and
+`legacy.INSTANCES`; these callbacks must be named and weak-referenceable so
+isolated `legacy.py` test loads can be garbage-collected after use. `legacy.py`
+keeps the catalog metadata validator call at its historical import-time
+position so the implementation can move without changing validation order.
+Topology leaf
 modules receive those registries as explicit arguments so tests that patch
 `legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS` still exercise the current
 registry state without introducing a reverse import.
@@ -1992,10 +2002,10 @@ Once the slot exists, the column flows through `_natural_column()` and
 
 ### Adding new components
 
-A new component needs two lockstep entries in `src/anomaly_metric_creator/legacy.py`
+A new component needs two lockstep entries in `src/anomaly_metric_creator/catalog.py`
 and two in `tests/conftest.py`:
 
-In `src/anomaly_metric_creator/legacy.py`:
+In `src/anomaly_metric_creator/catalog.py`:
 
 1. `COMPONENTS[name]` — ordered `MetricSpec` list (up to `MAX_METRICS_PER_COMPONENT`).
 2. `DEFAULT_METRICS_PER_COMPONENT[name]` — how many metrics the new component
