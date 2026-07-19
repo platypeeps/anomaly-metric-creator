@@ -25,11 +25,12 @@ class MetricSpec:
     deterministic series do not perturb the shared numpy random stream.
 
     Schema fields (``unit``, ``semantic_type``, ``min_value``, ``max_value``,
-    ``dtype``, ``derivation``) are declarative metadata only — they do not
-    affect generation. They flow into ``schema.json`` and the
-    ``validate`` subcommand's checks. Defaults preserve existing behavior for
-    catalog entries that have not been backfilled yet (the generator still
-    emits the same bytes whether or not these fields are populated).
+    ``dtype``, ``derivation``) flow into ``schema.json`` and the
+    ``validate`` subcommand's checks. ``dtype="int"`` also participates in
+    generation when integer casting is enabled, causing
+    ``generate_component`` to round the column values through ``np.rint``.
+    Defaults preserve existing behavior for catalog entries that have not
+    been backfilled yet.
     """
     name: str
     base: float
