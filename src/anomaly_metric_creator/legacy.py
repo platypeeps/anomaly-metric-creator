@@ -184,8 +184,6 @@ DERIVED_METRICS: set[tuple[str, str]] = {
 from .models_impl import (
     Instance as Instance,
     MetricSpec as MetricSpec,
-    _VALID_DTYPES as _VALID_DTYPES,
-    _VALID_SEMANTIC_TYPES as _VALID_SEMANTIC_TYPES,
     _configure_models_runtime as _configure_models_runtime,
     _load_instance_config as _models_load_instance_config,
     _validate_instance_list as _validate_instance_list,
@@ -2305,8 +2303,6 @@ from .catalog import (
     MAX_INSTANCES_PER_COMPONENT as MAX_INSTANCES_PER_COMPONENT,
     MAX_METRICS_PER_COMPONENT as MAX_METRICS_PER_COMPONENT,
     _configure_catalog_runtime as _configure_catalog_runtime,
-    _daily_sine as _daily_sine,
-    _llm_business_hours as _llm_business_hours,
     _validate_instances_registry as _catalog_validate_instances_registry,
     _validate_metric_spec_schema_metadata as _catalog_validate_metric_spec_schema_metadata,
 )

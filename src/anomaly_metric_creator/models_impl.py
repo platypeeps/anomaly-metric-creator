@@ -15,24 +15,6 @@ from .csv_layout import (
 # ------------------------------------------------------------------
 # Per-metric schema. One MetricSpec per CSV column per component.
 # ------------------------------------------------------------------
-# Vocabulary for ``MetricSpec.semantic_type``. Drives both the ``schema.json``
-# emitter and the ``validate`` subcommand's checks (e.g. ``counter`` / ``rate``
-# columns must be non-negative). Values map onto the OTLP semantic instrument
-# kinds the generator uses elsewhere (``stream_otel_signals`` Sum data points
-# for counters, ``stream_otel_gauges`` Gauge data points for gauges).
-_VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
-
-# Vocabulary for ``MetricSpec.dtype``. ``int`` here means "values are
-# expected to be whole numbers"; ``generate_component`` rounds
-# int-typed columns via ``np.rint`` before derivations run (the
-# default since the phase 6 flag day; the phase-9 flag day removed the
-# last CLI opt-out, and programmatic callers can still opt out via
-# ``apply_dtype_int_cast=False``), so the CSV
-# cell is a whole-integer string. The validator surfaces any remaining
-# fractional values as schema violations.
-_VALID_DTYPES = frozenset({"float", "int"})
-
-
 @dataclass(frozen=True)
 class MetricSpec:
     """Config for one synthetic metric column.

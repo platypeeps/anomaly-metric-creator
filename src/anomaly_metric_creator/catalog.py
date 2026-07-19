@@ -22,14 +22,25 @@ except ModuleNotFoundError as exc:
 from .models_impl import (
     Instance,
     MetricSpec,
-    _VALID_DTYPES,
-    _VALID_SEMANTIC_TYPES,
     _validate_instance_list,
 )
 
 # Local copy keeps the moved ``_daily_sine`` helper independent from
 # ``legacy.py`` while preserving its historic formula exactly.
 SECONDS_PER_DAY = 86_400
+
+# Vocabulary for ``MetricSpec.semantic_type``. Drives both the ``schema.json``
+# emitter and the ``validate`` subcommand's checks (e.g. ``counter`` / ``rate``
+# columns must be non-negative). Values map onto the OTLP semantic instrument
+# kinds the generator uses elsewhere (``stream_otel_signals`` Sum data points
+# for counters, ``stream_otel_gauges`` Gauge data points for gauges).
+_VALID_SEMANTIC_TYPES = frozenset({"counter", "gauge", "ratio", "rate"})
+
+# Vocabulary for ``MetricSpec.dtype``. ``int`` here means "values are expected
+# to be whole numbers"; ``generate_component`` rounds int-typed columns via
+# ``np.rint`` before derivations run. The validator surfaces any remaining
+# fractional values as schema violations.
+_VALID_DTYPES = frozenset({"float", "int"})
 
 # Shared seasonality / shaping helpers used by COMPONENTS specs
 # ------------------------------------------------------------------
