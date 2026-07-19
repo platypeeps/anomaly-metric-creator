@@ -649,15 +649,7 @@ Consolidated prior planning follow-ups into Trellis task records, added the rema
 
 ### Main Changes
 
-- Extracted `MetricSpec`, `Instance`, `_validate_instance_list`, and
-  `_load_instance_config` into `models_impl.py`.
-- Moved `COMPONENTS`, `INSTANCES`, default metric counts, metric caps, catalog
-  shaping helpers, and catalog validator implementations into `catalog.py`.
-- Rewired `legacy.py` and `models.py` to preserve facade identity and
-  monkeypatch-visible registry reads.
-- Addressed review feedback by removing unused private imports/constants,
-  storing runtime callbacks through weak references, and invoking catalog
-  metadata validation from the historical `legacy.py` call site.
+- Detailed change bullets were not supplied; see the summary above.
 
 ### Git Commits
 
@@ -667,11 +659,7 @@ Consolidated prior planning follow-ups into Trellis task records, added the rema
 
 ### Testing
 
-- `.venv/bin/python -m py_compile src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/models_impl.py src/anomaly_metric_creator/catalog.py src/anomaly_metric_creator/models.py`
-- `.venv/bin/ruff check src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/models_impl.py src/anomaly_metric_creator/catalog.py src/anomaly_metric_creator/models.py tests/test_registry.py`
-- `.venv/bin/pytest tests/test_registry.py tests/test_instances.py tests/test_instance_config.py tests/test_instances_per_component.py tests/test_package_facades.py tests/test_topology_registry.py::test_component_metric_base_reads_live_components -n 0` (`111 passed`)
-- `.venv/bin/pytest` (`1610 passed, 2 skipped`)
-- `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
+- Validation was not recorded for this session.
 
 ### Status
 
@@ -841,7 +829,15 @@ Extracted MetricSpec and Instance into models_impl.py, moved component and insta
 
 ### Main Changes
 
-- Detailed change bullets were not supplied; see the summary above.
+- Extracted `MetricSpec`, `Instance`, `_validate_instance_list`, and
+  `_load_instance_config` into `models_impl.py`.
+- Moved `COMPONENTS`, `INSTANCES`, default metric counts, metric caps, catalog
+  shaping helpers, and catalog validator implementations into `catalog.py`.
+- Rewired `legacy.py` and `models.py` to preserve facade identity and
+  monkeypatch-visible registry reads.
+- Addressed review feedback by removing unused private imports/constants,
+  storing runtime callbacks through weak references, and invoking catalog
+  metadata validation from the historical `legacy.py` call site.
 
 ### Git Commits
 
@@ -853,7 +849,11 @@ Extracted MetricSpec and Instance into models_impl.py, moved component and insta
 
 ### Testing
 
-- Validation was not recorded for this session.
+- `.venv/bin/python -m py_compile src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/models_impl.py src/anomaly_metric_creator/catalog.py src/anomaly_metric_creator/models.py`
+- `.venv/bin/ruff check src/anomaly_metric_creator/legacy.py src/anomaly_metric_creator/models_impl.py src/anomaly_metric_creator/catalog.py src/anomaly_metric_creator/models.py tests/test_registry.py`
+- `.venv/bin/pytest tests/test_registry.py tests/test_instances.py tests/test_instance_config.py tests/test_instances_per_component.py tests/test_package_facades.py tests/test_topology_registry.py::test_component_metric_base_reads_live_components -n 0` (`111 passed`)
+- `.venv/bin/pytest` (`1610 passed, 2 skipped`)
+- `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
 
 ### Status
 
