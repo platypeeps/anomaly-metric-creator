@@ -55,7 +55,7 @@ def _apply_saturation(
     _validate_saturation_params(sat, context="_apply_saturation")
     upstream_arr = np.asarray(upstream_load, dtype=np.float64)
     # Generated captures are finite by construction (Kahn ordering feeds this
-    # only post-round load columns), so this never fires on real output; it
+    # only pre-round captured load columns), so this never fires on real output; it
     # fails loud for direct/programmatic callers rather than letting a
     # NaN/inf propagate silently through the logistic into a metric cell
     # (07-02-verify-topology-divzero). np.maximum/np.minimum do not filter
