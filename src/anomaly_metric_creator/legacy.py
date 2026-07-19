@@ -126,11 +126,11 @@ class RunContext:
     cascading_anomalies: dict = field(default_factory=dict)
     instances: dict = field(default_factory=dict)
 
-# Derived-metric recomputation moved with generate_component() to generation.py
+# Derived-metric recomputation moved to generation_derivations.py and generation.py
 # (decomposition final step). Re-imported here so tests and validators keep the
 # historic ``legacy.<name>`` surface.
 from . import generation as _generation_module
-from .generation import (
+from .generation_derivations import (
     DERIVED_METRICS as DERIVED_METRICS,
     DERIVATIONS as DERIVATIONS,
     _derive_cacheservice as _derive_cacheservice,
@@ -870,12 +870,14 @@ from .generation import (
     _INSTANCE_FILTER_NO_MATCH as _INSTANCE_FILTER_NO_MATCH,
     _build_timestamp_arrays as _generation_build_timestamp_arrays,
     _configure_generation_runtime as _configure_generation_runtime,
-    _format_csv_row_block as _generation_format_csv_row_block,
-    _format_metric_suffix as _generation_format_metric_suffix,
     _natural_column as _generation_natural_column,
     _resolve_instance_filter as _generation_resolve_instance_filter,
-    _splice_dst_artifact as _generation_splice_dst_artifact,
     generate_component as _generation_generate_component,
+)
+from .generation_emit import (
+    _format_csv_row_block as _generation_format_csv_row_block,
+    _format_metric_suffix as _generation_format_metric_suffix,
+    _splice_dst_artifact as _generation_splice_dst_artifact,
 )
 
 
