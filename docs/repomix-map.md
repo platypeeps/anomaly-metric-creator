@@ -691,13 +691,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-02-decomp-catalog-data/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-02-decomp-generation-topology/
       check.jsonl
       design.md
@@ -986,6 +979,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         07-02-decomp-artifacts/
           check.jsonl
           implement.jsonl
+          prd.md
+          task.json
+        07-02-decomp-catalog-data/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
           prd.md
           task.json
         07-02-decomp-cli-args/

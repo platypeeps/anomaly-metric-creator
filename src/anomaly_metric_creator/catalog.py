@@ -560,8 +560,9 @@ del _components_keys, _defaults_keys, _overflowed, _name, _default
 # byte-identical to today: ``Instance()`` carries no dimension labels, so
 # Phase 2's CSV writer treats the run as "no dimension columns" and falls
 # back to today's ``timestamp, m0, m1, ...`` header. Keys MUST match
-# ``COMPONENTS`` exactly — drift is rejected at import time by
-# ``_validate_instances_registry``.
+# ``COMPONENTS`` exactly — ``legacy.py`` invokes
+# ``_validate_instances_registry`` at its historical import-time validation
+# point so the moved registry keeps the original validation order.
 INSTANCES: dict[str, list["Instance"]] = {
     name: [Instance()] for name in COMPONENTS
 }
