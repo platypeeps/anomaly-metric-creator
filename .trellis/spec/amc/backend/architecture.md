@@ -12,6 +12,8 @@ wiring/import-stability surfaces, not behavior forks. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/cli.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/models.py`; `src/anomaly_metric_creator/otel.py`;
 `src/anomaly_metric_creator/scenarios.py`; `src/anomaly_metric_creator/schema.py`;
+`src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
@@ -62,9 +64,11 @@ scan/iteration primitives + `_INSTANCE_DIMENSION_COLUMNS`), `gauges_impl.py`
 validation orchestration and `Violation`), `validate_cells.py` (cell,
 derivation, and long-form dimension validation), `validate_topology.py`
 (aggregate topology coupling validation), `validate_topology_instances.py`
-(per-instance topology coupling validation), and `otel_stream.py` (OTEL HTTP
-streaming). All are re-imported by
-`legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
+(per-instance topology coupling validation), `otel_stream.py` (OTEL HTTP
+streaming), `cli_args.py` (parser construction, CLI reconciliation, and
+generate-flag validation), and `cli_subcommands.py` (dedicated `combine`,
+`validate`, `serve`, and `trace-bundle` subcommand dispatch helpers). All are
+re-imported by `legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) preserve historic object identity. When an
 extracted module must read a registry that still lives in `legacy.py`, configure
 live callbacks from `legacy.py` and pass the current registry view into leaf
@@ -78,6 +82,8 @@ come from the live registry. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/otel.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
+`src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
 `src/anomaly_metric_creator/validate_cells.py`;

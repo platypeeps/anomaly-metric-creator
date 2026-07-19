@@ -23,6 +23,8 @@ The supported subcommands are `generate` (implicit default), `combine DIR`,
 the generation parser; `serve` parses server flags first and forwards remaining
 generation flags to the normal parser. Sources: `CLAUDE.md`; `README.md`;
 `docs/application-flow.md`; `src/anomaly_metric_creator/legacy.py`;
+`src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/server.py`; `src/anomaly_metric_creator/trace_bundle.py`;
 `tests/test_cli_surface.py`; `tests/test_trace_bundle.py`.
 
@@ -30,6 +32,7 @@ The canonical artifact flag is `--emit` with tokens `metrics`, `logs`,
 `traces`, `gauges`, `schema`, and `combined`. `combined` **and** `gauges` each
 require `metrics` (the parser rejects the combination otherwise); `schema` has
 no artifact dependency. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_emit_selection_hygiene.py`;
 `tests/test_cli_surface.py`.
 
@@ -37,6 +40,7 @@ The canonical OTEL selection flag is `--otel-send` with `logs`, `metrics`,
 `traces`, `gauges`, `all`, or `none`. Streaming is off unless selected; selected
 signals are authoritative and unselected endpoints must not leak in from env
 defaults. Sources: `README.md`; `CLAUDE.md`;
+`src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_cli.py`;
 `tests/test_otel_gauges.py`; `tests/test_cli_surface.py`.
 
@@ -52,6 +56,8 @@ configured retry path. Sources: `README.md`;
 New flags must be placed in the right parser/group, reconciled through the
 existing namespace flow, tested in isolation, and checked against interacting
 flags and subcommands. Sources: `CLAUDE.md`; `README.md`;
+`src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_cli_surface.py`;
 `tests/test_args.py`.
 
