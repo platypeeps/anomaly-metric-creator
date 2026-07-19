@@ -75,13 +75,13 @@ two-tier help + import-time validator ordering + the new registry seam).
 ## Acceptance Criteria
 
 - [ ] All locked SHA-256 golden hashes unchanged (full suite, `full-ci`).
-- [ ] `tests/test_cli_surface.py` passes unchanged (no test edits).
-- [ ] `python anomaly-metric-creator.py --help`, `amc --help`, and
+- [x] `tests/test_cli_surface.py` passes unchanged (no test edits).
+- [x] `python anomaly-metric-creator.py --help`, `amc --help`, and
       `--help-all` render identically to before the move.
-- [ ] `serve`'s forward-unrecognized-flags-to-`parse_args` path still works
+- [x] `serve`'s forward-unrecognized-flags-to-`parse_args` path still works
       (`tests/test_server.py` serve-flag coverage green).
-- [ ] CLAUDE.md module map updated in the same PR.
-- [ ] The `_load_instance_config` / resolution-cluster destination decision
+- [x] CLAUDE.md module map updated in the same PR.
+- [x] The `_load_instance_config` / resolution-cluster destination decision
       is recorded in design.md.
 
 ## Notes

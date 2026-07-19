@@ -6,7 +6,9 @@ the focused Trellis spec first when a durable rule changes. The canonical implem
 `src/anomaly_metric_creator/legacy.py`; the top-level `anomaly-metric-creator.py` is a
 thin compatibility shim that re-exports it and runs `main()`, and the installed `amc` /
 `anomaly-metric-creator` console scripts dispatch through `anomaly_metric_creator.cli`.
-Edit `legacy.py` for any behavior change — the shim and `cli.py` are wiring only, so
+Edit the focused implementation module for behavior changes (`legacy.py` still
+owns generation and registries; extracted modules own their named surfaces) —
+the shim and `cli.py` are wiring only, so
 `python anomaly-metric-creator.py …`, a `pip install .` console script, and the test
 suite all drive the same code. User-facing usage, install, CLI reference, output files,
 and the anomaly catalog live in [README.md](README.md). Read it first if you need to run
@@ -53,15 +55,22 @@ topology snapshot serialization, and `write_schema_json`),
 `validate_impl.py` (schema read-back shape validation, file-set / row-count /
 timestamp orchestration, `Violation`, and `validate_output`),
 `validate_cells.py` (cell/range checks, derivation recomputers, and long-form
-dimension checks), `validate_topology.py` (aggregate topology coupling), and
-`validate_topology_instances.py` (per-instance topology coupling), and
+dimension checks), `validate_topology.py` (aggregate topology coupling),
+`validate_topology_instances.py` (per-instance topology coupling),
 `otel_stream.py` (`stream_otel_signals`,
 `stream_otel_gauges`, `_write_activity`, `_verbose_body_repr`, and
-`_http_error_activity_fields`). `schema_impl.py` and the validator
-orchestrator access live topology registries through callbacks configured by
-`legacy.py`; topology leaf modules receive those registries as explicit
-arguments so tests that patch `legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS`
-still exercise the current registry state without introducing a reverse import.
+`_http_error_activity_fields`), `cli_args.py` (`parse_args`,
+`_parse_start_time_arg`, `_reconcile_cli_surface`, `_ADVANCED_DESTS`, and
+generate-flag validation), and `cli_subcommands.py`
+(`_SUBCOMMANDS`, `_main_combine_subcommand`, `_main_validate_subcommand`,
+`_main_serve_subcommand`, and `_main_trace_bundle_subcommand`).
+`schema_impl.py`, `cli_args.py`, and the validator orchestrator access live
+registries through callbacks configured by `legacy.py`; `cli_args.py` refreshes
+live `COMPONENTS`, `SCENARIOS`, and `DEFAULT_METRICS_PER_COMPONENT` before
+parsing so monkeypatched registry tests see the current state. Topology leaf
+modules receive those registries as explicit arguments so tests that patch
+`legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS` still exercise the current
+registry state without introducing a reverse import.
 `otel.py` imports
 its public streamers from `otel_stream.py`; `legacy.py` re-imports the same
 objects so facade/legacy identity remains stable.
@@ -75,7 +84,8 @@ namespace) — the design.md move-with-callers rule in practice.
 step-2 `from .otlp import` block); after any extraction, grep the moved
 range for `^from \.` re-imports and confirm every leaf re-import
 (`redaction`, `timeutil`, `otlp`, `csv_layout`, `artifacts`, `combine_impl`,
-`schema_impl`, `validate_impl`, `otel_stream`) still resolves.
+`schema_impl`, `validate_impl`, `otel_stream`, `cli_args`, `cli_subcommands`)
+still resolves.
 `tests/conftest.py::_load_amc` and the fresh-copy loaders in
 `tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with
 package context (real submodule import or a dotted spec name) so these
@@ -166,8 +176,11 @@ post-phase-9 CLI flag day and no longer parse. Canonical surface:
   the OTEL transport tuning flags). Hiding is a post-construction
   pass over `p._actions` keyed by `_ADVANCED_DESTS`.
 
-Reconciliation lives in `_reconcile_cli_surface(p, args)`, called
-immediately after `p.parse_args` and *before* every validation gate:
+Parser construction and CLI reconciliation live in `cli_args.py`; the
+dedicated subcommand parsers live in `cli_subcommands.py`; `legacy.py`
+re-imports those names so `legacy.<name>` and server `state.legacy` lookups
+stay compatible. Reconciliation lives in `_reconcile_cli_surface(p, args)`,
+called immediately after `p.parse_args` and *before* every validation gate:
 the canonical flags translate onto the historic argument-namespace
 names (`emit_selection`, `combine`, `otel_enabled`, the per-signal
 endpoints, ...) so all downstream gates and `main()` consume one

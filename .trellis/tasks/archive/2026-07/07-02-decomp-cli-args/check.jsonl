@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Owns deterministic full-suite, pytest/xdist, and pre-PR validation expectations."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Owns documentation, generated repo-map, and review readiness expectations for this extraction."}
