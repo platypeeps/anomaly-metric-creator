@@ -2,24 +2,29 @@
 
 Expanded historical/source guide for the anomaly metric creator. Canonical
 development conventions now live in `.trellis/spec/amc/backend/index.md`; update
-the focused Trellis spec first when a durable rule changes. The canonical implementation is
-`src/anomaly_metric_creator/legacy.py`; the top-level `anomaly-metric-creator.py` is a
-thin compatibility shim that re-exports it and runs `main()`, and the installed `amc` /
-`anomaly-metric-creator` console scripts dispatch through `anomaly_metric_creator.cli`.
-Edit the focused implementation module for behavior changes (`legacy.py` still
-owns generation and scenario/topology wiring; extracted modules own their named surfaces) —
-the shim and `cli.py` are wiring only, so
+the focused Trellis spec first when a durable rule changes. The canonical
+runtime entrypoint is still `src/anomaly_metric_creator/legacy.py`: it owns
+`main()`, `RunContext`, scenario registry/wiring, and compatibility re-imports.
+The top-level `anomaly-metric-creator.py` is a thin compatibility shim that
+re-exports it and runs `main()`, and the installed `amc` /
+`anomaly-metric-creator` console scripts dispatch through
+`anomaly_metric_creator.cli`. Edit the focused implementation module for
+behavior changes (`generation.py`, `topology_impl.py`, `topology_compose.py`,
+and other extracted modules own their named surfaces) — the shim and `cli.py`
+are wiring only, so
 `python anomaly-metric-creator.py …`, a `pip install .` console script, and the test
 suite all drive the same code. User-facing usage, install, CLI reference, output files,
 and the anomaly catalog live in [README.md](README.md). Read it first if you need to run
 the script or understand the failure modes it injects.
 Small package facade modules (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) are import-stability points for focused surfaces,
-not parallel behavior copies. Three now re-export from their extracted
-implementations (`combine.py`→`combine_impl.py`, `otel.py`→`otel_stream.py`,
-`schema.py`→`schema_impl.py`/`validate_impl.py`, and `models.py`→
-`models_impl.py` for `MetricSpec`/`Instance` while `Edge`, `RunContext`, and
-`SaturationParams` remain in `legacy.py` until the topology split). The schema
+not parallel behavior copies. They re-export from extracted implementations
+where a focused surface exists (`combine.py`→`combine_impl.py`,
+`otel.py`→`otel_stream.py`, `schema.py`→`schema_impl.py`/`validate_impl.py`,
+and `models.py`→`models_impl.py` for `MetricSpec`/`Instance` while `Edge`,
+`RunContext`, and `SaturationParams` stay exposed through `legacy.py` for
+identity compatibility; `Edge` and `SaturationParams` now originate in
+`topology_impl.py`). The schema
 facade imports the focused schema/validator implementations after loading
 `legacy.py` for live registry wiring, so object identity with the historic
 `legacy.<name>` surface remains stable.
@@ -31,8 +36,10 @@ surface (shim, facades, tests, `state.legacy` lookups) is unchanged, and new
 modules never import `legacy` (one-way dependency). Extracted so far:
 `redaction.py` (sensitive HTTP-header masking for OTEL transport
 diagnostics), `timeutil.py` (CSV-timestamp parsing + unix-nano conversion,
-shared by the merge writers, OTLP builders, and `server_mcp`), and
-`otlp.py` (the eight `_build_otlp_*` JSON/protobuf payload builders plus
+shared by the merge writers, OTLP builders, and `server_mcp`),
+`runtime_defaults.py` (`START` and `SECONDS_PER_DAY` shared by legacy and
+extracted generation helpers), and `otlp.py` (the eight `_build_otlp_*`
+JSON/protobuf payload builders plus
 `_anomaly_event_id`; protobuf imports stay lazy per-function),
 `csv_layout.py` (the shared per-component CSV header-scan / row-iteration
 primitives — `_scan_component_csv_headers`, `_iter_component_rows`,
@@ -67,7 +74,19 @@ generate-flag validation), and `cli_subcommands.py`
 `models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
 `_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
-catalog/instance metadata validator implementations).
+catalog/instance metadata validator implementations), `anomaly_dispatch.py`
+(`_VALID_ANOMALY_SHAPES`, anomaly value resolution, generator metadata caching,
+and step/span dispatch), `generation.py` (`generate_component` and live
+generation callbacks), `generation_derivations.py` (`DERIVATIONS`,
+`DERIVED_METRICS`, and `_derive_cacheservice`), `generation_helpers.py`
+(`_natural_column` and instance-filter helpers), `generation_emit.py` (CSV row
+formatting, DST splice, and timestamp-array helpers), `topology_models.py`
+(`Edge` and `SaturationParams`), `topology_registry.py` (topology metric
+registries and tuning constants), `topology_impl.py` (`TOPOLOGY`, callback
+runtime, generation order, and topology validators), `topology_compose.py`
+(aggregate coupling/saturation composition), `topology_instances.py`
+(per-instance topology composition), and `topology_support.py` (shared
+saturation/equality helpers).
 `schema_impl.py`, `cli_args.py`, and the validator orchestrator access live
 registries through callbacks configured by `legacy.py`; `cli_args.py` refreshes
 live `COMPONENTS`, `SCENARIOS`, and `DEFAULT_METRICS_PER_COMPONENT` before
@@ -77,10 +96,12 @@ and catalog helpers use the same callback pattern for `legacy.COMPONENTS` and
 isolated `legacy.py` test loads can be garbage-collected after use. `legacy.py`
 keeps the catalog metadata validator call at its historical import-time
 position so the implementation can move without changing validation order.
-Topology leaf
-modules receive those registries as explicit arguments so tests that patch
-`legacy.TOPOLOGY` or `_TOPOLOGY_LOAD_METRICS` still exercise the current
-registry state without introducing a reverse import.
+Generation and topology leaf modules use the same named callback pattern for
+`legacy.DERIVATIONS`, `legacy._format_fixed3`, `legacy.TOPOLOGY`,
+`legacy._TOPOLOGY_LOAD_METRICS`, and
+`legacy._TOPOLOGY_SATURATION_TARGETS` so legacy monkeypatches still exercise
+the current registry state without introducing a reverse import. Direct callers
+can patch the canonical extracted-module homes when they bypass `legacy.py`.
 `otel.py` imports
 its public streamers from `otel_stream.py`; `legacy.py` re-imports the same
 objects so facade/legacy identity remains stable.
@@ -94,7 +115,11 @@ namespace) — the design.md move-with-callers rule in practice.
 step-2 `from .otlp import` block); after any extraction, grep the moved
 range for `^from \.` re-imports and confirm every leaf re-import
 (`redaction`, `timeutil`, `otlp`, `csv_layout`, `artifacts`, `combine_impl`,
-`schema_impl`, `validate_impl`, `otel_stream`, `cli_args`, `cli_subcommands`)
+`schema_impl`, `validate_impl`, `otel_stream`, `cli_args`, `cli_subcommands`,
+`models_impl`, `catalog`, `runtime_defaults`, `anomaly_dispatch`, `generation`,
+`generation_derivations`, `generation_helpers`, `generation_emit`,
+`topology_models`, `topology_registry`, `topology_impl`, `topology_compose`,
+`topology_instances`, `topology_support`)
 still resolves.
 `tests/conftest.py::_load_amc` and the fresh-copy loaders in
 `tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with

@@ -862,3 +862,41 @@ Extracted MetricSpec and Instance into models_impl.py, moved component and insta
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: Extract generation and topology modules
+
+**Date**: 2026-07-18
+**Task**: Extract generation and topology modules
+**Package**: amc
+**Branch**: `refactor/extract-generation-topology`
+
+### Summary
+
+Extracted generation and topology code from legacy.py into focused modules, preserved compatibility/runtime callback seams, refreshed repo docs and generated map, and addressed PR review feedback through clean Copilot rounds.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54816b45b8b3c0ee1eb0d33735ac9c889779b5cc` | (see git log) |
+| `fe6cfaa2968b5e5a88c2b2b89e55d53657899159` | (see git log) |
+| `23fdfd25b506d35ca0b2c948dcf633ae8805935a` | (see git log) |
+| `4f8ea9171c244f5e5d1c5b8cf509e73f5e06d74c` | (see git log) |
+| `765bfc12e418fe1c62c6ebc503f59c5db4516522` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
