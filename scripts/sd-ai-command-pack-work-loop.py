@@ -339,7 +339,8 @@ def validate_state(state: Mapping[str, Any]) -> None:
     if not isinstance(current, dict) or not CURRENT_FIELDS.issubset(current):
         raise WorkLoopError("work-loop current state is malformed")
     if any(
-        value is not None and not isinstance(value, str)
+        value is not None
+        and (not isinstance(value, str) or not value.strip())
         for key, value in current.items()
         if key != "prNumber"
     ) or (
@@ -865,7 +866,11 @@ def transition_state(
                 raise WorkLoopError(
                     f"{key} must be recorded with the evidence command, not transition"
                 )
+            if value is not None and not isinstance(value, str):
+                raise WorkLoopError(f"{key} must be a non-empty string or null")
             normalized = compact_text(value) if isinstance(value, str) else value
+            if isinstance(value, str) and not normalized:
+                raise WorkLoopError(f"{key} must be a non-empty string or null")
             remembered = state["current"].get(key)
             if (
                 key in STABLE_CURRENT_FIELDS
@@ -900,6 +905,15 @@ def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
 def _clear_recovery_checkpoint(state: dict[str, Any]) -> None:
     if state["checkpoint"].get("state") in {"ready", "blocked"}:
         state["checkpoint"] = {"state": "none", "target": None, "reason": None}
+
+
+def _has_complete_recovery_evidence(
+    current: Mapping[str, Any], observations: Mapping[str, Any]
+) -> bool:
+    recorded_fields = {
+        key for key in CURRENT_FIELD_ORDER if current.get(key) is not None
+    }
+    return bool(recorded_fields) and recorded_fields.issubset(observations)
 
 
 def validated_evidence(
@@ -967,14 +981,14 @@ def validated_evidence(
             )
 
     branch_head: str | None = None
-    verify_branch = candidate_branch is not None and bool(
+    compare_branch_head = candidate_branch is not None and bool(
         {"branch", "head"} & set(updates)
     )
-    if verify_branch:
-        if not isinstance(candidate_branch, str):
+    if compare_branch_head:
+        if not isinstance(candidate_branch, str) or not candidate_branch.strip():
             raise WorkLoopError("branch evidence must be a non-empty string")
         branch_head = _branch_commit(evidence_repo, candidate_branch)
-        if branch_head is None:
+        if branch_head is None and "branch" in updates:
             raise WorkLoopError(
                 f"branch evidence is not a local Git branch: {candidate_branch}"
             )
@@ -987,7 +1001,11 @@ def validated_evidence(
             raise WorkLoopError(f"head evidence is not a local Git commit: {candidate_head}")
         candidate["head"] = resolved_head
         candidate_head = resolved_head
-        if verify_branch and branch_head != resolved_head:
+        if (
+            compare_branch_head
+            and branch_head is not None
+            and branch_head != resolved_head
+        ):
             raise WorkLoopError("HEAD evidence does not match the recorded branch")
         if not branch_changed and remembered_head is not None and candidate_head != remembered_head:
             resolved_remembered = _resolved_commit(evidence_repo, remembered_head)
@@ -1041,7 +1059,15 @@ def update_evidence(
     repo: Path | None = None,
 ) -> None:
     candidate = validated_evidence(state, updates, repo=repo)
+    recovery_checkpoint_active = state["checkpoint"].get("state") in {
+        "ready",
+        "blocked",
+    }
     state["current"] = candidate
+    if recovery_checkpoint_active and not _has_complete_recovery_evidence(
+        candidate, updates
+    ):
+        return
     state["contextHealth"] = {
         "level": "green",
         "epoch": state["contextHealth"]["epoch"],
@@ -1132,13 +1158,26 @@ def reconcile_state(
         apply_context_signal(state, signal, f"runtime signal: {signal}")
     elif not context_signal_applied:
         has_observations = bool(evidence_observations) or observed_phase is not None
-        if has_observations or state["contextHealth"]["level"] != "red":
+        recovery_checkpoint_active = state["checkpoint"].get("state") in {
+            "ready",
+            "blocked",
+        }
+        recovery_current = candidate_current or current
+        has_complete_recovery_evidence = _has_complete_recovery_evidence(
+            recovery_current, evidence_observations
+        )
+        may_restore_health = (
+            not recovery_checkpoint_active or has_complete_recovery_evidence
+        )
+        if (
+            has_observations and may_restore_health
+        ) or state["contextHealth"]["level"] != "red":
             state["contextHealth"] = {
                 "level": "green",
                 "epoch": state["contextHealth"]["epoch"],
                 "reasons": [],
             }
-        if has_observations:
+        if has_complete_recovery_evidence:
             _clear_recovery_checkpoint(state)
 
 
@@ -1222,8 +1261,10 @@ def status_snapshot(
             "task": state["current"].get("task"),
             "branch": state["current"].get("branch"),
             "head": state["current"].get("head"),
+            "baseBranch": state["current"].get("baseBranch"),
             "prNumber": state["current"].get("prNumber"),
             "prUrl": state["current"].get("prUrl"),
+            "lastShippedSha": state["current"].get("lastShippedSha"),
             "focusMode": focus["mode"],
             "focus": list(focus["original"]),
             "counters": dict(state["counters"]),
@@ -1275,7 +1316,12 @@ def _print(value: Mapping[str, Any], *, as_json: bool) -> None:
         "iteration",
         "phase",
         "task",
+        "branch",
+        "head",
+        "baseBranch",
         "prNumber",
+        "prUrl",
+        "lastShippedSha",
         "focusMode",
         "heartbeatAt",
         "stopReason",
@@ -1294,6 +1340,11 @@ def _add_current_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--last-shipped-sha")
 
 
+def _add_transition_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--task")
+    command.add_argument("--base-branch")
+
+
 def _current_updates_from_args(args: argparse.Namespace) -> dict[str, Any]:
     field_map = {
         "task": args.task,
@@ -1303,6 +1354,14 @@ def _current_updates_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "prNumber": args.pr_number,
         "prUrl": args.pr_url,
         "lastShippedSha": args.last_shipped_sha,
+    }
+    return {key: value for key, value in field_map.items() if value is not None}
+
+
+def _transition_updates_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    field_map = {
+        "task": args.task,
+        "baseBranch": args.base_branch,
     }
     return {key: value for key, value in field_map.items() if value is not None}
 
@@ -1337,7 +1396,7 @@ def build_parser() -> argparse.ArgumentParser:
     transition.add_argument("--repo", type=Path, default=Path.cwd())
     transition.add_argument("--run-id", required=True)
     transition.add_argument("--phase", choices=PHASES, required=True)
-    _add_current_arguments(transition)
+    _add_transition_arguments(transition)
     transition.add_argument("--json", action="store_true")
 
     evidence = subparsers.add_parser(
@@ -1499,7 +1558,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "transition":
-            updates = _current_updates_from_args(args)
+            updates = _transition_updates_from_args(args)
             state = mutate_state(
                 args.repo,
                 args.run_id,

@@ -122,10 +122,15 @@ bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
 
 `task` and `baseBranch` are stable iteration identity. Branch changes are
 accepted only from the feature branch to the recorded base branch at a verified
-merge boundary; commit advances must be locally verifiable. Never use a
-checkpoint transition merely to replace HEAD or PR evidence. A successful
+merge boundary; commit advances must be locally verifiable. A head-only update
+may continue after the recorded branch ref is removed locally, but explicit
+branch evidence must resolve and any available recorded branch must match the
+submitted head. Never use a checkpoint transition merely to replace HEAD or PR
+evidence. A successful
 evidence update or exact verified reconciliation clears an obsolete recovery
-checkpoint; real identity, branch, ancestry, or PR conflicts remain red.
+checkpoint only when the update supplies every non-null field in the recorded
+current-state ledger; a matching phase or partial evidence is not recovery
+evidence. Real identity, branch, ancestry, or PR conflicts remain red.
 
 ## Candidate Inventory And Focus
 

@@ -272,6 +272,10 @@ Task and base branch are stable iteration identity; commit ancestry, PR
 identity, and the final feature-to-base branch switch are validated locally.
 Verified same-phase reconciliation uses the same rules and clears obsolete
 recovery checkpoints instead of routing through a synthetic checkpoint phase.
+A matching phase or partial evidence is not recovery evidence and cannot clear
+a ready or blocked checkpoint left by contradictory current-state observations.
+Recovery through an evidence update or reconciliation must supply every
+non-null field in the recorded current-state ledger.
 
 The work-designs command is a thin `needs-design` selector for that same
 controller. Its default now carries selected tasks from planning through a
@@ -424,9 +428,10 @@ and local/remote branches, installed SD pack and Trellis versions, relevant PR,
 open PRs/issues, current/in-progress/planned Trellis work, completed tasks
 stranded outside the Trellis archive, user-local autonomous loop state,
 anomalies, and numbered next steps. Loop state includes run ID,
-mode/selector/focus, iteration, phase, task/PR, counters, heartbeat, context
-health, checkpoint, lock, and stop reason. Reading it never refreshes the
-ledger or lock. The status adapter accepts terminal `none`, `invalid`, and
+mode/selector/focus, iteration, phase, task, branch/head/base-branch evidence,
+PR identity, last shipped SHA, counters, heartbeat, context health, checkpoint,
+lock, and stop reason. Reading it never refreshes the ledger or lock. The status
+adapter accepts terminal `none`, `invalid`, and
 `unavailable` snapshots plus complete `active`, `paused`, `stopped`, and
 `completed` run snapshots. Missing, unsupported, or incomplete helper results
 become bounded `invalid` anomalies without echoing helper-controlled values. A
