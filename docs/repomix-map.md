@@ -1187,6 +1187,7 @@ scripts/
   sd-ai-command-pack-install-audit.py
   sd-ai-command-pack-pr-body-scope.py
   sd-ai-command-pack-record-session.py
+  sd-ai-command-pack-review-full-check.sh
   sd-ai-command-pack-review-learnings.py
   sd-ai-command-pack-review-local.sh
   sd-ai-command-pack-review-preflight.mjs

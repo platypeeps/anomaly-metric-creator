@@ -14,14 +14,17 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from datetime import datetime
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 SCHEMA_VERSION = 1
 COMMAND_TIMEOUT_SECONDS = 20
 MAX_ITEMS = 100
 HUMAN_ITEM_LIMIT = 5
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+COMMIT_RE = re.compile(r"[0-9a-f]{40,64}")
 GITHUB_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 PR_SEPARATOR = "\x1f"
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
@@ -613,7 +616,11 @@ def validate_work_loop_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
     if not normalized_checkpoint["state"]:
         return invalid_field("checkpoint.state")
-    for field, limit in (("target", 240), ("reason", 500)):
+    for field, limit in (
+        ("target", 240),
+        ("reason", 500),
+        ("resumePhase", 40),
+    ):
         if field not in checkpoint:
             continue
         value = checkpoint[field]
@@ -684,6 +691,138 @@ def validate_work_loop_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
                     return invalid_field("lock.runId")
                 normalized_lock["runId"] = normalized_lock_run_id
         normalized["lock"] = normalized_lock
+
+    if "terminalReconciliation" in snapshot:
+        terminal = snapshot["terminalReconciliation"]
+        if terminal is None:
+            normalized["terminalReconciliation"] = None
+        else:
+            if not isinstance(terminal, dict) or set(terminal) != {
+                "status",
+                "reconciledAt",
+                "archivedTask",
+                "taskId",
+                "delivery",
+                "bookkeeping",
+                "observed",
+            }:
+                return invalid_field("terminalReconciliation")
+            if terminal.get("status") != "verified":
+                return invalid_field("terminalReconciliation.status")
+            if status not in {"stopped", "completed"}:
+                return invalid_field("terminalReconciliation.status")
+            normalized_terminal: dict[str, Any] = {"status": "verified"}
+            for field, limit in (
+                ("reconciledAt", 80),
+                ("archivedTask", 300),
+                ("taskId", 200),
+            ):
+                value = terminal.get(field)
+                if not isinstance(value, str):
+                    return invalid_field(f"terminalReconciliation.{field}")
+                normalized_value = safe_text(value, limit=limit)
+                if not normalized_value:
+                    return invalid_field(f"terminalReconciliation.{field}")
+                normalized_terminal[field] = normalized_value
+            try:
+                datetime.fromisoformat(
+                    normalized_terminal["reconciledAt"].replace("Z", "+00:00")
+                )
+            except ValueError:
+                return invalid_field("terminalReconciliation.reconciledAt")
+            archived_path = normalized_terminal["archivedTask"]
+            pure_archived = PurePosixPath(archived_path)
+            if (
+                "\\" in archived_path
+                or pure_archived.as_posix() != archived_path
+                or pure_archived.parts[:3] != (".trellis", "tasks", "archive")
+                or len(pure_archived.parts) < 5
+                or any(part in {"", ".", ".."} for part in pure_archived.parts)
+            ):
+                return invalid_field("terminalReconciliation.archivedTask")
+
+            def normalize_pr(value: object, field: str) -> dict[str, Any] | None:
+                if not isinstance(value, dict) or set(value) != {
+                    "prNumber",
+                    "prUrl",
+                    "head",
+                    "mergeCommit",
+                }:
+                    return None
+                number = value.get("prNumber")
+                url = value.get("prUrl")
+                head = value.get("head")
+                merge_commit = value.get("mergeCommit")
+                if (
+                    isinstance(number, bool)
+                    or not isinstance(number, int)
+                    or number < 1
+                    or not isinstance(url, str)
+                    or not isinstance(head, str)
+                    or COMMIT_RE.fullmatch(head) is None
+                    or not isinstance(merge_commit, str)
+                    or COMMIT_RE.fullmatch(merge_commit) is None
+                ):
+                    return None
+                safe_url = safe_text(url, limit=500)
+                try:
+                    split = urlsplit(safe_url)
+                    hostname = split.hostname
+                    _ = split.port
+                    username = split.username
+                    password = split.password
+                except ValueError:
+                    return None
+                final_component = split.path.rstrip("/").rsplit("/", 1)[-1]
+                if (
+                    split.scheme not in {"http", "https"}
+                    or not hostname
+                    or username is not None
+                    or password is not None
+                    or split.query
+                    or split.fragment
+                    or not final_component.isdigit()
+                    or int(final_component) != number
+                ):
+                    return None
+                return {
+                    "prNumber": number,
+                    "prUrl": safe_url,
+                    "head": head,
+                    "mergeCommit": merge_commit,
+                }
+
+            delivery = normalize_pr(
+                terminal.get("delivery"), "terminalReconciliation.delivery"
+            )
+            if delivery is None:
+                return invalid_field("terminalReconciliation.delivery")
+            normalized_terminal["delivery"] = delivery
+            bookkeeping = terminal.get("bookkeeping")
+            if bookkeeping is None:
+                normalized_terminal["bookkeeping"] = None
+            else:
+                normalized_bookkeeping = normalize_pr(
+                    bookkeeping, "terminalReconciliation.bookkeeping"
+                )
+                if normalized_bookkeeping is None:
+                    return invalid_field("terminalReconciliation.bookkeeping")
+                normalized_terminal["bookkeeping"] = normalized_bookkeeping
+            observed = terminal.get("observed")
+            if (
+                not isinstance(observed, dict)
+                or set(observed) != {"branch", "head"}
+                or not isinstance(observed.get("branch"), str)
+                or not safe_text(observed["branch"], limit=200)
+                or not isinstance(observed.get("head"), str)
+                or COMMIT_RE.fullmatch(observed["head"]) is None
+            ):
+                return invalid_field("terminalReconciliation.observed")
+            normalized_terminal["observed"] = {
+                "branch": safe_text(observed["branch"], limit=200),
+                "head": observed["head"],
+            }
+            normalized["terminalReconciliation"] = normalized_terminal
 
     return normalized
 
@@ -978,9 +1117,14 @@ def next_steps(report: Mapping[str, Any]) -> list[str]:
             steps.append(
                 f"Resume paused SD work loop {run_id} from its recorded checkpoint."
             )
+        terminal_reconciliation = work_loop.get("terminalReconciliation")
+        terminal_verified = (
+            isinstance(terminal_reconciliation, dict)
+            and terminal_reconciliation.get("status") == "verified"
+        )
         if isinstance(work_loop.get("contextHealth"), dict) and work_loop[
             "contextHealth"
-        ].get("level") == "red":
+        ].get("level") == "red" and not terminal_verified:
             steps.append(
                 "Reconcile the red SD work-loop checkpoint with live Trellis, Git, and PR state."
             )
@@ -1239,7 +1383,23 @@ def render_local(report: Mapping[str, Any], *, dry_run: bool) -> None:
             f"- heartbeat: {work_loop.get('heartbeatAt') or 'unknown'}; "
             f"context health {health_level}; checkpoint {checkpoint_state}"
         )
-        print(f"- counters: {work_loop.get('counters') or {}}")
+        terminal = work_loop.get("terminalReconciliation")
+        if isinstance(terminal, dict) and terminal.get("status") == "verified":
+            print(
+                "- terminal reconciliation: verified historical external completion; "
+                f"reconciled {terminal.get('reconciledAt') or 'unknown'}"
+            )
+            delivery = terminal.get("delivery")
+            bookkeeping = terminal.get("bookkeeping")
+            external = (
+                f"delivery PR #{delivery.get('prNumber')}"
+                if isinstance(delivery, dict)
+                else "delivery PR unknown"
+            )
+            if isinstance(bookkeeping, dict):
+                external += f"; bookkeeping PR #{bookkeeping.get('prNumber')}"
+            print(f"- external completion: {external}")
+        print(f"- counters (loop-owned): {work_loop.get('counters') or {}}")
         if work_loop.get("stopReason"):
             print(f"- stop reason: {work_loop.get('stopReason')}")
 

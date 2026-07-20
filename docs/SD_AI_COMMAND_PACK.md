@@ -65,6 +65,9 @@ Quick links:
 - `.agents/skills/sd-update-spec/SKILL.md`: Trellis update-spec workflow plus
   pack-managed repository knowledge refresh.
 - `scripts/sd-ai-command-pack-full-check.sh`: canonical full-check script.
+- `scripts/sd-ai-command-pack-review-full-check.sh`: deterministic
+  `sd-review-pr` selector for a repository-owned `check:full` wrapper or the
+  canonical pack-script fallback.
 - `scripts/sd-ai-command-pack-shell-lib.sh`: shared Bash helpers sourced by
   the full-check, review-local, and review-scope scripts.
 - `scripts/sd-ai-command-pack-toolchain.sh`: non-mutating toolchain doctor and
@@ -194,10 +197,21 @@ it. Use a separate request to execute the recommendation.
    review, then disposition any first-review boundary-risk, authored-source
    size, or multi-task scope advisory before round one. Run `sd-full-check` or
    `sd-review-local` (optionally with `all`) explicitly when you want
-   Prism/Gito.
+   Prism/Gito. The review gate delegates to
+   `scripts/sd-ai-command-pack-review-full-check.sh`. When the root
+   `package.json` defines a non-empty `check:full` script, the helper runs
+   that repository-owned wrapper through
+   `SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_RUNNER` (default `npm`);
+   otherwise it invokes the installed pack full-check script directly. The
+   wrapper may perform repository prerequisites before calling the pack script,
+   but it must not invoke `sd-review-pr`, a review-pr adapter, or the helper
+   itself.
 11. Request the configured remote reviewer, defaulting to GitHub Copilot, after
    a clean local pass and again after every pushed review-fix commit made
-   during the loop, unless the user explicitly asked for local-only review.
+   during the loop, unless the user explicitly asked for local-only review or
+   the trusted fleet workflow proves the exact consumer head qualifies for
+   integration-only review. That profile suppresses only a new request and
+   still inspects all existing feedback, local gates, and CI.
 12. Let the review-pr command reply to and resolve review threads as part of the
    normal loop once findings are fixed, rebutted with evidence, or confirmed
    already addressed.
@@ -270,12 +284,16 @@ advances a phase, while the helper's `evidence` subcommand records verified
 same-phase commit, PR, review-fix, finish-work, and merge facts atomically.
 Task and base branch are stable iteration identity; commit ancestry, PR
 identity, and the final feature-to-base branch switch are validated locally.
-Verified same-phase reconciliation uses the same rules and clears obsolete
-recovery checkpoints instead of routing through a synthetic checkpoint phase.
-A matching phase or partial evidence is not recovery evidence and cannot clear
-a ready or blocked checkpoint left by contradictory current-state observations.
+Verified same-phase reconciliation uses the same rules. A checkpoint is an
+overlay that retains its owning lifecycle phase in `checkpoint.resumePhase`,
+instead of becoming a synthetic later phase; its human target remains intact.
 Recovery through an evidence update or reconciliation must supply every
-non-null field in the recorded current-state ledger.
+non-null field in the recorded current-state ledger. A complete verified
+forward recovery advances evidence and phase atomically, clears the checkpoint,
+and remains amber until exact reconciliation turns green. Partial evidence and
+identity, PR, Git, branch, or regression conflicts stay red without a partial
+update. Legacy schema-v1 ledgers use a phase-valued target as the owner, or
+require explicit `--resume-phase` when the target is human-only.
 
 The work-designs command is a thin `needs-design` selector for that same
 controller. Its default now carries selected tasks from planning through a
@@ -935,11 +953,65 @@ with the
 deciding which consumers are stale. It processes one consumer at a time: verify a clean tree (dirty
 trees are skipped and reported, never touched), branch, install the
 release, run the consumer's full-check, open the consumer PR, watch it to
-settled, and merge through the consumer's housekeeping gate. Bare consumer
+settled, and merge through the consumer's housekeeping gate. Before review it
+runs the source-side fleet review classifier against the exact pre-refresh base
+and current head. A verified release/candidate ledger, exact installer
+inspection and audit, safe base/current receipts, and an installer-only diff
+select integration-only review; ambiguity or consumer-owned changes select the
+normal configured remote-review loop. Bare consumer
 names such as `loadsmith rwbp-website`, or `consumer=a,b`, filter the run;
-`no-merge` stops before merging and `dry-run` reports preflight only. Unknown
-consumer names fail before mutation rather than broadening to the whole fleet.
+`no-merge` stops before merging, `dry-run` reports preflight only, and
+`remote-review` forces normal remote review, while `remote=<name>` selects the
+release-authority Git remote (default `origin`).
+Before it inventories consumers, preflight requires the matching local and
+remote `v<version>` tag identities, tagged version and payload, ancestry, and
+tagged plus current full-fleet candidate ledgers to agree. Missing, stale,
+mismatched, or rewritten release identity fails before mutation. Unknown
+consumer names also fail before mutation rather than broadening to the fleet.
 The report is a per-consumer status table plus a fleet version summary.
+Its consumer rows state `integration-only`, `remote`, or `n/a` review profile
+so avoided remote-review rounds remain visible rather than implicit.
+
+The fleet skill also records mandatory internal timing evidence with
+`scripts/sd-ai-command-pack-fleet-timing.py`. One resumable run brackets
+preflight and the fixed checkout, install, audit, local-gate, commit/push, PR,
+reviewer-wait, CI-wait, housekeeping, and post-merge-audit stages. Reviewer and
+CI waits start together after PR creation, so the report measures their overlap
+and interval-union active time instead of double-counting concurrent waits.
+The final summary includes critical path, summed stage time, slowest consumer,
+slowest stage, overlap, and retries. State is private and atomic in the user's
+local state directory; durable records and reports omit repository paths,
+credentials, command output, and review text. Timing has no public fleet
+argument and never changes an authoritative delivery-gate result. A telemetry
+error remains visible and pauses new mutation until the last valid record can
+resume.
+
+Every verified rollout finding is also classified before watch, merge, or the
+next consumer mutation with the source-only command:
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-fleet-finding-classify.py \
+  --input <temporary-findings.json> --json
+```
+
+Schema version 1 requires a non-empty `findings` array. Each row contains a
+safe unique `id`, `contractFamily`, `summary`, `evidence`, and `reviewer`, plus
+optional repository-relative `path` and positive `line`. Correctness,
+security, install/audit, and compatibility block by default. Hardening, style,
+test implementation, documentation, diagnostics, and consumer-unrelated work
+defer by default. `impact: blocker` requires concrete `impactEvidence`; an
+explicit `overrideDisposition` requires `overrideRationale`. No public adapter
+argument or environment variable can downgrade a blocker.
+
+Exit `0` means continue only after every observation receives an evidence-
+backed reply, allowed thread resolution, and one follow-up per canonical owner
+when work remains. Exit `1` pauses all further fleet mutation and batches
+blocker owners into one corrective campaign. Exit `2`, malformed output, or an
+unavailable command fails closed. Exact duplicate observations share their
+first owner's timing decision and task, while each observation remains visible
+for reply and resolution. The fleet report includes blocker and deferred
+owners, duplicates, overrides with rationale, and follow-up task identifiers.
 
 The `sd-test-gaps` command closes the worst coverage gaps with targeted
 tests. It runs the repository's coverage flow as a baseline (aborting if
@@ -1069,6 +1141,42 @@ bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
   scripts/sd-ai-command-pack-work-loop.py evidence --repo . \
   --run-id <run-id> --head <sha> --pr-number <n> --pr-url <url>
 ```
+
+After resuming a paused checkpoint, reconcile its complete locally observed
+state before selecting more work. Add `--verified-live-advance` when the live
+lifecycle is ahead, then repeat the same complete reconcile without that flag
+to turn the amber recovery into green exact agreement. Old ledgers with a
+human-only checkpoint target also require
+`--resume-phase <recorded-lifecycle-phase>`.
+
+A stopped or completed run may be reconciled with task and merge state that
+advanced after its execution lock was released. The orchestration layer must
+first verify exact merged PR state through GitHub, including URL, head SHA,
+merge commit SHA, and default base branch. The local helper deliberately makes
+no network calls:
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-work-loop.py reconcile-terminal --repo . \
+  --run-id <run-id> \
+  --archived-task .trellis/tasks/archive/<month>/<task> \
+  --delivery-pr-number <n> --delivery-pr-url <url> \
+  --delivery-head <sha> --delivery-merge-commit <sha> \
+  --branch <default> --head <default-head> --json
+```
+
+The optional bookkeeping PR uses the parallel `--bookkeeping-pr-number`,
+`--bookkeeping-pr-url`, `--bookkeeping-head`, and
+`--bookkeeping-merge-commit` group; supply all four or none. The command
+requires a completed, identity-matching archived task, a clean checked-out
+default branch synchronized with its origin tracking ref, locally resolvable
+commits, no live owner, and an explicit flag for safe stale-lock recovery. It
+keeps phase/status terminal, preserves `current`, counters, focus, iteration,
+history, and stop reason, and stores external completion in
+`terminalReconciliation`. Identical normalized evidence does not rewrite the
+ledger; conflicting evidence fails without mutation. Status and housekeeping
+render a verified record as historical external completion and label the
+preserved counters as loop-owned.
 
 ### Full Check And Preflight
 
@@ -1610,6 +1718,7 @@ export UV_TOOL_DIR="${UV_TOOL_DIR:-$SANDBOX_TMP/sd-ai-command-pack-uv-tools}"
 export RUFF_CACHE_DIR="${RUFF_CACHE_DIR:-$SANDBOX_TMP/sd-ai-command-pack-ruff-cache}"
 python3 scripts/sd-ai-command-pack-install-audit.py
 bash -n scripts/sd-ai-command-pack-full-check.sh
+bash -n scripts/sd-ai-command-pack-review-full-check.sh
 bash -n scripts/sd-ai-command-pack-shell-lib.sh
 bash -n scripts/sd-ai-command-pack-toolchain.sh
 bash -n scripts/sd-ai-command-pack-review-local.sh
