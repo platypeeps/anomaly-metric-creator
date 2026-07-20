@@ -115,7 +115,7 @@ def _require_not_contains(
 def _yaml_mapping_block(text: str, key: str) -> str | None:
     """Return a top-level mapping entry without assuming its indentation."""
     match = re.search(
-        rf"^(?P<indent>[ \t]+){re.escape(key)}:\s*$",
+        rf"^(?P<indent>[ \t]*){re.escape(key)}:[ \t]*(?:#[^\n]*)?$",
         text,
         re.MULTILINE,
     )
@@ -124,7 +124,7 @@ def _yaml_mapping_block(text: str, key: str) -> str | None:
 
     indent = match.group("indent")
     next_entry = re.search(
-        rf"^{re.escape(indent)}\S[^:\n]*:\s*$",
+        rf"^{re.escape(indent)}\S[^:\n]*:[ \t]*(?:#[^\n]*)?$",
         text[match.end() :],
         re.MULTILINE,
     )
