@@ -35,7 +35,9 @@ def test_list_mode_owns_the_expected_clean_module_set() -> None:
 
 
 def test_ci_and_local_preflight_invoke_checker_without_inline_module_lists() -> None:
-    modules = _run("--list").stdout.splitlines()
+    list_result = _run("--list")
+    assert list_result.returncode == 0, list_result.stderr
+    modules = list_result.stdout.splitlines()
     workflow = WORKFLOW.read_text(encoding="utf-8")
     preflight = LOCAL_PREFLIGHT.read_text(encoding="utf-8")
 
