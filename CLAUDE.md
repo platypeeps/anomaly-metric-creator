@@ -2518,9 +2518,13 @@ run in CI):
   matrix version; bump both together when a new stable CPython lands.
   The full matrix runs for opened/reopened/ready PRs, `full-ci`-labeled
   updates, auto-merge-armed PRs (the `auto_merge_enabled` event and every
-  later push to an armed PR — auto-merge never lands on quick-lane
-  evidence), workflow/dependency diffs, manual dispatch, and every push to
-  `main`; merge-burst `main` pushes run in per-commit concurrency groups so
+  later push or label event on an armed PR — auto-merge never lands on
+  quick-lane evidence), workflow/dependency diffs, manual dispatch, and every
+  push to `main`; manual dispatch forces the application classifier even for a
+  docs-only tip. The lightweight guards use `uv`-managed Python 3.14 without
+  syncing the full project environment, and command-pack metadata plus
+  `.trellis/audit/**` remain in that lightweight lane. Merge-burst `main`
+  pushes run in per-commit concurrency groups so
   they cannot cancel each other's backstop runs, while PR refs keep
   cancel-in-progress. The aggregate `test` job is guarded with
   `if: ${{ !cancelled() }}` (never `always()`): when arming auto-merge

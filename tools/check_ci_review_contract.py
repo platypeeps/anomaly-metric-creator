@@ -42,6 +42,33 @@ REQUIRED_FILES = {
     ),
 }
 
+_REVIEW_TOOLING_SHELL_SYNTAX = (
+    "bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh "
+    "scripts/sd-ai-command-pack-full-check.sh "
+    "scripts/sd-ai-command-pack-housekeeping.sh "
+    "scripts/sd-ai-command-pack-review-scope.sh "
+    "scripts/sd-ai-command-pack-review-local.sh "
+    "scripts/sd-ai-command-pack-shell-lib.sh "
+    "scripts/sd-ai-command-pack-toolchain.sh"
+)
+_CI_PYTHON_SYNTAX_GLOB = (
+    "git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' "
+    "'.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'"
+)
+_PRECOMMIT_PYTHON_SYNTAX_FILES = (
+    r"files: ^(scripts|src|tests|tools|\.codex/hooks|\.github/copilot/hooks|"
+    r"\.gemini/hooks)/.*\.py$"
+)
+_LIGHTWEIGHT_PYTHON_PREFIX = "uv run --python 3.14 --no-project python"
+_LIGHTWEIGHT_PYTHON_GUARDS = (
+    "tools/check_python_syntax.py",
+    "tools/check_workflow_pip.py",
+    "tools/check_trellis_placeholders.py",
+    "tools/check_ci_review_contract.py",
+    "tools/check_copilot_instruction_contract.py",
+    "scripts/sd-ai-command-pack-pr-body-scope.py",
+)
+
 
 def _read(path: Path) -> tuple[str | None, str | None]:
     try:
@@ -96,7 +123,12 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ("Socket result input", "SOCKET_RESULT: ${{ needs.socket.result }}"),
         (
             "classifier invocation",
-            "bash scripts/classify-ci-changes.sh --github-output changed-files.txt",
+            'bash scripts/classify-ci-changes.sh "${classifier_args[@]}" changed-files.txt',
+        ),
+        (
+            "manual dispatch classifier force-app",
+            'if [ "$EVENT_NAME" = "workflow_dispatch" ]; then'
+            " classifier_args+=(--force-app) fi",
         ),
         ("full-ci trigger", "full-ci"),
         ("full-ci output", "full_ci_requested"),
@@ -158,6 +190,12 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             " full_ci_requested=true fi ;;",
         ),
         (
+            "auto-merge labeled full-ci request",
+            'labeled) if [ "$PR_LABEL" = "full-ci" ] ||'
+            ' [ "$PR_AUTO_MERGE" = "true" ]; then'
+            " full_ci_requested=true fi ;;",
+        ),
+        (
             "auto-merge enabled full-ci request",
             "auto_merge_enabled) full_ci_requested=true ;;",
         ),
@@ -174,8 +212,28 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "aggregate cancellation-safe guard",
             "if: ${{ !cancelled() }}",
         ),
+        (
+            "lightweight uv setup",
+            "name: Set up uv for lightweight guards",
+        ),
+        (
+            "CI review-tooling shell syntax coverage",
+            _REVIEW_TOOLING_SHELL_SYNTAX,
+        ),
+        (
+            "CI scripts Python syntax coverage",
+            _CI_PYTHON_SYNTAX_GLOB,
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
+    for guard in _LIGHTWEIGHT_PYTHON_GUARDS:
+        _require_contains(
+            text,
+            f"{_LIGHTWEIGHT_PYTHON_PREFIX} {guard}",
+            path=path,
+            label=f"pinned Python lightweight guard ({guard})",
+            violations=violations,
+        )
     _require_not_contains(
         text,
         "steps.full-ci.outputs.full_ci_requested",
@@ -272,8 +330,11 @@ def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
         ("SD AI command-pack review-local script", "scripts/sd-ai-command-pack-review-local.sh"),
         ("SD AI command-pack install audit", "scripts/sd-ai-command-pack-install-audit.py"),
         ("PR body scope guard", "scripts/sd-ai-command-pack-pr-body-scope.py"),
-        ("PR body scope config", ".sd-ai-command-pack/pr-body-scope.json"),
         ("PR body scope tests", "tests/test_pr_body_scope_lint.py"),
+        ("command-pack payload classification", ".sd-ai-command-pack/*"),
+        ("Trellis audit classification", ".trellis/audit/*"),
+        ("command-pack shell library classification", "scripts/sd-ai-command-pack-shell-lib.sh"),
+        ("command-pack toolchain classification", "scripts/sd-ai-command-pack-toolchain.sh"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
@@ -287,6 +348,14 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         ("PR body scope config trigger", ".sd-ai-command-pack/pr-body-scope"),
         ("PR body scope tests trigger", "tests/test_pr_body_scope_lint"),
         ("Copilot hook pass_filenames", "pass_filenames: false"),
+        (
+            "pre-commit review-tooling shell syntax coverage",
+            _REVIEW_TOOLING_SHELL_SYNTAX,
+        ),
+        (
+            "pre-commit scripts Python syntax coverage",
+            _PRECOMMIT_PYTHON_SYNTAX_FILES,
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 

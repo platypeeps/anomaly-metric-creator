@@ -99,8 +99,32 @@ def test_review_tooling_scripts_stay_in_lightweight_lane(tmp_path: Path) -> None
         "scripts/sd-ai-command-pack-install-audit.py",
         "scripts/sd-ai-command-pack-full-check.sh",
         "scripts/sd-ai-command-pack-housekeeping.sh",
+        "scripts/sd-ai-command-pack-shell-lib.sh",
+        "scripts/sd-ai-command-pack-toolchain.sh",
         ".sd-ai-command-pack/pr-body-scope.json",
         "tests/test_pr_body_scope_lint.py",
+    )
+
+    result = _run(str(changed))
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["lightweight_only"] == "true"
+    assert outputs["app_required"] == "false"
+    assert outputs["review_tooling_changed"] == "true"
+
+
+def test_command_pack_payload_and_audit_artifacts_are_lightweight(
+    tmp_path: Path,
+) -> None:
+    changed = _changed_file(
+        tmp_path,
+        ".sd-ai-command-pack/installed-targets.txt",
+        ".sd-ai-command-pack/manifest.json",
+        ".sd-ai-command-pack/provenance.json",
+        ".sd-ai-command-pack/review-preflight.json",
+        ".trellis/audit/ledger.md",
+        ".trellis/audit/report-2026-07-17.md",
     )
 
     result = _run(str(changed))

@@ -931,6 +931,25 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
+    07-20-audit-ci-automation-portability/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-20-audit-ci-lint-parity/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    07-20-audit-ci-workflow-correctness/
+      design.md
+      implement.md
+      prd.md
+      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/

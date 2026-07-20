@@ -166,7 +166,8 @@ lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
 test for ordinary PR update churn that still touches app paths, and the full
 Python 3.14 test lane for app-required opened/reopened/ready PRs,
 `full-ci` label runs, auto-merge-armed PRs (the `auto_merge_enabled` event
-and every later push to an armed PR, via the payload's `auto_merge` field),
+and every later push or label event on an armed PR, via the payload's
+`auto_merge` field),
 workflow/dependency changes, manual dispatch, and `main` pushes. Auto-merge
 must never merge on quick-lane evidence, and `main` pushes run in per-commit
 concurrency groups so merge-burst runs cannot cancel each other's backstop
@@ -178,6 +179,97 @@ there is no older declared floor and no multi-version lane. Sources:
 `.github/workflows/ci.yml`; `scripts/classify-ci-changes.sh`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
+
+## Scenario: CI event and lightweight guard contract
+
+### 1. Scope / Trigger
+
+- Trigger: any change to CI event cadence, path classification, the
+  lightweight guard runtime, or local/remote syntax-gate coverage.
+- This is an infrastructure contract spanning GitHub event inputs, a shell
+  classifier, workflow outputs, local pre-commit hooks, tests, and docs.
+
+### 2. Signatures
+
+- Classifier: `bash scripts/classify-ci-changes.sh [--force-app]
+  [--github-output] changed-files.txt`.
+- Lightweight Python guard: `uv run --python 3.14 --no-project python
+  <stdlib-only-check> [paths...]`.
+- Shell syntax gate: `bash -n <review-tooling-shell-scripts...>`.
+
+### 3. Contracts
+
+- `workflow_dispatch` appends `--force-app`, making `app_required=true` even
+  for a documentation-only tip.
+- `labeled` selects full CI when the applied label is `full-ci` or the event's
+  pull request already has auto-merge armed.
+- `.sd-ai-command-pack/**`, `.trellis/audit/**`, and the command-pack shell
+  entrypoints are lightweight review/documentation surfaces. Dependency and
+  workflow paths override that classification and force the full lane.
+- Python syntax coverage includes top-level `scripts/*.py`. Both the workflow
+  and pre-commit shell gates cover `sd-ai-command-pack-toolchain.sh` and
+  `sd-ai-command-pack-shell-lib.sh`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Manual dispatch of a docs-only tip | `app_required=true`; full lane eligible |
+| Any later label event on an armed PR | `full_ci_requested=true` |
+| Pack metadata or Trellis audit artifact only | lightweight lane |
+| Dependency or workflow path mixed into that diff | full application lane |
+| Python guard cannot run under managed 3.14 | lightweight job fails |
+| Toolchain/shared-library shell syntax is invalid | local and remote syntax gates fail |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `.sd-ai-command-pack/manifest.json` plus
+  `.trellis/audit/ledger.md` stays lightweight and reports review tooling.
+- Base: an ordinary runtime Python diff remains application-required.
+- Bad: a docs-only manual dispatch remains lightweight, or a non-`full-ci`
+  label on an armed PR rebuilds the required context from the quick lane.
+
+### 6. Tests Required
+
+- `tests/test_ci_change_classifier.py` asserts pack/audit positive cases and
+  runtime/dependency/workflow negative cases.
+- `tests/test_ci_review_contract.py` mutation-tests the labeled auto-merge
+  clause, manual-dispatch force-app, every managed-Python lightweight guard
+  command, and both syntax lists against the live repository.
+- `tests/test_python_syntax_lint.py` parses all tracked Python under
+  `scripts/`, `src/`, `tests/`, `tools/`, and generated hook roots.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```bash
+# Manual dispatch can leave a docs-only diff app_required=false.
+bash scripts/classify-ci-changes.sh --github-output changed-files.txt
+
+# Any non-full-ci label ignores the armed PR state.
+if [ "$PR_LABEL" = "full-ci" ]; then
+  full_ci_requested=true
+fi
+```
+
+Correct:
+
+```bash
+classifier_args=(--github-output)
+if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+  classifier_args+=(--force-app)
+fi
+
+if [ "$PR_LABEL" = "full-ci" ] || [ "$PR_AUTO_MERGE" = "true" ]; then
+  full_ci_requested=true
+fi
+```
+
+Sources: `.github/workflows/ci.yml`; `.pre-commit-config.yaml`;
+`scripts/classify-ci-changes.sh`; `tools/check_ci_review_contract.py`;
+`tests/test_ci_change_classifier.py`; `tests/test_ci_review_contract.py`;
+`tests/test_python_syntax_lint.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
 CodeQL analyzes opened/reopened/ready_for_review PRs and `full-ci`-labeled
 updates; plain `synchronize` events keep the trigger but report a skipped

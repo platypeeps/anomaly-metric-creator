@@ -511,15 +511,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: raise floors deliberately to the oldest exercised combination.
 
 ## A-047 — Non-full-ci labeled event lets auto-merge land on quick-lane evidence
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: tooling
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - .github/workflows/ci.yml:104-108 — labeled arm ignores PR_AUTO_MERGE; cancel-in-progress rebuilds the required context from the quick lane
-- why: any other label on an armed PR defeats the documented full-gate guarantee.
-- fix: honor PR_AUTO_MERGE in the labeled arm + contract anchor.
+  - `.github/workflows/ci.yml` — the labeled arm honors `PR_AUTO_MERGE` as well as the one-shot `full-ci` label.
+  - `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py` — a named anchor and mutation test fail if the armed-PR clause is removed.
+- why: fixed; later label events on an armed PR keep the full-matrix gate.
 
 ## A-048 — CI mypy clean-module gate has no local counterpart
 - status: open
@@ -533,15 +533,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: tools/check_mypy_gate.py shared by CI and local preflight.
 
 ## A-049 — Pack payload not absorbed into classifier/syntax gates (full-suite waste; toolchain.sh ungated)
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: tooling
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - scripts/classify-ci-changes.sh:70-94 — manifest/provenance classify app_required (~40 runner-min per refresh, verified #243-#245); toolchain.sh absent from both bash -n lists
-- why: weekly refreshes waste the matrix; a syntax-broken universal entry script can merge unparsed.
-- fix: classify .sd-ai-command-pack/* as review-tooling; add toolchain.sh to bash -n; widen py-syntax globs.
+  - `scripts/classify-ci-changes.sh`; `tests/test_ci_change_classifier.py` — `.sd-ai-command-pack/**` and `.trellis/audit/**` are lightweight, with dependency/workflow escalation preserved.
+  - `.github/workflows/ci.yml`; `.pre-commit-config.yaml`; `tools/check_ci_review_contract.py` — both shell gates cover the toolchain and shared library, and Python syntax includes `scripts/*.py`.
+- why: fixed; refresh/audit-only diffs stay cheap while command-pack entrypoints are parsed locally and remotely.
 
 ## A-050 — Local full-check's Python checks silently vanish without Node.js
 - status: open
@@ -555,15 +555,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: python3 fallback or make preflight required.
 
 ## A-051 — workflow_dispatch cannot force the full matrix it is documented to run
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: tooling
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - ci.yml:59-65 — dispatch diffs HEAD^..HEAD; app_required=false on docs-tip; --force-app unused
-- why: the manual re-run escape hatch silently does nothing.
-- fix: pass --force-app on dispatch events.
+  - `.github/workflows/ci.yml` — manual dispatch appends `--force-app` to the shared classifier invocation.
+  - `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py` — the dispatch-specific force-app path is contract-pinned.
+- why: fixed; manual dispatch makes the full application lane eligible even for a lightweight tip diff.
 
 ## A-052 — Role-name-leak CI mirror scans far less than the pre-commit hook
 - status: open
@@ -577,15 +577,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: extend the scan roots.
 
 ## A-053 — Lightweight lane runs repo lints under unpinned system Python
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: tooling
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - ci.yml:184-215 — bare `python`, no setup step, in a >=3.14 repo
-- why: first 3.14-only construct in tests/tools false-fails the lane.
-- fix: setup-uv + `uv run --python 3.14` for the guards.
+  - `.github/workflows/ci.yml` — lightweight guards install pinned `setup-uv` and invoke every Python guard through managed Python 3.14 with `--no-project`.
+  - `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py` — the managed-runtime command is contract-pinned and mutation-tested.
+- why: fixed; the cheap lane now executes syntax and contract guards under the repository's declared Python version.
 
 ## A-054 — Five weeks of features + breaking requires-python raise unreleased under tagged 0.3.0
 - status: open
