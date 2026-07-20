@@ -41,9 +41,24 @@ def test_ci_and_local_preflight_invoke_checker_without_inline_module_lists() -> 
     workflow = WORKFLOW.read_text(encoding="utf-8")
     preflight = LOCAL_PREFLIGHT.read_text(encoding="utf-8")
 
-    assert "python tools/check_mypy_gate.py" in workflow
-    assert '["tools/check_mypy_gate.py"]' in preflight
-    for owner in (workflow, preflight):
+    workflow_step_marker = "      - name: Type-check gate (mypy, clean modules)"
+    assert workflow.count(workflow_step_marker) == 1
+    workflow_step_start = workflow.index(workflow_step_marker)
+    workflow_step_end = workflow.find(
+        "\n      - name:", workflow_step_start + len(workflow_step_marker)
+    )
+    assert workflow_step_end != -1
+    workflow_step = workflow[workflow_step_start:workflow_step_end]
+
+    preflight_marker = 'run("Clean-module mypy gate"'
+    preflight_calls = [
+        line for line in preflight.splitlines() if preflight_marker in line
+    ]
+    assert len(preflight_calls) == 1
+
+    assert "python tools/check_mypy_gate.py" in workflow_step
+    assert '["tools/check_mypy_gate.py"]' in preflight_calls[0]
+    for owner in (workflow_step, preflight_calls[0]):
         assert not [module for module in modules if module in owner]
 
 
