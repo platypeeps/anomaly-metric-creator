@@ -429,6 +429,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     ci.yml
     codeql.yml
     dependabot-auto-merge.yml
+    sd-ai-command-pack-sync.yml
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md

@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Canonical CI cadence, aggregate check, advisory coverage, workflow pinning, and contract-test requirements."}
+{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Documentation ownership and lockstep update requirements for workflow behavior changes."}

@@ -303,6 +303,25 @@ repo's workflow token is not allowed to create PR reviews. Sources:
 `.github/workflows/dependabot-auto-merge.yml`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
 
+The weekly command-pack sync must run the canonical installer from the
+`platypeeps/sd-ai-command-pack` `main` branch, refresh
+`docs/repomix-map.md`, and use one fixed PR branch. The no-diff path must create
+neither a branch nor a PR; a real diff must open or update a PR and arm the
+normal squash auto-merge path without a direct `main` push or `--admin`
+bypass. Both write steps must use the scoped
+`SD_AI_COMMAND_PACK_PR_TOKEN` Actions secret; the repo-wide Actions
+create/approve setting and `GITHUB_TOKEN` must stay out of this path. Sources:
+`.github/workflows/sd-ai-command-pack-sync.yml`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
+
+Windows portability coverage is collection-only and advisory: pull requests
+sync the locked Python 3.14 development environment on `windows-latest`, then
+run `pytest --collect-only -q`. The job must use `continue-on-error: true` and
+must not appear in the `test` or `CI Result` dependency lists. Sources:
+`.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`;
+`tests/test_ci_review_contract.py`; `CLAUDE.md`;
+`docs/DEVELOPMENT_CYCLE.md`.
+
 ## Review Checklist
 
 Before marking a PR ready, walk these headings: scope and description,

@@ -687,10 +687,10 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - git log — 17 refresh commits, several back-to-back at HEAD
-- why: ~3% of all commits are the same hand-performed sync.
+  - `.github/workflows/sd-ai-command-pack-sync.yml`; `tools/check_ci_review_contract.py` — weekly/manual canonical refresh, no-diff PR suppression, fixed automation branch, and normal gated auto-merge are implemented under contract.
+- why: implementation is pending merge and live no-change dispatch; keep open until the shipped workflow proves the no-side-effect path.
 - fix: scheduled sync workflow, PR-on-change, reuse the auto-merge gate.
 
 ## A-064 — Dev-install docs teach unlocked pip while CI enforces the uv lock
@@ -709,10 +709,10 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - CLAUDE.md:2151-2166 guard rules; CI ubuntu-only
-- why: guards rot silently until a Windows lane exists.
+  - `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py` — an advisory locked Python 3.14 `windows-latest` collect-only job is implemented and excluded from `CI Result` dependencies.
+- why: implementation is pending its first live PR result; keep open until Windows collection succeeds remotely.
 - fix: cheap windows-latest collect-only job.
 
 ## A-066 — Documented eval recipe loses the harness's trace evidence

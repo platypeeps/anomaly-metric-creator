@@ -104,6 +104,13 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             name: test (py3.12)
             steps:
               - run: uv run --no-sync python tools/check_mypy_gate.py
+          windows_collection:
+            name: Windows collection (advisory)
+            runs-on: windows-latest
+            continue-on-error: true
+            steps:
+              - run: uv sync --extra dev --locked --python 3.14
+              - run: uv run --no-sync pytest --collect-only -q
           test:
             name: test
             needs: [changes, lightweight_readiness, quick_check, test_matrix]
@@ -164,6 +171,34 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             if: github.event.pull_request.user.login == 'dependabot[bot]'
             steps:
               - run: gh pr merge --auto --squash "$PR_URL"
+        """,
+    )
+    _write(
+        root / ".github/workflows/sd-ai-command-pack-sync.yml",
+        """
+        on:
+          schedule:
+            - cron: '17 9 * * 1'
+          workflow_dispatch:
+        permissions:
+          contents: write
+          pull-requests: write
+        jobs:
+          sync:
+            steps:
+              - run: git clone --depth 1 --branch main https://github.com/platypeeps/sd-ai-command-pack.git "$RUNNER_TEMP/sd-ai-command-pack"
+              - run: python "$RUNNER_TEMP/sd-ai-command-pack/install.py" "$GITHUB_WORKSPACE" --force
+              - run: scripts/update_repomix
+              - id: create-pr
+                uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+                with:
+                  token: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
+                  branch: automation/sd-ai-command-pack-sync
+                  delete-branch: true
+              - if: steps.create-pr.outputs.pull-request-number != ''
+                run: gh pr merge --auto --squash "$PR_URL"
+                env:
+                  GH_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
         """,
     )
     _write(
@@ -244,6 +279,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         lightweight readiness
         quick test
         full-ci
+        sd-ai-command-pack-sync.yml
+        windows-latest
+        pytest --collect-only -q
         """,
     )
     _write(
@@ -269,6 +307,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         lightweight readiness
         quick test
         full-ci
+        sd-ai-command-pack-sync.yml
+        windows-latest
+        pytest --collect-only -q
         """,
     )
     _write(
@@ -356,6 +397,103 @@ def test_ci_result_must_include_socket(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "stable aggregate dependencies" in result.stderr
+
+
+def test_windows_collection_must_remain_advisory(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "needs: [test, socket]", "needs: [test, socket, windows_collection]"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "advisory Windows job in CI Result dependencies" in result.stderr
+
+
+def test_windows_collection_requires_locked_environment(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "uv sync --extra dev --locked --python 3.14",
+            "uv sync --extra dev --python 3.14",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "Windows locked development sync" in result.stderr
+
+
+def test_pack_sync_forbids_direct_main_push(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8") + "\n- run: git push origin main\n",
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "direct default-branch push" in result.stderr
+
+
+def test_pack_sync_requires_pr_creation_action(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1",
+            "removed/action@5f6978faf089d4d20b00c7766989d076bb2fc7f1",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "pinned create-pull-request action" in result.stderr
+
+
+def test_pack_sync_forbids_repo_wide_workflow_token(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "secrets.SD_AI_COMMAND_PACK_PR_TOKEN", "secrets.GITHUB_TOKEN"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "scoped PR token" in result.stderr
+    assert "repo-wide workflow token for PR writes" in result.stderr
+
+
+def test_ci_docs_must_cover_scheduled_sync(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    docs = tmp_path / "docs/DEVELOPMENT_CYCLE.md"
+    docs.write_text(
+        docs.read_text(encoding="utf-8").replace(
+            "sd-ai-command-pack-sync.yml", "removed-sync.yml"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "scheduled command-pack sync" in result.stderr
 
 
 def test_stale_copilot_ci_context_guidance_fails(tmp_path: Path) -> None:
