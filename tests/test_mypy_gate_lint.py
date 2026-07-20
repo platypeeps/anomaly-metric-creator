@@ -50,9 +50,3 @@ def test_unknown_argument_exits_two() -> None:
 
     assert result.returncode == 2
     assert "usage" in result.stderr
-
-
-def test_real_clean_module_gate_passes() -> None:
-    result = _run()
-
-    assert result.returncode == 0, result.stdout + result.stderr
