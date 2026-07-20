@@ -14,8 +14,7 @@ concurrency:
 # secret is used so the repo-wide Actions create/approve setting can stay off;
 # branch protection and the required CI Result remain authoritative.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   sync:
@@ -24,6 +23,11 @@ jobs:
     steps:
       - name: Check out target repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
 
       - name: Fetch current command pack
         shell: bash

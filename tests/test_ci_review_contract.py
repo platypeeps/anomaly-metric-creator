@@ -181,11 +181,13 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             - cron: '17 9 * * 1'
           workflow_dispatch:
         permissions:
-          contents: write
-          pull-requests: write
+          contents: read
         jobs:
           sync:
             steps:
+              - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+                with:
+                  python-version: "3.14"
               - run: git clone --depth 1 --branch main https://github.com/platypeeps/sd-ai-command-pack.git "$RUNNER_TEMP/sd-ai-command-pack"
               - run: python "$RUNNER_TEMP/sd-ai-command-pack/install.py" "$GITHUB_WORKSPACE" --force
               - run: scripts/update_repomix
@@ -502,6 +504,23 @@ def test_pack_sync_requires_fail_closed_secret_preflight(tmp_path: Path) -> None
 
     assert result.returncode == 1
     assert "fail-closed scoped token preflight" in result.stderr
+
+
+def test_pack_sync_default_token_must_remain_read_only(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "contents: read", "contents: write\n  pull-requests: write"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "read-only default workflow token" in result.stderr
+    assert "default token contents write" in result.stderr
 
 
 def test_ci_docs_must_cover_scheduled_sync(tmp_path: Path) -> None:

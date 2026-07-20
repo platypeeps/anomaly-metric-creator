@@ -390,8 +390,12 @@ def _check_pack_sync(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("weekly schedule", "cron: '17 9 * * 1'"),
         ("manual dispatch", "workflow_dispatch:"),
-        ("contents write permission", "contents: write"),
-        ("pull-request write permission", "pull-requests: write"),
+        ("read-only default workflow token", "contents: read"),
+        (
+            "pinned Python setup",
+            "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+        ),
+        ("installer Python version", 'python-version: "3.14"'),
         (
             "canonical pack source",
             "https://github.com/platypeeps/sd-ai-command-pack.git",
@@ -438,6 +442,8 @@ def _check_pack_sync(path: Path, text: str, violations: list[str]) -> None:
         ("branch-protection bypass", "gh pr merge --admin"),
         ("direct default-branch checkout", "git checkout main && git merge"),
         ("repo-wide workflow token for PR writes", "secrets.GITHUB_TOKEN"),
+        ("default token contents write", "contents: write"),
+        ("default token pull-request write", "pull-requests: write"),
     ]:
         _require_not_contains(
             text,
