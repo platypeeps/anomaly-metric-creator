@@ -351,10 +351,15 @@ def test_real_repo_tree_is_clean():
             for ext in ("*.py", "*.md", "*.yaml", "*.yml", "*.toml"):
                 files.extend(d.rglob(ext))
     assert files, "no candidate files found for repo-tree scan"
-    result = _run(*files)
-    assert result.returncode == 0, (
-        f"lint failed against current repo tree:\nstderr:\n{result.stderr}"
-    )
+    # Absolute paths across the expanded live tree exceed Windows'
+    # CreateProcess command-line limit in this repository. Bounded chunks keep
+    # the same complete-tree assertion portable as the task/archive set grows.
+    for start in range(0, len(files), 100):
+        result = _run(*files[start : start + 100])
+        assert result.returncode == 0, (
+            "lint failed against current repo tree chunk "
+            f"{start // 100 + 1}:\nstderr:\n{result.stderr}"
+        )
 
 
 def test_nonexistent_path_exits_two(tmp_path: Path):
