@@ -28,7 +28,8 @@ Implement audit items A-063 and A-065, subject to maintainer confirmation before
       development dependencies.
 - [ ] Windows failures are advisory and cannot make the aggregate required
       context red.
-- [ ] Recurring automation has explicit maintainer approval before merge.
+- [x] Recurring automation has explicit maintainer approval before merge
+      (approved by the maintainer on 2026-07-20).
 - [ ] A-063 and A-065 are marked `fixed` only when their behavior is actually
       shipped.
 

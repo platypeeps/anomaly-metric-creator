@@ -7,6 +7,7 @@ The workflow cadence is intentionally spread across a few files:
 * ``.github/workflows/ci.yml`` chooses the lightweight, quick, or full lane.
 * The Socket job, CodeQL workflow, and Dependabot workflow follow the same
   review-economy policy.
+* The scheduled command-pack workflow is PR-only and no-ops on an empty diff.
 * ``scripts/sd-ai-command-pack-full-check.sh`` mirrors the local quick/full gate.
 
 This checker is deliberately text-based and stdlib-only so pre-commit can run it
@@ -32,6 +33,7 @@ REQUIRED_FILES = {
     "ci": Path(".github/workflows/ci.yml"),
     "codeql": Path(".github/workflows/codeql.yml"),
     "dependabot": Path(".github/workflows/dependabot-auto-merge.yml"),
+    "pack_sync": Path(".github/workflows/sd-ai-command-pack-sync.yml"),
     "precommit": Path(".pre-commit-config.yaml"),
     "classifier": Path("scripts/classify-ci-changes.sh"),
     "full_check": Path("scripts/sd-ai-command-pack-full-check.sh"),
@@ -108,6 +110,26 @@ def _require_not_contains(
 ) -> None:
     if needle in text:
         violations.append(f"{path}: forbidden {label}: {needle!r}")
+
+
+def _yaml_mapping_block(text: str, key: str) -> str | None:
+    """Return a top-level mapping entry without assuming its indentation."""
+    match = re.search(
+        rf"^(?P<indent>[ \t]*){re.escape(key)}:[ \t]*(?:#[^\n]*)?$",
+        text,
+        re.MULTILINE,
+    )
+    if match is None:
+        return None
+
+    indent = match.group("indent")
+    next_entry = re.search(
+        rf"^{re.escape(indent)}\S[^:\n]*:[ \t]*(?:#[^\n]*)?$",
+        text[match.end() :],
+        re.MULTILINE,
+    )
+    end = match.end() + next_entry.start() if next_entry is not None else len(text)
+    return text[match.start() : end]
 
 
 def _check_ci(path: Path, text: str, violations: list[str]) -> None:
@@ -257,6 +279,17 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "CI scripts Python syntax coverage",
             _CI_PYTHON_SYNTAX_GLOB,
         ),
+        ("advisory Windows collection job", "  windows_collection:"),
+        ("Windows runner", "runs-on: windows-latest"),
+        ("Windows job advisory guard", "continue-on-error: true"),
+        (
+            "Windows locked development sync",
+            "uv sync --extra dev --locked --python 3.14",
+        ),
+        (
+            "Windows collection command",
+            "uv run --no-sync pytest --collect-only -q",
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
     for guard in _LIGHTWEIGHT_PYTHON_GUARDS:
@@ -287,6 +320,18 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         label="persistent full-ci re-check (belongs only in codeql.yml)",
         violations=violations,
     )
+
+    ci_result_block = _yaml_mapping_block(text, "ci_result")
+    if ci_result_block is None:
+        violations.append(f"{path}: cannot inspect stable aggregate job block")
+    else:
+        _require_not_contains(
+            ci_result_block,
+            "windows_collection",
+            path=path,
+            label="advisory Windows job in CI Result dependencies",
+            violations=violations,
+        )
 
 
 def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
@@ -362,6 +407,74 @@ def _check_dependabot(path: Path, text: str, violations: list[str]) -> None:
         label="GitHub Actions PR approval",
         violations=violations,
     )
+
+
+def _check_pack_sync(path: Path, text: str, violations: list[str]) -> None:
+    for label, needle in [
+        ("weekly schedule", "cron: '17 9 * * 1'"),
+        ("manual dispatch", "workflow_dispatch:"),
+        ("read-only default workflow token", "contents: read"),
+        (
+            "pinned Python setup",
+            "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+        ),
+        ("installer Python version", 'python-version: "3.14"'),
+        (
+            "canonical pack source",
+            "https://github.com/platypeeps/sd-ai-command-pack.git",
+        ),
+        ("shallow main clone", "git clone --depth 1 --branch main"),
+        (
+            "canonical forced refresh",
+            'python "$RUNNER_TEMP/sd-ai-command-pack/install.py" '
+            '"$GITHUB_WORKSPACE" --force',
+        ),
+        ("generated repository map refresh", "scripts/update_repomix"),
+        (
+            "pinned create-pull-request action",
+            "peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1",
+        ),
+        ("stable automation branch", "branch: automation/sd-ai-command-pack-sync"),
+        ("stale branch cleanup", "delete-branch: true"),
+        (
+            "scoped PR token",
+            "token: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}",
+        ),
+        (
+            "fail-closed scoped token preflight",
+            'if [ -z "$SCOPED_TOKEN" ]; then',
+        ),
+        (
+            "scoped token failure diagnostic",
+            "SD_AI_COMMAND_PACK_PR_TOKEN is not configured",
+        ),
+        (
+            "scoped auto-merge token",
+            "GH_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}",
+        ),
+        ("normal auto-merge gate", "gh pr merge --auto --squash"),
+        (
+            "PR-only auto-merge condition",
+            "steps.create-pr.outputs.pull-request-number != ''",
+        ),
+    ]:
+        _require_contains(text, needle, path=path, label=label, violations=violations)
+
+    for label, needle in [
+        ("direct default-branch push", "git push origin main"),
+        ("branch-protection bypass", "gh pr merge --admin"),
+        ("direct default-branch checkout", "git checkout main && git merge"),
+        ("repo-wide workflow token for PR writes", "secrets.GITHUB_TOKEN"),
+        ("default token contents write", "contents: write"),
+        ("default token pull-request write", "pull-requests: write"),
+    ]:
+        _require_not_contains(
+            text,
+            needle,
+            path=path,
+            label=label,
+            violations=violations,
+        )
 
 
 def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
@@ -442,6 +555,9 @@ def _check_docs(path: Path, text: str, violations: list[str]) -> None:
         ("lightweight lane", "lightweight readiness"),
         ("quick lane", "quick test"),
         ("full-ci label", "full-ci"),
+        ("scheduled command-pack sync", "sd-ai-command-pack-sync.yml"),
+        ("Windows collection runner", "windows-latest"),
+        ("Windows collection command", "pytest --collect-only -q"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
@@ -501,6 +617,7 @@ def check(root: Path) -> tuple[int, list[str]]:
     _check_codeql(root / REQUIRED_FILES["codeql"], texts["codeql"], violations)
     _check_socket(root / REQUIRED_FILES["ci"], texts["ci"], violations)
     _check_dependabot(root / REQUIRED_FILES["dependabot"], texts["dependabot"], violations)
+    _check_pack_sync(root / REQUIRED_FILES["pack_sync"], texts["pack_sync"], violations)
     _check_precommit(root / REQUIRED_FILES["precommit"], texts["precommit"], violations)
     _check_classifier(root / REQUIRED_FILES["classifier"], texts["classifier"], violations)
     _check_full_check(root / REQUIRED_FILES["full_check"], texts["full_check"], violations)

@@ -2,7 +2,8 @@
 
 ## Execution Order
 
-1. Stop for explicit maintainer approval of recurring pack-sync PR creation.
+1. Record the maintainer's 2026-07-20 approval of recurring pack-sync PR
+   creation. This gate is satisfied.
 2. Add contract tests and the idempotent scheduled sync workflow.
 3. Add the advisory Windows collect-only job and fix narrow collection-time
    portability issues it exposes.

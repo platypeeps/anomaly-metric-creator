@@ -2598,6 +2598,20 @@ run in CI):
   required `CI Result`, so a bump that breaks the application gate, the
   lockstep guard, or Socket never lands. Needs repo `allow_auto_merge` plus
   branch protection requiring that aggregate check.
+- `.github/workflows/sd-ai-command-pack-sync.yml` — runs weekly and on manual
+  dispatch, installs the current `platypeeps/sd-ai-command-pack` `main` into
+  the repository, refreshes the generated metadata-only map, and uses one
+  fixed automation branch. `peter-evans/create-pull-request` no-ops on an
+  empty diff; a real diff opens or updates one PR and arms normal squash
+  auto-merge. It never pushes to `main` or bypasses branch protection. Both
+  writes use the scoped `SD_AI_COMMAND_PACK_PR_TOKEN` Actions secret so the
+  repo-wide Actions create/approve setting remains disabled; the token needs
+  contents, pull-request, and workflow write access.
+- `.github/workflows/ci.yml` also runs `Windows collection (advisory)` on pull
+  requests: locked Python 3.14 dev dependencies plus
+  `pytest --collect-only -q` on `windows-latest`. `continue-on-error: true`
+  and exclusion from `test`/`CI Result` dependencies keep the lane visible but
+  non-blocking; it is not a second full test matrix.
 - `.github/workflows/codeql.yml` — explicit CodeQL analysis for both
   `python` and `actions`, advisory on PRs (not a required branch-protection
   context; `CI Result` is the required check). Analysis runs on

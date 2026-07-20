@@ -117,6 +117,23 @@ full CI was requested. Dependabot auto-merge enables GitHub auto-merge for
 patch/minor updates, but does not try to approve the PR with `GITHUB_TOKEN`;
 this repo's workflow token is not allowed to create PR reviews.
 
+The weekly `.github/workflows/sd-ai-command-pack-sync.yml` workflow runs the
+canonical pack installer from `platypeeps/sd-ai-command-pack` and refreshes
+the metadata-only repository map. Its fixed automation branch and
+`create-pull-request` action make the no-change path side-effect free: no diff
+means no branch or PR. A real diff opens or updates one PR and arms normal
+squash auto-merge, which still waits for `CI Result`. Branch/PR creation and
+auto-merge use the scoped `SD_AI_COMMAND_PACK_PR_TOKEN` Actions secret, so the
+repository-level "Allow GitHub Actions to create and approve pull requests"
+setting stays disabled. The token needs repository contents, pull-request, and
+workflow write access because a pack refresh can update workflow files.
+
+Every pull request also runs `Windows collection (advisory)`: the locked Python
+3.14 development environment followed by `pytest --collect-only -q` on
+`windows-latest`. The job uses `continue-on-error` and is deliberately absent
+from both aggregate dependency lists, so it exposes import-time portability
+regressions without becoming a branch-protection requirement.
+
 Auto-merge never lands on quick-lane evidence: arming it triggers a
 full-matrix run on the current head, and every subsequent push to an armed PR
 classifies as full CI (the event payload's `auto_merge` field gates both
