@@ -900,3 +900,44 @@ Extracted generation and topology code from legacy.py into focused modules, pres
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: Close CI cadence and guard gaps
+
+**Date**: 2026-07-20
+**Task**: Close CI cadence and guard gaps
+**Package**: amc
+**Branch**: `codex/archive-audit-ci-workflow-correctness`
+
+### Summary
+
+Merged PR #263 to make CI event selection, lightweight Python runtimes, syntax coverage, and classifier contracts deterministic.
+
+### Main Changes
+
+- Made workflow_dispatch force the app lane and labeled auto-merge PRs select full CI.
+- Pinned every lightweight Python guard to uv-managed Python 3.14 and expanded Python and shell syntax coverage.
+- Added classifier and mutation-contract tests, synchronized CI docs/specs, and closed the matching audit findings.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0f8a5bf` | fix: close CI cadence and guard gaps |
+| `159c3e5` | fix: remove inline manifest seeds |
+| `5f7d37c` | fix: pin all lightweight Python guards |
+
+### Testing
+
+- [OK] SD AI command pack deterministic full check passed.
+- [OK] GitHub CI, CodeQL, Socket, and aggregate CI Result checks passed on PR #263.
+- [OK] Copilot fresh-head review completed with no new comments after the one valid finding was fixed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

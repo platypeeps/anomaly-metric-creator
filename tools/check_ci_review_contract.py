@@ -23,6 +23,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -67,6 +68,10 @@ _LIGHTWEIGHT_PYTHON_GUARDS = (
     "tools/check_ci_review_contract.py",
     "tools/check_copilot_instruction_contract.py",
     "scripts/sd-ai-command-pack-pr-body-scope.py",
+)
+_CODEQL_ACTION_PATTERN = re.compile(
+    r"^\s*uses:\s*github/codeql-action/(init|analyze)@([0-9a-f]{40})(?:\s|$)",
+    re.MULTILINE,
 )
 
 
@@ -276,6 +281,24 @@ def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
         ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
+
+    revisions: dict[str, list[str]] = {"init": [], "analyze": []}
+    for action, revision in _CODEQL_ACTION_PATTERN.findall(text):
+        revisions[action].append(revision)
+
+    for action, action_revisions in revisions.items():
+        if len(action_revisions) != 1:
+            violations.append(
+                f"{path}: expected exactly one pinned github/codeql-action/{action} "
+                f"step, found {len(action_revisions)}"
+            )
+
+    if all(len(action_revisions) == 1 for action_revisions in revisions.values()):
+        if revisions["init"][0] != revisions["analyze"][0]:
+            violations.append(
+                f"{path}: CodeQL init/analyze revisions must match: "
+                f"init@{revisions['init'][0]} != analyze@{revisions['analyze'][0]}"
+            )
 
 
 def _check_socket(path: Path, text: str, violations: list[str]) -> None:

@@ -280,6 +280,10 @@ produces no code-scanning summary
 check, so `CodeQL` must not be a required context while this gating is in
 place). Keep the `synchronize` trigger itself: once `full-ci` is applied,
 later pushes to the PR re-analyze automatically.
+Pin the CodeQL `init` and `analyze` steps to the same exact 40-character action
+revision. A partial dependency update can otherwise initialize one action
+version and analyze with another, failing before queries run; the CI contract
+guard and its mutation test must reject that drift locally.
 Socket should keep a visible PR check but fast-skip unless
 dependency/security-relevant files changed or full CI was requested. Sources:
 `.github/workflows/codeql.yml`; `.github/workflows/ci.yml`;

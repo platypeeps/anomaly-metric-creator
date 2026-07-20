@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-07-18
+- **Total Sessions**: 22
+- **Last Active**: 2026-07-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~902 | Active |
+| `journal-1.md` | ~941 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-07-20 | Close CI cadence and guard gaps | `0f8a5bf`, `159c3e5`, `5f7d37c` | `codex/archive-audit-ci-workflow-correctness` |
 | 21 | 2026-07-18 | Extract generation and topology modules | `54816b45b8b3c0ee1eb0d33735ac9c889779b5cc`, `fe6cfaa2968b5e5a88c2b2b89e55d53657899159`, `23fdfd25b506d35ca0b2c948dcf633ae8805935a`, `4f8ea9171c244f5e5d1c5b8cf509e73f5e06d74c`, `765bfc12e418fe1c62c6ebc503f59c5db4516522` | `refactor/extract-generation-topology` |
 | 20 | 2026-07-18 | Extract catalog data modules | `dff5744`, `2704d85`, `448959c` | `refactor/extract-catalog-data` |
 | 19 | 2026-07-18 | Extract CLI argument parsing | `47289f8`, `445fd72` | `refactor/extract-cli-args` |
