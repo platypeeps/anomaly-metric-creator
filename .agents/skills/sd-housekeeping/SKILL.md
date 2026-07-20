@@ -76,6 +76,11 @@ This command performs this end-of-stream flow:
     state, pack/Trellis versions, relevant PR and review rounds, repo-wide open
     PRs/issues, Trellis inventory, anomalies, and numbered next steps. Inventory
     alone does not block current-stream cleanup.
+    A verified terminal work-loop reconciliation is historical external
+    completion: report its delivery/bookkeeping PRs separately and label the
+    preserved counters as loop-owned. Do not recommend red-checkpoint
+    reconciliation again for that verified record. An unreconciled stopped red
+    ledger remains an anomaly and next action for `sd-work-backlog` to verify.
 14. Preserve session-only follow-up context in the concise chat summary when it
     is not observable from repository state, but do not replace or contradict
     the status report's evidence-backed next steps.

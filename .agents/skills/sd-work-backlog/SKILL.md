@@ -91,6 +91,44 @@ run: reconcile the ledger with live Trellis, Git, branch, and PR state first,
 then use explicit stale-lock recovery only when the prior process is gone and
 the repository is safe. Concurrent loops for one repository are forbidden.
 
+Before calling `start`, inspect the helper status. A stopped or completed red
+ledger whose task, Git, and GitHub state advanced after the run released its
+lock is a historical reconciliation case, not a resumable run. Verify all of
+the following before changing that ledger:
+
+1. The recorded task now exists below `.trellis/tasks/archive/`, its regular
+   non-symlink `task.json` is `completed`, and its ID matches the ledger task.
+2. `gh pr view` reports the delivery PR as `MERGED` and returns the exact URL,
+   full head SHA, merge commit SHA, and default base branch. If a separate
+   bookkeeping PR archived the task, verify the same complete field group for
+   that PR. Do not infer any of these values from local branch names.
+3. Every submitted commit exists locally. The checked-out default branch is
+   clean, tracks `origin/<default>`, and its local and remote-tracking tips are
+   identical to the submitted observed head.
+4. No live or ambiguous run owner exists. Use `--recover-stale-lock` only when
+   process liveness and the safe repository state above prove the lock stale.
+
+Then invoke the dedicated local-only audit operation with the preverified
+GitHub evidence:
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-work-loop.py reconcile-terminal --repo . \
+  --run-id <run-id> --archived-task <archive-path> \
+  --delivery-pr-number <n> --delivery-pr-url <url> \
+  --delivery-head <sha> --delivery-merge-commit <sha> \
+  --bookkeeping-pr-number <n> --bookkeeping-pr-url <url> \
+  --bookkeeping-head <sha> --bookkeeping-merge-commit <sha> \
+  --branch <default> --head <default-head> --json
+```
+
+Omit all four bookkeeping flags when there was no separate bookkeeping PR.
+The helper performs no network calls, never revives the run, and never rewrites
+its counters or historical `current` evidence. An identical verified record is
+a byte-for-byte no-op; different evidence is a contradiction. Once status
+shows a verified terminal reconciliation, treat the run and its counters as
+historical, then a later explicit work-backlog invocation may start a new run.
+
 At startup, resume, every phase boundary, and every iteration boundary:
 
 1. Read the helper's status JSON.
@@ -102,6 +140,29 @@ At startup, resume, every phase boundary, and every iteration boundary:
 If live state is verifiably ahead, record a verified live advance. If the
 ledger claims work that live state cannot prove, record red context health and
 stop instead of replaying it.
+
+A checkpoint is an overlay on its owning lifecycle phase, not a later phase.
+New checkpoints persist `checkpoint.resumePhase` while keeping a human target
+unchanged. After resuming a paused checkpoint, reconcile before inventorying or
+selecting more work. Supply every non-null current-state field shown by status;
+for a verified later phase, use the exact locally observed values:
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-work-loop.py reconcile --repo . \
+  --run-id <run-id> --observed-phase <observed-lifecycle-phase> \
+  --task <task> --branch <branch> --head <sha> \
+  --base-branch <base-branch> --pr-number <n> --pr-url <url> \
+  --last-shipped-sha <sha> --verified-live-advance --json
+```
+
+Omit fields that are `null`, but never omit a recorded non-null field. A
+successful later-phase recovery clears the checkpoint and records amber
+rehydration; repeat the same complete reconcile without
+`--verified-live-advance` to reach green exact agreement. Schema-v1 ledgers
+whose phase is literally `checkpoint` use a phase-valued checkpoint target as
+the owner. When a legacy target is human-only, add
+`--resume-phase <recorded-lifecycle-phase>`; do not guess it.
 
 Phase transitions and same-phase evidence have separate owners. Use
 `transition` only when the lifecycle phase changes. After a commit, PR
@@ -270,8 +331,9 @@ Classify failures as transient, task-local, user-input, or repository-wide.
   it; persist the parked result and continue only from a clean boundary.
 
 At every boundary, check for newer operator instructions. `skip current` is
-allowed only before mutation. `pause` writes a resumable checkpoint and
-releases the lock. `stop now` checkpoints at the next safe transition.
+allowed only before mutation. `pause` writes a resumable checkpoint overlay,
+retains the owning lifecycle phase, and releases the lock. `stop now`
+checkpoints at the next safe transition.
 `stop after current` completes follow-ups and cleanup before stopping. Focus
 updates replace/add/clear the helper's focus and immediately re-inventory.
 

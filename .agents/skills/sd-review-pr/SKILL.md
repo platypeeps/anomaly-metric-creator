@@ -15,12 +15,33 @@ GitHub Copilot is the default remote reviewer unless a repo overrides it.
 ## Invocation Mode
 
 Standalone `sd-review-pr` is the default and runs finish-work after a clean
-review loop. The internal `defer-finish-work` mode is accepted only from
-`sd-ship` when that composite command is continuing through `until=merge`.
-It is not a public user argument: reject it when the caller is not the active
-`sd-ship` merge-through chain. The mode changes only lifecycle ownership
-routing in Steps 1.5 and 8; every local check, remote-review round, CI check,
-and thread rule remains authoritative.
+review loop. The internal `defer-finish-work` mode is accepted from `sd-ship`
+when that composite command is continuing through `until=merge`, and from the
+active `sd-fleet-refresh` workflow while it owns the consumer watch and
+housekeeping tail. It is not a public user argument: reject it for any other
+caller. The mode changes only lifecycle ownership routing in Steps 1.5 and 8;
+every local check, CI check, and thread rule remains authoritative.
+
+`sd-fleet-refresh` may supply one additional trusted internal review context:
+
+```text
+caller: sd-fleet-refresh
+review-profile: integration-only|remote
+source-root: <absolute pack source checkout>
+consumer: <fleet manifest name>
+base-commit: <full consumer base SHA>
+release-remote: <source release remote>
+classified-head: <full consumer refresh SHA; integration-only only>
+return-after: review-result
+defer-finish-work: true
+```
+
+Accept it only while already executing the resolved `sd-fleet-refresh` skill.
+For `integration-only`, require every field, require `classified-head` to match
+the live local and PR head, and rerun the source classifier in Step 1. For
+`remote`, do not suppress the configured reviewer. A user-supplied imitation
+is an unknown argument/context error before the first gate. This internal
+profile is never an environment variable or platform-adapter surface.
 
 ## Safety Rules
 
@@ -49,6 +70,10 @@ and thread rule remains authoritative.
   review-fix commit made during this command run. Do not ask for permission
   before each configured remote-review request; stop only when the loop is clean
   or the configured round limit is reached.
+- Suppress a new configured remote-review request only when the trusted fleet
+  integration-only context reclassifies the exact current PR head as eligible.
+  Classifier failure or mismatch falls back to the normal remote-review loop;
+  it never skips existing feedback, local checks, CI, or merge gates.
 - Count one remote loop as: trigger the configured remote reviewer, wait for
   completion, inspect review/CI state, address findings, and push any resulting
   commit. After the configured remote round limit, default five, stop before
@@ -130,6 +155,29 @@ commits have not been pushed, the wrong branch is checked out, or the remote PR
 branch changed. Push the intended local commits or check out the PR head before
 continuing; do not request remote review on stale remote code.
 
+### Fleet Integration-Only Recheck
+
+When trusted `review-profile: integration-only` context is active, first
+require `classified-head`, `LOCAL_HEAD`, and `HEAD_SHA` to be identical. Then
+from `source-root`, rerun the source classifier against the consumer checkout:
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-fleet-review-classify.py \
+  --consumer <consumer> --repo <absolute consumer checkout> \
+  --base-commit <base-commit> --remote <release-remote> --json
+```
+
+Accept integration-only classification only when the command exits `0`, emits
+one valid schema-version-1 JSON object, reports `eligible: true`, and its
+consumer, repository, base commit, and head commit match the trusted context
+and live repository. Record its release tag, payload digest, changed paths,
+and installed platforms for the final report. If the trusted context was
+validly supplied but this recheck is non-eligible, unavailable, malformed, or
+head-mismatched, switch this invocation to the normal remote profile and report
+the classifier reason. Do not stop or ask merely because the safe fallback
+requires remote review.
+
 If the PR is draft, do not mark it ready until the deterministic local
 full-check has passed unless the user explicitly asked to mark it ready. This
 keeps `ready_for_review` workflows from starting before local review is clean.
@@ -138,7 +186,7 @@ keeps `ready_for_review` workflows from starting before local review is clean.
 
 If the PR is already merged, do not continue the review loop. If authorized
 `defer-finish-work` mode is active, cancel the deferral and run the Trellis
-finish-work procedure from Step 8 first; the composite Stage 4 cannot own
+finish-work procedure from Step 8 first; the deferred merge tail cannot own
 finish-work after an external merge has already ended the normal chain. Then
 run housekeeping inside the current command run:
 
@@ -161,18 +209,30 @@ tool session by itself.
 
 ## Step 2: Run Local Full Check
 
-Run the deterministic local full-check gate before requesting a remote review.
+Run the deterministic local full-check gate before requesting a remote review
+or accepting the integration-only profile.
 This PR-review cycle must not run Prism or Gito implicitly, even if the
 environment would normally enable them for `sd-full-check`:
 
 ```bash
-SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 \
-SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 \
-bash scripts/sd-ai-command-pack-full-check.sh
+bash scripts/sd-ai-command-pack-review-full-check.sh
 ```
 
-If `scripts/sd-ai-command-pack-full-check.sh` is missing, stop and report that the review
-cycle pack is not fully installed. Do not fall back to remote-review-first
+The helper owns deterministic command selection. When the root
+`package.json` defines a non-empty string `scripts["check:full"]`, it runs
+`npm run check:full` (or the runner selected by
+`SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_RUNNER`) so repository-owned cleanup,
+database readiness, and test-environment setup execute before the pack gate.
+That package script may wrap
+`scripts/sd-ai-command-pack-full-check.sh`, but it must not invoke
+`sd-review-pr`, a review-pr platform adapter, or the helper itself.
+
+When no usable `check:full` package script is configured, the helper runs the
+existing `scripts/sd-ai-command-pack-full-check.sh` compatibility fallback.
+Both paths force `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` and
+`SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0`. If the helper, selected package
+runner, or fallback script is missing, or the configured command would recurse,
+stop and report its exact diagnostic. Do not fall back to remote-review-first
 review.
 
 If full-check fails, fix the smallest correct set of issues, run the relevant
@@ -182,11 +242,12 @@ unless the user explicitly asks for a remote diagnostic despite local failures.
 
 ## Step 2.5: Disposition First-Review Advisories
 
-Before the first remote-review request for each PR head, inspect the preflight
-output from Step 2. When it warns about changed parser or structured-input
-logic, subprocess/external-command behavior, path/filesystem boundaries,
-environment or global state, or digest/integrity framing, cover every
-applicable boundary with a focused test or record why it does not apply:
+Before the first remote-review request or integration-only decision for each PR
+head, inspect the preflight output from Step 2. When it warns about changed
+parser or structured-input logic, subprocess/external-command behavior,
+path/filesystem boundaries, environment or global state, or digest/integrity
+framing, cover every applicable boundary with a focused test or record why it
+does not apply:
 
 - malformed or unhashable input;
 - missing commands, nonzero exits, or timeouts;
@@ -245,6 +306,11 @@ After deterministic local full-check passes:
   gh pr ready "$PR_NUMBER"
   ```
 
+- If the rechecked fleet integration-only profile is active, do not run a
+  remote-review request command. Record `0` remote rounds with the exact
+  classifier evidence, then continue directly to Step 5. This suppresses only
+  a new implementation-review request; existing review events, conversation
+  comments, and threads remain authoritative.
 - If the user asked for local review only, skip remote review and continue to
   Step 5 to inspect existing comments and CI.
 - Otherwise, trigger the configured remote reviewer when no remote review has
@@ -304,8 +370,9 @@ repository or organization docs say that trigger is enabled.
 
 ## Step 4: Wait For Review Completion
 
-Skip this step if no remote review was requested. Otherwise, poll every 30
-seconds with lightweight PR metadata only, for at most
+Skip this step for an active fleet integration-only profile or when no remote
+review was requested. Otherwise, poll every 30 seconds with lightweight PR
+metadata only, for at most
 `REMOTE_REVIEW_SETTLE_POLLS` polls. Keep updates short.
 
 ```bash
@@ -371,6 +438,16 @@ accepted request with no observable activity from a policy/availability
 rejection.
 
 ## Step 5: Inspect Comments, Prior Threads, And CI
+
+If Step 4 did not already fetch complete review data for the current head,
+including every integration-only run, fetch all review events, inline comments,
+and top-level conversation comments once before classification:
+
+```bash
+gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate
+gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate
+gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate
+```
 
 Fetch thread-aware review data. Prefer platform/GitHub tools that expose review
 thread ids and resolution state. If using `gh`, use GraphQL:
@@ -502,9 +579,11 @@ When files change:
 5. Return to Step 1 before making another review, CI, or remote-trigger
    decision so `HEAD_SHA`, review requests, latest reviews, and PR state are
    fresh.
-6. Treat the pushed commit as requiring another configured remote-review
-   request after Step 2 passes, unless the user asked for local-only review or
-   no remote reviewer is configured.
+6. Rerun any trusted fleet classification for the new head. If it remains
+   eligible, keep the integration-only profile and inspect existing feedback
+   again without a new request. Otherwise treat the pushed commit as requiring
+   another configured remote-review request after Step 2 passes, unless the
+   user asked for local-only review or no remote reviewer is configured.
 
 ```bash
 git status -sb
@@ -521,19 +600,23 @@ already satisfied.
 ## Step 7: Repeat Or Stop
 
 After every round that produced a code/docs change, return to Step 1 to refresh
-all PR state, then run deterministic local full-check again. If deterministic
-local full-check passes and remote review is configured, trigger another remote
-review before considering the loop clean. Compare the new thread ids and
-timestamps with the refreshed snapshot, and do not request duplicate remote
-reviews for the same PR head when no review-fix commit has been pushed since
-the latest requested remote review.
+all PR state, rerun any trusted fleet classification for the new head, then run
+deterministic local full-check again. If the branch no longer qualifies for
+integration-only review, switch to the normal remote loop. Otherwise keep zero
+remote requests and re-inspect existing feedback. For the normal profile, if
+deterministic local full-check passes and remote review is configured, trigger
+another remote review before considering the loop clean. Compare the new thread
+ids and timestamps with the refreshed snapshot, and do not request duplicate
+remote reviews for the same PR head when no review-fix commit has been pushed
+since the latest requested remote review.
 
 Stop when:
 
 - deterministic local full-check passes;
-- the latest requested remote review produces no new actionable
-  comments;
-- no review-fix commit has been pushed since the latest requested remote review;
+- the latest requested remote review produces no new actionable comments, or
+  the exact current head remains eligible for integration-only review;
+- no review-fix commit has been pushed since the latest requested remote review
+  or integration-only recheck;
 - all prior review threads are resolved or intentionally left with a documented
   user decision;
 - CI is passing or any non-passing check is documented as unrelated/flaky with
@@ -570,20 +653,23 @@ The learning pass is observational and does not reopen a clean remote-review
 loop. If it fails, report the exact failure and continue to Step 8; do not hide
 the failed attempt or retry it in the same invocation.
 
-## Step 8: Finish Work Or Hand Off To The Composite Merge Tail
+## Step 8: Finish Work Or Hand Off To The Merge Tail
 
-After the loop stops because deterministic local full-check passes and no
-requested remote review produced new actionable comments, choose the lifecycle
-owner before the final report:
+After the loop stops because deterministic local full-check passes, no
+requested remote review produced new actionable comments, or the exact head
+remains integration-only eligible with no actionable existing feedback, choose
+the lifecycle owner before the final report:
 
 ```bash
 PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq .state)
 ```
 
 - In authorized `defer-finish-work` mode while the PR remains open, do not
-  archive the active task or record the final session yet. Report exactly:
-  `Finish-work deferred to Stage 4 sd-housekeeping.` Return control to
-  `sd-ship`, which keeps the task active through its watch stage.
+  archive the active task or record the final session yet. For `sd-ship`,
+  report exactly `Finish-work deferred to Stage 4 sd-housekeeping.` and return
+  control to its watch stage. For `sd-fleet-refresh`, report exactly
+  `Finish-work deferred to the fleet housekeeping tail.` and return the compact
+  review result to that workflow.
 - Otherwise, including standalone `sd-review-pr`, `sd-ship until=review`, and
   a PR that became merged during the review loop, run the Trellis finish-work
   flow automatically. Do not ask whether to run it; a clean review loop is the
@@ -636,7 +722,10 @@ Report:
 - Pack full-check: whether the deterministic local gate passed with Prism/Gito
   disabled for the `sd-review-pr` cycle.
 - Remote review rounds used: <n> of <limit> — mandatory in every report;
-  write `0 of <limit>` with the skip reason when no remote review ran.
+  write `0 of <limit>` with the classifier tag/head evidence for an
+  integration-only run, or the other skip reason when no remote review ran.
+- Review profile: `integration-only` or `remote`, including classifier changed
+  and disallowed paths when fleet classification was attempted.
 - Optional AI review: reviewer label/slug used, or why remote review was
   skipped.
 - Comments fixed, rebutted, or left for user decision.
@@ -648,7 +737,8 @@ Report:
 - Finish-work actions and any archive/journal commits pushed.
 - Finish-work ownership: completed here, or
   `Finish-work deferred to Stage 4 sd-housekeeping.` for the authorized
-  composite merge-through path.
+  composite merge-through path, or `Finish-work deferred to the fleet
+  housekeeping tail.` for the authorized fleet path.
 - Housekeeping actions if the PR was already merged or became merged while the
   command was running.
 - CI status.
