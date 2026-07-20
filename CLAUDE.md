@@ -2276,10 +2276,9 @@ comments that leaked the role name in the handoff sentence and
 VER-701 added the lint as the structural fix.
 
 Scope note: at the default pre-commit stage the hook only sees files
-in the staged diff. It does **not** scan `git commit` messages
-(those would require a `commit-msg` stage hook that
-`pre-commit install --hook-type commit-msg` would enable, which is
-not wired up in this repo today), and it does not scan text typed
+in the staged diff. The separate `role-name-commit-message` hook scans
+`git commit` message files after one-time installation with
+`pre-commit install --hook-type commit-msg`; it does not scan text typed
 directly into the GitHub web UI. For comment bodies authored
 outside the staged tree (e.g. `gh pr comment --body-file`
 payloads), use the stdin pre-flight pattern below — that is the
@@ -2443,19 +2442,20 @@ per-branch escape hatch — unlike the role-name lint, a branch
 name has no legitimate reason to embed a ticket literal; the
 structural fix is to rename the branch.
 
-Scope note: the hook only fires on `git push`. Branches created
+Scope note: the local hook only fires on `git push`. Branches created
 locally that never push (throwaway worktrees, exploratory work)
 are not checked, by design — the leak is specifically about what
-reaches GitHub. CI / server-side hooks are out of scope for this
-repo today; the pre-push hook is the single client-side guard.
+reaches GitHub. The CI `changes` job checks `github.head_ref`, so every pull
+request also receives a server-side branch-name check.
 
-Known gap (refspec push bypass): the pre-commit hook runs
+Local-feedback gap (refspec push bypass): the pre-commit hook runs
 `check_branch_name.py --current`, which reads the *current local*
 branch name. A refspec push of the form
 `git push origin clean:ver-123` or a detached-HEAD push
 `git push origin HEAD:ver-123` publishes a leaking *remote* ref
 name while the local branch is clean — `--current` cannot see the
-remote side, so the hook will not flag it. The
+remote side, so the hook will not flag it locally. CI checks the published PR
+head ref and closes the merge-path bypass. The
 `-` stdin mode does close this gap: it parses git's pre-push
 protocol (`<local-ref> <local-sha> <remote-ref> <remote-sha>`) and
 lints *both* ref names per line, de-duped when they are equal.
@@ -2570,8 +2570,9 @@ run in CI):
   report-only baseline step (`continue-on-error: true`, whole `[tool.mypy]`
   `files` set — legacy.py + the server layer are the known-messy ~137-error
   baseline) plus a **gating** step that runs `mypy --follow-imports=silent`
-  over the currently-clean modules and fails on any error there. The gated
-  list is the modules that already type-check clean (the extracted leaf
+  over the currently-clean modules and fails on any error there. The command
+  and gated list are owned by `tools/check_mypy_gate.py`, which both CI and the
+  local review preflight invoke. The list contains modules that already type-check clean (the extracted leaf
   modules, the facades, `cli.py`, and the clean `server_*` modules);
   `--follow-imports=silent` checks their imports for inference but reports
   only errors originating in the listed files, so importing still-dirty

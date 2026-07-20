@@ -36,7 +36,18 @@ the structural install audit in `scripts/sd-ai-command-pack-install-audit.py`,
 current-diff CI classification, configured package scripts when present, and
 optional Prism/Gito review. AMC's repo-local review preflight runs the
 CI/review cadence guard, the Copilot instruction contract guard, the PR-body
-scope guard, and focused review-churn pytest coverage.
+scope guard, the canonical clean-module mypy gate, and focused review-churn
+pytest coverage.
+
+Install the repository's non-default Git hook stages once per clone:
+
+```bash
+.venv/bin/pre-commit install --hook-type pre-push
+.venv/bin/pre-commit install --hook-type commit-msg
+```
+
+The pre-push hook checks the current branch name. The commit-msg hook passes the
+message file to `tools/check_role_name_leaks.py` before Git records it.
 
 When a PR body exists, pass it to local preflight with
 `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY` or
@@ -68,6 +79,12 @@ For high-risk runtime changes, also run the full heavy/non-heavy pytest split:
 The workflow uses `scripts/classify-ci-changes.sh` to select one application
 lane, runs Socket as a sibling job, and combines both in the stable aggregate
 check named `CI Result`.
+
+Before lane selection, the `changes` job checks the actual pull-request
+`github.head_ref` and runs the AMC-module-load, role-name, and agent-hook
+exception guards under uv-managed Python 3.14. The role-name scan covers
+`src/`, `scripts/`, `.agents/`, and `.trellis/`, so these checks apply to every
+application lane rather than depending on local hooks.
 
 | Lane | Runs When | Purpose |
 | --- | --- | --- |

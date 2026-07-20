@@ -7,6 +7,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "check_ci_review_contract.py"
 
@@ -39,6 +41,14 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             outputs:
               full_ci_requested: ${{{{ steps['full-ci'].outputs.full_ci_requested }}}}
             steps:
+              - env:
+                  HEAD_REF: ${{{{ github.head_ref }}}}
+                run: uv run --python 3.14 --no-project python tools/check_branch_name.py "$HEAD_REF"
+              - run: |
+                  git ls-files src scripts .agents .trellis
+                  uv run --python 3.14 --no-project python tools/check_amc_module_load.py
+                  uv run --python 3.14 --no-project python tools/check_role_name_leaks.py
+                  uv run --python 3.14 --no-project python tools/check_agent_hook_exceptions.py
               - id: classify
                 env:
                   EVENT_NAME: ${{{{ github.event_name }}}}
@@ -92,6 +102,8 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: python scripts/sd-ai-command-pack-pr-body-scope.py
           test_matrix:
             name: test (py3.12)
+            steps:
+              - run: uv run --no-sync python tools/check_mypy_gate.py
           test:
             name: test
             needs: [changes, lightweight_readiness, quick_check, test_matrix]
@@ -172,6 +184,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - id: copilot-instruction-contract
                 entry: python tools/check_copilot_instruction_contract.py
                 pass_filenames: false
+              - id: role-name-commit-message
+                entry: python tools/check_role_name_leaks.py
+                stages: [commit-msg]
         """,
     )
     _write(
@@ -677,6 +692,67 @@ def test_full_check_runs_review_preflight(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "review preflight runner" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("needle", "label"),
+    [
+        ("python tools/check_amc_module_load.py", "AMC module-load CI guard"),
+        ("python tools/check_role_name_leaks.py", "role-name CI guard"),
+        (
+            "python tools/check_agent_hook_exceptions.py",
+            "agent-hook-exception CI guard",
+        ),
+    ],
+)
+def test_fast_ci_guards_are_contract_pinned(
+    tmp_path: Path, needle: str, label: str
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(needle, "python removed.py"),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert label in result.stderr
+
+
+def test_branch_guard_must_use_pull_request_head_ref(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "HEAD_REF: ${{ github.head_ref }}",
+            "HEAD_REF: ${{ github.ref }}",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "pull-request head-ref branch guard" in result.stderr
+
+
+def test_role_name_commit_message_hook_is_contract_pinned(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    precommit = tmp_path / ".pre-commit-config.yaml"
+    precommit.write_text(
+        precommit.read_text(encoding="utf-8").replace(
+            "id: role-name-commit-message",
+            "id: removed-role-name-commit-message",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "role-name commit-message hook" in result.stderr
 
 
 def test_missing_repo_file_exits_two(tmp_path: Path) -> None:

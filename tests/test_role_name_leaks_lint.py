@@ -326,6 +326,10 @@ def test_real_repo_tree_is_clean():
     Equivalent to the ``test_real_test_tree_is_clean`` regression in
     ``tests/test_amc_module_load_lint.py``."""
     candidate_dirs = [
+        REPO_ROOT / "src",
+        REPO_ROOT / "scripts",
+        REPO_ROOT / ".agents",
+        REPO_ROOT / ".trellis",
         REPO_ROOT / "tools",
         REPO_ROOT / "tests",
         REPO_ROOT / ".github",
