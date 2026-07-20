@@ -946,9 +946,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     07-20-audit-ci-workflow-correctness/
-      check.jsonl
       design.md
-      implement.jsonl
       implement.md
       prd.md
       task.json
