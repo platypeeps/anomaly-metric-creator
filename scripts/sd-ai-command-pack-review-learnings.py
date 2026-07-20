@@ -167,9 +167,12 @@ class PullRequestComment:
         # all carry repo-controlled text): an embedded managed marker would
         # splice the managed block on the next update.
         body = _neutralize_managed_markers(_one_line(self.body, limit=220))
-        path = _neutralize_managed_markers(self.path)
+        path = _neutralize_managed_markers(_one_line(self.path, limit=500))
         url = _neutralize_managed_markers(self.pr_url)
-        return f"- **{state}** PR #{self.pr_number} `{path}`: {body} ({url})"
+        return (
+            f"- **{state}** PR #{self.pr_number} "
+            f"{_markdown_code_span(path)}: {body} ({url})"
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -178,6 +181,17 @@ class CopilotReviewWindow:
     prs_inspected: int
     cutoff: str | None
     truncated: bool
+
+
+def _markdown_code_span(value: str) -> str:
+    longest_run = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", value)),
+        default=0,
+    )
+    if longest_run == 0:
+        return f"`{value}`"
+    fence = "`" * (longest_run + 1)
+    return f"{fence} {value} {fence}"
 
 
 def _parse_diff(diff_text: str) -> tuple[set[str], list[AddedLine]]:

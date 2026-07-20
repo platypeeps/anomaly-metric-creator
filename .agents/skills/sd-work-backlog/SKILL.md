@@ -103,6 +103,35 @@ If live state is verifiably ahead, record a verified live advance. If the
 ledger claims work that live state cannot prove, record red context health and
 stop instead of replaying it.
 
+Phase transitions and same-phase evidence have separate owners. Use
+`transition` only when the lifecycle phase changes. After a commit, PR
+publication, pushed review fix, finish-work commit, or verified merge changes
+the facts inside the current phase, record them atomically with `evidence`:
+
+Transition updates are limited to the stable iteration identity fields `task`
+and `baseBranch`. Record `branch`, `head`, `prNumber`, `prUrl`, and
+`lastShippedSha` only through `evidence`, including when establishing those
+facts immediately after a phase change.
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-work-loop.py evidence --repo . \
+  --run-id <run-id> --head <sha> [--pr-number <n> --pr-url <url>] \
+  [--last-shipped-sha <sha>] [--branch <default-branch>]
+```
+
+`task` and `baseBranch` are stable iteration identity. Branch changes are
+accepted only from the feature branch to the recorded base branch at a verified
+merge boundary; commit advances must be locally verifiable. A head-only update
+may continue after the recorded branch ref is removed locally, but explicit
+branch evidence must resolve and any available recorded branch must match the
+submitted head. Never use a checkpoint transition merely to replace HEAD or PR
+evidence. A successful
+evidence update or exact verified reconciliation clears an obsolete recovery
+checkpoint only when the update supplies every non-null field in the recorded
+current-state ledger; a matching phase or partial evidence is not recovery
+evidence. Real identity, branch, ancestry, or PR conflicts remain red.
+
 ## Candidate Inventory And Focus
 
 Require a clean, unambiguous iteration boundary before selecting new work.
@@ -186,6 +215,13 @@ stages. The outer loop must not invoke `sd-create-pr`, `sd-review-pr`,
 PR, merge state, finish-work, housekeeping, review rounds, final branch/HEAD,
 and anomalies, then returns here.
 
+Record each commit and PR fact returned during the nested lifecycle with
+`evidence` while the ledger remains in `shipping`. When housekeeping returns a
+verified clean default branch and merge HEAD, record `branch`, `head`, and the
+final shipped feature SHA before transitioning to `followups`. Reconcile the
+result exactly after the evidence update; do not replay any nested lifecycle
+stage to repair a stale ledger.
+
 ### 4. Process Follow-Ups
 
 Before selecting another task:
@@ -196,6 +232,20 @@ Before selecting another task:
 - capture durable conventions through the existing spec/review-learning owner;
   never rerun the PR-scoped learning pass at this outer level; and
 - record each follow-up as addressed, tasked, captured, parked, or blocked.
+
+Refresh an existing `.obsidian-kb` after follow-up task creation and before
+recording the iteration result:
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-update-spec-kb.py --if-present
+```
+
+The helper's absent-KB result is a visible no-op and must not create the
+directory. A nonzero result blocks the iteration before its clean boundary;
+report the helper diagnostics and the exact command above as recovery. This
+does not repeat housekeeping's earlier post-finish refresh: it owns only task
+documentation created after the nested ship returned.
 
 Record the compact iteration result through the helper, including PR,
 review-round and CI-retry counts, decisions, and follow-up pointers. Verify the

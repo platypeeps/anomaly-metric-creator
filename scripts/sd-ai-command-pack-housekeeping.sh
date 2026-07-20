@@ -215,6 +215,39 @@ run_gh() {
   run_command_with_timeout "$HOUSEKEEPING_GH_TIMEOUT_SECONDS" gh "$@"
 }
 
+refresh_existing_kb() {
+  local kb_path=".obsidian-kb"
+  local toolchain="$SCRIPT_DIR/sd-ai-command-pack-toolchain.sh"
+  local helper="$SCRIPT_DIR/sd-ai-command-pack-update-spec-kb.py"
+  local -a refresh_args
+  refresh_args=(--if-present)
+
+  if [ ! -e "$kb_path" ] && [ ! -L "$kb_path" ]; then
+    printf 'Obsidian KB refresh: skipped (.obsidian-kb is not present)\n'
+    return 0
+  fi
+
+  section "Refresh existing Obsidian KB"
+  if [ ! -r "$toolchain" ] || [ ! -r "$helper" ]; then
+    add_anomaly "existing Obsidian KB refresh failed because the pack helper is missing; restore the pack install, then run: bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py --if-present"
+    return 1
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    refresh_args+=(--dry-run)
+  fi
+  if bash "$toolchain" run-python -- "$helper" "${refresh_args[@]}"; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      add_action "previewed refresh of existing .obsidian-kb"
+    else
+      add_action "refreshed existing .obsidian-kb after finish-work"
+    fi
+    return 0
+  fi
+
+  add_anomaly "existing Obsidian KB refresh failed; resolve the reported conflict, then run: bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py --if-present"
+  return 1
+}
+
 fetch_and_prune() {
   if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
     add_anomaly "remote $REMOTE is not configured; skipped fetch/prune and remote checks"
@@ -1006,6 +1039,11 @@ main() {
 
   START_BRANCH="$(current_branch)"
   printf 'start branch: %s\n' "${START_BRANCH:-detached HEAD}"
+
+  if ! refresh_existing_kb; then
+    run_status_report
+    return 1
+  fi
 
   configure_github_repo_scope
   fetch_and_prune

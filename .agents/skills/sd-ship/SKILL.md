@@ -113,8 +113,10 @@ before Stage 1.
    chain; this leaves the active Trellis task unarchived for a later resume.
 5. Stage 4 — `sd-housekeeping`: invoke housekeeping exactly once. Its gate
    runs finish-work, pushes any resulting task/journal commits and waits for
-   their checks, performs the merge, and reports the post-merge state;
-   `sd-ship` relays that outcome.
+   their checks, owns the one post-finish Obsidian KB refresh for repositories
+   that already have a KB, performs the merge, and reports the post-merge
+   state; housekeeping remains its only owner and `sd-ship` relays that
+   outcome.
    Under the trusted `sd-work-backlog` context, convert that report into the
    compact nested result below and return control to the parent controller.
    Do not emit the parent session's final response and do not start another
