@@ -39,12 +39,25 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             outputs:
               full_ci_requested: ${{{{ steps['full-ci'].outputs.full_ci_requested }}}}
             steps:
-              - run: bash scripts/classify-ci-changes.sh --github-output changed-files.txt
-                id: full-ci
+              - id: classify
+                env:
+                  EVENT_NAME: ${{{{ github.event_name }}}}
+                run: |
+                  classifier_args=(--github-output)
+                  if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+                    classifier_args+=(--force-app)
+                  fi
+                  bash scripts/classify-ci-changes.sh "${{classifier_args[@]}}" changed-files.txt
+              - id: full-ci
                 env:
                   PR_AUTO_MERGE: ${{{{ github.event.pull_request.auto_merge != null }}}}
-              - run: |
+                run: |
                   case "$PR_ACTION" in
+                    labeled)
+                      if [ "$PR_LABEL" = "full-ci" ] || [ "$PR_AUTO_MERGE" = "true" ]; then
+                        full_ci_requested=true
+                      fi
+                      ;;
                     synchronize)
                       if [ "$PR_AUTO_MERGE" = "true" ]; then
                         full_ci_requested=true
@@ -57,7 +70,12 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
           lightweight_readiness:
             name: lightweight readiness
             steps:
+              - name: Set up uv for lightweight guards
+                uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
               - run: git diff --check "origin/$BASE_REF...HEAD"
+              - run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
+              - run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
+              - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
           quick_check:
             name: quick test
             steps:
@@ -132,6 +150,11 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         repos:
           - repo: local
             hooks:
+              - id: python-syntax
+                entry: python tools/check_python_syntax.py
+                files: ^(scripts|src|tests|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
+              - id: review-tooling-shell-syntax
+                entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
               - id: ci-review-contract
                 entry: python tools/check_ci_review_contract.py
                 files: ^scripts/sd-ai-command-pack-pr-body-scope\.py|\.sd-ai-command-pack/pr-body-scope\.json|tests/test_pr_body_scope_lint\.py$
@@ -159,6 +182,10 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         scripts/sd-ai-command-pack-install-audit.py
         scripts/sd-ai-command-pack-full-check.sh
         scripts/sd-ai-command-pack-housekeeping.sh
+        scripts/sd-ai-command-pack-shell-lib.sh
+        scripts/sd-ai-command-pack-toolchain.sh
+        .sd-ai-command-pack/*
+        .trellis/audit/*
         .sd-ai-command-pack/pr-body-scope.json
         tests/test_pr_body_scope_lint.py
         """,
@@ -436,6 +463,76 @@ def test_missing_auto_merge_synchronize_gate_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "auto-merge synchronize gate" in result.stderr
+
+
+def test_missing_auto_merge_labeled_gate_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            ' || [ "$PR_AUTO_MERGE" = "true" ]',
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "auto-merge labeled full-ci request" in result.stderr
+
+
+def test_manual_dispatch_must_force_classifier_app_gate(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "classifier_args+=(--force-app)",
+            ": # force-app removed",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "manual dispatch classifier force-app" in result.stderr
+
+
+def test_lightweight_guards_require_pinned_python(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "uv run --python 3.14 --no-project python tools/check_python_syntax.py",
+            "python tools/check_python_syntax.py",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "pinned Python lightweight guards" in result.stderr
+
+
+def test_ci_shell_syntax_must_cover_command_pack_entrypoints(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            " scripts/sd-ai-command-pack-toolchain.sh",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "CI review-tooling shell syntax coverage" in result.stderr
 
 
 def test_missing_auto_merge_enabled_trigger_fails(tmp_path: Path) -> None:

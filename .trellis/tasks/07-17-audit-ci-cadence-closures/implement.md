@@ -2,6 +2,12 @@
 
 ## Execution Order
 
+This parent is coordination-only. Execute and merge these child tasks in order:
+
+1. `07-20-audit-ci-workflow-correctness` — PR 1, lane selection and guard runtime.
+2. `07-20-audit-ci-lint-parity` — PR 2, lint mirrors and local parity.
+3. `07-20-audit-ci-automation-portability` — PR 3, maintainer-approved recurring automation and advisory Windows collection.
+
 PR 1 (lane selection): A-047 labeled-arm fix + contract anchor →
 A-051 dispatch `--force-app` → A-053 uv-pinned guards → A-049+addendum
 classifier/syntax-gate widening, each with its classifier/contract test.

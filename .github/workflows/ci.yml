@@ -67,7 +67,16 @@ jobs:
 
       - name: Classify changed files
         id: classify
-        run: bash scripts/classify-ci-changes.sh --github-output changed-files.txt
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          classifier_args=(--github-output)
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            classifier_args+=(--force-app)
+          fi
+          bash scripts/classify-ci-changes.sh "${classifier_args[@]}" changed-files.txt
 
       - name: Decide full CI cadence
         id: full-ci
@@ -102,7 +111,7 @@ jobs:
               # with codeql.yml's persistent re-check — the split is pinned in
               # tools/check_ci_review_contract.py.
               labeled)
-                if [ "$PR_LABEL" = "full-ci" ]; then
+                if [ "$PR_LABEL" = "full-ci" ] || [ "$PR_AUTO_MERGE" = "true" ]; then
                   full_ci_requested=true
                 fi
                 ;;
@@ -144,6 +153,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up uv for lightweight guards
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+
       - name: Whitespace check
         shell: bash
         env:
@@ -169,7 +181,7 @@ jobs:
           fi
 
       - name: Shell syntax for review tooling
-        run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh
+        run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
 
       - name: Smoke CI classifier
         run: |
@@ -189,9 +201,9 @@ jobs:
           python_files=()
           while IFS= read -r path; do
             python_files+=("$path")
-          done < <(git ls-files 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
+          done < <(git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
           if [ "${#python_files[@]}" -gt 0 ]; then
-            python tools/check_python_syntax.py "${python_files[@]}"
+            uv run --python 3.14 --no-project python tools/check_python_syntax.py "${python_files[@]}"
           fi
 
           workflow_files=()
@@ -199,7 +211,7 @@ jobs:
             workflow_files+=("$path")
           done < <(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
           if [ "${#workflow_files[@]}" -gt 0 ]; then
-            python tools/check_workflow_pip.py "${workflow_files[@]}"
+            uv run --python 3.14 --no-project python tools/check_workflow_pip.py "${workflow_files[@]}"
           fi
 
           trellis_files=()
@@ -207,12 +219,12 @@ jobs:
             trellis_files+=("$path")
           done < <(git ls-files .trellis/tasks .trellis/workspace | grep -E '\.(md|json|jsonl|ya?ml|toml)$' || true)
           if [ "${#trellis_files[@]}" -gt 0 ]; then
-            python tools/check_trellis_placeholders.py "${trellis_files[@]}"
+            uv run --python 3.14 --no-project python tools/check_trellis_placeholders.py "${trellis_files[@]}"
           fi
 
-          python tools/check_ci_review_contract.py
-          python tools/check_copilot_instruction_contract.py
-          python scripts/sd-ai-command-pack-pr-body-scope.py
+          uv run --python 3.14 --no-project python tools/check_ci_review_contract.py
+          uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
+          uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
 
   quick_check:
     name: quick test

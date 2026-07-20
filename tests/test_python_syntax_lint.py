@@ -59,6 +59,7 @@ def test_non_utf8_file_exits_two(tmp_path: Path) -> None:
 
 def test_live_python_files_parse() -> None:
     roots = [
+        REPO_ROOT / "scripts",
         REPO_ROOT / "src",
         REPO_ROOT / "tests",
         REPO_ROOT / "tools",

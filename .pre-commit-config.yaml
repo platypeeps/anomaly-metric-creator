@@ -30,7 +30,7 @@ repos:
         name: validate Python syntax without bytecode
         entry: python tools/check_python_syntax.py
         language: python
-        files: ^(src|tests|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
+        files: ^(scripts|src|tests|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
         pass_filenames: true
       # Forbid duplicate `spec_from_file_location(...)` loads of
       # `anomaly-metric-creator.py` in tests/. The canonical loader
@@ -116,9 +116,9 @@ repos:
       # malformed script.
       - id: review-tooling-shell-syntax
         name: validate review tooling shell syntax
-        entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh
+        entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
         language: system
-        files: ^scripts/(classify-ci-changes|classify_ci_changes|sd-ai-command-pack-(full-check|housekeeping|review-scope|review-local))\.sh$
+        files: ^scripts/(classify-ci-changes|classify_ci_changes|sd-ai-command-pack-(full-check|housekeeping|review-scope|review-local|shell-lib|toolchain))\.sh$
         pass_filenames: false
       # Guard the named anchors that keep local full-check, CI lane selection,
       # CodeQL/Socket cadence, and review docs in sync. This is intentionally
