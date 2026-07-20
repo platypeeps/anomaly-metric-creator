@@ -265,6 +265,14 @@ asks to stop. Task-local pre-mutation blockers can be parked; contradictory or
 dirty repository-wide state stops safely. Unavoidable user input gets one
 recommended question and a wait of up to 15 minutes when supported.
 
+Lifecycle phases and mutable evidence are separate contracts. `transition`
+advances a phase, while the helper's `evidence` subcommand records verified
+same-phase commit, PR, review-fix, finish-work, and merge facts atomically.
+Task and base branch are stable iteration identity; commit ancestry, PR
+identity, and the final feature-to-base branch switch are validated locally.
+Verified same-phase reconciliation uses the same rules and clears obsolete
+recovery checkpoints instead of routing through a synthetic checkpoint phase.
+
 The work-designs command is a thin `needs-design` selector for that same
 controller. Its default now carries selected tasks from planning through a
 green merge. `sd-work-designs until=design` preserves planning-only behavior
@@ -413,11 +421,16 @@ bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
 `sd-status` is the read-only delivery snapshot for a repository. It reports the
 branch, staged/unstaged/untracked counts, Git stash count, upstream ahead/behind state, default
 and local/remote branches, installed SD pack and Trellis versions, relevant PR,
-open PRs/issues, current/in-progress/planned Trellis work, user-local autonomous
-loop state, anomalies, and numbered next steps. Loop state includes run ID,
+open PRs/issues, current/in-progress/planned Trellis work, completed tasks
+stranded outside the Trellis archive, user-local autonomous loop state,
+anomalies, and numbered next steps. Loop state includes run ID,
 mode/selector/focus, iteration, phase, task/PR, counters, heartbeat, context
 health, checkpoint, lock, and stop reason. Reading it never refreshes the
-ledger or lock. A positional path selects another checkout, so
+ledger or lock. The status adapter accepts terminal `none`, `invalid`, and
+`unavailable` snapshots plus complete `active`, `paused`, `stopped`, and
+`completed` run snapshots. Missing, unsupported, or incomplete helper results
+become bounded `invalid` anomalies without echoing helper-controlled values. A
+positional path selects another checkout, so
 `sd-status /path/to/repo` is equivalent to
 `sd-status --repo /path/to/repo`.
 `--no-network` suppresses GitHub calls and `--json` emits schema version 1. Ordinary runs do
@@ -523,7 +536,10 @@ Planning scaffolds, untouched legacy archives, and
 symlinked context files are skipped. Journal history is append-only: newly
 added/current sessions remain editable, but an older session must be restored
 and the intended current session edited by its explicit `## Session <n>:`
-heading. Target repos can tune roots,
+heading. A separate repository-wide task-location check fails when a direct
+child of `.trellis/tasks/` has completed status, names the offending record,
+and provides the Trellis archive command; archived, non-completed, and
+symlinked task entries are ignored. Target repos can tune roots,
 path-reference prefixes, integration paths, optional paths, copied-template
 paths, and the `diffSizeWarningLines`, `largeFileWarningLines`,
 `sourceReviewWarningLines`, and `untrackedFileReadLimitBytes` warning thresholds
@@ -532,6 +548,10 @@ document service-user paths under `/home/<user>/` can add those service users to
 `allowedLinuxHomeUsers` in that config. The script requires Node 16.9 or newer
 and scans regular documentation files only; symlinked docs are skipped
 intentionally so local/generated links do not expand outside the repository.
+Generated GitHub paths and path-like comment snippets inside the complete
+`sd-review-learnings` managed block are remote provenance, so the local path
+validator masks only that block while preserving line numbers. Human-authored
+content around the block and incomplete marker pairs remain checked normally.
 
 The review-local script is intentionally tool-stack aware. In this pack version
 its runner-owned default toolset is Prism and Gito. Its default scope is
@@ -709,7 +729,10 @@ conflicts it could not bring current — automation should treat `3` as
 "KB partially stale", not success. Run
 `python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run` to preview the
 refresh without writes, `--check` to verify the generated folder and ignore
-entry are current, or `--help` for the safe CLI summary.
+entry are current, or `--help` for the safe CLI summary. Add `--if-present` to
+any mode when automation should refresh only repositories that already have
+`.obsidian-kb`; an absent folder returns success with a visible skip reason and
+causes no writes, while an occupied or invalid path retains the normal failure.
 
 To use the generated knowledge folder inside an Obsidian vault, copy the repo's
 `.obsidian-kb` folder into the vault. Recopy it after future `sd-update-spec`
@@ -948,6 +971,9 @@ Lifecycle side effects have one owner. `until=review` keeps finish-work in
 watches with `no-merge` in Stage 3, and invokes housekeeping exactly once in
 Stage 4. A blocked or timed-out watch therefore leaves the active Trellis task
 available for a later resume instead of archiving it before the PR settles.
+After finish-work, housekeeping owns one `--if-present` KB refresh before its
+merge gate so archived task documentation is current. `sd-ship` does not repeat
+that refresh.
 
 When the canonical backlog controller invokes the merge-through chain, it adds
 a trusted internal `caller: sd-work-backlog` context bound to the active run,
@@ -956,6 +982,10 @@ bounded `SD_SHIP_MERGE_RESULT` with PR/merge, finish-work, housekeeping, review
 rounds, final branch/HEAD, and anomalies. This changes only report ownership:
 all four stages and safety gates still run exactly as in standalone shipping,
 and the parent loop remains the only owner of the overall final response.
+After it creates or updates post-ship follow-up tasks, the parent controller
+owns one final `--if-present` KB refresh before recording the iteration result.
+That later refresh covers only mutations made after nested housekeeping
+returned and is not a duplicate unconditional archive refresh.
 
 The `sd-retro` command captures a structured retrospective after a
 debugging stream or incident: what broke, the root cause, why existing
@@ -1022,7 +1052,18 @@ Git remote. The schema-versioned JSON ledger and lock use atomic replacement,
 user-only permissions where supported, bounded history, and no credentials or
 raw command/review output. A relative explicit state path is rejected. Use
 `sd-status --json` for read-only loop visibility; use the work-loop command to
-resume, reconcile, checkpoint, or stop it.
+resume, record evidence, reconcile, checkpoint, or stop it. For example:
+
+`sd-status` treats the dynamically loaded work-loop helper as an input boundary:
+it normalizes active and terminal snapshots to pack-owned fields, validates
+nested run metadata, and sanitizes and bounds every retained string before JSON
+or terminal rendering.
+
+```bash
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-work-loop.py evidence --repo . \
+  --run-id <run-id> --head <sha> --pr-number <n> --pr-url <url>
+```
 
 ### Full Check And Preflight
 

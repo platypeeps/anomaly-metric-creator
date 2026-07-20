@@ -39,10 +39,15 @@ This command performs this end-of-stream flow:
      continue only after required checks are complete and green
    - if finish-work reports uncommitted PR work or ambiguous dirty files, stop
      and report that blocker instead of running cleanup
-3. The script fetches and prunes `origin` so local remote-tracking refs reflect
+3. Before any fetch or merge, the script performs the one post-finish Obsidian
+   KB refresh through
+   `scripts/sd-ai-command-pack-update-spec-kb.py --if-present`. Repositories
+   without `.obsidian-kb` remain unchanged. A refresh failure blocks the merge
+   and reports the supported recovery command.
+4. The script fetches and prunes `origin` so local remote-tracking refs reflect
    GitHub.
-4. The script detects the remote default branch, usually `main`.
-5. If the current branch is a feature branch with an open PR, the script merges
+5. The script detects the remote default branch, usually `main`.
+6. If the current branch is a feature branch with an open PR, the script merges
    only when all of these are true:
    - the working tree is clean
    - the local branch head, remote branch head, and PR head are identical
@@ -53,25 +58,25 @@ This command performs this end-of-stream flow:
      failed, cancelled, or timed out). Checks skipped by change classifiers do
      not block the merge.
    - GitHub review threads have no unresolved comments
-6. The script merges the PR with `gh pr merge --match-head-commit`. If GitHub
+7. The script merges the PR with `gh pr merge --match-head-commit`. If GitHub
    refuses the merge, report an anomaly instead of forcing the merge.
-7. If the current branch is a feature branch, use `gh pr view` to confirm the
+8. If the current branch is a feature branch, use `gh pr view` to confirm the
    branch's PR is `MERGED` and the local branch head matches the merged PR head
    before deleting anything.
-8. When the current feature branch is confirmed merged and the working tree is
+9. When the current feature branch is confirmed merged and the working tree is
    clean, switch to the default branch and fast-forward it from `origin`.
-9. Delete the merged local feature branch.
-10. Delete the merged remote feature branch unless
+10. Delete the merged local feature branch.
+11. Delete the merged remote feature branch unless
    `--keep-remote-branch` is passed.
-11. The housekeeping script delegates final verification to the installed
+12. The housekeeping script delegates final verification to the installed
     `sd-status` collector in strict mode. It passes the default/source branch,
     remote-branch policy, whether refs were refreshed, and every cleanup
     anomaly; do not run a parallel final-state collector.
-12. Treat the delegated status report as authoritative for the expected clean
+13. Treat the delegated status report as authoritative for the expected clean
     state, pack/Trellis versions, relevant PR and review rounds, repo-wide open
     PRs/issues, Trellis inventory, anomalies, and numbered next steps. Inventory
     alone does not block current-stream cleanup.
-13. Preserve session-only follow-up context in the concise chat summary when it
+14. Preserve session-only follow-up context in the concise chat summary when it
     is not observable from repository state, but do not replace or contradict
     the status report's evidence-backed next steps.
 

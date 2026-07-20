@@ -1346,6 +1346,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="verify the generated folder and ignore entry are current without writing files",
     )
+    parser.add_argument(
+        "--if-present",
+        action="store_true",
+        help="skip successfully without writes when .obsidian-kb is absent",
+    )
     return parser.parse_args(argv)
 
 
@@ -1517,6 +1522,10 @@ def refresh(root: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = repo_root()
+
+    if args.if_present and not os.path.lexists(root / KB_DIR):
+        print("Obsidian KB refresh: skipped (.obsidian-kb is not present)")
+        return 0
 
     try:
         if args.dry_run:

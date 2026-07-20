@@ -107,8 +107,6 @@ paths, and deprecated fallbacks.
 - `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`: explicit PR body text for tooling/generated
   and PR-body scope checks in local or CI contexts where `gh pr view` should not
   be used.
-- `REVIEW_PREFLIGHT_PR_BODY`: deprecated compatibility fallback for older
-  repos; honored through `0.15.x` and scheduled for removal in `0.16.0`.
 
 ## Expected Report
 

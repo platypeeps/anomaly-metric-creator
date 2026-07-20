@@ -25,6 +25,16 @@ CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 GITHUB_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 PR_SEPARATOR = "\x1f"
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+WORK_LOOP_TERMINAL_STATUSES = frozenset({"none", "invalid", "unavailable"})
+WORK_LOOP_RUN_STATUSES = frozenset({"active", "paused", "stopped", "completed"})
+WORK_LOOP_REQUIRED_STRING_FIELDS = (
+    "runId",
+    "mode",
+    "selector",
+    "phase",
+    "focusMode",
+    "heartbeatAt",
+)
 REVIEW_TOTAL_COUNT_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!){"
     "repository(owner:$owner,name:$name){"
@@ -375,7 +385,11 @@ def collect_trellis(repo: Path) -> dict[str, Any]:
     tasks: list[dict[str, Any]] = []
     if task_root.is_dir():
         for task_json in sorted(task_root.glob("*/task.json")):
-            if task_json.is_symlink() or not task_json.is_file():
+            if (
+                task_json.parent.is_symlink()
+                or task_json.is_symlink()
+                or not task_json.is_file()
+            ):
                 continue
             task = task_record(task_json)
             if task is not None:
@@ -406,10 +420,15 @@ def collect_trellis(repo: Path) -> dict[str, Any]:
         (task for task in tasks if task["status"] == "planning"),
         key=task_sort_key,
     )
+    completed_outside_archive = sorted(
+        (task for task in tasks if task["status"] == "completed"),
+        key=task_sort_key,
+    )
     return {
         "activeTask": active,
         "inProgress": in_progress,
         "planned": planned,
+        "completedOutsideArchive": completed_outside_archive,
     }
 
 
@@ -441,7 +460,204 @@ def collect_work_loop(repo: Path) -> dict[str, Any]:
         return {"status": "invalid", "error": safe_text(error, limit=500)}
     if not isinstance(snapshot, dict):
         return {"status": "invalid", "error": "work-loop helper returned invalid data"}
-    return snapshot
+    return validate_work_loop_snapshot(snapshot)
+
+
+def validate_work_loop_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed when a loaded helper does not honor the status contract."""
+    status = snapshot.get("status")
+    if not isinstance(status, str) or not status:
+        return {
+            "status": "invalid",
+            "error": "work-loop helper returned snapshot without a valid status",
+        }
+    if status in WORK_LOOP_TERMINAL_STATUSES:
+        terminal_snapshot = {"status": status}
+        error = snapshot.get("error")
+        if error is None or status == "none":
+            return terminal_snapshot
+        if not isinstance(error, str):
+            return {
+                "status": "invalid",
+                "error": "work-loop helper returned invalid terminal snapshot field: error",
+            }
+        terminal_snapshot["error"] = safe_text(error, limit=500)
+        return terminal_snapshot
+    if status not in WORK_LOOP_RUN_STATUSES:
+        return {
+            "status": "invalid",
+            "error": "work-loop helper returned unsupported status",
+        }
+
+    def invalid_field(field: str) -> dict[str, Any]:
+        return {
+            "status": "invalid",
+            "error": f"work-loop helper returned invalid run snapshot field: {field}",
+        }
+
+    normalized: dict[str, Any] = {"status": status}
+    required_string_limits = {
+        "runId": 120,
+        "mode": 40,
+        "selector": 120,
+        "phase": 80,
+        "focusMode": 40,
+        "heartbeatAt": 80,
+    }
+    for field in WORK_LOOP_REQUIRED_STRING_FIELDS:
+        value = snapshot.get(field)
+        if not isinstance(value, str) or not value:
+            return invalid_field(field)
+        normalized_value = safe_text(value, limit=required_string_limits[field])
+        if not normalized_value:
+            return invalid_field(field)
+        normalized[field] = normalized_value
+    iteration = snapshot.get("iteration")
+    if (
+        isinstance(iteration, bool)
+        or not isinstance(iteration, int)
+        or iteration < 1
+    ):
+        return invalid_field("iteration")
+    normalized["iteration"] = iteration
+    focus = snapshot.get("focus")
+    if not isinstance(focus, list) or not all(
+        isinstance(value, str) for value in focus
+    ):
+        return invalid_field("focus")
+    if len(focus) > MAX_ITEMS:
+        return invalid_field("focus")
+    normalized_focus = [safe_text(value, limit=160) for value in focus]
+    if any(not value for value in normalized_focus):
+        return invalid_field("focus")
+    normalized["focus"] = normalized_focus
+
+    counters = snapshot.get("counters")
+    if (
+        not isinstance(counters, dict)
+        or len(counters) > MAX_ITEMS
+        or any(
+            not isinstance(key, str)
+            or not key
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for key, value in counters.items()
+        )
+    ):
+        return invalid_field("counters")
+    normalized_counters: dict[str, int] = {}
+    for key, value in counters.items():
+        normalized_key = safe_text(key, limit=80)
+        if not normalized_key or normalized_key in normalized_counters:
+            return invalid_field("counters")
+        normalized_counters[normalized_key] = value
+    normalized["counters"] = normalized_counters
+
+    context_health = snapshot.get("contextHealth")
+    if not isinstance(context_health, dict):
+        return invalid_field("contextHealth")
+    health_level = context_health.get("level")
+    if not isinstance(health_level, str) or not health_level:
+        return invalid_field("contextHealth.level")
+    normalized_health: dict[str, Any] = {
+        "level": safe_text(health_level, limit=40)
+    }
+    if not normalized_health["level"]:
+        return invalid_field("contextHealth.level")
+    if "epoch" in context_health:
+        epoch = context_health["epoch"]
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+            return invalid_field("contextHealth.epoch")
+        normalized_health["epoch"] = epoch
+    if "reasons" in context_health:
+        reasons = context_health["reasons"]
+        if (
+            not isinstance(reasons, list)
+            or len(reasons) > MAX_ITEMS
+            or not all(isinstance(value, str) for value in reasons)
+        ):
+            return invalid_field("contextHealth.reasons")
+        normalized_reasons = [safe_text(value, limit=240) for value in reasons]
+        if any(not value for value in normalized_reasons):
+            return invalid_field("contextHealth.reasons")
+        normalized_health["reasons"] = normalized_reasons
+    normalized["contextHealth"] = normalized_health
+
+    checkpoint = snapshot.get("checkpoint")
+    if not isinstance(checkpoint, dict):
+        return invalid_field("checkpoint")
+    checkpoint_state = checkpoint.get("state")
+    if not isinstance(checkpoint_state, str) or not checkpoint_state:
+        return invalid_field("checkpoint.state")
+    normalized_checkpoint: dict[str, Any] = {
+        "state": safe_text(checkpoint_state, limit=40)
+    }
+    if not normalized_checkpoint["state"]:
+        return invalid_field("checkpoint.state")
+    for field, limit in (("target", 240), ("reason", 500)):
+        if field not in checkpoint:
+            continue
+        value = checkpoint[field]
+        if value is not None and not isinstance(value, str):
+            return invalid_field(f"checkpoint.{field}")
+        normalized_checkpoint[field] = (
+            safe_text(value, limit=limit) if value is not None else None
+        )
+    normalized["checkpoint"] = normalized_checkpoint
+
+    for field, limit in (
+        ("until", 40),
+        ("task", 160),
+        ("branch", 200),
+        ("head", 120),
+        ("baseBranch", 200),
+        ("prUrl", 240),
+        ("lastShippedSha", 80),
+        ("stopReason", 500),
+    ):
+        if field not in snapshot:
+            continue
+        value = snapshot[field]
+        if value is not None and not isinstance(value, str):
+            return invalid_field(field)
+        normalized[field] = (
+            safe_text(value, limit=limit) if value is not None else None
+        )
+
+    if "prNumber" in snapshot:
+        pr_number = snapshot["prNumber"]
+        if pr_number is not None and (
+            isinstance(pr_number, bool)
+            or not isinstance(pr_number, int)
+            or pr_number < 1
+        ):
+            return invalid_field("prNumber")
+        normalized["prNumber"] = pr_number
+
+    if "lock" in snapshot:
+        lock = snapshot["lock"]
+        if not isinstance(lock, dict):
+            return invalid_field("lock")
+        normalized_lock: dict[str, Any] = {}
+        for field in ("present", "stale"):
+            if field not in lock:
+                continue
+            if not isinstance(lock[field], bool):
+                return invalid_field(f"lock.{field}")
+            normalized_lock[field] = lock[field]
+        if "runId" in lock:
+            lock_run_id = lock["runId"]
+            if lock_run_id is not None and not isinstance(lock_run_id, str):
+                return invalid_field("lock.runId")
+            normalized_lock["runId"] = (
+                safe_text(lock_run_id, limit=120)
+                if lock_run_id is not None
+                else None
+            )
+        normalized["lock"] = normalized_lock
+
+    return normalized
 
 
 def parse_gh_lines(output: str, *, kind: str) -> list[dict[str, Any]]:
@@ -742,6 +958,12 @@ def next_steps(report: Mapping[str, Any]) -> list[str]:
             )
     trellis = report.get("trellis")
     if isinstance(trellis, dict):
+        completed_outside_archive = trellis.get("completedOutsideArchive")
+        if completed_outside_archive:
+            steps.append(
+                "Archive completed active-root Trellis tasks with "
+                "python3 ./.trellis/scripts/task.py archive <task-dir>."
+            )
         active = trellis.get("activeTask")
         if isinstance(active, dict):
             steps.append(
@@ -796,6 +1018,7 @@ def collect_local(
     if relevant_branch is None and git.get("branch") != default:
         relevant_branch = git.get("branch")
     work_loop = collect_work_loop(repo)
+    trellis = collect_trellis(repo)
     report: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "mode": "local",
@@ -812,7 +1035,7 @@ def collect_local(
             branch=relevant_branch if isinstance(relevant_branch, str) else None,
             network=network,
         ),
-        "trellis": collect_trellis(repo),
+        "trellis": trellis,
         "workLoop": work_loop,
         "cleanupContext": {
             "sourceBranch": source_branch,
@@ -829,6 +1052,21 @@ def collect_local(
         report["anomalies"].append(
             "work-loop state is invalid: "
             + safe_text(work_loop.get("error") or "unknown error", limit=400)
+        )
+    completed_outside_archive = trellis.get("completedOutsideArchive", [])
+    if completed_outside_archive:
+        shown = ", ".join(
+            safe_text(task.get("path") or task.get("id"), limit=160)
+            for task in completed_outside_archive[:HUMAN_ITEM_LIMIT]
+        )
+        suffix = (
+            f"; +{len(completed_outside_archive) - HUMAN_ITEM_LIMIT} more"
+            if len(completed_outside_archive) > HUMAN_ITEM_LIMIT
+            else ""
+        )
+        report["anomalies"].append(
+            f"{len(completed_outside_archive)} completed Trellis task(s) remain "
+            f"outside .trellis/tasks/archive/: {shown}{suffix}"
         )
     if expect_clean:
         report["anomalies"].extend(
@@ -999,6 +1237,12 @@ def render_local(report: Mapping[str, Any], *, dry_run: bool) -> None:
     print(f"- in-progress Trellis tasks: {len(trellis.get('inProgress', []))}")
     planned = trellis.get("planned", [])
     print(f"- planned Trellis tasks ({len(planned)}): {format_task(planned[0]) if planned else 'none'}")
+    completed_outside_archive = trellis.get("completedOutsideArchive", [])
+    print(
+        "- completed Trellis tasks outside archive "
+        f"({len(completed_outside_archive)}): "
+        f"{format_task(completed_outside_archive[0]) if completed_outside_archive else 'none'}"
+    )
 
     print("\n==> Anomalies")
     if anomalies:

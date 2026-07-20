@@ -20,6 +20,9 @@ const MIN_NODE_VERSION = { major: 16, minor: 9, label: '16.9.0' };
 // default truncates large diffs and surfaces as a spawn error.
 const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const REVIEW_CODE_PATH_PATTERN = /\.(?:cjs|js|mjs|py|sh|ts|tsx)$/;
+const REVIEW_LEARNINGS_PATH_PROVENANCE_FILE = 'docs/review-learnings.md';
+const REVIEW_LEARNINGS_MANAGED_BLOCK_PATTERN =
+  /<!-- sd-review-learnings:start -->[\s\S]*?<!-- sd-review-learnings:end -->/g;
 const GENERATED_REVIEW_PATHS = new Set([
   'docs/fleet/candidate-validation.json',
   'docs/repomix-map.md',
@@ -56,6 +59,7 @@ export function runReviewPreflight(options = {}) {
   runCheck('copied template diff disclosure', checkCopiedTemplateDiffDisclosure);
   runCheck('documentation path hygiene', checkDocumentationPathHygiene);
   runCheck('documentation path references', checkDocumentationPathReferences);
+  runCheck('completed Trellis task location', checkCompletedTrellisTaskLocation);
   runCheck('Trellis task context seeds', checkTrellisTaskContextSeeds);
   runCheck('Trellis journal records', checkTrellisJournalRecords);
   runCheck('first-review risk sweep', checkReviewRiskSweep);
@@ -382,7 +386,17 @@ function checkDocumentationPathReferences() {
       continue;
     }
 
-    missing.push(...findMissingDocumentationPathReferences(file, readText(file), (candidate) => exists(candidate)));
+    const referenceText = maskGeneratedDocumentationPathProvenance(
+      file,
+      readText(file),
+    );
+    missing.push(
+      ...findMissingDocumentationPathReferences(
+        file,
+        referenceText,
+        (candidate) => exists(candidate),
+      ),
+    );
   }
 
   for (const reference of missing) {
@@ -494,6 +508,62 @@ function checkTrellisTaskContextSeeds() {
 
   if (failures.length === failureStart) {
     pass(`checked ${inspectedFiles} changed in-progress, completed, or archived Trellis task context file(s) for generated _example seeds.`);
+  }
+}
+
+function checkCompletedTrellisTaskLocation() {
+  const failureStart = failures.length;
+  const taskRoot = resolve(rootDir, '.trellis', 'tasks');
+  if (!existsSync(taskRoot)) {
+    pass('no Trellis task root is present; completed-task location check skipped.');
+    return;
+  }
+
+  let entries;
+  try {
+    entries = readdirSync(taskRoot, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.name !== 'archive' &&
+          !entry.isSymbolicLink() &&
+          entry.isDirectory(),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name));
+  } catch (error) {
+    fail(`.trellis/tasks could not be inspected for completed active-root tasks: ${thrownValueMessage(error)}`);
+    return;
+  }
+
+  let inspected = 0;
+  let completed = 0;
+  for (const entry of entries) {
+    const taskFile = `.trellis/tasks/${entry.name}/task.json`;
+    if (!isRegularFile(taskFile)) {
+      continue;
+    }
+
+    inspected += 1;
+    let task;
+    try {
+      task = readJson(taskFile);
+    } catch (error) {
+      fail(`${taskFile} could not be parsed as JSON while checking completed-task location: ${thrownValueMessage(error)}`);
+      continue;
+    }
+
+    if (task?.status !== 'completed') {
+      continue;
+    }
+
+    completed += 1;
+    fail(
+      `${taskFile} has status completed outside .trellis/tasks/archive/; ` +
+        `archive it with python3 ./.trellis/scripts/task.py archive ${entry.name}.`,
+    );
+  }
+
+  if (completed === 0 && failures.length === failureStart) {
+    pass(`checked ${inspected} active-root Trellis task record(s); none is completed outside archive.`);
   }
 }
 
@@ -976,6 +1046,17 @@ export function findMissingDocumentationPathReferences(file, text, existsPath, o
   }
 
   return missing;
+}
+
+export function maskGeneratedDocumentationPathProvenance(file, text) {
+  if (file !== REVIEW_LEARNINGS_PATH_PROVENANCE_FILE) {
+    return text;
+  }
+
+  return text.replace(
+    REVIEW_LEARNINGS_MANAGED_BLOCK_PATTERN,
+    (block) => block.replace(/[^\n]/g, ' '),
+  );
 }
 
 function resolvesToLineSuffixedPath(resolved, existsPath) {

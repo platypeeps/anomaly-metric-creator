@@ -34,17 +34,22 @@ STATUSES = frozenset({"active", "paused", "stopped", "completed"})
 MODES = frozenset({"backlog", "designs"})
 SELECTORS = frozenset({"all", "needs-design"})
 UNTIL_VALUES = frozenset({"design", "merge"})
-CURRENT_FIELDS = frozenset(
-    {
-        "task",
-        "branch",
-        "head",
-        "baseBranch",
-        "prNumber",
-        "prUrl",
-        "lastShippedSha",
-    }
+CURRENT_FIELD_ORDER = (
+    "task",
+    "branch",
+    "head",
+    "baseBranch",
+    "prNumber",
+    "prUrl",
+    "lastShippedSha",
 )
+CURRENT_FIELDS = frozenset(CURRENT_FIELD_ORDER)
+STABLE_CURRENT_FIELDS = ("task", "baseBranch")
+TRANSITION_CURRENT_FIELDS = frozenset(STABLE_CURRENT_FIELDS)
+ACTIVE_EVIDENCE_PHASES = frozenset(
+    {"selected", "planning", "implementing", "validating", "shipping", "followups"}
+)
+MERGE_EVIDENCE_PHASES = frozenset({"shipping", "followups"})
 COUNTER_FIELDS = frozenset(
     {
         "completed",
@@ -851,17 +856,198 @@ def transition_state(
     current_phase = state["phase"]
     if phase not in LEGAL_TRANSITIONS[current_phase]:
         raise WorkLoopError(f"illegal work-loop transition: {current_phase} -> {phase}")
-    state["phase"] = phase
+    normalized_updates: dict[str, Any] = {}
     if updates:
         for key, value in updates.items():
             if key not in state["current"]:
                 raise WorkLoopError(f"unknown current-state field: {key}")
-            state["current"][key] = compact_text(value) if isinstance(value, str) else value
+            if key not in TRANSITION_CURRENT_FIELDS:
+                raise WorkLoopError(
+                    f"{key} must be recorded with the evidence command, not transition"
+                )
+            normalized = compact_text(value) if isinstance(value, str) else value
+            remembered = state["current"].get(key)
+            if (
+                key in STABLE_CURRENT_FIELDS
+                and remembered is not None
+                and remembered != normalized
+            ):
+                raise WorkLoopError(f"cannot replace stable current-state field: {key}")
+            normalized_updates[key] = normalized
+    state["phase"] = phase
+    state["current"].update(normalized_updates)
     if phase == "inventory" and current_phase == "complete":
         state["iteration"] += 1
         state["current"] = {key: None for key in state["current"]}
     if phase == "stopped":
         state["status"] = "stopped"
+
+
+def _resolved_commit(repo: Path, value: str) -> str | None:
+    return run_git(
+        repo, "rev-parse", "--verify", "--end-of-options", f"{value}^{{commit}}"
+    )
+
+
+def _branch_commit(repo: Path, branch: str) -> str | None:
+    return _resolved_commit(repo, f"refs/heads/{branch}")
+
+
+def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    return run_git(repo, "merge-base", "--is-ancestor", ancestor, descendant) is not None
+
+
+def _clear_recovery_checkpoint(state: dict[str, Any]) -> None:
+    if state["checkpoint"].get("state") in {"ready", "blocked"}:
+        state["checkpoint"] = {"state": "none", "target": None, "reason": None}
+
+
+def validated_evidence(
+    state: Mapping[str, Any],
+    updates: Mapping[str, Any],
+    *,
+    repo: Path | None = None,
+    phase: str | None = None,
+) -> dict[str, Any]:
+    if not updates:
+        raise WorkLoopError("evidence update requires at least one current-state field")
+    unknown = sorted(set(updates) - CURRENT_FIELDS)
+    if unknown:
+        raise WorkLoopError(f"unknown current-state field: {unknown[0]}")
+    evidence_phase = phase or state["phase"]
+    if evidence_phase not in ACTIVE_EVIDENCE_PHASES:
+        raise WorkLoopError(f"cannot update evidence during {evidence_phase} phase")
+
+    current = state["current"]
+    candidate = dict(current)
+    for key, value in updates.items():
+        if key == "prNumber":
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise WorkLoopError("prNumber evidence must be a positive integer")
+            candidate[key] = value
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise WorkLoopError(f"{key} evidence must be a non-empty string")
+        candidate[key] = compact_text(value)
+
+    for key in STABLE_CURRENT_FIELDS:
+        remembered = current.get(key)
+        observed = candidate.get(key)
+        if remembered is not None and observed != remembered:
+            raise WorkLoopError(f"cannot replace stable current-state field: {key}")
+
+    remembered_pr = current.get("prNumber")
+    if remembered_pr is not None and candidate.get("prNumber") != remembered_pr:
+        raise WorkLoopError("cannot replace recorded pull request number")
+    remembered_url = current.get("prUrl")
+    if remembered_url is not None and candidate.get("prUrl") != remembered_url:
+        raise WorkLoopError("cannot replace recorded pull request URL")
+    if candidate.get("prUrl") is not None:
+        if candidate.get("prNumber") is None:
+            raise WorkLoopError("pull request URL evidence requires a pull request number")
+        final_component = urlsplit(candidate["prUrl"]).path.rstrip("/").rsplit("/", 1)[-1]
+        if not final_component.isdigit() or int(final_component) != candidate["prNumber"]:
+            raise WorkLoopError("pull request URL does not match the recorded number")
+
+    evidence_repo = repo or Path(state["repository"]["root"])
+    remembered_branch = current.get("branch")
+    candidate_branch = candidate.get("branch")
+    branch_changed = (
+        remembered_branch is not None and candidate_branch != remembered_branch
+    )
+    if branch_changed:
+        if (
+            evidence_phase not in MERGE_EVIDENCE_PHASES
+            or candidate_branch != candidate.get("baseBranch")
+            or candidate.get("prNumber") is None
+            or candidate.get("lastShippedSha") is None
+        ):
+            raise WorkLoopError(
+                "branch evidence may change only to the base branch at a verified merge boundary"
+            )
+
+    branch_head: str | None = None
+    verify_branch = candidate_branch is not None and bool(
+        {"branch", "head"} & set(updates)
+    )
+    if verify_branch:
+        if not isinstance(candidate_branch, str):
+            raise WorkLoopError("branch evidence must be a non-empty string")
+        branch_head = _branch_commit(evidence_repo, candidate_branch)
+        if branch_head is None:
+            raise WorkLoopError(
+                f"branch evidence is not a local Git branch: {candidate_branch}"
+            )
+
+    remembered_head = current.get("head")
+    candidate_head = candidate.get("head")
+    if candidate_head is not None:
+        resolved_head = _resolved_commit(evidence_repo, candidate_head)
+        if resolved_head is None:
+            raise WorkLoopError(f"head evidence is not a local Git commit: {candidate_head}")
+        candidate["head"] = resolved_head
+        candidate_head = resolved_head
+        if verify_branch and branch_head != resolved_head:
+            raise WorkLoopError("HEAD evidence does not match the recorded branch")
+        if not branch_changed and remembered_head is not None and candidate_head != remembered_head:
+            resolved_remembered = _resolved_commit(evidence_repo, remembered_head)
+            if resolved_remembered is None or not _is_ancestor(
+                evidence_repo, resolved_remembered, resolved_head
+            ):
+                raise WorkLoopError("head evidence must advance to a descendant commit")
+
+    remembered_shipped = current.get("lastShippedSha")
+    candidate_shipped = candidate.get("lastShippedSha")
+    if candidate_shipped is not None:
+        resolved_shipped = _resolved_commit(evidence_repo, candidate_shipped)
+        if resolved_shipped is None:
+            raise WorkLoopError(
+                f"lastShippedSha evidence is not a local Git commit: {candidate_shipped}"
+            )
+        candidate["lastShippedSha"] = resolved_shipped
+        candidate_shipped = resolved_shipped
+        if remembered_shipped is not None and candidate_shipped != remembered_shipped:
+            resolved_remembered = _resolved_commit(evidence_repo, remembered_shipped)
+            if resolved_remembered is None or not _is_ancestor(
+                evidence_repo, resolved_remembered, resolved_shipped
+            ):
+                raise WorkLoopError(
+                    "lastShippedSha evidence must advance to a descendant commit"
+                )
+        evidence_tip = remembered_head if branch_changed else candidate_head
+        resolved_tip = (
+            _resolved_commit(evidence_repo, evidence_tip) if evidence_tip is not None else None
+        )
+        if resolved_tip is None:
+            tip_branch = remembered_branch if branch_changed else candidate_branch
+            if isinstance(tip_branch, str):
+                resolved_tip = _branch_commit(evidence_repo, tip_branch)
+        if resolved_tip is None:
+            raise WorkLoopError(
+                "lastShippedSha evidence requires a verifiable recorded head or branch"
+            )
+        if not _is_ancestor(
+            evidence_repo, resolved_shipped, resolved_tip
+        ):
+            raise WorkLoopError("lastShippedSha evidence must belong to the shipped branch")
+
+    return candidate
+
+
+def update_evidence(
+    state: dict[str, Any],
+    updates: Mapping[str, Any],
+    *,
+    repo: Path | None = None,
+) -> None:
+    candidate = validated_evidence(state, updates, repo=repo)
+    state["current"] = candidate
+    state["contextHealth"] = {
+        "level": "green",
+        "epoch": state["contextHealth"]["epoch"],
+        "reasons": [],
+    }
+    _clear_recovery_checkpoint(state)
 
 
 def apply_context_signal(state: dict[str, Any], signal: str, reason: str) -> None:
@@ -880,40 +1066,50 @@ def reconcile_state(
     *,
     signal: str | None = None,
     verified_live_advance: bool = False,
+    repo: Path | None = None,
 ) -> None:
     contradictions: list[str] = []
     context_signal_applied = False
     current = state["current"]
-    for observed_key, current_key in (
-        ("task", "task"),
-        ("branch", "branch"),
-        ("head", "head"),
-        ("prNumber", "prNumber"),
-    ):
-        observed = observations.get(observed_key)
-        remembered = current.get(current_key)
-        if observed is not None and remembered is not None and observed != remembered:
-            contradictions.append(
-                f"observed {observed_key} {observed!r} differs from ledger {remembered!r}"
-            )
     observed_phase = observations.get("phase")
+    advanced_phase: str | None = None
     if observed_phase is not None:
         if observed_phase not in PHASE_ORDER:
             raise WorkLoopError(f"invalid observed phase: {observed_phase}")
         ledger_order = PHASE_ORDER[state["phase"]]
         observed_order = PHASE_ORDER[observed_phase]
         if observed_order > ledger_order and verified_live_advance:
-            state["phase"] = observed_phase
-            apply_context_signal(
-                state,
-                "continuation-summary",
-                f"verified live state advanced to {observed_phase}",
-            )
-            context_signal_applied = True
+            advanced_phase = observed_phase
         elif observed_phase != state["phase"]:
             contradictions.append(
                 f"observed phase {observed_phase} differs from ledger {state['phase']}"
             )
+    evidence_observations: dict[str, Any] = {}
+    for key in CURRENT_FIELD_ORDER:
+        value = observations.get(key)
+        if value is None:
+            continue
+        evidence_observations[key] = (
+            compact_text(value) if isinstance(value, str) else value
+        )
+    mismatches = {
+        key: value
+        for key, value in evidence_observations.items()
+        if current.get(key) != value
+    }
+    candidate_current: dict[str, Any] | None = None
+    if mismatches and verified_live_advance:
+        try:
+            candidate_current = validated_evidence(
+                state, mismatches, repo=repo, phase=advanced_phase
+            )
+        except WorkLoopError as error:
+            contradictions.append(str(error))
+    elif mismatches:
+        contradictions.extend(
+            f"observed {key} {value!r} differs from ledger {current.get(key)!r}"
+            for key, value in mismatches.items()
+        )
     if contradictions:
         apply_context_signal(state, "contradiction", "; ".join(contradictions))
         state["checkpoint"] = {
@@ -922,14 +1118,28 @@ def reconcile_state(
             "reason": compact_text("; ".join(contradictions)),
         }
         return
+    if candidate_current is not None:
+        state["current"] = candidate_current
+    if advanced_phase is not None:
+        state["phase"] = advanced_phase
+        apply_context_signal(
+            state,
+            "continuation-summary",
+            f"verified live state advanced to {advanced_phase}",
+        )
+        context_signal_applied = True
     if signal:
         apply_context_signal(state, signal, f"runtime signal: {signal}")
     elif not context_signal_applied:
-        state["contextHealth"] = {
-            "level": "green",
-            "epoch": state["contextHealth"]["epoch"],
-            "reasons": [],
-        }
+        has_observations = bool(evidence_observations) or observed_phase is not None
+        if has_observations or state["contextHealth"]["level"] != "red":
+            state["contextHealth"] = {
+                "level": "green",
+                "epoch": state["contextHealth"]["epoch"],
+                "reasons": [],
+            }
+        if has_observations:
+            _clear_recovery_checkpoint(state)
 
 
 def record_result(
@@ -1074,6 +1284,29 @@ def _print(value: Mapping[str, Any], *, as_json: bool) -> None:
             print(f"{key}: {value[key]}")
 
 
+def _add_current_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--task")
+    command.add_argument("--branch")
+    command.add_argument("--head")
+    command.add_argument("--base-branch")
+    command.add_argument("--pr-number", type=int)
+    command.add_argument("--pr-url")
+    command.add_argument("--last-shipped-sha")
+
+
+def _current_updates_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    field_map = {
+        "task": args.task,
+        "branch": args.branch,
+        "head": args.head,
+        "baseBranch": args.base_branch,
+        "prNumber": args.pr_number,
+        "prUrl": args.pr_url,
+        "lastShippedSha": args.last_shipped_sha,
+    }
+    return {key: value for key, value in field_map.items() if value is not None}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-home", help="absolute user-local state directory")
@@ -1104,23 +1337,22 @@ def build_parser() -> argparse.ArgumentParser:
     transition.add_argument("--repo", type=Path, default=Path.cwd())
     transition.add_argument("--run-id", required=True)
     transition.add_argument("--phase", choices=PHASES, required=True)
-    transition.add_argument("--task")
-    transition.add_argument("--branch")
-    transition.add_argument("--head")
-    transition.add_argument("--base-branch")
-    transition.add_argument("--pr-number", type=int)
-    transition.add_argument("--pr-url")
-    transition.add_argument("--last-shipped-sha")
+    _add_current_arguments(transition)
     transition.add_argument("--json", action="store_true")
+
+    evidence = subparsers.add_parser(
+        "evidence", help="record verified evidence without changing phase"
+    )
+    evidence.add_argument("--repo", type=Path, default=Path.cwd())
+    evidence.add_argument("--run-id", required=True)
+    _add_current_arguments(evidence)
+    evidence.add_argument("--json", action="store_true")
 
     reconcile = subparsers.add_parser("reconcile", help="compare ledger with live evidence")
     reconcile.add_argument("--repo", type=Path, default=Path.cwd())
     reconcile.add_argument("--run-id", required=True)
     reconcile.add_argument("--observed-phase", choices=PHASES)
-    reconcile.add_argument("--task")
-    reconcile.add_argument("--branch")
-    reconcile.add_argument("--head")
-    reconcile.add_argument("--pr-number", type=int)
+    _add_current_arguments(reconcile)
     reconcile.add_argument("--signal", choices=sorted(CONTEXT_SIGNALS))
     reconcile.add_argument("--verified-live-advance", action="store_true")
     reconcile.add_argument("--json", action="store_true")
@@ -1267,30 +1499,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "transition":
-            field_map = {
-                "task": args.task,
-                "branch": args.branch,
-                "head": args.head,
-                "baseBranch": args.base_branch,
-                "prNumber": args.pr_number,
-                "prUrl": args.pr_url,
-                "lastShippedSha": args.last_shipped_sha,
-            }
-            updates = {key: value for key, value in field_map.items() if value is not None}
+            updates = _current_updates_from_args(args)
             state = mutate_state(
                 args.repo,
                 args.run_id,
                 lambda item: transition_state(item, args.phase, updates=updates),
                 state_root=state_root,
             )
+        elif args.command == "evidence":
+            updates = _current_updates_from_args(args)
+            state = mutate_state(
+                args.repo,
+                args.run_id,
+                lambda item: update_evidence(item, updates, repo=args.repo),
+                state_root=state_root,
+            )
         elif args.command == "reconcile":
-            observations = {
-                "phase": args.observed_phase,
-                "task": args.task,
-                "branch": args.branch,
-                "head": args.head,
-                "prNumber": args.pr_number,
-            }
+            observations = _current_updates_from_args(args)
+            observations["phase"] = args.observed_phase
             observations = {key: value for key, value in observations.items() if value is not None}
             state = mutate_state(
                 args.repo,
@@ -1300,6 +1526,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     observations,
                     signal=args.signal,
                     verified_live_advance=args.verified_live_advance,
+                    repo=args.repo,
                 ),
                 state_root=state_root,
             )
