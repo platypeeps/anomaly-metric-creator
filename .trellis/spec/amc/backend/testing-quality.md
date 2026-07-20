@@ -234,8 +234,8 @@ there is no older declared floor and no multi-version lane. Sources:
 - `tests/test_ci_change_classifier.py` asserts pack/audit positive cases and
   runtime/dependency/workflow negative cases.
 - `tests/test_ci_review_contract.py` mutation-tests the labeled auto-merge
-  clause, manual-dispatch force-app, managed Python command, and both syntax
-  lists against the live repository.
+  clause, manual-dispatch force-app, every managed-Python lightweight guard
+  command, and both syntax lists against the live repository.
 - `tests/test_python_syntax_lint.py` parses all tracked Python under
   `scripts/`, `src/`, `tests/`, `tools/`, and generated hook roots.
 

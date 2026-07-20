@@ -76,6 +76,11 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
               - run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
               - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
+              - run: uv run --python 3.14 --no-project python tools/check_workflow_pip.py
+              - run: uv run --python 3.14 --no-project python tools/check_trellis_placeholders.py
+              - run: uv run --python 3.14 --no-project python tools/check_ci_review_contract.py
+              - run: uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
+              - run: uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
           quick_check:
             name: quick test
             steps:
@@ -501,20 +506,30 @@ def test_manual_dispatch_must_force_classifier_app_gate(tmp_path: Path) -> None:
 
 
 def test_lightweight_guards_require_pinned_python(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    ci = tmp_path / ".github/workflows/ci.yml"
-    ci.write_text(
-        ci.read_text(encoding="utf-8").replace(
-            "uv run --python 3.14 --no-project python tools/check_python_syntax.py",
-            "python tools/check_python_syntax.py",
-        ),
-        encoding="utf-8",
+    guards = (
+        "tools/check_python_syntax.py",
+        "tools/check_workflow_pip.py",
+        "tools/check_trellis_placeholders.py",
+        "tools/check_ci_review_contract.py",
+        "tools/check_copilot_instruction_contract.py",
+        "scripts/sd-ai-command-pack-pr-body-scope.py",
     )
+    for index, guard in enumerate(guards):
+        root = tmp_path / str(index)
+        _write_minimal_contract(root)
+        ci = root / ".github/workflows/ci.yml"
+        ci.write_text(
+            ci.read_text(encoding="utf-8").replace(
+                f"uv run --python 3.14 --no-project python {guard}",
+                f"python {guard}",
+            ),
+            encoding="utf-8",
+        )
 
-    result = _run(str(tmp_path))
+        result = _run(str(root))
 
-    assert result.returncode == 1
-    assert "pinned Python lightweight guards" in result.stderr
+        assert result.returncode == 1
+        assert f"pinned Python lightweight guard ({guard})" in result.stderr
 
 
 def test_ci_shell_syntax_must_cover_command_pack_entrypoints(tmp_path: Path) -> None:

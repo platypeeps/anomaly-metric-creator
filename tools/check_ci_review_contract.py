@@ -59,6 +59,15 @@ _PRECOMMIT_PYTHON_SYNTAX_FILES = (
     r"files: ^(scripts|src|tests|tools|\.codex/hooks|\.github/copilot/hooks|"
     r"\.gemini/hooks)/.*\.py$"
 )
+_LIGHTWEIGHT_PYTHON_PREFIX = "uv run --python 3.14 --no-project python"
+_LIGHTWEIGHT_PYTHON_GUARDS = (
+    "tools/check_python_syntax.py",
+    "tools/check_workflow_pip.py",
+    "tools/check_trellis_placeholders.py",
+    "tools/check_ci_review_contract.py",
+    "tools/check_copilot_instruction_contract.py",
+    "scripts/sd-ai-command-pack-pr-body-scope.py",
+)
 
 
 def _read(path: Path) -> tuple[str | None, str | None]:
@@ -208,10 +217,6 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "name: Set up uv for lightweight guards",
         ),
         (
-            "pinned Python lightweight guards",
-            "uv run --python 3.14 --no-project python tools/check_python_syntax.py",
-        ),
-        (
             "CI review-tooling shell syntax coverage",
             _REVIEW_TOOLING_SHELL_SYNTAX,
         ),
@@ -221,6 +226,14 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
+    for guard in _LIGHTWEIGHT_PYTHON_GUARDS:
+        _require_contains(
+            text,
+            f"{_LIGHTWEIGHT_PYTHON_PREFIX} {guard}",
+            path=path,
+            label=f"pinned Python lightweight guard ({guard})",
+            violations=violations,
+        )
     _require_not_contains(
         text,
         "steps.full-ci.outputs.full_ci_requested",
