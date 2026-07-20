@@ -135,6 +135,11 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         jobs:
           analyze:
             if: (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'full-ci')) || github.event.label.name == 'full-ci'
+            steps:
+              - name: Initialize CodeQL
+                uses: github/codeql-action/init@1111111111111111111111111111111111111111
+              - name: Perform CodeQL Analysis
+                uses: github/codeql-action/analyze@1111111111111111111111111111111111111111
         """,
     )
     _write(
@@ -416,6 +421,23 @@ def test_missing_codeql_persistent_full_ci_recheck_fails(tmp_path: Path) -> None
 
     assert result.returncode == 1
     assert "persistent full-ci re-check on synchronize" in result.stderr
+
+
+def test_codeql_init_and_analyze_revisions_must_match(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    codeql = tmp_path / ".github/workflows/codeql.yml"
+    codeql.write_text(
+        codeql.read_text(encoding="utf-8").replace(
+            "github/codeql-action/init@1111111111111111111111111111111111111111",
+            "github/codeql-action/init@2222222222222222222222222222222222222222",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "CodeQL init/analyze revisions must match" in result.stderr
 
 
 def test_ci_persistent_full_ci_recheck_is_forbidden(tmp_path: Path) -> None:
