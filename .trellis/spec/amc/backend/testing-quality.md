@@ -99,7 +99,11 @@ Additional mechanical guards catch recent review-churn patterns before PR
 review: syntax-only `ast.parse` over Python files, Ruff F841 unused locals for
 runtime/tools/hooks, agent-hook exception-shape checks, Trellis placeholder
 and journal/index commit-list consistency checks, Copilot instruction contract
-checks, and trace-payload validation anti-pattern checks. Keep these hooks
+checks, trace-payload validation anti-pattern checks, and the canonical
+clean-module mypy gate in `tools/check_mypy_gate.py`. CI invokes the
+AMC-module-load, role-name, and agent-hook-exception guards from the always-run
+changes job under uv-managed Python 3.14; role-name live-tree coverage includes
+`src/`, `scripts/`, `.agents/`, and `.trellis/`. Keep these hooks
 stdlib-only where they are local scripts, with the documented `0`/`1`/`2` exit
 contract and acceptance tests over both temporary fixtures and the live repo
 tree. `tools/benchmark_combine.py` is the one intentional exception to the
@@ -111,11 +115,13 @@ acceptance test, and is not wired into pre-commit or CI. Sources:
 `tools/check_agent_hook_exceptions.py`; `tools/check_trellis_placeholders.py`;
 `tools/check_copilot_instruction_contract.py`;
 `tools/check_trace_payload_antipatterns.py`;
+`tools/check_mypy_gate.py`;
 `tests/test_python_syntax_lint.py`;
 `tests/test_agent_hook_exception_lint.py`;
 `tests/test_trellis_placeholder_lint.py`;
 `tests/test_copilot_instruction_contract.py`;
-`tests/test_trace_payload_antipatterns_lint.py`.
+`tests/test_trace_payload_antipatterns_lint.py`;
+`tests/test_mypy_gate_lint.py`.
 
 Ruff is pinned in two places that must stay in lockstep: the `ruff==` dev-extra
 pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
@@ -135,7 +141,8 @@ install audit through `scripts/sd-ai-command-pack-install-audit.py`,
 current-diff CI classification, configured package scripts when present, and
 optional Prism/Gito review. AMC's repo-local review preflight runs the CI/review
 cadence contract guard, the Copilot instruction contract guard, the PR-body
-scope guard, and focused review-churn tests. Use
+scope guard, the canonical clean-module mypy gate, and focused review-churn
+tests. Use
 `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` or
 `SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0` to skip optional AI review while
 iterating. Use `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON`,

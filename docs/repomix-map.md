@@ -1274,6 +1274,7 @@ tests/
   test_instances_per_component.py
   test_instances.py
   test_multiday_cascades.py
+  test_mypy_gate_lint.py
   test_otel_gauges.py
   test_otlp_units.py
   test_package_entrypoint.py
@@ -1319,6 +1320,7 @@ tools/
   check_branch_name.py
   check_ci_review_contract.py
   check_copilot_instruction_contract.py
+  check_mypy_gate.py
   check_python_syntax.py
   check_role_name_leaks.py
   check_ruff_lockstep.py

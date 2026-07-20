@@ -13,10 +13,12 @@ commit-hook bypasses identified by the audit.
 - Reuse existing lint entrypoints in the lightweight guards step; do not copy
   their logic into YAML.
 - Expand role-name scan roots through the checker configuration and its tests.
-- Pass `github.head_ref` to the existing branch-name checker and register the
-  same guard as a `commit-msg` hook.
-- In the full-check shell wrapper, use Node when available and a Python 3
-  implementation otherwise, with parity tests for the fallback.
+- Pass `github.head_ref` to the existing branch-name checker, and register the
+  existing role-name checker as a `commit-msg` hook that receives the commit
+  message filename.
+- Apply the pending Ruff 0.15.22 update to both pin owners and regenerate the
+  lockfile, preserving the existing lockstep checker as the executable
+  contract.
 
 ## Boundaries And Non-Goals
 
@@ -27,9 +29,9 @@ commit-hook bypasses identified by the audit.
 ## Affected Files
 
 `tools/check_mypy_gate.py`, `.github/workflows/ci.yml`,
-`scripts/sd-ai-command-pack-full-check.sh`, `.pre-commit-config.yaml`, existing
-lint tools/tests, `docs/DEVELOPMENT_CYCLE.md`, `CLAUDE.md`, relevant Trellis
-spec text, and `.trellis/audit/ledger.md`.
+`.pre-commit-config.yaml`, existing lint tools/tests, `pyproject.toml`,
+`uv.lock`, `docs/DEVELOPMENT_CYCLE.md`,
+`CLAUDE.md`, relevant Trellis spec text, and `.trellis/audit/ledger.md`.
 
 ## Data And Command Contracts
 
@@ -45,5 +47,5 @@ compatible with repositories where that stage is not yet installed.
 
 ## Validation
 
-Run focused checker tests, a no-Node fallback test, pre-commit across all files,
+Run focused checker tests, pre-commit across all files, the Ruff lockstep lint,
 and the live lightweight/full PR jobs.

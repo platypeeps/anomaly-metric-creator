@@ -177,6 +177,34 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "tests/test_pr_body_scope_lint.py",
         ),
         (
+            "pull-request head-ref branch guard",
+            'HEAD_REF: ${{ github.head_ref }}',
+        ),
+        (
+            "branch-name guard invocation",
+            'python tools/check_branch_name.py "$HEAD_REF"',
+        ),
+        (
+            "AMC module-load CI guard",
+            "python tools/check_amc_module_load.py",
+        ),
+        (
+            "role-name CI guard",
+            "python tools/check_role_name_leaks.py",
+        ),
+        (
+            "role-name live-tree roots",
+            "git ls-files src scripts .agents .trellis",
+        ),
+        (
+            "agent-hook-exception CI guard",
+            "python tools/check_agent_hook_exceptions.py",
+        ),
+        (
+            "canonical mypy gate invocation",
+            "python tools/check_mypy_gate.py",
+        ),
+        (
             "auto-merge enabled PR event",
             "types: [opened, synchronize, reopened, ready_for_review, labeled, auto_merge_enabled]",
         ),
@@ -371,6 +399,8 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         ("PR body scope config trigger", ".sd-ai-command-pack/pr-body-scope"),
         ("PR body scope tests trigger", "tests/test_pr_body_scope_lint"),
         ("Copilot hook pass_filenames", "pass_filenames: false"),
+        ("role-name commit-message hook", "id: role-name-commit-message"),
+        ("commit-message hook stage", "stages: [commit-msg]"),
         (
             "pre-commit review-tooling shell syntax coverage",
             _REVIEW_TOOLING_SHELL_SYNTAX,

@@ -1262,6 +1262,8 @@ Several focused checks run on every `git commit` via `.pre-commit-config.yaml`:
 - **Agent hook exceptions (`tools/check_agent_hook_exceptions.py`).** Forbids
   `except BaseException` / bare `except` in Python hook adapters and requires a
   reason comment on intentionally empty `except Exception: pass` handlers.
+- **Clean-module mypy gate (`tools/check_mypy_gate.py`).** Owns the canonical
+  19-module zero-error set used by both full CI and local review preflight.
 - **Trellis placeholders (`tools/check_trellis_placeholders.py`).** Blocks
   unfinished journal/task template text such as `(Add details)` from committed
   Trellis workspace artifacts.
@@ -1276,8 +1278,10 @@ Install and run locally (the `dev` extra installs both `ruff` and
 .venv/bin/pip install -e '.[dev]'           # installs ruff + pre-commit
 .venv/bin/pre-commit install                # one-time per clone
 .venv/bin/pre-commit install --hook-type pre-push  # one-time per clone
+.venv/bin/pre-commit install --hook-type commit-msg # one-time per clone
 .venv/bin/pre-commit run --all-files        # ad-hoc full sweep
 .venv/bin/ruff check tests/                 # direct ruff F401 check
+.venv/bin/python tools/check_mypy_gate.py   # clean-module type gate
 ```
 
 The `tests/`-scoped hooks run automatically on `git commit` for any
@@ -1289,15 +1293,15 @@ tests/` removes it. Adding a
 commit with a pointer to the canonical loader; switch to the `amc`
 fixture or annotate the line with `# amc-load: allow`.
 
-The `branch-name` hook runs at the `pre-push` stage (a separate
-git hook from `pre-commit`), which is why
-`pre-commit install --hook-type pre-push` is a one-time per-clone
-step. It rejects
+The `branch-name` hook runs at the `pre-push` stage and the role-name scanner
+runs against commit messages at the `commit-msg` stage. Those are separate Git
+hooks from `pre-commit`, which is why both explicit install commands above are
+one-time per-clone steps. The branch guard rejects
 any branch name matching `(?i)(^|\b)ver-\d+` — see
 [.trellis/spec/amc/backend/testing-quality.md](.trellis/spec/amc/backend/testing-quality.md)
 and [CLAUDE.md](CLAUDE.md) for the policy, anchors, and full invocation modes
-of `tools/check_branch_name.py`. The
-pre-commit hook checks the current local branch only; for full
-coverage of refspec pushes (`git push origin clean:ver-123`) and
-detached-HEAD pushes (`git push origin HEAD:ver-123`), see the
-hand-rolled `.git/hooks/pre-push` snippet in CLAUDE.md.
+of `tools/check_branch_name.py`. The pre-push hook checks the current local
+branch only; CI independently checks the actual pull-request
+`github.head_ref`, closing refspec and detached-HEAD publication bypasses for
+PRs. For earlier local feedback on those edge cases, see the hand-rolled
+`.git/hooks/pre-push` snippet in CLAUDE.md.

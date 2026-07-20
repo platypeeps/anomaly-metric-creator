@@ -522,15 +522,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - why: fixed; later label events on an armed PR keep the full-matrix gate.
 
 ## A-048 — CI mypy clean-module gate has no local counterpart
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: tooling
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - ci.yml:346-367 — 19-file list inlined in YAML; absent from pre-commit/full-check/docs
-- why: type regressions surface only ~19 min into CI; the list itself is unguarded.
-- fix: tools/check_mypy_gate.py shared by CI and local preflight.
+  - `tools/check_mypy_gate.py`; `.github/workflows/ci.yml`; `scripts/check-review-preflight.mjs` — one executable owner runs the 19 clean modules in CI and local preflight.
+  - `tests/test_mypy_gate_lint.py` — pins the module set and rejects a second inline workflow list.
+- why: fixed; clean-module type regressions now fail locally and remotely from one list.
 
 ## A-049 — Pack payload not absorbed into classifier/syntax gates (full-suite waste; toolchain.sh ungated)
 - status: fixed
@@ -548,11 +548,10 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: tooling
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ 87dbd79
 - evidence:
-  - scripts/sd-ai-command-pack-full-check.sh:850-857 — node absent → warn + return 0; churn pytest + contract guards live in the .mjs
-- why: green full-check on a node-less machine predicts nothing.
-- fix: python3 fallback or make preflight required.
+  - `scripts/sd-ai-command-pack-full-check.sh`; `.sd-ai-command-pack/provenance.json` — the affected wrapper is a pack-vouched installed target; a consumer-only edit would fail the install audit.
+- why: remains open; implement in the upstream SD command pack and refresh the consumer through the installer so provenance stays truthful.
 
 ## A-051 — workflow_dispatch cannot force the full matrix it is documented to run
 - status: fixed
@@ -566,15 +565,14 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - why: fixed; manual dispatch makes the full application lane eligible even for a lightweight tip diff.
 
 ## A-052 — Role-name-leak CI mirror scans far less than the pre-commit hook
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: tooling
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - tests/test_role_name_leaks_lint.py:320-342 — src/, scripts/, .agents/, .trellis/ absent from scan roots
-- why: leaks in those trees merge green without local hooks.
-- fix: extend the scan roots.
+  - `.github/workflows/ci.yml`; `tests/test_role_name_leaks_lint.py` — CI and the live-tree regression scan cover `src/`, `scripts/`, `.agents/`, and `.trellis/`.
+- why: fixed; those tracked trees are scanned before every application lane.
 
 ## A-053 — Lightweight lane runs repo lints under unpinned system Python
 - status: fixed
@@ -655,37 +653,34 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: test parametrized over amc.SCENARIOS parsing the table.
 
 ## A-060 — Three pre-commit lints have no CI mirror
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - ci.yml:185-214 mirrors four peers but not role-name-leaks / amc-module-load / agent-hook-exceptions
-- why: violations in later synchronizes can merge on quick-lane evidence.
-- fix: add the three sub-second invocations to the guards step.
+  - `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py` — the always-run changes job invokes role-name, AMC-module-load, and agent-hook-exception guards under managed Python.
+- why: fixed; quick/full lane selection cannot bypass these sub-second guards.
 
 ## A-061 — Branch-name lint's refspec bypass closable in CI
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - CLAUDE.md:2393-2418 — documented gap + manual hook workaround; CI sees github.head_ref
-- why: a refspec push republishes the ticket literal unchecked.
-- fix: run check_branch_name.py against $HEAD_REF in the changes job.
+  - `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py` — the changes job passes `github.head_ref` to the existing branch checker and contract-pins the source.
+- why: fixed; the published PR head ref is checked even when local refspec feedback is bypassed.
 
 ## A-062 — Role-name lint's commit-message surface unwired
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - CLAUDE.md:2219-2224 — commit-msg stage not wired; script already accepts file paths
-- why: commit messages reach PR pages like the bodies that leaked on #86.
-- fix: stages [commit-msg] hook entry + install instructions.
+  - `.pre-commit-config.yaml`; `README.md`; `docs/DEVELOPMENT_CYCLE.md` — the role-name checker runs at `commit-msg` and the one-time installation is documented.
+- why: fixed; locally authored commit messages receive the same structural scan as tracked text.
 
 ## A-063 — sd-ai-command-pack refresh is a recurring manual chore (17/564 commits)
 - status: open

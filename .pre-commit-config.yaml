@@ -7,7 +7,7 @@ repos:
     # `[project.optional-dependencies].dev` in `pyproject.toml` so a
     # local `ruff check` and this hook resolve the same binary. Bump
     # both lines together.
-    rev: v0.15.21
+    rev: v0.15.22
     hooks:
       - id: ruff
         name: ruff F401 (tests/)
@@ -74,6 +74,16 @@ repos:
         # belt-and-braces fallback for files pre-commit mis-classifies
         # and for ad-hoc CLI runs that pass arbitrary paths.
         types: [text]
+        pass_filenames: true
+      # Commit messages are published on PR pages and need the same role-name
+      # protection as tracked text. The commit-msg stage passes the temporary
+      # message filename directly to the existing scanner.
+      - id: role-name-commit-message
+        name: forbid internal role-name leaks in commit messages
+        entry: python tools/check_role_name_leaks.py
+        language: python
+        stages: [commit-msg]
+        always_run: true
         pass_filenames: true
       # Reject branch names that embed the ticket literal
       # `ver-<N>` / `VER-<N>`. PRs #47–#77 and #86 all shipped a

@@ -36,6 +36,44 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up uv for change and repository guards
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+
+      - name: Check pull request branch name
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: uv run --python 3.14 --no-project python tools/check_branch_name.py "$HEAD_REF"
+
+      - name: Run lightweight repository guards
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          amc_test_files=()
+          while IFS= read -r path; do
+            amc_test_files+=("$path")
+          done < <(git ls-files 'tests/*.py')
+          if [ "${#amc_test_files[@]}" -gt 0 ]; then
+            uv run --python 3.14 --no-project python tools/check_amc_module_load.py "${amc_test_files[@]}"
+          fi
+
+          role_name_files=()
+          while IFS= read -r path; do
+            role_name_files+=("$path")
+          done < <(git ls-files src scripts .agents .trellis)
+          if [ "${#role_name_files[@]}" -gt 0 ]; then
+            uv run --python 3.14 --no-project python tools/check_role_name_leaks.py "${role_name_files[@]}"
+          fi
+
+          hook_files=()
+          while IFS= read -r path; do
+            hook_files+=("$path")
+          done < <(git ls-files '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
+          if [ "${#hook_files[@]}" -gt 0 ]; then
+            uv run --python 3.14 --no-project python tools/check_agent_hook_exceptions.py "${hook_files[@]}"
+          fi
+
       - name: Collect changed files
         shell: bash
         env:
@@ -356,27 +394,7 @@ jobs:
       # as 07-02-legacy-monolith-decomposition extracts clean modules); never
       # drop one to silence a regression — fix the type error instead.
       - name: Type-check gate (mypy, clean modules)
-        run: |
-          uv run --no-sync mypy --follow-imports=silent \
-            src/anomaly_metric_creator/__init__.py \
-            src/anomaly_metric_creator/artifacts.py \
-            src/anomaly_metric_creator/cli.py \
-            src/anomaly_metric_creator/combine.py \
-            src/anomaly_metric_creator/gauges_impl.py \
-            src/anomaly_metric_creator/models.py \
-            src/anomaly_metric_creator/otel.py \
-            src/anomaly_metric_creator/otel_stream.py \
-            src/anomaly_metric_creator/otlp.py \
-            src/anomaly_metric_creator/redaction.py \
-            src/anomaly_metric_creator/scenarios.py \
-            src/anomaly_metric_creator/schema.py \
-            src/anomaly_metric_creator/server_commands.py \
-            src/anomaly_metric_creator/server_debug_ui.py \
-            src/anomaly_metric_creator/server_helm.py \
-            src/anomaly_metric_creator/server_kubernetes.py \
-            src/anomaly_metric_creator/server_mcp.py \
-            src/anomaly_metric_creator/server_mutations.py \
-            src/anomaly_metric_creator/timeutil.py
+        run: uv run --no-sync python tools/check_mypy_gate.py
 
       # The suite splits by the `heavy` marker so it fits the 7 GB standard
       # runner: the GB-scale 7-day / N=3 fixture tests run serially first
