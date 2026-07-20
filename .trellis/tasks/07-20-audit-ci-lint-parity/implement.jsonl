@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Defines AMC lint, mypy, pre-commit, and CI quality-gate ownership."}
-{"file": ".trellis/spec/shared/code-quality.md", "reason": "Defines shared checker reuse and maintainability expectations."}

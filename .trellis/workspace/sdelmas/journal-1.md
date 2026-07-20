@@ -941,3 +941,46 @@ Merged PR #263 to make CI event selection, lightweight Python runtimes, syntax c
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Mirror CI lints and local gates
+
+**Date**: 2026-07-20
+**Task**: Mirror CI lints and local gates
+**Package**: amc
+**Branch**: `codex/archive-audit-ci-lint-parity`
+
+### Summary
+
+Completed and merged PR #265, centralizing CI/local lint ownership and superseding Dependabot PR #259 with a validated lockstep Ruff update.
+
+### Main Changes
+
+- Added one repository-owned clean-module mypy gate consumed by CI and local review preflight.
+- Mirrored role-name, AMC-module-load, agent-hook-exception, PR branch-name, and commit-msg guards across local and remote gates.
+- Updated Ruff to 0.15.22 in lockstep, closed five audit findings, and closed superseded Dependabot PR #259.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `127e7c0f41e940210a99104d6a606faec8d34810` | fix: align CI and local lint gates |
+| `5704073d731f89b9582b2d45e9b33e0f4b0d4ad3` | test: avoid duplicate mypy gate run |
+| `781acb10dba553424ef99f64c71f6928ce06b9f4` | test: assert mypy list command succeeds |
+| `4c4986aed0bb319c94ac12b512b8175f2023fe17` | test: bound live-tree lint command size |
+| `eb86027aefd4c8bc8cb12ab0377040a4dc829f45` | test: scope mypy ownership assertion |
+
+### Testing
+
+- [OK] Full local suite: 1625 passed, 2 expected opt-in smoke skips
+- [OK] Canonical SD full-check passed
+- [OK] PR #265 CI: 6 passed, 4 expected skips
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
