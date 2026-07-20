@@ -112,6 +112,26 @@ def _require_not_contains(
         violations.append(f"{path}: forbidden {label}: {needle!r}")
 
 
+def _yaml_mapping_block(text: str, key: str) -> str | None:
+    """Return a top-level mapping entry without assuming its indentation."""
+    match = re.search(
+        rf"^(?P<indent>[ \t]+){re.escape(key)}:\s*$",
+        text,
+        re.MULTILINE,
+    )
+    if match is None:
+        return None
+
+    indent = match.group("indent")
+    next_entry = re.search(
+        rf"^{re.escape(indent)}\S[^:\n]*:\s*$",
+        text[match.end() :],
+        re.MULTILINE,
+    )
+    end = match.end() + next_entry.start() if next_entry is not None else len(text)
+    return text[match.start() : end]
+
+
 def _check_ci(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("change classifier job", "changes:"),
@@ -301,14 +321,17 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         violations=violations,
     )
 
-    ci_result_block = text[text.find("  ci_result:") :]
-    _require_not_contains(
-        ci_result_block,
-        "windows_collection",
-        path=path,
-        label="advisory Windows job in CI Result dependencies",
-        violations=violations,
-    )
+    ci_result_block = _yaml_mapping_block(text, "ci_result")
+    if ci_result_block is None:
+        violations.append(f"{path}: cannot inspect stable aggregate job block")
+    else:
+        _require_not_contains(
+            ci_result_block,
+            "windows_collection",
+            path=path,
+            label="advisory Windows job in CI Result dependencies",
+            violations=violations,
+        )
 
 
 def _check_codeql(path: Path, text: str, violations: list[str]) -> None:

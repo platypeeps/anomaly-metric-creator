@@ -424,6 +424,26 @@ def test_windows_collection_must_remain_advisory(tmp_path: Path) -> None:
     assert "advisory Windows job in CI Result dependencies" in result.stderr
 
 
+def test_windows_advisory_guard_does_not_assume_job_indentation(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8")
+        .replace("  ci_result:", " ci_result:")
+        .replace(
+            "needs: [test, socket]", "needs: [test, socket, windows_collection]"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "advisory Windows job in CI Result dependencies" in result.stderr
+
+
 def test_windows_collection_requires_locked_environment(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
     ci = tmp_path / ".github/workflows/ci.yml"
