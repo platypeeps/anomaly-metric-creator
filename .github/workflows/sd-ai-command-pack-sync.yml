@@ -43,6 +43,16 @@ jobs:
         shell: bash
         run: npm exec --yes --package=repomix@1.16.1 -- bash scripts/update_repomix
 
+      - name: Verify scoped PR token
+        shell: bash
+        env:
+          SCOPED_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
+        run: |
+          if [ -z "$SCOPED_TOKEN" ]; then
+            echo "::error::SD_AI_COMMAND_PACK_PR_TOKEN is not configured"
+            exit 1
+          fi
+
       # create-pull-request exits without creating a branch or PR when the
       # refreshed tree matches main. Its fixed branch updates one standing PR
       # instead of creating duplicates if another weekly run occurs first.

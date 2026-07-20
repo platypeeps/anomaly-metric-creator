@@ -189,6 +189,13 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: git clone --depth 1 --branch main https://github.com/platypeeps/sd-ai-command-pack.git "$RUNNER_TEMP/sd-ai-command-pack"
               - run: python "$RUNNER_TEMP/sd-ai-command-pack/install.py" "$GITHUB_WORKSPACE" --force
               - run: scripts/update_repomix
+              - env:
+                  SCOPED_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
+                run: |
+                  if [ -z "$SCOPED_TOKEN" ]; then
+                    echo "SD_AI_COMMAND_PACK_PR_TOKEN is not configured"
+                    exit 1
+                  fi
               - id: create-pr
                 uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
                 with:
@@ -478,6 +485,23 @@ def test_pack_sync_forbids_repo_wide_workflow_token(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "scoped PR token" in result.stderr
     assert "repo-wide workflow token for PR writes" in result.stderr
+
+
+def test_pack_sync_requires_fail_closed_secret_preflight(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            'if [ -z "$SCOPED_TOKEN" ]; then',
+            'if [ -n "$SCOPED_TOKEN" ]; then',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "fail-closed scoped token preflight" in result.stderr
 
 
 def test_ci_docs_must_cover_scheduled_sync(tmp_path: Path) -> None:

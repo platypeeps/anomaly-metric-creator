@@ -414,6 +414,14 @@ def _check_pack_sync(path: Path, text: str, violations: list[str]) -> None:
             "token: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}",
         ),
         (
+            "fail-closed scoped token preflight",
+            'if [ -z "$SCOPED_TOKEN" ]; then',
+        ),
+        (
+            "scoped token failure diagnostic",
+            "SD_AI_COMMAND_PACK_PR_TOKEN is not configured",
+        ),
+        (
             "scoped auto-merge token",
             "GH_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}",
         ),
