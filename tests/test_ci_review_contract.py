@@ -474,12 +474,24 @@ def test_parallel_full_test_jobs_are_required(
             "KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82",
             "pinned kubectl checksum",
         ),
+        (
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/"
+            "linux/amd64/kubectl",
+            "official kubectl download",
+        ),
         ("HELM_VERSION: v4.2.0", "pinned Helm version"),
         (
             "HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096",
             "pinned Helm checksum",
         ),
+        (
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz",
+            "official Helm download",
+        ),
+        ("--retry 3 --retry-all-errors", "real-client download retry"),
+        ('echo "$client_bin" >> "$GITHUB_PATH"', "real-client PATH export"),
         ('AMC_RUN_REAL_CLIENT_SMOKE: "1"', "real-client smoke opt-in"),
+        ("pytest -n 0 -q", "serial real-client smoke"),
         (
             "tests/test_server.py::test_real_helm4_binary_smoke_when_available",
             "Helm real-client smoke selector",
