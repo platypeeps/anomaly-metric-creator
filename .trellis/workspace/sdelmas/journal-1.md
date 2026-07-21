@@ -1480,3 +1480,44 @@ Approved and shipped both schema golden re-locks, preserving semantic assertions
 ### Next Steps
 
 - None - task complete
+
+
+## Session 36: Close CI performance program
+
+**Date**: 2026-07-21
+**Task**: Close CI performance program
+**Package**: amc
+**Branch**: `codex/close-performance-program`
+
+### Summary
+
+Verified and archived the nine-child CI and local test-performance program after exact-head hosted CI beat the parent target.
+
+### Main Changes
+
+- Recorded exact-head heavy/light timings, partition completeness, xdist coverage, and unchanged coverage threshold in the parent PRD.
+- Corrected the last stale N=3 fixture-size claim in CLAUDE.md.
+- Archived 07-18-perf-suite-runtime after all cross-child acceptance criteria passed.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6054ec4` | docs: close performance program verification |
+
+### Testing
+
+- [OK] 44 heavy + 1653 light = 1697 collected tests
+- [OK] Exact-head CI run 29831312539: 378s critical path, 65.3% below baseline
+- [OK] Combined coverage 87%; --cov-fail-under=85 unchanged
+- [OK] pre-commit run --all-files
+- [OK] bash scripts/sd-ai-command-pack-full-check.sh
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Publish, review, merge, and housekeep the focused closure PR.
