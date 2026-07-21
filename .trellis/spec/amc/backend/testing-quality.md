@@ -175,7 +175,11 @@ Python 3.14 test lane for app-required opened/reopened/ready PRs,
 `full-ci` label runs, auto-merge-armed PRs (the `auto_merge_enabled` event
 and every later push or label event on an armed PR, via the payload's
 `auto_merge` field),
-workflow/dependency changes, manual dispatch, and `main` pushes. Auto-merge
+workflow/dependency changes, manual dispatch, and `main` pushes. The full lane
+uses concurrent `test_heavy` and `test_light` jobs followed by
+`coverage_combine`; the light job owns the existing console-script, ruff, and
+mypy gates, while the combine job merges visible raw-coverage artifacts,
+generates XML, and enforces the 85% threshold. Auto-merge
 must never merge on quick-lane evidence, and `main` pushes run in per-commit
 concurrency groups so merge-burst runs cannot cancel each other's backstop
 verdicts. The version policy (decided 2026-07-06) is

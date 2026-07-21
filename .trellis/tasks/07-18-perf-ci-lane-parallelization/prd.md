@@ -25,10 +25,12 @@ the tests do.
   *where* the partitions run, not *what* they select.
 - Coverage currently aggregates via `--cov-append` across two steps in one
   working directory. Split jobs cannot share that file, so:
-  - each job runs coverage with `--cov` and `--cov-report=`, then uploads
-    its raw `.coverage` data file as an artifact;
+  - each job runs coverage with `--cov` and `--cov-report=`, renames the
+    hidden `.coverage` file to a visible lane-specific filename, then uploads
+    that raw data file as an artifact;
   - a combine job downloads both, runs `coverage combine`, then
-    `coverage report --fail-under=85` and `coverage xml`;
+    `coverage xml` before `coverage report --fail-under=85`, so the XML exists
+    even when the threshold gate fails;
   - the combine job publishes `coverage.xml` (what `ci.yml:403-409` does
     today) and keeps `if: ${{ !cancelled() }}` so the report survives a
     tripped gate.
@@ -38,8 +40,10 @@ the tests do.
   documented at `ci.yml:496-506`.
 - The required branch-protection context stays the aggregate `CI Result`;
   do not rename it or introduce a new required context.
-- Both jobs need the same setup preamble (checkout, uv, `uv sync --locked`).
-  Duplicating ~20s of setup per job is the accepted cost of the split.
+- Both pytest jobs and the combine job need checkout, uv, and a locked
+  development sync. Duplicating ~20s of setup is the accepted cost of the
+  split. The existing console-script, ruff, and mypy gates run once in the
+  light lane rather than being duplicated.
 
 ## Acceptance criteria
 
@@ -51,12 +55,12 @@ the tests do.
       and `--cov-fail-under=85` still gates the merge.
 - [ ] `coverage.xml` is still published as a workflow artifact, including
       on a run where the coverage gate fails.
-- [ ] `tools/check_ci_review_contract.py` passes. If it asserts the old
+- [x] `tools/check_ci_review_contract.py` passes. If it asserts the old
       single-job shape, it is updated in the same PR to pin the new shape,
       including the `!cancelled()` guard.
 - [ ] Cancelling a run (e.g. arming auto-merge mid-run) still yields a
       `cancelled` aggregate, not `failure`.
-- [ ] `CLAUDE.md`'s continuous-integration section describes the new job
+- [x] `CLAUDE.md`'s continuous-integration section describes the new job
       layout, including the coverage-combine step.
 
 ## Non-goals

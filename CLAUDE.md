@@ -2511,8 +2511,11 @@ run in CI):
 
 - `.github/workflows/ci.yml` — a path-classified cadence keeps the stable
   aggregate branch-protection context `test` while selecting the cheapest
-  safe lane: lightweight readiness, quick test, or the full `test (py3.14)`
-  matrix (the pytest suite plus the ruff-lockstep guard above, via `uv`).
+  safe lane: lightweight readiness, quick test, or the full Python 3.14 path:
+  concurrent `test heavy (py3.14)` and `test light (py3.14)` jobs followed by
+  `coverage (py3.14)`. The light job also runs the console-script, ruff, and
+  mypy gates once; the heavy job proceeds directly from setup to its pytest
+  partition.
   The tested version policy is latest-stable-CPython-only (decided
   2026-07-06): `requires-python` in `pyproject.toml` equals the single CI
   matrix version; bump both together when a new stable CPython lands.
@@ -2546,10 +2549,10 @@ run in CI):
   bill per-minute besides. The 7 GB standard runner couldn't hold
   the heavy N=3 / 7-day fixtures across xdist workers — a full `-n 2` run
   OOM-died after 32 min — so every run **splits** the suite by the `heavy`
-  marker instead of running everything serially:
-  `pytest -n 0 -m heavy` runs the GB-scale 7-day / N=3 fixture tests serially
-  (low-RAM), then `pytest -n 2 --dist loadfile -m "not heavy"` runs the light
-  remainder under real xdist (~25 min total; the pyproject addopts default
+  marker instead of running everything serially. Separate jobs start
+  `pytest -n 0 -m heavy` for the GB-scale 7-day / N=3 fixture tests serially
+  (low-RAM) and `pytest -n 2 --dist loadfile -m "not heavy"` for the light
+  remainder under real xdist at the same time (the pyproject addopts default
   `-n 4 --dist loadfile` still applies to local runs on larger machines).
   This keeps the parallel worker-distribution / global-state ordering path
   — the one CLAUDE.md warns turns leaked global state into order-dependent
@@ -2557,14 +2560,15 @@ run in CI):
   gate rather than passing serially and only flaking post-merge. The
   `heavy` marker is auto-applied in `tests/conftest.py`
   (`pytest_collection_modifyitems` over `_HEAVY_SESSION_FIXTURES`), so the
-  partition tracks the fixture set with no per-test annotation to drift; the
-  `-m heavy` step runs first so a broken marker collects zero tests and fails
-  fast (pytest exit 5) instead of letting the GB fixtures fall into the
-  parallel step and OOM. The light subset under `-n 2` stays within 7 GB
+  partition tracks the fixture set with no per-test annotation to drift. A
+  broken marker still makes the heavy job collect zero tests and fail with
+  pytest exit 5; the jobs are concurrent, so this is a correctness guard, not
+  an ordering guarantee. The light subset under `-n 2` stays within 7 GB
   because it excludes exactly the GB-scale fixtures whose concurrent
   generation caused the original OOM (the full serial suite, a strict
-  superset, already fits the runner). The workflow timeout is 45 minutes to
-  cover the heavy-serial + light-parallel PR path while still capping hangs.
+  superset, already fits the runner). Each pytest job has a 30-minute timeout,
+  and the coverage-combine job has a 10-minute timeout, capping hangs while
+  keeping the critical path below the former sequential 45-minute job.
   The full-suite lane also runs mypy and coverage, each in a **report-only +
   gated** pair (`07-06-coverage-threshold-and-mypy-gating`). **mypy:** a
   report-only baseline step (`continue-on-error: true`, whole `[tool.mypy]`
@@ -2580,14 +2584,19 @@ run in CI):
   decomposition extracts clean modules; never drop one to silence a
   regression. `mypy==2.1.0` is pinned exactly in the `dev` extra so the
   baseline count is comparable across runs (single pin site, no lockstep
-  script). **coverage:** `--cov=src/anomaly_metric_creator` aggregated across
-  the PR path's two partitioned steps via `--cov-append`, gated with
-  `--cov-fail-under=85` on the final run — a no-regression ratchet ~3 points
+  script). **coverage:** each pytest job runs
+  `--cov=src/anomaly_metric_creator` with no inline report, renames its hidden
+  `.coverage` file to a visible lane-specific artifact, and uploads it. The
+  coverage job downloads both files, runs `coverage combine`, generates
+  `coverage.xml`, and then gates with `coverage report --fail-under=85` — a
+  no-regression ratchet ~3 points
   below the measured 88% (xdist/partition jitter headroom), ratcheted UP
   toward the measured number as `07-02-legacy-monolith-decomposition` lands,
-  never lowered to pass a red build. `coverage.xml` is uploaded as a
-  workflow artifact (`actions/upload-artifact`, `if: ${{ !cancelled() }}` so
-  it publishes even when the gate trips). `COVERAGE_CORE=sysmon` (the
+  never lowered to pass a red build. XML generation precedes the threshold
+  step, and `coverage.xml` is uploaded as a workflow artifact
+  (`actions/upload-artifact`, `if: ${{ !cancelled() }}`), so it publishes even
+  when the gate trips. `[tool.coverage.run] relative_files = true` makes raw
+  data portable across job checkouts. `COVERAGE_CORE=sysmon` (the
   sys.monitoring backend, py3.12+) keeps tracing overhead inside the job
   timeout. `--cov` flags stay CI-only — `addopts` / `required_plugins`
   intentionally do not reference pytest-cov, so local `pytest` runs pay no

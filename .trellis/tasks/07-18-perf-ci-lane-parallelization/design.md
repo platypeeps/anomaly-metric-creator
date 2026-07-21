@@ -23,6 +23,10 @@ directory, which two jobs cannot share.
 so lane selection is untouched. Both keep the full setup preamble
 (checkout, `astral-sh/setup-uv` with `enable-cache`, `uv sync --locked`).
 The ~20s duplicated setup is the accepted cost; it is 2% of the saving.
+The existing console-script smoke, ruff, and mypy steps stay single-run gates
+in `test_light`; `test_heavy` proceeds directly from setup to the heavy pytest
+partition. This keeps both pytest partitions concurrent without duplicating
+unrelated validation.
 
 Keep the matrix `strategy` on both so the job names stay
 `test (py3.14)`-shaped, or flatten to fixed names and update the contract
@@ -42,20 +46,25 @@ check out to the same workspace path on GitHub runners, so it would work by
 luck; `relative_files` makes it correct by construction and keeps a local
 `coverage combine` working from a different checkout.
 
-Each lane uploads its raw `.coverage` as a distinct artifact
-(`coverage-data-heavy`, `coverage-data-light`). `coverage_combine`
-downloads both, renames them to `.coverage.heavy` / `.coverage.light`
-(`coverage combine` discovers `.coverage.*` in the working directory), then:
+Each lane renames its hidden `.coverage` file to `coverage-heavy` or
+`coverage-light` before uploading a distinct artifact (`coverage-data-heavy`,
+`coverage-data-light`). This avoids relying on `upload-artifact`'s hidden-file
+behavior. `coverage_combine` checks out the source, installs uv, syncs the
+locked Python 3.14 development environment, downloads both artifacts, and
+renames the files to `.coverage.heavy` / `.coverage.light` (`coverage combine`
+discovers `.coverage.*` in the working directory), then:
 
 ```
 uv run coverage combine
-uv run coverage report --fail-under=85
 uv run coverage xml
+uv run coverage report --fail-under=85
 ```
 
 The `--cov-fail-under=85` gate moves off the pytest invocation and onto
 `coverage report` in the combine job. That is the same threshold on the
-same combined data — not a weakening.
+same combined data — not a weakening. XML generation intentionally precedes
+the failing report step, and the artifact upload uses `if: ${{ !cancelled() }}`,
+so a coverage-threshold failure still publishes `coverage.xml`.
 
 **Aggregate wiring.** The `test` job (`ci.yml:493`) currently reads a single
 `MATRIX_RESULT`. It gains `coverage_combine` in `needs:` and checks that
@@ -103,7 +112,9 @@ the auto-merge red flash documented at `ci.yml:496-506` and pinned by
   `!cancelled()`), so a lane failure fails the aggregate through the lane,
   not through a misleading coverage number.
 - **`coverage combine` consumes its inputs**, so `coverage xml` must run
-  after `combine` in the same job, and `coverage.xml` uploads from there.
+  after `combine` in the same job. Generate XML before the threshold-report
+  step and upload it with `if: ${{ !cancelled() }}` so a red coverage gate
+  retains its diagnostic artifact.
 - Two concurrent jobs both restore the uv cache; this is a read path and
   authenticates with the runtime token, unaffected by `permissions:`.
 
