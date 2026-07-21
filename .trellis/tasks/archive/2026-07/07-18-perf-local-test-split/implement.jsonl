@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Defines suite partitioning, fixture resource cost, local gates, and test guidance."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Defines synchronization requirements for developer-facing test commands."}

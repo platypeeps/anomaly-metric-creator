@@ -1184,7 +1184,7 @@ ship under the `dev` extra.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest        # runs across 4 workers by default (see below)
+.venv/bin/pytest        # normal full-suite path; 4 workers by default
 ```
 
 Tests live in `tests/` and write only into `tmp_path` (never `iot_logs/`). The suite
@@ -1215,15 +1215,21 @@ required sync destination so Claude Code receives the same guidance.
 `pyproject.toml` sets `addopts = "-ra --dist loadfile -n 4"` and declares
 `required_plugins = ["pytest-xdist"]`, so the default invocation runs across
 4 worker processes, distributes tests by file, and fails fast with a clear
-message if `pytest-xdist` is missing. This drops the broader validation sweep
-from ~15–22 minutes serial to ~5 minutes parallel. Override on the command
-line if your host needs a different worker count:
+message if `pytest-xdist` is missing. This is the measured fastest full-suite
+path on the development host. Session fixtures used by multiple files can be
+built by up to `min(consuming files, workers)` processes; `loadfile` prevents
+additional per-test fan-out. More than four workers has not materially improved
+this file-granular suite. Override when your host needs less memory:
 
 ```bash
 .venv/bin/pytest -n 0   # in-process; required for `pdb` / true serial
-                        # also the right choice on low-RAM (< 8 GB) CI runners
-.venv/bin/pytest -n 8   # bigger boxes (~16 GB RAM headroom recommended)
+.venv/bin/pytest -n 2   # lower-memory parallel fallback
 ```
+
+CI splits heavy and light tests into concurrent jobs to isolate runner memory.
+Running those partitions sequentially is intentionally not the local speed
+recommendation: on the 2026-07-20 checkout, the bare suite took 253.36s and the
+serial heavy partition alone took 345.01s.
 
 `-n 1` is not a true serial run — xdist still spawns one worker subprocess,
 which breaks interactive debuggers like `pdb`. Use `-n 0` instead when you
@@ -1233,9 +1239,9 @@ Session-scoped fixtures in `tests/conftest.py` are lazily instantiated **per
 worker** the first time a worker touches a test that requests them. Peak
 fixture RAM therefore scales with how many distinct workers hit each fixture
 — `--dist loadfile` keeps each file's tests on a single worker, which
-collapses fan-out to at most one instantiation per file. The
-`n3_one_day_dataset_dir` fixture alone is ~1.3 GB; 4 workers caps peak
-fixture memory near ~5 GB even under worst-case fan-out.
+collapses fan-out to at most one instantiation per file. A fixture shared by
+multiple files can still be built on `min(consuming files, workers)` processes,
+which is why lower worker counts remain the memory-conservative override.
 
 ### Test-hygiene lint
 

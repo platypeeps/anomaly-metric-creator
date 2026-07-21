@@ -69,18 +69,18 @@ relative_files = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-# `-n 4 --dist loadfile` parallelizes the suite across 4 worker processes
-# and keeps every test from a given file on a single worker. The N=3
-# fixture (`n3_one_day_dataset_dir`) alone is ~1.3 GB and is lazily
-# instantiated per worker the first time a worker touches a test that
-# requests it; with `--dist load` (xdist's default per-test
-# distribution) a single file's tests can scatter across every worker,
-# so every worker pays the instantiation cost. `--dist loadfile`
-# collapses that to at most one instantiation per file regardless of
-# worker fan-out, bounding peak fixture RAM near ~5 GB on a 4-worker
-# run. Override on the command line for narrow or wide hosts:
+# `-n 4 --dist loadfile` is the measured local throughput default and keeps
+# every test from a given file on one worker. Session fixtures are lazy and
+# process-local, so a fixture used by multiple files can still be built on
+# `min(consuming files, workers)` processes. `loadfile` prevents the worse
+# per-test fan-out where one file can make every worker build the same fixture.
+# Four workers are the practical saturation point for this file-granular suite;
+# wider pools have not produced a material local speedup. A serial heavy
+# partition avoids fixture fan-out but is a memory-conservative fallback, not a
+# speed optimization: on the 2026-07-20 checkout it took 345.01s by itself,
+# versus 253.36s for the complete default run. Override when needed:
 #   .venv/bin/pytest -n 0   # in-process; required for pdb / true serial
-#   .venv/bin/pytest -n 8   # bigger boxes
+#   .venv/bin/pytest -n 2   # lower-memory parallel fallback
 # `required_plugins` makes the failure mode explicit: without
 # `pytest-xdist` installed, the `addopts` `-n` flag would otherwise
 # fail with a cryptic "unrecognized arguments" error.
@@ -96,7 +96,7 @@ addopts = "-ra --strict-markers --dist loadfile -n 4"
 # cheap-default convention these markers attach to.
 markers = [
   "full_resolution: declares the test depends on 1s rows (86,400/day); pairs with an explicit interval_seconds=1.0 at the run_capture call site. The script's --interval-seconds default is 60s, and interval_seconds=None inherits that default.",
-  "heavy: auto-applied (tests/conftest.py pytest_collection_modifyitems) to any test whose fixture closure pulls a GB-scale fixture — a session fixture in _HEAVY_SESSION_FIXTURES (7-day / N=3) or a regenerating module fixture in _HEAVY_MODULE_FIXTURES. The PR CI gate runs `-m heavy` serially and `-m \"not heavy\"` under xdist so the parallel ordering path is exercised without OOM-ing the standard runner. Do not hand-apply.",
+  "heavy: auto-applied (tests/conftest.py pytest_collection_modifyitems) to any test whose fixture closure pulls a GB-scale fixture — a session fixture in _HEAVY_SESSION_FIXTURES (7-day / N=3) or a regenerating module fixture in _HEAVY_MODULE_FIXTURES. The PR CI gate runs `-m heavy` and `-m \"not heavy\"` in separate loadfile-distributed xdist jobs so the parallel ordering path is exercised without OOM-ing the standard runner. Do not hand-apply.",
 ]
 
 [tool.mypy]

@@ -76,10 +76,20 @@ Before marking a PR ready, requesting a final remote review, or applying the
 bash scripts/sd-ai-command-pack-full-check.sh
 ```
 
-For high-risk runtime changes, also run the full heavy/non-heavy pytest split:
+For a full local suite, use the normal four-worker default:
 
 ```bash
-.venv/bin/pytest -n 2 --dist loadfile -m heavy
+.venv/bin/pytest
+```
+
+The heavy/light split is a CI memory-isolation strategy, not the fastest local
+path. On the current development host, the bare suite completed in 253.36s,
+while the serial heavy partition alone took 345.01s. Use the sequential split
+only when memory pressure makes fixture fan-out unsafe; lower the light worker
+count on smaller machines:
+
+```bash
+.venv/bin/pytest -n 0 --dist loadfile -m heavy
 .venv/bin/pytest -n 2 --dist loadfile -m "not heavy"
 ```
 

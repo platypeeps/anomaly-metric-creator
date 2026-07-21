@@ -7,6 +7,15 @@ session fixture is rebuilt once per worker that touches a consuming file.
 The CI split builds each exactly once. Developers should get that by
 default.
 
+## Implementation decision (2026-07-20)
+
+Do not add the proposed split wrapper. A current bare run passed 1,680 tests
+in 253.36s; the serial heavy partition alone took 345.01s. The split therefore
+cannot satisfy the performance acceptance criterion. Retain `-n 4 --dist
+loadfile` as the normal local command and document the split only as a
+memory-conservative fallback. No classifier registration is needed because no
+script is added.
+
 ## Correction to the PRD framing
 
 The PRD implies the split is undocumented locally. It is not:
@@ -25,7 +34,10 @@ Two real problems remain, and they are narrower than "add the split":
 2. It hands a developer the **CI runner's** `-n 2` — correct for a 4-vCPU
    runner, wrong for a 14-core workstation, where `-n 4` is 36% faster.
 
-## Proposal
+## Original proposal (rejected by live measurement)
+
+The options below document the pre-measurement design. The implementation
+decision above supersedes them; no split wrapper or classifier change ships.
 
 **Fix the guidance, not just the numbers.** Invert the framing in
 `docs/DEVELOPMENT_CYCLE.md`: the split is the normal full-suite command;

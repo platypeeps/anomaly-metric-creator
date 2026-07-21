@@ -1285,3 +1285,41 @@ Reduced the repo-local review preflight from a 2.92-second warm median to 0.32 s
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: Retain measured local pytest default
+
+**Date**: 2026-07-21
+**Task**: Retain measured local pytest default
+**Package**: amc
+**Branch**: `codex/local-test-split`
+
+### Summary
+
+Remeasured the proposed local test split, rejected it because the serial heavy half was slower than the complete default suite, and synchronized developer guidance around the proven four-worker path.
+
+### Main Changes
+
+- Measured the bare suite at 253.36 seconds and the serial heavy partition at 345.01 seconds.
+- Retained the existing pytest defaults and documented the CI split as memory isolation rather than a local speed optimization.
+- Updated README, development guidance, CLAUDE.md, pyproject commentary, and the canonical Trellis test spec without adding a slower wrapper.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b566968` | docs: retain measured local pytest default |
+
+### Testing
+
+- [OK] Bare full suite: 1,680 passed, 2 skipped in 253.36s.
+- [OK] Heavy decision run: 48 passed in 345.01s; full-check, pre-commit, contract tests, and exact fixture-owner collection check passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

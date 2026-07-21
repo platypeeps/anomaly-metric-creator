@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Verify the split runs the full marker partition without duplicating heavy fixtures."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Verify README-style guidance, CLAUDE.md, and Trellis guidance remain aligned."}
