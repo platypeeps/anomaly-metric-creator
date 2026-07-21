@@ -1436,3 +1436,47 @@ Closed the indirect heavy-marker escape, synchronized full-resolution and fixtur
 ### Next Steps
 
 - None - task complete
+
+
+## Session 35: Trim heavy schema fixtures
+
+**Date**: 2026-07-21
+**Task**: Trim heavy schema fixtures
+**Package**: amc
+**Branch**: `codex/trim-heavy-fixtures`
+
+### Summary
+
+Approved and shipped both schema golden re-locks, preserving semantic assertions while cutting the serial heavy suite by 32.5%.
+
+### Main Changes
+
+- Moved equality-only N=3 stability runs to the 60s cadence without changing a locked hash.
+- Re-locked default and N=3 seven-day schema fixtures at approved cheap inputs while preserving duration, row-count, file-list, and dimension-cardinality assertions.
+- Recorded the declined synthetic topology narrowing, durable testing convention, and 122.68s local heavy-suite saving.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `313d910` | test: run N3 stability checks at 60s |
+| `aa154ee` | docs: record heavy fixture trim decisions |
+| `8f94f35` | test: re-lock 7d schema at 60s cadence |
+| `23b7a56` | test: re-lock N3 7d schema as standalone |
+| `45a5f8c` | docs: record approved schema fixture trims |
+
+### Testing
+
+- [OK] 70 focused schema and N=3 tests passed.
+- [OK] Serial heavy suite: 44 passed in 254.79s, down 122.68s from baseline.
+- [OK] Full suite: 1695 passed, 2 skipped in 232.95s; pre-commit and local full-check passed.
+- [OK] PR #284 exact-head CI, coverage, CodeQL, Windows collection, and Copilot review passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
