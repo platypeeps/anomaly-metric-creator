@@ -1397,3 +1397,42 @@ PR #281 added an explicit seven-path repo-tooling allowlist, retained tested and
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: Close heavy fixture marker escape
+
+**Date**: 2026-07-21
+**Task**: Close heavy fixture marker escape
+**Package**: amc
+**Branch**: `codex/heavy-marker-fixture-docs-finish-work`
+
+### Summary
+
+Closed the indirect heavy-marker escape, synchronized full-resolution and fixture-cost documentation, and shipped PR #282.
+
+### Main Changes
+
+- Classified parametrized indirect heavy-fixture lookups and guarded registry-name uniqueness.
+- Renamed the shadowing validator fixture and marked exact-timestamp correctness coverage as full-resolution.
+- Replaced stale N=3 fixture cost claims with measured on-disk size and setup timing.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b266cb283dcb4ea9f206f8af92ca3b14e40f6233` | test: close heavy fixture marker escape |
+
+### Testing
+
+- [OK] 1695 passed, 2 intentional real-client skips in the full local suite
+- [OK] 46 heavy plus 1651 light equals 1697 collected tests
+- [OK] Full hosted CI, CodeQL, Windows collection, and Copilot review passed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

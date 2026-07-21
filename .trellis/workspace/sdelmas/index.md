@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 34
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1399 | Active |
+| `journal-1.md` | ~1436 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-07-21 | Close heavy fixture marker escape | `b266cb283dcb4ea9f206f8af92ca3b14e40f6233` | `codex/heavy-marker-fixture-docs-finish-work` |
 | 33 | 2026-07-21 | Classify repo-only CI tooling paths | `8e703f4` | `codex/ci-classifier-script-paths` |
 | 32 | 2026-07-21 | Dedupe long-form writer scans | `2c939e4` | `codex/longform-writer-test-dedupe` |
 | 31 | 2026-07-21 | Retain measured local pytest default | `b566968` | `codex/local-test-split` |
