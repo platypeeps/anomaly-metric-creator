@@ -500,13 +500,13 @@ _LONG_FORM_HEADER = [
 def n3_one_day_gauges_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
     """Run ``write_gauges_csv`` against the shared session-scoped N=3
     dataset (per-component CSVs generated once in ``conftest.py``).
-    Avoids re-running the ~25-second N=3 generation pass per test
+    Avoids re-running the measured 4.12-second N=3 generation pass per test
     module — the writer is a pure function of the per-component CSV
     bytes, so the locked golden hash still holds.
 
     Materializes the per-component CSVs as **hardlinks** into a
     module-scoped temp directory rather than copying them, so we
-    don't double the ~1.3 GB disk footprint of the shared dataset.
+    don't double the 264 MiB on-disk footprint of the shared dataset.
     The hardlinked entries appear as normal files to every reader
     in this module — there's no symlink resolution to worry about,
     and an unlink in this module's temp dir doesn't affect the

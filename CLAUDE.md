@@ -2751,14 +2751,18 @@ The `heavy` marker partitions the suite for the 16 GB PR runner (see
 "Continuous integration" above). It is **auto-applied** — never hand-write
 `@pytest.mark.heavy` — by `pytest_collection_modifyitems` in
 `tests/conftest.py`, which marks any collected test whose fixture closure
-(`item.fixturenames`) intersects `_HEAVY_SESSION_FIXTURES` (the GB-scale
-`seven_day_run` / `n3_one_day_dataset_dir` / `n3_seven_day_dataset_dir`).
-Add a new GB-scale fixture to that frozenset — do not list test files in the
+(`item.fixturenames`) intersects `_HEAVY_SESSION_FIXTURES` or
+`_HEAVY_MODULE_FIXTURES`. It also marks indirect
+`request.getfixturevalue` consumers when a parametrized string names a
+registered heavy fixture, because those targets do not enter the fixture
+closure. Every registered name must resolve to one fixture definition; do not
+shadow a registered heavy fixture name in another test module. Add a new
+GB-scale fixture to the appropriate frozenset — do not list test files in the
 workflow. `pytest -m heavy` and `pytest -m "not heavy"` both use xdist
 `-n 2 --dist loadfile` in separate jobs and partition the full suite; the
 decision is unit-tested in
-`tests/test_heavy_marker.py` via the pure `_item_is_heavy(fixturenames)`
-helper.
+`tests/test_heavy_marker.py` via the pure classification helpers plus live
+collection and fixture-definition guards.
 
 Tests must remain order-independent and file-isolated for the default
 parallel mode to stay sound. Two existing properties of the suite make this

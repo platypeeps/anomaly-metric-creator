@@ -42,13 +42,13 @@ Measured against a real session:
 
 | Docstring claim | Location | Measured |
 |---|---|---|
-| "~1.3 GB of output" | `tests/conftest.py:347-348` | **264 MB** |
-| "multiple minutes and ~9 GB" | `tests/conftest.py:386` | **~1.85 GB** |
+| "~1.3 GB of output" | `tests/conftest.py:347-348` | **264 MiB on disk; 4.12s setup-only** |
+| "multiple minutes and ~9 GB" | `tests/conftest.py:386` | **1.81 GiB on disk; 29.08s setup-only** |
 
-`pyproject.toml:75` derives its `~5 GB` peak-memory budget from the first
-of these, so the stale figure has already propagated into a second
-decision. These numbers are cited when sizing CI lanes, so they need to be
-right.
+The planning snapshot also cited a `pyproject.toml` `~5 GB` comment, but prior
+performance work had already removed it before implementation. The live
+pytest configuration now documents measured suite timings instead, so no
+`pyproject.toml` change is required here.
 
 Also worth correcting while in the file: the GB figures describe **on-disk
 output**, not RSS. Measured peak RSS is 8-11 GB depending on lane and
@@ -74,17 +74,17 @@ has 16 GB RAM but only 14 GB SSD.
 
 ## Acceptance criteria
 
-- [ ] A test fails against current `main` and passes after the marker fix,
+- [x] A test fails against current `main` and passes after the marker fix,
       demonstrating the escape is really closed rather than documented.
-- [ ] Setting `interval_seconds=1.0` on the `test_validate_output.py`
-      fixture causes its consumers to be marked heavy (verify manually,
-      then revert).
-- [ ] `test_anomalies_match_declared_value` carries `full_resolution` and
+- [x] Temporarily changing the renamed `test_validate_output.py` fixture to
+      `interval_seconds=1.0` and registering that renamed fixture as heavy
+      causes its consumers to be marked heavy; revert both changes.
+- [x] `test_anomalies_match_declared_value` carries `full_resolution` and
       the `full_resolution` audit lists it.
-- [ ] Every size figure in `tests/conftest.py` matches a measurement taken
+- [x] Every size figure in `tests/conftest.py` matches a measurement taken
       in this task, with the measurement method recorded in the PR.
-- [ ] `pyproject.toml`'s memory-budget comment no longer derives from the
-      stale 1.3 GB figure.
+- [x] `pyproject.toml` no longer contains the planning snapshot's stale
+      memory-budget derivation; prior performance work had already removed it.
 
 ## Non-goals
 

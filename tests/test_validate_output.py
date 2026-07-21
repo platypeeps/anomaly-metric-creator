@@ -49,7 +49,7 @@ def one_day_schema_run(amc, tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def seven_day_schema_run(amc, tmp_path_factory):
+def validator_seven_day_schema_run(amc, tmp_path_factory):
     out = tmp_path_factory.mktemp("ver139_validator_seven_day")
     return run_capture(
         amc, out, days=7, extra_args=["--emit", "metrics,schema"]
@@ -717,7 +717,7 @@ def _classify(line: str) -> tuple[str, str, str] | None:
     "fixture_name,expected",
     [
         ("one_day_schema_run", _EXPECTED_VIOLATIONS_ONE_DAY),
-        ("seven_day_schema_run", _EXPECTED_VIOLATIONS_SEVEN_DAY),
+        ("validator_seven_day_schema_run", _EXPECTED_VIOLATIONS_SEVEN_DAY),
     ],
 )
 def test_validator_default_violations_match_expected(
@@ -744,7 +744,7 @@ def test_validator_default_violations_match_expected(
 
 @pytest.mark.parametrize(
     "fixture_name",
-    ["one_day_schema_run", "seven_day_schema_run"],
+    ["one_day_schema_run", "validator_seven_day_schema_run"],
 )
 def test_validator_default_only_known_violation_kinds(
     amc, request, fixture_name

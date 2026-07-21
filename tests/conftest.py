@@ -210,6 +210,24 @@ def _item_is_heavy(fixturenames):
     )
 
 
+def _item_parametrizes_heavy_fixture(item):
+    """True when an indirect fixture lookup names a registered heavy fixture.
+
+    ``request.getfixturevalue`` targets supplied through ``parametrize`` do not
+    enter ``item.fixturenames``. Treat exact string values matching the heavy
+    registries as fixture names; a coincidental match only routes a light test
+    conservatively into the isolated lane.
+    """
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return False
+    declared = _HEAVY_SESSION_FIXTURES | _HEAVY_MODULE_FIXTURES
+    return any(
+        isinstance(value, str) and value in declared
+        for value in callspec.params.values()
+    )
+
+
 def pytest_collection_modifyitems(config, items):
     # Auto-apply the ``heavy`` marker so the marker stays in lockstep with the
     # fixture set above with no per-test annotation to drift. The CI ``-m
@@ -217,7 +235,9 @@ def pytest_collection_modifyitems(config, items):
     # collects zero tests and fails (pytest exit code 5), surfacing the
     # regression instead of silently routing the GB fixtures into ``-n 2``.
     for item in items:
-        if _item_is_heavy(getattr(item, "fixturenames", ())):
+        if _item_is_heavy(
+            getattr(item, "fixturenames", ())
+        ) or _item_parametrizes_heavy_fixture(item):
             item.add_marker(pytest.mark.heavy)
 
 
@@ -342,9 +362,9 @@ def n3_one_day_dataset_dir(amc, tmp_path_factory):
     ``tests/test_instances_per_component.py``, and the N=3 schema
     assertions in ``tests/test_schema_file.py``.
 
-    The generation pass costs ~25-30 seconds and produces ~1.3 GB of
-    output, so running it once per consuming test module would
-    multiply both the wall time and the disk pressure. The Phase 5
+    A 2026-07-21 ``pytest --setup-only`` run took 4.12 seconds and occupied
+    264 MiB on disk (runtime varies by host), so running it once per consuming
+    test module would multiply both the wall time and the disk pressure. The Phase 5
     writer tests instead invoke ``write_gauges_csv`` and
     ``combine_logs`` directly against the shared dataset (the
     writers are pure functions of the per-component CSV bytes), so
@@ -383,8 +403,9 @@ def n3_seven_day_dataset_dir(amc, tmp_path_factory):
     and the N=3 schema hash in ``tests/test_schema_file.py``
     (``SCHEMA_N3_SEVEN_DAY_HASH``).
 
-    This is the single most expensive generation in the suite (~7x the
-    1-day N=3 pass; multiple minutes and ~9 GB at 1s resolution), so it
+    This is the single most expensive generation in the suite. A 2026-07-21
+    ``pytest --setup-only`` run took 29.08 seconds and occupied 1.81 GiB on
+    disk at 1s resolution (runtime varies by host), so it
     must never be duplicated in a module-scoped fixture — the suite
     previously ran three independent copies of it across two modules
     (the PR #67 antipattern from the "Test resource cost" checklist).
