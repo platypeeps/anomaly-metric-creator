@@ -855,13 +855,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-18-perf-heavy-fixture-trim/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-18-perf-suite-runtime/
       check.jsonl
       design.md
@@ -1115,6 +1108,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         07-18-perf-ci-worker-counts/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-18-perf-heavy-fixture-trim/
           check.jsonl
           design.md
           implement.jsonl
