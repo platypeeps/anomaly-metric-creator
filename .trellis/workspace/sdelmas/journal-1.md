@@ -1641,3 +1641,44 @@ Extracted the ordered scenario catalog, builders, validation, and runtime helper
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: Complete legacy monolith decomposition
+
+**Date**: 2026-07-21
+**Task**: Complete legacy monolith decomposition
+**Package**: amc
+**Branch**: `codex/decomp-legacy-dispatch-root`
+
+### Summary
+
+Split the final legacy dispatch root without a line-count waiver, merged PR #291 after full CI and review, and archived the child plus 12-of-12 parent epic.
+
+### Main Changes
+
+- Extracted run orchestration into run_pipeline.py and generation defaults into run_defaults.py while preserving the live legacy namespace seam.
+- Moved RunContext to models_impl.py with identity-preserving facade exports and reduced legacy.py to 766 lines.
+- Updated architecture documentation, resolved review feedback, and completed child and parent Trellis bookkeeping.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc32d4f` | refactor: split legacy run pipeline |
+| `6b69ac3` | chore: record dispatch-root pull request |
+| `62be64a` | refactor: derive reporting paths from emit registry |
+
+### Testing
+
+- [OK] Full pytest suite: 1700 passed, 2 skipped
+- [OK] Pre-commit and repository full-check passed
+- [OK] Final-head GitHub heavy/light matrix, combined coverage, CodeQL, and CI Result passed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

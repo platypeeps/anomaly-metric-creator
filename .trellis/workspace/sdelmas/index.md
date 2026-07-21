@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 39
+- **Total Sessions**: 40
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1641 | Active |
+| `journal-1.md` | ~1682 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 40 | 2026-07-21 | Complete legacy monolith decomposition | `bc32d4f`, `6b69ac3`, `62be64a` | `codex/decomp-legacy-dispatch-root` |
 | 39 | 2026-07-21 | Extract scenario registry and resolution modules | `d03612138ef1e2929910e9204688f1cf31adffb6`, `58e02fd6544d01d120ba986fe966e87301f8b09e`, `310814e56dfc127359e158c22f403af1085cad6a` | `codex/decomp-scenario-catalog-recovery-bookkeeping` |
 | 38 | 2026-07-21 | Repair legacy decomposition task topology | `4120382` | `codex/repair-legacy-epic-plan` |
 | 37 | 2026-07-21 | Close local CI audit program | `ecb574e` | `codex/close-ci-audit-program` |
