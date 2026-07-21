@@ -1162,3 +1162,46 @@ Measured the public GitHub runner under the heavy partition, adopted two loadfil
 ### Next Steps
 
 - Merge PR #275 through guarded housekeeping, then continue the performance/CI backlog.
+
+
+## Session 28: Ship pinned real Kubernetes client CI smokes
+
+**Date**: 2026-07-20
+**Task**: Ship pinned real Kubernetes client CI smokes
+**Package**: amc
+**Branch**: `codex/real-client-smoke-ci`
+
+### Summary
+
+Pinned and verified kubectl and Helm real-client CI smokes, synchronized the advertised Kubernetes version, closed audit findings A-022 and A-067, and hardened the CI contract through three Copilot review rounds.
+
+### Main Changes
+
+- Installed checksum-pinned kubectl v1.36.2 and Helm v4.2.0 in the full light lane and ran both opt-in real-client smokes serially.
+- Centralized the advertised Kubernetes v1.36.2 value across command, API, OpenAPI, and node surfaces with skew-warning coverage.
+- Added CI contract and mutation guards for official downloads, retries, PATH wiring, serial selectors, and exact checksum-to-artifact bindings.
+- Updated user docs, Trellis specs, audit evidence, and the repository map in lockstep.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1c552ec` | ci: run pinned real Kubernetes client smokes |
+| `6385138` | test: cover real-client CI anchors |
+| `8790805` | test: bind pinned client checksums |
+
+### Testing
+
+- [OK] Final PR head 8790805 passed all 9 required GitHub checks, including heavy/light shards and the 87% coverage gate.
+- [OK] Pinned-client smoke step installed kubectl v1.36.2 and Helm v4.2.0 and reported 2 passed with no skips.
+- [OK] 66 focused CI-contract tests and the 165-test local review gate passed.
+- [OK] Final Copilot review covered 18/18 changed files with no new comments and zero unresolved threads.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
