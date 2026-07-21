@@ -55,7 +55,7 @@ behavior.
       Ruff, pre-commit, and the repository full-check gate pass.
 - [x] `.trellis/spec/amc/backend/architecture.md`, `CLAUDE.md`, the parent epic
       artifacts, and `docs/repomix-map.md` describe the final ownership map.
-- [ ] PR review and required CI checks settle green before merge; the child and
+- [x] PR review and required CI checks settle green before merge; the child and
       parent Trellis tasks are finished/archived through the normal SD flow.
 
 ## Notes
@@ -64,3 +64,7 @@ behavior.
   dispatch-root waiver and selected the split alternative on 2026-07-21.
 - This is a structural refactor only. Any output or CLI behavior delta is a
   regression, not an intended change.
+- PR #291 merged on 2026-07-21 at commit
+  `1a19bdc296a990b791c48d20aa5c3a131f943f65` after the final-head Python
+  3.14 heavy/light matrix, combined coverage gate, CodeQL, and all review
+  conversations settled green.

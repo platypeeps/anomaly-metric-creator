@@ -218,3 +218,10 @@ at the same relative position, preserving the documented order.
 - `conftest._load_amc()` still yields a module exposing the full historic
   namespace.
 - mypy finding count does not increase (CI report-only step).
+
+## Final Status (2026-07-21)
+
+Complete without a waiver. PR #291 extracted the dispatch root, reduced
+`legacy.py` to 766 physical lines, preserved the live compatibility namespace,
+and passed the full local and remote hash/coverage/review gates. All planned
+and recovery children have now landed.
