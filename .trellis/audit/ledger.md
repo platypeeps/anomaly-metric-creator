@@ -2,14 +2,14 @@
 Committed cross-session memory of repo-audit findings; managed by sd-audit-repo (full detail per finding in the dated audit reports beside this file).
 
 ## A-001 — Eval ground-truth wall has no structural expression at the MCP tool boundary
-- status: open
+- status: fixed
 - severity: P2 · effort: M · confidence: Plausible
 - dimension: architecture
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/server_mcp.py:153 — every tool handler receives full rubric-bearing SimulationState; eval gating opt-in per handler
-- why: one new MCP_TOOLS entry reading rubric fields invalidates eval runs; no registry guard mirrors the route-classification scan.
+  - tests/test_server_eval_mode.py — every registered handler and its transitively called module-local helpers are AST-scanned for rubric-bearing state and file access, with only the two eval-gated log tools allowed to reach `metric_report.log`.
+- why: fixed; a new direct or module-local-helper rubric read now fails the structural wall test.
 - fix: narrowed investigation-view state for handlers, or a registry-level guard/lint over MCP_TOOLS.
 
 ## A-002 — Server consumes generator internals via untyped `state.legacy: Any` incl. leaf-resident helpers
@@ -224,15 +224,14 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: serve_main wiring test (patched serve_forever) asserting eval_mode + security-config threading. Scope note: _generation_argv_without_otel IS covered elsewhere.
 
 ## A-021 — Ground-truth-wall leak sweeps hand-enumerate MCP tools and lag the registry (3/15, 9/15)
-- status: open
+- status: fixed
 - severity: P1 · effort: M · confidence: Verified
 - dimension: testing
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - tests/test_server_mcp.py:595 (3-tuple) and tests/test_server_eval_mode.py:188-233 (9/15) vs 15-tool MCP_TOOLS; no set-equality coupling; eval sweep docstring falsely claims full coverage
-  - profile-text renderers (describe/pod-logs/helm) protected only by an unpinned no-slugs-today invariant
-- why: a new/refactored tool reading rubric data ships with no failing leak test.
+  - tests/test_server_eval_mode.py — `_TOOL_MINIMAL_ARGS` is asserted equal to `MCP_TOOLS`; every tool call succeeds and is serialized in eval and non-eval modes, with the non-eval ConfigMap path proving the sweep observes active slugs.
+- why: fixed; a new tool without schema-valid sweep arguments fails loudly, and every registered response participates in the live leak test.
 - fix: registry-driven sweep with per-tool args table keyed equal to MCP_TOOLS, both modes.
 
 ## A-022 — Real kubectl/Helm 4 interop smokes permanently skipped; CI never runs them

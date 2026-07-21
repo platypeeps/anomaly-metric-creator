@@ -8,9 +8,12 @@ surface, the report-log tools' eval-mode refusal, and the auth/rate/body
 interaction on `/mcp`.
 """
 
+import ast
 import datetime as _dt
+import inspect
 import json
 import re
+import textwrap
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -20,6 +23,121 @@ import pytest
 from anomaly_metric_creator import server, server_mcp
 
 _COMPONENTS = "apigateway,cacheservice,database,authservice"
+
+_TOOL_MINIMAL_ARGS = {
+    "get_current_time": {},
+    "list_components": {},
+    "get_topology": {},
+    "get_metric_histogram": {"component": "apigateway"},
+    "list_metric_fields": {},
+    "group_metrics_by_field": {"field": "component"},
+    "get_correlated_timeline": {},
+    "get_logs": {},
+    "deduplicate_logs": {},
+    "kubectl_get": {"kind": "configmaps"},
+    "describe_resource": {"kind": "deployment", "name": "apigateway"},
+    "get_pod_logs": {},
+    "get_events": {},
+    "helm_status": {},
+    "helm_history": {},
+}
+_WINDOW_TOOLS = {
+    "get_metric_histogram",
+    "group_metrics_by_field",
+    "get_correlated_timeline",
+    "get_logs",
+    "deduplicate_logs",
+}
+_LOG_TOOLS = {"get_logs", "deduplicate_logs"}
+
+
+def _tool_minimal_arguments(amc, state):
+    registered = {tool.name for tool in server_mcp.MCP_TOOLS}
+    configured = set(_TOOL_MINIMAL_ARGS)
+    assert configured == registered, (
+        "MCP minimal-argument registry drift: "
+        f"missing={sorted(registered - configured)}, "
+        f"extra={sorted(configured - registered)}"
+    )
+
+    arguments = {
+        name: dict(template) for name, template in _TOOL_MINIMAL_ARGS.items()
+    }
+    window = {
+        "from_ms": server_mcp._epoch_ms(amc.START),
+        "to_ms": server_mcp._epoch_ms(amc.START + _dt.timedelta(days=1)),
+    }
+    for name in _WINDOW_TOOLS:
+        arguments[name].update(window)
+
+    component = arguments["get_metric_histogram"]["component"]
+    arguments["get_metric_histogram"]["metric"] = amc.COMPONENTS[component][0].name
+
+    pods = server_mcp.resource_snapshot(state).get("pods", [])
+    assert pods, "minimal MCP arguments require at least one simulated pod"
+    arguments["get_pod_logs"]["pod"] = pods[0]["name"]
+    for name in ("helm_status", "helm_history"):
+        arguments[name]["release"] = server.DEFAULT_RELEASE
+    return arguments
+
+
+def _tool_surface_blob(amc, state):
+    parts = []
+    status, listing = server_mcp.handle_mcp_http_post(
+        state, b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    )
+    assert status == 200
+    assert listing is not None
+    parts.append(json.dumps(listing, sort_keys=True))
+
+    failures = {}
+    for name, arguments in _tool_minimal_arguments(amc, state).items():
+        status, body = server_mcp.handle_mcp_http_post(
+            state,
+            json.dumps({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }).encode("utf-8"),
+        )
+        if (
+            status != 200
+            or body is None
+            or "error" in body
+            or body.get("result", {}).get("isError") is not False
+        ):
+            failures[name] = {"status": status, "body": body}
+        parts.append(json.dumps(body, sort_keys=True))
+    assert not failures, f"minimal MCP calls failed: {failures}"
+    return "\n".join(parts)
+
+
+def _module_local_tool_sources(handler):
+    """Return ASTs for a handler and its transitively called local helpers."""
+    pending = [inspect.unwrap(handler)]
+    sources = {}
+    while pending:
+        function = pending.pop()
+        if function in sources:
+            continue
+        source = textwrap.dedent(inspect.getsource(function))
+        tree = ast.parse(source)
+        definition = tree.body[0]
+        assert isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if ast.get_docstring(definition, clean=False) is not None:
+            definition.body = definition.body[1:]
+        sources[function] = definition
+        for node in ast.walk(definition):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            called = function.__globals__.get(node.func.id)
+            if (
+                inspect.isfunction(called)
+                and called.__module__ == server_mcp.__name__
+            ):
+                pending.append(inspect.unwrap(called))
+    return sources
 
 
 def _build_state(amc, out_dir, *, eval_mode, seed="42"):
@@ -185,39 +303,45 @@ def test_every_dispatched_route_is_classified():
     )
 
 
-def test_eval_mode_tool_surface_has_no_ground_truth_leak(amc, tmp_path):
-    """Automated leak sweep: serialize tools/list + every tool response in
-    eval mode and assert no scenario slug or manifest description appears.
+def test_mcp_tool_handlers_have_no_rubric_access():
+    """Structural wall: tool handlers cannot reach rubric-bearing state.
+
+    The live response sweep below protects observable behavior. This guard
+    follows module-local helper calls so moving a rubric read one function
+    down cannot evade review. External ops renderers have their own live
+    multi-surface sweep in this module. See the MCP facade and eval-mode
+    contract in `.trellis/spec/amc/backend/api-cli-server.md`.
     """
-    state = _build_state(amc, tmp_path, eval_mode=True)
-    day_from = server_mcp._epoch_ms(amc.START)
-    day_to = server_mcp._epoch_ms(amc.START + _dt.timedelta(days=1))
+    forbidden_attributes = {
+        "anomaly_rows",
+        "active_scenarios",
+        "scenarios",
+        "SCENARIOS",
+    }
+    violations = []
+    for tool in server_mcp.MCP_TOOLS:
+        for function, definition in _module_local_tool_sources(tool.handler).items():
+            for node in ast.walk(definition):
+                if isinstance(node, ast.Name) and node.id == "SCENARIOS":
+                    violations.append((tool.name, function.__name__, "SCENARIOS"))
+                elif isinstance(node, ast.Attribute) and node.attr in forbidden_attributes:
+                    violations.append((tool.name, function.__name__, node.attr))
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    if "anomalies.csv" in node.value:
+                        violations.append(
+                            (tool.name, function.__name__, "anomalies.csv")
+                        )
+                    if "metric_report.log" in node.value and tool.name not in _LOG_TOOLS:
+                        violations.append(
+                            (tool.name, function.__name__, "metric_report.log")
+                        )
+    assert not violations, f"MCP rubric access outside the wall: {violations}"
 
-    def call(name, arguments=None):
-        _status, body = server_mcp.handle_mcp_http_post(
-            state,
-            json.dumps({
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": name, "arguments": arguments or {}},
-            }).encode("utf-8"),
-        )
-        return json.dumps(body, sort_keys=True)
 
-    blobs = []
-    _status, listing = server_mcp.handle_mcp_http_post(
-        state, b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-    )
-    blobs.append(json.dumps(listing, sort_keys=True))
-    window = {"from_ms": day_from, "to_ms": day_to}
-    blobs.append(call("get_current_time"))
-    blobs.append(call("list_components"))
-    blobs.append(call("get_topology"))
-    blobs.append(call("list_metric_fields"))
-    blobs.append(call("get_correlated_timeline", window))
-    blobs.append(call("group_metrics_by_field", {"field": "component", **window}))
-    blobs.append(call("get_logs", window))
-    blobs.append(call("deduplicate_logs", window))
-    blob = "\n".join(blobs)
+def test_eval_mode_tool_surface_has_no_ground_truth_leak(amc, tmp_path):
+    """Registry-coupled sweep over every tool in eval and non-eval modes."""
+    state = _build_state(amc, tmp_path / "eval", eval_mode=True)
+    blob = _tool_surface_blob(amc, state)
 
     slugs = set(amc.SCENARIOS)
     assert slugs  # non-empty guard
@@ -231,6 +355,16 @@ def test_eval_mode_tool_surface_has_no_ground_truth_leak(amc, tmp_path):
     assert descriptions  # non-empty guard
     leaked = [d for d in descriptions if d and d in blob]
     assert not leaked, leaked
+
+    # Positive control: the identical registry-driven calls in non-eval mode
+    # expose at least one active slug through the operator-visible ConfigMap.
+    plain_state = _build_state(amc, tmp_path / "plain", eval_mode=False)
+    plain_blob = _tool_surface_blob(amc, plain_state)
+    active = set(state.active_scenarios)
+    assert active
+    assert any(slug in plain_blob for slug in active), (
+        "control failed: no active slug appeared in any non-eval MCP response"
+    )
 
 
 def test_eval_mode_ops_surfaces_have_no_scenario_slug_leak(amc, tmp_path):

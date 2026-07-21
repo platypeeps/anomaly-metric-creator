@@ -3,7 +3,7 @@
   "name": "audit-mcp-wall-registry-guard",
   "title": "Registry-couple the MCP ground-truth-wall leak sweeps",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",
