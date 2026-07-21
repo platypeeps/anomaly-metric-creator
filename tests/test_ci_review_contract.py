@@ -118,6 +118,24 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             if: needs.changes.outputs.app_required == 'true' && needs.changes.outputs.full_ci_requested == 'true'
             steps:
               - run: uv sync --extra dev --locked --python 3.14
+              - env:
+                  KUBECTL_VERSION: v1.36.2
+                  KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+                  HELM_VERSION: v4.2.0
+                  HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
+                run: |
+                  set -euo pipefail
+                  curl --fail --location --show-error --silent --retry 3 --retry-all-errors https://dl.k8s.io/release/${{KUBECTL_VERSION}}/bin/linux/amd64/kubectl
+                  printf '%s  %s\\n' "$KUBECTL_SHA256" "$client_bin/kubectl" | sha256sum --check --strict
+                  curl --fail --location --show-error --silent --retry 3 --retry-all-errors https://get.helm.sh/helm-${{HELM_VERSION}}-linux-amd64.tar.gz
+                  printf '%s  %s\\n' "$HELM_SHA256" "$client_root/helm.tar.gz" | sha256sum --check --strict
+                  echo "$client_bin" >> "$GITHUB_PATH"
+              - env:
+                  AMC_RUN_REAL_CLIENT_SMOKE: "1"
+                run: |
+                  uv run --no-sync pytest -n 0 -q \
+                    tests/test_server.py::test_real_helm4_binary_smoke_when_available \
+                    tests/test_server.py::test_real_kubectl_binary_smoke_when_available
               - run: uv run --no-sync python tools/check_mypy_gate.py
               - run: uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=
               - run: mv .coverage coverage-light
@@ -445,6 +463,103 @@ def test_parallel_full_test_jobs_are_required(
 
     assert result.returncode == 1
     assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("needle", "expected"),
+    [
+        ("set -euo pipefail", "fail-closed real-client installer"),
+        ("KUBECTL_VERSION: v1.36.2", "pinned kubectl version"),
+        (
+            "KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82",
+            "pinned kubectl checksum",
+        ),
+        (
+            "printf '%s  %s\\n' \"$KUBECTL_SHA256\" \"$client_bin/kubectl\"",
+            "kubectl checksum wiring",
+        ),
+        (
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/"
+            "linux/amd64/kubectl",
+            "official kubectl download",
+        ),
+        ("HELM_VERSION: v4.2.0", "pinned Helm version"),
+        (
+            "HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096",
+            "pinned Helm checksum",
+        ),
+        (
+            "printf '%s  %s\\n' \"$HELM_SHA256\" \"$client_root/helm.tar.gz\"",
+            "Helm checksum wiring",
+        ),
+        (
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz",
+            "official Helm download",
+        ),
+        ("--retry 3 --retry-all-errors", "real-client download retry"),
+        ('echo "$client_bin" >> "$GITHUB_PATH"', "real-client PATH export"),
+        ('AMC_RUN_REAL_CLIENT_SMOKE: "1"', "real-client smoke opt-in"),
+        ("pytest -n 0 -q", "serial real-client smoke"),
+        (
+            "tests/test_server.py::test_real_helm4_binary_smoke_when_available",
+            "Helm real-client smoke selector",
+        ),
+        (
+            "tests/test_server.py::test_real_kubectl_binary_smoke_when_available",
+            "kubectl real-client smoke selector",
+        ),
+    ],
+)
+def test_real_client_smoke_contract_is_required(
+    tmp_path: Path, needle: str, expected: str
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(needle, "REMOVED_REAL_CLIENT_ANCHOR"),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_both_real_client_downloads_require_checksum_verification(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(
+        text.replace("sha256sum --check --strict", "sha256sum --check", 1),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "exactly two real-client checksum checks" in result.stderr
+
+
+def test_both_real_client_downloads_fail_closed(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(
+        text.replace(
+            "curl --fail --location --show-error --silent",
+            "curl --location --show-error --silent",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "exactly two fail-closed real-client downloads" in result.stderr
 
 
 def test_coverage_xml_must_precede_threshold_gate(tmp_path: Path) -> None:

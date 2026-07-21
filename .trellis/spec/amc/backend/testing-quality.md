@@ -132,7 +132,7 @@ the light worker pool while preserving file-owned fixture locality. Sources:
 
 Sources: `tools/check_ci_review_contract.py`;
 `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-`.trellis/tasks/07-20-perf-ci-heavy-worker-trial/prd.md`.
+`.trellis/tasks/archive/2026-07/07-20-perf-ci-heavy-worker-trial/prd.md`.
 
 ### 5. Good/Base/Bad Cases
 
@@ -260,7 +260,8 @@ and every later push or label event on an armed PR, via the payload's
 workflow/dependency changes, manual dispatch, and `main` pushes. The full lane
 uses concurrent `test_heavy` and `test_light` jobs followed by
 `coverage_combine`; the light job owns the existing console-script, ruff, and
-mypy gates, while the combine job merges visible raw-coverage artifacts,
+mypy gates plus the checksum-pinned kubectl v1.36.2 / Helm v4.2.0 real-client
+server smokes, while the combine job merges visible raw-coverage artifacts,
 generates XML, and enforces the 85% threshold. Auto-merge
 must never merge on quick-lane evidence, and `main` pushes run in per-commit
 concurrency groups so merge-burst runs cannot cancel each other's backstop

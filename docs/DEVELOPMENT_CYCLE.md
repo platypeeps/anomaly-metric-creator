@@ -92,6 +92,19 @@ application lane rather than depending on local hooks.
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
 | `test heavy (py3.14)` + `test light (py3.14)` + `coverage (py3.14)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, auto-merge is armed (the `auto_merge_enabled` event and every later push or label event on the armed PR), workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the heavy and non-heavy pytest partitions concurrently, then combine their raw data and enforce the 85% coverage gate. The light job also owns the console-script, ruff, and mypy gates. |
 
+### Pinned CI tool bumps
+
+The full light lane installs kubectl v1.36.2 and Helm v4.2.0 from their
+official release endpoints, verifies both Linux-amd64 downloads with the exact
+SHA-256 values in `ci.yml`, and runs the two opt-in real-client server smokes
+serially. When either client moves, update the version and checksum together,
+keep `server_ops.py`'s advertised Kubernetes version within supported kubectl
+skew, update README's tested-version sentence, run both real-client smokes,
+and update the CI contract guard and its mutation tests. Sources:
+`.github/workflows/ci.yml`; `src/anomaly_metric_creator/server_ops.py`;
+`tests/test_server.py`; `tools/check_ci_review_contract.py`;
+`tests/test_ci_review_contract.py`; `README.md`.
+
 CodeQL is advisory on PRs and not a required branch-protection context
 (`CI Result` is the only required check): it analyzes
 opened/reopened/ready_for_review PRs and `full-ci`-labeled updates, skips on

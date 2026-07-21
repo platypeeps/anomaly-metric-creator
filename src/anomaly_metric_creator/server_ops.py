@@ -39,6 +39,9 @@ from .server_traces import (
 DEFAULT_RELEASE = "simulated-saas"
 DEFAULT_CHART = "simulated-saas-0.3.0"
 DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+_K8S_ADVERTISED_VERSION = "1.36.2"
+_K8S_ADVERTISED_TAG = f"v{_K8S_ADVERTISED_VERSION}"
+_K8S_ADVERTISED_GIT_VERSION = f"{_K8S_ADVERTISED_TAG}-amc"
 
 
 def _query_int(query: dict[str, list[str]], name: str, default: int) -> int:
@@ -2831,9 +2834,9 @@ def _render_top(state: SimulationState, kind: str) -> str:
 
 def _render_kubectl_version() -> str:
     return (
-        "Client Version: v1.29.4\n"
+        f"Client Version: {_K8S_ADVERTISED_TAG}\n"
         "Kustomize Version: v5.0.4\n"
-        "Server Version: v1.29.4-amc\n"
+        f"Server Version: {_K8S_ADVERTISED_GIT_VERSION}\n"
     )
 
 
@@ -4655,7 +4658,7 @@ def _node_rows(state: SimulationState) -> list[dict[str, Any]]:
             "status": "Ready",
             "roles": "worker",
             "age": "30d",
-            "version": "v1.29.4",
+            "version": _K8S_ADVERTISED_TAG,
             "cpu_m": 2100,
             "cpu_pct": 52,
             "memory_mi": 9240,
@@ -4666,7 +4669,7 @@ def _node_rows(state: SimulationState) -> list[dict[str, Any]]:
             "status": "Ready",
             "roles": "worker",
             "age": "30d",
-            "version": "v1.29.4",
+            "version": _K8S_ADVERTISED_TAG,
             "cpu_m": 1840,
             "cpu_pct": 46,
             "memory_mi": 8120,
@@ -4677,7 +4680,7 @@ def _node_rows(state: SimulationState) -> list[dict[str, Any]]:
             "status": "NotReady" if partition else "Ready",
             "roles": "worker",
             "age": "30d",
-            "version": "v1.29.4",
+            "version": _K8S_ADVERTISED_TAG,
             "cpu_m": 2600 if partition else 1760,
             "cpu_pct": 78 if partition else 44,
             "memory_mi": 10400 if partition else 7900,
@@ -4932,10 +4935,11 @@ def kubernetes_api_response(
     if path.startswith("/openapi"):
         return _k8s_openapi_response(state, path)
     if path == "/version":
+        major, minor, _ = _K8S_ADVERTISED_VERSION.split(".")
         return _k8s_json_response({
-            "major": "1",
-            "minor": "29",
-            "gitVersion": "v1.29.4-amc",
+            "major": major,
+            "minor": minor,
+            "gitVersion": _K8S_ADVERTISED_GIT_VERSION,
             "gitCommit": "simulated",
             "gitTreeState": "clean",
             "buildDate": _k8s_timestamp(state.clock.now()),
@@ -4998,7 +5002,7 @@ def _k8s_openapi_v2_document(state: SimulationState) -> dict[str, Any]:
         "swagger": "2.0",
         "info": {
             "title": "AMC simulator Kubernetes schema",
-            "version": "v1.29.4-amc",
+            "version": _K8S_ADVERTISED_GIT_VERSION,
         },
         "paths": _openapi_paths(openapi_version="2"),
         "definitions": _openapi_schema_definitions(state, ref_prefix="#/definitions/"),
@@ -5025,7 +5029,7 @@ def _k8s_openapi_v3_document(
         "openapi": "3.0.0",
         "info": {
             "title": f"AMC simulator Kubernetes schema {group or 'core'}/{version}",
-            "version": "v1.29.4-amc",
+            "version": _K8S_ADVERTISED_GIT_VERSION,
         },
         "paths": _openapi_paths(group=group, version=version, openapi_version="3"),
         "components": {

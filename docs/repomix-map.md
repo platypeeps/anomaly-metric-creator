@@ -813,13 +813,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-17-audit-real-client-smoke-ci/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-17-audit-serve-error-visibility/
       check.jsonl
       design.md
@@ -912,13 +905,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     07-18-perf-suite-runtime/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    07-20-perf-ci-heavy-worker-trial/
       check.jsonl
       design.md
       implement.jsonl
@@ -1135,6 +1121,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-17-audit-real-client-smoke-ci/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         07-18-perf-ci-lane-parallelization/
           check.jsonl
           design.md
@@ -1165,6 +1158,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           task.json
         07-20-audit-ci-workflow-correctness/
           design.md
+          implement.md
+          prd.md
+          task.json
+        07-20-perf-ci-heavy-worker-trial/
+          check.jsonl
+          design.md
+          implement.jsonl
           implement.md
           prd.md
           task.json

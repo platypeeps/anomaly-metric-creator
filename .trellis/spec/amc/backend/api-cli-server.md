@@ -202,6 +202,15 @@ Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server_kubernetes.py`;
 `src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.
 
+The facade advertises Kubernetes v1.36.2 from one server-ops constant and the
+full CI light lane smoke-tests it with checksum-pinned kubectl v1.36.2 and Helm
+v4.2.0 binaries. Treat the client pins, checksums, advertised version, README
+tested-version statement, real-client smoke selectors, and deterministic CI
+guard as one update contract. Sources: `.github/workflows/ci.yml`;
+`src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`;
+`README.md`; `docs/DEVELOPMENT_CYCLE.md`.
+
 Kubernetes mutation and event identity must include namespace anywhere a real
 cluster would treat namespace as part of object identity. Generated pod names
 such as replacement/recreated pods must map back to their owning component when

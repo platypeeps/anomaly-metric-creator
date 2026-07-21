@@ -533,6 +533,10 @@ payloads exposed through the Helm-shaped Secret API.
 Real `kubectl` and Helm 4 client compatibility is also available through the
 Kubernetes API facade:
 
+The compatibility facade is CI smoke-tested with kubectl v1.36.2 and Helm
+v4.2.0 while advertising Kubernetes v1.36.2. Those versions are pinned so a
+client or advertised-version bump is reviewed and validated as one change.
+
 ```bash
 curl -s http://127.0.0.1:8088/v1/kubeconfig > /tmp/amc.kubeconfig
 
