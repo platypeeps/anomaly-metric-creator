@@ -848,6 +848,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
+    07-21-decomp-scenario-catalog-recovery/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/

@@ -1561,3 +1561,42 @@ Verified and archived the three-child consumer-owned CI cadence program while pr
 ### Next Steps
 
 - Publish, review, merge, and housekeep the focused CI-audit closure PR; keep A-050 parked until a separate upstream PR is authorized.
+
+
+## Session 38: Repair legacy decomposition task topology
+
+**Date**: 2026-07-21
+**Task**: Repair legacy decomposition task topology
+**Package**: amc
+**Branch**: `codex/repair-legacy-epic-plan`
+
+### Summary
+
+Corrected the legacy epic from a misleading 10/10-complete state to 10/11 and created a converged child for the unimplemented scenario-catalog PR B.
+
+### Main Changes
+
+- Measured legacy.py at 4,829 lines and documented the remaining scenario builders, registry, validation, and resolution surface.
+- Created 07-21-decomp-scenario-catalog-recovery with PRD, design, implementation plan, and grounded context manifests.
+- Corrected the archived predecessor scope and parent sequencing without marking the epic complete.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4120382` | docs: recover missing scenario decomposition child |
+
+### Testing
+
+- [OK] Trellis context validation for parent and recovery child
+- [OK] pre-commit run --all-files
+- [OK] bash scripts/sd-ai-command-pack-full-check.sh
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Implement 07-21-decomp-scenario-catalog-recovery; return to the parent size/waiver decision only after unchanged hashes.

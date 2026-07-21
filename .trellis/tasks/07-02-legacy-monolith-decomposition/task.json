@@ -28,7 +28,8 @@
     "07-02-decomp-cli-args",
     "07-02-decomp-catalog-data",
     "07-02-decomp-generation-topology",
-    "07-06-validate-impl-split-and-cleanup"
+    "07-06-validate-impl-split-and-cleanup",
+    "07-21-decomp-scenario-catalog-recovery"
   ],
   "parent": null,
   "relatedFiles": [],

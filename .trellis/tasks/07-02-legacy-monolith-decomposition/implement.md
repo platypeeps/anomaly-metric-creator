@@ -16,13 +16,18 @@ cross-child order, the shared per-PR protocol, and the epic-close checklist.
    (`_configure_cli_runtime`), per design.md's 2026-07-17 Decision 1. Most
    contract-dense step: two-tier help, `p.set_defaults` env seeding,
    reconciliation-before-validation ordering all must survive byte-identical.
-3. **Step 9 — `07-02-decomp-catalog-data`** — `catalog.py`,
-   `scenario_catalog.py`, `models_impl.py`, `scenarios_impl.py` (+ the
-   resolution-cluster assignment from design.md Decision 2). Registry
-   validators move with their registries in the same PR.
-4. **Step 10 — `07-02-decomp-generation-topology`** — the RNG-order-critical
-   core; only after 8 and 9 have landed with unchanged hashes.
-5. **Epic close** — resolve design.md Decision 2 (end-state waiver) with the
+3. **Step 9A — `07-02-decomp-catalog-data`** — the already-landed
+   `catalog.py` + `models_impl.py` extraction, including component/instance
+   registries and their validators. The archived task's scenario half did not
+   land and is owned by 9B below.
+4. **Step 9B recovery — `07-21-decomp-scenario-catalog-recovery`** — finish
+   the scenario builders/data/validation/resolution half that the archived
+   step-9 task left undone; preserve live monkeypatch bindings and the sole
+   import-time validation call.
+5. **Step 10 — `07-02-decomp-generation-topology`** — the RNG-order-critical
+   core; only after steps 8, 9A, and the recovered 9B have landed with
+   unchanged hashes.
+6. **Epic close** — resolve design.md Decision 2 (end-state waiver) with the
    maintainer, update CLAUDE.md's architecture section to the final module
    map, flip remaining checklist boxes, archive.
 

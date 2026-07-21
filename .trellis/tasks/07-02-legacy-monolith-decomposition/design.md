@@ -28,6 +28,13 @@
   800-line cap. Decide whether the epic's "thin" target means <800
   (requires scoping the resolution cluster and slimming `main()`) or
   "dispatch + wiring only" (record the accepted size).
+- **[2026-07-21 recovery]** The archived step-9 task landed only models +
+  component catalog PR A; scenario PR B never landed. Current `legacy.py` is
+  4,829 lines and still owns builders, the ordered scenario registry,
+  validation, and resolution. `07-21-decomp-scenario-catalog-recovery` is an
+  eleventh child and must land before the end-state decision. It refines PR B
+  into behavior modules below 800 lines plus one documented data-only ordered
+  registry exception.
 
 ## Section map (measured 2026-07-02, post-#176)
 

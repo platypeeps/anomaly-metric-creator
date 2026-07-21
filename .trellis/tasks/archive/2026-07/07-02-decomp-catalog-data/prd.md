@@ -59,3 +59,8 @@ Move the SCENARIOS registry (~3k lines of data) to scenario_catalog.py, COMPONEN
   validators while preserving the `legacy.<name>` surface and
   monkeypatch-visible runtime callbacks. PR B still owns
   `scenarios_impl.py` + `scenario_catalog.py` and the `scenarios.py` facade.
+- 2026-07-21 completion-scope correction: this archived task's completed state
+  represents PR A only. PR B did not land and is now explicitly recovered by
+  active child `07-21-decomp-scenario-catalog-recovery` under the same epic.
+  The unchecked scenario acceptance criteria remain evidence of that split,
+  not completed work.
