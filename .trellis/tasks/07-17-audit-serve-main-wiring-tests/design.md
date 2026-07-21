@@ -13,9 +13,9 @@ disable the ground-truth wall.
 
 ## Proposal
 
-New focused file `test_serve_main_wiring.py` under `tests/` (small-files rule; uses
-the session `amc` fixture). Three tests, each running the real `serve_main`
-with patch points *below* the code under test:
+New focused file `test_serve_main_wiring.py` under `tests/` (small-files rule;
+uses the session `amc` fixture). Two tests run the real `serve_main` with patch
+points *below* the code under test and no generated-artifact fixture:
 
 1. **Eval-kwarg threading.** Monkeypatch `server.build_state` with a
    wrapper that captures `kwargs` and raises a private `_StopWiring`
@@ -25,12 +25,12 @@ with patch points *below* the code under test:
    `captured["eval_mode"] is True`. Control case: same argv without the
    flag → `is False`. This fails if the kwarg is dropped, renamed, or
    mis-threaded — the exact A-020 regression.
-2. **Flag → ServerSecurityConfig mapping.** Let `build_state` run for real
-   (needs artifacts — see below). Monkeypatch
-   `server._BoundedThreadingHTTPServer` with a stub class recording its
-   init args and exposing `server_address` + a no-op `serve_forever`;
-   monkeypatch `server.make_handler` with a wrapper that captures the
-   `security=` kwarg and returns the real handler. Run `serve_main` with
+2. **Flag → ServerSecurityConfig mapping.** Monkeypatch `build_state` to
+   return a minimal state with a real shutdown event, patch the background
+   starters to no-ops, and monkeypatch `server._BoundedThreadingHTTPServer`
+   with a stub class recording its init args and exposing `server_address`, a
+   no-op `serve_forever`, and `server_close`. Monkeypatch `server.make_handler`
+   to capture the `security=` kwarg. Run `serve_main` with
    non-default values for **all eight** flags (`--auth-token`,
    `--max-request-body-bytes`, `--allow-remote-without-auth`,
    `--cors-allow-origin`, `--rate-limit-per-minute`,
@@ -38,18 +38,11 @@ with patch points *below* the code under test:
    `--socket-timeout-seconds`) plus `--no-generate --port 0`; assert each
    `ServerSecurityConfig` field equals its flag value, and that the stub
    server received `max_workers`/`max_sse` from the same config.
-3. **Optional live smoke.** Wrap `_BoundedThreadingHTTPServer.__init__` to
-   stash the instance (calling the real init), run `serve_main` with
-   `--mcp-eval-mode --no-generate --port 0` in a daemon thread, wait for
-   the stashed instance, then over HTTP to `127.0.0.1:<port>`: GET
-   `/v1/anomalies` → 404 (rubric hidden), GET `/healthz` → 200; finally
-   `httpd.shutdown()` and join the thread — pins bind + wall + clean
-   shutdown end-to-end.
-
-Artifacts for tests 2–3: generate once per module into `tmp_path_factory`
-via `amc.main(["--output-dir", d, "--interval-seconds", "3600", "--seed",
-"7"])` — 24 rows/component, cheap, no session GB fixture needed;
-`--no-generate` then points serve_main at it.
+The optional live HTTP smoke is intentionally omitted: existing eval-mode
+tests already pin the hidden endpoint's `404` behavior through the real
+handler, while this task closes the distinct parser-to-state composition gap.
+Repeating that HTTP contract here would add thread/socket timing without making
+the silent `eval_mode` drop or security-field swap more detectable.
 
 ## Boundaries And Non-Goals
 
@@ -68,14 +61,13 @@ via `amc.main(["--output-dir", d, "--interval-seconds", "3600", "--seed",
 
 - Test 2's `serve_main` runs to completion (prints the listening banner) —
   capture stdout with `capsys` or ignore; assert no exception.
-- Thread hygiene in test 3: always `shutdown()` in a `finally`; give the
-  daemon thread a join timeout so a hang fails fast rather than wedging
-  xdist.
+- Keep every patch inside `monkeypatch`; no real socket, background thread, or
+  process-global server state is created.
 - `--allow-remote-without-auth` on a loopback bind is harmless (the
   parser gate only fires for non-loopback hosts) — safe to set for the
   mapping test.
-- Port 0 gives an OS-assigned port; read it from the stashed instance's
-  `server_address`, never hardcode.
+- Port 0 remains in the argv to exercise the real parser while the server
+  double supplies a deterministic loopback address.
 
 ## Validation
 

@@ -213,15 +213,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: refuse/warn on `*` without auth, or exclude rubric//v1/debug surfaces.
 
 ## A-020 — serve_main composition (incl. --mcp-eval-mode → eval_mode wire) never executed by any test
-- status: open
+- status: fixed
 - severity: P1 · effort: M · confidence: Verified
 - dimension: testing
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/server.py:1519 — only production activation of the wall; sole test invocations die at arg validation; eval tests call build_state directly
-- why: mis-threading the default-False kwarg leaves all eval tests green while the real server leaks the rubric; no mypy backstop (server.py ungated).
-- fix: serve_main wiring test (patched serve_forever) asserting eval_mode + security-config threading. Scope note: _generation_argv_without_otel IS covered elsewhere.
+  - tests/test_serve_main_wiring.py — runs the real `serve_main` composition past validation, asserts both eval-mode flag states reach `build_state`, and checks all eight `ServerSecurityConfig` fields plus worker/SSE passthrough and cleanup.
+- why: fixed; removing the `eval_mode` kwarg or swapping two security mappings now fails a focused mutation-sensitive test while existing handler tests retain the live HTTP wall contract.
+- fix: focused `serve_main` wiring tests with in-memory state/server doubles; `_generation_argv_without_otel` remains covered elsewhere.
 
 ## A-021 — Ground-truth-wall leak sweeps hand-enumerate MCP tools and lag the registry (3/15, 9/15)
 - status: fixed

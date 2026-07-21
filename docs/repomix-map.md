@@ -1326,6 +1326,7 @@ tests/
   test_schema_file.py
   test_sd_ai_command_pack_full_check_script.py
   test_sd_ai_command_pack_housekeeping_script.py
+  test_serve_main_wiring.py
   test_server_eval_mode.py
   test_server_hardening.py
   test_server_mcp.py

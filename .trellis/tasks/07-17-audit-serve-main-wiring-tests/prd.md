@@ -22,7 +22,7 @@ default-False kwarg silently drops the ground-truth wall.
 
 ## Acceptance criteria
 
-- [ ] A test fails if the eval_mode kwarg is dropped or mis-threaded.
-- [ ] Flag→ServerSecurityConfig mapping asserted field-by-field.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] A test fails if the eval_mode kwarg is dropped or mis-threaded.
+- [x] Flag→ServerSecurityConfig mapping asserted field-by-field.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).
