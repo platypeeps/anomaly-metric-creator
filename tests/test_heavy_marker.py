@@ -4,7 +4,8 @@ The PR CI gate runs the light test set under real xdist
 (``pytest -n 2 --dist loadfile -m "not heavy"``) and the GB-scale
 heavy-fixture tests serially (``pytest -n 0 -m heavy``). That split keeps
 the determinism / global-state ordering path exercised on pull requests
-without OOM-ing the 7 GB standard runner on the N=3 / 7-day fixtures.
+without parallelizing the N=3 / 7-day fixtures before the 16 GB standard
+runner's memory and disk headroom has been measured.
 
 These tests pin the marking *decision* so a regression that stops
 classifying the GB-scale fixtures as heavy (which would let them run

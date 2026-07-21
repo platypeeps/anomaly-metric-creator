@@ -1,0 +1,2 @@
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Supplies the canonical local and remote validation expectations for CI workflow changes."}
+{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Requires worker-count documentation and the mechanical CI contract to remain in lockstep."}

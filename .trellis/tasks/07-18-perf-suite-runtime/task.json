@@ -21,6 +21,7 @@
   "children": [
     "07-18-perf-ci-lane-parallelization",
     "07-18-perf-ci-worker-counts",
+    "07-20-perf-ci-heavy-worker-trial",
     "07-18-perf-longform-writer-test-dedupe",
     "07-18-perf-heavy-fixture-trim",
     "07-18-perf-local-test-split",

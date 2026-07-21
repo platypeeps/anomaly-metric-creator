@@ -883,13 +883,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-18-perf-ci-lane-parallelization/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-18-perf-ci-worker-counts/
       check.jsonl
       design.md
@@ -932,7 +925,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-20-audit-ci-automation-portability/
+    07-20-perf-ci-heavy-worker-trial/
       check.jsonl
       design.md
       implement.jsonl
@@ -1143,6 +1136,20 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         07-06-validate-impl-split-and-cleanup/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-18-perf-ci-lane-parallelization/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-20-audit-ci-automation-portability/
           check.jsonl
           design.md
           implement.jsonl

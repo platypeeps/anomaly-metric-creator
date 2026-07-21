@@ -347,9 +347,10 @@ jobs:
       - name: Sync dependencies (dev extra)
         run: uv sync --extra dev --locked --python ${{ matrix.python-version }}
 
-      # GB-scale 7-day / N=3 fixture tests stay serial so the standard 7 GB
-      # runner does not OOM. Pytest exit 5 makes an empty heavy partition a
-      # hard failure if marker assignment ever drifts.
+      # GB-scale 7-day / N=3 fixture tests stay serial pending a measured
+      # memory-and-disk headroom trial on the standard 16 GB runner. Pytest
+      # exit 5 makes an empty heavy partition a hard failure if marker
+      # assignment ever drifts.
       - name: Run heavy test partition
         env:
           COVERAGE_CORE: sysmon

@@ -1074,3 +1074,48 @@ Merged PR #272 after splitting the full CI suite into concurrent heavy and light
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: Evaluate CI light-worker counts
+
+**Date**: 2026-07-20
+**Task**: Evaluate CI light-worker counts
+**Package**: amc
+**Branch**: `codex/ci-worker-counts-light`
+
+### Summary
+
+Trialed four light-lane pytest workers against a remote adoption threshold, retained two workers after the hosted result missed that threshold, corrected runner-capacity guidance, and split the heavy-worker experiment into its own task.
+
+### Main Changes
+
+- Measured the four-worker hosted light step at 352 seconds versus the 364-second baseline and retained two workers because the 12-second saving missed the 100-second threshold.
+- Synchronized the CI workflow contract, tests, Trellis testing spec, source guide, and development guide with the retained two-worker command and corrected runner premise.
+- Created 07-20-perf-ci-heavy-worker-trial with pre-committed memory and disk headroom thresholds.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4fc30ef` | ci: use four workers for the light test lane |
+| `9c1d9f4` | fix: remove duplicate heavy trial child |
+| `337a8d7` | docs: correct light partition count |
+| `f48544d` | docs: keep CI signature copyable |
+| `587ee5f` | docs: mark runner premise as historical |
+| `d9128ac` | ci: retain two light workers after remote trial |
+
+### Testing
+
+- [OK] 1595 passed, 2 skipped at the retained two-worker light-lane setting
+- [OK] 55 focused CI-contract and heavy-marker tests passed
+- [OK] canonical SD full-check passed, including 148 review-churn tests and mypy
+- [OK] GitHub run 29796887824 passed heavy, light, combined coverage, aggregate test, and CI Result
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -2543,12 +2543,14 @@ run in CI):
   suites — an accepted cost of the "every merge commit gets a completed
   verdict" guarantee, not a bug (cancelling them would reopen the gap the
   per-commit groups close). All events run on the standard `ubuntu-latest`
-  runner: the org's `ubuntu-latest-m` 16 GB larger runner stopped being
+  runner: the org's `ubuntu-latest-m` larger runner stopped being
   served on 2026-07-04 (main-push jobs sat queued for hours with
   `runner_id=0`, so the post-merge backstop never ran), and larger runners
-  bill per-minute besides. The 7 GB standard runner couldn't hold
-  the heavy N=3 / 7-day fixtures across xdist workers — a full `-n 2` run
-  OOM-died after 32 min — so every run **splits** the suite by the `heavy`
+  bill per-minute besides. Public-repository standard runners provide 4 vCPU,
+  16 GB RAM, and 14 GB SSD, and their minutes are free; wall clock rather than
+  billed minutes is therefore the optimization target. A prior full `-n 2`
+  run still OOM-died after 32 min while holding the heavy N=3 / 7-day fixtures
+  across xdist workers, so every run **splits** the suite by the `heavy`
   marker instead of running everything serially. Separate jobs start
   `pytest -n 0 -m heavy` for the GB-scale 7-day / N=3 fixture tests serially
   (low-RAM) and `pytest -n 2 --dist loadfile -m "not heavy"` for the light
@@ -2563,10 +2565,12 @@ run in CI):
   partition tracks the fixture set with no per-test annotation to drift. A
   broken marker still makes the heavy job collect zero tests and fail with
   pytest exit 5; the jobs are concurrent, so this is a correctness guard, not
-  an ordering guarantee. The light subset under `-n 2` stays within 7 GB
-  because it excludes exactly the GB-scale fixtures whose concurrent
-  generation caused the original OOM (the full serial suite, a strict
-  superset, already fits the runner). Each pytest job has a 30-minute timeout,
+  an ordering guarantee. The light subset excludes exactly the GB-scale
+  fixtures whose concurrent generation caused the original OOM. A four-worker
+  CI trial completed the light step in 352s versus the 364s two-worker
+  baseline, only 12s below baseline and short of the pre-committed 100s
+  adoption threshold, so CI retains `-n 2`; the faster local four-worker result
+  did not transfer to the hosted runner. Each pytest job has a 30-minute timeout,
   and the coverage-combine job has a 10-minute timeout, capping hangs while
   keeping the critical path below the former sequential 45-minute job.
   The full-suite lane also runs mypy and coverage, each in a **report-only +
@@ -2725,7 +2729,7 @@ Override on the command line for narrow or wide hosts:
 which breaks interactive debuggers like `pdb`. Use `-n 0` instead when you
 need in-process execution.
 
-The `heavy` marker partitions the suite for the 7 GB PR runner (see
+The `heavy` marker partitions the suite for the 16 GB PR runner (see
 "Continuous integration" above). It is **auto-applied** — never hand-write
 `@pytest.mark.heavy` — by `pytest_collection_modifyitems` in
 `tests/conftest.py`, which marks any collected test whose fixture closure

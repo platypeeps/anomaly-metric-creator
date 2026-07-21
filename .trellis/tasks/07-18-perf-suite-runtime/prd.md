@@ -54,6 +54,12 @@ Two findings carry into the children: `-n 4` on the light lane is faster
 *and* peaks lower than `-n 2`, and there is almost no gain past `-n 4`
 because `--dist loadfile` granularity caps the fan-out.
 
+The hosted-runner trial did not reproduce the projected saving: full-matrix
+run `29796112539` measured the four-worker light step at 352s, only 12s below
+the 364s baseline. Because that missed the child's >=100s adoption threshold,
+the CI light lane retains `-n 2`; the local measurements remain useful only as
+workstation evidence.
+
 ## Goal
 
 Reduce the full-matrix CI test step from 1089s toward 350-500s, and remove
@@ -65,7 +71,8 @@ split, without weakening determinism guarantees or coverage.
 | Child | Priority | Expected saving |
 |---|---|---|
 | `07-18-perf-ci-lane-parallelization` | P1 | ~366s CI wall clock |
-| `07-18-perf-ci-worker-counts` | P1 | ~131s light, ~224s heavy (pending CI trial) |
+| `07-18-perf-ci-worker-counts` | P1 | 12s observed; `-n 4` rejected by threshold |
+| `07-20-perf-ci-heavy-worker-trial` | P1 | ~224s heavy (pending CI trial) |
 | `07-18-perf-longform-writer-test-dedupe` | P2 | ~74s local / ~140s CI |
 | `07-18-perf-heavy-fixture-trim` | P2 | ~60s local / ~115s CI, gated on re-lock decision |
 | `07-18-perf-local-test-split` | P2 | local only; removes 2-4x fixture rebuilds |

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
+- **Total Sessions**: 26
 - **Last Active**: 2026-07-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1070 | Active |
+| `journal-1.md` | ~1118 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-07-20 | Evaluate CI light-worker counts | `4fc30ef`, `9c1d9f4`, `337a8d7`, `f48544d`, `587ee5f`, `d9128ac` | `codex/ci-worker-counts-light` |
 | 25 | 2026-07-20 | Parallelize heavy and light CI test lanes | `32953c3` | `codex/parallelize-ci-test-lanes` |
 | 24 | 2026-07-20 | Complete CI automation and Windows portability audit | `07f8bb1` | `codex/complete-ci-automation-audit` |
 | 23 | 2026-07-20 | Mirror CI lints and local gates | `127e7c0f41e940210a99104d6a606faec8d34810`, `5704073d731f89b9582b2d45e9b33e0f4b0d4ad3`, `781acb10dba553424ef99f64c71f6928ce06b9f4`, `4c4986aed0bb319c94ac12b512b8175f2023fe17`, `eb86027aefd4c8bc8cb12ab0377040a4dc829f45` | `codex/archive-audit-ci-lint-parity` |
