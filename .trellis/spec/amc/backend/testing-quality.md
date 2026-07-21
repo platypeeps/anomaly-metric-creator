@@ -278,7 +278,8 @@ Sources: `scripts/sd-ai-command-pack-full-check.sh`;
 GitHub CI must keep the stable aggregate branch-protection context named
 `CI Result`, while `scripts/classify-ci-changes.sh` selects the cheapest safe
 application lane:
-lightweight readiness for docs/spec/agent/review-tooling-only changes, quick
+lightweight readiness for docs/spec/agent/review-tooling-only changes and
+explicitly enumerated repo-only automation, quick
 test for ordinary PR update churn that still touches app paths, and the full
 Python 3.14 test lane for app-required opened/reopened/ready PRs,
 `full-ci` label runs, auto-merge-armed PRs (the `auto_merge_enabled` event
@@ -327,6 +328,10 @@ there is no older declared floor and no multi-version lane. Sources:
 - `.sd-ai-command-pack/**`, `.trellis/audit/**`, and the command-pack shell
   entrypoints are lightweight review/documentation surfaces. Dependency and
   workflow paths override that classification and force the full lane.
+- `is_repo_tooling_path` may classify an explicit script lightweight only when
+  doing so skips no behavioral test. Tested scripts and all `tools/` paths stay
+  application-required; under-classification is safer than silently dropping
+  coverage.
 - Python syntax coverage includes top-level `scripts/*.py`. Both the workflow
   and pre-commit shell gates cover `sd-ai-command-pack-toolchain.sh` and
   `sd-ai-command-pack-shell-lib.sh`.
@@ -388,8 +393,9 @@ fi
 ```
 
 Sources: `.github/workflows/ci.yml`; `.pre-commit-config.yaml`;
-`scripts/classify-ci-changes.sh`; `tools/check_ci_review_contract.py`;
-`tests/test_ci_change_classifier.py`; `tests/test_ci_review_contract.py`;
+`scripts/classify-ci-changes.sh`; `tests/test_ci_change_classifier.py`;
+`tools/check_ci_review_contract.py`;
+`tests/test_ci_review_contract.py`;
 `tests/test_python_syntax_lint.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
 CodeQL analyzes opened/reopened/ready_for_review PRs and `full-ci`-labeled

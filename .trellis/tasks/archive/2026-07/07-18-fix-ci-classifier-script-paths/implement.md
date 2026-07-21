@@ -10,15 +10,16 @@
      [ "$out" = "false" ] && echo "app_required: $f"
    done | sort
    ```
-2. **Verify Group A has no test coverage** before classifying anything. For
-   each of the 8 candidates:
+2. **Verify Group A has no test coverage** before classifying anything. Start
+   from every currently unclassified script rather than the design snapshot:
    ```bash
-   rg -n "sd_ai_command_pack_lib|sync-agent-skills|update_repomix|record-session|review-learnings|shell-lib|toolchain|update-spec-kb" tests/
+   rg -n -i "record[-_]session|review[-_]full[-_]check|review[-_]learnings|command[-_]pack[-_]status|update[-_]spec[-_]kb|work[-_]loop|fleet[-_]lib|sd_ai_command_pack_lib|sync[-_]agent[-_]skills|update[-_]repomix" tests/
    ```
-   Any member that a test exercises drops out of Group A and stays
-   app-required. `scripts/sd_ai_command_pack_lib.py` is the likeliest —
-   check it specifically against
-   `tests/test_sd_ai_command_pack_full_check_script.py`.
+   Any member that a behavioral test exercises drops out of Group A and stays
+   app-required. The live audit retained `scripts/sd_ai_command_pack_lib.py`
+   and `scripts/sync-agent-skills.py` for this reason. It also retained the
+   shell-only `scripts/sd-ai-command-pack-review-full-check.sh` until an
+   always-run syntax guard covers it.
 3. Add `is_repo_tooling_path()` to `scripts/classify-ci-changes.sh` next to
    `is_review_tooling_path()` (`:70-94`), listing the verified Group A
    paths. Call it from `is_lightweight_path()` (`:96-116`) alongside the
@@ -35,7 +36,8 @@
      escalation still fires;
    - a mixed-diff case (Group A path + application path) asserting
      escalation wins.
-5. Record the Group B decision — including `tools/benchmark_combine.py`
+5. Record the retained-script and `tools/` decisions — including
+   `tools/benchmark_combine.py`
    staying app-required despite having no test — in this task's `prd.md`, so
    it is not re-raised as an oversight.
 6. Update `CLAUDE.md`'s CI-cadence section with the new predicate and the
@@ -49,16 +51,18 @@
 # every Group A path is lightweight
 for f in scripts/sd-ai-command-pack-record-session.py \
          scripts/sd-ai-command-pack-review-learnings.py \
-         scripts/sd-ai-command-pack-shell-lib.sh \
-         scripts/sd-ai-command-pack-toolchain.sh \
+         scripts/sd-ai-command-pack-status.py \
          scripts/sd-ai-command-pack-update-spec-kb.py \
-         scripts/sd_ai_command_pack_lib.py \
-         scripts/sync-agent-skills.py \
+         scripts/sd-ai-command-pack-work-loop.py \
+         scripts/sd_ai_command_pack_fleet_lib.py \
          scripts/update_repomix; do
   echo "$f -> $(bash scripts/classify-ci-changes.sh -- "$f" | grep -E '^(lightweight_only|app_required)=' | tr '\n' ' ')"
 done
 
-# Group B and application paths still escalate
+# Retained scripts, tools, and application paths still escalate
+bash scripts/classify-ci-changes.sh -- scripts/sd_ai_command_pack_lib.py
+bash scripts/classify-ci-changes.sh -- scripts/sync-agent-skills.py
+bash scripts/classify-ci-changes.sh -- scripts/sd-ai-command-pack-review-full-check.sh
 bash scripts/classify-ci-changes.sh -- tools/check_role_name_leaks.py
 bash scripts/classify-ci-changes.sh -- src/anomaly_metric_creator/legacy.py
 bash scripts/classify-ci-changes.sh -- pyproject.toml

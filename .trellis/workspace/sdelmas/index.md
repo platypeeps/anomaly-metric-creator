@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
+- **Total Sessions**: 33
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1362 | Active |
+| `journal-1.md` | ~1399 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-07-21 | Classify repo-only CI tooling paths | `8e703f4` | `codex/ci-classifier-script-paths` |
 | 32 | 2026-07-21 | Dedupe long-form writer scans | `2c939e4` | `codex/longform-writer-test-dedupe` |
 | 31 | 2026-07-21 | Retain measured local pytest default | `b566968` | `codex/local-test-split` |
 | 30 | 2026-07-21 | Trim duplicate local review work | `ec192d3` | `codex/local-gate-dedupe` |

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Defines CI lane selection, classifier safety, deterministic tests, and local review gates."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Guides classifier, tests, Trellis spec, and developer-documentation synchronization."}

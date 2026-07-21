@@ -11,8 +11,19 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "classify-ci-changes.sh"
+REPO_TOOLING_PATHS = (
+    "scripts/sd-ai-command-pack-record-session.py",
+    "scripts/sd-ai-command-pack-review-learnings.py",
+    "scripts/sd-ai-command-pack-status.py",
+    "scripts/sd-ai-command-pack-update-spec-kb.py",
+    "scripts/sd-ai-command-pack-work-loop.py",
+    "scripts/sd_ai_command_pack_fleet_lib.py",
+    "scripts/update_repomix",
+)
 
 
 def _changed_file(tmp_path: Path, *paths: str) -> Path:
@@ -112,6 +123,61 @@ def test_review_tooling_scripts_stay_in_lightweight_lane(tmp_path: Path) -> None
     assert outputs["lightweight_only"] == "true"
     assert outputs["app_required"] == "false"
     assert outputs["review_tooling_changed"] == "true"
+
+
+@pytest.mark.parametrize("path", REPO_TOOLING_PATHS)
+def test_untested_repo_tooling_stays_in_lightweight_lane(
+    tmp_path: Path,
+    path: str,
+) -> None:
+    changed = _changed_file(tmp_path, path)
+
+    result = _run(str(changed))
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["lightweight_only"] == "true"
+    assert outputs["app_required"] == "false"
+    assert outputs["review_tooling_changed"] == "false"
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "scripts/sd_ai_command_pack_lib.py",
+        "scripts/sync-agent-skills.py",
+        "scripts/sd-ai-command-pack-review-full-check.sh",
+        "tools/check_role_name_leaks.py",
+        "tools/benchmark_combine.py",
+    ),
+)
+def test_tested_or_conservatively_retained_tooling_requires_app_gate(
+    tmp_path: Path,
+    path: str,
+) -> None:
+    changed = _changed_file(tmp_path, path)
+
+    result = _run(str(changed))
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["lightweight_only"] == "false"
+    assert outputs["app_required"] == "true"
+
+
+def test_repo_tooling_mixed_with_runtime_path_requires_app_gate(tmp_path: Path) -> None:
+    changed = _changed_file(
+        tmp_path,
+        "scripts/update_repomix",
+        "src/anomaly_metric_creator/legacy.py",
+    )
+
+    result = _run(str(changed))
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["lightweight_only"] == "false"
+    assert outputs["app_required"] == "true"
 
 
 def test_command_pack_payload_and_audit_artifacts_are_lightweight(

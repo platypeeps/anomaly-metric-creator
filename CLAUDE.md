@@ -2533,7 +2533,11 @@ run in CI):
   push to `main`; manual dispatch forces the application classifier even for a
   docs-only tip. The lightweight guards use `uv`-managed Python 3.14 without
   syncing the full project environment, and command-pack metadata plus
-  `.trellis/audit/**` remain in that lightweight lane. Merge-burst `main`
+  `.trellis/audit/**` remain in that lightweight lane. The classifier also
+  keeps an explicit `is_repo_tooling_path` allowlist for repo-only automation,
+  but only when selecting the lightweight lane skips no behavioral test;
+  tested scripts and all `tools/` paths stay application-required.
+  Merge-burst `main`
   pushes run in per-commit concurrency groups so
   they cannot cancel each other's backstop runs, while PR refs keep
   cancel-in-progress. The aggregate `test` job is guarded with
