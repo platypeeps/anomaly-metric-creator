@@ -51,11 +51,12 @@ def test_n3_combined_matches_gauges_bytes(n3_one_day_combine_run, n3_one_day_gau
     requiring someone to notice two locked constants drifted apart."""
 ```
 
-The two fixtures live in different modules, so the test belongs in whichever
-module can request both — most likely `tests/test_combine.py` importing the
-gauges fixture, or a shared conftest-level fixture. Resolve during
-implementation; do **not** duplicate a third derivation to make the import
-tidy.
+The two fixtures originally lived in different modules. Implementation
+co-locates the combine fixture and its cheap N=3 guards with the existing
+gauges fixture in `tests/test_gauges_file.py`. Under `--dist loadfile` this
+keeps both outputs on one worker and avoids duplicating either derivation just
+to make the equality assertion visible. Each fixture caches its streaming
+SHA-256 once; the absolute and runtime-equality tests reuse those digests.
 
 **Keep both absolute locked hashes.** `N3_GAUGES_ONE_DAY_HASH` and
 `N3_COMBINED_ONE_DAY_HASH` are the same value today, but they guard

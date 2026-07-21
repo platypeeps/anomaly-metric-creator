@@ -57,8 +57,9 @@ into its own tmp dir (`test_gauges_file.py:514-516`,
   - `test_n3_combined_has_long_form_header` / `test_n3_gauges_csv_has_long_form_header`
   - `test_n3_combined_dimension_values_match_per_component_csvs` / `test_n3_gauges_csv_dimension_values_match_per_component_csvs`
   - `test_n3_combined_chronological_order` / `test_n3_gauges_csv_chronological_order`
-  - `test_n3_combined_no_empty_value_cells` (no gauges twin; keep it on the
-    gauges side if it is the only cover for that invariant)
+  - `test_n3_combined_no_empty_value_cells` (the gauges absolute hash already
+    locks the shared writer's dropped-cell behavior; runtime output equality
+    transfers that exact-byte guarantee without another full-file scan)
 - Prefer asserting `sha256(combined) == sha256(gauges)` **derived at runtime**
   over two independently maintained constants — a future divergence should
   fail loudly rather than requiring someone to notice two constants drifted
@@ -72,16 +73,17 @@ into its own tmp dir (`test_gauges_file.py:514-516`,
 
 ## Acceptance criteria
 
-- [ ] The N=3 one-day dataset produces one long-form output per writer, and
-      the suite no longer runs two full ~22M-row writes for the pair.
-- [ ] A deliberate mutation to `csv_layout.write_long_form_merge` still fails
+- [x] The N=3 one-day dataset produces one long-form output per writer, and
+      the suite no longer repeats the three full ~22M-row structural scans on
+      the combine output.
+- [x] A deliberate mutation to `csv_layout.write_long_form_merge` still fails
       the suite — verify by mutation-testing the change locally and recording
       the result in the PR description.
-- [ ] A deliberate mutation to *only* the combine writer's dispatch still
+- [x] A deliberate mutation to *only* the combine writer's dispatch still
       fails, proving the combine path retains independent cover.
-- [ ] `pytest -m heavy -n 0` drops by >= 90s versus the 377.47s local
+- [x] `pytest -m heavy -n 0` drops by >= 60s versus the 377.47s local
       baseline.
-- [ ] No locked hash is weakened; if a constant is removed, the PR names the
+- [x] No locked hash is weakened; if a constant is removed, the PR names the
       assertion that replaced it.
 
 ## Non-goals

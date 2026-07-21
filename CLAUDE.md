@@ -690,7 +690,11 @@ and dispatches one of two layouts:
   contract. Empty / dropped cells are skipped
   (long form encodes "this measurement was emitted" via row presence —
   unlike the wide layout, which carries an empty string in the
-  corresponding column).
+  corresponding column). The N=3 tests co-locate both writer fixtures in
+  `tests/test_gauges_file.py`, retain an independent absolute SHA-256 guard
+  for each entry point, and compare their runtime digests once. Gauges-side
+  structural assertions therefore cover the byte-identical combine output
+  without repeating three full scans of the ~22M-row file.
 
 Both layouts share the same `_COMBINE_OUTPUT_FILENAME`
 (`combined_metrics_unified.csv`); the filename does not change with the

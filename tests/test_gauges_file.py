@@ -485,6 +485,9 @@ def test_non_component_files_excludes_gauges_csv_from_combine_discovery(amc):
 N3_GAUGES_ONE_DAY_HASH = (
     "511f455075c8f82ab765dea783230a5a23404607958c4b9da93bcb6005368c5c"
 )
+N3_COMBINED_ONE_DAY_HASH = (
+    "511f455075c8f82ab765dea783230a5a23404607958c4b9da93bcb6005368c5c"
+)
 
 
 _LONG_FORM_HEADER = [
@@ -517,8 +520,34 @@ def n3_one_day_gauges_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
     component_csv_paths = {
         c: out / f"{c}.csv" for c in sorted(amc.COMPONENTS.keys())
     }
-    amc.write_gauges_csv(component_csv_paths, out / "gauges.csv")
-    return SimpleNamespace(out_dir=out, stderr="")
+    output_path = out / "gauges.csv"
+    amc.write_gauges_csv(component_csv_paths, output_path)
+    return SimpleNamespace(
+        out_dir=out,
+        stderr="",
+        digest=sha256_path(output_path),
+    )
+
+
+@pytest.fixture(scope="module")
+def n3_one_day_combine_run(amc, n3_one_day_dataset_dir, tmp_path_factory):
+    """Run the N=3 combine writer beside the matching gauges fixture.
+
+    Co-locating both module-scoped fixtures keeps them on one loadfile worker,
+    so the equality contract does not create a third 1.5 GB writer output.
+    The source CSVs are hardlinked into a private directory because combine
+    autodiscovery writes its output alongside its inputs.
+    """
+    out = tmp_path_factory.mktemp("ver148_n3_one_day_combine")
+    for src in n3_one_day_dataset_dir.iterdir():
+        os.link(src, out / src.name)
+    amc.combine_logs(out)
+    output_path = out / "combined_metrics_unified.csv"
+    return SimpleNamespace(
+        out_dir=out,
+        stderr="",
+        digest=sha256_path(output_path),
+    )
 
 
 def test_n3_gauges_csv_has_long_form_header(n3_one_day_gauges_run):
@@ -538,12 +567,45 @@ def test_n3_gauges_csv_byte_identical_one_day(n3_one_day_gauges_run):
     per-(component, instance) iterator construction, or the dropped-cell
     skip behavior under the dimensioned path must regenerate this hash
     and document the cause in the PR description."""
-    path = n3_one_day_gauges_run.out_dir / "gauges.csv"
-    actual = sha256_path(path)
+    actual = n3_one_day_gauges_run.digest
     assert actual == N3_GAUGES_ONE_DAY_HASH, (
         f"N=3 gauges.csv drifted from locked 1-day hash. "
         f"expected={N3_GAUGES_ONE_DAY_HASH} actual={actual}"
     )
+
+
+def test_n3_combined_has_long_form_header(n3_one_day_combine_run):
+    """Dimensioned combine output uses the same ten-column long form."""
+    path = n3_one_day_combine_run.out_dir / "combined_metrics_unified.csv"
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        header = next(csv.reader(f))
+    assert header == _LONG_FORM_HEADER, (
+        f"N=3 combined_metrics_unified.csv header must be the long form; "
+        f"got {header}"
+    )
+
+
+def test_n3_combined_byte_identical_one_day(n3_one_day_combine_run):
+    """Keep an independent absolute hash guard on the combine entry point."""
+    actual = n3_one_day_combine_run.digest
+    assert actual == N3_COMBINED_ONE_DAY_HASH, (
+        f"N=3 combined drifted from locked 1-day hash. "
+        f"expected={N3_COMBINED_ONE_DAY_HASH} actual={actual}"
+    )
+
+
+def test_n3_long_form_writer_outputs_match(
+    n3_one_day_gauges_run,
+    n3_one_day_combine_run,
+):
+    """The gauge and combine entry points emit byte-identical N=3 output.
+
+    Both route through ``csv_layout.write_long_form_merge``. Comparing their
+    runtime digests transfers the gauges-side structural checks to combine
+    without scanning the second 1.5 GB output three more times. The separate
+    absolute hash tests prevent both writers from drifting together silently.
+    """
+    assert n3_one_day_combine_run.digest == n3_one_day_gauges_run.digest
 
 
 def test_n3_gauges_csv_tie_break_within_timestamp(n3_one_day_gauges_run):

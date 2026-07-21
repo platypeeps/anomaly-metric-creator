@@ -1323,3 +1323,43 @@ Remeasured the proposed local test split, rejected it because the serial heavy h
 ### Next Steps
 
 - None - task complete
+
+
+## Session 32: Dedupe long-form writer scans
+
+**Date**: 2026-07-21
+**Task**: Dedupe long-form writer scans
+**Package**: amc
+**Branch**: `codex/longform-writer-test-dedupe`
+
+### Summary
+
+Co-located the N=3 gauge and combine fixtures, preserved independent golden hashes with runtime equality, and removed redundant combine-output scans.
+
+### Main Changes
+
+- Moved N=3 combine fixture coverage beside the gauges fixture so loadfile creates each GB-scale output once.
+- Cached streaming digests, retained both absolute hash guards, and replaced three full combine scans with runtime equality.
+- Updated Trellis testing guidance and task evidence with measured performance and mutation checks.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2c939e4` | test: dedupe long-form writer scans |
+
+### Testing
+
+- [OK] 46 heavy tests passed in 276.10s, 101.37s faster than baseline
+- [OK] 1678 passed, 2 skipped in 231.75s with the default four-worker suite
+- [OK] Shared-writer, combine-only, and output-divergence mutation checks failed the intended guards
+- [OK] Pre-commit and canonical full-check passed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
