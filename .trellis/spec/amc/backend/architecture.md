@@ -4,10 +4,12 @@
 
 This repository is a single Python package that generates deterministic
 observability artifacts and can serve those artifacts through an incident
-simulator facade. The canonical generation implementation remains
-`src/anomaly_metric_creator/legacy.py`; `anomaly-metric-creator.py`,
-`src/anomaly_metric_creator/cli.py`, and small package facade modules are
-wiring/import-stability surfaces, not behavior forks. Sources: `CLAUDE.md`;
+simulator facade. `src/anomaly_metric_creator/legacy.py` is the historic public
+binding and live-runtime wiring surface; `run_pipeline.py` owns one-run
+orchestration and focused modules own their named behavior.
+`anomaly-metric-creator.py`, `src/anomaly_metric_creator/cli.py`, and small
+package facade modules are wiring/import-stability surfaces, not behavior
+forks. Sources: `CLAUDE.md`;
 `anomaly-metric-creator.py`; `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/cli.py`; `src/anomaly_metric_creator/combine.py`;
 `src/anomaly_metric_creator/models.py`;
@@ -16,6 +18,8 @@ wiring/import-stability surfaces, not behavior forks. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/scenarios.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
+`src/anomaly_metric_creator/run_pipeline.py`;
+`src/anomaly_metric_creator/run_defaults.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
@@ -30,10 +34,13 @@ behavior. Sources: `README.md`; `pyproject.toml`;
 
 ## Generation Pipeline
 
-Generation runs through `main()` and `generate_component()` with a
-`RunContext` carrying per-run state and `np.random.RandomState(seed)`. Do not
-reintroduce module-level mutable scenario state or module-level RNG flows.
+Generation enters through `legacy.main()`, delegates to `run_pipeline.main()`,
+and reaches `generation.generate_component()` with a `models_impl.RunContext`
+carrying per-run state and `np.random.RandomState(seed)`. Do not reintroduce
+module-level mutable scenario state or module-level RNG flows.
 Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
+`src/anomaly_metric_creator/run_pipeline.py`;
+`src/anomaly_metric_creator/models_impl.py`;
 `tests/test_determinism.py`; `tests/test_correctness.py`;
 `tests/test_scenarios.py`.
 
@@ -53,9 +60,11 @@ parallel maps. Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 
 ## Module Boundaries
 
-Keep `main()`, `RunContext`, and compatibility wrappers in `legacy.py`;
-focused generation, topology, scenario, and artifact owners live in dedicated
-modules while `legacy.py` preserves the historic public surface.
+Keep the `main()` wrapper and compatibility bindings in `legacy.py`;
+`run_pipeline.py` owns run-level orchestration/artifact lifecycle,
+`models_impl.py` owns `RunContext`, and focused generation, topology, scenario,
+and artifact owners live in dedicated modules. `legacy.py` re-exports the
+historic public surface and configures live runtime views.
 Focused modules extracted so far through decomposition epic
 `07-02-legacy-monolith-decomposition`:
 `redaction.py` (sensitive HTTP-header masking), `timeutil.py`
@@ -73,8 +82,11 @@ derivation, and long-form dimension validation), `validate_topology.py`
 streaming), `cli_args.py` (parser construction, CLI reconciliation, and
 generate-flag validation), `cli_subcommands.py` (dedicated `combine`,
 `validate`, `serve`, and `trace-bundle` subcommand dispatch helpers),
-`models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
-`_load_instance_config`), `catalog.py` (`COMPONENTS`, `INSTANCES`,
+`models_impl.py` (`MetricSpec`, `Instance`, `RunContext`,
+`_validate_instance_list`, and `_load_instance_config`), `run_defaults.py`
+(generation-command defaults and anomaly-count salt), `run_pipeline.py`
+(one-run orchestration, reporting artifacts, emitted-file registry, and output
+hygiene), `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
 catalog/instance metadata validator implementations), `scenario_builders.py`
 (`Scenario`, `register_cascade`, and deterministic scenario-spec builders),
@@ -95,9 +107,9 @@ composition), `topology_instances.py` (per-instance topology composition), and
 `topology_support.py` (shared saturation/equality helpers). All are
 re-imported by `legacy.py`, and the package facades (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) preserve historic object identity. `models.py`
-imports `MetricSpec` and `Instance` from `models_impl.py`; `Edge` and
+imports `MetricSpec`, `Instance`, and `RunContext` from `models_impl.py`; `Edge` and
 `SaturationParams` are imported by `legacy.py` from `topology_impl.py`, while
-`RunContext` remains in `legacy.py`. When an
+`legacy.py` re-exports the canonical `RunContext`. When an
 extracted module must read a registry that still lives in `legacy.py`, configure
 named, weak-referenceable live callbacks from `legacy.py` and pass the current
 registry view into leaf helpers rather than importing `legacy.py` from the
@@ -121,6 +133,8 @@ filter anomaly windows against the `schema.json` topology snapshot because that
 is the graph used by the artifacts being validated, while current load-metric
 name mapping may still come from the live registry. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
+`src/anomaly_metric_creator/run_pipeline.py`;
+`src/anomaly_metric_creator/run_defaults.py`;
 `src/anomaly_metric_creator/otel.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
 `src/anomaly_metric_creator/cli_args.py`;

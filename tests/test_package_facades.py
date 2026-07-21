@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import weakref
 
 
 def test_package_facades_route_to_legacy():
@@ -51,6 +52,17 @@ def test_scenario_facade_routes_to_extracted_owners():
     assert "legacy" not in scenario_catalog.__dict__
     assert "legacy" not in scenario_validation.__dict__
     assert "legacy" not in scenarios_impl.__dict__
+
+
+def test_run_pipeline_uses_live_weak_legacy_namespace():
+    from anomaly_metric_creator import legacy, models_impl, run_pipeline
+
+    runtime_ref = run_pipeline._run_runtimes[legacy.__name__]
+    assert isinstance(runtime_ref, weakref.ReferenceType)
+    assert runtime_ref() is legacy._run_runtime_namespace
+    assert legacy._EMIT_ARTIFACT_FILES is run_pipeline._EMIT_ARTIFACT_FILES
+    assert legacy.RunContext is models_impl.RunContext
+    assert "legacy" not in run_pipeline.__dict__
 
 
 def test_scenario_registry_validation_runs_once_during_legacy_import():

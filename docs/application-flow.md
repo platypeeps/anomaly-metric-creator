@@ -1,10 +1,11 @@
 # Application flow
 
-End-to-end execution of `main(argv=None)` in
+End-to-end execution enters through `main(argv=None)` in
 `src/anomaly_metric_creator/legacy.py` (the top-level
-`anomaly-metric-creator.py` is a re-export shim). The script has five
-top-level modes, dispatched on the `argv[0]` subcommand token in `main()`
-before any argparse runs:
+`anomaly-metric-creator.py` is a re-export shim) and delegates to the
+orchestration owner in `src/anomaly_metric_creator/run_pipeline.py`. The script
+has five top-level modes, dispatched on the `argv[0]` subcommand token before
+any argparse runs:
 
 - **`generate`** (the implicit default when no subcommand token is given) —
   the synthetic-data pipeline detailed below.

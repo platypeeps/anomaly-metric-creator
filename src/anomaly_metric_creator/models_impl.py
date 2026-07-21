@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -71,6 +71,16 @@ class Instance:
     az: str | None = None
     region: str | None = None
     tenant: str | None = None
+
+
+@dataclass
+class RunContext:
+    """Per-run mutable generation state."""
+
+    rng: "np.random.RandomState"
+    anomalies: list = field(default_factory=list)
+    cascading_anomalies: dict = field(default_factory=dict)
+    instances: dict = field(default_factory=dict)
 
 
 _DEFAULT_RUNTIME_KEY = "__default__"

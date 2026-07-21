@@ -848,7 +848,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-21-decomp-scenario-catalog-recovery/
+    07-21-decomp-legacy-dispatch-root/
       check.jsonl
       design.md
       implement.jsonl
@@ -1175,6 +1175,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-21-decomp-scenario-catalog-recovery/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
   workspace/
     sdelmas/
       index.md
@@ -1238,6 +1245,8 @@ src/
     otel.py
     otlp.py
     redaction.py
+    run_defaults.py
+    run_pipeline.py
     runtime_defaults.py
     scenario_builders.py
     scenario_catalog.py

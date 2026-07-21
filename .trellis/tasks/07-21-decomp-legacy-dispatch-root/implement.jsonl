@@ -1,0 +1,6 @@
+{"file":".trellis/spec/amc/backend/architecture.md","reason":"Canonical module boundaries, compatibility facade, and weak live-runtime callback rules."}
+{"file":".trellis/spec/amc/backend/scenarios-and-data.md","reason":"Deterministic output, registry ordering, and scenario composition contracts used by main()."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Golden hashes, line-count expectations, facade identity, and full-suite quality gates."}
+{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Required Trellis, CLAUDE, and generated repository-map synchronization."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing registries and helpers instead of creating parallel orchestration state."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Map CLI-to-generation-to-artifact contracts during the extraction."}
