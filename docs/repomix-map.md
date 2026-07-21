@@ -855,13 +855,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-18-fix-ci-classifier-script-paths/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-18-fix-heavy-marker-and-fixture-docs/
       check.jsonl
       design.md
@@ -1101,6 +1094,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         07-17-audit-test-guard-lints/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-18-fix-ci-classifier-script-paths/
           check.jsonl
           design.md
           implement.jsonl
