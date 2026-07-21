@@ -33,6 +33,10 @@ cross-child order, the shared per-PR protocol, and the epic-close checklist.
 7. **Epic close** — after that child merges with unchanged hashes, update
    CLAUDE.md's final module map, flip remaining checklist boxes, archive.
 
+Completed 2026-07-21: PR #291 supplied the final no-waiver dispatch-root split;
+the parent and final child are ready for normal Trellis archive/session
+bookkeeping.
+
 ## Per-PR Protocol (every remaining extraction)
 
 - One extraction per PR; branch from `main`; PR opens as **draft** and walks

@@ -70,13 +70,13 @@ copies." This task is that future split.
 
 ## Acceptance criteria (per extraction; the epic closes when legacy.py is thin)
 
-- [ ] After each extraction PR, all locked golden hashes pass unchanged.
-- [ ] The public import surface (shim + facades + test fixture) is unchanged;
+- [x] After each extraction PR, all locked golden hashes pass unchanged.
+- [x] The public import surface (shim + facades + test fixture) is unchanged;
       `tests/` pass under the existing xdist config.
-- [ ] Each new module is under the 800-line cap and has a single clear
+- [x] Each new module is under the 800-line cap and has a single clear
       responsibility.
-- [ ] CLAUDE.md's architecture/module section is updated in the same PR.
-- [ ] Import-time validation still fires exactly once, in the same order.
+- [x] CLAUDE.md's architecture/module section is updated in the same PR.
+- [x] Import-time validation still fires exactly once, in the same order.
 
 ## Status update (2026-07-06 review)
 
@@ -108,6 +108,12 @@ declarative registry. On 2026-07-21 the maintainer rejected the proposed final
 dispatch-root waiver; child `07-21-decomp-legacy-dispatch-root` now owns the
 remaining `main()` split and the epic cannot close until it merges with
 unchanged hashes and `legacy.py` is below 800 lines.
+
+Child `07-21-decomp-legacy-dispatch-root` merged as PR #291 on 2026-07-21.
+`legacy.py` is now a 766-line compatibility/runtime-wiring facade, all newly
+extracted behavior modules are below 800 lines, the full 1,700-test suite kept
+the locked hashes unchanged, and the final-head remote heavy/light matrix plus
+combined coverage and CodeQL gates passed. The no-waiver epic is complete.
 
 ## Notes
 
