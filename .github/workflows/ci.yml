@@ -347,14 +347,70 @@ jobs:
       - name: Sync dependencies (dev extra)
         run: uv sync --extra dev --locked --python ${{ matrix.python-version }}
 
-      # GB-scale 7-day / N=3 fixture tests stay serial pending a measured
-      # memory-and-disk headroom trial on the standard 16 GB runner. Pytest
-      # exit 5 makes an empty heavy partition a hard failure if marker
-      # assignment ever drifts.
+      # Trial two loadfile-distributed workers for the GB-scale 7-day / N=3
+      # fixtures while sampling system memory and disk headroom. Keep this
+      # setting only if peak used memory is <= 12 GiB and post-run free disk is
+      # >= 2 GiB. Pytest exit 5 still makes an empty heavy partition a hard
+      # failure if marker assignment ever drifts.
+      - name: Record heavy trial runner baseline
+        run: |
+          printf 'heavy_trial_nproc=%s\n' "$(nproc)"
+          printf 'heavy_trial_before_mem_total_kib=%s\n' "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+          printf 'heavy_trial_before_mem_available_kib=%s\n' "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+          printf 'heavy_trial_before_free_disk_kib=%s\n' "$(df -Pk / | awk 'NR == 2 {print $4}')"
+          free -m
+          df -h /
+
       - name: Run heavy test partition
         env:
           COVERAGE_CORE: sysmon
-        run: uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
+        run: |
+          peak_file="$RUNNER_TEMP/amc-heavy-peak-used-kib"
+          printf '0\n' > "$peak_file"
+          (
+            peak_used_kib=0
+            while true; do
+              total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+              available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+              used_kib=$((total_kib - available_kib))
+              if (( used_kib > peak_used_kib )); then
+                peak_used_kib="$used_kib"
+                printf '%s\n' "$peak_used_kib" > "$peak_file"
+              fi
+              sleep 1
+            done
+          ) &
+          sampler_pid=$!
+          stop_sampler() {
+            kill "$sampler_pid" 2>/dev/null || true
+            wait "$sampler_pid" 2>/dev/null || true
+          }
+          trap stop_sampler EXIT
+          set +e
+          uv run --no-sync pytest -n 2 --dist loadfile -m heavy --cov=src/anomaly_metric_creator --cov-report=
+          pytest_status=$?
+          set -e
+          stop_sampler
+          trap - EXIT
+          exit "$pytest_status"
+
+      - name: Report heavy trial runner headroom
+        if: always()
+        run: |
+          peak_file="$RUNNER_TEMP/amc-heavy-peak-used-kib"
+          if [ -f "$peak_file" ]; then
+            peak_used_kib="$(cat "$peak_file")"
+            printf 'heavy_trial_peak_used_kib=%s\n' "$peak_used_kib"
+            printf 'heavy_trial_peak_used_mib=%s\n' "$(((peak_used_kib + 1023) / 1024))"
+          else
+            printf 'heavy_trial_peak_used_kib=unavailable\n'
+          fi
+          printf 'heavy_trial_peak_limit_kib=12582912\n'
+          printf 'heavy_trial_after_mem_available_kib=%s\n' "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+          printf 'heavy_trial_after_free_disk_kib=%s\n' "$(df -Pk / | awk 'NR == 2 {print $4}')"
+          printf 'heavy_trial_disk_floor_kib=2097152\n'
+          free -m
+          df -h /
 
       # upload-artifact excludes hidden files by default, so expose the raw
       # coverage data under a visible, lane-specific filename first.

@@ -240,7 +240,8 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ),
         (
             "heavy pytest partition",
-            "pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=",
+            "pytest -n 2 --dist loadfile -m heavy "
+            "--cov=src/anomaly_metric_creator --cov-report=",
         ),
         (
             "light pytest partition",
@@ -420,7 +421,8 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         (
             "test_heavy",
             "heavy",
-            "pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=",
+            "pytest -n 2 --dist loadfile -m heavy "
+            "--cov=src/anomaly_metric_creator --cov-report=",
             "mv .coverage coverage-heavy",
             "name: coverage-data-heavy",
         ),

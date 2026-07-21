@@ -43,3 +43,12 @@ Trial -n 2 --dist loadfile for the heavy CI lane with measured memory and disk h
 - Source split: `07-18-perf-ci-worker-counts` owns the completed light trial,
   which retained `-n 2` after its remote result missed the adoption threshold;
   this task owns only the heavy experiment and decision.
+
+## Trial preparation evidence (2026-07-20)
+
+- The focused CI-contract and heavy-marker suite passed: 55 tests in 3.99s.
+- The two-worker heavy rehearsal passed all 48 tests in 243.93s.
+- Collection remains exact: 48 heavy + 1597 light = 1645 total.
+- All five heavy-job shell blocks parse under `bash -n` after YAML decoding.
+- Hosted memory and disk evidence remains the adoption gate; local success is
+  not used to infer runner headroom.

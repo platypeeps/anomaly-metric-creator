@@ -97,7 +97,7 @@ runner headroom while still exercising parallel ordering. Sources:
 - Trigger: a change to the heavy/light marker boundary, either pytest worker
   count, xdist distribution mode, or the GitHub-hosted runner capacity premise.
   Sources: `.github/workflows/ci.yml`; `tests/conftest.py`;
-  `.trellis/tasks/07-18-perf-ci-worker-counts/design.md`.
+  `.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/design.md`.
 
 ### 2. Signatures
 
@@ -116,7 +116,7 @@ runner headroom while still exercising parallel ordering. Sources:
 - The heavy and light selectors must remain disjoint and their collected counts
   must sum to the full suite. Sources: `tests/conftest.py`;
   `tests/test_heavy_marker.py`; `.github/workflows/ci.yml`;
-  `.trellis/tasks/07-18-perf-ci-worker-counts/prd.md`.
+  `.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/prd.md`.
 
 ### 4. Validation & Error Matrix
 
@@ -129,7 +129,7 @@ runner headroom while still exercising parallel ordering. Sources:
 
 Sources: `tools/check_ci_review_contract.py`;
 `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-`.trellis/tasks/07-18-perf-ci-worker-counts/design.md`.
+`.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/design.md`.
 
 ### 5. Good/Base/Bad Cases
 
@@ -148,7 +148,7 @@ Sources: `tools/check_ci_review_contract.py`;
 - Before publishing a worker-count change, collect the heavy, light, and full
   suites and assert that the first two counts sum to the third. Sources:
   `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-  `.trellis/tasks/07-18-perf-ci-worker-counts/implement.md`.
+  `.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/implement.md`.
 
 ### 7. Wrong vs Correct
 
