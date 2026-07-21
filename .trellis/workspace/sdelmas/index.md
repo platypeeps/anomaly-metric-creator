@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 42
+- **Total Sessions**: 43
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1764 | Active |
+| `journal-1.md` | ~1803 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 43 | 2026-07-21 | Test serve_main composition wiring | `68c7176ac5936e47447cebefbf42e3d3882b8de3` | `codex/serve-main-wiring-tests` |
 | 42 | 2026-07-21 | Registry-couple MCP wall guards | `bce736517982c5e08aeadc5a8cdd9a937b0fa839`, `f47090949582c90da6380f9cb0e829d478e7d4fe` | `codex/mcp-wall-registry-guard` |
 | 41 | 2026-07-21 | Release AMC 0.4.0 | `3811df4`, `73867cb`, `639be6c`, `1823f4c` | `main` |
 | 40 | 2026-07-21 | Complete legacy monolith decomposition | `bc32d4f`, `6b69ac3`, `62be64a` | `codex/decomp-legacy-dispatch-root` |

@@ -1764,3 +1764,44 @@ Strengthened the MCP eval-mode ground-truth wall with a registry-coupled all-too
 ### Next Steps
 
 - None - task complete
+
+
+## Session 43: Test serve_main composition wiring
+
+**Date**: 2026-07-21
+**Task**: Test serve_main composition wiring
+**Package**: amc
+**Branch**: `codex/serve-main-wiring-tests`
+
+### Summary
+
+Added focused in-memory composition coverage for eval-mode forwarding and serve security flag mapping, closed audit finding A-020, and verified the change through local and GitHub review gates.
+
+### Main Changes
+
+- Added focused serve_main tests for both mcp eval-mode values reaching build_state.
+- Pinned all eight security flags, worker and SSE passthrough, cleanup, and shutdown wiring.
+- Marked audit finding A-020 fixed and refreshed the generated repository map.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68c7176ac5936e47447cebefbf42e3d3882b8de3` | test: cover serve_main wiring |
+
+### Testing
+
+- [OK] Focused wiring tests: 3 passed.
+- [OK] Affected server tests: 125 passed, 2 expected opt-in skips in 22.12s.
+- [OK] Full test suite: 1707 passed, 2 expected opt-in skips in 230.14s.
+- [OK] Ruff passed for the new test file; all 13 pre-commit hooks passed.
+- [OK] Deterministic review full-check passed; exact-head Copilot review produced no comments; GitHub CI Result passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Task complete; merge PR #297 and run post-merge housekeeping.
