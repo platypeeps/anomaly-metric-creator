@@ -42,7 +42,7 @@ SCHEMA_ONE_DAY_HASH = (
     "6b79531d611755bd0df5bf14cca2244853d8339602d5703828534d4666b92aec"
 )
 SCHEMA_SEVEN_DAY_HASH = (
-    "5a1e5653c615f12560ab4b078fa0b26008d4c2b995b5a79b7b49743dd6838a46"
+    "779936a803989cd142de2438d6123fe63904f458bace9f7c1efa0b274c28508c"
 )
 
 
@@ -63,16 +63,18 @@ def one_day_schema_run(amc, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run(amc, tmp_path_factory):
-    # Explicit 1s cadence preserves the full-resolution SCHEMA_SEVEN_DAY_HASH.
-    # This GB-scale fixture regenerates rather than deriving from
-    # ``seven_day_run``: schema.json's ``files`` section is coupled to the
-    # exact ``--emit metrics,schema`` selection, which ``seven_day_run``
-    # (``metrics,logs,traces``) does not match. It is classified ``heavy`` via
-    # ``conftest._HEAVY_MODULE_FIXTURES`` so it stays out of the parallel CI
-    # lane (07-06-heavy-marker-module-fixture-coverage).
+    """Generate the 7-day schema lock at a cheap cadence.
+
+    The sole consumer reads ``schema.json``; it never opens the generated
+    metric CSVs. This fixture regenerates rather than deriving from
+    ``seven_day_run``: schema.json's ``files`` section is coupled to the exact
+    ``--emit metrics,schema`` selection, which ``seven_day_run``
+    (``metrics,logs,traces``) does not match. The 60s cadence preserves the
+    7-day duration/cardinality contract without generating unread 1s CSVs.
+    """
     out = tmp_path_factory.mktemp("ver139_seven_day_schema")
     return run_capture(
-        amc, out, days=7, interval_seconds=1.0,
+        amc, out, days=7, interval_seconds=60.0,
         extra_args=["--emit", "metrics,schema"],
     )
 
@@ -288,8 +290,12 @@ def test_schema_byte_identical_default_one_day(one_day_schema_run):
     )
 
 
-def test_schema_byte_identical_default_seven_day(seven_day_schema_run):
+def test_schema_byte_identical_default_seven_day(seven_day_schema_run, amc):
+    """The coarse 7-day lock retains duration and cardinality semantics."""
     path = seven_day_schema_run.out_dir / "schema.json"
+    metadata = _load_schema(seven_day_schema_run.out_dir)["metadata"]
+    assert metadata["total_seconds"] == 7 * amc.SECONDS_PER_DAY
+    assert metadata["rows_per_component"] == 7 * amc.SECONDS_PER_DAY // 60
     actual = sha256_path(path)
     assert actual == SCHEMA_SEVEN_DAY_HASH, (
         f"schema.json drifted from locked 7-day hash. "
