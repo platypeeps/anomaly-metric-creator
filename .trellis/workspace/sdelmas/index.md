@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
+- **Total Sessions**: 38
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1560 | Active |
+| `journal-1.md` | ~1600 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-07-21 | Repair legacy decomposition task topology | `4120382` | `codex/repair-legacy-epic-plan` |
 | 37 | 2026-07-21 | Close local CI audit program | `ecb574e` | `codex/close-ci-audit-program` |
 | 36 | 2026-07-21 | Close CI performance program | `6054ec4` | `codex/close-performance-program` |
 | 35 | 2026-07-21 | Trim heavy schema fixtures | `313d910`, `aa154ee`, `8f94f35`, `23b7a56`, `45a5f8c` | `codex/trim-heavy-fixtures` |
