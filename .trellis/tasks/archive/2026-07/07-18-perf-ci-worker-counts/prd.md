@@ -48,9 +48,9 @@ hosted runner.
 - [x] A four-worker full-matrix trial completed at 352s versus the
       `29631419630` baseline of 364s; because it missed the >=100s adoption
       threshold, the light lane retains `-n 2`.
-- [ ] All 1645 tests still pass, and the heavy/light partition still sums to
+- [x] All 1645 tests still pass, and the heavy/light partition still sums to
       the full collected count.
-- [ ] The `-m heavy` job still treats an empty marker partition as a hard
+- [x] The `-m heavy` job still treats an empty marker partition as a hard
       failure (pytest exit 5) rather than spilling GB fixtures into the
       parallel lane.
 - [x] `CLAUDE.md` states the correct runner specification and no longer refers
@@ -74,3 +74,7 @@ hosted runner.
   only 12s (3.3%) below the 364s baseline. That misses the >=100s adoption
   threshold, so the experiment is rejected and the final workflow keeps
   `-n 2`.
+- Final run `29796887824` passed both partitions, combined coverage, aggregate
+  `test`, and `CI Result`; its retained two-worker light step completed in
+  387s. The focused contract suite also verifies the empty-heavy-partition
+  failure and the 48 + 1597 = 1645 collection invariant.
