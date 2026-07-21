@@ -1724,3 +1724,43 @@ Completed, merged, tagged, published, and smoke-tested the AMC 0.4.0 release.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 42: Registry-couple MCP wall guards
+
+**Date**: 2026-07-21
+**Task**: Registry-couple MCP wall guards
+**Package**: amc
+**Branch**: `codex/mcp-wall-registry-guard`
+
+### Summary
+
+Strengthened the MCP eval-mode ground-truth wall with a registry-coupled all-tool sweep and a transitive AST structural guard, synchronized canonical specs and audit evidence, and delivered the change through PR #295.
+
+### Main Changes
+
+- Exercised every registered MCP tool in eval and non-eval modes using schema-valid minimal arguments and a non-eval positive control.
+- Added a transitive module-local AST guard that prevents MCP handlers from reaching rubric-bearing state or artifacts outside the narrow log-tool exception.
+- Updated the canonical server spec, historical guide, audit ledger, task plan, and grounded Trellis context records.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bce736517982c5e08aeadc5a8cdd9a937b0fa839` | test: registry-couple MCP wall guards |
+| `f47090949582c90da6380f9cb0e829d478e7d4fe` | chore: ground MCP wall task context |
+
+### Testing
+
+- [OK] Focused server eval/MCP suite: 53 passed
+- [OK] Full pytest suite: 1704 passed, 2 expected opt-in skips
+- [OK] Ruff, all-files pre-commit, deterministic PR full-check, CI, CodeQL, and current-head Copilot review passed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

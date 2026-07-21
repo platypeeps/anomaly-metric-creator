@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 41
+- **Total Sessions**: 42
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1724 | Active |
+| `journal-1.md` | ~1764 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-07-21 | Registry-couple MCP wall guards | `bce736517982c5e08aeadc5a8cdd9a937b0fa839`, `f47090949582c90da6380f9cb0e829d478e7d4fe` | `codex/mcp-wall-registry-guard` |
 | 41 | 2026-07-21 | Release AMC 0.4.0 | `3811df4`, `73867cb`, `639be6c`, `1823f4c` | `main` |
 | 40 | 2026-07-21 | Complete legacy monolith decomposition | `bc32d4f`, `6b69ac3`, `62be64a` | `codex/decomp-legacy-dispatch-root` |
 | 39 | 2026-07-21 | Extract scenario registry and resolution modules | `d03612138ef1e2929910e9204688f1cf31adffb6`, `58e02fd6544d01d120ba986fe966e87301f8b09e`, `310814e56dfc127359e158c22f403af1085cad6a` | `codex/decomp-scenario-catalog-recovery-bookkeeping` |
