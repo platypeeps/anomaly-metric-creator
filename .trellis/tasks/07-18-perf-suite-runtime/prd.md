@@ -16,8 +16,7 @@ The full-matrix `test (py3.14)` job is **1110s, of which the single
 smoke, both ruff steps, and both mypy steps total **21s**. CI runtime on
 this repo is test runtime; nothing else is worth optimizing.
 
-That step runs two sequential pytest invocations
-(`.github/workflows/ci.yml:397-398`):
+That step runs two sequential pytest invocations:
 
 | Partition | Tests | Mode | CI time |
 |---|---|---|---|
@@ -66,6 +65,26 @@ while peaking at 5.09 GiB system used memory and retaining 76.9 GiB free disk.
 Both pre-committed capacity thresholds passed, so two heavy workers are
 adopted.
 
+### Final verification (2026-07-21)
+
+Exact-head CI run `29831312539` at `45a5f8c` completed the heavy test step in
+361s and the light test step in 378s. Because the lanes run concurrently, the
+full-suite test critical path is 378s: 711s (65.3%) below the original 1089s
+sequential step and comfortably below the 600s acceptance threshold.
+
+The final partition contains 44 heavy and 1653 light tests, exactly matching
+all 1697 collected tests. Both CI lanes retain real xdist execution with
+`-n 2 --dist loadfile`; the exact-head run and the command-contract guard
+passed. Combined coverage remained 87%, the same figure recorded before the
+program closed, and the unchanged `--cov-fail-under=85` gate passed.
+
+The collected suite grew from the 1603-test baseline to 1697 tests; no test was
+deleted to obtain the speedup. The two approved golden-hash re-locks are each
+recorded in `07-18-perf-heavy-fixture-trim` and isolated in commits `8f94f35`
+and `23b7a56`. The heavy-worker trial passed its pre-committed thresholds and
+was adopted before fixture trimming, so its backward-rerun condition did not
+apply.
+
 ## Goal
 
 Reduce the full-matrix CI test step from 1089s toward 350-500s, and remove
@@ -80,7 +99,7 @@ split, without weakening determinism guarantees or coverage.
 | `07-18-perf-ci-worker-counts` | P1 | 12s observed; `-n 4` rejected by threshold |
 | `07-20-perf-ci-heavy-worker-trial` | P1 | 216s heavy observed; adopted |
 | `07-18-perf-longform-writer-test-dedupe` | P2 | ~74s local / ~140s CI |
-| `07-18-perf-heavy-fixture-trim` | P2 | 122.68s local observed (32.5%); hosted result pending |
+| `07-18-perf-heavy-fixture-trim` | P2 | 122.68s local observed (32.5%); 361s hosted heavy step |
 | `07-18-perf-local-test-split` | P2 | local only; removes 2-4x fixture rebuilds |
 | `07-18-perf-local-gate-dedupe` | P2 | ~4s of a 6.3s deterministic gate, plus Prism/KB interrupts |
 | `07-18-fix-heavy-marker-and-fixture-docs` | P3 | correctness, not speed |
@@ -93,17 +112,17 @@ overlapping test files and should land sequentially, not concurrently.
 
 ## Cross-child acceptance criteria
 
-- [ ] The full-matrix CI test step drops below 600s with no test deleted
+- [x] The full-matrix CI test step drops below 600s with no test deleted
       and no locked hash weakened, except where a child PRD explicitly
       records the trade and the maintainer approved it.
 - [x] The partition still covers the suite exactly: the `-m heavy` count
       plus the `-m "not heavy"` count equals the total collected count.
-- [ ] The parallel xdist ordering path stays exercised at the PR gate —
+- [x] The parallel xdist ordering path stays exercised at the PR gate —
       the property CLAUDE.md gives as the reason the light lane runs under
       real xdist rather than serially.
-- [ ] Coverage remains aggregated across every partition and the
+- [x] Coverage remains aggregated across every partition and the
       `--cov-fail-under` ratchet is not lowered.
-- [ ] `CLAUDE.md` no longer states the 7 GB runner premise.
+- [x] `CLAUDE.md` no longer states the 7 GB runner premise.
 
 ## Constraints
 
