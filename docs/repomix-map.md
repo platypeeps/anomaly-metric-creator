@@ -792,13 +792,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-17-audit-serve-main-wiring-tests/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-17-audit-sim-mutation-correctness/
       check.jsonl
       design.md
@@ -1072,6 +1065,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-17-audit-serve-main-wiring-tests/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         07-17-audit-test-guard-lints/
           check.jsonl
           design.md
@@ -1326,6 +1326,7 @@ tests/
   test_schema_file.py
   test_sd_ai_command_pack_full_check_script.py
   test_sd_ai_command_pack_housekeeping_script.py
+  test_serve_main_wiring.py
   test_server_eval_mode.py
   test_server_hardening.py
   test_server_mcp.py

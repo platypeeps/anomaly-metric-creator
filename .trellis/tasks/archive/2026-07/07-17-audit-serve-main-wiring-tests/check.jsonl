@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Verify focused wiring tests, both mutation checks, full-suite evidence, lint, and pre-commit coverage."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Verify the audit ledger, task evidence, and generated repository map remain synchronized before publication."}
