@@ -583,48 +583,50 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - why: fixed; the cheap lane now executes syntax and contract guards under the repository's declared Python version.
 
 ## A-054 — Five weeks of features + breaking requires-python raise unreleased under tagged 0.3.0
-- status: open
+- status: fixed
 - severity: P1 · effort: S · confidence: Verified
 - dimension: release-hygiene
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - pyproject.toml:7,13 (0.3.0, >=3.14) vs v0.3.0 tag (>=3.11); exactly 172 commits since 2026-06-11; no newer tag/release/publish automation
-  - the v0.3.0 tag holds no [build-system]/[project.scripts]/src — no tag contains the installable package
-- why: a main install silently refuses Pythons the "same version" accepted; two trees share one version in machine metadata.
+  - `pyproject.toml`; `uv.lock`; `CHANGELOG.md` — the release PR aligns version 0.4.0 across package metadata, the locked editable project, and a dated release section that names the Python 3.11→3.14 break.
+  - `.trellis/tasks/07-17-audit-cut-release-0-4-0/implement.md` — the explicit post-merge tag, GitHub Release, and tag-install verification sequence is part of the release closeout.
+- why: fixed; 0.4.0 is cut from the installable package tree with the breaking floor change named in release notes.
 - fix: cut 0.4.0 now; bump version in the same PR as future floor/surface changes.
 
 ## A-055 — No documented versioning scheme or release-gate policy
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: release-hygiene
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - docs/DEVELOPMENT_CYCLE.md — zero release matches; no changelog/version checklist heading anywhere
-- why: nothing ties payload changes to version/changelog updates — how A-054 accumulated.
+  - `docs/DEVELOPMENT_CYCLE.md` — documents the 0.x versioning policy and exact release/tag/install sequence.
+  - `.trellis/spec/amc/backend/testing-quality.md`; `.github/PULL_REQUEST_TEMPLATE.md`; `CLAUDE.md`; `.github/instructions/anomaly-metric-creator.instructions.md` — the changelog/version-impact review heading is lockstep-guarded.
+- why: fixed; release mechanics and version-impact review are now durable, task-loadable contracts.
 - fix: Releasing section + checklist heading in three-way lockstep.
 
 ## A-056 — CHANGELOG Unreleased omits user-facing fixes incl. the redaction posture flip
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: release-hygiene
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - CHANGELOG.md:8-50 — no Fixed/Security subsection; #213/#134/#128 unlisted
-- why: exactly what an upgrader needs is invisible; 0.2.0 set the Security precedent.
+  - `CHANGELOG.md` — 0.4.0 carries Security/Fixed entries for #213 response-header redaction, #134 combined-artifact allowlisting, and #128 file-descriptor preflight.
+- why: fixed; the upgrader-facing fixes are included in the promoted 0.4.0 notes.
 - fix: backfill before/with the 0.4.0 cut.
 
 ## A-057 — No runtime version surface (--version / __version__)
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: release-hygiene
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - no importlib.metadata/--version in cli.py/__init__.py
-- why: deployed installs can't identify themselves amid A-054's drift.
+  - `src/anomaly_metric_creator/version.py`; `src/anomaly_metric_creator/cli_args.py`; `src/anomaly_metric_creator/__init__.py` — one metadata owner feeds `--version` and `__version__`.
+  - `tests/test_cli.py`; `tests/test_version.py` — installed-version output and source-tree fallback behavior are covered.
+- why: fixed; deployed installs expose their package version through CLI and Python APIs.
 - fix: --version + __version__ from importlib.metadata.
 
 ## A-058 — Test-resource-cost rules remain prose despite the repo's lints-over-prose policy

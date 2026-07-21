@@ -25,6 +25,7 @@ PR_CHECKLIST_HEADINGS = [
     "Cross-platform test guards",
     "Default-behavior changes",
     "CI / workflow / dependency hygiene",
+    "Changelog / version impact",
 ]
 
 COPIED_FILES = [
@@ -152,7 +153,8 @@ def _write_minimal_contract(root: Path) -> None:
         single source of truth, completeness, mode/flag combinations,
         deterministic test paths, hot-path performance, user-facing output
         order, test hygiene, test resource cost, cross-platform guards,
-        default-behavior changes, and CI/workflow/dependency hygiene.
+        default-behavior changes, CI/workflow/dependency hygiene, and
+        changelog/version impact.
         """,
     )
     _write(

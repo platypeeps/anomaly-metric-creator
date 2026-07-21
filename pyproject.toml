@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anomaly-metric-creator"
-version = "0.3.0"
+version = "0.4.0"
 description = "Synthetic IoT-style metric log generator with built-in anomalies."
 readme = "README.md"
 # Latest-stable-only support policy (decided 2026-07-06): the project

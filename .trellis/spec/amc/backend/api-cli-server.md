@@ -61,6 +61,62 @@ flags and subcommands. Sources: `CLAUDE.md`; `README.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_cli_surface.py`;
 `tests/test_args.py`.
 
+### Scenario: Installed version discovery
+
+#### 1. Scope / Trigger
+
+Release and support reports need one installed-distribution version across the
+CLI, package facade, and MCP initialize response.
+
+#### 2. Signatures
+
+- `package_version(*, fallback: str = "0+unknown") -> str`
+- `amc --version` and `anomaly-metric-creator --version`
+- `anomaly_metric_creator.__version__: str`
+
+#### 3. Contracts
+
+Installed metadata for distribution `anomaly-metric-creator` is authoritative.
+The CLI and package facade use `0+unknown` only when that metadata is absent;
+the MCP facade passes `fallback="unknown"` to preserve its protocol response.
+
+#### 4. Validation & Error Matrix
+
+- Installed distribution -> return its normalized metadata version exactly.
+- Missing distribution metadata -> return the caller-owned fallback.
+- Other metadata/runtime failure -> propagate it; do not hide broken installs.
+
+#### 5. Good / Base / Bad Cases
+
+- Good: an installed 0.4.0 wheel reports `0.4.0` through both console scripts
+  and `anomaly_metric_creator.__version__`.
+- Base: an uninstalled source import reports `0+unknown`.
+- Bad: separate hard-coded versions in CLI, package, or MCP code drift from
+  `pyproject.toml`.
+
+#### 6. Tests Required
+
+Assert both help tiers list `--version`, the CLI matches
+`importlib.metadata.version(...)`, the package facade matches the same value,
+and missing metadata yields both the default and MCP-specific fallbacks.
+
+#### 7. Wrong vs Correct
+
+```python
+# Wrong: a second release-version owner.
+__version__ = "0.4.0"
+
+# Correct: installed metadata with a caller-owned source fallback.
+__version__ = package_version()
+```
+
+Sources: `pyproject.toml`; `uv.lock`;
+`src/anomaly_metric_creator/version.py`;
+`src/anomaly_metric_creator/__init__.py`;
+`src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/server_mcp.py`; `tests/test_cli.py`;
+`tests/test_version.py`.
+
 ## Output Contracts
 
 Generated artifacts live under `--output-dir`; cleanup must remove stale files

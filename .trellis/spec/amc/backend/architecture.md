@@ -18,6 +18,7 @@ forks. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/scenarios.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
+`src/anomaly_metric_creator/version.py`;
 `src/anomaly_metric_creator/run_pipeline.py`;
 `src/anomaly_metric_creator/run_defaults.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
@@ -82,6 +83,8 @@ derivation, and long-form dimension validation), `validate_topology.py`
 streaming), `cli_args.py` (parser construction, CLI reconciliation, and
 generate-flag validation), `cli_subcommands.py` (dedicated `combine`,
 `validate`, `serve`, and `trace-bundle` subcommand dispatch helpers),
+`version.py` (installed-distribution version discovery with caller-owned
+source-tree fallbacks),
 `models_impl.py` (`MetricSpec`, `Instance`, `RunContext`,
 `_validate_instance_list`, and `_load_instance_config`), `run_defaults.py`
 (generation-command defaults and anomaly-count salt), `run_pipeline.py`

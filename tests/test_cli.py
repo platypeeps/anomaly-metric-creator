@@ -7,6 +7,7 @@ state is leaking determinism.
 
 import filecmp
 import http.client
+import importlib.metadata
 import json
 import os
 import subprocess
@@ -55,7 +56,7 @@ def test_help_lists_visible_surface_and_hides_advanced():
     result = _invoke("--help")
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
+    for flag in ("--version", "--duration-days", "--seed", "--output-dir", "--drop-rate",
                  "--interval-seconds", "--emit", "--components",
                  "--scenarios", "--exclude-scenarios", "--signal-level",
                  "--metrics-per-component", "--instances-per-component",
@@ -87,7 +88,7 @@ def test_help_all_lists_every_flag_without_deprecated_aliases():
     result = _invoke("--help-all")
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    for flag in ("--duration-days", "--seed", "--output-dir", "--drop-rate",
+    for flag in ("--version", "--duration-days", "--seed", "--output-dir", "--drop-rate",
                  "--interval-seconds", "--components",
                  "--scenarios", "--exclude-scenarios",
                  "--signal-level", "--anomaly-count",
@@ -123,6 +124,15 @@ def test_help_all_lists_every_flag_without_deprecated_aliases():
     # The advanced group lost its '& deprecated' suffix at the flag day.
     assert "advanced:" in out
     assert "deprecated" not in out.lower()
+
+
+def test_version_reports_installed_distribution_version():
+    result = _invoke("--version")
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert result.stdout.strip() == importlib.metadata.version(
+        "anomaly-metric-creator"
+    )
 
 
 def test_serve_help_lists_server_flags_without_generation():

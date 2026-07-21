@@ -77,6 +77,8 @@ dimension checks), `validate_topology.py` (aggregate topology coupling),
 generate-flag validation), and `cli_subcommands.py`
 (`_SUBCOMMANDS`, `_main_combine_subcommand`, `_main_validate_subcommand`,
 `_main_serve_subcommand`, and `_main_trace_bundle_subcommand`),
+`version.py` (`package_version`, the shared installed-distribution version
+lookup with caller-owned source-tree fallbacks),
 `models_impl.py` (`MetricSpec`, `Instance`, `RunContext`,
 `_validate_instance_list`, and `_load_instance_config`), `run_defaults.py`
 (generation-command defaults and the anomaly-count salt), `run_pipeline.py`
@@ -2160,7 +2162,7 @@ increase `--duration-days`, rather than silently truncating.
 
 ## Pre-PR checklist (required before marking a PR ready for review)
 
-This checklist maps to 14 recurring patterns identified across past PR reviews (11 surfaced in an initial sweep, two more added later, and one — **CI / workflow / dependency hygiene** — from a full sweep of all ~750 Copilot review comments through PR #122). Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. `.trellis/spec/amc/backend/testing-quality.md` and `.trellis/spec/amc/backend/documentation-review.md` are the canonical task-loadable sources for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 14 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — those headings. When a heading is renamed, added, or removed in Trellis, update the template and this source guide in the same diff so the three stay in lockstep.
+This checklist maps to 15 recurring review gates, including **CI / workflow / dependency hygiene** from the full sweep of ~750 Copilot comments through PR #122 and **Changelog / version impact** from the 0.4.0 release-hygiene audit. Work through each bold heading before marking the PR ready for review (i.e. before removing draft status). Either confirm each heading or write "N/A — _reason_". The bullets under each heading are guidance for what to verify, not additional checklist entries to copy verbatim. `.trellis/spec/amc/backend/testing-quality.md` and `.trellis/spec/amc/backend/documentation-review.md` are the canonical task-loadable sources for the checklist; `.github/PULL_REQUEST_TEMPLATE.md` prefills the same 15 headings as Markdown `- [ ]` lines on every new PR and must mirror — not redefine — those headings. When a heading is renamed, added, or removed in Trellis, update the template, Copilot instructions, mechanical contract guard, and this source guide in the same diff so the surfaces stay in lockstep.
 
 When a recurring issue is *mechanical* (a greppable shape), prefer turning it into a `tools/check_*.py` lint over adding a prose bullet here: the `ruff-lockstep` / `role-name-leaks` / `branch-name` lints reliably stop their patterns, whereas prose rules in this file have not (the test-resource-cost rules recurred across several PRs after being documented). The sweep's top finding was that **doc/comment-vs-code drift is the single most-flagged pattern (~30% of all review comments)** — so the Doc / docstring sync heading below is the highest-leverage one to actually run, not skim.
 
@@ -2273,6 +2275,14 @@ When a recurring issue is *mechanical* (a greppable shape), prefer turning it in
 - Docs that tell users to run a tool ensure it is in the `dev` extra; `addopts` plugin flags (`-n`) require a matching `required_plugins = [...]`; workflow shell snippets must not assume runner-image tools (`jq`) without installing them and must handle the real JSON payload shape; inline workflow comments must be factually correct about Actions semantics.
 - A new `tools/check_*.py` lint honors the `0`/`1`/`2` exit-code contract in its own docstring: wrap `json.loads`, file reads, and `gh` subprocess calls so a decode/IO failure exits `2` (structural) — not a traceback, and not `1` (which means "violation"); check `path.exists()` *before* skip-rules; parse `gh api --paginate` page-by-page (it can emit multiple concatenated JSON documents); use anchored/full-token matching for markers and pins.
 - Keep `.github/instructions/anomaly-metric-creator.instructions.md` and `.github/PULL_REQUEST_TEMPLATE.md` in lockstep with the registry contracts and checklist headings they mirror — a stale reviewer-instructions file makes Copilot flag correct code as buggy (#44).
+
+**Changelog / version impact**
+- User-visible behavior, compatibility changes, supported Python floors, and
+  release-process changes update `CHANGELOG.md` in the same PR or explicitly
+  state why no changelog entry is warranted.
+- A release PR keeps `pyproject.toml`, the editable project entry in `uv.lock`,
+  the promoted changelog heading, tag name, GitHub Release, and
+  `amc --version` output aligned.
 
 ### Reviewer-before-ready gate
 

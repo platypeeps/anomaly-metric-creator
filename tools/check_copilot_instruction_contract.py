@@ -47,6 +47,7 @@ PR_CHECKLIST_HEADINGS = [
     "Cross-platform test guards",
     "Default-behavior changes",
     "CI / workflow / dependency hygiene",
+    "Changelog / version impact",
 ]
 
 TESTING_SPEC_HEADING_FRAGMENTS = [
@@ -64,6 +65,7 @@ TESTING_SPEC_HEADING_FRAGMENTS = [
     "cross-platform guards",
     "default-behavior changes",
     "ci/workflow/dependency hygiene",
+    "changelog/version impact",
 ]
 
 COPILOT_REQUIRED_NEEDLES = [

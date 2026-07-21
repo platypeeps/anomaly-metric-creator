@@ -212,7 +212,7 @@ for project-specific rules to be hand-edited into each copied adapter.
 
 ## Pre-PR checklist headings (canonical in Trellis)
 
-PR descriptions in this repo carry a 14-heading checklist mirrored from
+PR descriptions in this repo carry a 15-heading checklist mirrored from
 `.trellis/spec/amc/backend/testing-quality.md` and
 `.trellis/spec/amc/backend/documentation-review.md`. When reviewing, walk the diff against
 each heading and call out any item that the PR description marked
@@ -257,6 +257,9 @@ confirmed but the diff does not support:
 14. **CI / workflow / dependency hygiene** — workflow YAML, dependency pins,
     Dependabot behavior, and generated review instructions stay in lockstep
     with Trellis, `pyproject.toml`, pre-commit, and CI.
+15. **Changelog / version impact** — user-visible behavior, compatibility,
+    package metadata, and release posture are reflected in `CHANGELOG.md` and
+    the version plan, or the PR explains why no entry/bump is warranted.
 
 ## What not to spend review time on
 

@@ -7,6 +7,14 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-21
+
+**Breaking release.** AMC now follows its latest-stable-CPython-only policy:
+the supported floor moved from Python 3.11 in v0.3.0 to Python 3.14. This
+release also ships the installable package, server/MCP/eval surfaces, trace
+bundles, atomic artifact publication, and the completed legacy-module
+decomposition accumulated since v0.3.0.
+
 ### Added
 
 - **Server mode (`amc serve`).** A stdlib HTTP server that turns a generated
@@ -29,6 +37,9 @@ authoritative history is the GitHub release notes and the git commit log; the
   preserving the historical default start time when the flag is omitted.
 - **`SECURITY.md`** documenting the trust model, the remote-bind posture
   (discouraged; not a supported production posture), and credential handling.
+- **Runtime version discovery.** `amc --version` and
+  `anomaly_metric_creator.__version__` report the installed distribution
+  version; source trees without installed metadata use `0+unknown`.
 
 ### Changed
 
@@ -42,12 +53,27 @@ authoritative history is the GitHub release notes and the git commit log; the
 - **Python support policy: latest stable CPython only.** `requires-python` is
   now `>=3.14`; older interpreters are unsupported and untested.
 
+### Security
+
+- **Response-header redaction defaults to mask.** Server response headers are
+  masked unless they are explicitly known safe, closing the posture gap fixed
+  in PR #213.
+
+### Fixed
+
+- **Combined-artifact input allowlist.** The combine path excludes stale or
+  foreign CSVs instead of treating every nearby CSV as a component artifact
+  (PR #134).
+- **Long-form merge file-descriptor preflight.** Large merges fail clearly
+  before exhausting the process file-descriptor limit (PR #128).
+
 ### Internal
 
-- The ~13k-line `legacy.py` monolith is being decomposed into focused modules
+- The ~13k-line `legacy.py` monolith was decomposed into focused modules
   (`redaction`, `timeutil`, `otlp`, `csv_layout`, `gauges_impl`, `artifacts`,
-  `combine_impl`, `schema_impl`, `validate_impl`, `otel_stream`, …) with
-  byte-identical output — no behavior change.
+  `combine_impl`, `schema_impl`, `validate_impl`, `otel_stream`,
+  `run_pipeline`, …); the compatibility facade is now 766 lines and output
+  remains byte-identical.
 
 ## 0.3.0 - 2026-06-11
 

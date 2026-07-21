@@ -96,8 +96,9 @@ Sources: `scripts/update_repomix`; `README.md`; `docs/repomix-map.md`.
 
 ## PR and Review Surfaces
 
-The PR template checklist mirrors the required review headings. If a heading is
-renamed, added, or removed in the Trellis review spec, update
+The PR template checklist mirrors the required review headings, including the
+changelog/version-impact gate for user-visible or compatibility changes. If a
+heading is renamed, added, or removed in the Trellis review spec, update
 `.github/PULL_REQUEST_TEMPLATE.md` and Copilot instructions in the same diff.
 Sources: `.trellis/spec/amc/backend/testing-quality.md`;
 `.github/PULL_REQUEST_TEMPLATE.md`;

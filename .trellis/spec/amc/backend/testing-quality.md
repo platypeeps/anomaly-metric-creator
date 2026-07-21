@@ -481,7 +481,8 @@ Before marking a PR ready, walk these headings: scope and description,
 validators/schema, docs/docstrings, single source of truth, completeness,
 mode/flag combinations, deterministic test paths, hot-path performance,
 user-facing output order, test hygiene, test resource cost, cross-platform
-guards, default-behavior changes, and CI/workflow/dependency hygiene. Sources:
+guards, default-behavior changes, CI/workflow/dependency hygiene, and
+changelog/version impact. Sources:
 `CLAUDE.md`; `.github/PULL_REQUEST_TEMPLATE.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`.
 
