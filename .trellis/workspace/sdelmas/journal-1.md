@@ -1119,3 +1119,46 @@ Trialed four light-lane pytest workers against a remote adoption threshold, reta
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: Adopt two heavy CI workers after runner trial
+
+**Date**: 2026-07-20
+**Task**: Adopt two heavy CI workers after runner trial
+**Package**: amc
+**Branch**: `codex/ci-heavy-worker-trial`
+
+### Summary
+
+Measured the public GitHub runner under the heavy partition, adopted two loadfile-distributed workers after the pre-committed headroom gate passed, and synchronized the CI contract and canonical guidance.
+
+### Main Changes
+
+- Trialed the heavy lane with two loadfile-distributed workers and temporary memory/disk diagnostics.
+- Adopted -n 2 after run 29798826800 improved the heavy step by 216.38 seconds (30.2%) with 5,209 MiB peak memory and ample disk headroom.
+- Removed the temporary diagnostics and synchronized workflow guards, tests, Trellis specs, task evidence, development guidance, and fixture comments.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c13fa09` | ci: trial two heavy workers with headroom sampling |
+| `b3c9cea` | ci: adopt two heavy workers after runner trial |
+| `3c8831b` | docs: point fixture guidance to canonical spec |
+
+### Testing
+
+- [OK] 55 focused CI contract and marker tests passed.
+- [OK] Local heavy two-worker rehearsal: 48 passed in 243.93s.
+- [OK] Canonical full check passed: 148 review-churn tests, clean mypy, install audit, and knowledge freshness.
+- [OK] GitHub run 29799660817 passed: heavy 8m24s, light 6m33s, coverage, test, and CI Result.
+- [OK] Final Copilot review covered 13 of 13 files with no new comments; all three prior threads resolved.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge PR #275 through guarded housekeeping, then continue the performance/CI backlog.
