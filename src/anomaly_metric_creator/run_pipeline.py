@@ -65,9 +65,10 @@ def write_reporting_artifacts(
     namespace = _runtime_namespace(runtime_key)
     _atomic_artifact_open = namespace["_atomic_artifact_open"]
     _anomaly_event_id = namespace["_anomaly_event_id"]
+    _EMIT_ARTIFACT_FILES = namespace["_EMIT_ARTIFACT_FILES"]
     output_dir = Path(output_dir)
-    log_path = output_dir / "metric_report.log"
-    trace_path = output_dir / "metric_traces.jsonl"
+    log_path = output_dir / _EMIT_ARTIFACT_FILES["logs"][0]
+    trace_path = output_dir / _EMIT_ARTIFACT_FILES["traces"][0]
 
     with contextlib.ExitStack() as stack:
         log_f = (
