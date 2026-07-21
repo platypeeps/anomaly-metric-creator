@@ -5,18 +5,20 @@
 1. Branch from `main`. Correct the PRD's saving estimate to ~74s local /
    ~140s CI per `design.md` — do this first so the PR description and the
    task artifacts agree from the outset.
-2. Decide fixture visibility. Read how `n3_one_day_gauges_run`
-   (`tests/test_gauges_file.py:497`) and `n3_one_day_combine_run`
-   (`tests/test_combine.py:496`) are scoped, then choose between promoting
-   one to `tests/conftest.py` or co-locating the new test. Confirm the
-   `heavy` marker still applies after any promotion:
+2. Co-locate `n3_one_day_combine_run` and its cheap header/hash guards with
+   `n3_one_day_gauges_run` in `tests/test_gauges_file.py`; promoting a
+   module-scoped fixture through `conftest.py` would still duplicate writer
+   work across loadfile workers. Cache each streaming digest in its fixture
+   and reuse it in both absolute-hash and equality assertions. Confirm the
+   `heavy` marker still applies after the move:
    ```bash
    .venv/bin/pytest -m heavy --collect-only -q | tail -1
    ```
-   The collected count must not drop. (`tail -1` reads pytest's summary
-   line; `grep -c .` would count that line too and report N+1.)
-3. Add `test_n3_combined_matches_gauges_bytes` using `conftest.sha256_path`
-   for both sides (streaming; the resource-cost rule forbids whole-file
+   The expected count is 46 after replacing three tests with one. (`tail -1`
+   reads pytest's summary line; `grep -c .` would count that line too and
+   report N+1.)
+3. Add `test_n3_long_form_writer_outputs_match` using digests computed with
+   `conftest.sha256_path` (streaming; the resource-cost rule forbids whole-file
    reads). Run it alone and confirm it passes.
 4. Run mutation check C (make the outputs differ artificially) and confirm
    the new test fails. Restore.
@@ -86,3 +88,19 @@ du -sh "$(ls -dt "$(python3 -c 'import tempfile;print(tempfile.gettempdir())')"/
   writer needs its own N=3 derivation at all, or whether a much smaller
   N=3 input (fewer components) would prove the same dispatch. That is a
   larger scope question and belongs in `07-18-perf-heavy-fixture-trim`.
+
+## Implementation Result (2026-07-21)
+
+- Co-located the combine fixture and cheap N=3 guards in
+  `tests/test_gauges_file.py`; both streaming digests are computed once and
+  reused by independent absolute-hash checks plus runtime equality.
+- Replaced three redundant combine-output scans with one digest comparison.
+  Heavy collection moved from 48 to the expected 46 tests.
+- Mutation checks passed: a combine-only component omission failed the
+  combine hash, a shared-writer header mutation failed the gauges hash, and
+  an appended combine byte failed runtime equality. All mutations were
+  restored immediately.
+- Serial heavy timing passed 46 tests in 276.10s, saving 101.37s (26.9%)
+  against the 377.47s baseline.
+- The normal four-worker suite passed 1,678 tests with 2 expected skips in
+  231.75s; all pre-commit guards passed.

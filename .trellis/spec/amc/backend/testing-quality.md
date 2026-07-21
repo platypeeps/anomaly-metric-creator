@@ -186,6 +186,14 @@ pytest -n 2 --dist loadfile -m "not heavy"
 fan-out from multiplying expensive fixture construction. Sources:
 `pyproject.toml`; `tests/conftest.py`; `.github/workflows/ci.yml`.
 
+When two entry points produce byte-identical GB-scale artifacts through one
+shared writer, co-locate their file-owned fixtures so `loadfile` creates each
+artifact exactly once. Cache each output's streaming `sha256_path` digest,
+retain an independent absolute hash guard per entry point, and compare the
+runtime digests directly; shared structural assertions then need only scan one
+of the byte-identical outputs. Sources: `tests/test_gauges_file.py`;
+`CLAUDE.md`.
+
 Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 `.pre-commit-config.yaml`; run `.venv/bin/ruff check tests/` or
 `.venv/bin/pre-commit run --all-files` for touched test hygiene. Sources:

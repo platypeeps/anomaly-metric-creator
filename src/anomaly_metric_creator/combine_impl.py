@@ -450,4 +450,3 @@ def combine_logs(input_dir, components=None, *, assume_monotonic_wide_components
         assume_monotonic_wide_components=assume_monotonic_wide_components,
     )
 
-
