@@ -683,14 +683,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - why: fixed; locally authored commit messages receive the same structural scan as tracked text.
 
 ## A-063 — sd-ai-command-pack refresh is a recurring manual chore (17/564 commits)
-- status: open
+- status: fixed
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-20 @ pending-pr
+- last-seen: 2026-07-21 @ c38f0f7
 - evidence:
-  - `.github/workflows/sd-ai-command-pack-sync.yml`; `tools/check_ci_review_contract.py` — weekly/manual canonical refresh, no-diff PR suppression, fixed automation branch, and normal gated auto-merge are implemented under contract.
-- why: implementation is pending merge and live no-change dispatch; keep open until the shipped workflow proves the no-side-effect path.
+  - `.github/workflows/sd-ai-command-pack-sync.yml`; `tools/check_ci_review_contract.py`; PRs #267, #268, and #269 — weekly/manual canonical refresh, no-diff PR suppression, the fixed automation branch, scoped-token writes, and normal gated auto-merge are shipped and exercised by genuine refreshes.
+  - GitHub Actions runs `29785268662` and `29791043370` — both post-merge no-change dispatches succeeded without creating the automation branch or a pull request; the final 0.24.7 run reported `pull-request-operation = none`.
+- why: fixed; real refreshes use reviewable pull requests and the shipped no-change path has twice demonstrated no branch or PR side effects.
 - fix: scheduled sync workflow, PR-on-change, reuse the auto-merge gate.
 
 ## A-064 — Dev-install docs teach unlocked pip while CI enforces the uv lock
@@ -705,14 +706,14 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: uv sync --locked as the primary instruction.
 
 ## A-065 — Windows guard discipline paid for but never exercised
-- status: open
+- status: fixed
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-20 @ pending-pr
+- last-seen: 2026-07-21 @ c38f0f7
 - evidence:
-  - `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py` — an advisory locked Python 3.14 `windows-latest` collect-only job is implemented and excluded from `CI Result` dependencies.
-- why: implementation is pending its first live PR result; keep open until Windows collection succeeds remotely.
+  - `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`; GitHub Actions run `29790018855` — the locked Python 3.14 `windows-latest` collect-only job passed in 31 seconds on PR #269 and remains excluded from the required `test` and `CI Result` dependency lists.
+- why: fixed; Windows collection now runs successfully on pull requests while remaining advisory and unable to make the aggregate required context red.
 - fix: cheap windows-latest collect-only job.
 
 ## A-066 — Documented eval recipe loses the harness's trace evidence
