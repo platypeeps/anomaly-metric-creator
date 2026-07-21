@@ -1682,3 +1682,45 @@ Split the final legacy dispatch root without a line-count waiver, merged PR #291
 ### Next Steps
 
 - None - task complete
+
+
+## Session 41: Release AMC 0.4.0
+
+**Date**: 2026-07-21
+**Task**: Release AMC 0.4.0
+**Package**: amc
+**Branch**: `main`
+
+### Summary
+
+Completed, merged, tagged, published, and smoke-tested the AMC 0.4.0 release.
+
+### Main Changes
+
+- Added shared installed-version discovery with amc --version, the compatibility console script, and package API reporting 0.4.0.
+- Promoted the 0.4.0 changelog, documented the release/versioning contract, and synchronized guarded checklist surfaces.
+- Published annotated tag v0.4.0 and the GitHub Release from merge commit 1cc9efb.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3811df4` | Prepare AMC 0.4.0 release |
+| `73867cb` | Document installed version contract |
+| `639be6c` | Fix release version lockstep |
+| `1823f4c` | Address version test review feedback |
+
+### Testing
+
+- [OK] Full suite: 1703 passed, 2 opt-in real-client smokes skipped.
+- [OK] Pre-commit and full-check gates passed on the release PR.
+- [OK] Fresh Python 3.14.6 install from remote v0.4.0 tag; both console scripts and package API reported 0.4.0.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
