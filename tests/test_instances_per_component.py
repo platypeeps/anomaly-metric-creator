@@ -489,32 +489,22 @@ def test_n3_seven_day_csvs_byte_identical(amc, n3_7d):
     )
 
 
-def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
+def test_n3_1d_hashes_stable(amc, tmp_path_factory):
     """N=3 1-day output is byte-stable across two identical runs.
 
-    Complements the locked-hash test: catches non-determinism that would
-    surface as a re-run hash mismatch even if the locked hashes happen to
-    match the first run by accident.
-
-    The baseline ``n3_1d`` is the session-scoped
-    ``n3_one_day_dataset_dir``, which uses
-    ``--emit metrics,schema``. The second run emits ``metrics`` only, so the
-    two outputs are comparable on the per-component CSV artifacts their hashes
-    cover without emitting an irrelevant second ``schema.json``. The shared
-    baseline already emits no logs/traces.
-    Per-component CSV bytes are independent of the ``--emit`` selection
-    (the metric columns are written under any selection that includes
-    ``metrics``), so this trims disk without changing the test's
-    invariant.
+    Byte-stability is interval-independent: the invariant is "same args twice
+    -> same bytes", not any specific locked hash. Both passes therefore use
+    the cheap 60s cadence, while ``test_n3_one_day_csvs_byte_identical`` keeps
+    the independent full-resolution golden-hash contract.
     """
+    extra = ["--instances-per-component", "3", "--emit", "metrics"]
+    out1 = tmp_path_factory.mktemp("inst_n3_1d_stab_a")
+    _run(amc, out1, days=1, extra_args=extra, interval_seconds=60.0)
     out2 = tmp_path_factory.mktemp("inst_n3_1d_v2")
-    _run(amc, out2, days=1, extra_args=[
-        "--instances-per-component", "3",
-        "--emit", "metrics",
-    ])
+    _run(amc, out2, days=1, extra_args=extra, interval_seconds=60.0)
     for name in amc.COMPONENTS:
         fname = f"{name}.csv"
-        assert sha256_path(n3_1d / fname) == sha256_path(out2 / fname), (
+        assert sha256_path(out1 / fname) == sha256_path(out2 / fname), (
             f"{fname}: N=3 1-day output is not byte-stable"
         )
 
@@ -529,9 +519,8 @@ def test_n3_7d_hashes_stable(amc, tmp_path_factory):
     full-resolution pass was one of the three independent 7-day N=3
     generations the "Test resource cost" checklist forbids. The
     full-resolution locked hashes are covered separately by
-    ``test_n3_seven_day_csvs_byte_identical`` against the shared
-    session fixture, and full-resolution stability by
-    ``test_n3_1d_hashes_stable`` at 1 day.
+    ``test_n3_seven_day_csvs_byte_identical`` against the shared session
+    fixture. The one-day stability check uses the same cheap cadence.
     """
     extra = ["--instances-per-component", "3", "--emit", "metrics"]
     out1 = tmp_path_factory.mktemp("inst_n3_7d_stab_a")
