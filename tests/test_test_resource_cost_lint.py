@@ -104,6 +104,14 @@ def test_no_args_and_missing_path_exit_two(tmp_path: Path) -> None:
     assert result.returncode == 2
 
 
+def test_existing_non_python_file_exits_two(tmp_path: Path) -> None:
+    path = tmp_path / "test_sample.pyy"
+    path.write_text("data = output.read_bytes()\n", encoding="utf-8")
+    result = _run(path)
+    assert result.returncode == 2
+    assert "expected a Python file or directory" in result.stderr
+
+
 def test_syntax_error_exits_two(tmp_path: Path) -> None:
     result = _run(_source(tmp_path, "if True print('broken')\n"))
     assert result.returncode == 2

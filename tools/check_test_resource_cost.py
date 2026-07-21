@@ -103,6 +103,12 @@ def main(argv: list[str]) -> int:
         if not path.exists():
             print(f"check_test_resource_cost: no such path: {path}", file=sys.stderr)
             return 2
+        if not path.is_dir() and (not path.is_file() or path.suffix != ".py"):
+            print(
+                f"check_test_resource_cost: expected a Python file or directory: {path}",
+                file=sys.stderr,
+            )
+            return 2
         files.extend(_python_files(path))
 
     violations: list[str] = []
