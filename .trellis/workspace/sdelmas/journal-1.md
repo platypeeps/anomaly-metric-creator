@@ -999,7 +999,10 @@ Closed A-063 and A-065 after PRs #267-#269 shipped, Windows collection passed re
 
 ### Main Changes
 
-- Detailed change bullets were not supplied; see the summary above.
+- Marked audit findings A-063 and A-065 fixed after the shipped sync workflow
+  and Windows collection job produced the required live acceptance evidence.
+- Archived the completed CI automation task and recorded its verified
+  command-pack reconciliation and no-change sync evidence.
 
 ### Git Commits
 
@@ -1009,7 +1012,11 @@ Closed A-063 and A-065 after PRs #267-#269 shipped, Windows collection passed re
 
 ### Testing
 
-- Validation was not recorded for this session.
+- [OK] Canonical local full-check passed with the clean-module mypy gate, 139
+  review-churn tests, the 151-target install audit, and KB freshness check.
+- [OK] GitHub Actions run `29790018855` passed Windows collection and the required
+  `CI Result` check; no-change sync run `29791043370` completed with no branch
+  or pull request.
 
 ### Status
 
