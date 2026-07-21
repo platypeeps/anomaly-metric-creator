@@ -28,13 +28,41 @@ several lints have no CI mirror; and the guards lane runs unpinned Python.
 - A-063 — scheduled pack-sync workflow opening a PR only on change (reuse the auto-merge gate).
 - A-065 — windows-latest collect-only lane (uv sync + pytest --collect-only).
 
+### Final ownership boundary (2026-07-21)
+
+A-050 was confirmed during the lint-parity child to live in a pack-vouched
+installed target. A consumer-only edit would fail the install audit and make
+provenance untruthful, so it is not a local closure item: it remains `open` in
+the audit ledger pending a separately authorized upstream SD command-pack
+change. This parent closes the consumer-owned CI program without claiming that
+A-050 is fixed.
+
+### Final verification (2026-07-21)
+
+- PR #263 merged the workflow-selection and guard-runtime child. Its contract
+  and mutation tests pin armed labeled-event full gating, forced manual
+  dispatch, managed Python 3.14 guards, lightweight pack/audit paths, and the
+  widened shell/Python syntax gates.
+- PR #265 merged the lint-parity child. One executable owner now supplies the
+  19-module mypy gate to CI and local preflight; the three fast guards,
+  expanded role-name roots, PR-head branch check, and commit-message hook are
+  contract-tested. A-050 was retained as the explicit upstream exception.
+- PR #267 merged the maintainer-approved weekly sync and advisory Windows
+  collection. Follow-ups #268, #269, and #270 exercised and corrected the
+  automation path; no-change runs `29785268662` and `29791043370` created no
+  branch or PR, and Windows collection passed in run `29790018855`.
+- The audit ledger marks A-047, A-048, A-049, A-051, A-052, A-053, A-060,
+  A-061, A-062, A-063, and A-065 `fixed`; A-050 alone remains `open` with its
+  upstream ownership and recovery path recorded.
+
 ## Acceptance criteria
 
-- [ ] Labeled-event mutation test proves an armed PR re-gates on the full matrix.
-- [ ] A pack-refresh diff classifies lightweight; toolchain.sh syntax-gated.
-- [ ] Each added mirror/lint has a test or contract anchor.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
-      `.trellis/audit/ledger.md` (same-PR, per ledger rules).
+- [x] Labeled-event mutation test proves an armed PR re-gates on the full matrix.
+- [x] A pack-refresh diff classifies lightweight; toolchain.sh syntax-gated.
+- [x] Each added mirror/lint has a test or contract anchor.
+- [x] Every consumer-owned covered ledger item is `status: fixed` in
+      `.trellis/audit/ledger.md`; A-050 remains explicitly open and
+      upstream-owned rather than introducing consumer provenance drift.
 
 ## Added by 2026-07-17 audit follow-up (session-discovered, no ledger id)
 
@@ -54,6 +82,6 @@ of an audit-doc PR that is **not** armed for auto-merge. It is a correctness
 tidy of the classifier, not the reason any armed PR paid the full matrix.
 
 Acceptance addendum:
-- [ ] `.trellis/audit/*` is lightweight-classified alongside the other
+- [x] `.trellis/audit/*` is lightweight-classified alongside the other
       `.trellis/*` non-code paths, with a `tests/` assertion mirroring the
       existing classifier cases.

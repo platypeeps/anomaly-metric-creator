@@ -1,0 +1,2 @@
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Verify the shipped CI event, classifier, guard, automation, Windows, mypy, and branch-protection contracts."}
+{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Verify the aggregate audit record, ownership boundary, archived task references, and generated map remain synchronized."}
