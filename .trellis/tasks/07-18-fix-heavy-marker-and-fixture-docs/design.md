@@ -27,7 +27,7 @@ inherits `_CHEAP_INTERVAL_SECONDS_DEFAULT = 60.0` (`conftest.py:36`) —
 10,080 rows, ~8.7 MB. Add `interval_seconds=1.0` and a ~520 MB fixture lands
 in the parallel lane silently.
 
-Three candidate fixes, to choose during implementation:
+Three candidate fixes were evaluated during implementation:
 
 1. **Rename the shadowing fixture** (e.g. `validator_seven_day_schema_run`).
    Smallest diff, removes the collision entirely, and the parametrize
@@ -41,8 +41,12 @@ Three candidate fixes, to choose during implementation:
    `_HEAVY_*_FIXTURES` is defined outside `conftest.py`. Cheap, structural,
    and catches the *cause* rather than the symptom.
 
-Recommend **1 + 3**: rename now, and add the collision guard so it cannot
-recur. Option 2 solves a problem the repo does not yet have.
+Implementation chose **1 + 2 + a scoped form of 3**. Renaming removes the
+known collision. Collection-time callspec detection closes the general
+`getfixturevalue` hole. The uniqueness guard rejects duplicate definitions
+of names that are actually in the heavy registries; a blanket ban on heavy
+fixture definitions outside `conftest.py` was rejected because
+`seven_day_schema_run` and `synthetic_n3_run` are legitimate module fixtures.
 
 Whichever is chosen, `tests/test_heavy_marker.py` must gain a case that
 **fails against current `main`** — a real-collection assertion, not another
@@ -64,11 +68,12 @@ auditability of 1s-dependent sites; an unmarked one defeats it.
 
 | Claim | Location | Measured |
 |---|---|---|
-| "~1.3 GB of output" | `tests/conftest.py:347-348` | **264 MB** |
-| "multiple minutes and ~9 GB" | `tests/conftest.py:386` | **~1.85 GB** |
+| "~1.3 GB of output" | `tests/conftest.py:347-348` | **264 MiB on disk; 4.12s setup-only** |
+| "multiple minutes and ~9 GB" | `tests/conftest.py:386` | **1.81 GiB on disk; 29.08s setup-only** |
 
-Both ~5x high. `pyproject.toml:75` derives its `~5 GB` budget from the
-first, so the error has already propagated into a second decision.
+Both were materially high. The planning snapshot's `pyproject.toml` `~5 GB`
+comment had already been removed by prior performance work before this task,
+so implementation only updates the live marker description there.
 
 Also correct the *kind*: these are **on-disk output**, not RSS. Measured
 peak RSS is 8-11 GB depending on lane and worker count. The distinction
@@ -85,9 +90,9 @@ ceilings are different and the docs currently conflate them.
 ## Affected Files
 
 `tests/test_validate_output.py` (rename + parametrize strings),
-`tests/test_heavy_marker.py` (new failing-first case, collision guard),
-`tests/test_correctness.py:431` (marker), `tests/conftest.py` (docstrings),
-`pyproject.toml:75` (derived budget), `CLAUDE.md` if it repeats the figures.
+`tests/test_heavy_marker.py` (failing-first coverage, collision guard),
+`tests/test_correctness.py:431` (marker), `tests/conftest.py` (collection hook
+and docstrings), `pyproject.toml` and the testing guidance (marker contract).
 
 ## Risks And Edge Cases
 
@@ -95,9 +100,9 @@ ceilings are different and the docs currently conflate them.
   consumers were accidentally light and become heavy (or vice versa), the
   counts shift. Verify before/after and confirm the new classification is
   the *correct* one, not merely different.
-- **A collision guard may flag legitimate cases.** Check for other fixtures
-  outside `conftest.py` sharing a heavy name before adding it, so the guard
-  lands green.
+- **A collision guard may flag legitimate cases.** The initial blanket design
+  did: the heavy registry intentionally includes module fixtures. The shipped
+  guard therefore checks uniqueness, not location.
 - **Item 3 coordinates with `07-18-perf-heavy-fixture-trim`**, which edits
   the same docstrings. Whichever lands second must re-read rather than
   reapply.

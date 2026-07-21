@@ -98,9 +98,13 @@ complete default run took 253.36s while the serial heavy partition alone took
 `pyproject.toml`.
 
 The `heavy` marker is auto-applied by `tests/conftest.py` based on fixture
-closure, not hand-written on tests. CI runs both partitions under two-worker
-xdist with `--dist loadfile`; the selectors keep the GB-scale fixtures out of
-the light worker pool while preserving file-owned fixture locality. Sources:
+closure or a parametrized string naming a registered heavy fixture, not
+hand-written on tests. The latter covers indirect `request.getfixturevalue`
+lookups, which do not enter `item.fixturenames`. Each registered heavy fixture
+name must resolve to exactly one definition so collection cannot bind a light
+shadow fixture to a heavy name. CI runs both partitions under two-worker xdist
+with `--dist loadfile`; the selectors keep the GB-scale fixtures out of the
+light worker pool while preserving file-owned fixture locality. Sources:
 `tests/conftest.py`; `pyproject.toml`;
 `.github/workflows/ci.yml`; `CLAUDE.md`; `README.md`;
 `tests/test_heavy_marker.py`.
@@ -162,7 +166,8 @@ Sources: `tools/check_ci_review_contract.py`;
 
 - `tests/test_ci_review_contract.py` pins the exact heavy and light workflow
   commands and mutation-tests the live workflow contract.
-- `tests/test_heavy_marker.py` pins fixture-closure classification.
+- `tests/test_heavy_marker.py` pins fixture-closure classification, indirect
+  parametrized lookup classification, and heavy-name uniqueness.
 - Before publishing a worker-count change, collect the heavy, light, and full
   suites and assert that the first two counts sum to the third. Sources:
   `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;

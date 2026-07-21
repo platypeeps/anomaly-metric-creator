@@ -96,7 +96,7 @@ addopts = "-ra --strict-markers --dist loadfile -n 4"
 # cheap-default convention these markers attach to.
 markers = [
   "full_resolution: declares the test depends on 1s rows (86,400/day); pairs with an explicit interval_seconds=1.0 at the run_capture call site. The script's --interval-seconds default is 60s, and interval_seconds=None inherits that default.",
-  "heavy: auto-applied (tests/conftest.py pytest_collection_modifyitems) to any test whose fixture closure pulls a GB-scale fixture — a session fixture in _HEAVY_SESSION_FIXTURES (7-day / N=3) or a regenerating module fixture in _HEAVY_MODULE_FIXTURES. The PR CI gate runs `-m heavy` and `-m \"not heavy\"` in separate loadfile-distributed xdist jobs so the parallel ordering path is exercised without OOM-ing the standard runner. Do not hand-apply.",
+  "heavy: auto-applied (tests/conftest.py pytest_collection_modifyitems) to any test whose fixture closure pulls a GB-scale fixture, or whose parametrized strings name a registered heavy fixture for indirect getfixturevalue lookup. The PR CI gate runs `-m heavy` and `-m \"not heavy\"` in separate loadfile-distributed xdist jobs so the parallel ordering path is exercised without OOM-ing the standard runner. Do not hand-apply.",
 ]
 
 [tool.mypy]

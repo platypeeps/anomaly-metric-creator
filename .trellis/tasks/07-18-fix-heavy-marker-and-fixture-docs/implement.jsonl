@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Defines fixture reuse, full-resolution intent, and the heavy/light partition contract."}
+{"file":".trellis/guide/code-reuse.md","reason":"Requires shared fixtures and guards instead of duplicated test infrastructure."}

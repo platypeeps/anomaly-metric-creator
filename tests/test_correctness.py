@@ -428,6 +428,7 @@ def test_derived_hit_ratio_consistency_seven_day(seven_day_run):
 # ------------------------------------------------------------------
 # Anomaly value coherence (catches wire-to-wrong-field)
 # ------------------------------------------------------------------
+@pytest.mark.full_resolution
 def test_anomalies_match_declared_value(amc, seven_day_run):
     """For each deterministic primary anomaly, the CSV cell at the declared
     (component, metric, timestamp) matches the resolved spec value. Cascade
@@ -439,6 +440,8 @@ def test_anomalies_match_declared_value(amc, seven_day_run):
     were written to a sibling metric, the declared column would carry its natural
     value instead of the injected constant.
     """
+    # Pin 1s resolution because this test indexes manifest timestamps directly
+    # in per-second component rows; 60s rows cannot preserve that lookup.
     lookup = primary_spec_lookup(amc)
     manifest = read_manifest(seven_day_run.out_dir)
 

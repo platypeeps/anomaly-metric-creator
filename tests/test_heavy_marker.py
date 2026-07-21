@@ -13,11 +13,48 @@ stops marking anything, that step collects zero tests and pytest exits
 non-zero.
 """
 
+import ast
+from pathlib import Path
+from types import SimpleNamespace
+
 from conftest import (
     _HEAVY_MODULE_FIXTURES,
     _HEAVY_SESSION_FIXTURES,
     _item_is_heavy,
+    _item_parametrizes_heavy_fixture,
 )
+
+
+def _module_fixture_definition_paths() -> dict[str, list[str]]:
+    definitions: dict[str, list[str]] = {}
+    tests_dir = Path(__file__).parent
+
+    for path in tests_dir.glob("test_*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if any(
+                (
+                    isinstance(decorator, ast.Attribute)
+                    and isinstance(decorator.value, ast.Name)
+                    and decorator.value.id == "pytest"
+                    and decorator.attr == "fixture"
+                )
+                or (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and isinstance(decorator.func.value, ast.Name)
+                    and decorator.func.value.id == "pytest"
+                    and decorator.func.attr == "fixture"
+                )
+                for decorator in node.decorator_list
+            ):
+                definitions.setdefault(node.name, []).append(
+                    path.relative_to(tests_dir.parent).as_posix()
+                )
+
+    return definitions
 
 
 def test_heavy_fixture_set_is_nonempty():
@@ -43,10 +80,56 @@ def test_item_is_heavy_detects_each_declared_heavy_fixture():
 
 def test_declared_heavy_fixtures_resolve_to_real_fixtures(request):
     fixture_defs = request.session._fixturemanager._arg2fixturedefs
-    for fixture_name in _HEAVY_SESSION_FIXTURES | _HEAVY_MODULE_FIXTURES:
+    for fixture_name in _HEAVY_SESSION_FIXTURES:
         assert fixture_name in fixture_defs and fixture_defs[fixture_name], (
             f"{fixture_name} is declared heavy but has no fixture definition"
         )
+
+    module_definitions = _module_fixture_definition_paths()
+    for fixture_name in _HEAVY_MODULE_FIXTURES:
+        assert module_definitions.get(fixture_name), (
+            f"{fixture_name} is declared heavy but has no fixture definition"
+        )
+
+
+def test_declared_heavy_fixture_names_have_single_definition(request):
+    fixture_defs = request.session._fixturemanager._arg2fixturedefs
+    module_definitions = _module_fixture_definition_paths()
+    duplicates = {
+        fixture_name: paths
+        for fixture_name in _HEAVY_MODULE_FIXTURES
+        if len(paths := module_definitions.get(fixture_name, ())) > 1
+    }
+    duplicates.update({
+        fixture_name: sorted(fixture_def.baseid for fixture_def in definitions)
+        for fixture_name in _HEAVY_SESSION_FIXTURES
+        if len(definitions := fixture_defs.get(fixture_name, ())) > 1
+    })
+
+    assert not duplicates, (
+        "heavy fixture registry names must resolve unambiguously; duplicate "
+        f"definitions can escape fixture-closure marking: {duplicates}"
+    )
+
+
+def test_parametrized_heavy_fixture_names_are_marked_heavy(request):
+    declared = _HEAVY_SESSION_FIXTURES | _HEAVY_MODULE_FIXTURES
+    escaped = []
+
+    for item in request.session.items:
+        callspec = getattr(item, "callspec", None)
+        if callspec is None:
+            continue
+        fixture_names = declared.intersection(
+            value for value in callspec.params.values() if isinstance(value, str)
+        )
+        if fixture_names and item.get_closest_marker("heavy") is None:
+            escaped.append((item.nodeid, sorted(fixture_names)))
+
+    assert not escaped, (
+        "parametrized heavy fixture names bypassed item.fixturenames and the "
+        f"automatic marker: {escaped}"
+    )
 
 
 def test_item_is_heavy_detects_gb_scale_module_fixtures():
@@ -68,3 +151,20 @@ def test_item_is_heavy_false_for_light_fixtures():
 
 def test_item_is_heavy_handles_empty_fixturenames():
     assert not _item_is_heavy(())
+
+
+def test_item_parametrizes_heavy_fixture_detects_indirect_lookup():
+    item = SimpleNamespace(
+        callspec=SimpleNamespace(params={"fixture_name": "seven_day_schema_run"})
+    )
+
+    assert _item_parametrizes_heavy_fixture(item)
+
+
+def test_item_parametrizes_heavy_fixture_ignores_unregistered_values():
+    light = SimpleNamespace(
+        callspec=SimpleNamespace(params={"fixture_name": "one_day_schema_run"})
+    )
+
+    assert not _item_parametrizes_heavy_fixture(light)
+    assert not _item_parametrizes_heavy_fixture(SimpleNamespace())

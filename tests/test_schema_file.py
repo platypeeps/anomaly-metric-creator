@@ -522,7 +522,7 @@ def one_day_schema_run_n3(n3_one_day_dataset_dir):
     schema's dim block fires on every component. Delegates to the
     session-scoped ``n3_one_day_dataset_dir`` in ``conftest.py``
     (identical args: days=1, 1s cadence, N=3, ``metrics,schema``)
-    instead of regenerating the ~25-30s / ~1.3 GB dataset for this
+    instead of regenerating the measured 4.12s / 264 MiB-on-disk dataset for this
     module — the PR #63 module-scoped-duplicate antipattern from the
     "Test resource cost" checklist. The locked
     ``SCHEMA_N3_ONE_DAY_HASH`` holds byte-identically because the

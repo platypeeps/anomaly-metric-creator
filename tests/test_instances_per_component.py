@@ -94,7 +94,7 @@ def n1_explicit_1d(amc, tmp_path_factory):
 def n3_1d(n3_one_day_dataset_dir):
     """N=3 1-day dataset for this module's per-component CSV / anomalies
     checks. Delegates to the session-scoped ``n3_one_day_dataset_dir``
-    fixture in ``conftest.py`` so the ~25-second / ~1.3 GB
+    fixture in ``conftest.py`` so the measured 4.12-second / 264 MiB-on-disk
     generation pass runs once for the whole suite instead of once per
     test file. Every consumer in this module only reads per-component
     CSVs or ``anomalies.csv``; the shared fixture's
@@ -106,7 +106,7 @@ def n3_1d(n3_one_day_dataset_dir):
 def n3_7d(n3_seven_day_dataset_dir):
     """N=3 7-day dataset for the locked-hash check. Delegates to the
     session-scoped ``n3_seven_day_dataset_dir`` in ``conftest.py`` —
-    the single most expensive generation in the suite (~9 GB at 1s
+    the single most expensive generation in the suite (1.81 GiB on disk at 1s
     resolution) — so it runs at most once per worker instead of once
     per consuming module. The shared fixture's
     ``--emit metrics,schema`` does not move the per-component
@@ -498,10 +498,10 @@ def test_n3_1d_hashes_stable(amc, n3_1d, tmp_path_factory):
 
     The baseline ``n3_1d`` is the session-scoped
     ``n3_one_day_dataset_dir``, which uses
-    ``--emit metrics,schema``. The second run emits ``metrics`` only,
-    so the two outputs are comparable on the artifacts the per-component
-    CSV hashes cover, and the second run avoids re-emitting the
-    ~1.3 GB of logs/traces artifacts neither side compares against.
+    ``--emit metrics,schema``. The second run emits ``metrics`` only, so the
+    two outputs are comparable on the per-component CSV artifacts their hashes
+    cover without emitting an irrelevant second ``schema.json``. The shared
+    baseline already emits no logs/traces.
     Per-component CSV bytes are independent of the ``--emit`` selection
     (the metric columns are written under any selection that includes
     ``metrics``), so this trims disk without changing the test's
@@ -525,7 +525,7 @@ def test_n3_7d_hashes_stable(amc, tmp_path_factory):
     Byte-stability is interval-independent (the invariant is "same args
     twice -> same bytes", not any specific locked hash), so this test
     runs both passes at the cheap 60s default instead of duplicating
-    the ~9 GB full-resolution session dataset — the second
+    the 1.81 GiB-on-disk full-resolution session dataset — the second
     full-resolution pass was one of the three independent 7-day N=3
     generations the "Test resource cost" checklist forbids. The
     full-resolution locked hashes are covered separately by
