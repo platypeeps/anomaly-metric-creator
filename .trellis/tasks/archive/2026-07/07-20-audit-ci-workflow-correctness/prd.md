@@ -25,18 +25,18 @@ Implement audit items A-047, A-049, A-051, A-053 and the Trellis audit-path clas
 
 ## Acceptance Criteria
 
-- [ ] A labeled-event fixture for an auto-merge-armed PR selects the full
+- [x] A labeled-event fixture for an auto-merge-armed PR selects the full
       matrix and fails if the `PR_AUTO_MERGE` clause is removed.
-- [ ] Manual workflow dispatch forces `app_required=true`.
-- [ ] The lightweight guards execute through `uv run --python 3.14`.
-- [ ] Diffs limited to `.sd-ai-command-pack/**` or `.trellis/audit/**`
+- [x] Manual workflow dispatch forces `app_required=true`.
+- [x] The lightweight guards execute through `uv run --python 3.14`.
+- [x] Diffs limited to `.sd-ai-command-pack/**` or `.trellis/audit/**`
       classify lightweight, while application, dependency, and workflow paths
       retain their existing escalation behavior.
-- [ ] Both shell syntax-gate locations include the toolchain and shell library;
+- [x] Both shell syntax-gate locations include the toolchain and shell library;
       Python syntax coverage includes `scripts/*.py`.
-- [ ] Focused classifier/contract tests and the repository's required local
+- [x] Focused classifier/contract tests and the repository's required local
       review gate pass.
-- [ ] A-047, A-049, A-051, and A-053 are marked `fixed` in
+- [x] A-047, A-049, A-051, and A-053 are marked `fixed` in
       `.trellis/audit/ledger.md`; the session-discovered audit-path addendum is
       recorded as completed.
 
@@ -44,3 +44,5 @@ Implement audit items A-047, A-049, A-051, A-053 and the Trellis audit-path clas
 
 - Child 1 of `07-17-audit-ci-cadence-closures`; it must merge before the lint
   parity and automation/portability children.
+- Final evidence: PR #263 merged on 2026-07-20 at head `5f7d37c`; the parent
+  closure re-ran the focused contract suite and repository gate.

@@ -15,7 +15,8 @@ classifier/syntax-gate widening, each with its classifier/contract test.
 PR 2 (mirrors/parity): A-048 `tools/check_mypy_gate.py` (move list out of
 YAML, wire CI + docs) → A-060 three lint mirrors in guards step → A-052
 scan-root extension → A-061 head-ref branch-name check → A-062 commit-msg
-stage hook → A-050 full-check node fallback (record chosen posture).
+stage hook → classify A-050 as upstream-owned because its target is
+pack-vouched, retaining the open ledger item instead of drifting the consumer.
 
 PR 3 (automation, maintainer-confirmed): A-063 scheduled pack-sync
 workflow (PR-on-change, auto-merge gate) → A-065 windows-latest
@@ -54,5 +55,7 @@ matrix (PR 1); dropping a module from the mypy-gate list must fail
 
 ## Follow-Ups
 
+- A-050 remains parked pending separate authorization for an upstream SD
+  command-pack PR; its open ledger record is the recovery pointer.
 - If the Windows collect-only lane stays quiet for a quarter, consider a
   real Windows test lane (new task; cost decision).
