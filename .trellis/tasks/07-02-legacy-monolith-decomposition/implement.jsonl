@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/amc/backend/architecture.md","reason":"Keep the epic module boundaries, facade ownership, and one-way import rules aligned with the remaining scenario extraction."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Preserve the byte-identical determinism, import-time validation, and full-suite gates required by every extraction child."}
+{"file":".trellis/tasks/archive/2026-07/07-02-decomp-catalog-data/implement.md","reason":"Recover the predecessor's explicitly unimplemented PR B as the new eleventh child."}

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Verify all locked hashes, focused registry contracts, full-suite behavior, and hosted full CI remain unchanged."}
+{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Verify CLAUDE, Trellis specs, facade docs, task state, and the generated repository map stay synchronized."}
+{"file":".trellis/tasks/archive/2026-07/07-02-decomp-catalog-data/prd.md","reason":"Check every omitted PR B requirement is covered by the recovery child acceptance criteria."}

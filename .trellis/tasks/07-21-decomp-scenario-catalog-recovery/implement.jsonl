@@ -1,0 +1,3 @@
+{"file":".trellis/spec/amc/backend/architecture.md","reason":"Preserve canonical module ownership, one-way imports, facade identity, and legacy compatibility boundaries during the scenario split."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Preserve determinism hashes, import-time validation, xdist behavior, and full-CI verification."}
+{"file":".trellis/tasks/archive/2026-07/07-02-decomp-catalog-data/design.md","reason":"Recover the predecessor task's unimplemented PR B design and callback-seam decisions."}

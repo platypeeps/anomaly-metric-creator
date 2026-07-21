@@ -93,6 +93,20 @@ copies." This task is that future split.
   1,684 lines (> the 800-line cap this epic's own criteria require) — see
   design.md Invariants note.
 
+## Recovery status (2026-07-21)
+
+All ten original child tasks are archived, but `07-02-decomp-catalog-data`
+completed only its PR A (`models_impl.py` + `catalog.py`). Its own archived
+plan and notes leave PR B (`scenarios_impl.py` + `scenario_catalog.py` and the
+resolution cluster) undone, while `legacy.py` still measures 4,829 lines and
+contains that roughly 3,300-line surface. The epic is therefore not 10/10
+complete in substance.
+
+Child `07-21-decomp-scenario-catalog-recovery` now owns the omitted PR B with a
+split that keeps executable modules below 800 lines and preserves one ordered
+declarative registry. The epic cannot close or request its final dispatch-root
+waiver until that child merges with unchanged hashes.
+
 ## Notes
 
 - **Epic — do not attempt in one session.** Break into per-module child tasks

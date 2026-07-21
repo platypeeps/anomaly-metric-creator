@@ -22,7 +22,11 @@ cross-child order, the shared per-PR protocol, and the epic-close checklist.
    validators move with their registries in the same PR.
 4. **Step 10 — `07-02-decomp-generation-topology`** — the RNG-order-critical
    core; only after 8 and 9 have landed with unchanged hashes.
-5. **Epic close** — resolve design.md Decision 2 (end-state waiver) with the
+5. **Step 9B recovery — `07-21-decomp-scenario-catalog-recovery`** — finish
+   the scenario builders/data/validation/resolution half that the archived
+   step-9 task left undone; preserve live monkeypatch bindings and the sole
+   import-time validation call.
+6. **Epic close** — resolve design.md Decision 2 (end-state waiver) with the
    maintainer, update CLAUDE.md's architecture section to the final module
    map, flip remaining checklist boxes, archive.
 
