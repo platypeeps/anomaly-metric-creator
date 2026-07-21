@@ -22,15 +22,15 @@ Implement audit items A-063 and A-065, subject to maintainer confirmation before
 
 ## Acceptance Criteria
 
-- [ ] A no-change scheduled run creates no branch or pull request; a genuine
+- [x] A no-change scheduled run creates no branch or pull request; a genuine
       refresh produces one reviewable PR through the existing gate.
-- [ ] Windows collection succeeds with the declared Python floor and locked
+- [x] Windows collection succeeds with the declared Python floor and locked
       development dependencies.
-- [ ] Windows failures are advisory and cannot make the aggregate required
+- [x] Windows failures are advisory and cannot make the aggregate required
       context red.
 - [x] Recurring automation has explicit maintainer approval before merge
       (approved by the maintainer on 2026-07-20).
-- [ ] A-063 and A-065 are marked `fixed` only when their behavior is actually
+- [x] A-063 and A-065 are marked `fixed` only when their behavior is actually
       shipped.
 
 ## Notes
