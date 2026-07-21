@@ -398,10 +398,8 @@ def n3_one_day_dataset_dir(amc, tmp_path_factory):
 @pytest.fixture(scope="session")
 def n3_seven_day_dataset_dir(amc, tmp_path_factory):
     """7-day ``--instances-per-component 3`` dataset, generated once and
-    shared by the 7-day hash locks in
-    ``tests/test_instances_per_component.py`` (``N3_SEVEN_DAY_HASHES``)
-    and the N=3 schema hash in ``tests/test_schema_file.py``
-    (``SCHEMA_N3_SEVEN_DAY_HASH``).
+    consumed by the full-resolution 7-day hash locks in
+    ``tests/test_instances_per_component.py`` (``N3_SEVEN_DAY_HASHES``).
 
     This is the single most expensive generation in the suite. A 2026-07-21
     ``pytest --setup-only`` run took 29.08 seconds and occupied 1.81 GiB on
@@ -409,12 +407,10 @@ def n3_seven_day_dataset_dir(amc, tmp_path_factory):
     must never be duplicated in a module-scoped fixture — the suite
     previously ran three independent copies of it across two modules
     (the PR #67 antipattern from the "Test resource cost" checklist).
-    ``--emit metrics,schema`` trims the logs / traces
-    artifacts no consumer reads; per-component CSV bytes are
-    independent of the ``--emit`` selection so ``N3_SEVEN_DAY_HASHES``
-    are unaffected, and ``SCHEMA_N3_SEVEN_DAY_HASH`` was locked under
-    the same ``metrics,schema`` selection. Explicit
-    ``interval_seconds=1.0`` preserves the full-resolution locks."""
+    ``--emit metrics,schema`` trims the logs / traces artifacts the remaining
+    consumer does not read; per-component CSV bytes are independent of the
+    ``schema`` token, so ``N3_SEVEN_DAY_HASHES`` are unaffected. Explicit
+    ``interval_seconds=1.0`` preserves those full-resolution locks."""
     out = tmp_path_factory.mktemp("n3_seven_day_dataset")
     return run_capture(
         amc, out, days=7,
