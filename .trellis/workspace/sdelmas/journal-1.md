@@ -1521,3 +1521,43 @@ Verified and archived the nine-child CI and local test-performance program after
 ### Next Steps
 
 - Publish, review, merge, and housekeep the focused closure PR.
+
+
+## Session 37: Close local CI audit program
+
+**Date**: 2026-07-21
+**Task**: Close local CI audit program
+**Package**: amc
+**Branch**: `codex/close-ci-audit-program`
+
+### Summary
+
+Verified and archived the three-child consumer-owned CI cadence program while preserving A-050 as an explicit upstream-owned open finding.
+
+### Main Changes
+
+- Recorded merged PR and hosted-run evidence for workflow correctness, lint parity, recurring sync, and advisory Windows collection.
+- Reconciled the workflow-correctness child acceptance checklist with shipped PR #263 evidence.
+- Documented that A-050 remains open because its target is a pack-vouched upstream file, then archived the local parent.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ecb574e` | docs: close local CI audit program |
+
+### Testing
+
+- [OK] 206 focused CI and tooling contract tests
+- [OK] pre-commit run --all-files
+- [OK] Trellis task context validation
+- [OK] bash scripts/sd-ai-command-pack-full-check.sh
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Publish, review, merge, and housekeep the focused CI-audit closure PR; keep A-050 parked until a separate upstream PR is authorized.
