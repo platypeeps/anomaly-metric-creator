@@ -61,8 +61,8 @@ def _apply_signal_level_and_count(component_anomalies: dict, cascade_registry: d
 
     Sampling for ``anomaly_count`` uses a dedicated
     ``np.random.SeedSequence`` derived from ``seed`` with a fixed
-    ``spawn_key`` tag, so it doesn't perturb the column-noise RNG stream that
-    ``generate_component`` shares via ``np.random``. The sampled positions are
+    ``spawn_key`` tag, so it doesn't perturb the main generation RNG stream
+    carried by ``RunContext.rng``. The sampled positions are
     iterated in sorted order so the manifest row order is fully deterministic
     for a given ``(seed, anomaly_count, eligible-pool)`` triple — independent
     of CPython's set iteration order.

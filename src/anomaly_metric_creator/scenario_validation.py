@@ -364,7 +364,9 @@ def _validate_scenarios_registry(
                 f"SCENARIOS[{slug!r}].severity {scenario.severity!r} must be "
                 "a string in low / medium / high"
             )
-        if not isinstance(scenario.days_required, int) or scenario.days_required < 1:
+        if (isinstance(scenario.days_required, bool)
+                or not isinstance(scenario.days_required, int)
+                or scenario.days_required < 1):
             raise ValueError(
                 f"SCENARIOS[{slug!r}].days_required {scenario.days_required!r} "
                 "must be a positive int (the minimum --duration-days at which "
