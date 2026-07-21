@@ -14,11 +14,10 @@ for mid-2026 kubectl (A-067).
 Order matters: bump the advertised version first, then make CI prove it.
 
 - **A-067:** hoist the advertised-version literals into one
-  `_K8S_ADVERTISED_VERSION` constant (server_ops.py; both sites read it);
-  bump to the minor that puts the pinned CI kubectl inside supported skew
-  (pick against the chosen client pin — e.g. advertise 1.33.x for a
-  1.34.x kubectl; finalize at implementation from the current stable
-  matrix). README records the tested client versions.
+  `_K8S_ADVERTISED_VERSION` constant (all API, OpenAPI, node, and simulated
+  command renderers derive from it). The implementation-time official stable
+  matrix is kubectl v1.36.2 and Helm v4.2.0, so the facade advertises v1.36.2
+  with zero kubectl minor skew. README records the tested client versions.
 - **A-022:** a **step inside the existing full-lane test job** (not a new
   aggregate-feeding job — avoids rewiring `CI Result` needs and its
   contract anchors):
@@ -45,11 +44,12 @@ Order matters: bump the advertised version first, then make CI prove it.
 ## Affected Files
 
 `src/anomaly_metric_creator/server_ops.py` (constant + bump),
-`.github/workflows/ci.yml` (full-lane step),
-`tests/test_server.py` (only if the smokes need version-string
-assertions updated), README (tested versions),
-docs/DEVELOPMENT_CYCLE.md ("Pinned tools bump" additions),
-`.trellis/audit/ledger.md` flips (A-022, A-067).
+`.github/workflows/ci.yml` (full-lane step), `tests/test_server.py` (version
+and skew assertions), `tools/check_ci_review_contract.py` plus
+`tests/test_ci_review_contract.py` (mechanical pin/smoke contract), README
+(tested versions), docs/DEVELOPMENT_CYCLE.md ("Pinned tools bump" additions),
+Trellis API/testing specs, and `.trellis/audit/ledger.md` flips (A-022,
+A-067).
 
 ## Risks And Edge Cases
 

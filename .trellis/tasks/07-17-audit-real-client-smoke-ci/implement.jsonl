@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/amc/backend/architecture.md","reason":"Locates the canonical server_ops owner and prohibits parallel Kubernetes state or compatibility implementations."}
+{"file":".trellis/spec/amc/backend/api-cli-server.md","reason":"Defines the fake Kubernetes API and Helm facade behavior exercised by stock clients."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Defines the CI lane, real-client test, pinning, aggregate, and review-gate contracts that the implementation must preserve."}
+{"file":".trellis/audit/report-2026-07-17.md","reason":"Supplies the verified A-022 and A-067 evidence and intended remediation boundary for this audit task."}

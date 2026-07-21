@@ -1878,7 +1878,7 @@ def test_server_auth_token_protects_debug_api_and_embeds_kubeconfig(amc, tmp_pat
         assert body["result"]["support_status"] == "supported"
 
         version = _get_json_with_headers(base_url + "/version", headers)
-        assert version["gitVersion"] == "v1.29.4-amc"
+        assert version["gitVersion"] == "v1.36.2-amc"
 
 
 def test_request_body_limit_and_mutating_k8s_operations_are_traced(amc, tmp_path):
@@ -2805,11 +2805,17 @@ def test_shutdown_event_closes_long_lived_sse_streams(amc, tmp_path):
 
 def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    command_version = server.run_command(state, command="kubectl version")
+    assert "Client Version: v1.36.2" in command_version["result"]["stdout"]
+    assert "Server Version: v1.36.2-amc" in command_version["result"]["stdout"]
     with _running_test_server(state) as base_url:
         version = _get_json(base_url + "/version")
-        assert version["gitVersion"] == "v1.29.4-amc"
+        assert version["major"] == "1"
+        assert version["minor"] == "36"
+        assert version["gitVersion"] == "v1.36.2-amc"
 
         openapi_v2 = _get_json(base_url + "/openapi/v2")
+        assert openapi_v2["info"]["version"] == "v1.36.2-amc"
         pod_schema = openapi_v2["definitions"]["io.k8s.api.core.v1.Pod"]
         assert pod_schema["x-kubernetes-group-version-kind"] == [
             {"group": "", "version": "v1", "kind": "Pod"}
@@ -2819,6 +2825,7 @@ def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
         openapi_v3 = _get_json(base_url + "/openapi/v3")
         assert "api/v1" in openapi_v3["paths"]
         core_schema = _get_json(base_url + "/openapi/v3/api/v1?hash=ignored")
+        assert core_schema["info"]["version"] == "v1.36.2-amc"
         assert "io.k8s.api.core.v1.Pod" in core_schema["components"]["schemas"]
 
         resources = _get_json(base_url + "/api/v1")
@@ -2860,6 +2867,13 @@ def test_real_kubernetes_api_resources_logs_metrics_and_auth(amc, tmp_path):
         )
         state_info = cache_pod["status"]["containerStatuses"][0]["state"]
         assert state_info["waiting"]["reason"] == "CrashLoopBackOff"
+
+        nodes = _get_json(base_url + "/api/v1/nodes")
+        node_versions = {
+            node["status"]["nodeInfo"]["kubeletVersion"]
+            for node in nodes["items"]
+        }
+        assert node_versions == {"v1.36.2"}
 
         table_request = urllib.request.Request(
             base_url + "/api/v1/namespaces/saas-prod/pods",
@@ -3054,6 +3068,7 @@ def test_real_kubectl_binary_smoke_when_available(amc, tmp_path):
                 check=False,
             )
             assert result.returncode == 0, result.stderr
+            assert "version difference" not in result.stderr.lower(), result.stderr
             return result.stdout
 
         assert "cronjobs" in run_kubectl(["api-resources"])

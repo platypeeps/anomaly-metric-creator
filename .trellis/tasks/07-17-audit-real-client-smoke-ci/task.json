@@ -2,8 +2,8 @@
   "id": "audit-real-client-smoke-ci",
   "name": "audit-real-client-smoke-ci",
   "title": "Run real kubectl/Helm smokes in CI and bump advertised K8s version",
-  "description": "",
-  "status": "planning",
+  "description": "Install checksum-pinned kubectl v1.36.2 and Helm v4.2.0 in the full CI lane, run the existing real-client smokes, and advertise Kubernetes v1.36.2 from one source constant.",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",
@@ -12,7 +12,7 @@
   "assignee": "sdelmas",
   "createdAt": "2026-07-17",
   "completedAt": null,
-  "branch": null,
+  "branch": "codex/real-client-smoke-ci",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Implementation pins verified from official release endpoints on 2026-07-20: kubectl v1.36.2 and Helm v4.2.0. The facade advertises v1.36.2, and the CI contract guard owns the pin, checksum, serial smoke, and selector anchors.",
   "meta": {}
 }

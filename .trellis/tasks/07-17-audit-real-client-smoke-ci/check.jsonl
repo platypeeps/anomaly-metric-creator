@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/amc/backend/api-cli-server.md","reason":"Defines the real kubectl and Helm facade contracts, advertised Kubernetes surface, and server-mode compatibility invariants."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Defines full-lane CI behavior, workflow contract guards, focused server validation, and dependency/workflow hygiene."}
+{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Requires compatibility claims, pinned-tool guidance, workflow changes, task evidence, and user-facing docs to remain synchronized."}

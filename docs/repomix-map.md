@@ -918,13 +918,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-20-perf-ci-heavy-worker-trial/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1165,6 +1158,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           task.json
         07-20-audit-ci-workflow-correctness/
           design.md
+          implement.md
+          prd.md
+          task.json
+        07-20-perf-ci-heavy-worker-trial/
+          check.jsonl
+          design.md
+          implement.jsonl
           implement.md
           prd.md
           task.json

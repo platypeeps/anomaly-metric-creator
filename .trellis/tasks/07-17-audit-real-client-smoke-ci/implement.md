@@ -2,9 +2,9 @@
 
 ## Execution Order
 
-1. Branch from `main`. Pick the client pins (current stable kubectl +
-   Helm 4.x) and the advertised minor that sits inside ±1 skew of the
-   kubectl pin; record all three in the PR description.
+1. Branch from `main`. Pin the implementation-time official stable clients:
+   kubectl v1.36.2 and Helm v4.2.0, with an advertised Kubernetes v1.36.2;
+   record all three in the PR description.
 2. A-067: hoist `_K8S_ADVERTISED_VERSION`, update both literal sites,
    grep-sweep `1.29.4`.
 3. Local proof: download the pinned binaries to a scratch dir, run both

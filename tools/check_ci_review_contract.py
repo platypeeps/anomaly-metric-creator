@@ -460,6 +460,70 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
                 violations=violations,
             )
 
+    light_block = _yaml_mapping_block(text, "test_light")
+    if light_block is None:
+        violations.append(f"{path}: cannot inspect real-client smoke job block")
+    else:
+        for label, needle in [
+            ("fail-closed real-client installer", "set -euo pipefail"),
+            ("pinned kubectl version", "KUBECTL_VERSION: v1.36.2"),
+            (
+                "pinned kubectl checksum",
+                "KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82",
+            ),
+            (
+                "official kubectl download",
+                "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/"
+                "linux/amd64/kubectl",
+            ),
+            ("pinned Helm version", "HELM_VERSION: v4.2.0"),
+            (
+                "pinned Helm checksum",
+                "HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096",
+            ),
+            (
+                "official Helm download",
+                "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz",
+            ),
+            (
+                "fail-closed real-client download",
+                "curl --fail --location --show-error --silent",
+            ),
+            ("real-client download retry", "--retry 3 --retry-all-errors"),
+            ("real-client PATH export", 'echo "$client_bin" >> "$GITHUB_PATH"'),
+            ("real-client smoke opt-in", 'AMC_RUN_REAL_CLIENT_SMOKE: "1"'),
+            ("serial real-client smoke", "pytest -n 0 -q"),
+            (
+                "Helm real-client smoke selector",
+                "tests/test_server.py::test_real_helm4_binary_smoke_when_available",
+            ),
+            (
+                "kubectl real-client smoke selector",
+                "tests/test_server.py::test_real_kubectl_binary_smoke_when_available",
+            ),
+        ]:
+            _require_contains(
+                light_block,
+                needle,
+                path=path,
+                label=label,
+                violations=violations,
+            )
+        checksum_checks = light_block.count("sha256sum --check --strict")
+        if checksum_checks != 2:
+            violations.append(
+                f"{path}: expected exactly two real-client checksum checks, "
+                f"found {checksum_checks}"
+            )
+        fail_closed_downloads = light_block.count(
+            "curl --fail --location --show-error --silent"
+        )
+        if fail_closed_downloads != 2:
+            violations.append(
+                f"{path}: expected exactly two fail-closed real-client "
+                f"downloads, found {fail_closed_downloads}"
+            )
+
 
 def _check_pyproject(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [

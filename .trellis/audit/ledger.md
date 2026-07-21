@@ -236,14 +236,14 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: registry-driven sweep with per-tool args table keyed equal to MCP_TOOLS, both modes.
 
 ## A-022 — Real kubectl/Helm 4 interop smokes permanently skipped; CI never runs them
-- status: open
+- status: fixed
 - severity: P2 · effort: M · confidence: Plausible
 - dimension: testing
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - tests/test_server.py:135-137 — env-gated; no workflow sets the var or installs binaries
-- why: the headline real-client guarantee is verified by no running test.
+  - `.github/workflows/ci.yml`; `tests/test_server.py`; `tools/check_ci_review_contract.py` — the full light lane installs checksum-pinned kubectl and Helm binaries and runs both opt-in real-client smokes serially; the deterministic guard pins the workflow contract.
+- why: fixed; the headline real-client guarantee is exercised by the full CI lane with reproducible official binaries.
 - fix: full-lane CI step with pinned binaries running the two smokes.
 
 ## A-023 — Heavy-marker fixture-name registries unvalidated against real fixtures
@@ -728,14 +728,14 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: add --persist-command-db to the recommended command; document persistence as the only trace path in eval mode.
 
 ## A-067 — K8s facade advertises v1.29.4, outside supported skew for mid-2026 clients
-- status: open
+- status: fixed
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: consumer-impact
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - server_ops.py:4936-4938, 2834-2836
-- why: current kubectl exceeds ±1 skew; client behaviors drift untested.
+  - `src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`; `.github/workflows/ci.yml`; `README.md` — all advertised version surfaces derive from v1.36.2, matching the pinned kubectl v1.36.2 smoke client; the smoke rejects version-skew warnings.
+- why: fixed; one advertised-version source and a same-minor real-client smoke prevent silent skew drift.
 - fix: single version constant, bump, re-run real-client smokes.
 
 ## A-068 — amc validate hard-fails on foreign files generation tolerates

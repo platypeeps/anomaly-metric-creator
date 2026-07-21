@@ -402,7 +402,9 @@ reviews. `kubectl get` uses server-side `meta.k8s.io/v1` Table responses when
 the client asks for them, including category support for `kubectl get all`.
 Helm compatibility is provided through Helm-shaped `helm.sh/release.v1` Secret
 objects with double-base64 gzip JSON release payloads, which are smoke-tested
-with Helm 4. Do not describe these payloads as native Helm 3 protobuf releases
+in full CI with kubectl v1.36.2 and Helm v4.2.0 against the facade's advertised
+Kubernetes v1.36.2. Do not describe these payloads as native Helm 3 protobuf
+releases
 unless the storage encoder is changed to emit Helm's protobuf release object.
 Every real-client request should be recorded as command family `kubernetes-api`
 so unsupported client paths remain visible in `/v1/debug/search`.

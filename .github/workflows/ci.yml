@@ -392,6 +392,50 @@ jobs:
       - name: Sync dependencies (dev extra)
         run: uv sync --extra dev --locked --python ${{ matrix.python-version }}
 
+      # Pinned real-client compatibility contract (07-17-audit-real-client-smoke-ci).
+      # When either client moves, update its checksum, the advertised Kubernetes
+      # version, README compatibility evidence, and the pinned-tools checklist.
+      - name: Install pinned real Kubernetes clients
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+          HELM_VERSION: v4.2.0
+          HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
+        run: |
+          set -euo pipefail
+          client_root="$RUNNER_TEMP/amc-real-clients"
+          client_bin="$client_root/bin"
+          mkdir -p "$client_bin"
+
+          curl --fail --location --show-error --silent \
+            --retry 3 --retry-all-errors \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            --output "$client_bin/kubectl"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$client_bin/kubectl" \
+            | sha256sum --check --strict
+          chmod 0755 "$client_bin/kubectl"
+
+          curl --fail --location --show-error --silent \
+            --retry 3 --retry-all-errors \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+            --output "$client_root/helm.tar.gz"
+          printf '%s  %s\n' "$HELM_SHA256" "$client_root/helm.tar.gz" \
+            | sha256sum --check --strict
+          tar -xzf "$client_root/helm.tar.gz" -C "$client_root" linux-amd64/helm
+          install -m 0755 "$client_root/linux-amd64/helm" "$client_bin/helm"
+
+          "$client_bin/kubectl" version --client
+          "$client_bin/helm" version --short
+          echo "$client_bin" >> "$GITHUB_PATH"
+
+      - name: Run pinned real kubectl and Helm smokes
+        env:
+          AMC_RUN_REAL_CLIENT_SMOKE: "1"
+        run: |
+          uv run --no-sync pytest -n 0 -q \
+            tests/test_server.py::test_real_helm4_binary_smoke_when_available \
+            tests/test_server.py::test_real_kubectl_binary_smoke_when_available
+
       - name: Smoke installed console scripts
         run: |
           uv venv --python ${{ matrix.python-version }} .ci-package-smoke

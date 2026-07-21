@@ -21,6 +21,19 @@ supported skew for mid-2026 kubectl clients.
 ## Acceptance criteria
 
 - [ ] Both smokes run green in the full lane with pinned client versions.
-- [ ] kubectl version skew warning gone against the bumped facade.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] kubectl version skew warning gone against the bumped facade.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).
+
+## Implementation evidence (2026-07-20)
+
+- Official stable pins: kubectl v1.36.2 and Helm v4.2.0; the workflow verifies
+  Linux-amd64 SHA-256 values `1e9045ec…c27d82` and `97dbeb97…f4096` before
+  either binary enters `PATH`.
+- The facade advertises Kubernetes v1.36.2 from one source constant across
+  command output, `/version`, OpenAPI v2/v3 metadata, and node kubelet data.
+- Exact-version macOS arm64 binaries were checksum-verified locally and both
+  opt-in real-client smokes passed in 1.81 seconds with no kubectl skew warning.
+- Focused validation: 57 CI-contract tests passed; all 91 ordinary server tests
+  passed with only the two explicitly opt-in real-client tests skipped in the
+  non-opt-in run; workflow YAML and both new shell blocks parse cleanly.
