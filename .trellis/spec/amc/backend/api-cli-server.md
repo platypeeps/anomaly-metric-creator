@@ -110,7 +110,8 @@ __version__ = "0.4.0"
 __version__ = package_version()
 ```
 
-Sources: `pyproject.toml`; `src/anomaly_metric_creator/version.py`;
+Sources: `pyproject.toml`; `uv.lock`;
+`src/anomaly_metric_creator/version.py`;
 `src/anomaly_metric_creator/__init__.py`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/server_mcp.py`; `tests/test_cli.py`;

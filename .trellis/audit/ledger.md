@@ -589,7 +589,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - first-seen: 2026-07-17 @ b0df00b
 - last-seen: 2026-07-21 @ pending-pr
 - evidence:
-  - `pyproject.toml`; `CHANGELOG.md` — the release PR aligns version 0.4.0 with a dated release section that names the Python 3.11→3.14 break.
+  - `pyproject.toml`; `uv.lock`; `CHANGELOG.md` — the release PR aligns version 0.4.0 across package metadata, the locked editable project, and a dated release section that names the Python 3.11→3.14 break.
   - `.trellis/tasks/07-17-audit-cut-release-0-4-0/implement.md` — the explicit post-merge tag, GitHub Release, and tag-install verification sequence is part of the release closeout.
 - why: fixed; 0.4.0 is cut from the installable package tree with the breaking floor change named in release notes.
 - fix: cut 0.4.0 now; bump version in the same PR as future floor/surface changes.

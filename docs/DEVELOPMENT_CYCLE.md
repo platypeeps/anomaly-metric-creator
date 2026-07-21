@@ -205,7 +205,8 @@ backward-compatible fixes. Every release starts with a PR that:
 
 1. promotes `CHANGELOG.md`'s `Unreleased` content to a dated version heading
    and leaves a fresh empty `Unreleased` section;
-2. updates `project.version` in `pyproject.toml` to the same version;
+2. updates `project.version` in `pyproject.toml` and regenerates `uv.lock` so
+   the editable project package carries the same version;
 3. names any breaking Python-floor, CLI, file-format, or server/API change;
 4. passes the focused checks, full local gate, and required remote review/CI.
 

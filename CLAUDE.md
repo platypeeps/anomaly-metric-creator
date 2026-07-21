@@ -2280,8 +2280,9 @@ When a recurring issue is *mechanical* (a greppable shape), prefer turning it in
 - User-visible behavior, compatibility changes, supported Python floors, and
   release-process changes update `CHANGELOG.md` in the same PR or explicitly
   state why no changelog entry is warranted.
-- A release PR keeps `pyproject.toml`'s version, the promoted changelog
-  heading, tag name, GitHub Release, and `amc --version` output aligned.
+- A release PR keeps `pyproject.toml`, the editable project entry in `uv.lock`,
+  the promoted changelog heading, tag name, GitHub Release, and
+  `amc --version` output aligned.
 
 ### Reviewer-before-ready gate
 

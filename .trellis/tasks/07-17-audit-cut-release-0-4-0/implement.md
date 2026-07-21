@@ -19,7 +19,8 @@
    and the mechanical checklist contract/test in the same commit.
 5. **A-054:** promote Unreleased → `## 0.4.0 - <date>` (breaking line for
    the Python-floor raise first), re-stub Unreleased, bump
-   `pyproject.toml` to `0.4.0`.
+   `pyproject.toml` to `0.4.0`, then regenerate `uv.lock` so the locked
+   editable project carries the same version.
 6. Flip A-054/A-055/A-056/A-057 to `status: fixed` in
    `.trellis/audit/ledger.md` (same PR, per ledger rules).
 7. Open the PR as draft; walk the pre-PR checklist (including the brand-new

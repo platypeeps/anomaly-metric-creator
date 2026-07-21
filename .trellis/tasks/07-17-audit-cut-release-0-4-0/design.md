@@ -38,7 +38,8 @@ the content lands is the failure mode to avoid.
 - **A-055 (process on rails).** `docs/DEVELOPMENT_CYCLE.md` gains a
   "Release process" section: 0.x scheme (minor = features and/or breaking
   changes while 0.x, patch = fixes only), steps (promote Unreleased →
-  versioned heading with date, bump `pyproject.toml`, release PR, tag
+  versioned heading with date, bump `pyproject.toml`, regenerate `uv.lock`,
+  release PR, tag
   `vX.Y.Z` on the merge commit, GitHub Release from the changelog section,
   verify install from the tag). Add a 15th pre-PR checklist heading
   **"Changelog / version impact"** to every mechanically guarded lockstep
@@ -48,7 +49,8 @@ the content lands is the failure mode to avoid.
 - **A-054 (the cut).** Promote `## Unreleased` → `## 0.4.0 - <merge date>`
   with a `### Changed`/breaking line naming the Python-floor raise
   (3.11→3.14); leave a fresh empty `## Unreleased` stub. Bump
-  `version = "0.4.0"`. After merge: `git tag v0.4.0 <merge-sha>`, push tag,
+  `version = "0.4.0"` and regenerate `uv.lock` so its editable project entry
+  matches. After merge: `git tag v0.4.0 <merge-sha>`, push tag,
   `gh release create v0.4.0` with the changelog section as notes.
 
 ## Boundaries And Non-Goals
@@ -62,7 +64,7 @@ the content lands is the failure mode to avoid.
 
 ## Affected Files
 
-- `pyproject.toml` (version), `CHANGELOG.md`,
+- `pyproject.toml` + `uv.lock` (version), `CHANGELOG.md`,
   `src/anomaly_metric_creator/version.py`, `cli_args.py`, `server_mcp.py`,
   `src/anomaly_metric_creator/__init__.py`, `docs/DEVELOPMENT_CYCLE.md`,
   `README.md`, `CLAUDE.md`, `.github/PULL_REQUEST_TEMPLATE.md`, Copilot
