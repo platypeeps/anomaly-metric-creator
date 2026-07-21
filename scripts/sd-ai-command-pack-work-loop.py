@@ -891,8 +891,14 @@ def acquire_lock(
                 "terminal reconciliation lock is unreadable or malformed; "
                 "do not start a work loop until it is inspected"
             ) from error
+        if state_label == "stale":
+            raise WorkLoopError(
+                "repository has a stale terminal reconciliation lock; retry "
+                "reconcile-terminal with --recover-stale-lock after verifying "
+                "the prior reconciliation process is gone"
+            )
         raise WorkLoopError(
-            f"repository has a {state_label} terminal reconciliation lock; "
+            "repository has an active terminal reconciliation lock; "
             "retry after reconciliation finishes"
         )
     payload = lock_payload(state)
@@ -986,16 +992,21 @@ def acquire_terminal_lock(
             try:
                 current = read_json(lock_path)
                 validate_lock(current)
+                stale = lock_is_stale(current, stale_after=stale_after)
             except WorkLoopError as error:
                 raise WorkLoopError(
                     "terminal reconciliation lock is unreadable or malformed; "
                     "inspect it before retrying"
                 ) from error
-            stale = lock_is_stale(current, stale_after=stale_after)
-            if not stale or not recover_stale:
-                state_label = "stale" if stale else "active"
+            if not stale:
                 raise WorkLoopError(
-                    f"repository has a {state_label} terminal reconciliation lock"
+                    "repository has an active terminal reconciliation lock; "
+                    "retry after reconciliation finishes"
+                ) from None
+            if not recover_stale:
+                raise WorkLoopError(
+                    "repository has a stale terminal reconciliation lock; "
+                    "retry with --recover-stale-lock"
                 ) from None
             try:
                 lock_path.unlink()
@@ -1640,36 +1651,59 @@ def validated_evidence(
             )
         candidate["lastShippedSha"] = resolved_shipped
         candidate_shipped = resolved_shipped
-        if remembered_shipped is not None and candidate_shipped != remembered_shipped:
-            resolved_remembered = _resolved_commit(evidence_repo, remembered_shipped)
-            if resolved_remembered is None or not _is_ancestor(
-                evidence_repo, resolved_remembered, resolved_shipped
+        resolved_remembered_shipped = (
+            _resolved_commit(evidence_repo, remembered_shipped)
+            if remembered_shipped is not None
+            else None
+        )
+        if (
+            remembered_shipped is not None
+            and candidate_shipped != resolved_remembered_shipped
+        ):
+            if resolved_remembered_shipped is None or not _is_ancestor(
+                evidence_repo, resolved_remembered_shipped, resolved_shipped
             ):
                 raise WorkLoopError(
                     "lastShippedSha evidence must advance to a descendant commit"
                 )
-        evidence_tip = candidate_head
-        if branch_changed:
-            evidence_tip = (
-                _branch_commit(evidence_repo, remembered_branch)
-                if isinstance(remembered_branch, str)
-                else None
-            ) or remembered_head or candidate_head
-        resolved_tip = (
-            _resolved_commit(evidence_repo, evidence_tip) if evidence_tip is not None else None
+        unchanged_historical_shipped_evidence = (
+            resolved_remembered_shipped is not None
+            and candidate_shipped == resolved_remembered_shipped
+            and not branch_changed
+            and isinstance(remembered_branch, str)
+            and bool(remembered_branch.strip())
+            and isinstance(candidate_branch, str)
+            and bool(candidate_branch.strip())
+            and candidate_branch == remembered_branch
+            and candidate_branch == candidate.get("baseBranch")
         )
-        if resolved_tip is None:
-            tip_branch = remembered_branch if branch_changed else candidate_branch
-            if isinstance(tip_branch, str):
-                resolved_tip = _branch_commit(evidence_repo, tip_branch)
-        if resolved_tip is None:
-            raise WorkLoopError(
-                "lastShippedSha evidence requires a verifiable recorded head or branch"
+        if not unchanged_historical_shipped_evidence:
+            evidence_tip = candidate_head
+            if branch_changed:
+                evidence_tip = (
+                    _branch_commit(evidence_repo, remembered_branch)
+                    if isinstance(remembered_branch, str)
+                    else None
+                ) or remembered_head or candidate_head
+            resolved_tip = (
+                _resolved_commit(evidence_repo, evidence_tip)
+                if evidence_tip is not None
+                else None
             )
-        if not _is_ancestor(
-            evidence_repo, resolved_shipped, resolved_tip
-        ):
-            raise WorkLoopError("lastShippedSha evidence must belong to the shipped branch")
+            if resolved_tip is None:
+                tip_branch = remembered_branch if branch_changed else candidate_branch
+                if isinstance(tip_branch, str):
+                    resolved_tip = _branch_commit(evidence_repo, tip_branch)
+            if resolved_tip is None:
+                raise WorkLoopError(
+                    "lastShippedSha evidence requires a verifiable recorded head or branch"
+                )
+            if not _is_ancestor(
+                evidence_repo, resolved_shipped, resolved_tip
+            ):
+                raise WorkLoopError(
+                    "lastShippedSha evidence must belong to the shipped branch"
+                )
 
     return candidate
 
