@@ -16,7 +16,7 @@
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
-  "pr_url": null,
+  "pr_url": "https://github.com/platypeeps/anomaly-metric-creator/pull/291",
   "subtasks": [],
   "children": [],
   "parent": "07-02-legacy-monolith-decomposition",
