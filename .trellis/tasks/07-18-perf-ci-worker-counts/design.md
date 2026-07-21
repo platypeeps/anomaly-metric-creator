@@ -93,7 +93,8 @@ billed minutes — is the optimization target.
 ## Validation
 
 - Part A: a full-matrix run showing the light lane >= 100s below its 364s
-  baseline, all 1555 tests passing.
+  baseline, with all 1597 collected light tests passing or skipping as
+  expected.
 - Follow-up task: a trial run with an added diagnostic step capturing `nproc`,
   `free -m`, and `df -h` before and after the heavy invocation. Record the
   numbers in the PR whether or not the change is adopted — a failed trial
