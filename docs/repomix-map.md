@@ -1181,6 +1181,7 @@ docs/
   application-flow.md
   DEVELOPMENT_CYCLE.md
   REVIEW_PATTERNS.md
+  review-learnings.md
   SD_AI_COMMAND_PACK.md
   topology.md
 scripts/
