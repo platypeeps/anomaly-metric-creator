@@ -102,8 +102,7 @@ runner headroom while still exercising parallel ordering. Sources:
 ### 2. Signatures
 
 - Heavy lane: `pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=`.
-- Light lane: `pytest -n 4 --dist loadfile -m "not heavy"
-  --cov=src/anomaly_metric_creator --cov-report=`.
+- Light lane: `pytest -n 4 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=`.
   Sources: `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`.
 
 ### 3. Contracts
