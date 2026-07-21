@@ -3,7 +3,7 @@
   "name": "fix-ci-classifier-script-paths",
   "title": "Classify non-application script paths out of the full CI matrix",
   "description": "scripts/update_repomix changed on PR #249 and triggered the 16.6-min full matrix; it is not in is_review_tooling_path.",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",

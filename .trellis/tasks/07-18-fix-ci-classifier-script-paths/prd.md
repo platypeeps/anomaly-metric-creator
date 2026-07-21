@@ -23,6 +23,16 @@ code".
 - `scripts/classify-ci-changes.sh:151-154` — anything not matching
   `is_lightweight_path` sets `app_required=true`.
 
+The implementation-day re-enumeration found 25 application-required paths,
+not the planning snapshot's 21. Seven repo-only scripts have no behavioral
+test that the lightweight lane would skip and are safe to classify there.
+Three other command-pack scripts remain application-required:
+`scripts/sd_ai_command_pack_lib.py` and `scripts/sync-agent-skills.py` have
+direct consumers/tests, while `scripts/sd-ai-command-pack-review-full-check.sh`
+is conservatively retained until the always-run shell-syntax guard covers it.
+All 15 `tools/` paths remain application-required; this includes the untested
+benchmark harness because a single directory-level rule is easier to audit.
+
 ## Requirements
 
 - Add a classification for repo tooling that cannot affect application
@@ -50,17 +60,17 @@ code".
 
 ## Acceptance criteria
 
-- [ ] A diff touching only `scripts/update_repomix` classifies as
+- [x] A diff touching only `scripts/update_repomix` classifies as
       `lightweight_only=true` / `app_required=false`.
-- [ ] Every unclassified path under `scripts/`, `tools/`, and `docs/` has
+- [x] Every unclassified path under `scripts/`, `tools/`, and `docs/` has
       been enumerated and explicitly decided; the PR lists them.
-- [ ] A diff touching `src/anomaly_metric_creator/*` still classifies as
+- [x] A diff touching `src/anomaly_metric_creator/*` still classifies as
       `app_required=true`.
-- [ ] A diff touching `pyproject.toml` or any workflow still sets
+- [x] A diff touching `pyproject.toml` or any workflow still sets
       `dependency_changed` / `workflow_changed` and forces the full matrix.
-- [ ] `tests/test_ci_change_classifier.py` covers each new path plus the
+- [x] `tests/test_ci_change_classifier.py` covers each new path plus the
       negative cases above.
-- [ ] `CLAUDE.md`'s CI-cadence section describes the new classification.
+- [x] `CLAUDE.md`'s CI-cadence section describes the new classification.
 
 ## Non-goals
 

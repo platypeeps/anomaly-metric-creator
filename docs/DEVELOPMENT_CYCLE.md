@@ -107,7 +107,7 @@ application lane rather than depending on local hooks.
 
 | Lane | Runs When | Purpose |
 | --- | --- | --- |
-| `lightweight readiness` | Docs, Trellis specs/tasks/audit artifacts, agent prompts/skills, Prism rules, command-pack metadata, or review-tooling scripts only | Catch whitespace, shell syntax, Python syntax, workflow pip, and Trellis artifact hygiene issues under uv-managed Python 3.14 without installing the full dev environment. |
+| `lightweight readiness` | Docs, Trellis specs/tasks/audit artifacts, agent prompts/skills, Prism rules, command-pack metadata, review-tooling scripts, or explicitly enumerated repo-only automation with no skipped behavioral tests | Catch whitespace, shell syntax, Python syntax, workflow pip, and Trellis artifact hygiene issues under uv-managed Python 3.14 without installing the full dev environment. |
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
 | `test heavy (py3.14)` + `test light (py3.14)` + `coverage (py3.14)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, auto-merge is armed (the `auto_merge_enabled` event and every later push or label event on the armed PR), workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the heavy and non-heavy pytest partitions concurrently, then combine their raw data and enforce the 85% coverage gate. The light job also owns the console-script, ruff, and mypy gates. |
 

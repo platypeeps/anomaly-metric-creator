@@ -93,6 +93,17 @@ is_review_tooling_path() {
   esac
 }
 
+is_repo_tooling_path() {
+  case "$1" in
+    scripts/sd-ai-command-pack-record-session.py|scripts/sd-ai-command-pack-review-learnings.py|scripts/sd-ai-command-pack-status.py|scripts/sd-ai-command-pack-update-spec-kb.py|scripts/sd-ai-command-pack-work-loop.py|scripts/sd_ai_command_pack_fleet_lib.py|scripts/update_repomix)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 is_lightweight_path() {
   local path="$1"
 
@@ -109,6 +120,12 @@ is_lightweight_path() {
   esac
 
   if is_review_tooling_path "$path"; then
+    return 0
+  fi
+
+  # Repo-only automation is lightweight only when the application test lanes
+  # do not cover it. Keep tested scripts and all tools/ paths app-required.
+  if is_repo_tooling_path "$path"; then
     return 0
   fi
 

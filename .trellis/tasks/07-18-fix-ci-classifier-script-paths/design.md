@@ -4,30 +4,41 @@
 
 `scripts/update_repomix` triggered the 16.6-minute full matrix on PR #249
 because the classifier treats anything outside its lightweight allowlist as
-application-required. The enumeration below shows the class is 21 paths —
-but they split into two groups with **different correct answers**, and
-blanket-classifying them would open a real coverage gap.
+application-required. The implementation-day enumeration shows the class is
+25 paths split into three groups with **different correct answers**; blanket
+classification would open a real coverage gap.
 
 ## Enumeration
 
-Every tracked path under `scripts/`, `tools/`, and `docs/` run through
-`scripts/classify-ci-changes.sh`. 21 come back `app_required` (`docs/` is
-already fully classified — all 6 files are lightweight):
+Every tracked path under `scripts/`, `tools/`, and `docs/` ran through
+`scripts/classify-ci-changes.sh`. Twenty-five came back `app_required`
+(`docs/` was already fully classified):
 
-**Group A — repo/pack tooling that cannot affect application behavior (8):**
+**Group A — repo/pack tooling with no skipped behavioral test (7):**
 
 ```
 scripts/sd-ai-command-pack-record-session.py
 scripts/sd-ai-command-pack-review-learnings.py
-scripts/sd-ai-command-pack-shell-lib.sh
-scripts/sd-ai-command-pack-toolchain.sh
+scripts/sd-ai-command-pack-status.py
 scripts/sd-ai-command-pack-update-spec-kb.py
-scripts/sd_ai_command_pack_lib.py
-scripts/sync-agent-skills.py
+scripts/sd-ai-command-pack-work-loop.py
+scripts/sd_ai_command_pack_fleet_lib.py
 scripts/update_repomix
 ```
 
-**Group B — `tools/` lint scripts, each covered by a test (13):**
+**Group B — command-pack scripts retained as application-required (3):**
+
+```
+scripts/sd-ai-command-pack-review-full-check.sh
+scripts/sd_ai_command_pack_lib.py
+scripts/sync-agent-skills.py
+```
+
+The shared library and sync command have behavioral coverage. The review
+wrapper is conservatively retained until the always-run shell syntax guard
+covers it.
+
+**Group C — all `tools/` paths stay application-required (15):**
 
 ```
 tools/benchmark_combine.py            tools/check_python_syntax.py
@@ -37,13 +48,14 @@ tools/check_approval_duplicate.py     tools/check_trace_payload_antipatterns.py
 tools/check_branch_name.py            tools/check_trellis_placeholders.py
 tools/check_ci_review_contract.py     tools/check_workflow_pip.py
 tools/check_copilot_instruction_contract.py
+tools/check_mypy_gate.py              tools/check_test_resource_cost.py
 ```
 
 ## Proposal
 
-**Classify Group A lightweight. Leave Group B alone.**
+**Classify Group A lightweight. Leave Groups B and C alone.**
 
-Group B is the trap. Each `tools/check_*.py` has a corresponding
+Group C is the trap. Each `tools/check_*.py` has a corresponding
 `tests/test_*_lint.py`, and the lightweight lane does not run tests — it
 runs a fixed set of guards. Classifying `tools/check_role_name_leaks.py` as
 lightweight would skip `tests/test_role_name_leaks_lint.py` on the very PR
@@ -51,7 +63,7 @@ that changed it. Today those paths correctly land in `app_required`, and the
 quick lane runs 9 of the lint test files (`ci.yml:260-269`). That is the
 right behavior; do not "fix" it.
 
-`tools/benchmark_combine.py` is the one Group B member with no test — it is
+`tools/benchmark_combine.py` is the one Group C member with no test — it is
 a benchmark harness, not a check. It could move to Group A, but the gain is
 one rarely-edited file against the cost of a special case in an otherwise
 clean "all of `tools/` is app-required" rule. **Recommend leaving it**, and
@@ -71,11 +83,10 @@ review/pack tooling that also sets `review_tooling_changed` — and
 from `is_lightweight_path` (`classify-ci-changes.sh:96-116`) keeps both
 names honest.
 
-**Verify Group A really has no test coverage** before classifying. At least
-one member warrants a check: `scripts/sd_ai_command_pack_lib.py` is a shared
-library, and `tests/test_sd_ai_command_pack_full_check_script.py` exists.
-If any Group A member is exercised by a test, it moves to the same treatment
-as Group B.
+The live verification moved `scripts/sd_ai_command_pack_lib.py` and
+`scripts/sync-agent-skills.py` out of Group A because their behavior is covered
+by tests. Textual contract checks that merely require a script name do not
+exercise that script's behavior and therefore do not disqualify Group A.
 
 ## Boundaries And Non-Goals
 
