@@ -90,7 +90,7 @@ count on smaller machines:
 
 ```bash
 .venv/bin/pytest -n 0 --dist loadfile -m heavy
-.venv/bin/pytest -n 4 --dist loadfile -m "not heavy"
+.venv/bin/pytest -n 2 --dist loadfile -m "not heavy"
 ```
 
 ## GitHub CI Cadence
