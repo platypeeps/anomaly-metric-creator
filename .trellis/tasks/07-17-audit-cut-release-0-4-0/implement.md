@@ -2,21 +2,21 @@
 
 ## Execution Order
 
-1. Branch from `main` (e.g. `release/0-4-0`). Confirm decomposition step 8
-   (`cli_args` extraction) has not started; if it has, coordinate rebase
-   order per design.md.
-2. **A-057:** add the `_dist_version()` helper (importlib.metadata +
-   `PackageNotFoundError` fallback `"0+unknown"`); wire
-   `--version` (argparse `action="version"`) into the common group in
-   `parse_args`; add `__version__` to `anomaly_metric_creator/__init__.py`.
-   Tests: flag presence (full-token match) in `test_cli_surface.py`;
-   subprocess `amc --version` smoke in `test_cli.py`.
+1. Branch from current `main`; verify the completed decomposition ownership
+   map and refresh the older plan against `cli_args.py` and the existing MCP
+   metadata lookup.
+2. **A-057:** add the shared package-version helper (`importlib.metadata` +
+   caller-owned `PackageNotFoundError` fallback); reuse it from MCP; wire
+   `--version` (argparse `action="version"`) into `cli_args.py`'s common
+   group; add `__version__` to `anomaly_metric_creator/__init__.py`.
+   Tests: exact flag token in both help tiers, subprocess version action,
+   package facade value, fallback behavior, and preserved MCP fallback.
 3. **A-056:** backfill `### Security` (#213) and `### Fixed` (#134, #128)
    entries into the Unreleased section.
 4. **A-055:** write the Release process section in
    `docs/DEVELOPMENT_CYCLE.md`; add the "Changelog / version impact"
-   heading to CLAUDE.md checklist + PR template + Trellis spec checklist
-   source in the same commit.
+   heading to Trellis specs, CLAUDE.md, PR template, Copilot instructions,
+   and the mechanical checklist contract/test in the same commit.
 5. **A-054:** promote Unreleased → `## 0.4.0 - <date>` (breaking line for
    the Python-floor raise first), re-stub Unreleased, bump
    `pyproject.toml` to `0.4.0`.
@@ -25,7 +25,7 @@
 7. Open the PR as draft; walk the pre-PR checklist (including the brand-new
    heading — it applies to its own PR); mark ready; merge via the normal
    auto-merge flow.
-8. **Post-merge, with user go-ahead:** `git tag v0.4.0 <merge-sha>`,
+8. **Post-merge, with specific user go-ahead:** `git tag v0.4.0 <merge-sha>`,
    `git push origin v0.4.0`, `gh release create v0.4.0 --title "0.4.0"
    --notes-from-tag` (or paste the changelog section). Then the fresh-venv
    tag-install smoke from design.md Validation.

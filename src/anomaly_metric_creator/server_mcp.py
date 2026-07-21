@@ -29,7 +29,6 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from importlib import metadata as _importlib_metadata
 from typing import Any, Callable
 
 from .server_ops import (
@@ -48,6 +47,7 @@ from .server_ops import (
     resource_snapshot,
 )
 from .server_traces import CommandTrace
+from .version import package_version
 
 # Latest protocol revision this facade implements; requested versions we
 # recognize are echoed back per the MCP spec, anything else falls back to
@@ -97,10 +97,7 @@ class McpToolError(ValueError):
 
 
 def _server_version() -> str:
-    try:
-        return _importlib_metadata.version("anomaly-metric-creator")
-    except _importlib_metadata.PackageNotFoundError:
-        return "unknown"
+    return package_version(fallback="unknown")
 
 
 def _as_utc(dt: _dt.datetime) -> _dt.datetime:

@@ -24,7 +24,7 @@ process on rails so version drift cannot recur.
 ## Acceptance criteria
 
 - [ ] v0.4.0 tag + Release exist; installing the tag yields working console scripts.
-- [ ] Checklist heading exists in all three lockstep surfaces.
-- [ ] CHANGELOG carries Fixed/Security for the three named PRs.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] Checklist heading exists in all three lockstep surfaces.
+- [x] CHANGELOG carries Fixed/Security for the three named PRs.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).

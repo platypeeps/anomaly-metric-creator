@@ -23,6 +23,7 @@ from .cli_subcommands import (
     _main_trace_bundle_subcommand as _main_trace_bundle_subcommand,
     _main_validate_subcommand as _main_validate_subcommand,
 )
+from .version import package_version
 
 
 _DEFAULT_RUNTIME_KEY = "__default__"
@@ -323,6 +324,13 @@ def parse_args(argv=None, *, runtime_key: str = _DEFAULT_RUNTIME_KEY):
     g_adv = p.add_argument_group(
         "advanced",
         "Hidden from -h; shown here via --help-all.",
+    )
+
+    g_common.add_argument(
+        "--version",
+        action="version",
+        version=package_version(),
+        help="Print the installed anomaly-metric-creator version and exit.",
     )
 
     g_art.add_argument(

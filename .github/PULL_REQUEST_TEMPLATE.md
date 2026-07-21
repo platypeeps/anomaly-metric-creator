@@ -37,3 +37,4 @@ the box line with "N/A — _reason_".
 - [ ] Cross-platform test guards
 - [ ] Default-behavior changes
 - [ ] CI / workflow / dependency hygiene
+- [ ] Changelog / version impact

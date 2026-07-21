@@ -6,8 +6,11 @@ Verified state: `pyproject.toml:7` says `version = "0.3.0"`; tags are
 `v0.2.0` / `v0.3.0` only; `CHANGELOG.md` already carries a rich
 `## Unreleased` section (server mode, MCP, eval mode, trace-bundle,
 `--start-time`, SECURITY.md); no `--version` flag or `__version__` exists
-anywhere in `src/`. `docs/DEVELOPMENT_CYCLE.md` exists (not repo root).
-172 commits including the requires-python 3.11→3.14 break are unreleased.
+on the package/CLI surface. `server_mcp.py` has a private distribution-version
+lookup for the MCP handshake, and `parse_args` now belongs to `cli_args.py`
+after the completed legacy decomposition. `docs/DEVELOPMENT_CYCLE.md` exists
+(not repo root). The audit's unreleased-history count is historical; live
+release content is derived from the current changelog and merged tree.
 
 ## Proposal
 
@@ -15,17 +18,18 @@ One release PR carries A-057 + A-056 + A-055 + the A-054 version/changelog
 promotion, so the tag placed after merge contains everything. Tagging before
 the content lands is the failure mode to avoid.
 
-- **A-057 (`--version` / `__version__`).** Add
+- **A-057 (`--version` / `__version__`).** Add a small `version.py` owner for
+  the `importlib.metadata` lookup, reuse it from the existing MCP version
+  response, and add
   `p.add_argument("--version", action="version", version=...)` to
   `parse_args` in the common group (renders under `-h`; exits before
   `_reconcile_cli_surface`, so no reconciliation interaction). Version
-  string from `importlib.metadata.version("anomaly-metric-creator")`,
-  wrapped in a small helper that catches `PackageNotFoundError` and falls
-  back to `"0+unknown"` — the `python anomaly-metric-creator.py` shim path
-  runs uninstalled. Expose `__version__` in
-  `src/anomaly_metric_creator/__init__.py` via the same helper. Extend
-  `tests/test_cli_surface.py` (flag presence with full-token matching, not
-  bare `in`) and add an installed-path smoke in `tests/test_cli.py`.
+  string comes from `importlib.metadata.version("anomaly-metric-creator")`;
+  the shared helper catches `PackageNotFoundError` and accepts a caller-owned
+  fallback so package/CLI use `"0+unknown"` while MCP preserves its historic
+  `"unknown"`. Expose `__version__` in
+  `src/anomaly_metric_creator/__init__.py` via the same helper. Extend the CLI
+  help/subprocess coverage and add focused helper/facade identity tests.
 - **A-056 (backfill).** Add to the Unreleased section before promotion:
   `### Security` — #213 response-header redaction flipped to
   mask-unless-known-safe; `### Fixed` — #134 combined-artifact component
@@ -37,11 +41,10 @@ the content lands is the failure mode to avoid.
   versioned heading with date, bump `pyproject.toml`, release PR, tag
   `vX.Y.Z` on the merge commit, GitHub Release from the changelog section,
   verify install from the tag). Add a 15th pre-PR checklist heading
-  **"Changelog / version impact"** to all three lockstep surfaces in one
-  diff: CLAUDE.md checklist, `.github/PULL_REQUEST_TEMPLATE.md`, and the
-  Trellis spec source (`.trellis/spec/amc/backend/` checklist file —
-  `documentation-review.md`/`testing-quality.md`, whichever carries the
-  headings; CLAUDE.md names them as the canonical pair).
+  **"Changelog / version impact"** to every mechanically guarded lockstep
+  surface in one diff: the Trellis specs, CLAUDE.md, PR template, Copilot
+  reviewer instructions, and `check_copilot_instruction_contract.py` plus its
+  acceptance-test fixture.
 - **A-054 (the cut).** Promote `## Unreleased` → `## 0.4.0 - <merge date>`
   with a `### Changed`/breaking line naming the Python-floor raise
   (3.11→3.14); leave a fresh empty `## Unreleased` stub. Bump
@@ -60,19 +63,18 @@ the content lands is the failure mode to avoid.
 ## Affected Files
 
 - `pyproject.toml` (version), `CHANGELOG.md`,
-  `src/anomaly_metric_creator/legacy.py` (parse_args),
+  `src/anomaly_metric_creator/version.py`, `cli_args.py`, `server_mcp.py`,
   `src/anomaly_metric_creator/__init__.py`, `docs/DEVELOPMENT_CYCLE.md`,
-  `CLAUDE.md`, `.github/PULL_REQUEST_TEMPLATE.md`,
-  `.trellis/spec/amc/backend/` checklist source,
-  `tests/test_cli_surface.py`, `tests/test_cli.py`,
+  `README.md`, `CLAUDE.md`, `.github/PULL_REQUEST_TEMPLATE.md`, Copilot
+  reviewer instructions, `.trellis/spec/amc/backend/` checklist sources,
+  the checklist contract guard and tests, CLI/version tests,
   `.trellis/audit/ledger.md` (flip A-054/A-055/A-056/A-057 to fixed).
 
 ## Risks And Edge Cases
 
-- Coordination with decomposition step 8: `parse_args` is slated to move to
-  `cli_args.py`. Land this release PR **before** step 8 starts, or rebase
-  the step-8 move over it (the flag is one added action — trivial either
-  way, but say so in whichever PR goes second).
+- The decomposition is complete: add the flag to `cli_args.py`, not the
+  compatibility facade in `legacy.py`, and keep the package/MCP version lookup
+  single-sourced.
 - The `--version` helper must not import-time-fail when
   `importlib.metadata` misses the dist (uninstalled checkout, zipapp).
 - Checklist-heading edits must keep the three surfaces byte-aligned —

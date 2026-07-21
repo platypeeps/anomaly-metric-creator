@@ -197,6 +197,25 @@ Turning it into a real gate would mean passing the PR body plus an `--actor`
 bot-skip (on a pack version that ships it) and running the check in the app
 lanes; that is deliberately not wired today.
 
+## Release Process
+
+AMC uses semantic versions while it remains in the `0.x` series: a minor
+release may contain features or breaking changes, while a patch release is for
+backward-compatible fixes. Every release starts with a PR that:
+
+1. promotes `CHANGELOG.md`'s `Unreleased` content to a dated version heading
+   and leaves a fresh empty `Unreleased` section;
+2. updates `project.version` in `pyproject.toml` to the same version;
+3. names any breaking Python-floor, CLI, file-format, or server/API change;
+4. passes the focused checks, full local gate, and required remote review/CI.
+
+After that PR merges, create an annotated `vX.Y.Z` tag on the exact merge
+commit, push the tag, and create the matching GitHub Release from the promoted
+changelog section. Verify the release itself by installing from that tag into
+a fresh virtual environment and checking both console scripts plus
+`amc --version`. Tagging and GitHub Release creation are outward-facing steps
+and require explicit maintainer approval for that release.
+
 ## Review Economy Rules
 
 - Keep branch protection on `CI Result`, not lane-specific job names.

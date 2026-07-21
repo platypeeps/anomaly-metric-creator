@@ -694,13 +694,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-02-legacy-monolith-decomposition/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-02-otel-exporter-target-policy/
       check.jsonl
       design.md
@@ -848,13 +841,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-21-decomp-legacy-dispatch-root/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -946,6 +932,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         07-02-decomp-timeutil-otlp/
           check.jsonl
           implement.jsonl
+          prd.md
+          task.json
+        07-02-legacy-monolith-decomposition/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
           prd.md
           task.json
         07-02-mcp-analysis-tools/
@@ -1175,6 +1168,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-21-decomp-legacy-dispatch-root/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         07-21-decomp-scenario-catalog-recovery/
           check.jsonl
           design.md
@@ -1276,6 +1276,7 @@ src/
     validate_impl.py
     validate_topology_instances.py
     validate_topology.py
+    version.py
 tests/
   conftest.py
   test_add_session_journal_content.py
@@ -1344,6 +1345,7 @@ tests/
   test_trace_payload_antipatterns_lint.py
   test_trellis_placeholder_lint.py
   test_validate_output.py
+  test_version.py
   test_workflow_pip_lint.py
 tools/
   benchmark_combine.py
