@@ -72,7 +72,7 @@ def _run_component(amc, tmp_path, drop_rows: set[int], anomaly_specs: list[dict]
         ts_strings=ts_strings,
         ctx=ctx,
     )
-    lines = (out / "comp_drop.csv").read_text().splitlines()
+    lines = (out / "comp_drop.csv").read_text().splitlines()  # resource-lint: allow
     return ctx, lines
 
 

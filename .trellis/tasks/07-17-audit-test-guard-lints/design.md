@@ -11,26 +11,26 @@ deterministic pacing test.
 
 ## Proposal
 
-- **A-058 — `tools/check_test_resource_cost.py`:** flags, in `tests/`
-  only: `.read_bytes()`, `.readlines()`, `.read_text().splitlines()`
-  (line-based regex on source lines; anchored patterns, not bare
-  substrings). Escape hatch: trailing `# resource-lint: allow` via the
-  role-name lint's exact `rstrip().endswith(...)` semantics. Exit
-  contract 0/1/2 with wrapped IO (`path.exists()` before read → 2 on
-  structural failure). Acceptance tests file
-  (a new `test_test_resource_cost_lint.py`) mirroring the sibling lint
-  tests. Triage pass: fix or `allow`-annotate the two known in-tree
-  sites (test_instances_per_component.py:144, test_combine.py:384) in
-  the same PR. Wire: `.pre-commit-config.yaml` (tests/ file filter) —
-  CI mirroring rides `07-17-audit-ci-cadence-closures` A-060's guards
-  step; if that lands first add this lint there too, else leave a note
-  in its PRD (avoid cross-PR collision on the same workflow lines).
+- **A-058 — `tools/check_test_resource_cost.py`:** parse Python ASTs and flag,
+  in `tests/` only, executable `.read_bytes()`, `.readlines()`, and
+  `.read_text().splitlines()` calls. AST matching prevents examples in strings
+  or comments from tripping the guard and closes multiline-call bypasses.
+  Escape hatch: trailing `# resource-lint: allow` via the role-name lint's
+  exact `rstrip().endswith(...)` semantics on the call's source span. Accept
+  explicit Python files or directories (recursive `*.py` discovery), aggregate
+  violations, and use the 0/1/2 contract with missing/unreadable/syntax-invalid
+  input as structural exit 2. Current-main triage found 46 calls across nine
+  files: rewrite the two unsafe patterns called out by the audit
+  (`test_instances.py` byte equality via `sha256_path` and
+  `test_combine.py` row counting via streaming iteration); mark intentional
+  small control/log/schema reads explicitly. Wire the guard into
+  `.pre-commit-config.yaml` and the already-shipped always-run CI changes job,
+  then pin both anchors in `check_ci_review_contract.py` with mutation tests.
 - **A-059 — README scenario-table sync test:** parse the
-  `## Scenario catalog` markdown table (slug/severity/days/description
-  columns per its header); parametrize over `amc.SCENARIOS`; assert each
-  scenario has a row whose severity + `days_required` match; assert
-  no table row lacks a registry entry (bidirectional). Non-empty guards
-  on both sides (vacuous-pass rule).
+  `### Scenario catalog` markdown table by named headers; normalize backticks
+  and bold severity, and compare slug, signal, days, and component sets against
+  `amc.SCENARIOS`. Assert registry and table slugs are bidirectionally equal and
+  both sides are non-empty (vacuous-pass rule).
 - **A-023 — heavy-registry resolution:** a test resolving every name in
   `_HEAVY_SESSION_FIXTURES` through pytest's fixture manager
   (`request.session._fixturemanager._arg2fixturedefs`) — a renamed
@@ -48,23 +48,23 @@ deterministic pacing test.
 
 ## Boundaries And Non-Goals
 
-- No new CI lanes (ci-cadence owns workflow edits); no debug-UI JS
+- No new CI lanes (the existing changes job owns the sub-second guard); no debug-UI JS
   *execution* harness (syntax check only); no lint for non-test trees.
 
 ## Affected Files
 
 New `tools/check_test_resource_cost.py` + its test file;
-`tests/conftest.py`-adjacent new tests (scenario sync, heavy registry);
-`tests/test_server.py` or a focused file (JS check);
-`tests/test_otel_gauges.py` (pacing rewrite); `.pre-commit-config.yaml`;
-two triaged test sites; CLAUDE.md lints section;
+focused scenario sync and debug-UI syntax test files;
+`tests/test_heavy_marker.py`; `tests/test_otel_gauges.py` (pacing rewrite);
+`.pre-commit-config.yaml`; `.github/workflows/ci.yml`; CI contract guard/tests;
+triaged test sites; CLAUDE.md and the testing-quality spec;
 `.trellis/audit/ledger.md` flips (A-058/059/023/024/025).
 
 ## Risks And Edge Cases
 
-- The resource-cost regexes must not flag `f.read(1 << 20)` chunked
-  loops (the sanctioned pattern) — patterns target the three exact
-  method spellings; acceptance tests pin both directions.
+- The AST matcher must not flag `f.read(1 << 20)` chunked loops, examples in
+  strings/comments, or standalone `read_text()` calls; acceptance tests pin
+  those directions plus multiline calls and exemption placement.
 - README table parsing must tolerate cosmetic column spacing (split on
   `|`, strip) but stay anchored on the section heading — a moved
   heading should fail loudly, not skip silently (assert the section is
@@ -79,5 +79,7 @@ two triaged test sites; CLAUDE.md lints section;
   `allow`-marked → 0; missing path → 2.
 - Sync-test mutation: comment one SCENARIOS entry's README row →
   failure naming the slug.
-- `pytest tests/test_test_resource_cost_lint.py tests/test_heavy_marker.py
-  tests/test_otel_gauges.py -n 0` + full suite + pre-commit.
+- `pytest tests/test_test_resource_cost_lint.py
+  tests/test_readme_scenario_catalog_sync.py tests/test_debug_ui_javascript.py
+  tests/test_heavy_marker.py tests/test_otel_gauges.py -n 0` + CI contract
+  tests + full suite + pre-commit.

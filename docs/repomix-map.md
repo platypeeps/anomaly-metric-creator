@@ -1272,6 +1272,7 @@ tests/
   test_combine.py
   test_copilot_instruction_contract.py
   test_correctness.py
+  test_debug_ui_javascript.py
   test_determinism.py
   test_drop_rate_manifest.py
   test_emit_selection_hygiene.py
@@ -1291,6 +1292,7 @@ tests/
   test_phase7_partial_outage.py
   test_pr_body_scope_lint.py
   test_python_syntax_lint.py
+  test_readme_scenario_catalog.py
   test_redact_sensitive_headers.py
   test_registry.py
   test_reporting_artifacts.py
@@ -1309,6 +1311,7 @@ tests/
   test_server.py
   test_shapes.py
   test_sync_agent_skills.py
+  test_test_resource_cost_lint.py
   test_topology_fanout.py
   test_topology_finite.py
   test_topology_llm.py
@@ -1333,6 +1336,7 @@ tools/
   check_python_syntax.py
   check_role_name_leaks.py
   check_ruff_lockstep.py
+  check_test_resource_cost.py
   check_trace_payload_antipatterns.py
   check_trellis_placeholders.py
   check_workflow_pip.py

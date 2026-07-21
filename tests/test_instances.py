@@ -13,6 +13,8 @@ import dataclasses
 import numpy as np
 import pytest
 
+from conftest import sha256_path
+
 
 # ---------------------------------------------------------------------------
 # Instance dataclass
@@ -141,8 +143,9 @@ def test_generate_component_default_instances_matches_explicit_anonymous(amc, tm
         instances=[amc.Instance()],
     )
 
-    assert (out_default / "authservice.csv").read_bytes() == \
-        (out_explicit / "authservice.csv").read_bytes()
+    assert sha256_path(out_default / "authservice.csv") == sha256_path(
+        out_explicit / "authservice.csv"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -2,22 +2,24 @@
 
 ## Execution Order
 
-1. Branch from `main`. A-058: write the lint (0/1/2 contract, allow
-   marker, anchored patterns) + acceptance tests; run against `tests/`
-   and triage the two known sites (chunked-stream rewrite preferred over
-   `allow`); wire pre-commit.
-2. A-059: scenario-table sync test (bidirectional + non-empty guards);
+1. Branch from `main`. A-058: write the AST-backed lint (recursive file/directory
+   inputs, aggregated 0/1/2 contract, trailing allow marker) + acceptance tests;
+   run it against `tests/`, rewrite the two audit-identified unsafe reads, and
+   explicitly exempt intentional small-artifact reads.
+2. Wire A-058 to pre-commit and the always-run CI changes job. Extend the CI
+   contract guard and mutation suite so either anchor cannot drift.
+3. A-059: scenario-table sync test (bidirectional + non-empty guards) covering
+   slug, signal/severity, days, and component sets;
    mutation-check by hiding one row locally.
-3. A-023: heavy-registry resolution test via the fixture manager;
+4. A-023: heavy-registry resolution test via the fixture manager;
    mutation-check with a misspelled name.
-4. A-024: JS extraction + `node --check` test with node-absent skipif.
-5. A-025: pacing rewrite to monkeypatched sleep capture; keep one
+5. A-024: focused JS extraction + `node --check` test with node-absent skipif.
+6. A-025: pacing rewrite to monkeypatched sleep capture; keep real
    real-transport assertion.
-6. CLAUDE.md lints section gains the new lint (name, marker, exit
-   codes); note in `07-17-audit-ci-cadence-closures`' PRD if its guards
-   step should pick this lint up (whichever lands second wires it).
-7. Flip A-058/A-059/A-023/A-024/A-025 → `fixed` (same PR).
-8. Draft PR → checklist (test-hygiene + resource-cost headings) → ready
+7. CLAUDE.md and the testing-quality spec gain the enforced guard contract.
+8. Flip A-058/A-059/A-023/A-024/A-025 → `fixed` (same PR).
+9. Refresh generated repository/KB knowledge, draft PR, run the full checklist
+   (test hygiene + resource cost + CI/workflow), then ready
    → merge.
 
 ## Validation Plan
@@ -25,7 +27,10 @@
 ```bash
 .venv/bin/python tools/check_test_resource_cost.py tests/   # 0 after triage
 .venv/bin/pytest tests/test_test_resource_cost_lint.py -n 0
-.venv/bin/pytest tests/test_heavy_marker.py tests/test_otel_gauges.py -n 0
+.venv/bin/pytest tests/test_readme_scenario_catalog_sync.py \
+  tests/test_debug_ui_javascript.py tests/test_heavy_marker.py \
+  tests/test_otel_gauges.py -n 0
+.venv/bin/pytest tests/test_ci_review_contract.py -n 0
 .venv/bin/pytest && .venv/bin/pre-commit run --all-files
 ```
 

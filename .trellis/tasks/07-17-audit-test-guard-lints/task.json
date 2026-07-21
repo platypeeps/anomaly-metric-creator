@@ -2,8 +2,8 @@
   "id": "audit-test-guard-lints",
   "name": "audit-test-guard-lints",
   "title": "Build the missing test-guard lints and sync checks",
-  "description": "",
-  "status": "planning",
+  "description": "Close audit findings A-058, A-059, A-023, A-024, and A-025 with an AST-backed test-resource lint, README scenario sync, heavy-fixture resolution, debug-UI JavaScript syntax, and deterministic pacing guards wired through pre-commit and CI.",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",
@@ -12,7 +12,7 @@
   "assignee": "sdelmas",
   "createdAt": "2026-07-17",
   "completedAt": null,
-  "branch": null,
+  "branch": "codex/test-guard-lints",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Planning reconverged on 2026-07-20 after the CI-cadence children merged: the resource lint must be wired into the existing always-run changes job and pinned by the CI contract guard. Current-main triage found 46 exact call sites across nine test files; two unsafe large-file reads will be rewritten and intentional small-artifact reads explicitly exempted.",
   "meta": {}
 }

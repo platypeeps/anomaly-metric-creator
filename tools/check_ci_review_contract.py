@@ -223,6 +223,10 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "python tools/check_amc_module_load.py",
         ),
         (
+            "test-resource-cost CI guard",
+            "python tools/check_test_resource_cost.py",
+        ),
+        (
             "role-name CI guard",
             "python tools/check_role_name_leaks.py",
         ),
@@ -713,6 +717,11 @@ def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
 def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("CI review contract hook", "id: ci-review-contract"),
+        ("test-resource-cost hook", "id: test-resource-cost"),
+        (
+            "test-resource-cost hook entry",
+            "python tools/check_test_resource_cost.py",
+        ),
         ("Copilot instruction contract hook", "id: copilot-instruction-contract"),
         ("Copilot instruction contract entry", "tools/check_copilot_instruction_contract.py"),
         ("PR body scope guard trigger", "sd-ai-command-pack-pr-body-scope"),

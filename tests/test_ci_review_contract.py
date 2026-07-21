@@ -47,6 +47,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: |
                   git ls-files src scripts .agents .trellis
                   uv run --python 3.14 --no-project python tools/check_amc_module_load.py
+                  uv run --python 3.14 --no-project python tools/check_test_resource_cost.py
                   uv run --python 3.14 --no-project python tools/check_role_name_leaks.py
                   uv run --python 3.14 --no-project python tools/check_agent_hook_exceptions.py
               - id: classify
@@ -307,6 +308,8 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 entry: python tools/check_ci_review_contract.py
                 files: ^scripts/sd-ai-command-pack-pr-body-scope\.py|\.sd-ai-command-pack/pr-body-scope\.json|tests/test_pr_body_scope_lint\.py$
                 pass_filenames: false
+              - id: test-resource-cost
+                entry: python tools/check_test_resource_cost.py
               - id: copilot-instruction-contract
                 entry: python tools/check_copilot_instruction_contract.py
                 pass_filenames: false
@@ -1210,6 +1213,10 @@ def test_full_check_runs_review_preflight(tmp_path: Path) -> None:
     ("needle", "label"),
     [
         ("python tools/check_amc_module_load.py", "AMC module-load CI guard"),
+        (
+            "python tools/check_test_resource_cost.py",
+            "test-resource-cost CI guard",
+        ),
         ("python tools/check_role_name_leaks.py", "role-name CI guard"),
         (
             "python tools/check_agent_hook_exceptions.py",
@@ -1224,6 +1231,32 @@ def test_fast_ci_guards_are_contract_pinned(
     ci = tmp_path / ".github/workflows/ci.yml"
     ci.write_text(
         ci.read_text(encoding="utf-8").replace(needle, "python removed.py"),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert label in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("needle", "label"),
+    [
+        ("id: test-resource-cost", "test-resource-cost hook"),
+        (
+            "entry: python tools/check_test_resource_cost.py",
+            "test-resource-cost hook entry",
+        ),
+    ],
+)
+def test_resource_cost_precommit_hook_is_contract_pinned(
+    tmp_path: Path, needle: str, label: str
+) -> None:
+    _write_minimal_contract(tmp_path)
+    precommit = tmp_path / ".pre-commit-config.yaml"
+    precommit.write_text(
+        precommit.read_text(encoding="utf-8").replace(needle, "removed-resource-hook"),
         encoding="utf-8",
     )
 

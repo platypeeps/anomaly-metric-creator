@@ -64,7 +64,15 @@ expensive 1-day, 7-day, or N-instance datasets. Sources: `CLAUDE.md`;
 Stream large generated files in tests. Use `sha256_path` or line iteration
 instead of `Path.read_bytes()`, `readlines()`, or `read_text().splitlines()` on
 multi-hundred-MB CSVs. Sources: `CLAUDE.md`; `tests/conftest.py`;
-`tests/test_correctness.py`; `tests/test_gauges_file.py`.
+`tests/test_correctness.py`; `tests/test_gauges_file.py`;
+`tools/check_test_resource_cost.py`.
+
+The `test-resource-cost` pre-commit hook and always-run CI repository guard
+enforce those executable call shapes with Python AST parsing. A deliberately
+small control, log, or schema read may use a trailing
+`# resource-lint: allow` marker on the call's source span; prefer streaming for
+generated data. Sources: `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
+`tools/check_test_resource_cost.py`; `tests/test_test_resource_cost_lint.py`.
 
 Tests that use POSIX-only modules or attributes must guard collection on
 platforms where those APIs are missing. Sources: `CLAUDE.md`; `tests/`;
