@@ -51,7 +51,7 @@ evidence of a safe setting.
 
 ### Part C — correct the premise
 
-`CLAUDE.md` states a 7 GB standard runner. The repo is public
+Before this task, `CLAUDE.md` stated a 7 GB standard runner. The repo is public
 (`gh api repos/platypeeps/anomaly-metric-creator --jq .private` -> `false`)
 and GitHub's standard `ubuntu-latest` for public repositories is
 4 vCPU / 16 GB / 14 GB SSD.
