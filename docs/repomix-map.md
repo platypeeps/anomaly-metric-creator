@@ -792,13 +792,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-17-audit-serve-main-wiring-tests/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-17-audit-sim-mutation-correctness/
       check.jsonl
       design.md
@@ -1066,6 +1059,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         07-17-audit-real-client-smoke-ci/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-serve-main-wiring-tests/
           check.jsonl
           design.md
           implement.jsonl
