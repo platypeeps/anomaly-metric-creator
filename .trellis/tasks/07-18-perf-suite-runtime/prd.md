@@ -65,7 +65,8 @@ split, without weakening determinism guarantees or coverage.
 | Child | Priority | Expected saving |
 |---|---|---|
 | `07-18-perf-ci-lane-parallelization` | P1 | ~366s CI wall clock |
-| `07-18-perf-ci-worker-counts` | P1 | ~131s light, ~224s heavy (pending CI trial) |
+| `07-18-perf-ci-worker-counts` | P1 | ~131s light |
+| `07-20-perf-ci-heavy-worker-trial` | P1 | ~224s heavy (pending CI trial) |
 | `07-18-perf-longform-writer-test-dedupe` | P2 | ~74s local / ~140s CI |
 | `07-18-perf-heavy-fixture-trim` | P2 | ~60s local / ~115s CI, gated on re-lock decision |
 | `07-18-perf-local-test-split` | P2 | local only; removes 2-4x fixture rebuilds |

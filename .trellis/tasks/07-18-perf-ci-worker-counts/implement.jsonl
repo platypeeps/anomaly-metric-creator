@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Defines the CI worker-distribution, full-check, and stable aggregate contracts affected by the light-lane worker change."}
+{"file":".trellis/tasks/07-18-perf-ci-worker-counts/design.md","reason":"Records the measured four-worker result, task boundaries, and the separate evidence-gated heavy-lane trial."}

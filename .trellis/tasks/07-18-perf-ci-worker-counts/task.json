@@ -1,9 +1,9 @@
 {
   "id": "perf-ci-worker-counts",
   "name": "perf-ci-worker-counts",
-  "title": "Right-size pytest worker counts for the 4-vCPU public runner",
-  "description": "Light lane -n 2 -> -n 4 (measured -36%); trial heavy lane -n 2 (measured -31%, 11.3GB peak). Correct the stale 7GB/2-core premise in CLAUDE.md.",
-  "status": "planning",
+  "title": "Right-size light-lane pytest workers for the public runner",
+  "description": "Raise the light lane from -n 2 to -n 4 using measured evidence and correct the stale private-runner capacity premise. The heavy-lane trial is split into 07-20-perf-ci-heavy-worker-trial.",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",
@@ -12,7 +12,7 @@
   "assignee": "sdelmas",
   "createdAt": "2026-07-18",
   "completedAt": null,
-  "branch": null,
+  "branch": "codex/ci-worker-counts-light",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "07-18-perf-suite-runtime",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Split on 2026-07-20 because the original plan requires two sequential PRs while finish-work archives one selected task per merged PR. Heavy-lane evidence work moved intact to 07-20-perf-ci-heavy-worker-trial.",
   "meta": {}
 }

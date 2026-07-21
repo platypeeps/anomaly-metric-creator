@@ -2,11 +2,11 @@
 
 ## Overview
 
-Two independent changes sharing one premise correction. The light lane is
-under-parallelized against a runner twice the size the config assumes; the
-heavy lane may be able to leave serial entirely. The first is safe on
-measured evidence; the second needs a CI trial because the local box cannot
-reproduce the runner's ceiling.
+The light lane is under-parallelized against a runner twice the size the
+config assumes, and the change is safe on measured evidence. The original
+design also covered an independent heavy-lane experiment; that evidence-gated
+work now lives in `07-20-perf-ci-heavy-worker-trial` so each required PR has
+its own Trellis lifecycle.
 
 ## Proposal
 
@@ -30,11 +30,11 @@ count, so wide values are wasted regardless of core count. `-n 4` is
 therefore both the CI-correct and the locally-optimal setting; there is no
 tension to resolve.
 
-### Part B — heavy lane `-n 0` -> `-n 2` (trial first, adopt on evidence)
+### Follow-up — heavy lane `-n 0` -> `-n 2`
 
 Measured: 377.47s -> **259.79s (-31%)**, 48 passed, **peak RSS 11.25 GB**.
 
-The trial is required because two ceilings exist and the local box clears
+The follow-up trial is required because two ceilings exist and the local box clears
 both by a wide margin:
 
 - **RAM**: 11.25 GB measured against a 16 GB runner is ~70% utilization.
@@ -45,7 +45,7 @@ both by a wide margin:
   outputs. Disk is the more likely cause of the historical failure that
   `CLAUDE.md` records as an OOM, and it is the ceiling nobody has measured.
 
-The trial must therefore capture **both** `df -h` and peak memory, not just
+`07-20-perf-ci-heavy-worker-trial` must therefore capture **both** `df -h` and peak memory, not just
 pass/fail. A green run that finished with 200 MB of disk left is not
 evidence of a safe setting.
 
@@ -75,8 +75,8 @@ billed minutes — is the optimization target.
 
 ## Risks And Edge Cases
 
-- **Part B is the risk; Part A is not.** Ship Part A even if the Part B
-  trial fails — they are separable and Part A's evidence is unambiguous.
+- **The heavy trial is the risk; this task is not.** Ship this task before the
+  follow-up experiment; the light-lane evidence is unambiguous.
 - **Peak RSS is measured on darwin.** Linux allocator behavior and numpy's
   `<U` string-array intermediates may differ. The trial is the only way to
   know; treat 11.25 GB as an indication, not a Linux prediction.
@@ -94,7 +94,7 @@ billed minutes — is the optimization target.
 
 - Part A: a full-matrix run showing the light lane >= 100s below its 364s
   baseline, all 1555 tests passing.
-- Part B: a trial run with an added diagnostic step capturing `nproc`,
+- Follow-up task: a trial run with an added diagnostic step capturing `nproc`,
   `free -m`, and `df -h` before and after the heavy invocation. Record the
   numbers in the PR whether or not the change is adopted — a failed trial
   with data is a durable result; a failed trial without data gets repeated.

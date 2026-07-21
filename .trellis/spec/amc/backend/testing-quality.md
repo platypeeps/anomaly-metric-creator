@@ -84,10 +84,89 @@ an xdist worker subprocess. Sources: `README.md`; `CLAUDE.md`;
 
 The `heavy` marker is auto-applied by `tests/conftest.py` based on fixture
 closure, not hand-written on tests. CI runs heavy tests serially and the
-non-heavy set under xdist to stay inside runner memory while still exercising
-parallel ordering. Sources: `tests/conftest.py`; `pyproject.toml`;
+non-heavy set under four-worker xdist with `--dist loadfile` to preserve
+runner headroom while still exercising parallel ordering. Sources:
+`tests/conftest.py`; `pyproject.toml`;
 `.github/workflows/ci.yml`; `CLAUDE.md`; `README.md`;
 `tests/test_heavy_marker.py`.
+
+## Scenario: CI test partition worker contract
+
+### 1. Scope / Trigger
+
+- Trigger: a change to the heavy/light marker boundary, either pytest worker
+  count, xdist distribution mode, or the GitHub-hosted runner capacity premise.
+  Sources: `.github/workflows/ci.yml`; `tests/conftest.py`;
+  `.trellis/tasks/07-18-perf-ci-worker-counts/design.md`.
+
+### 2. Signatures
+
+- Heavy lane: `pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=`.
+- Light lane: `pytest -n 4 --dist loadfile -m "not heavy"
+  --cov=src/anomaly_metric_creator --cov-report=`.
+  Sources: `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`.
+
+### 3. Contracts
+
+- Keep the GB-scale fixture closure in the serial heavy lane until a dedicated
+  runner trial demonstrates safe memory and disk headroom.
+- Keep `--dist loadfile` in the light lane so a test file and its shared
+  fixtures stay on one worker; use the four workers available on the public
+  `ubuntu-latest` runner.
+- The heavy and light selectors must remain disjoint and their collected counts
+  must sum to the full suite. Sources: `tests/conftest.py`;
+  `tests/test_heavy_marker.py`; `.github/workflows/ci.yml`;
+  `.trellis/tasks/07-18-perf-ci-worker-counts/prd.md`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Heavy marker closure becomes empty | `pytest -m heavy` exits 5 and fails CI |
+| Light command loses `-n 4` or `--dist loadfile` | CI review contract guard fails |
+| Heavy + light collection differs from full collection | Treat as a partition defect and do not publish |
+| Heavy worker count is raised without runner evidence | Keep `-n 0`; do not infer safety from a larger local machine |
+
+Sources: `tools/check_ci_review_contract.py`;
+`tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
+`.trellis/tasks/07-18-perf-ci-worker-counts/design.md`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: light tests use `-n 4 --dist loadfile`, while GB-scale fixture tests
+  remain serial and both selectors cover the full collection.
+- Base: a local debugger run overrides the defaults with `-n 0` without
+  changing the CI contract.
+- Bad: `--dist load` scatters one file across workers, or the heavy lane is
+  parallelized solely because it passed on a higher-capacity developer host.
+
+### 6. Tests Required
+
+- `tests/test_ci_review_contract.py` pins the exact heavy and light workflow
+  commands and mutation-tests the live workflow contract.
+- `tests/test_heavy_marker.py` pins fixture-closure classification.
+- Before publishing a worker-count change, collect the heavy, light, and full
+  suites and assert that the first two counts sum to the third. Sources:
+  `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
+  `.trellis/tasks/07-18-perf-ci-worker-counts/implement.md`.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```bash
+pytest -n 4 --dist load -m "not heavy"
+```
+
+Correct:
+
+```bash
+pytest -n 4 --dist loadfile -m "not heavy"
+```
+
+`loadfile` keeps file-scoped fixture work on one worker and prevents worker
+fan-out from multiplying expensive fixture construction. Sources:
+`pyproject.toml`; `tests/conftest.py`; `.github/workflows/ci.yml`.
 
 Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 `.pre-commit-config.yaml`; run `.venv/bin/ruff check tests/` or
