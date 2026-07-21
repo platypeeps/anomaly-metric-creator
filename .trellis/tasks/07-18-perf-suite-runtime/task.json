@@ -27,8 +27,7 @@
     "07-18-perf-local-test-split",
     "07-18-perf-local-gate-dedupe",
     "07-18-fix-heavy-marker-and-fixture-docs",
-    "07-18-fix-ci-classifier-script-paths",
-    "07-20-perf-ci-heavy-worker-trial"
+    "07-18-fix-ci-classifier-script-paths"
   ],
   "parent": null,
   "relatedFiles": [],
