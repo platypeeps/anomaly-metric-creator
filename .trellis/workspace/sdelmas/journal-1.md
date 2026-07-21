@@ -1247,3 +1247,41 @@ Added mechanically enforced test resource guards and closed five audit-backed te
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: Trim duplicate local review work
+
+**Date**: 2026-07-21
+**Task**: Trim duplicate local review work
+**Package**: amc
+**Branch**: `codex/local-gate-dedupe`
+
+### Summary
+
+Reduced the repo-local review preflight from a 2.92-second warm median to 0.32 seconds while preserving direct contract and mypy guards, documented iteration workarounds, and filed the pack-owned follow-ups upstream.
+
+### Main Changes
+
+- Removed the duplicate ten-file pytest bundle from scripts/check-review-preflight.mjs while retaining real-checkout guards.
+- Updated developer guidance and the canonical Trellis quality spec for the lean gate, Prism fast path, and Obsidian KB regeneration.
+- Filed sd-ai-command-pack issues #203 and #204 for Prism scan deduplication and KB self-healing.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ec192d3` | perf: trim duplicate local review tests |
+
+### Testing
+
+- [OK] Repo-local preflight median improved from 2.92s to 0.32s; deterministic components total 2.40s.
+- [OK] 77 focused contract tests, full-check, pre-commit, provenance audit, CI, CodeQL, Windows collection, and Copilot review passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

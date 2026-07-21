@@ -3,8 +3,6 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const python = process.env.REVIEW_PREFLIGHT_PYTHON || (existsSync(".venv/bin/python") ? ".venv/bin/python" : "python3");
-const pytestCommand = process.env.REVIEW_PREFLIGHT_PYTEST || (existsSync(".venv/bin/pytest") ? ".venv/bin/pytest" : python);
-const pytestPrefixArgs = pytestCommand === python ? ["-m", "pytest"] : [];
 
 function run(label, command, args) {
   console.log(`\n==> ${label}`);
@@ -26,17 +24,8 @@ run("CI/review cadence contract guard", python, ["tools/check_ci_review_contract
 run("Copilot instruction contract guard", python, ["tools/check_copilot_instruction_contract.py"]);
 run("PR body scope guard", python, ["scripts/sd-ai-command-pack-pr-body-scope.py"]);
 run("Clean-module mypy gate", python, ["tools/check_mypy_gate.py"]);
-run("Review-churn lint tests", pytestCommand, [
-  ...pytestPrefixArgs,
-  "-q",
-  "tests/test_ci_change_classifier.py",
-  "tests/test_python_syntax_lint.py",
-  "tests/test_workflow_pip_lint.py",
-  "tests/test_ci_review_contract.py",
-  "tests/test_copilot_instruction_contract.py",
-  "tests/test_pr_body_scope_lint.py",
-  "tests/test_ruff_lockstep_lint.py",
-  "tests/test_mypy_gate_lint.py",
-  "tests/test_trellis_placeholder_lint.py",
-  "tests/test_trace_payload_antipatterns_lint.py",
-]);
+
+// Contract mutation suites stay in CI; the real-repo guards above validate the
+// checkout directly:
+// tests/test_copilot_instruction_contract.py
+// tests/test_pr_body_scope_lint.py

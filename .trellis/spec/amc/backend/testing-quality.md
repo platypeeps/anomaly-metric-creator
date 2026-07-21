@@ -231,11 +231,15 @@ install audit through `scripts/sd-ai-command-pack-install-audit.py`,
 current-diff CI classification, configured package scripts when present, and
 optional Prism/Gito review. AMC's repo-local review preflight runs the CI/review
 cadence contract guard, the Copilot instruction contract guard, the PR-body
-scope guard, the canonical clean-module mypy gate, and focused review-churn
-tests. Use
+scope guard, and the canonical clean-module mypy gate. Review-churn mutation
+tests run in GitHub CI instead of being repeated by the repo-local preflight. Use
 `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` or
 `SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0` to skip optional AI review while
-iterating. Use `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON`,
+iterating after the focused deterministic checks pass; re-enable Prism for the
+final local review when practical. If the generated Obsidian KB freshness check
+fails after a pull, refresh the gitignored output with
+`.venv/bin/python3 scripts/sd-ai-command-pack-update-spec-kb.py` before
+rerunning the gate. Use `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON`,
 `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_MAX_FINDINGS`, or
 `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES` to steer Prism without editing the script.
 Sources: `scripts/sd-ai-command-pack-full-check.sh`;

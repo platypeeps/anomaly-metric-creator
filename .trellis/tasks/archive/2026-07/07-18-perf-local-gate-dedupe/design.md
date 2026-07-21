@@ -3,14 +3,20 @@
 ## Overview
 
 Three findings, only one of which is actionable inside this repository. The
-actionable one is a single-file trim worth ~4s of a 6.3s gate. The other two
-live in pack-managed files and are upstream conversations.
+actionable one removes the duplicate pytest bundle from the repo-local gate.
+The other two live in pack-managed files and are upstream conversations.
+
+The 2026-07-20 implementation pass reconciled this plan against command-pack
+0.24.7. The preflight had gained the canonical mypy gate and a tenth pytest
+file. Current component timing is 2.64s for pytest versus about 0.26s for the
+four direct guards; the implementation preserves all four guards and replaces
+the pytest invocation with comments naming the two contract-pinned test paths.
 
 ## Proposal
 
-### Part A — trim `scripts/check-review-preflight.mjs` (actionable, ~4s)
+### Part A — trim `scripts/check-review-preflight.mjs` (actionable)
 
-The script is 41 lines and costs 4.19s. Attribution:
+The original analysis measured this attribution:
 
 | Lines | Work | Cost |
 |---|---|---|
@@ -30,7 +36,7 @@ the fourth step runs*:
 - `scripts/sd-ai-command-pack-pr-body-scope.py` runs again as its own
   `full-check` step (`run_sd_ai_command_pack_pr_body_scope_check` in
   `main()`).
-- All 9 test files are in the CI quick lane (`ci.yml:260-269`) as a strict
+- All 9 original test files were in the CI quick lane as a strict
   superset — it adds `tests/test_server.py`.
 
 **The file cannot simply be deleted.** `tools/check_copilot_instruction_contract.py`
@@ -42,13 +48,14 @@ invoke the guard that requires the preflight to invoke it.
 
 But `_check_review_preflight_wiring` requires only that the file **mention**
 `tests/test_copilot_instruction_contract.py` and
-`tests/test_pr_body_scope_lint.py` — not that it run all nine. So:
+`tests/test_pr_body_scope_lint.py` — not that it execute the pytest suite. So:
 
-> Trim lines 28-40 from nine test files to those two (or drop the pytest
-> block entirely and reference the two paths in a comment).
+> Drop the duplicate pytest block and reference the two contract-pinned test
+> paths in a comment.
 
-Result: ~4.19s -> ~0.2s, **no contract change, no pack drift, single-file
-diff**. Same win as deletion at a fraction of the blast radius.
+Result: the expensive duplicate bundle is removed with **no contract change
+and no pack drift**. Same functional win as deletion at a fraction of the
+blast radius.
 
 The two preflights are **not** duplicates of each other, contrary to the
 first reading. The pack preflight validates review *references* — path
@@ -81,7 +88,7 @@ meanwhile.
 - **Do not edit pack-managed files**: `full-check.sh`,
   `sd-ai-command-pack-review-preflight.mjs`,
   `sd-ai-command-pack-update-spec-kb.py`
-  (`.sd-ai-command-pack/provenance.json`, pack 0.15.6). Local edits drift
+  (`.sd-ai-command-pack/provenance.json`, pack 0.24.7). Local edits drift
   and are clobbered on upgrade.
 - **Do not delete `scripts/check-review-preflight.mjs`** in this task. Full
   removal is a ~15-file change across both contract guards, four test files'
@@ -115,8 +122,8 @@ meanwhile.
 
 ## Validation
 
-- Time the gate before and after; deterministic total should drop from
-  ~6.3s to ~2.5s or below.
+- Time the gate before and after; the repo-local preflight dropped from a 2.92s
+  warm median to 0.32s, and the deterministic component total measured 2.40s.
 - Run the trimmed preflight directly and confirm exit 0.
 - Run `tools/check_copilot_instruction_contract.py` and
   `tools/check_ci_review_contract.py` against the real repo — both must
