@@ -279,6 +279,36 @@ def test_validate_scenarios_registry_rejects_days_required_too_high(amc, monkeyp
         amc._validate_scenarios_registry()
 
 
+def test_validate_scenarios_registry_rejects_boolean_days_required(amc, monkeypatch):
+    """Booleans are not valid positive integers for ``days_required``."""
+    good_component = next(iter(amc.COMPONENTS))
+    primary_spec = {
+        "time_offset": 0,
+        "metric": amc.COMPONENTS[good_component][0].name,
+        "description": "test-only synthetic spec",
+        "generator": lambda ts, idx: 1.0,
+    }
+    bad_scenario = amc.Scenario(
+        id="synthetic_boolean_days",
+        name="Synthetic boolean days_required scenario",
+        severity="medium",
+        days_required=True,
+        category="same_day",
+        components_touched=(good_component,),
+        primary_specs=((good_component, primary_spec),),
+        cascade_specs=(),
+    )
+    patched = dict(amc.SCENARIOS)
+    patched[bad_scenario.id] = bad_scenario
+    monkeypatch.setattr(amc, "SCENARIOS", patched)
+
+    with pytest.raises(
+        ValueError,
+        match=r"synthetic_boolean_days.*days_required True.*positive int",
+    ):
+        amc._validate_scenarios_registry()
+
+
 def test_validate_scenarios_registry_rejects_days_required_too_low(amc, monkeypatch):
     """The import-time validator must reject ``days_required`` set below the
     day index of the earliest spec offset.

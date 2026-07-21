@@ -1239,6 +1239,10 @@ src/
     otlp.py
     redaction.py
     runtime_defaults.py
+    scenario_builders.py
+    scenario_catalog.py
+    scenario_validation.py
+    scenarios_impl.py
     scenarios.py
     schema_impl.py
     schema.py

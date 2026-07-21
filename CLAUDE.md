@@ -4,7 +4,10 @@ Expanded historical/source guide for the anomaly metric creator. Canonical
 development conventions now live in `.trellis/spec/amc/backend/index.md`; update
 the focused Trellis spec first when a durable rule changes. The canonical
 runtime entrypoint is still `src/anomaly_metric_creator/legacy.py`: it owns
-`main()`, `RunContext`, scenario registry/wiring, and compatibility re-imports.
+`main()`, `RunContext`, scenario compatibility wiring, and compatibility
+re-imports. Canonical scenario builders/data/validation/runtime behavior now
+lives in `scenario_builders.py`, `scenario_catalog.py`,
+`scenario_validation.py`, and `scenarios_impl.py`.
 The top-level `anomaly-metric-creator.py` is a thin compatibility shim that
 re-exports it and runs `main()`, and the installed `amc` /
 `anomaly-metric-creator` console scripts dispatch through
@@ -20,7 +23,8 @@ Small package facade modules (`combine.py`, `models.py`, `otel.py`,
 `scenarios.py`, `schema.py`) are import-stability points for focused surfaces,
 not parallel behavior copies. They re-export from extracted implementations
 where a focused surface exists (`combine.py`→`combine_impl.py`,
-`otel.py`→`otel_stream.py`, `schema.py`→`schema_impl.py`/`validate_impl.py`,
+`otel.py`→`otel_stream.py`, `scenarios.py`→`scenario_builders.py`/
+`scenario_catalog.py`, `schema.py`→`schema_impl.py`/`validate_impl.py`,
 and `models.py`→`models_impl.py` for `MetricSpec`/`Instance` while `Edge`,
 `RunContext`, and `SaturationParams` stay exposed through `legacy.py` for
 identity compatibility; `Edge` and `SaturationParams` now originate in
@@ -74,7 +78,12 @@ generate-flag validation), and `cli_subcommands.py`
 `models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
 `_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
-catalog/instance metadata validator implementations), `anomaly_dispatch.py`
+catalog/instance metadata validator implementations), `scenario_builders.py`
+(`Scenario`, `register_cascade`, and deterministic scenario-spec builders),
+`scenario_catalog.py` (the single ordered declarative `SCENARIOS` registry),
+`scenario_validation.py` (spec/registry validation against explicit inputs),
+`scenarios_impl.py` (selection, signal/count filtering, and runtime composition
+through a live registry callback), `anomaly_dispatch.py`
 (`_VALID_ANOMALY_SHAPES`, anomaly value resolution, generator metadata caching,
 and step/span dispatch), `generation.py` (`generate_component` and live
 generation callbacks), `generation_derivations.py` (`DERIVATIONS`,
@@ -96,6 +105,13 @@ and catalog helpers use the same callback pattern for `legacy.COMPONENTS` and
 isolated `legacy.py` test loads can be garbage-collected after use. `legacy.py`
 keeps the catalog metadata validator call at its historical import-time
 position so the implementation can move without changing validation order.
+Scenario validation/runtime uses the same named weak callback pattern for
+`legacy.SCENARIOS`; `legacy.py` keeps exactly one scenario-validator call at
+the historical import-time position. `scenario_catalog.py` is the deliberate
+module-size exception: its 2k-line body is one ordered declarative registry and
+must not acquire validation or runtime orchestration. The executable scenario
+modules remain below 800 lines, and `scenarios.py` imports the canonical model,
+registry, and helper directly while preserving identity with `legacy`.
 Generation and topology leaf modules use the same named callback pattern for
 `legacy.DERIVATIONS`, `legacy._format_fixed3`, `legacy.TOPOLOGY`,
 `legacy._TOPOLOGY_LOAD_METRICS`, and
@@ -119,7 +135,8 @@ range for `^from \.` re-imports and confirm every leaf re-import
 `models_impl`, `catalog`, `runtime_defaults`, `anomaly_dispatch`, `generation`,
 `generation_derivations`, `generation_helpers`, `generation_emit`,
 `topology_models`, `topology_registry`, `topology_impl`, `topology_compose`,
-`topology_instances`, `topology_support`)
+`topology_instances`, `topology_support`, `scenario_builders`,
+`scenario_catalog`, `scenario_validation`, `scenarios_impl`)
 still resolves.
 `tests/conftest.py::_load_amc` and the fresh-copy loaders in
 `tests/test_correctness.py` / `tests/test_determinism.py` load `legacy` with
@@ -1836,6 +1853,13 @@ uniqueness or shape checks beyond what the dataclass enforces.
 
 `SCENARIOS: dict[str, Scenario]` holds every anomaly scenario in the catalog. There
 are no legacy `anoms_*` module-level lists; all specs live in `Scenario` entries.
+`scenario_catalog.py` owns the ordered registry, `scenario_builders.py` owns
+the frozen model and spec builders, `scenario_validation.py` owns validation,
+and `scenarios_impl.py` owns selection/composition. `legacy.py` re-exports the
+canonical objects and delegates through a named live getter so tests that patch
+`legacy.SCENARIOS` remain visible without any extracted module importing
+`legacy`. The catalog is intentionally one data-only module even though it
+exceeds 800 lines; splitting it would obscure the ordering contract below.
 `_apply_scenarios()` in `main()` is the single point that populates
 `component_anomalies` and `cascading_anomalies`. Each `Scenario` bundles:
 

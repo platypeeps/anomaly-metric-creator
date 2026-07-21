@@ -5,14 +5,24 @@
 `SCENARIOS: dict[str, Scenario]` is the only anomaly scenario catalog; legacy
 module-level anomaly lists must not return. `_apply_scenarios()` is the single
 composition point that populates per-run primary and cascade anomaly state.
-Sources: `CLAUDE.md`; `README.md`; `src/anomaly_metric_creator/legacy.py`;
+The canonical ordered data lives in `scenario_catalog.py`; builders and the
+`Scenario` model live in `scenario_builders.py`; runtime selection/composition
+lives in `scenarios_impl.py`. `legacy.py` keeps patch-visible compatibility
+bindings and wrappers, while `scenarios.py` re-exports the canonical objects.
+Sources: `CLAUDE.md`; `README.md`;
+`src/anomaly_metric_creator/scenario_builders.py`;
+`src/anomaly_metric_creator/scenario_catalog.py`;
+`src/anomaly_metric_creator/scenarios_impl.py`;
+`src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/scenarios.py`; `tests/test_scenarios.py`;
 `tests/test_registry.py`.
 
 Each `Scenario` entry owns its slug, label, severity, `days_required`,
 category, `components_touched`, `primary_specs`, and `cascade_specs`.
 `Scenario.id` must match its `SCENARIOS` key. Sources: `CLAUDE.md`;
-`README.md`; `src/anomaly_metric_creator/legacy.py`;
+`README.md`; `src/anomaly_metric_creator/scenario_builders.py`;
+`src/anomaly_metric_creator/scenario_catalog.py`;
+`src/anomaly_metric_creator/legacy.py`;
 `tests/test_scenarios.py`.
 
 `days_required` must be a positive integer equal to the 1-based day index of
@@ -33,8 +43,13 @@ Primary and cascade specs are validated at import time by
 `_validate_scenarios_registry()` and `_validate_scenario_spec()`. Validate
 required keys, component/metric membership, callable generators, finite
 non-negative non-bool times/durations, non-empty descriptions, shape names,
-shape params, and `instance_filter` forms before runtime. Sources: `CLAUDE.md`;
-`src/anomaly_metric_creator/legacy.py`; `tests/test_scenarios.py`;
+shape params, and `instance_filter` forms before runtime. The implementation
+takes explicit registry/catalog inputs; `legacy.py` owns the sole historical
+import-time call and delegates with its current patch-visible bindings.
+Sources: `CLAUDE.md`;
+`src/anomaly_metric_creator/scenario_validation.py`;
+`src/anomaly_metric_creator/legacy.py`; `tests/test_package_facades.py`;
+`tests/test_scenarios.py`;
 `tests/test_registry.py`.
 
 Cascade specs are single-row step specs and must not declare `shape`,
@@ -51,14 +66,17 @@ defaults. Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 The scenario resolution pipeline is allowlist, exclusion, severity,
 duration, then component filter. Severity and duration drops warn on stderr;
 component-disjoint drops are silent. Sources: `CLAUDE.md`; `README.md`;
+`src/anomaly_metric_creator/scenarios_impl.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_args.py`;
 `tests/test_scenarios.py`; `tests/test_correctness.py`.
 
 ## Adding Scenarios, Metrics, and Components
 
-New scenarios must update `SCENARIOS`, `components_touched`, README scenario
-catalog rows, ops profiles, and focused tests in the same change. Sources:
-`CLAUDE.md`; `README.md`; `src/anomaly_metric_creator/legacy.py`;
+New scenarios must update `scenario_catalog.SCENARIOS`, `components_touched`,
+README scenario catalog rows, ops profiles, and focused tests in the same
+change. Sources:
+`CLAUDE.md`; `README.md`; `src/anomaly_metric_creator/scenario_catalog.py`;
+`src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/server_ops.py`; `tests/test_scenarios.py`;
 `tests/test_server.py`.
 

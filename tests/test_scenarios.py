@@ -996,6 +996,41 @@ def test_validate_scenarios_registry_rejects_unhashable_severity_cascade(amc):
         amc.SCENARIOS.update(original)
 
 
+def test_apply_scenarios_preserves_spec_severity_overrides(amc, monkeypatch):
+    """Manifest provenance uses a spec override, then the scenario fallback."""
+    primary_override = {
+        "time_offset": 0,
+        "metric": "error_rate",
+        "description": "primary override",
+        "generator": lambda ts, idx: 0.1,
+        "severity": "low",
+    }
+    cascade_fallback = {
+        "time_offset": 60,
+        "metric": "error_rate",
+        "description": "cascade fallback",
+        "generator": lambda ts, idx: 0.2,
+    }
+    scenario = amc.Scenario(
+        id="__severity_override__",
+        name="severity override",
+        severity="high",
+        days_required=1,
+        category="test",
+        components_touched=("apigateway", "authservice"),
+        primary_specs=(("apigateway", primary_override),),
+        cascade_specs=(("authservice", cascade_fallback),),
+    )
+    monkeypatch.setattr(amc, "SCENARIOS", {scenario.id: scenario})
+    component_anomalies: dict = {}
+    cascade_registry: dict = {}
+
+    amc._apply_scenarios(component_anomalies, cascade_registry, {scenario.id})
+
+    assert component_anomalies["apigateway"][0]["_severity"] == "low"
+    assert cascade_registry["authservice"][0]["_severity"] == "high"
+
+
 def test_uninspectable_callable_span_dispatch_skips_intermediate_arities(amc):
     """When inspect.signature() fails, the span dispatcher must attempt only
     the two canonical shapes (5-arg then 2-arg) — never an intermediate
