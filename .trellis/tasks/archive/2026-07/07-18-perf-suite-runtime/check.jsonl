@@ -1,0 +1,2 @@
+{"file":".trellis/spec/amc/backend/testing-quality.md","reason":"Verify exact partition coverage, xdist execution, deterministic hash controls, and the unchanged coverage threshold."}
+{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Verify the final performance record, archived task references, and generated repository map remain synchronized."}
