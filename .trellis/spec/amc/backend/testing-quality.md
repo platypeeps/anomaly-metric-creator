@@ -19,7 +19,7 @@ commit, and assert the retained semantic fields before the byte hash. For
 reads no metric CSVs, but its changed `files` list is part of the new golden
 contract. Sources: `tests/test_instances_per_component.py`;
 `tests/test_schema_file.py`;
-`.trellis/tasks/07-18-perf-heavy-fixture-trim/prd.md`.
+`.trellis/tasks/archive/2026-07/07-18-perf-heavy-fixture-trim/prd.md`.
 
 Use canonical registries and helpers instead of parallel maps:
 `COMPONENTS`, `SCENARIOS`, `DERIVATIONS`, `TOPOLOGY`,
