@@ -106,6 +106,20 @@ Use the local-first review cycle:
   sd-ai-command-pack repository before release; review this repo's
   integration (PR metadata, repo-owned files, wiring) rather than
   re-reviewing the vendored file contents line by line.
+- Source-only SD pack surfaces are intentionally absent from consumer
+  installs. `SOURCE_ONLY_ALLOWED_PACK_FILES` is an audit allowlist for
+  pack-like files permitted in the `sd-ai-command-pack` source checkout; it is
+  not a required consumer-target list. Before reporting a missing pack file in
+  a consumer, verify the path is listed in
+  `.sd-ai-command-pack/manifest.json` and
+  `.sd-ai-command-pack/installed-targets.txt`, confirm any vouched target hash
+  in `.sd-ai-command-pack/provenance.json`, and run
+  `python3 scripts/sd-ai-command-pack-install-audit.py`. If the path is not an
+  installed target and the audit passes, do not report its absence as a defect.
+- `docs/SD_AI_COMMAND_PACK.md` may describe source-checkout-only operator workflows.
+  References to source-only scripts are valid when the surrounding
+  section explicitly labels the workflow or command source-only;
+  do not require those scripts to exist in a consumer checkout.
 <!-- SD-AI-COMMAND-PACK:COPILOT-GUIDANCE:END -->
 
 <!-- TRELLIS:COPILOT-GUIDANCE:START -->
