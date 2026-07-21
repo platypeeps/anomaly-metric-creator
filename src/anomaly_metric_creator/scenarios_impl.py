@@ -224,12 +224,12 @@ def _apply_scenarios(
         for component, spec in scenario.primary_specs:
             tagged = dict(spec)
             tagged["_scenario_id"] = slug
-            tagged["_severity"] = scenario.severity
+            tagged["_severity"] = spec.get("severity", scenario.severity)
             tagged["_is_cascade"] = False
             component_anomalies.setdefault(component, []).append(tagged)
         for target, cascade in scenario.cascade_specs:
             tagged = dict(cascade)
             tagged["_scenario_id"] = slug
-            tagged["_severity"] = scenario.severity
+            tagged["_severity"] = cascade.get("severity", scenario.severity)
             tagged["_is_cascade"] = True
             cascade_registry.setdefault(target, []).append(tagged)
