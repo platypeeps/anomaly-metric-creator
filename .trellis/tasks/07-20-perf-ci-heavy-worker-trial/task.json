@@ -21,6 +21,6 @@
   "children": [],
   "parent": "07-18-perf-suite-runtime",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Run 29798826800 passed the pre-committed decision rule: 5,333,032 KiB peak used memory <= 12,582,912 KiB, 80,632,056 KiB post-run free disk >= 2,097,152 KiB, and 48 heavy tests passed in 500.62s versus the 717s baseline. Adopt two loadfile-distributed heavy workers and remove temporary diagnostics.",
   "meta": {}
 }

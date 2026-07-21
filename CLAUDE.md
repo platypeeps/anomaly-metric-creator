@@ -2551,9 +2551,9 @@ run in CI):
   billed minutes is therefore the optimization target. A prior full `-n 2`
   run still OOM-died after 32 min while holding the heavy N=3 / 7-day fixtures
   across xdist workers, so every run **splits** the suite by the `heavy`
-  marker instead of running everything serially. Separate jobs start
-  `pytest -n 0 -m heavy` for the GB-scale 7-day / N=3 fixture tests serially
-  (low-RAM) and `pytest -n 2 --dist loadfile -m "not heavy"` for the light
+  marker instead of running everything in one worker pool. Separate jobs start
+  `pytest -n 2 --dist loadfile -m heavy` for the GB-scale 7-day / N=3 fixture
+  tests and `pytest -n 2 --dist loadfile -m "not heavy"` for the light
   remainder under real xdist at the same time (the pyproject addopts default
   `-n 4 --dist loadfile` still applies to local runs on larger machines).
   This keeps the parallel worker-distribution / global-state ordering path
@@ -2565,9 +2565,13 @@ run in CI):
   partition tracks the fixture set with no per-test annotation to drift. A
   broken marker still makes the heavy job collect zero tests and fail with
   pytest exit 5; the jobs are concurrent, so this is a correctness guard, not
-  an ordering guarantee. The light subset excludes exactly the GB-scale
-  fixtures whose concurrent generation caused the original OOM. A four-worker
-  CI trial completed the light step in 352s versus the 364s two-worker
+  an ordering guarantee. Hosted trial `29798826800` adopted two heavy workers
+  after measuring 5,333,032 KiB (5.09 GiB) peak system used memory and
+  80,632,056 KiB (76.9 GiB) post-run free disk, clearing the pre-committed
+  12 GiB / 2 GiB limits; the 48-test step completed in 500.62s versus the
+  717s post-parallelization baseline. The light subset excludes exactly the
+  GB-scale fixtures whose concurrent generation caused the original OOM. A
+  four-worker CI trial completed the light step in 352s versus the 364s two-worker
   baseline, only 12s below baseline and short of the pre-committed 100s
   adoption threshold, so CI retains `-n 2`; the faster local four-worker result
   did not transfer to the hosted runner. Each pytest job has a 30-minute timeout,
@@ -2736,8 +2740,9 @@ The `heavy` marker partitions the suite for the 16 GB PR runner (see
 (`item.fixturenames`) intersects `_HEAVY_SESSION_FIXTURES` (the GB-scale
 `seven_day_run` / `n3_one_day_dataset_dir` / `n3_seven_day_dataset_dir`).
 Add a new GB-scale fixture to that frozenset — do not list test files in the
-workflow. `pytest -m heavy` (serial) and `pytest -m "not heavy"` (xdist
-`-n 2`) partition the full suite; the decision is unit-tested in
+workflow. `pytest -m heavy` and `pytest -m "not heavy"` both use xdist
+`-n 2 --dist loadfile` in separate jobs and partition the full suite; the
+decision is unit-tested in
 `tests/test_heavy_marker.py` via the pure `_item_is_heavy(fixturenames)`
 helper.
 

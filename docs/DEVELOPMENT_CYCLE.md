@@ -70,7 +70,7 @@ bash scripts/sd-ai-command-pack-full-check.sh
 For high-risk runtime changes, also run the full heavy/non-heavy pytest split:
 
 ```bash
-.venv/bin/pytest -n 0 -m heavy
+.venv/bin/pytest -n 2 --dist loadfile -m heavy
 .venv/bin/pytest -n 2 --dist loadfile -m "not heavy"
 ```
 

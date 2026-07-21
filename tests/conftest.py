@@ -159,10 +159,10 @@ def _guard_cwd_otel_activity_log():
 # GB-scale session fixtures. A test that requests any of these (directly or
 # transitively) is auto-marked ``heavy`` so the PR CI gate can isolate it from
 # the light remainder (``pytest -n 2 --dist loadfile -m "not heavy"``). A prior
-# full xdist run OOM-died while generating these fixtures; the dedicated heavy
-# trial uses ``--dist loadfile`` and explicit memory/disk evidence to decide
-# whether two workers are safe on the 16 GB standard runner (CLAUDE.md
-# "Continuous integration" section). Every other fixture (including
+# full xdist run OOM-died while generating these fixtures. The isolated heavy
+# lane now uses two loadfile-distributed workers after hosted capacity evidence
+# cleared its memory/disk thresholds (CLAUDE.md "Continuous integration"
+# section). Every other fixture (including
 # the 1-day full-resolution runs) stays in the parallel set. Derive new heavy
 # fixtures here; never hand-list test files in the workflow.
 _HEAVY_SESSION_FIXTURES = frozenset(

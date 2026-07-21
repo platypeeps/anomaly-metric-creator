@@ -1,9 +1,9 @@
 """Unit coverage for the ``heavy`` auto-marker in ``conftest``.
 
 The PR CI gate runs both partitions under two-worker, loadfile-distributed
-xdist while the heavy lane measures runner memory and disk headroom. The light
-selector excludes the GB-scale fixtures; the heavy selector owns their
-evidence-gated worker trial.
+xdist after the isolated heavy lane cleared its hosted memory and disk
+thresholds. The light selector excludes the GB-scale fixtures; the heavy
+selector keeps each file's fixture work on one worker.
 
 These tests pin the marking *decision* so a regression that stops
 classifying the GB-scale fixtures as heavy (which would let them escape into

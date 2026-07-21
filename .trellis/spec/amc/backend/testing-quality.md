@@ -83,9 +83,9 @@ an xdist worker subprocess. Sources: `README.md`; `CLAUDE.md`;
 `pyproject.toml`.
 
 The `heavy` marker is auto-applied by `tests/conftest.py` based on fixture
-closure, not hand-written on tests. CI runs heavy tests serially and the
-non-heavy set under two-worker xdist with `--dist loadfile` to preserve
-runner headroom while still exercising parallel ordering. Sources:
+closure, not hand-written on tests. CI runs both partitions under two-worker
+xdist with `--dist loadfile`; the selectors keep the GB-scale fixtures out of
+the light worker pool while preserving file-owned fixture locality. Sources:
 `tests/conftest.py`; `pyproject.toml`;
 `.github/workflows/ci.yml`; `CLAUDE.md`; `README.md`;
 `tests/test_heavy_marker.py`.
@@ -101,14 +101,17 @@ runner headroom while still exercising parallel ordering. Sources:
 
 ### 2. Signatures
 
-- Heavy lane: `pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=`.
+- Heavy lane: `pytest -n 2 --dist loadfile -m heavy --cov=src/anomaly_metric_creator --cov-report=`.
 - Light lane: `pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=`.
   Sources: `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`.
 
 ### 3. Contracts
 
-- Keep the GB-scale fixture closure in the serial heavy lane until a dedicated
-  runner trial demonstrates safe memory and disk headroom.
+- Keep the GB-scale fixture closure in its own heavy lane. Two workers are
+  adopted because run `29798826800` measured 5,333,032 KiB peak system used
+  memory and 80,632,056 KiB post-run free disk, clearing the pre-committed
+  12,582,912 KiB / 2,097,152 KiB thresholds. Keep `--dist loadfile` so each
+  file's GB-scale fixtures remain on one worker.
 - Keep `--dist loadfile` in the light lane so a test file and its shared
   fixtures stay on one worker. Retain two workers because the measured
   four-worker CI trial saved only 12 seconds against a 364-second baseline,
@@ -125,16 +128,16 @@ runner headroom while still exercising parallel ordering. Sources:
 | Heavy marker closure becomes empty | `pytest -m heavy` exits 5 and fails CI |
 | Light command loses `-n 2` or `--dist loadfile` | CI review contract guard fails |
 | Heavy + light collection differs from full collection | Treat as a partition defect and do not publish |
-| Heavy worker count is raised without runner evidence | Keep `-n 0`; do not infer safety from a larger local machine |
+| Heavy worker count is raised without runner evidence | Do not publish; runner evidence and a pre-committed decision boundary are required |
 
 Sources: `tools/check_ci_review_contract.py`;
 `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-`.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/design.md`.
+`.trellis/tasks/07-20-perf-ci-heavy-worker-trial/prd.md`.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: light tests use `-n 2 --dist loadfile`, while GB-scale fixture tests
-  remain serial and both selectors cover the full collection.
+- Good: both selectors use `-n 2 --dist loadfile`, the GB-scale fixture closure
+  remains isolated in the heavy lane, and both selectors cover the collection.
 - Base: a local debugger run overrides the defaults with `-n 0` without
   changing the CI contract.
 - Bad: `--dist load` scatters one file across workers, or the heavy lane is

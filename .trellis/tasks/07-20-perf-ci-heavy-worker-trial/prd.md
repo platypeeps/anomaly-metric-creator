@@ -23,14 +23,14 @@ Trial -n 2 --dist loadfile for the heavy CI lane with measured memory and disk h
 
 ## Acceptance Criteria
 
-- [ ] A full-matrix trial completes with 48 heavy tests and reports peak system
+- [x] A full-matrix trial completes with 48 heavy tests and reports peak system
       memory plus before/after root-filesystem headroom.
-- [ ] The final worker count follows the pre-committed 12 GB / 2 GB decision
+- [x] The final worker count follows the pre-committed 12 GB / 2 GB decision
       rule, with the exact observed values recorded in task and PR evidence.
-- [ ] When adopted, heavy-lane wall clock improves against the 717-second
+- [x] When adopted, heavy-lane wall clock improves against the 717-second
       post-parallelization baseline without weakening coverage or aggregates.
-- [ ] The heavy and light partitions still sum to the full collected suite.
-- [ ] Temporary diagnostics are removed from the final workflow unless they
+- [x] The heavy and light partitions still sum to the full collected suite.
+- [x] Temporary diagnostics are removed from the final workflow unless they
       prove generally useful and receive their own documented contract.
 
 ## Measurement context
@@ -52,3 +52,16 @@ Trial -n 2 --dist loadfile for the heavy CI lane with measured memory and disk h
 - All five heavy-job shell blocks parse under `bash -n` after YAML decoding.
 - Hosted memory and disk evidence remains the adoption gate; local success is
   not used to infer runner headroom.
+
+## Hosted trial result (run 29798826800)
+
+- Runner: 4 CPUs; 16,373,460 KiB total memory.
+- Peak system used memory: 5,333,032 KiB (5.09 GiB), below the 12,582,912 KiB
+  adoption limit.
+- Post-run root-filesystem free space: 80,632,056 KiB (76.9 GiB), above the
+  2,097,152 KiB adoption floor.
+- Heavy result: 48 passed in 500.62s, 216.38s (30.2%) below the 717s
+  post-parallelization baseline.
+- Light, combined coverage, aggregate `test`, and `CI Result` all passed.
+- Decision: adopt `-n 2 --dist loadfile` for the heavy lane and remove all
+  temporary capacity diagnostics before final validation.
