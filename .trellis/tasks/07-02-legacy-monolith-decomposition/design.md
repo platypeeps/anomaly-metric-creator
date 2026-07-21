@@ -171,7 +171,7 @@ Consequence: step 8 stays before step 9 and the two steps stay decoupled —
 step 9 landing later does not require revisiting the seam (the seam keeps
 pointing at legacy's namespace, which is where tests patch).
 
-### Decision 2 (recommendation, needs maintainer sign-off at epic close): end-state = **"dispatch + wiring only" with a recorded waiver**
+### Decision 2 (resolved 2026-07-21): end-state = **dispatch + wiring below 800 lines; no waiver**
 
 After steps 8–10, `legacy.py` retains `main()` (~590), `RunContext`,
 constants + emit registry + re-import wiring, and the resolution cluster
@@ -183,13 +183,13 @@ constants + emit registry + re-import wiring, and the resolution cluster
   (they are scenario machinery; the section map already assigns that family
   there); `_load_instance_config` moves with `models_impl.py` (it constructs
   and validates `Instance` objects).
-- Even so, `main()` + `RunContext` + constants + the re-import wiring block
-  land around ~1,000 lines. Forcing <800 would require splitting `main()`
-  itself — a behavior-risky refactor outside this epic's verbatim-move
-  mandate. Recommend: keep the <800 cap for every **new** module, record an
-  explicit waiver for `legacy.py` as the dispatch/wiring root, and state the
-  accepted size in CLAUDE.md when the epic closes. Revisit only if a later
-  epic wants to decompose `main()` behaviorally.
+- The maintainer selected the split instead of the proposed waiver. Child
+  `07-21-decomp-legacy-dispatch-root` moves run-level orchestration behind a
+  named weak live-runtime seam, moves `RunContext` to its model owner, and
+  requires both `legacy.py` and every new behavior module to finish below 800
+  physical lines. Its PRD/design are the authoritative boundary and preserve
+  the same patch-visible, isolated-import, RNG-order, and golden-hash contracts
+  as the prior extractions.
 
 Child-task planning artifacts (design.md + implement.md for
 `07-02-decomp-cli-args`, `07-02-decomp-catalog-data`,

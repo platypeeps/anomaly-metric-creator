@@ -102,10 +102,12 @@ resolution cluster) undone, while `legacy.py` still measures 4,829 lines and
 contains that roughly 3,300-line surface. The epic is therefore not 10/10
 complete in substance.
 
-Child `07-21-decomp-scenario-catalog-recovery` now owns the omitted PR B with a
-split that keeps executable modules below 800 lines and preserves one ordered
-declarative registry. The epic cannot close or request its final dispatch-root
-waiver until that child merges with unchanged hashes.
+Child `07-21-decomp-scenario-catalog-recovery` completed the omitted PR B with
+a split that keeps executable modules below 800 lines and preserves one ordered
+declarative registry. On 2026-07-21 the maintainer rejected the proposed final
+dispatch-root waiver; child `07-21-decomp-legacy-dispatch-root` now owns the
+remaining `main()` split and the epic cannot close until it merges with
+unchanged hashes and `legacy.py` is below 800 lines.
 
 ## Notes
 

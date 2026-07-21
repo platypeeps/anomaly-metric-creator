@@ -27,9 +27,11 @@ cross-child order, the shared per-PR protocol, and the epic-close checklist.
 5. **Step 10 — `07-02-decomp-generation-topology`** — the RNG-order-critical
    core; only after steps 8, 9A, and the recovered 9B have landed with
    unchanged hashes.
-6. **Epic close** — resolve design.md Decision 2 (end-state waiver) with the
-   maintainer, update CLAUDE.md's architecture section to the final module
-   map, flip remaining checklist boxes, archive.
+6. **Dispatch-root split — `07-21-decomp-legacy-dispatch-root`** — implement
+   the maintainer-selected no-waiver path: extract run orchestration, preserve
+   live legacy bindings, and bring `legacy.py` below 800 lines.
+7. **Epic close** — after that child merges with unchanged hashes, update
+   CLAUDE.md's final module map, flip remaining checklist boxes, archive.
 
 ## Per-PR Protocol (every remaining extraction)
 
@@ -70,8 +72,8 @@ python anomaly-metric-creator.py --help
   finding).
 - `.trellis/spec/amc/backend/index.md` conventions updated if an extraction
   changes a documented seam (e.g. the new `_configure_cli_runtime`).
-- On epic close: record the Decision 2 waiver (or the <800 alternative) in
-  both the epic design.md and CLAUDE.md.
+- On epic close: record the completed Decision 2 no-waiver split in CLAUDE.md
+  and the final line-count evidence in the epic artifacts.
 
 ## Review Notes
 

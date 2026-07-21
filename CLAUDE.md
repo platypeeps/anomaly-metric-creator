@@ -3,9 +3,11 @@
 Expanded historical/source guide for the anomaly metric creator. Canonical
 development conventions now live in `.trellis/spec/amc/backend/index.md`; update
 the focused Trellis spec first when a durable rule changes. The canonical
-runtime entrypoint is still `src/anomaly_metric_creator/legacy.py`: it owns
-`main()`, `RunContext`, scenario compatibility wiring, and compatibility
-re-imports. Canonical scenario builders/data/validation/runtime behavior now
+runtime entrypoint remains `src/anomaly_metric_creator/legacy.py`, but it is a
+compatibility and live-runtime wiring facade: `run_pipeline.py` owns the
+`main()` orchestration body and run-level artifact lifecycle, while
+`models_impl.py` owns `RunContext`. Canonical scenario
+builders/data/validation/runtime behavior
 lives in `scenario_builders.py`, `scenario_catalog.py`,
 `scenario_validation.py`, and `scenarios_impl.py`.
 The top-level `anomaly-metric-creator.py` is a thin compatibility shim that
@@ -25,15 +27,16 @@ not parallel behavior copies. They re-export from extracted implementations
 where a focused surface exists (`combine.py`→`combine_impl.py`,
 `otel.py`→`otel_stream.py`, `scenarios.py`→`scenario_builders.py`/
 `scenario_catalog.py`, `schema.py`→`schema_impl.py`/`validate_impl.py`,
-and `models.py`→`models_impl.py` for `MetricSpec`/`Instance` while `Edge`,
-`RunContext`, and `SaturationParams` stay exposed through `legacy.py` for
-identity compatibility; `Edge` and `SaturationParams` now originate in
+and `models.py`→`models_impl.py` for `MetricSpec`/`Instance`/`RunContext` while
+`Edge`, `RunContext`, and `SaturationParams` stay exposed through `legacy.py`
+for identity compatibility; `Edge` and `SaturationParams` originate in
 `topology_impl.py`). The schema
 facade imports the focused schema/validator implementations after loading
 `legacy.py` for live registry wiring, so object identity with the historic
 `legacy.<name>` surface remains stable.
-That split is now underway (the `07-02-legacy-monolith-decomposition` epic;
-boundaries and sequencing fixed in that task's `design.md`). Extraction
+The `07-02-legacy-monolith-decomposition` split now leaves `legacy.py` as the
+sub-800-line public facade; boundaries and sequencing are recorded in the epic
+and its child designs. Extraction
 pattern: code moves **verbatim** to a new module, `legacy.py` re-imports every
 moved name at the same conceptual location so the historic `legacy.<name>`
 surface (shim, facades, tests, `state.legacy` lookups) is unchanged, and new
@@ -59,8 +62,7 @@ gauge writer, the combine long-form writer, the OTEL streamer, and
 publication helpers — landed with step 3 because `gauges_impl` depends on
 them), and `combine_impl.py` (the wide + long-form combine writers,
 `discover_components`, `_wide_component_rows_are_monotonic`, and the
-`_NON_COMPONENT_FILES` / `_COMBINE_OUTPUT_FILENAME` constants;
-`_EMIT_ARTIFACT_FILES` stays in `legacy.py` as a core emit registry),
+`_NON_COMPONENT_FILES` / `_COMBINE_OUTPUT_FILENAME` constants),
 `schema_impl.py` (`SCHEMA_DOCUMENT_VERSION`, schema document serializers,
 topology snapshot serialization, and `write_schema_json`),
 `validate_impl.py` (schema read-back shape validation, file-set / row-count /
@@ -75,8 +77,11 @@ dimension checks), `validate_topology.py` (aggregate topology coupling),
 generate-flag validation), and `cli_subcommands.py`
 (`_SUBCOMMANDS`, `_main_combine_subcommand`, `_main_validate_subcommand`,
 `_main_serve_subcommand`, and `_main_trace_bundle_subcommand`),
-`models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
-`_load_instance_config`), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
+`models_impl.py` (`MetricSpec`, `Instance`, `RunContext`,
+`_validate_instance_list`, and `_load_instance_config`), `run_defaults.py`
+(generation-command defaults and the anomaly-count salt), `run_pipeline.py`
+(`main()` orchestration, reporting artifacts, emitted-file collection, and
+output hygiene), and `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
 catalog/instance metadata validator implementations), `scenario_builders.py`
 (`Scenario`, `register_cascade`, and deterministic scenario-spec builders),
@@ -118,6 +123,10 @@ Generation and topology leaf modules use the same named callback pattern for
 `legacy._TOPOLOGY_SATURATION_TARGETS` so legacy monkeypatches still exercise
 the current registry state without introducing a reverse import. Direct callers
 can patch the canonical extracted-module homes when they bypass `legacy.py`.
+`run_pipeline.py` uses one named weak callback returning the current legacy
+namespace, keyed by the facade module's `__name__`; `main()` resolves its
+collaborators at call time so fresh package-qualified legacy copies and
+monkeypatches remain isolated without a reverse import.
 `otel.py` imports
 its public streamers from `otel_stream.py`; `legacy.py` re-imports the same
 objects so facade/legacy identity remains stable.
@@ -132,7 +141,8 @@ step-2 `from .otlp import` block); after any extraction, grep the moved
 range for `^from \.` re-imports and confirm every leaf re-import
 (`redaction`, `timeutil`, `otlp`, `csv_layout`, `artifacts`, `combine_impl`,
 `schema_impl`, `validate_impl`, `otel_stream`, `cli_args`, `cli_subcommands`,
-`models_impl`, `catalog`, `runtime_defaults`, `anomaly_dispatch`, `generation`,
+`models_impl`, `catalog`, `runtime_defaults`, `run_defaults`, `run_pipeline`,
+`anomaly_dispatch`, `generation`,
 `generation_derivations`, `generation_helpers`, `generation_emit`,
 `topology_models`, `topology_registry`, `topology_impl`, `topology_compose`,
 `topology_instances`, `topology_support`, `scenario_builders`,

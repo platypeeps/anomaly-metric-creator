@@ -29,7 +29,8 @@
     "07-02-decomp-catalog-data",
     "07-02-decomp-generation-topology",
     "07-06-validate-impl-split-and-cleanup",
-    "07-21-decomp-scenario-catalog-recovery"
+    "07-21-decomp-scenario-catalog-recovery",
+    "07-21-decomp-legacy-dispatch-root"
   ],
   "parent": null,
   "relatedFiles": [],
