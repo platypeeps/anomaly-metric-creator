@@ -47,21 +47,37 @@ the tests do.
 
 ## Acceptance criteria
 
-- [ ] On a full-matrix PR run, the heavy and light jobs start within one
+- [x] On a full-matrix PR run, the heavy and light jobs start within one
       scheduling window of each other rather than sequentially.
-- [ ] Application-lane wall clock drops by >= 300s versus the
+- [x] Application-lane wall clock drops by >= 300s versus the
       `29631419630` baseline on a comparable run.
-- [ ] Combined coverage equals the pre-split figure within normal jitter,
+- [x] Combined coverage equals the pre-split figure within normal jitter,
       and `--cov-fail-under=85` still gates the merge.
-- [ ] `coverage.xml` is still published as a workflow artifact, including
+- [x] `coverage.xml` is still published as a workflow artifact, including
       on a run where the coverage gate fails.
 - [x] `tools/check_ci_review_contract.py` passes. If it asserts the old
       single-job shape, it is updated in the same PR to pin the new shape,
       including the `!cancelled()` guard.
-- [ ] Cancelling a run (e.g. arming auto-merge mid-run) still yields a
+- [x] Cancelling a run (e.g. arming auto-merge mid-run) still yields a
       `cancelled` aggregate, not `failure`.
 - [x] `CLAUDE.md`'s continuous-integration section describes the new job
       layout, including the coverage-combine step.
+
+## Completion evidence
+
+- PR #272 merged as `d4a4c38b91cacb545877271cf6d677aaff3a1993`.
+- Final run `29793442387` started both pytest jobs in the same scheduling
+  window; heavy finished in 11m57s, light in 6m23s, and coverage combine in
+  18s. The 735s critical path saves 354s versus the 1089s baseline step.
+- Combined coverage was 87%, the unchanged 85% gate passed, and artifact
+  `coverage-xml-py3.14` was published as artifact ID `8481343343`.
+- Local failure-path rehearsal generated XML before an intentional
+  `--fail-under=100` failure; the contract guard mutation-tests that order and
+  the cancellation-safe upload condition.
+- Superseded run `29793348418` concluded `cancelled`; its `test`, coverage,
+  and `CI Result` aggregates were cancelled rather than failed.
+- Copilot reviewed all 13 changed files on exact head `32953c3` and generated
+  no comments.
 
 ## Non-goals
 
