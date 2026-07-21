@@ -78,19 +78,46 @@ If the answer to either is yes, drop that trim and keep the fixture. The
 `test_n3_1d_hashes_stable` fix and the `synthetic_n3_run` investigation
 proceed regardless.
 
+### Decision gate outcome
+
+The maintainer approved both re-locks on 2026-07-21.
+
+- Commit `8f94f35` changes `SCHEMA_SEVEN_DAY_HASH` from
+  `5a1e5653c615f12560ab4b078fa0b26008d4c2b995b5a79b7b49743dd6838a46`
+  to
+  `779936a803989cd142de2438d6123fe63904f458bace9f7c1efa0b274c28508c`
+  for `interval_seconds=1.0 -> 60.0` while retaining
+  `--emit metrics,schema`.
+- Commit `23b7a56` changes `SCHEMA_N3_SEVEN_DAY_HASH` from
+  `795e069ae587ab546b1f71bdcd1d6c9cde8b7523d5128fb78fb9e8843421852a`
+  to
+  `ee102cd0b4cbd8aa207796eb68a96766b8f83f8ea46837c9b0f5e1a9c8898335`
+  for `--emit metrics,schema` at 1s -> standalone `--emit schema` at 60s.
+
+### Synthetic fixture investigation outcome
+
+Decline the proposed `synthetic_n3_run` output narrowing. The generator has
+one component selector, `--components`, and that same set controls topology
+generation, anomaly filtering, and emitted component CSVs. The fixture pins
+all six components because the apigateway-to-authservice assertion depends on
+their full coupling shape; selecting only `authservice` would remove its
+upstream input rather than merely suppress five unread files. There is no
+separate output-only component filter. At a measured 2.71s, adding one solely
+for this fixture is not justified.
+
 ## Acceptance criteria
 
-- [ ] `test_n3_1d_hashes_stable` runs both passes at the 60s default,
+- [x] `test_n3_1d_hashes_stable` runs both passes at the 60s default,
       matching `test_n3_7d_hashes_stable`, with no locked hash changed.
-- [ ] Each approved re-lock is a separate commit whose message records the
+- [x] Each approved re-lock is a separate commit whose message records the
       old hash, the new hash, and the parameter that changed.
-- [ ] Every trimmed fixture's docstring states what its consumers actually
+- [x] Every trimmed fixture's docstring states what its consumers actually
       read, so the next reader does not restore the waste.
-- [ ] `pytest -m heavy -n 0` drops by >= 30s versus the 377.47s local
-      baseline (more if both re-locks are approved).
-- [ ] No test loses an assertion. If a fixture narrows, the PR names each
+- [x] `pytest -m heavy -n 0` drops by >= 30s versus the 377.47s local
+      baseline: 44 heavy tests passed in 254.79s, a 122.68s (32.5%) reduction.
+- [x] No test loses an assertion. If a fixture narrows, the PR names each
       consuming test and confirms what it reads.
-- [ ] Any trim declined at the decision gate is recorded in this PRD with
+- [x] Any trim declined at the decision gate is recorded in this PRD with
       the reason, so it is not re-proposed.
 
 ## Non-goals

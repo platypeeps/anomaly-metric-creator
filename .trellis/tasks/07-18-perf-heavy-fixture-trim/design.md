@@ -2,10 +2,10 @@
 
 ## Overview
 
-Four items, one of which is free and three of which trade full-resolution
-byte coverage for time. The free one should land immediately; the other
-three are behind the PRD's decision gate and must not be implemented before
-it clears.
+Four items: one free cadence change, two golden-hash re-locks, and one
+timeboxed investigation. The free change and investigation proceed first.
+The two re-locks — and any narrowing change discovered by the investigation —
+must not be implemented before the PRD's maintainer gate clears.
 
 ## Proposal
 

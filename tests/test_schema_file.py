@@ -42,7 +42,7 @@ SCHEMA_ONE_DAY_HASH = (
     "6b79531d611755bd0df5bf14cca2244853d8339602d5703828534d4666b92aec"
 )
 SCHEMA_SEVEN_DAY_HASH = (
-    "5a1e5653c615f12560ab4b078fa0b26008d4c2b995b5a79b7b49743dd6838a46"
+    "779936a803989cd142de2438d6123fe63904f458bace9f7c1efa0b274c28508c"
 )
 
 
@@ -63,16 +63,18 @@ def one_day_schema_run(amc, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def seven_day_schema_run(amc, tmp_path_factory):
-    # Explicit 1s cadence preserves the full-resolution SCHEMA_SEVEN_DAY_HASH.
-    # This GB-scale fixture regenerates rather than deriving from
-    # ``seven_day_run``: schema.json's ``files`` section is coupled to the
-    # exact ``--emit metrics,schema`` selection, which ``seven_day_run``
-    # (``metrics,logs,traces``) does not match. It is classified ``heavy`` via
-    # ``conftest._HEAVY_MODULE_FIXTURES`` so it stays out of the parallel CI
-    # lane (07-06-heavy-marker-module-fixture-coverage).
+    """Generate the 7-day schema lock at a cheap cadence.
+
+    The sole consumer reads ``schema.json``; it never opens the generated
+    metric CSVs. This fixture regenerates rather than deriving from
+    ``seven_day_run``: schema.json's ``files`` section is coupled to the exact
+    ``--emit metrics,schema`` selection, which ``seven_day_run``
+    (``metrics,logs,traces``) does not match. The 60s cadence preserves the
+    7-day duration/cardinality contract without generating unread 1s CSVs.
+    """
     out = tmp_path_factory.mktemp("ver139_seven_day_schema")
     return run_capture(
-        amc, out, days=7, interval_seconds=1.0,
+        amc, out, days=7, interval_seconds=60.0,
         extra_args=["--emit", "metrics,schema"],
     )
 
@@ -288,8 +290,12 @@ def test_schema_byte_identical_default_one_day(one_day_schema_run):
     )
 
 
-def test_schema_byte_identical_default_seven_day(seven_day_schema_run):
+def test_schema_byte_identical_default_seven_day(seven_day_schema_run, amc):
+    """The coarse 7-day lock retains duration and cardinality semantics."""
     path = seven_day_schema_run.out_dir / "schema.json"
+    metadata = _load_schema(seven_day_schema_run.out_dir)["metadata"]
+    assert metadata["total_seconds"] == 7 * amc.SECONDS_PER_DAY
+    assert metadata["rows_per_component"] == 7 * amc.SECONDS_PER_DAY // 60
     actual = sha256_path(path)
     assert actual == SCHEMA_SEVEN_DAY_HASH, (
         f"schema.json drifted from locked 7-day hash. "
@@ -498,8 +504,10 @@ def test_schema_topology_version_is_two(one_day_schema_run, amc):
 # Dimensions block (phase 8)
 # ------------------------------------------------------------------
 # Locked SHA-256 golden hashes for ``schema.json`` at
-# ``--instances-per-component 3`` and the default --seed / scenario set
-# at --duration-days 1 and 7. Re-locked at phase 8 alongside the
+# ``--instances-per-component 3`` and the default --seed / scenario set.
+# The 1-day lock covers ``metrics,schema`` at 1s; the 7-day lock covers a
+# standalone schema at 60s because its consumer reads no metric CSVs. Initially
+# locked at phase 8 alongside the
 # new per-component ``dimensions`` block. Protects against silent drift
 # in the dim-aware schema output: the axes/cardinality block, the
 # component payload order, and the metadata reflect the multi-instance
@@ -512,7 +520,7 @@ SCHEMA_N3_ONE_DAY_HASH = (
     "a5b385e419b646f960efeb0eba16418be4276f217512984b7b84298a85e1ef9f"
 )
 SCHEMA_N3_SEVEN_DAY_HASH = (
-    "795e069ae587ab546b1f71bdcd1d6c9cde8b7523d5128fb78fb9e8843421852a"
+    "ee102cd0b4cbd8aa207796eb68a96766b8f83f8ea46837c9b0f5e1a9c8898335"
 )
 
 
@@ -532,13 +540,19 @@ def one_day_schema_run_n3(n3_one_day_dataset_dir):
 
 
 @pytest.fixture(scope="module")
-def seven_day_schema_run_n3(n3_seven_day_dataset_dir):
-    """Delegates to the session-scoped 7-day N=3 dataset — the single
-    most expensive generation in the suite; see
-    ``conftest.n3_seven_day_dataset_dir`` for the sharing rationale.
-    ``SCHEMA_N3_SEVEN_DAY_HASH`` holds byte-identically (same args,
-    same ``metrics,schema`` --emit selection)."""
-    return SimpleNamespace(out_dir=n3_seven_day_dataset_dir)
+def seven_day_schema_run_n3(amc, tmp_path_factory):
+    """Generate only the N=3 7-day ``schema.json`` read by its consumer.
+
+    The schema lock does not read the full-resolution metric CSVs owned by
+    ``n3_seven_day_dataset_dir``. A standalone schema run at 60s preserves the
+    duration and dimension-cardinality metadata without pulling that 1.81 GiB
+    fixture into this module.
+    """
+    out = tmp_path_factory.mktemp("n3_seven_day_schema")
+    return run_capture(
+        amc, out, days=7, interval_seconds=60.0,
+        extra_args=["--emit", "schema", "--instances-per-component", "3"],
+    )
 
 
 def test_schema_omits_dimensions_block_for_anonymous_default(one_day_schema_run):
@@ -605,12 +619,20 @@ def test_schema_n3_byte_identical_one_day(one_day_schema_run_n3):
     )
 
 
-def test_schema_n3_byte_identical_seven_day(seven_day_schema_run_n3):
-    """Locked SHA-256 hash for the default N=3 7-day schema.json — same
-    protection as the 1-day case, plus catches drift introduced only at
-    multi-day boundaries (e.g. a metadata field that depends on
-    duration)."""
+def test_schema_n3_byte_identical_seven_day(seven_day_schema_run_n3, amc):
+    """Lock the coarse standalone N=3 schema and its 7-day semantics."""
     path = seven_day_schema_run_n3.out_dir / "schema.json"
+    doc = _load_schema(seven_day_schema_run_n3.out_dir)
+    assert doc["metadata"]["total_seconds"] == 7 * amc.SECONDS_PER_DAY
+    assert (
+        doc["metadata"]["rows_per_component"]
+        == 7 * amc.SECONDS_PER_DAY // 60
+    )
+    assert doc["files"] == ["schema.json"]
+    assert all(
+        payload["dimensions"]["cardinality"] == 3
+        for payload in doc["components"].values()
+    )
     actual = sha256_path(path)
     assert actual == SCHEMA_N3_SEVEN_DAY_HASH, (
         f"N=3 7-day schema.json drifted from locked hash. "
