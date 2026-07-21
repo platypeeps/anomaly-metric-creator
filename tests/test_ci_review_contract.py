@@ -126,9 +126,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 run: |
                   set -euo pipefail
                   curl --fail --location --show-error --silent --retry 3 --retry-all-errors https://dl.k8s.io/release/${{KUBECTL_VERSION}}/bin/linux/amd64/kubectl
-                  echo kubectl | sha256sum --check --strict
+                  printf '%s  %s\\n' "$KUBECTL_SHA256" "$client_bin/kubectl" | sha256sum --check --strict
                   curl --fail --location --show-error --silent --retry 3 --retry-all-errors https://get.helm.sh/helm-${{HELM_VERSION}}-linux-amd64.tar.gz
-                  echo helm | sha256sum --check --strict
+                  printf '%s  %s\\n' "$HELM_SHA256" "$client_root/helm.tar.gz" | sha256sum --check --strict
                   echo "$client_bin" >> "$GITHUB_PATH"
               - env:
                   AMC_RUN_REAL_CLIENT_SMOKE: "1"
@@ -475,6 +475,10 @@ def test_parallel_full_test_jobs_are_required(
             "pinned kubectl checksum",
         ),
         (
+            "printf '%s  %s\\n' \"$KUBECTL_SHA256\" \"$client_bin/kubectl\"",
+            "kubectl checksum wiring",
+        ),
+        (
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/"
             "linux/amd64/kubectl",
             "official kubectl download",
@@ -483,6 +487,10 @@ def test_parallel_full_test_jobs_are_required(
         (
             "HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096",
             "pinned Helm checksum",
+        ),
+        (
+            "printf '%s  %s\\n' \"$HELM_SHA256\" \"$client_root/helm.tar.gz\"",
+            "Helm checksum wiring",
         ),
         (
             "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz",

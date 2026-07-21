@@ -34,9 +34,11 @@ supported skew for mid-2026 kubectl clients.
   command output, `/version`, OpenAPI v2/v3 metadata, and node kubelet data.
 - Exact-version macOS arm64 binaries were checksum-verified locally and both
   opt-in real-client smokes passed in 1.81 seconds with no kubectl skew warning.
-- Focused validation: 64 CI-contract tests passed; all 91 ordinary server tests
+- Focused validation: 66 CI-contract tests passed; all 91 ordinary server tests
   passed with only the two explicitly opt-in real-client tests skipped in the
   non-opt-in run; workflow YAML and both new shell blocks parse cleanly.
 - GitHub Actions run `29801400915`, light job `88543062073`, installed and
   probed kubectl v1.36.2 and Helm v4.2.0, then the dedicated opt-in smoke step
   completed with `2 passed in 5.80s` and no skips (2026-07-21).
+- Review hardening requires each pinned checksum variable to feed its matching
+  kubectl or Helm verification line, with mutation coverage for both bindings.

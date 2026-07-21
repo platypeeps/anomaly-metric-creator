@@ -472,6 +472,10 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
                 "KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82",
             ),
             (
+                "kubectl checksum wiring",
+                "printf '%s  %s\\n' \"$KUBECTL_SHA256\" \"$client_bin/kubectl\"",
+            ),
+            (
                 "official kubectl download",
                 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/"
                 "linux/amd64/kubectl",
@@ -480,6 +484,10 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             (
                 "pinned Helm checksum",
                 "HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096",
+            ),
+            (
+                "Helm checksum wiring",
+                "printf '%s  %s\\n' \"$HELM_SHA256\" \"$client_root/helm.tar.gz\"",
             ),
             (
                 "official Helm download",

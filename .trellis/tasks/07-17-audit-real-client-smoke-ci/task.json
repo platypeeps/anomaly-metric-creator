@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Implementation pins verified from official release endpoints on 2026-07-20: kubectl v1.36.2 and Helm v4.2.0. The facade advertises v1.36.2, and the CI contract guard owns the pin, checksum, serial smoke, and selector anchors. GitHub Actions run 29801400915 light job 88543062073 installed both clients and the dedicated smoke step passed both tests in 5.80 seconds on 2026-07-21.",
+  "notes": "Implementation pins verified from official release endpoints on 2026-07-20: kubectl v1.36.2 and Helm v4.2.0. The facade advertises v1.36.2, and the CI contract guard owns each pin, checksum-to-artifact binding, serial smoke, and selector anchor. GitHub Actions run 29801400915 light job 88543062073 installed both clients and the dedicated smoke step passed both tests in 5.80 seconds on 2026-07-21.",
   "meta": {}
 }
