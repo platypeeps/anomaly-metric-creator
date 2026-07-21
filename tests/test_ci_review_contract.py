@@ -119,7 +119,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             steps:
               - run: uv sync --extra dev --locked --python 3.14
               - run: uv run --no-sync python tools/check_mypy_gate.py
-              - run: uv run --no-sync pytest -n 4 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=
+              - run: uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=
               - run: mv .coverage coverage-light
               - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
                 with:

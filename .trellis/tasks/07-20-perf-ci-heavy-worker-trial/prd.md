@@ -40,5 +40,6 @@ Trial -n 2 --dist loadfile for the heavy CI lane with measured memory and disk h
   on a 48 GB developer host.
 - The public Linux runner provides 4 vCPU, 16 GB RAM, and 14 GB SSD. Local
   success cannot establish its memory or disk headroom.
-- Source split: `07-18-perf-ci-worker-counts` owns the already-evidenced light
-  lane; this task owns only the heavy experiment and decision.
+- Source split: `07-18-perf-ci-worker-counts` owns the completed light trial,
+  which retained `-n 2` after its remote result missed the adoption threshold;
+  this task owns only the heavy experiment and decision.

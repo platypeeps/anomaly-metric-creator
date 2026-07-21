@@ -2,18 +2,23 @@
 
 ## Execution Order
 
-1. Branch from `main`. Change the light lane from `-n 2` to `-n 4` and
-   correct the `CLAUDE.md` runner premise. This is evidenced and low risk.
-2. Open that PR, label `full-ci`, confirm the light lane drops >= 100s and
-   all 1597 currently collected light tests pass or skip as expected. Merge.
-3. Continue with `07-20-perf-ci-heavy-worker-trial`, which owns the separate
+1. Branch from `main`, trial the light lane at `-n 4`, and correct the
+   `CLAUDE.md` runner premise.
+2. Open that PR, label `full-ci`, and compare the remote light step with the
+   364-second baseline. Adopt only at >=100 seconds saved; otherwise restore
+   `-n 2`. Run `29796112539` measured 352 seconds, so restore `-n 2`.
+3. Confirm the retained setting passes the focused and full gates, then merge.
+4. Continue with `07-20-perf-ci-heavy-worker-trial`, which owns the separate
    diagnostic PR and its pre-committed adopt/reject rule.
 
 ## Validation Plan
 
 ```bash
-# light lane at the proposed setting, before pushing
+# candidate rehearsal retained as historical trial evidence
 .venv/bin/pytest -n 4 --dist loadfile -m "not heavy" -q
+
+# final light-lane setting after the remote trial missed its threshold
+.venv/bin/pytest -n 2 --dist loadfile -m "not heavy" -q
 
 # partition still covers the suite exactly
 .venv/bin/pytest -m heavy --collect-only -q | tail -1
@@ -23,8 +28,9 @@
 .venv/bin/pre-commit run --all-files
 ```
 
-CI validation confirms the light-lane wall-clock improvement against the
-recorded baseline. The heavy-lane diagnostic output belongs to the follow-up.
+CI validation measures the candidate against the recorded baseline and then
+confirms the retained setting. The heavy-lane diagnostic output belongs to the
+follow-up.
 
 ## Documentation And Spec Updates
 
@@ -41,9 +47,8 @@ recorded baseline. The heavy-lane diagnostic output belongs to the follow-up.
 
 - Keep the heavy-lane experiment in its follow-up task. Reviewers should not
   have to weigh an evidenced change against an unproven one in the same diff.
-- The counter-intuitive measurement (`-n 4` peaks *lower* than `-n 2`) will
-  draw a question; pre-empt it with the fixture-lifetime explanation from
-  `design.md`.
+- Keep both sides of the result: `-n 4` was materially faster locally, but the
+  remote light step improved by only 12 seconds and therefore was not adopted.
 
 ## Follow-Ups
 

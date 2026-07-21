@@ -2,15 +2,16 @@
 
 ## Overview
 
-The light lane is under-parallelized against a runner twice the size the
-config assumes, and the change is safe on measured evidence. The original
-design also covered an independent heavy-lane experiment; that evidence-gated
-work now lives in `07-20-perf-ci-heavy-worker-trial` so each required PR has
-its own Trellis lifecycle.
+The light lane's worker count was justified by a stale runner premise, so this
+design tests the locally faster setting against a pre-committed remote adoption
+threshold. The original design also covered an independent heavy-lane
+experiment; that evidence-gated work now lives in
+`07-20-perf-ci-heavy-worker-trial` so each required PR has its own Trellis
+lifecycle.
 
 ## Proposal
 
-### Part A — light lane `-n 2` -> `-n 4` (land immediately)
+### Part A — trial light lane `-n 2` -> `-n 4`
 
 Measured on 14-core / 48 GB darwin, 1555 tests:
 
@@ -26,9 +27,13 @@ finishing sooner means fewer session fixtures are simultaneously alive, and
 flight. Projected CI: 364s -> **~233s**.
 
 `-n 10` buys 3% over `-n 4` — `--dist loadfile` bounds parallelism by file
-count, so wide values are wasted regardless of core count. `-n 4` is
-therefore both the CI-correct and the locally-optimal setting; there is no
-tension to resolve.
+count, so wide values are wasted regardless of core count. The local evidence
+made `-n 4` the candidate, but remote CI remained the adoption gate.
+
+Full-matrix run `29796112539` measured the four-worker light step at 352s,
+versus the 364s baseline. The 12-second saving missed the pre-committed
+100-second threshold, so the proposal is rejected and the final workflow
+retains `-n 2`. The faster local result did not transfer to the hosted runner.
 
 ### Follow-up — heavy lane `-n 0` -> `-n 2`
 
@@ -75,8 +80,8 @@ billed minutes — is the optimization target.
 
 ## Risks And Edge Cases
 
-- **The heavy trial is the risk; this task is not.** Ship this task before the
-  follow-up experiment; the light-lane evidence is unambiguous.
+- **Local speedup may not transfer to CI.** The remote threshold controls the
+  final setting; the observed 12-second saving requires restoring `-n 2`.
 - **Peak RSS is measured on darwin.** Linux allocator behavior and numpy's
   `<U` string-array intermediates may differ. The trial is the only way to
   know; treat 11.25 GB as an indication, not a Linux prediction.
@@ -92,11 +97,12 @@ billed minutes — is the optimization target.
 
 ## Validation
 
-- Part A: a full-matrix run showing the light lane >= 100s below its 364s
-  baseline, with all 1597 collected light tests passing or skipping as
-  expected.
+- Part A: trial `-n 4` in a full-matrix run and adopt it only if the light step
+  is >=100s below its 364s baseline. Run `29796112539` measured 352s, so restore
+  `-n 2` and retain the negative result as evidence.
 - Follow-up task: a trial run with an added diagnostic step capturing `nproc`,
   `free -m`, and `df -h` before and after the heavy invocation. Record the
   numbers in the PR whether or not the change is adopted — a failed trial
   with data is a durable result; a failed trial without data gets repeated.
-- Full suite locally at both settings before pushing.
+- Full suite locally at the candidate setting before pushing, followed by the
+  final focused and full gates at the retained `-n 2` setting.

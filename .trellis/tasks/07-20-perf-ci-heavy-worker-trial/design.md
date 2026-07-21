@@ -34,7 +34,8 @@ permanent tool unless repeated runner experiments justify one.
   partition becomes empty.
 - The heavy coverage artifact name and downstream combine/aggregate jobs do
   not change.
-- The light lane remains `-n 4` and is not part of this experiment.
+- The light lane remains `-n 2` after its four-worker trial missed the
+  pre-committed adoption threshold; it is not part of this experiment.
 
 ## Failure handling
 

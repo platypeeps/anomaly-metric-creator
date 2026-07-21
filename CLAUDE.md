@@ -2553,7 +2553,7 @@ run in CI):
   across xdist workers, so every run **splits** the suite by the `heavy`
   marker instead of running everything serially. Separate jobs start
   `pytest -n 0 -m heavy` for the GB-scale 7-day / N=3 fixture tests serially
-  (low-RAM) and `pytest -n 4 --dist loadfile -m "not heavy"` for the light
+  (low-RAM) and `pytest -n 2 --dist loadfile -m "not heavy"` for the light
   remainder under real xdist at the same time (the pyproject addopts default
   `-n 4 --dist loadfile` still applies to local runs on larger machines).
   This keeps the parallel worker-distribution / global-state ordering path
@@ -2565,10 +2565,12 @@ run in CI):
   partition tracks the fixture set with no per-test annotation to drift. A
   broken marker still makes the heavy job collect zero tests and fail with
   pytest exit 5; the jobs are concurrent, so this is a correctness guard, not
-  an ordering guarantee. The light subset uses all four runner vCPUs and
-  excludes exactly the GB-scale fixtures whose concurrent generation caused
-  the original OOM; measured locally, `-n 4` finished faster and at lower peak
-  RSS than `-n 2`. Each pytest job has a 30-minute timeout,
+  an ordering guarantee. The light subset excludes exactly the GB-scale
+  fixtures whose concurrent generation caused the original OOM. A four-worker
+  CI trial completed the light step in 352s versus the 364s two-worker
+  baseline, only 12s below baseline and short of the pre-committed 100s
+  adoption threshold, so CI retains `-n 2`; the faster local four-worker result
+  did not transfer to the hosted runner. Each pytest job has a 30-minute timeout,
   and the coverage-combine job has a 10-minute timeout, capping hangs while
   keeping the critical path below the former sequential 45-minute job.
   The full-suite lane also runs mypy and coverage, each in a **report-only +
@@ -2735,7 +2737,7 @@ The `heavy` marker partitions the suite for the 16 GB PR runner (see
 `seven_day_run` / `n3_one_day_dataset_dir` / `n3_seven_day_dataset_dir`).
 Add a new GB-scale fixture to that frozenset — do not list test files in the
 workflow. `pytest -m heavy` (serial) and `pytest -m "not heavy"` (xdist
-`-n 4`) partition the full suite; the decision is unit-tested in
+`-n 2`) partition the full suite; the decision is unit-tested in
 `tests/test_heavy_marker.py` via the pure `_item_is_heavy(fixturenames)`
 helper.
 

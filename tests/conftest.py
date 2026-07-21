@@ -159,7 +159,7 @@ def _guard_cwd_otel_activity_log():
 # GB-scale session fixtures. A test that requests any of these (directly or
 # transitively) is auto-marked ``heavy`` so the PR CI gate can run it serially
 # (``pytest -n 0 -m heavy``) while the light remainder runs under real xdist
-# (``pytest -n 4 --dist loadfile -m "not heavy"``). A prior full xdist run
+# (``pytest -n 2 --dist loadfile -m "not heavy"``). A prior full xdist run
 # OOM-died while generating these fixtures; keep them serial until a dedicated
 # trial demonstrates memory and disk headroom on the 16 GB standard runner
 # (CLAUDE.md "Continuous integration" section). Every other fixture (including

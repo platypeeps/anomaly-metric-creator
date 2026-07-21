@@ -440,7 +440,7 @@ jobs:
       - name: Run light test partition
         env:
           COVERAGE_CORE: sysmon
-        run: uv run --no-sync pytest -n 4 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=
+        run: uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=
 
       - name: Prepare light coverage data
         run: mv .coverage coverage-light
