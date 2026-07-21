@@ -19,8 +19,11 @@ zero leak coverage unless a reviewer remembers.
   `_TOOL_MINIMAL_ARGS: dict[str, dict]` mapping **every** tool name to
   schema-valid minimal arguments (`get_metric_histogram` →
   `{"component": ..., "metric": ..., **window}`; `kubectl_get` →
-  `{"resource": "pods"}`; `get_pod_logs` → a pod name from the snapshot;
-  window-taking tools reuse the existing `from_ms`/`to_ms` day window; etc.).
+  `{"kind": "configmaps"}`; `get_pod_logs` → a pod name derived from the
+  snapshot; window-taking tools reuse the existing `from_ms`/`to_ms` day
+  window; etc.). Reuse `server.DEFAULT_RELEASE` for Helm calls and the first
+  registered metric for the selected component instead of duplicating those
+  owners in the test.
 - Coupling assertion first, so it fails loudly and names the gap:
   `assert set(_TOOL_MINIMAL_ARGS) == {t.name for t in server_mcp.MCP_TOOLS}`.
 - Rewrite the sweep body to iterate the table: `tools/call` each tool in
@@ -41,18 +44,21 @@ zero leak coverage unless a reviewer remembers.
 ### A-001 — structural guard on handler source
 
 Recommended shape: a **source-scan guard test** mirroring the
-`test_every_dispatched_route_is_classified` precedent (same file, :~150):
-for each `MCP_TOOLS` entry, `inspect.getsource(tool.handler)` and assert it
-contains none of a forbidden-access list — `state.anomaly_rows`,
-`state.active_scenarios`, `SCENARIOS`, `state.scenarios`,
-`"anomalies.csv"`, `metric_report.log`-reading outside the two gated log
-tools. Keep the list beside the test with a comment pointing at the
-ground-truth-wall section of CLAUDE.md. A narrowed investigation-view
-`state` object would be stronger but refactors all 15 handlers and the ops
-dispatch — explicitly deferred (non-goal) unless the scan proves too leaky.
-The two log tools legitimately read `metric_report.log` behind the
-`eval_mode` refusal — encode that as a per-tool allowlist entry
-(`{"get_logs", "deduplicate_logs"}: metric_report.log allowed`), never a
+`test_every_dispatched_route_is_classified` precedent (same file, :~150).
+For each `MCP_TOOLS` entry, unwrap the handler and inspect its AST plus the
+module-local helper functions it calls transitively. Reject rubric-bearing
+state attributes (`anomaly_rows`, `active_scenarios`, `scenarios`), a
+`SCENARIOS` name/attribute, and `"anomalies.csv"`. Reject
+`"metric_report.log"` everywhere except the two gated log-tool call graphs.
+Following module-local helpers keeps a handler from evading the guard by
+moving a read one function down while leaving external ops renderers to the
+existing live multi-surface sweep. Keep the forbidden list beside the test
+with a comment pointing at the ground-truth-wall section of the Trellis
+API/server spec. A narrowed investigation-view `state` object would be
+stronger but refactors all 15 handlers and the ops dispatch — explicitly
+deferred (non-goal) unless the scan proves too leaky. The two log tools
+legitimately reach `metric_report.log` behind the `eval_mode` refusal — encode
+that as a per-tool allowlist (`{"get_logs", "deduplicate_logs"}`), never a
 blanket exemption.
 
 ## Boundaries And Non-Goals
@@ -68,9 +74,12 @@ blanket exemption.
   positive control + source-scan guard),
 - possibly `src/anomaly_metric_creator/server_mcp.py` (docstring/comment
   pointing new-tool authors at the table — no behavior change),
+- `.trellis/spec/amc/backend/api-cli-server.md` (canonical registry-coupled
+  wall contract),
 - `.trellis/audit/ledger.md` (flip A-021, A-001 → fixed),
-- CLAUDE.md MCP section: one sentence noting the sweep is registry-coupled
-  and a new tool must add a `_TOOL_MINIMAL_ARGS` entry.
+- `CLAUDE.md` MCP section: mirror the canonical spec with one sentence noting
+  the sweep is registry-coupled and a new tool must add a
+  `_TOOL_MINIMAL_ARGS` entry.
 
 ## Risks And Edge Cases
 

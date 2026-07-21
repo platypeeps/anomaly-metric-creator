@@ -213,9 +213,16 @@ subject to the **ground-truth wall**: no MCP tool may read `anomalies.csv` or
 the `SCENARIOS` registry, because the MCP surface is what an AI agent under
 evaluation sees while the anomaly manifest is the eval harness's scoring
 rubric. When adding a tool, extend `MCP_TOOLS`, keep it inside the wall, and add
-coverage in `tests/test_server_mcp.py`. Sources: `CLAUDE.md`; `README.md`;
+core behavior coverage in `tests/test_server_mcp.py` plus one schema-valid
+minimal-argument entry in the registry-coupled eval/non-eval sweep in
+`tests/test_server_eval_mode.py`. That sweep must keep exact key equality with
+`MCP_TOOLS`. Its structural guard scans each handler and transitively called
+module-local helpers for rubric-bearing state or files; only the eval-gated
+`get_logs` and `deduplicate_logs` call graphs may reach `metric_report.log`.
+Sources: `CLAUDE.md`; `README.md`;
 `src/anomaly_metric_creator/server_mcp.py`;
-`src/anomaly_metric_creator/server.py`; `tests/test_server_mcp.py`.
+`src/anomaly_metric_creator/server.py`; `tests/test_server_mcp.py`;
+`tests/test_server_eval_mode.py`.
 
 `amc serve --mcp-eval-mode` is a stricter posture: the run's active scenarios
 and anomaly manifest are the scoring rubric, so eval mode hides every

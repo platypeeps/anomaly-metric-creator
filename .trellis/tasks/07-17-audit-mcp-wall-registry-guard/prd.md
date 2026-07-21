@@ -22,7 +22,7 @@ rubric-bearing SimulationState.
 
 ## Acceptance criteria
 
-- [ ] Sweep keys == set(MCP_TOOLS) asserted; all 15 tools leak-checked in both modes.
-- [ ] A rubric read from a new tool handler fails a test or lint, not a review.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] Sweep keys == set(MCP_TOOLS) asserted; all 15 tools leak-checked in both modes.
+- [x] A rubric read from a new tool handler fails a test or lint, not a review.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).

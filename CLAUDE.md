@@ -300,8 +300,11 @@ rubric. `server.py` only routes the request body (`_send_mcp_post`);
 protocol behavior, error codes, and the import-time-validated
 `MCP_TOOLS` registry live in `server_mcp.py`. When adding a tool, extend
 `MCP_TOOLS` (name, description, JSON-Schema `inputSchema`, handler),
-keep it inside the ground-truth wall, and add coverage in
-`tests/test_server_mcp.py`.
+keep it inside the ground-truth wall, add core coverage in
+`tests/test_server_mcp.py`, and add its schema-valid minimal arguments to
+the registry-coupled eval/non-eval sweep in `tests/test_server_eval_mode.py`;
+the structural guard there also scans module-local helper calls for rubric
+access.
 
 **Eval mode (`--mcp-eval-mode`).** `amc serve` is an evaluation target for
 AI incident-response agents; the agent's scoring rubric is the run's
