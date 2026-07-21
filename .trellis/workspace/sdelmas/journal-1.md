@@ -1363,3 +1363,37 @@ Co-located the N=3 gauge and combine fixtures, preserved independent golden hash
 ### Next Steps
 
 - None - task complete
+
+
+## Session 33: Classify repo-only CI tooling paths
+
+**Date**: 2026-07-21
+**Task**: Classify repo-only CI tooling paths
+**Package**: amc
+**Branch**: `codex/ci-classifier-script-paths`
+
+### Summary
+
+PR #281 added an explicit seven-path repo-tooling allowlist, retained tested and tools paths as application-required, added focused classifier regressions, synchronized CI documentation/specs, and passed local gates, Copilot review, and full hosted CI.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8e703f4` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
