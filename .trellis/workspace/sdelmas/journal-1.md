@@ -1600,3 +1600,44 @@ Corrected the legacy epic from a misleading 10/10-complete state to 10/11 and cr
 ### Next Steps
 
 - Implement 07-21-decomp-scenario-catalog-recovery; return to the parent size/waiver decision only after unchanged hashes.
+
+
+## Session 39: Extract scenario registry and resolution modules
+
+**Date**: 2026-07-21
+**Task**: Extract scenario registry and resolution modules
+**Package**: amc
+**Branch**: `codex/decomp-scenario-catalog-recovery-bookkeeping`
+
+### Summary
+
+Extracted the ordered scenario catalog, builders, validation, and runtime helpers from legacy.py while preserving facade identity, monkeypatch visibility, import ordering, and locked output; addressed three Copilot review rounds and merged PR #289.
+
+### Main Changes
+
+- Moved scenario builders, the ordered catalog, validation, and runtime composition into focused owner modules.
+- Reduced legacy.py to 1,587 lines while retaining compatibility wrappers and one import-time validator call.
+- Fixed Boolean days_required validation and preserved per-spec manifest severity overrides from review feedback.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d03612138ef1e2929910e9204688f1cf31adffb6` | refactor: extract scenario catalog modules |
+| `58e02fd6544d01d120ba986fe966e87301f8b09e` | fix: address review feedback round 1 |
+| `310814e56dfc127359e158c22f403af1085cad6a` | fix: preserve per-spec scenario severity |
+
+### Testing
+
+- [OK] Full pytest suite: 1,697 passed; 2 opt-in real-client smokes skipped.
+- [OK] Focused registry, scenario, and facade suite: 194 passed.
+- [OK] Mypy gate: 23 clean source modules; deterministic full-check and exact-head hosted full CI passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
