@@ -1,5 +1,13 @@
 # Local test split — Implementation Plan
 
+## Measured outcome
+
+Execution stopped after the required before-change measurements disproved the
+proposal: the complete bare suite took 253.36s, while the serial heavy half of
+the split took 345.01s. The implementation therefore adds no wrapper and makes
+no classifier change. It corrects the local/CI guidance and fixture fan-out
+explanation instead.
+
 ## Execution Order
 
 1. Branch from `main`. Measure the baseline before changing anything, so

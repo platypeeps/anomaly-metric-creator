@@ -4,11 +4,26 @@
 
 A bare `.venv/bin/pytest` runs the whole suite at `-n 4`, so each GB-scale
 session fixture is rebuilt **once per worker that touches a consuming
-file** — up to 4x. The CI split (`-n 0 -m heavy`, then the light remainder)
-builds each fixture exactly once. Local developers should get that same
-property by default instead of the slowest available configuration.
+file** — up to 4x. This task tests whether avoiding that fan-out with a
+sequential heavy/light split improves local wall time, and adopts it only if
+the same-checkout measurement beats the default.
 
 ## Measurement context
+
+### Live decision measurement (2026-07-20)
+
+The implementation pass remeasured current `main` before adding a wrapper:
+
+| Configuration | Result | Wall time |
+|---|---|---|
+| bare default (`-n 4 --dist loadfile`) | 1,680 passed, 2 skipped | **253.36s** |
+| heavy serial (`-n 0 -m heavy`) | 48 passed, 1,634 deselected | **345.01s** |
+
+The proposed sequential split cannot beat the bare default: its heavy half
+alone is 91.65s (36.2%) slower than the complete suite, before any light tests
+run. The task therefore rejects the wrapper and retains the default. The useful
+change is correcting the documentation: the split is CI memory isolation and a
+local low-memory fallback, not a faster developer path.
 
 `pyproject.toml:86` sets `addopts = "-ra --strict-markers --dist loadfile -n 4"`
 for all tests. The comment at `:67-81` correctly notes session fixtures are
@@ -42,34 +57,32 @@ core count.
 
 ## Requirements
 
-- Give developers a one-command split run that builds each heavy fixture
-  once. Options to weigh in `design.md`: a documented two-command sequence,
-  a `Makefile` / `just` target, or a `tox`-style alias. Do **not** try to
-  express the split inside `addopts` — pytest runs one invocation.
+- Adopt a one-command split only if the same-checkout measurement beats the
+  bare default. The live measurement rejected it, so no wrapper is added.
 - Correct `docs/DEVELOPMENT_CYCLE.md:62-63`, which currently hands
   developers the CI runner's `-n 2` to run on a 14-core machine.
 - Update the `pyproject.toml:67-81` comment: state that the `min(files,
   workers)` bound is the real one, that the `~5 GB` figure covers only the
   1-day fixture, and that `-n` above 4 does not help under
   `--dist loadfile`.
-- Reconsider the `-n 4` default itself. It is right for the light lane and
-  wrong for a whole-suite run; if the default stays, the docs must say that
-  a bare `pytest` is the slow path and name the fast one.
+- Reconsider the `-n 4` default itself. The live measurement retained it as
+  the faster whole-suite path; docs must distinguish throughput from the
+  split's lower fixture fan-out.
 - Keep `-n 0` documented as the required mode for `pdb` — `-n 1` still
   spawns a worker subprocess and breaks interactive debugging.
 
 ## Acceptance criteria
 
-- [ ] A documented single command runs the full suite via the split and is
-      measurably faster than a bare `.venv/bin/pytest` on the same machine;
-      the PR records both timings.
-- [ ] `docs/DEVELOPMENT_CYCLE.md` no longer recommends the CI runner's
+- [x] The proposed split was measured before adoption and rejected because its
+      heavy half alone was slower than bare `.venv/bin/pytest`; no slower
+      wrapper was added.
+- [x] `docs/DEVELOPMENT_CYCLE.md` no longer recommends the CI runner's
       worker count for local use.
-- [ ] The `pyproject.toml` comment states the correct fan-out bound and the
+- [x] The `pyproject.toml` comment states the correct fan-out bound and the
       `--dist loadfile` saturation point.
-- [ ] Whatever the default becomes, `pytest` with no arguments still passes
+- [x] `pytest` with no arguments still passes
       the full suite — no one is left with a broken bare invocation.
-- [ ] `CLAUDE.md`'s parallel-execution section matches the new guidance.
+- [x] `CLAUDE.md`'s parallel-execution section matches the new guidance.
 
 ## Non-goals
 

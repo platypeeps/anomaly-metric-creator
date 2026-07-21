@@ -2704,11 +2704,9 @@ the `dev` extra (see [README.md](README.md#tests)).
 `required_plugins = ["pytest-xdist"]`, so every `.venv/bin/pytest`
 invocation runs across 4 worker processes by default, distributes tests by
 file (whole files stay on one worker), and fails fast with a clear message
-if `pytest-xdist` is missing from the active environment. The full broader
-sweep (`test_correctness.py`, `test_validate_output.py`, `test_schema_file.py`,
-`test_combine.py`, `test_gauges_file.py`, `test_scenario_deviation.py`) drops
-from ~15–22 min serial to ~5 min parallel, which keeps it inside a 10-minute
-per-command CI budget so the run does not get auto-backgrounded.
+if `pytest-xdist` is missing from the active environment. This is the normal
+and measured-fastest local full-suite path: the 2026-07-20 checkout completed
+in 253.36s.
 
 Session-scoped fixtures in `tests/conftest.py` (`one_day_run_a`,
 `one_day_run_b`, `seven_day_run`, `n3_one_day_dataset_dir`, …) are
@@ -2719,22 +2717,27 @@ distinct workers that hit each fixture, not with the worker count alone.
 every test in a file on the same worker: under xdist's default `--dist
 load` (per-test distribution) a single file's tests can scatter across
 every worker and force each of them to instantiate the file's shared
-fixtures, while `--dist loadfile` collapses that to at most one
-instantiation per file regardless of worker fan-out. The N=3 dataset alone
-is ~1.3 GB, so 4 workers cap peak fixture memory around ~5 GB even under
-worst-case fan-out.
+fixtures. With `--dist loadfile`, a session fixture shared by multiple files
+can still be built on `min(consuming files, workers)` processes, but each file
+stays on one worker. Four workers are the practical saturation point for this
+file-granular suite; wider local pools have not produced a material speedup.
 
-Override on the command line for narrow or wide hosts:
+Override on the command line for debugging or lower-memory hosts:
 
 ```
 .venv/bin/pytest -n 0   # in-process; required for `pdb` / true serial
-                        # also the right choice on low-RAM (< 8 GB) CI runners
-.venv/bin/pytest -n 8   # double up on bigger boxes; ensure ~16 GB RAM
+.venv/bin/pytest -n 2   # lower-memory parallel fallback
 ```
 
 `-n 1` is not a true serial run — xdist still spawns one worker subprocess,
 which breaks interactive debuggers like `pdb`. Use `-n 0` instead when you
 need in-process execution.
+
+CI's heavy/light split isolates memory on the hosted runner; it is not a local
+speed optimization. A serial heavy partition avoids session-fixture fan-out,
+but on the same 2026-07-20 checkout it took 345.01s by itself, already slower
+than the entire default run. Use that split only when memory pressure requires
+it, not as the normal developer command.
 
 The `heavy` marker partitions the suite for the 16 GB PR runner (see
 "Continuous integration" above). It is **auto-applied** — never hand-write

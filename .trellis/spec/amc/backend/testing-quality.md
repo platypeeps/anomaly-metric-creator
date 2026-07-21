@@ -82,12 +82,19 @@ platforms where those APIs are missing. Sources: `CLAUDE.md`; `tests/`;
 
 The default pytest invocation uses xdist loadfile distribution with four
 workers: `addopts = "-ra --dist loadfile -n 4"`, and `required_plugins`
-requires `pytest-xdist` so missing xdist fails clearly. Sources:
+requires `pytest-xdist` so missing xdist fails clearly. This is the canonical
+local full-suite command. A shared session fixture can be instantiated on
+`min(consuming files, workers)` processes even under loadfile distribution;
+four workers are the measured saturation point for the file-granular suite.
+Sources:
 `pyproject.toml`; `README.md`; `CLAUDE.md`; `tests/conftest.py`;
 `.github/workflows/ci.yml`.
 
 Use `-n 0` for true in-process serial runs such as `pdb`; `-n 1` still spawns
-an xdist worker subprocess. Sources: `README.md`; `CLAUDE.md`;
+an xdist worker subprocess. The heavy/light CI partition is a memory-isolation
+strategy, not the normal local speed path: on the 2026-07-20 checkout, the
+complete default run took 253.36s while the serial heavy partition alone took
+345.01s. Sources: `README.md`; `CLAUDE.md`;
 `pyproject.toml`.
 
 The `heavy` marker is auto-applied by `tests/conftest.py` based on fixture
