@@ -53,9 +53,9 @@ parallel maps. Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 
 ## Module Boundaries
 
-Keep `main()`, `RunContext`, the scenario registry, and compatibility wrappers
-in `legacy.py`; focused generation, topology, and artifact helpers may live in
-dedicated modules when `legacy.py` preserves the historic public surface.
+Keep `main()`, `RunContext`, and compatibility wrappers in `legacy.py`;
+focused generation, topology, scenario, and artifact owners live in dedicated
+modules while `legacy.py` preserves the historic public surface.
 Focused modules extracted so far through decomposition epic
 `07-02-legacy-monolith-decomposition`:
 `redaction.py` (sensitive HTTP-header masking), `timeutil.py`
@@ -76,7 +76,12 @@ generate-flag validation), `cli_subcommands.py` (dedicated `combine`,
 `models_impl.py` (`MetricSpec`, `Instance`, `_validate_instance_list`, and
 `_load_instance_config`), `catalog.py` (`COMPONENTS`, `INSTANCES`,
 `DEFAULT_METRICS_PER_COMPONENT`, metric caps, catalog seasonality helpers, and
-catalog/instance metadata validator implementations), `anomaly_dispatch.py`
+catalog/instance metadata validator implementations), `scenario_builders.py`
+(`Scenario`, `register_cascade`, and deterministic scenario-spec builders),
+`scenario_catalog.py` (the single ordered declarative `SCENARIOS` registry),
+`scenario_validation.py` (scenario/spec validators with explicit inputs),
+`scenarios_impl.py` (selection, signal/count filtering, and composition with a
+live registry callback), `anomaly_dispatch.py`
 (shape vocabulary and generator-arity dispatch), `generation.py`
 (`generate_component` and live generation callbacks),
 `generation_derivations.py` (derived-metric recomputation registry),
@@ -102,7 +107,11 @@ keeps dependency direction one-way. The moved model/catalog readers use those
 callbacks for patched `legacy.COMPONENTS` and `legacy.INSTANCES`; `legacy.py`
 still invokes catalog metadata validation at the historical import-time call
 site, while `catalog.py` remains the source of truth for the shipped component
-and instance registries. The moved generation and topology helpers use the same
+and instance registries. The moved scenario readers use the same pattern for
+patched `legacy.SCENARIOS`; the sole import-time scenario-validation call stays
+at its historical `legacy.py` site, and `scenario_catalog.py` is intentionally
+one ordered data-only registry even though it exceeds the normal 800-line
+behavior-module limit. The moved generation and topology helpers use the same
 callback pattern for `legacy.DERIVATIONS`, `legacy._format_fixed3`,
 `legacy.TOPOLOGY`, `legacy._TOPOLOGY_LOAD_METRICS`, and
 `legacy._TOPOLOGY_SATURATION_TARGETS`, with direct module callers falling back
@@ -118,6 +127,10 @@ name mapping may still come from the live registry. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/models_impl.py`;
 `src/anomaly_metric_creator/catalog.py`;
+`src/anomaly_metric_creator/scenario_builders.py`;
+`src/anomaly_metric_creator/scenario_catalog.py`;
+`src/anomaly_metric_creator/scenario_validation.py`;
+`src/anomaly_metric_creator/scenarios_impl.py`;
 `src/anomaly_metric_creator/anomaly_dispatch.py`;
 `src/anomaly_metric_creator/generation.py`;
 `src/anomaly_metric_creator/generation_derivations.py`;

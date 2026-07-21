@@ -3,7 +3,7 @@
   "name": "decomp-scenario-catalog-recovery",
   "title": "Extract scenario registry and resolution modules",
   "description": "Recover the unimplemented PR B from archived decomposition step 9: move scenario builders and resolution helpers to scenarios_impl.py, move SCENARIOS and its validator to scenario_catalog.py, preserve legacy monkeypatch visibility and import-time ordering, and re-point the scenarios facade with byte-identical output.",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",

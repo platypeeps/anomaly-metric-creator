@@ -25,7 +25,9 @@ Use canonical registries and helpers instead of parallel maps:
 `COMPONENTS`, `SCENARIOS`, `DERIVATIONS`, `TOPOLOGY`,
 `_EMIT_ARTIFACT_FILES`, `_COMBINE_OUTPUT_FILENAME`,
 `_INSTANCE_DIMENSION_COLUMNS`, and related helpers. Sources: `CLAUDE.md`;
-`src/anomaly_metric_creator/legacy.py`; `tests/test_registry.py`;
+`src/anomaly_metric_creator/legacy.py`;
+`src/anomaly_metric_creator/scenario_catalog.py`;
+`src/anomaly_metric_creator/scenarios_impl.py`; `tests/test_registry.py`;
 `tests/test_emit_selection_hygiene.py`; `tests/test_validate_output.py`.
 
 Dispatch tables should raise for unknown internal keys. Use strict indexing on
@@ -33,6 +35,20 @@ strict registries and let tolerant callers opt in locally with narrow
 `try/except KeyError`. Sources: `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_validate_output.py`;
 `tests/test_scenarios.py`.
+
+Scenario extraction keeps three independently reviewable behavior owners
+(`scenario_builders.py`, `scenario_validation.py`, and `scenarios_impl.py`)
+below 800 lines. `scenario_catalog.py` is the explicit exception: it may exceed
+that limit only as one declarative ordered registry, with no validation or
+runtime orchestration. Preserve facade/legacy object identity, patched
+`legacy.SCENARIOS` visibility, and the single historical import-time validator
+call. Sources: `src/anomaly_metric_creator/scenario_builders.py`;
+`src/anomaly_metric_creator/scenario_catalog.py`;
+`src/anomaly_metric_creator/scenario_validation.py`;
+`src/anomaly_metric_creator/scenarios_impl.py`;
+`src/anomaly_metric_creator/scenarios.py`;
+`src/anomaly_metric_creator/legacy.py`; `tests/test_package_facades.py`;
+`tests/test_registry.py`; `tests/test_scenarios.py`.
 
 ## Validation Strategy
 

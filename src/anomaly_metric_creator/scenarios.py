@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
-from .legacy import SCENARIOS, Scenario, register_cascade
+from .scenario_builders import Scenario, register_cascade
+from .scenario_catalog import SCENARIOS
 
 __all__ = ["SCENARIOS", "Scenario", "register_cascade"]

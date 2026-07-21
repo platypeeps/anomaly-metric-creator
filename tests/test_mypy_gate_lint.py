@@ -27,9 +27,15 @@ def test_list_mode_owns_the_expected_clean_module_set() -> None:
 
     assert result.returncode == 0, result.stderr
     modules = result.stdout.splitlines()
-    assert len(modules) == 19
+    assert len(modules) == 23
     assert modules[0] == "src/anomaly_metric_creator/__init__.py"
     assert modules[-1] == "src/anomaly_metric_creator/timeutil.py"
+    assert {
+        "src/anomaly_metric_creator/scenario_builders.py",
+        "src/anomaly_metric_creator/scenario_catalog.py",
+        "src/anomaly_metric_creator/scenario_validation.py",
+        "src/anomaly_metric_creator/scenarios_impl.py",
+    } <= set(modules)
     assert len(modules) == len(set(modules))
     assert all((REPO_ROOT / module).is_file() for module in modules)
 
