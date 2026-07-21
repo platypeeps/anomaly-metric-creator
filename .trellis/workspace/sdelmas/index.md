@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
+- **Total Sessions**: 27
 - **Last Active**: 2026-07-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1118 | Active |
+| `journal-1.md` | ~1160 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-07-20 | Adopt two heavy CI workers after runner trial | `c13fa09`, `b3c9cea`, `3c8831b` | `codex/ci-heavy-worker-trial` |
 | 26 | 2026-07-20 | Evaluate CI light-worker counts | `4fc30ef`, `9c1d9f4`, `337a8d7`, `f48544d`, `587ee5f`, `d9128ac` | `codex/ci-worker-counts-light` |
 | 25 | 2026-07-20 | Parallelize heavy and light CI test lanes | `32953c3` | `codex/parallelize-ci-test-lanes` |
 | 24 | 2026-07-20 | Complete CI automation and Windows portability audit | `07f8bb1` | `codex/complete-ci-automation-audit` |

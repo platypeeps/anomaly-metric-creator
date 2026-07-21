@@ -60,6 +60,12 @@ the 364s baseline. Because that missed the child's >=100s adoption threshold,
 the CI light lane retains `-n 2`; the local measurements remain useful only as
 workstation evidence.
 
+The heavy trial did transfer: run `29798826800` completed all 48 tests in
+500.62s at `-n 2 --dist loadfile`, 216.38s (30.2%) below the 717s baseline,
+while peaking at 5.09 GiB system used memory and retaining 76.9 GiB free disk.
+Both pre-committed capacity thresholds passed, so two heavy workers are
+adopted.
+
 ## Goal
 
 Reduce the full-matrix CI test step from 1089s toward 350-500s, and remove
@@ -72,7 +78,7 @@ split, without weakening determinism guarantees or coverage.
 |---|---|---|
 | `07-18-perf-ci-lane-parallelization` | P1 | ~366s CI wall clock |
 | `07-18-perf-ci-worker-counts` | P1 | 12s observed; `-n 4` rejected by threshold |
-| `07-20-perf-ci-heavy-worker-trial` | P1 | ~224s heavy (pending CI trial) |
+| `07-20-perf-ci-heavy-worker-trial` | P1 | 216s heavy observed; adopted |
 | `07-18-perf-longform-writer-test-dedupe` | P2 | ~74s local / ~140s CI |
 | `07-18-perf-heavy-fixture-trim` | P2 | ~60s local / ~115s CI, gated on re-lock decision |
 | `07-18-perf-local-test-split` | P2 | local only; removes 2-4x fixture rebuilds |

@@ -347,14 +347,15 @@ jobs:
       - name: Sync dependencies (dev extra)
         run: uv sync --extra dev --locked --python ${{ matrix.python-version }}
 
-      # GB-scale 7-day / N=3 fixture tests stay serial pending a measured
-      # memory-and-disk headroom trial on the standard 16 GB runner. Pytest
-      # exit 5 makes an empty heavy partition a hard failure if marker
-      # assignment ever drifts.
+      # Two loadfile-distributed workers keep file-owned GB-scale fixtures
+      # together. Hosted trial 29798826800 measured 5.09 GiB peak used memory
+      # and 76.9 GiB post-run free disk, clearing the pre-committed 12 GiB / 2
+      # GiB adoption thresholds. Pytest exit 5 still makes an empty heavy
+      # partition a hard failure if marker assignment ever drifts.
       - name: Run heavy test partition
         env:
           COVERAGE_CORE: sysmon
-        run: uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
+        run: uv run --no-sync pytest -n 2 --dist loadfile -m heavy --cov=src/anomaly_metric_creator --cov-report=
 
       # upload-artifact excludes hidden files by default, so expose the raw
       # coverage data under a visible, lane-specific filename first.
