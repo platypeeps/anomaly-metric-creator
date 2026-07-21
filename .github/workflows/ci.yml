@@ -319,8 +319,8 @@ jobs:
             tests/test_trace_payload_antipatterns_lint.py
           uv run --no-sync pytest -q tests/test_server.py -k "apply or rollout"
 
-  test_matrix:
-    name: test (py${{ matrix.python-version }})
+  test_heavy:
+    name: test heavy (py${{ matrix.python-version }})
     needs: changes
     if: needs.changes.outputs.app_required == 'true' && needs.changes.outputs.full_ci_requested == 'true'
     strategy:
@@ -331,13 +331,8 @@ jobs:
         # the validated version are the same; bump both together when a new
         # stable CPython lands.
         python-version: ["3.14"]
-    # All events use the standard runner: the org's ubuntu-latest-m larger
-    # runner stopped being served on 2026-07-04 (main-push jobs sat queued
-    # for hours with runner_id=0, so the post-merge backstop never ran), and
-    # larger runners bill per-minute besides. The heavy/not-heavy split in
-    # the test step keeps the suite inside the 7 GB standard runner.
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -346,6 +341,49 @@ jobs:
         # enable-cache uses the Actions cache service, which authenticates
         # with the runtime token (ACTIONS_RUNTIME_TOKEN) independent of the
         # `permissions:` block above.
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (dev extra)
+        run: uv sync --extra dev --locked --python ${{ matrix.python-version }}
+
+      # GB-scale 7-day / N=3 fixture tests stay serial so the standard 7 GB
+      # runner does not OOM. Pytest exit 5 makes an empty heavy partition a
+      # hard failure if marker assignment ever drifts.
+      - name: Run heavy test partition
+        env:
+          COVERAGE_CORE: sysmon
+        run: uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
+
+      # upload-artifact excludes hidden files by default, so expose the raw
+      # coverage data under a visible, lane-specific filename first.
+      - name: Prepare heavy coverage data
+        run: mv .coverage coverage-heavy
+
+      - name: Upload heavy coverage data
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-data-heavy
+          path: coverage-heavy
+          if-no-files-found: error
+
+  test_light:
+    name: test light (py${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.app_required == 'true' && needs.changes.outputs.full_ci_requested == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Tested version policy: latest stable CPython only. Keep this in
+        # lockstep with requires-python and the heavy lane.
+        python-version: ["3.14"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
 
@@ -396,47 +434,72 @@ jobs:
       - name: Type-check gate (mypy, clean modules)
         run: uv run --no-sync python tools/check_mypy_gate.py
 
-      # The suite splits by the `heavy` marker so it fits the 7 GB standard
-      # runner: the GB-scale 7-day / N=3 fixture tests run serially first
-      # (they OOM xdist workers), then the light remainder runs under real
-      # xdist, keeping the parallel worker-distribution / global-state
-      # ordering path exercised on every run. The two `-m` sets partition
-      # the suite, so coverage is complete. ~25 min in practice.
-      #
-      # Code coverage is measured across the whole lane: --cov-append on the
-      # second step aggregates the serial-heavy and parallel-light partitions
-      # into one report, and --cov-fail-under gates the second (final) run on
-      # the combined total. --cov takes the source path (not the package
-      # name) because tests import the implementation through conftest's
-      # module loader, and path-based matching measures those files
-      # regardless of the module name they load under. COVERAGE_CORE=sysmon
-      # selects the sys.monitoring backend (available since py3.12), keeping
-      # tracing overhead low enough for the 45-minute job timeout.
-      #
-      # The floor is a no-regression ratchet: 85 sits ~3 points below the
-      # measured 88% (allowing for xdist/partition jitter) so a real coverage
-      # drop fails the build while normal variance does not. The suite already
-      # clears the 80% house standard; ratchet this floor UP toward the
-      # measured number as 07-02-legacy-monolith-decomposition extracts and
-      # tests more of legacy.py — never lower it to make a red build pass
-      # (07-06-coverage-threshold-and-mypy-gating).
-      - name: Run test suite
+      # The light remainder runs under real xdist to retain coverage of the
+      # parallel worker-distribution and global-state ordering path.
+      - name: Run light test partition
         env:
           COVERAGE_CORE: sysmon
-        run: |
-          uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
-          uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-append --cov-report=term --cov-report=xml --cov-fail-under=85
+        run: uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=
 
-      # Publish coverage.xml for inspection/trend tracking. !cancelled() so it
-      # uploads whether the suite passed or the coverage gate failed (you want
-      # the report most when the gate trips), but not on a cancelled run.
+      - name: Prepare light coverage data
+        run: mv .coverage coverage-light
+
+      - name: Upload light coverage data
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-data-light
+          path: coverage-light
+          if-no-files-found: error
+
+  coverage_combine:
+    name: coverage (py3.14)
+    needs: [test_heavy, test_light]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (dev extra)
+        run: uv sync --extra dev --locked --python 3.14
+
+      - name: Download heavy coverage data
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-data-heavy
+          path: coverage-data
+
+      - name: Download light coverage data
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-data-light
+          path: coverage-data
+
+      - name: Combine coverage data
+        run: |
+          mv coverage-data/coverage-heavy .coverage.heavy
+          mv coverage-data/coverage-light .coverage.light
+          uv run --no-sync coverage combine
+
+      # Generate XML before the threshold step: if the 85% ratchet trips,
+      # the later !cancelled() upload still publishes the diagnostic report.
+      - name: Generate coverage XML
+        run: uv run --no-sync coverage xml
+
+      - name: Enforce coverage threshold
+        run: uv run --no-sync coverage report --fail-under=85
+
       - name: Upload coverage report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-xml-py${{ matrix.python-version }}
+          name: coverage-xml-py3.14
           path: coverage.xml
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # Collection catches import-time POSIX assumptions without paying for a
   # second full test platform. This lane is intentionally advisory: it is not
@@ -546,7 +609,7 @@ jobs:
 
   test:
     name: test
-    needs: [changes, lightweight_readiness, quick_check, test_matrix]
+    needs: [changes, lightweight_readiness, quick_check, test_heavy, test_light, coverage_combine]
     # !cancelled(), not always(): when concurrency cancel-in-progress
     # supersedes this run — e.g. arming auto-merge triggers a fresh full run
     # on the same head — this aggregate is cancelled WITH the run, so the
@@ -571,7 +634,9 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           LIGHTWEIGHT_RESULT: ${{ needs.lightweight_readiness.result }}
           QUICK_RESULT: ${{ needs.quick_check.result }}
-          MATRIX_RESULT: ${{ needs.test_matrix.result }}
+          HEAVY_RESULT: ${{ needs.test_heavy.result }}
+          LIGHT_RESULT: ${{ needs.test_light.result }}
+          COVERAGE_RESULT: ${{ needs.coverage_combine.result }}
           LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
           APP_REQUIRED: ${{ needs.changes.outputs.app_required }}
           FULL_CI_REQUESTED: ${{ needs.changes.outputs.full_ci_requested }}
@@ -584,8 +649,10 @@ jobs:
           fi
 
           if [ "$APP_REQUIRED" = "true" ] && [ "$FULL_CI_REQUESTED" = "true" ]; then
-            echo "selected lane: full matrix"
-            test "$MATRIX_RESULT" = "success"
+            echo "selected lane: full test lanes"
+            test "$HEAVY_RESULT" = "success"
+            test "$LIGHT_RESULT" = "success"
+            test "$COVERAGE_RESULT" = "success"
           elif [ "$APP_REQUIRED" = "true" ]; then
             echo "selected lane: quick test"
             test "$QUICK_RESULT" = "success"

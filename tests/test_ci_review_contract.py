@@ -100,10 +100,60 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: pytest tests/test_pr_body_scope_lint.py
               - run: python tools/check_copilot_instruction_contract.py
               - run: python scripts/sd-ai-command-pack-pr-body-scope.py
-          test_matrix:
-            name: test (py3.12)
+          test_heavy:
+            name: test heavy (py3.14)
+            needs: changes
+            if: needs.changes.outputs.app_required == 'true' && needs.changes.outputs.full_ci_requested == 'true'
             steps:
+              - run: uv sync --extra dev --locked --python 3.14
+              - run: uv run --no-sync pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=
+              - run: mv .coverage coverage-heavy
+              - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+                with:
+                  name: coverage-data-heavy
+                  path: coverage-heavy
+          test_light:
+            name: test light (py3.14)
+            needs: changes
+            if: needs.changes.outputs.app_required == 'true' && needs.changes.outputs.full_ci_requested == 'true'
+            steps:
+              - run: uv sync --extra dev --locked --python 3.14
               - run: uv run --no-sync python tools/check_mypy_gate.py
+              - run: uv run --no-sync pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=
+              - run: mv .coverage coverage-light
+              - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+                with:
+                  name: coverage-data-light
+                  path: coverage-light
+          coverage_combine:
+            name: coverage (py3.14)
+            needs: [test_heavy, test_light]
+            steps:
+              - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+              - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+              - run: uv sync --extra dev --locked --python 3.14
+              - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+                with:
+                  name: coverage-data-heavy
+                  path: coverage-data
+              - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+                with:
+                  name: coverage-data-light
+                  path: coverage-data
+              - name: Combine coverage data
+                run: |
+                  mv coverage-data/coverage-heavy .coverage.heavy
+                  mv coverage-data/coverage-light .coverage.light
+                  uv run --no-sync coverage combine
+              - name: Generate coverage XML
+                run: uv run --no-sync coverage xml
+              - name: Enforce coverage threshold
+                run: uv run --no-sync coverage report --fail-under=85
+              - name: Upload coverage report
+                if: ${{{{ !cancelled() }}}}
+                uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+                with:
+                  name: coverage-xml-py3.14
           windows_collection:
             name: Windows collection (advisory)
             runs-on: windows-latest
@@ -113,7 +163,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: uv run --no-sync pytest --collect-only -q
           test:
             name: test
-            needs: [changes, lightweight_readiness, quick_check, test_matrix]
+            needs: [changes, lightweight_readiness, quick_check, test_heavy, test_light, coverage_combine]
             if: ${{{{ !cancelled() }}}}
             steps:
               - run: |
@@ -121,7 +171,14 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                   echo full-ci
                   echo "selected lane: lightweight readiness"
                   echo "selected lane: quick test"
-                  echo "selected lane: full matrix"
+                  echo "selected lane: full test lanes"
+                  test "$HEAVY_RESULT" = "success"
+                  test "$LIGHT_RESULT" = "success"
+                  test "$COVERAGE_RESULT" = "success"
+                env:
+                  HEAVY_RESULT: ${{{{ needs.test_heavy.result }}}}
+                  LIGHT_RESULT: ${{{{ needs.test_light.result }}}}
+                  COVERAGE_RESULT: ${{{{ needs.coverage_combine.result }}}}
           socket:
             name: socket
             needs: changes
@@ -208,6 +265,13 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 run: gh pr merge --auto --squash "$PR_URL"
                 env:
                   GH_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
+        """,
+    )
+    _write(
+        root / "pyproject.toml",
+        """
+        [tool.coverage.run]
+        relative_files = true
         """,
     )
     _write(
@@ -357,6 +421,118 @@ def test_missing_ci_lane_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "quick lane" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("job", "expected"),
+    [
+        ("test_heavy", "heavy full-test lane"),
+        ("test_light", "light full-test lane"),
+        ("coverage_combine", "coverage combine lane"),
+    ],
+)
+def test_parallel_full_test_jobs_are_required(
+    tmp_path: Path, job: str, expected: str
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(f"  {job}:", "  removed_job:"),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_coverage_xml_must_precede_threshold_gate(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    xml_step = """- name: Generate coverage XML
+        run: uv run --no-sync coverage xml"""
+    threshold_step = """- name: Enforce coverage threshold
+        run: uv run --no-sync coverage report --fail-under=85"""
+    ci.write_text(
+        text.replace(
+            f"{xml_step}\n      {threshold_step}",
+            f"{threshold_step}\n      {xml_step}",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "diagnostic-preserving order" in result.stderr
+
+
+def test_coverage_data_must_use_relative_paths(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace(
+            "relative_files = true", "relative_files = false"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "relative coverage paths" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("needle", "expected"),
+    [
+        (
+            "HEAVY_RESULT: ${{ needs.test_heavy.result }}",
+            "heavy result input",
+        ),
+        (
+            "LIGHT_RESULT: ${{ needs.test_light.result }}",
+            "light result input",
+        ),
+        (
+            "COVERAGE_RESULT: ${{ needs.coverage_combine.result }}",
+            "coverage result input",
+        ),
+    ],
+)
+def test_full_test_aggregate_requires_every_result(
+    tmp_path: Path, needle: str, expected: str
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(needle, "REMOVED_RESULT: skipped"),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_coverage_combine_keeps_default_dependency_semantics(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "  coverage_combine:\n    name: coverage (py3.14)",
+            "  coverage_combine:\n    name: coverage (py3.14)\n    if: ${{ always() }}",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "default success dependency semantics" in result.stderr
 
 
 def test_reverting_aggregate_guard_to_always_fails(tmp_path: Path) -> None:

@@ -61,6 +61,11 @@ dev = [
   "pytest-cov>=7.0",
 ]
 
+[tool.coverage.run]
+# Heavy and light CI partitions run in separate checkouts/jobs. Store relative
+# source paths so coverage.py can combine their independently produced data.
+relative_files = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

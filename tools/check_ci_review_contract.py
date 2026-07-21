@@ -34,6 +34,7 @@ REQUIRED_FILES = {
     "codeql": Path(".github/workflows/codeql.yml"),
     "dependabot": Path(".github/workflows/dependabot-auto-merge.yml"),
     "pack_sync": Path(".github/workflows/sd-ai-command-pack-sync.yml"),
+    "pyproject": Path("pyproject.toml"),
     "precommit": Path(".pre-commit-config.yaml"),
     "classifier": Path("scripts/classify-ci-changes.sh"),
     "full_check": Path("scripts/sd-ai-command-pack-full-check.sh"),
@@ -137,11 +138,13 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ("change classifier job", "changes:"),
         ("lightweight lane", "lightweight_readiness:"),
         ("quick lane", "quick_check:"),
-        ("full matrix lane", "test_matrix:"),
+        ("heavy full-test lane", "test_heavy:"),
+        ("light full-test lane", "test_light:"),
+        ("coverage combine lane", "coverage_combine:"),
         ("application aggregate", "  test:"),
         (
             "aggregate lane dependencies",
-            "needs: [changes, lightweight_readiness, quick_check, test_matrix]",
+            "needs: [changes, lightweight_readiness, quick_check, test_heavy, test_light, coverage_combine]",
         ),
         ("stable aggregate", "  ci_result:"),
         ("stable aggregate name", "name: CI Result"),
@@ -165,7 +168,16 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
         ),
         ("lightweight result text", "selected lane: lightweight readiness"),
         ("quick result text", "selected lane: quick test"),
-        ("full result text", "selected lane: full matrix"),
+        ("full result text", "selected lane: full test lanes"),
+        ("heavy result input", "HEAVY_RESULT: ${{ needs.test_heavy.result }}"),
+        ("light result input", "LIGHT_RESULT: ${{ needs.test_light.result }}"),
+        (
+            "coverage result input",
+            "COVERAGE_RESULT: ${{ needs.coverage_combine.result }}",
+        ),
+        ("heavy result gate", 'test "$HEAVY_RESULT" = "success"'),
+        ("light result gate", 'test "$LIGHT_RESULT" = "success"'),
+        ("coverage result gate", 'test "$COVERAGE_RESULT" = "success"'),
         (
             "lightweight whitespace PR diff",
             'git diff --check "origin/$BASE_REF...HEAD"',
@@ -226,6 +238,26 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             "canonical mypy gate invocation",
             "python tools/check_mypy_gate.py",
         ),
+        (
+            "heavy pytest partition",
+            "pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=",
+        ),
+        (
+            "light pytest partition",
+            'pytest -n 2 --dist loadfile -m "not heavy" '
+            "--cov=src/anomaly_metric_creator --cov-report=",
+        ),
+        ("visible heavy coverage data", "mv .coverage coverage-heavy"),
+        ("visible light coverage data", "mv .coverage coverage-light"),
+        ("heavy coverage artifact", "name: coverage-data-heavy"),
+        ("light coverage artifact", "name: coverage-data-light"),
+        (
+            "pinned coverage download action",
+            "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+        ),
+        ("coverage XML command", "coverage xml"),
+        ("coverage threshold gate", "coverage report --fail-under=85"),
+        ("coverage XML artifact", "name: coverage-xml-py3.14"),
         (
             "auto-merge enabled PR event",
             "types: [opened, synchronize, reopened, ready_for_review, labeled, auto_merge_enabled]",
@@ -332,6 +364,107 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             label="advisory Windows job in CI Result dependencies",
             violations=violations,
         )
+
+    coverage_block = _yaml_mapping_block(text, "coverage_combine")
+    if coverage_block is None:
+        violations.append(f"{path}: cannot inspect coverage combine job block")
+    else:
+        coverage_header = coverage_block.split("steps:", maxsplit=1)[0]
+        _require_not_contains(
+            coverage_header,
+            "if:",
+            path=path,
+            label="coverage combine job-level condition (must use default success dependency semantics)",
+            violations=violations,
+        )
+        for label, needle in [
+            ("coverage combine dependencies", "needs: [test_heavy, test_light]"),
+            (
+                "coverage combine checkout",
+                "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+            ),
+            (
+                "coverage combine uv setup",
+                "astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990",
+            ),
+            ("coverage combine locked sync", "uv sync --extra dev --locked --python 3.14"),
+            ("heavy coverage input", "mv coverage-data/coverage-heavy .coverage.heavy"),
+            ("light coverage input", "mv coverage-data/coverage-light .coverage.light"),
+            ("coverage combine command", "coverage combine"),
+            ("coverage XML generation", "coverage xml"),
+            ("coverage threshold report", "coverage report --fail-under=85"),
+            ("coverage report cancellation-safe upload", "if: ${{ !cancelled() }}"),
+        ]:
+            _require_contains(
+                coverage_block,
+                needle,
+                path=path,
+                label=label,
+                violations=violations,
+            )
+
+        ordered_needles = [
+            "coverage combine",
+            "coverage xml",
+            "coverage report --fail-under=85",
+            "name: Upload coverage report",
+        ]
+        positions = [coverage_block.find(needle) for needle in ordered_needles]
+        if all(position >= 0 for position in positions) and positions != sorted(positions):
+            violations.append(
+                f"{path}: coverage combine, XML, threshold, and upload steps "
+                "must remain in diagnostic-preserving order"
+            )
+
+    lane_contracts = [
+        (
+            "test_heavy",
+            "heavy",
+            "pytest -n 0 -m heavy --cov=src/anomaly_metric_creator --cov-report=",
+            "mv .coverage coverage-heavy",
+            "name: coverage-data-heavy",
+        ),
+        (
+            "test_light",
+            "light",
+            'pytest -n 2 --dist loadfile -m "not heavy" '
+            "--cov=src/anomaly_metric_creator --cov-report=",
+            "mv .coverage coverage-light",
+            "name: coverage-data-light",
+        ),
+    ]
+    full_lane_if = (
+        "if: needs.changes.outputs.app_required == 'true' && "
+        "needs.changes.outputs.full_ci_requested == 'true'"
+    )
+    for key, label, pytest_command, move_command, artifact_name in lane_contracts:
+        block = _yaml_mapping_block(text, key)
+        if block is None:
+            violations.append(f"{path}: cannot inspect {label} full-test job block")
+            continue
+        for anchor_label, needle in [
+            (f"{label} change dependency", "needs: changes"),
+            (f"{label} full-CI condition", full_lane_if),
+            (f"{label} locked sync", "uv sync --extra dev --locked"),
+            (f"{label} pytest command", pytest_command),
+            (f"{label} visible coverage data", move_command),
+            (f"{label} coverage artifact", artifact_name),
+        ]:
+            _require_contains(
+                block,
+                needle,
+                path=path,
+                label=anchor_label,
+                violations=violations,
+            )
+
+
+def _check_pyproject(path: Path, text: str, violations: list[str]) -> None:
+    for label, needle in [
+        ("coverage run configuration", "[tool.coverage.run]"),
+        ("relative coverage paths", "relative_files = true"),
+    ]:
+        _require_contains(text, needle, path=path, label=label, violations=violations)
 
 
 def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
@@ -618,6 +751,7 @@ def check(root: Path) -> tuple[int, list[str]]:
     _check_socket(root / REQUIRED_FILES["ci"], texts["ci"], violations)
     _check_dependabot(root / REQUIRED_FILES["dependabot"], texts["dependabot"], violations)
     _check_pack_sync(root / REQUIRED_FILES["pack_sync"], texts["pack_sync"], violations)
+    _check_pyproject(root / REQUIRED_FILES["pyproject"], texts["pyproject"], violations)
     _check_precommit(root / REQUIRED_FILES["precommit"], texts["precommit"], violations)
     _check_classifier(root / REQUIRED_FILES["classifier"], texts["classifier"], violations)
     _check_full_check(root / REQUIRED_FILES["full_check"], texts["full_check"], violations)
