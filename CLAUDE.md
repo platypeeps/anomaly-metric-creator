@@ -772,10 +772,15 @@ The document carries five slices of information:
   section under `topology_mode == "realistic"`.
 
 The output is byte-deterministic (`sort_keys=True`, fixed indent, UTF-8
-with trailing newline). Locked SHA-256 golden hashes at 1d and 7d live
-in `tests/test_schema_file.py` and were re-locked at the phase 7 schema-version bump. The `combine` subcommand does not
-regenerate `schema.json` (it never enters the generation pipeline),
-matching the `gauges.csv` invariant.
+with trailing newline). Locked SHA-256 golden hashes live in
+`tests/test_schema_file.py`. The 1-day default and 1-day N=3 locks retain their
+1s `metrics,schema` inputs; the 7-day default lock uses 60s with
+`metrics,schema`, and the 7-day N=3 lock uses a standalone 60s `schema` run.
+Those coarse locks assert duration, row cardinality, and (for N=3) dimension
+cardinality before hashing, so they cover the schema semantics without
+generating unread full-resolution CSVs. The `combine` subcommand does not
+regenerate `schema.json` (it never enters the generation pipeline), matching
+the `gauges.csv` invariant.
 
 ### Multi-instance fan-out (`--instances-per-component`)
 

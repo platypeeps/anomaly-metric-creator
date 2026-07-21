@@ -9,6 +9,18 @@ Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
 `tests/test_determinism.py`; `tests/test_correctness.py`;
 `tests/test_schema_file.py`; `tests/test_gauges_file.py`.
 
+Separate repeatability checks from absolute golden locks when choosing test
+inputs. A test that asserts only "same arguments produce the same bytes" may
+use the cheapest cadence that still exercises the behavior. An absolute hash
+lock must document its exact cadence and emit selection; if those parameters
+are deliberately coarsened, record maintainer approval, re-lock in an isolated
+commit, and assert the retained semantic fields before the byte hash. For
+`schema.json`, a standalone `--emit schema` run is valid when the consumer
+reads no metric CSVs, but its changed `files` list is part of the new golden
+contract. Sources: `tests/test_instances_per_component.py`;
+`tests/test_schema_file.py`;
+`.trellis/tasks/07-18-perf-heavy-fixture-trim/prd.md`.
+
 Use canonical registries and helpers instead of parallel maps:
 `COMPONENTS`, `SCENARIOS`, `DERIVATIONS`, `TOPOLOGY`,
 `_EMIT_ARTIFACT_FILES`, `_COMBINE_OUTPUT_FILENAME`,

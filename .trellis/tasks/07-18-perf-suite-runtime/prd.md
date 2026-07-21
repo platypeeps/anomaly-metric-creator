@@ -80,7 +80,7 @@ split, without weakening determinism guarantees or coverage.
 | `07-18-perf-ci-worker-counts` | P1 | 12s observed; `-n 4` rejected by threshold |
 | `07-20-perf-ci-heavy-worker-trial` | P1 | 216s heavy observed; adopted |
 | `07-18-perf-longform-writer-test-dedupe` | P2 | ~74s local / ~140s CI |
-| `07-18-perf-heavy-fixture-trim` | P2 | ~60s local / ~115s CI, gated on re-lock decision |
+| `07-18-perf-heavy-fixture-trim` | P2 | 122.68s local observed (32.5%); hosted result pending |
 | `07-18-perf-local-test-split` | P2 | local only; removes 2-4x fixture rebuilds |
 | `07-18-perf-local-gate-dedupe` | P2 | ~4s of a 6.3s deterministic gate, plus Prism/KB interrupts |
 | `07-18-fix-heavy-marker-and-fixture-docs` | P3 | correctness, not speed |
@@ -96,7 +96,7 @@ overlapping test files and should land sequentially, not concurrently.
 - [ ] The full-matrix CI test step drops below 600s with no test deleted
       and no locked hash weakened, except where a child PRD explicitly
       records the trade and the maintainer approved it.
-- [ ] The partition still covers the suite exactly: the `-m heavy` count
+- [x] The partition still covers the suite exactly: the `-m heavy` count
       plus the `-m "not heavy"` count equals the total collected count.
 - [ ] The parallel xdist ordering path stays exercised at the PR gate —
       the property CLAUDE.md gives as the reason the light lane runs under
