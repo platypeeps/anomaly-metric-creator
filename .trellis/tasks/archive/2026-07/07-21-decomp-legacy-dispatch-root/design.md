@@ -157,8 +157,9 @@ verification/publish flow; it does not authorize behavior changes.
 
 ## Implementation Status (2026-07-21)
 
-Implemented on `codex/decomp-legacy-dispatch-root`. Final line counts are
+Completed by merged PR #291 on `codex/decomp-legacy-dispatch-root`. Final line counts are
 `legacy.py` 766, `run_pipeline.py` 673, `run_defaults.py` 33, and
 `models_impl.py` 367. The full suite passed with 1,700 tests and two expected
-real-client skips; pre-commit and the repository full-check also passed. PR
-review, required CI, merge, and task/epic archive remain.
+real-client skips; pre-commit and the repository full-check also passed. The
+final-head Python 3.14 heavy/light matrix, combined coverage gate, CodeQL, and
+review conversations all settled green before merge.
