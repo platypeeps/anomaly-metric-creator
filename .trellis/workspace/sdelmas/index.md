@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1286 | Active |
+| `journal-1.md` | ~1324 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-07-21 | Retain measured local pytest default | `b566968` | `codex/local-test-split` |
 | 30 | 2026-07-21 | Trim duplicate local review work | `ec192d3` | `codex/local-gate-dedupe` |
 | 29 | 2026-07-21 | Test guard lints and sync checks | `f0f5180`, `4170b44`, `fed6621`, `0a0c8dc` | `codex/test-guard-lints` |
 | 28 | 2026-07-20 | Ship pinned real Kubernetes client CI smokes | `1c552ec`, `6385138`, `8790805` | `codex/real-client-smoke-ci` |
