@@ -78,9 +78,20 @@ If the answer to either is yes, drop that trim and keep the fixture. The
 `test_n3_1d_hashes_stable` fix and the `synthetic_n3_run` investigation
 proceed regardless.
 
+### Synthetic fixture investigation outcome
+
+Decline the proposed `synthetic_n3_run` output narrowing. The generator has
+one component selector, `--components`, and that same set controls topology
+generation, anomaly filtering, and emitted component CSVs. The fixture pins
+all six components because the apigateway-to-authservice assertion depends on
+their full coupling shape; selecting only `authservice` would remove its
+upstream input rather than merely suppress five unread files. There is no
+separate output-only component filter. At a measured 2.71s, adding one solely
+for this fixture is not justified.
+
 ## Acceptance criteria
 
-- [ ] `test_n3_1d_hashes_stable` runs both passes at the 60s default,
+- [x] `test_n3_1d_hashes_stable` runs both passes at the 60s default,
       matching `test_n3_7d_hashes_stable`, with no locked hash changed.
 - [ ] Each approved re-lock is a separate commit whose message records the
       old hash, the new hash, and the parameter that changed.
