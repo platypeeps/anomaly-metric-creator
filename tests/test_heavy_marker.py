@@ -41,6 +41,14 @@ def test_item_is_heavy_detects_each_declared_heavy_fixture():
         )
 
 
+def test_declared_heavy_fixtures_resolve_to_real_fixtures(request):
+    fixture_defs = request.session._fixturemanager._arg2fixturedefs
+    for fixture_name in _HEAVY_SESSION_FIXTURES | _HEAVY_MODULE_FIXTURES:
+        assert fixture_name in fixture_defs and fixture_defs[fixture_name], (
+            f"{fixture_name} is declared heavy but has no fixture definition"
+        )
+
+
 def test_item_is_heavy_detects_gb_scale_module_fixtures():
     # The three GB-scale module fixtures the 07-06 review found escaping the
     # marker must all classify heavy: two via the module registry, and

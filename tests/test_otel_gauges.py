@@ -11,7 +11,6 @@ import json
 import subprocess
 import sys
 import threading
-import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -815,7 +814,7 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
 
     import shlex
     fail_lines = [
-        shlex.split(line) for line in log_target.read_text().splitlines()
+        shlex.split(line) for line in log_target.read_text().splitlines()  # resource-lint: allow
         if " FAIL " in line
     ]
     assert fail_lines, "expected FAIL activity record"
@@ -848,13 +847,15 @@ def test_stream_otel_gauges_http_error_activity_log_includes_response_headers(
         )
 
 
-def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_path):
+def test_stream_otel_gauges_pacing_requests_batch_seconds_sleeps(
+    amc, tmp_path, monkeypatch
+):
     """Regression for the pacing bug: between consecutive batches the
     streamer must sleep ``batch_seconds / speedup`` of wall-clock — not
     ``interval_seconds / speedup``. We seed CSVs covering N*batch_seconds of
     timeline, call ``stream_otel_gauges`` directly in-process against a mock
-    collector, and assert the elapsed wall-clock is within tolerance of the
-    expected ``(N-1) * batch_seconds / speedup``.
+    collector, and capture requested sleeps so scheduler and HTTP jitter cannot
+    make the assertion flaky.
     """
     # Generate CSVs first (no streaming) so the streamer call below is the
     # only thing being timed.
@@ -868,13 +869,17 @@ def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_pat
         "--output-dir", str(out),
     ])
 
+    requested_sleeps = []
+    monkeypatch.setattr(
+        "anomaly_metric_creator.otel_stream.time.sleep", requested_sleeps.append
+    )
+
     server, thread, base = _start_mock()
     try:
         batch_seconds = 3600   # 1 hour of timeline per batch
         speedup = 360000.0     # 1h / 360000 = 10ms wall-clock per batch boundary
         expected_n_batches = 86400 // batch_seconds  # 24
 
-        start = time.perf_counter()
         requests_sent = amc.stream_otel_gauges(
             {"authservice": out / "authservice.csv"},
             endpoint=f"{base}/v1/metrics",
@@ -889,28 +894,15 @@ def test_stream_otel_gauges_wall_clock_pacing_matches_batch_seconds(amc, tmp_pat
             activity_log_path=None,
             verbose=False,
         )
-        elapsed = time.perf_counter() - start
     finally:
         _stop_mock(server, thread)
 
     assert requests_sent == expected_n_batches
-    # The streamer sleeps before each batch except the first one, so the
-    # total pacing sleep budget is (N-1) * batch_seconds / speedup. With the
-    # buggy pre-fix code this would collapse to (N-1) * interval_seconds /
-    # speedup, ~60× shorter. Tolerate +200% / -50% for HTTP + scheduler jitter
-    # — the assertion is about the *order of magnitude*, not exact timing.
-    expected_sleep = (expected_n_batches - 1) * batch_seconds / speedup
-    lower = expected_sleep * 0.5
-    # No upper bound stricter than 4x — CI runners can be slow, but the buggy
-    # path would be ~60x faster so even a 4x ceiling distinguishes the two.
-    upper = expected_sleep * 4.0 + 1.0
-    assert lower <= elapsed <= upper, (
-        f"wall-clock {elapsed:.3f}s outside expected pacing window "
-        f"[{lower:.3f}, {upper:.3f}] (expected ~{expected_sleep:.3f}s for "
-        f"{expected_n_batches} batches at batch_seconds={batch_seconds}, "
-        f"speedup={speedup}). The pre-fix bug would produce "
-        f"~{(expected_n_batches - 1) * 60 / speedup:.5f}s — far below the lower bound."
+    expected_sleep = batch_seconds / speedup
+    assert requested_sleeps == pytest.approx(
+        [expected_sleep] * (expected_n_batches - 1)
     )
+    assert sum(requested_sleeps) == pytest.approx(0.23)
 
 
 # ------------------------------------------------------------------

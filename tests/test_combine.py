@@ -381,8 +381,8 @@ def test_combine_without_dst_artifact_unchanged(amc, tmp_path):
     assert unified.exists()
 
     with open(unified) as f:
-        rows = f.readlines()
-    timestamps = [line.split(",", 1)[0] for line in rows[1:]]
+        next(f)
+        timestamps = [line.split(",", 1)[0] for line in f]
     assert timestamps == sorted(set(timestamps)), (
         "non-DST combine output should be timestamp-sorted with no duplicates"
     )

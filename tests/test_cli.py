@@ -1182,7 +1182,7 @@ def test_otel_http_error_activity_log_includes_response_headers(
 
     import shlex
     fail_lines = [
-        shlex.split(line) for line in log_target.read_text().splitlines()
+        shlex.split(line) for line in log_target.read_text().splitlines()  # resource-lint: allow
         if " FAIL " in line
     ]
     assert fail_lines, "expected FAIL activity record"
@@ -1259,7 +1259,7 @@ def test_otel_stream_survives_malformed_response_bad_status_line(
         verbose=True,  # so records carry error_type=<exception class>
     )
     assert sent == 0
-    log_lines = log_target.read_text().splitlines()
+    log_lines = log_target.read_text().splitlines()  # resource-lint: allow
     # max_retries=1 → one RETRY then one FAIL; both must record the exception
     # type, proving the widened http.client.HTTPException clause caught it.
     assert any(
@@ -1371,7 +1371,7 @@ def test_otel_activity_log_values_with_spaces_are_quoted(tmp_path):
     # and exactly the documented k=v tokens. The event_ts value contains a
     # space (YYYY-MM-DD HH:MM:SS), so unescaped writes would split it across
     # two tokens.
-    for line in log_target.read_text().splitlines():
+    for line in log_target.read_text().splitlines():  # resource-lint: allow
         if " SEND " not in line:
             continue
         tokens = shlex.split(line)
@@ -1427,7 +1427,7 @@ def test_otel_stream_default_protocol_is_protobuf(tmp_path):
 def _activity_log_send_lines(log_path):
     import shlex
     send_lines = []
-    for line in log_path.read_text().splitlines():
+    for line in log_path.read_text().splitlines():  # resource-lint: allow
         if " SEND " not in line:
             continue
         send_lines.append(shlex.split(line))
@@ -1561,7 +1561,7 @@ def test_otel_verbose_includes_response_status_on_ok(tmp_path):
     import shlex
     ok_lines = [
         shlex.split(line)
-        for line in log_target.read_text().splitlines()
+        for line in log_target.read_text().splitlines()  # resource-lint: allow
         if " OK " in line
     ]
     assert ok_lines, "expected at least one OK record"

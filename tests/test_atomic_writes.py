@@ -135,7 +135,7 @@ def test_concurrent_reader_never_sees_partial_log(amc, tmp_path):
     rows = _reporting_rows(2000)
     amc.write_reporting_artifacts(tmp_path, rows, emit_traces=False)
     log_path = tmp_path / "metric_report.log"
-    expected = log_path.read_bytes()
+    expected = log_path.read_bytes()  # resource-lint: allow
     assert len(expected) > 100_000  # big enough to expose partial writes
 
     stop = threading.Event()
@@ -144,7 +144,7 @@ def test_concurrent_reader_never_sees_partial_log(amc, tmp_path):
     def reader():
         while not stop.is_set():
             try:
-                observed = log_path.read_bytes()
+                observed = log_path.read_bytes()  # resource-lint: allow
             except FileNotFoundError:
                 failures.append("file missing during republication")
                 return
@@ -165,7 +165,7 @@ def test_concurrent_reader_never_sees_partial_log(amc, tmp_path):
         reader_thread.join()
 
     assert failures == []
-    assert log_path.read_bytes() == expected
+    assert log_path.read_bytes() == expected  # resource-lint: allow
 
 
 def test_continuous_generate_cycles_never_expose_partial_log(amc, tmp_path, capsys):
@@ -183,7 +183,7 @@ def test_continuous_generate_cycles_never_expose_partial_log(amc, tmp_path, caps
     ]
     amc.main(argv)  # the one-shot startup generation `amc serve` performs
     log_path = tmp_path / "metric_report.log"
-    baseline = log_path.read_bytes()
+    baseline = log_path.read_bytes()  # resource-lint: allow
     assert baseline
 
     args = amc.parse_args(argv)
@@ -195,7 +195,7 @@ def test_continuous_generate_cycles_never_expose_partial_log(amc, tmp_path, caps
     def reader():
         while not stop.is_set():
             try:
-                observed = log_path.read_bytes()
+                observed = log_path.read_bytes()  # resource-lint: allow
             except FileNotFoundError:
                 failures.append("file missing during regeneration")
                 return
@@ -217,4 +217,4 @@ def test_continuous_generate_cycles_never_expose_partial_log(amc, tmp_path, caps
     assert state.generation.last_error == ""
     assert state.generation.generation_count == 3
     # Confirms the seed-independence premise the reader assertion rests on.
-    assert log_path.read_bytes() == baseline
+    assert log_path.read_bytes() == baseline  # resource-lint: allow

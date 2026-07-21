@@ -72,7 +72,7 @@ def _read_jsonl_records_until(path, expected_count, *, timeout=5.0):
         if path.exists():
             records = [
                 json.loads(line)
-                for line in path.read_text(encoding="utf-8").splitlines()
+                for line in path.read_text(encoding="utf-8").splitlines()  # resource-lint: allow
             ]
             if len(records) >= expected_count:
                 return records

@@ -202,8 +202,8 @@ def test_seven_day_run_is_deterministic(amc, tmp_path_factory):
     out_b = tmp_path_factory.mktemp("seven_day_det_b")
     run_capture(amc, out_a, days=7, seed=42)
     run_capture(amc, out_b, days=7, seed=42)
-    bytes_a = (out_a / "anomalies.csv").read_bytes()
-    bytes_b = (out_b / "anomalies.csv").read_bytes()
+    bytes_a = (out_a / "anomalies.csv").read_bytes()  # resource-lint: allow
+    bytes_b = (out_b / "anomalies.csv").read_bytes()  # resource-lint: allow
     assert bytes_a == bytes_b, "Seven-day anomalies.csv differs across seeded runs"
 
 

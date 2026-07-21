@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Canonical pytest partition, guard, resource-cost, and CI verification contracts."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "README and generated documentation lockstep requirements."}
+{"file": ".trellis/audit/report-2026-07-17.md", "reason": "Source audit evidence and remediation boundaries for A-058, A-059, A-023, A-024, and A-025."}

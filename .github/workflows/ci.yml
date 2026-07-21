@@ -56,6 +56,7 @@ jobs:
           done < <(git ls-files 'tests/*.py')
           if [ "${#amc_test_files[@]}" -gt 0 ]; then
             uv run --python 3.14 --no-project python tools/check_amc_module_load.py "${amc_test_files[@]}"
+            uv run --python 3.14 --no-project python tools/check_test_resource_cost.py "${amc_test_files[@]}"
           fi
 
           role_name_files=()

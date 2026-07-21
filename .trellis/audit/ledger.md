@@ -247,37 +247,34 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: full-lane CI step with pinned binaries running the two smokes.
 
 ## A-023 — Heavy-marker fixture-name registries unvalidated against real fixtures
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: testing
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - tests/conftest.py:168-195 string frozensets; test_heavy_marker.py checks are tautological
-- why: fixture rename routes GB fixtures into the parallel lane → OOM.
-- fix: assert each name resolves to a real fixture.
+  - `tests/test_heavy_marker.py` resolves every declared heavy fixture name through pytest's fixture manager after full-suite collection.
+- why: fixed; a stale registry name now fails before it can silently route a GB-scale fixture into the parallel lane.
 
 ## A-024 — Debug-UI tests assert substring presence only; JS never executed
-- status: open
+- status: fixed
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: testing
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - tests/test_server.py:2583-2628 — marker-string assertions over the 1.2k-line blob
-- why: broken JS (incl. token-attach flow) ships green.
-- fix: extract script body + node --check (skip without node).
+  - `tests/test_debug_ui_javascript.py` extracts every embedded script from `DEBUG_HTML` and runs `node --check`, with an explicit skip when Node is unavailable.
+- why: fixed; JavaScript syntax errors fail locally and in CI environments that provide Node.
 
 ## A-025 — Gauge-stream wall-clock pacing assertion is a flake candidate under loaded xdist
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: testing
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - tests/test_otel_gauges.py:902-913 — perf_counter window around 24 real HTTP round-trips
-- why: CPU starvation on the 2-vCPU runner can breach the ceiling.
-- fix: monkeypatch time.sleep; assert requested durations.
+  - `tests/test_otel_gauges.py` captures requested pacing sleeps while retaining 24 real mock-collector HTTP round trips.
+- why: fixed; the pacing contract is exact and independent of runner scheduling jitter.
 
 ## A-026 — SECURITY.md describes superseded redaction posture as current; cites completed task as pending
 - status: open
@@ -631,26 +628,24 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: --version + __version__ from importlib.metadata.
 
 ## A-058 — Test-resource-cost rules remain prose despite the repo's lints-over-prose policy
-- status: open
+- status: fixed
 - severity: P2 · effort: M · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - CLAUDE.md:2061 names this class as the prose failure; no tools/check for it; read_bytes/readlines still in-tree (test_instances.py:144, test_combine.py:384)
-- why: the next GB-scale read regression depends on a reviewer noticing.
-- fix: tools/check_test_resource_cost.py + allow marker; triage existing sites; wire to hooks/CI.
+  - `tools/check_test_resource_cost.py`; `.pre-commit-config.yaml`; `.github/workflows/ci.yml`; `tests/test_test_resource_cost_lint.py` — AST guard, reviewed exemptions, and local/CI wiring.
+- why: fixed; executable whole-file reads now fail mechanically unless explicitly reviewed as bounded artifacts.
 
 ## A-059 — Canonical README scenario catalog has no sync check against SCENARIOS
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-07-20 @ pending-pr
 - evidence:
-  - CLAUDE.md:2663 declares the table canonical; README.md:1122 hand-maintained; nothing parses it
-- why: mechanically-derivable fields enforced only by prose, in the #1 drift dimension.
-- fix: test parametrized over amc.SCENARIOS parsing the table.
+  - `tests/test_readme_scenario_catalog.py` parses the canonical table and compares slug, severity, days, and ordered components bidirectionally with `SCENARIOS`.
+- why: fixed; mechanically derivable catalog fields can no longer drift silently.
 
 ## A-060 — Three pre-commit lints have no CI mirror
 - status: fixed

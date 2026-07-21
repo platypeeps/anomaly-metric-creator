@@ -239,7 +239,7 @@ def test_anomalies_sort_clean_on_fresh_run(amc, schema_run):
 def test_anomalies_sort_flags_out_of_order(amc, schema_run):
     schema = _load_schema(schema_run)
     p = schema_run / "anomalies.csv"
-    rows = p.read_text().splitlines()
+    rows = p.read_text().splitlines()  # resource-lint: allow
     header, body = rows[0], rows[1:]
     # Reverse-sort to force a violation; ensures the first comparison fails.
     body = list(reversed(body))
@@ -323,7 +323,7 @@ def test_cell_bounds_flags_above_max(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     cpu_col = header.index("cpu_util_pct")
     # Mutate the first data row's cpu value.
@@ -341,7 +341,7 @@ def test_cell_bounds_flags_below_min(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("error_rate")
     parts = rows[1].split(",")
@@ -359,7 +359,7 @@ def test_cell_bounds_flags_fractional_int(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("active_connections")
     parts = rows[1].split(",")
@@ -381,7 +381,7 @@ def test_cell_bounds_flags_non_finite_in_int_column(amc, schema_run, bad_cell):
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("active_connections")
     parts = rows[1].split(",")
@@ -402,7 +402,7 @@ def test_cell_bounds_flags_nan_in_float_column(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("error_rate")
     parts = rows[1].split(",")
@@ -420,7 +420,7 @@ def test_derivation_flags_non_finite_derived_cell(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "cacheservice"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("hit_ratio")
     parts = rows[1].split(",")
@@ -438,7 +438,7 @@ def test_derivation_flags_non_finite_recomputed_source(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "cacheservice"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("cache_hits")
     parts = rows[1].split(",")
@@ -456,7 +456,7 @@ def test_cell_bounds_flags_negative_for_counter(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "cacheservice"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("cache_hits")
     parts = rows[1].split(",")
@@ -474,7 +474,7 @@ def test_cell_bounds_flags_header_drift(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "apigateway"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     rows[0] = "timestamp,foo,bar,baz"
     csv_path.write_text("\n".join(rows) + "\n")
     violations = amc._validate_component_cells(schema_run, schema, component)
@@ -501,7 +501,7 @@ def test_derivations_flags_inconsistent_hit_ratio(amc, schema_run):
     schema = _load_schema(schema_run)
     component = "cacheservice"
     csv_path = schema_run / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     ratio_col = header.index("hit_ratio")
     parts = rows[1].split(",")
@@ -596,7 +596,7 @@ def test_validate_subcommand_exits_nonzero_on_violation(amc, tmp_path, capsys):
     ])
     # Inject a bogus cpu_util_pct cell to force a violation.
     csv_path = out / "apigateway.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("cpu_util_pct")
     parts = rows[1].split(",")
@@ -621,7 +621,7 @@ def test_validate_subcommand_warn_mode_exits_zero(amc, tmp_path, capsys):
         "--components", "apigateway",
     ])
     csv_path = out / "apigateway.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("cpu_util_pct")
     parts = rows[1].split(",")
@@ -805,7 +805,7 @@ def test_topology_coupling_skipped_under_independent_mode(amc, tmp_path):
     # zero-variance branch deterministically flags this under
     # "realistic" (see test_topology_coupling_flags_constant_downstream).
     csv_path = out / "apigateway.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("requests_per_sec")
     new_rows = [rows[0]]
@@ -842,7 +842,7 @@ def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
         ],
     )
     csv_path = out / "apigateway.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("requests_per_sec")
     new_rows = [rows[0]]
@@ -901,7 +901,7 @@ def test_topology_coupling_flags_random_downstream(amc, tmp_path):
         ],
     )
     csv_path = out / "database.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("queries_per_sec")
     rng = random.Random(123)
@@ -950,7 +950,7 @@ def test_topology_coupling_flags_non_finite_values(
         "queries_per_sec" if side == "target" else "requests_per_sec"
     )
     csv_path = out / target_file
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index(target_metric)
     new_rows = [rows[0]]
@@ -1094,7 +1094,7 @@ def test_topology_coupling_full_cli_flags_mutation(amc, tmp_path, capsys):
         ],
     )
     csv_path = out / "apigateway.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("requests_per_sec")
     new_rows = [rows[0]]
@@ -1168,7 +1168,7 @@ def test_topology_coupling_skips_zero_weight_edges(amc, schema_run):
     _write_schema(schema_run, schema)
 
     csv_path = schema_run / "cacheservice.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("cache_hits")
     new_rows = [rows[0]]
@@ -1298,7 +1298,7 @@ def test_topology_coupling_invalid_threshold_falls_back_to_live_topology(
     # Pin the target column to a single value so np.std() is zero and
     # the zero-variance branch fires deterministically.
     csv_path = schema_run / "cacheservice.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     col = header.index("cache_hits")
     new_rows = [rows[0]]
@@ -1594,7 +1594,7 @@ def test_validate_component_cells_flags_missing_dim_column_when_declared(
     schema = _load_schema(schema_run_n3)
     component = "apigateway"
     csv_path = schema_run_n3 / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header_cols = rows[0].split(",")
     # Drop the ``pod`` column from header and every data row.
     pod_idx = header_cols.index("pod")
@@ -1650,7 +1650,7 @@ def test_validate_component_row_count_uses_cardinality(amc, schema_run_n3):
     schema = _load_schema(schema_run_n3)
     component = "apigateway"
     csv_path = schema_run_n3 / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     # Keep only the first ~1/N of the data rows so total << expected.
     header = rows[0]
     body = rows[1:]
@@ -1691,7 +1691,7 @@ def test_validate_long_form_dimensions_flags_classic_gauges_under_n3(
     # Replace the dim-aware header with the classic one. Data rows
     # already carry the dim columns so the test verifies the validator
     # catches the header alone, not data drift.
-    rows = gauges_path.read_text().splitlines()
+    rows = gauges_path.read_text().splitlines()  # resource-lint: allow
     rows[0] = "timestamp,component,metric,value"
     gauges_path.write_text("\n".join(rows) + "\n")
     violations = amc._validate_long_form_dimensions(schema_run_n3, schema)
@@ -1710,7 +1710,7 @@ def test_validate_long_form_dimensions_flags_classic_combined_under_n3(
     expectation against the schema."""
     schema = _load_schema(schema_run_n3)
     combined = schema_run_n3 / "combined_metrics_unified.csv"
-    rows = combined.read_text().splitlines()
+    rows = combined.read_text().splitlines()  # resource-lint: allow
     rows[0] = "timestamp,component_a_metric"
     combined.write_text("\n".join(rows) + "\n")
     violations = amc._validate_long_form_dimensions(schema_run_n3, schema)
@@ -1768,7 +1768,7 @@ def test_validate_component_derivations_flags_drift_under_n3(amc, schema_run_n3)
     schema = _load_schema(schema_run_n3)
     component = "cacheservice"
     csv_path = schema_run_n3 / f"{component}.csv"
-    rows = csv_path.read_text().splitlines()
+    rows = csv_path.read_text().splitlines()  # resource-lint: allow
     header = rows[0].split(",")
     ratio_col = header.index("hit_ratio")
     parts = rows[1].split(",")

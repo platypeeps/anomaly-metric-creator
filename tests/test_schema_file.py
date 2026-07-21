@@ -350,18 +350,18 @@ def test_schema_combine_subcommand_does_not_regenerate(amc, tmp_path):
     run_capture(amc, out, days=1, interval_seconds=600,
                 extra_args=["--emit", "metrics,schema"])
     schema_path = out / "schema.json"
-    original_bytes = schema_path.read_bytes()
+    original_bytes = schema_path.read_bytes()  # resource-lint: allow
     # Now mutate the on-disk schema; the combine subcommand must leave it alone.
     schema_path.write_bytes(b'{"sentinel": "untouched"}\n')
     # Combine subcommand run.
     amc.main(["combine", str(out)])
-    assert schema_path.read_bytes() == b'{"sentinel": "untouched"}\n', (
+    assert schema_path.read_bytes() == b'{"sentinel": "untouched"}\n', (  # resource-lint: allow
         "the combine subcommand must not rewrite or pre-clean schema.json"
     )
     # And the original schema bytes are recoverable by re-running normally.
     run_capture(amc, out, days=1, interval_seconds=600,
                 extra_args=["--emit", "metrics,schema"])
-    assert schema_path.read_bytes() == original_bytes
+    assert schema_path.read_bytes() == original_bytes  # resource-lint: allow
 
 
 # ------------------------------------------------------------------

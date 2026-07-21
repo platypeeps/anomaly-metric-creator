@@ -53,6 +53,15 @@ repos:
         language: python
         files: ^tests/.*\.py$
         pass_filenames: true
+      # Keep GB-scale generated artifacts out of whole-file test reads. The
+      # AST guard ignores prose and permits reviewed, deliberately small files
+      # through a trailing `# resource-lint: allow` marker.
+      - id: test-resource-cost
+        name: guard test resource cost
+        entry: python tools/check_test_resource_cost.py
+        language: python
+        files: ^tests/.*\.py$
+        pass_filenames: true
       # Forbid internal role-name leaks (canonical list lives in
       # `tools/check_role_name_leaks.py::_FORBIDDEN_LABELS`) in any
       # text-bearing file in the repo. Two `APPROVED` comments on
