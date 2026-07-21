@@ -1025,3 +1025,52 @@ Closed A-063 and A-065 after PRs #267-#269 shipped, Windows collection passed re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Parallelize heavy and light CI test lanes
+
+**Date**: 2026-07-20
+**Task**: Parallelize heavy and light CI test lanes
+**Package**: amc
+**Branch**: `codex/parallelize-ci-test-lanes`
+
+### Summary
+
+Merged PR #272 after splitting the full CI suite into concurrent heavy and light jobs with combined coverage, preserving cancellation semantics and reducing the measured critical path by 354 seconds.
+
+### Main Changes
+
+- Split the full Python 3.14 CI path into concurrent heavy and light pytest
+  jobs, retaining the exact marker selectors and stable aggregate contexts.
+- Added visible raw-coverage artifacts and a locked combine job that generates
+  XML before enforcing the unchanged 85% threshold.
+- Strengthened the CI contract guard with 49 mutation tests covering topology,
+  aggregate results, dependency semantics, relative paths, and step order.
+- Merged PR #272 after exact-head Copilot review, verified cancellation
+  semantics, 87% combined coverage, artifact publication, and 354 seconds of
+  critical-path savings.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `32953c3` | (see git log) |
+
+### Testing
+
+- [OK] Local split rehearsal: 48 heavy tests passed in 350.89s; 1591 light
+  tests passed with 2 expected skips in 189.00s; combined coverage was 87%.
+- [OK] CI contract suite: 49 mutation tests passed; canonical full-check passed
+  with 148 review-churn tests and the 151-target pack install audit.
+- [OK] Final GitHub Actions run `29793442387` passed both pytest jobs, coverage
+  combine, the XML artifact upload, and required `CI Result`; superseded run
+  `29793348418` cancelled its aggregates without a transient failure.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
