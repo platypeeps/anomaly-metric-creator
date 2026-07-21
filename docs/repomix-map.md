@@ -757,13 +757,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-17-audit-ci-cadence-closures/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-17-audit-cut-release-0-4-0/
       check.jsonl
       design.md
@@ -1059,6 +1052,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         07-06-validate-impl-split-and-cleanup/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-ci-cadence-closures/
           check.jsonl
           design.md
           implement.jsonl
