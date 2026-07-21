@@ -1205,3 +1205,45 @@ Pinned and verified kubectl and Helm real-client CI smokes, synchronized the adv
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: Test guard lints and sync checks
+
+**Date**: 2026-07-21
+**Task**: Test guard lints and sync checks
+**Package**: amc
+**Branch**: `codex/test-guard-lints`
+
+### Summary
+
+Added mechanically enforced test resource guards and closed five audit-backed test hygiene gaps through PR #277.
+
+### Main Changes
+
+- Added an AST-backed resource-cost lint with pre-commit, CI, and contract-test wiring.
+- Added scenario catalog, heavy-fixture, debug UI JavaScript, and deterministic gauge-pacing regression checks.
+- Addressed CodeQL and Copilot findings with HTMLParser extraction, fail-closed input validation, and duplicate-slug rejection.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f0f5180` | Add test guard lints and sync checks |
+| `4170b44` | Use HTML parser for debug UI script check |
+| `fed6621` | Fail closed on guard input drift |
+| `0a0c8dc` | Document test guard review learnings |
+
+### Testing
+
+- [OK] 15 focused guard and catalog tests passed after review fixes.
+- [OK] Pre-commit all-files and the SD full check passed.
+- [OK] PR #277 exact-head CI passed all 9 executed checks; Copilot reviewed 30/30 files with no new comments.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
