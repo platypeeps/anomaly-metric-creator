@@ -2,7 +2,7 @@
 
 ## Goal
 
-Two thirds of the deterministic local gate is one 41-line script doing work
+Most of the deterministic local gate is one short script doing work
 that pre-commit and `full-check` already did. Separately, Prism runs three
 times by default and the KB freshness check fails instead of self-healing a
 gitignored artifact, costing a manual regen plus a full re-run of every step
@@ -10,7 +10,7 @@ before it.
 
 ## Measurement context
 
-Deterministic steps of the local gate, timed on this machine:
+The original analysis timed the deterministic steps as follows:
 
 | Step | Time |
 |---|---|
@@ -23,8 +23,18 @@ Deterministic steps of the local gate, timed on this machine:
 | `scripts/classify-ci-changes.sh` | 0.01s |
 | **Total** | **~6.3s** |
 
-`check-review-preflight.mjs` is 66% of that, and every one of its four steps
-is already covered:
+The implementation checkout was reconciled against command-pack 0.24.7 on
+2026-07-20. The repo-local preflight had since gained the canonical mypy gate
+and a tenth pytest file. Three direct runs measured 3.99s, 2.80s, and 2.92s;
+component timing attributed 2.64s to the pytest bundle and about 0.26s to the
+three contract guards plus mypy. The duplicate pytest bundle remains the
+dominant removable cost, while the direct guards and mypy check are preserved.
+After the trim, three direct runs measured 0.31s, 0.32s, and 0.33s. A complete
+deterministic-component timing pass measured 2.40s total (0.32s repo-local
+preflight, 1.03s install audit, 0.65s shared preflight, 0.16s KB check, 0.11s
+PR-body scope, 0.13s review scope, and under 0.01s classification).
+
+The original review found that every pytest target is already covered:
 
 - line 25 `tools/check_ci_review_contract.py` — already a pre-commit hook
   (`.pre-commit-config.yaml:127-132`)
@@ -77,7 +87,7 @@ pack-managed and would drift.
 
 ## Ownership constraint (read before editing)
 
-Per `.sd-ai-command-pack/provenance.json` (pack 0.15.6), these are
+Per `.sd-ai-command-pack/provenance.json` (pack 0.24.7), these are
 **pack-managed** — local edits drift from provenance and are clobbered on
 upgrade:
 
@@ -92,17 +102,16 @@ it is not free to remove.
 ## Requirements
 
 - **Trim `scripts/check-review-preflight.mjs` rather than delete it.** The
-  cost is concentrated in one place: lines 28-40 spend ~4.0s of the script's
-  4.19s running 9 lint-test files that the CI quick lane already runs as a
-  superset (`ci.yml:260-269` runs all 9 plus `tests/test_server.py`). The
-  three script invocations on lines 25-27 cost 0.16s combined.
+  current cost is concentrated in the pytest block: it spends 2.64s running
+  10 lint-test files already covered by CI. The four preserved direct guards,
+  including the canonical mypy gate added after the original analysis, cost
+  about 0.26s combined.
   `_check_review_preflight_wiring` only requires the file to *mention*
   `tests/test_copilot_instruction_contract.py` and
-  `tests/test_pr_body_scope_lint.py` — not to run all nine. Trimming the
-  pytest block to those two files (or referencing them in a comment and
-  dropping the block) takes the script to ~0.2s with **no contract change,
-  no pack drift, and a single-file diff**. That is the same win as deletion
-  at a fraction of the blast radius.
+  `tests/test_pr_body_scope_lint.py` — not to execute the mutation suites.
+  Referencing the two paths in a comment and dropping the pytest block retains
+  the wiring contract without pack drift. That is the same functional win as
+  deletion at a fraction of the blast radius.
 - Do not delete the file in this task. If full removal is wanted, it is a
   separate change that must also unwind `REQUIRED_FILES`, the wiring guard,
   the three `_require_contains` pins, four test files' fixtures, and the
@@ -120,26 +129,30 @@ it is not free to remove.
   hunks. This is pack-managed, so the in-repo action is documentation —
   record that `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` is the fast path and
   when it is appropriate. A behavior change belongs upstream in the pack.
+  Tracked upstream as
+  [sd-ai-command-pack#203](https://github.com/platypeeps/sd-ai-command-pack/issues/203).
 - **KB gate self-heal**: `.obsidian-kb/` is gitignored (`.gitignore:16-20`)
   and `--check` costs 0.24s, so regeneration has zero working-tree effect —
   yet `full-check.sh:442-445` exits 1 at step 7 of 14. This reproduces on
   any `git pull` that touches a spec source. Pack-managed, so propose the
   self-heal upstream and document the local regen command meanwhile.
+  Tracked upstream as
+  [sd-ai-command-pack#204](https://github.com/platypeeps/sd-ai-command-pack/issues/204).
 - Do not edit pack-managed files in place. If a change there is necessary,
   the task is to file it upstream and record the pending change here.
 
 ## Acceptance criteria
 
-- [ ] The deterministic local gate drops below ~2.5s, measured before and
+- [x] The deterministic local gate drops below ~2.5s, measured before and
       after, with the timings in the PR description.
-- [ ] No check is lost for a contributor who has never run
+- [x] No check is lost for a contributor who has never run
       `pre-commit install`; the PR names where each removed check now lives.
-- [ ] Pack-managed files are byte-identical to their provenance entries
+- [x] Pack-managed files are byte-identical to their provenance entries
       after the change (`sd-ai-command-pack-install-audit.py` reports no
       drift).
-- [ ] Any upstream-pack change is filed and referenced by this task rather
+- [x] Any upstream-pack change is filed and referenced by this task rather
       than applied locally.
-- [ ] The Prism opt-out and the KB regen command are documented where a
+- [x] The Prism opt-out and the KB regen command are documented where a
       developer hitting the interrupt will find them.
 
 ## Non-goals

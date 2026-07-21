@@ -28,6 +28,15 @@ guard list:
 SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh
 ```
 
+This is the fast iteration path after the focused deterministic checks for the
+changed surface pass. Re-enable Prism for the final local review when practical.
+If the generated Obsidian KB freshness check trips after a pull, refresh the
+gitignored output before rerunning the gate:
+
+```bash
+.venv/bin/python3 scripts/sd-ai-command-pack-update-spec-kb.py
+```
+
 The pack-provided full-check script runs whitespace checks, the shared
 review preflight in `scripts/sd-ai-command-pack-review-preflight.mjs`, AMC's
 repo-local review preflight in `scripts/check-review-preflight.mjs`, the
@@ -36,8 +45,8 @@ the structural install audit in `scripts/sd-ai-command-pack-install-audit.py`,
 current-diff CI classification, configured package scripts when present, and
 optional Prism/Gito review. AMC's repo-local review preflight runs the
 CI/review cadence guard, the Copilot instruction contract guard, the PR-body
-scope guard, the canonical clean-module mypy gate, and focused review-churn
-pytest coverage.
+scope guard, and the canonical clean-module mypy gate. Review-churn mutation
+tests remain in GitHub CI instead of being repeated by the local gate.
 
 Install the repository's non-default Git hook stages once per clone:
 

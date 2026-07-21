@@ -9,13 +9,14 @@
    time .venv/bin/python3 scripts/sd-ai-command-pack-install-audit.py
    time node scripts/sd-ai-command-pack-review-preflight.mjs
    ```
-2. **Part A.** Trim `scripts/check-review-preflight.mjs` lines 28-40 from
-   nine test files to `tests/test_copilot_instruction_contract.py` and
+2. **Part A.** Remove the duplicate pytest bundle from
+   `scripts/check-review-preflight.mjs` and retain comments naming
+   `tests/test_copilot_instruction_contract.py` and
    `tests/test_pr_body_scope_lint.py` — the two that
    `_check_review_preflight_wiring`
-   (`tools/check_copilot_instruction_contract.py:378`) requires the file to
-   mention. Leave lines 25-27 untouched; they cost 0.16s combined and three
-   of the five pinned paths live there.
+   requires the file to mention. Preserve the three contract guards and the
+   canonical mypy gate; current component timing puts those four direct checks
+   at about 0.26s combined.
 3. Immediately verify the pins still hold — this is the step that catches a
    bad trim:
    ```bash
