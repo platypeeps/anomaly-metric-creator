@@ -10,6 +10,7 @@ DRY_RUN=0
 SELF_TEST=0
 DELETE_REMOTE_BRANCH=1
 AUTO_MERGE=1
+FINISH_WORK_HEAD=""
 MERGE_STRATEGY="${SD_AI_COMMAND_PACK_HOUSEKEEPING_MERGE_STRATEGY:-merge}"
 HOUSEKEEPING_GIT_TIMEOUT_SECONDS=60
 HOUSEKEEPING_GH_TIMEOUT_SECONDS=120
@@ -32,6 +33,8 @@ End-of-stream housekeeping for a single active Trellis development stream.
 Options:
   --dry-run              Preview cleanup without running mutating git commands.
   --no-auto-merge        Do not merge an already-green open PR.
+  --finish-work-head <oid> Attest that SD finish-work completed for this exact
+                           commit and any resulting commits were pushed.
   --merge-strategy <name> Merge strategy for ready open PRs: merge, squash, or rebase. Defaults to merge.
   --keep-remote-branch   Leave the merged remote branch on GitHub.
   --remote <name>        Remote to fetch, prune, pull, and clean. Defaults to origin.
@@ -130,6 +133,26 @@ parse_args() {
       --no-auto-merge)
         AUTO_MERGE=0
         ;;
+      --finish-work-head)
+        shift
+        if [ "$#" -eq 0 ] || [ -z "${1:-}" ]; then
+          printf 'error: --finish-work-head requires a commit OID\n' >&2
+          exit 2
+        fi
+        # Enumerate lowercase hex digits because locale-aware ranges can treat
+        # uppercase letters as members of [a-f] on older macOS Bash versions.
+        case "$1" in
+          *[!0123456789abcdef]*)
+            printf 'error: --finish-work-head must be a full 40-character commit OID in lowercase\n' >&2
+            exit 2
+            ;;
+        esac
+        if [ "${#1}" -ne 40 ]; then
+          printf 'error: --finish-work-head must be a full 40-character commit OID in lowercase\n' >&2
+          exit 2
+        fi
+        FINISH_WORK_HEAD="$1"
+        ;;
       --merge-strategy)
         shift
         if [ "$#" -eq 0 ] || [ -z "${1:-}" ]; then
@@ -215,36 +238,39 @@ run_gh() {
   run_command_with_timeout "$HOUSEKEEPING_GH_TIMEOUT_SECONDS" gh "$@"
 }
 
-refresh_existing_kb() {
-  local kb_path=".obsidian-kb"
+refresh_obsidian_kb() {
   local toolchain="$SCRIPT_DIR/sd-ai-command-pack-toolchain.sh"
   local helper="$SCRIPT_DIR/sd-ai-command-pack-update-spec-kb.py"
-  local -a refresh_args
-  refresh_args=(--if-present)
+  local refresh_status
 
-  if [ ! -e "$kb_path" ] && [ ! -L "$kb_path" ]; then
-    printf 'Obsidian KB refresh: skipped (.obsidian-kb is not present)\n'
-    return 0
-  fi
-
-  section "Refresh existing Obsidian KB"
+  section "Refresh Obsidian KB"
   if [ ! -r "$toolchain" ] || [ ! -r "$helper" ]; then
-    add_anomaly "existing Obsidian KB refresh failed because the pack helper is missing; restore the pack install, then run: bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py --if-present"
+    add_anomaly "Obsidian KB refresh failed because a required pack helper is missing or unreadable; restore the pack install, then run: bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py"
     return 1
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    refresh_args+=(--dry-run)
-  fi
-  if bash "$toolchain" run-python -- "$helper" "${refresh_args[@]}"; then
-    if [ "$DRY_RUN" -eq 1 ]; then
-      add_action "previewed refresh of existing .obsidian-kb"
+    if bash "$toolchain" run-python -- "$helper" --dry-run; then
+      refresh_status=0
     else
-      add_action "refreshed existing .obsidian-kb after finish-work"
+      refresh_status=$?
+    fi
+  else
+    if bash "$toolchain" run-python -- "$helper"; then
+      refresh_status=0
+    else
+      refresh_status=$?
+    fi
+  fi
+  if [ "$refresh_status" -eq 0 ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      add_action "previewed refresh of .obsidian-kb"
+    else
+      add_action "refreshed .obsidian-kb after finish-work"
     fi
     return 0
   fi
 
-  add_anomaly "existing Obsidian KB refresh failed; resolve the reported conflict, then run: bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py --if-present"
+  add_anomaly "Obsidian KB refresh failed; resolve the reported issue, then run: bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-update-spec-kb.py"
   return 1
 }
 
@@ -645,6 +671,14 @@ maybe_merge_ready_open_pr() {
   fi
 
   local_head_oid="$(git rev-parse --verify "refs/heads/$branch^{commit}")"
+  if [ -z "$FINISH_WORK_HEAD" ]; then
+    add_anomaly "SD finish-work completion was not attested for PR #$pr_number; run the sd-finish-work flow, push any resulting commits, wait for required checks, then rerun housekeeping with --finish-work-head \"$local_head_oid\"; skipped auto-merge"
+    return 0
+  fi
+  if [ "$FINISH_WORK_HEAD" != "$local_head_oid" ]; then
+    add_anomaly "SD finish-work was attested for $FINISH_WORK_HEAD, but local $branch is now at $local_head_oid; rerun finish-work for the current head before housekeeping; skipped auto-merge"
+    return 0
+  fi
   if [ "$local_head_oid" != "$pr_head_oid" ]; then
     add_anomaly "local $branch is at $local_head_oid, but PR #$pr_number is at $pr_head_oid; skipped auto-merge"
     return 0
@@ -899,6 +933,7 @@ self_test_scenario() {
   local blocking="$5" successful="$6" unresolved="$7"
   local default_branch="${8-main}" fixture_pr_url="${9-https://example.test/pr/153}"
   local readiness_present="${10-1}" auth_ok="${11-1}"
+  local finish_work_head="${12-headoid}"
   local output merged=0 subshell_status=0
 
   # Capture the subshell status explicitly so a scenario that dies (for
@@ -912,6 +947,7 @@ self_test_scenario() {
     PATH=''
     DEFAULT_BRANCH="$default_branch"
     AUTO_MERGE=1
+    FINISH_WORK_HEAD="$finish_work_head"
     MERGE_STRATEGY=merge
     GITHUB_REPO_SLUG=owner/repo
     ANOMALIES=()
@@ -990,6 +1026,8 @@ self_test_scenario() {
 run_self_test() {
   local failures=0
 
+  self_test_scenario "finish-work head required" refuse false CLEAN 0 2 0 main https://example.test/pr/153 1 1 "" || failures=$((failures + 1))
+  self_test_scenario "stale finish-work head refuses" refuse false CLEAN 0 2 0 main https://example.test/pr/153 1 1 staleoid || failures=$((failures + 1))
   self_test_scenario "green executed checks merge" merge false CLEAN 0 2 0 || failures=$((failures + 1))
   # A single executed success is enough: SKIPPED/NEUTRAL conclusions are
   # pre-aggregated out of the counts by the readiness query, whose
@@ -1040,7 +1078,7 @@ main() {
   START_BRANCH="$(current_branch)"
   printf 'start branch: %s\n' "${START_BRANCH:-detached HEAD}"
 
-  if ! refresh_existing_kb; then
+  if ! refresh_obsidian_kb; then
     run_status_report
     return 1
   fi

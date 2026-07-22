@@ -382,12 +382,26 @@ run_prism_reviews() {
     return 0
   fi
 
+  local has_unstaged=0
+  local has_staged=0
   if ! git diff --quiet --; then
+    has_unstaged=1
+  fi
+  if ! git diff --cached --quiet --; then
+    has_staged=1
+  fi
+
+  if [ "$has_unstaged" -eq 1 ]; then
     run_prism_command "Prism review: unstaged changes" review unstaged
   fi
 
-  if ! git diff --cached --quiet --; then
+  if [ "$has_staged" -eq 1 ]; then
     run_prism_command "Prism review: staged changes" review staged
+  fi
+
+  if [ "$has_unstaged" -eq 1 ] || [ "$has_staged" -eq 1 ]; then
+    warn "Local changes were reviewed; skipping committed branch Prism review to avoid redundant scans."
+    return 0
   fi
 
   local merge_base
@@ -485,6 +499,7 @@ run_sd_ai_command_pack_install_audit() {
 run_sd_ai_command_pack_kb_freshness_check() {
   local mode="${SD_AI_COMMAND_PACK_FULL_CHECK_KB:-auto}"
   local script="scripts/sd-ai-command-pack-update-spec-kb.py"
+  local ignore_status=0
 
   if is_disabled "$mode"; then
     warn "Skipping Obsidian KB freshness check because SD_AI_COMMAND_PACK_FULL_CHECK_KB=$mode."
@@ -514,8 +529,41 @@ run_sd_ai_command_pack_kb_freshness_check() {
     return 0
   fi
 
-  if ! run "SD AI command pack Obsidian KB freshness check" python3 "$script" --check; then
+  if run "SD AI command pack Obsidian KB freshness check" python3 "$script" --check; then
+    return 0
+  fi
+
+  if [ "$mode" = "required" ]; then
     printf 'Generated Obsidian KB is stale or blocked. Refresh it with: python3 %s\n' "$script" >&2
+    exit 1
+  fi
+
+  if ! have git; then
+    printf 'Generated Obsidian KB is stale or blocked, but git is not found on PATH; refusing automatic refresh.\n' >&2
+    printf 'Install git, then verify the ignored state with: git check-ignore -q -- .obsidian-kb\n' >&2
+    exit 127
+  fi
+
+  git check-ignore -q -- ".obsidian-kb" || ignore_status=$?
+  if [ "$ignore_status" -eq 1 ]; then
+    printf 'Generated Obsidian KB is stale or blocked, but .obsidian-kb is not ignored; refusing automatic refresh.\n' >&2
+    printf 'Refresh it with: python3 %s\n' "$script" >&2
+    exit 1
+  fi
+  if [ "$ignore_status" -ne 0 ]; then
+    printf 'Generated Obsidian KB is stale or blocked, but its ignored state could not be verified; refusing automatic refresh.\n' >&2
+    printf 'Verify it with: git check-ignore -q -- .obsidian-kb\n' >&2
+    exit 1
+  fi
+
+  warn "Generated Obsidian KB is stale; refreshing ignored output automatically."
+  if ! run "SD AI command pack Obsidian KB refresh" python3 "$script"; then
+    printf 'Automatic Obsidian KB refresh failed. Retry with: python3 %s\n' "$script" >&2
+    exit 1
+  fi
+
+  if ! run "SD AI command pack Obsidian KB post-refresh check" python3 "$script" --check; then
+    printf 'Generated Obsidian KB is still stale or blocked after refresh. Retry with: python3 %s\n' "$script" >&2
     exit 1
   fi
 }

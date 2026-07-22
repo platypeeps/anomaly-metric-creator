@@ -19,11 +19,23 @@ Run from the feature branch when the command may merge a ready open PR. If the
 PR is already merged and cleanup starts from the default branch, the script only
 performs post-merge/default-branch cleanup and inventory reporting.
 
-The canonical implementation is:
+The cleanup-only implementation is:
 
 ```bash
 bash scripts/sd-ai-command-pack-housekeeping.sh
 ```
+
+When the current feature branch has an open PR, complete Step 2 first and then
+invoke the merge-capable implementation with its explicit lifecycle handoff:
+
+```bash
+bash scripts/sd-ai-command-pack-housekeeping.sh \
+  --finish-work-head "$(git rev-parse HEAD)"
+```
+
+The option is an attestation, not a shortcut. It is valid only after finish-work
+completed, any task or journal commits were pushed, and required checks for the
+new head settled green.
 
 ## Task List
 
@@ -39,10 +51,15 @@ This command performs this end-of-stream flow:
      continue only after required checks are complete and green
    - if finish-work reports uncommitted PR work or ambiguous dirty files, stop
      and report that blocker instead of running cleanup
+   - only after those steps succeed, invoke the housekeeping script with
+     `--finish-work-head "$(git rev-parse HEAD)"`; without an attestation for
+     the exact current head the executable merge gate must leave the PR open
 3. Before any fetch or merge, the script performs the one post-finish Obsidian
    KB refresh through
-   `scripts/sd-ai-command-pack-update-spec-kb.py --if-present`. Repositories
-   without `.obsidian-kb` remain unchanged. A refresh failure blocks the merge
+   `scripts/sd-ai-command-pack-update-spec-kb.py`. An absent `.obsidian-kb` is
+   created, while a valid root symlink to a directory is preserved and
+   refreshed through its target. A broken symlink, symlink to a non-directory,
+   or occupied non-directory path blocks the merge before KB or ignore writes
    and reports the supported recovery command.
 4. The script fetches and prunes `origin` so local remote-tracking refs reflect
    GitHub.
@@ -192,6 +209,10 @@ empty, write that the backlog is clear rather than dropping the section.
   commands such as fetch, pull, branch switching, or branch deletion.
 - `--no-auto-merge`: skip the ready-open-PR merge gate and only run post-merge
   cleanup.
+- `--finish-work-head <oid>`: attest that finish-work completed for the exact
+  current commit and its resulting commits were pushed before allowing a ready
+  open PR to reach the merge gate. Never pass this option speculatively, after
+  a blocked finish-work run, or with a head captured before finish-work.
 - `--merge-strategy <merge|squash|rebase>`: choose the strategy for an
   auto-merged PR. Defaults to `merge`.
 - `--keep-remote-branch`: delete the merged local branch but leave the remote

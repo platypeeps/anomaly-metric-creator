@@ -43,6 +43,157 @@ CATEGORY_REVIEW_SCAFFOLDING = "review-scaffolding"
 CATEGORY_PR_TEMPLATE = "pr-template"
 CATEGORY_COPILOT_INSTRUCTIONS = "copilot-instructions"
 
+SIGNAL_TASK_METADATA = "task-metadata"
+SIGNAL_BOUNDARY_VALIDATION = "boundary-validation"
+SIGNAL_CONTRACT_DOCUMENTATION = "contract-documentation-drift"
+SIGNAL_GENERATED_SURFACES = "generated-surfaces"
+SIGNAL_REVIEWER_TEST_HARNESS = "reviewer-test-harness-quality"
+SIGNAL_OTHER = "other"
+
+MAX_HISTORICAL_CLUSTERS = 5
+MAX_CLUSTER_SIGNATURES = 4
+MAX_CLUSTER_PRS = 8
+MAX_CLUSTER_PATH_FAMILIES = 6
+MAX_CLUSTER_EXAMPLES = 3
+MIN_PREVENTIVE_ACTION_COUNT = 2
+
+SIGNAL_CATEGORY_LABELS = {
+    SIGNAL_TASK_METADATA: "Task metadata",
+    SIGNAL_BOUNDARY_VALIDATION: "Boundary validation",
+    SIGNAL_CONTRACT_DOCUMENTATION: "Contract/documentation drift",
+    SIGNAL_GENERATED_SURFACES: "Generated surfaces",
+    SIGNAL_REVIEWER_TEST_HARNESS: "Reviewer/test harness quality",
+    SIGNAL_OTHER: "Other recurring signals",
+}
+
+GENERATED_SIGNAL_PATH_PREFIXES = (
+    "templates/",
+    ".agents/",
+    ".commands/",
+    ".claude/",
+    ".cursor/",
+    ".gemini/",
+    ".github/agents/",
+    ".github/copilot/",
+    ".github/hooks/",
+    ".github/prompts/",
+    ".opencode/",
+    ".agent/",
+    ".codebuddy/",
+    ".devin/",
+    ".factory/",
+    ".kilocode/",
+    ".kiro/",
+    ".pi/",
+    ".qoder/",
+    ".reasonix/",
+    ".trae/",
+    ".zcode/",
+    ".sd-ai-command-pack/",
+    ".prism/",
+    ".gito/",
+    "scripts/sd-ai-command-pack-",
+    "scripts/sd_ai_command_pack_",
+)
+GENERATED_SIGNAL_PATHS = {
+    ".github/copilot-instructions.md",
+    ".github/pull_request_template.md",
+    "docs/sd_ai_command_pack.md",
+}
+
+SIGNAL_CATEGORY_PATTERNS = (
+    (
+        SIGNAL_TASK_METADATA,
+        (
+            "task metadata",
+            "task.json",
+            "base branch",
+            "task status",
+            "task id",
+            "task directory",
+            "assignee",
+        ),
+    ),
+    (
+        SIGNAL_BOUNDARY_VALIDATION,
+        (
+            "boundary",
+            "fail closed",
+            "failure matrix",
+            "path traversal",
+            "untrusted",
+            "validate",
+            "validation",
+            "malformed",
+            "symlink",
+            "allowlist",
+        ),
+    ),
+    (
+        SIGNAL_GENERATED_SURFACES,
+        (
+            "generated surface",
+            "generated file",
+            "generated copy",
+            "copied surface",
+            "template parity",
+            "root/template",
+            "installed mirror",
+            "source of truth",
+            "keep in sync",
+        ),
+    ),
+    (
+        SIGNAL_REVIEWER_TEST_HARNESS,
+        (
+            "test harness",
+            "review harness",
+            "reviewer quality",
+            "false positive",
+            "tautological",
+            "fixture",
+            "mock",
+            "coverage",
+            "assertion",
+        ),
+    ),
+    (
+        SIGNAL_CONTRACT_DOCUMENTATION,
+        (
+            "contract",
+            "documentation",
+            "terminology",
+            "wording",
+            "readme",
+            "help text",
+            "docs drift",
+            "documented behavior",
+        ),
+    ),
+)
+
+SIGNAL_PREVENTIVE_ACTIONS = {
+    SIGNAL_TASK_METADATA: (
+        "Add a deterministic task-metadata validation gate before implementation "
+        "or publication."
+    ),
+    SIGNAL_BOUNDARY_VALIDATION: (
+        "Add boundary and failure-matrix fixtures for externally derived paths "
+        "and states."
+    ),
+    SIGNAL_CONTRACT_DOCUMENTATION: (
+        "Add contract terminology checks that keep documentation and help text "
+        "aligned with shipped behavior."
+    ),
+    SIGNAL_GENERATED_SURFACES: (
+        "Extend source-to-generated parity checks for every affected shipped surface."
+    ),
+    SIGNAL_REVIEWER_TEST_HARNESS: (
+        "Strengthen reviewer and test-harness fixtures so the reported failure "
+        "mode is exercised directly."
+    ),
+}
+
 REQUIRED_PR_TEMPLATE_PHRASES = (
     "## Scope and surfaces",
     "Primary surfaces touched",
@@ -160,6 +311,7 @@ class PullRequestComment:
     body: str
     is_resolved: bool
     is_outdated: bool
+    created_at: str = ""
 
     def markdown_item(self) -> str:
         state = "current" if not self.is_resolved and not self.is_outdated else "historical"
@@ -173,6 +325,70 @@ class PullRequestComment:
             f"- **{state}** PR #{self.pr_number} "
             f"{_markdown_code_span(path)}: {body} ({url})"
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class HistoricalSignalCluster:
+    category: str
+    count: int
+    signature_count: int
+    pr_numbers: tuple[int, ...]
+    path_families: tuple[str, ...]
+    first_seen: str
+    last_seen: str
+    signature_examples: tuple[tuple[str, int], ...]
+    examples: tuple[PullRequestComment, ...]
+
+    def markdown_items(self) -> list[str]:
+        label = SIGNAL_CATEGORY_LABELS[self.category]
+        pr_values = ", ".join(f"#{number}" for number in self.pr_numbers[:MAX_CLUSTER_PRS])
+        path_values = ", ".join(
+            _markdown_code_span(_neutralize_managed_markers(path))
+            for path in self.path_families[:MAX_CLUSTER_PATH_FAMILIES]
+        )
+        time_bounds = (
+            f"observed {self.first_seen} to {self.last_seen}"
+            if self.first_seen and self.last_seen
+            else "time bounds unavailable"
+        )
+        lines = [
+            f"- **{label}** (`{self.category}`): {self.count} historical "
+            f"comment(s) across {self.signature_count} normalized signature(s); "
+            f"PRs {pr_values or '(unknown)'}; path families "
+            f"{path_values or '`(unknown)`'}; {time_bounds}."
+        ]
+        if self.signature_examples:
+            rendered_signatures = "; ".join(
+                f"{_markdown_code_span(_neutralize_managed_markers(_one_line(text, limit=110)))} "
+                f"(x{count})"
+                for text, count in self.signature_examples
+            )
+            lines.append(f"  - Representative signatures: {rendered_signatures}")
+        for comment in self.examples:
+            body = _neutralize_managed_markers(_one_line(comment.body, limit=160))
+            path = _neutralize_managed_markers(_one_line(comment.path, limit=300))
+            url = _neutralize_managed_markers(comment.pr_url)
+            lines.append(
+                f"  - Example: PR #{comment.pr_number} {_markdown_code_span(path)}: "
+                f"{body} ({url})"
+            )
+
+        truncations: list[str] = []
+        if self.signature_count > len(self.signature_examples):
+            truncations.append(
+                f"signatures {len(self.signature_examples)}/{self.signature_count}"
+            )
+        if len(self.pr_numbers) > MAX_CLUSTER_PRS:
+            truncations.append(f"PRs {MAX_CLUSTER_PRS}/{len(self.pr_numbers)}")
+        if len(self.path_families) > MAX_CLUSTER_PATH_FAMILIES:
+            truncations.append(
+                f"path families {MAX_CLUSTER_PATH_FAMILIES}/{len(self.path_families)}"
+            )
+        if self.count > len(self.examples):
+            truncations.append(f"examples {len(self.examples)}/{self.count}")
+        if truncations:
+            lines.append(f"  - _Evidence truncated: {', '.join(truncations)}._")
+        return lines
 
 
 @dataclasses.dataclass(frozen=True)
@@ -635,6 +851,187 @@ def _one_line(text: str, *, limit: int = 220) -> str:
     return candidate + "..."
 
 
+def _normalize_signal_text(text: str) -> str:
+    normalized = _one_line(text, limit=800).lower()
+    normalized = re.sub(r"https?://\S+", "<url>", normalized)
+    normalized = re.sub(r"\bpr\s*#?\d+\b", "pr <n>", normalized)
+    normalized = re.sub(r"\blines?\s+\d+(?:\s*[-:]\s*\d+)?\b", "line <n>", normalized)
+    normalized = re.sub(r"(?<=\w):\d+\b", ":<n>", normalized)
+    normalized = re.sub(r"[`*_~]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" .,:;!?'\"")
+    return normalized or "(empty comment)"
+
+
+def _path_family(path: str) -> str:
+    normalized = path.replace("\\", "/").strip("/")
+    lowered = normalized.lower()
+    if lowered.startswith(".trellis/tasks/"):
+        return SIGNAL_TASK_METADATA
+    if lowered.startswith(".trellis/spec/"):
+        return "trellis-spec"
+    if lowered.startswith("templates/"):
+        return "templates"
+    if lowered.startswith("tests/"):
+        return "tests"
+    if lowered.startswith("docs/") or lowered in {"readme.md", "changelog.md"}:
+        return "documentation"
+    if lowered.startswith("scripts/"):
+        return "scripts"
+    if lowered.startswith(".github/"):
+        return "github-config"
+    if not normalized:
+        return "(unknown)"
+    parts = normalized.split("/")
+    return "/".join(parts[:2]) if len(parts) > 1 else "repository-root"
+
+
+def _signal_category(comment: PullRequestComment) -> str:
+    normalized = _normalize_signal_text(comment.body)
+    for category, patterns in SIGNAL_CATEGORY_PATTERNS:
+        if any(pattern in normalized for pattern in patterns):
+            return category
+
+    path = comment.path.replace("\\", "/").lower()
+    if path.startswith(".trellis/tasks/"):
+        return SIGNAL_TASK_METADATA
+    if path.startswith(GENERATED_SIGNAL_PATH_PREFIXES) or path in GENERATED_SIGNAL_PATHS:
+        return SIGNAL_GENERATED_SURFACES
+    if path.startswith("tests/"):
+        return SIGNAL_REVIEWER_TEST_HARNESS
+    if path.startswith("docs/") or path in {"readme.md", "changelog.md"}:
+        return SIGNAL_CONTRACT_DOCUMENTATION
+    return SIGNAL_OTHER
+
+
+def _timestamp_value(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.timestamp()
+
+
+def _timestamp_day(value: str) -> str:
+    if not value or _timestamp_value(value) == 0.0:
+        return ""
+    return value[:10]
+
+
+def _comment_sort_key(comment: PullRequestComment) -> tuple[float, int, str, str]:
+    return (
+        -_timestamp_value(comment.created_at),
+        comment.pr_number,
+        comment.path.casefold(),
+        _normalize_signal_text(comment.body),
+    )
+
+
+def partition_review_comments(
+    comments: list[PullRequestComment],
+) -> tuple[list[PullRequestComment], list[PullRequestComment]]:
+    actionable = sorted(
+        (
+            comment
+            for comment in comments
+            if not comment.is_resolved and not comment.is_outdated
+        ),
+        key=_comment_sort_key,
+    )
+    historical = [
+        comment
+        for comment in comments
+        if comment.is_resolved or comment.is_outdated
+    ]
+    return actionable, historical
+
+
+def cluster_historical_comments(
+    comments: list[PullRequestComment],
+) -> list[HistoricalSignalCluster]:
+    signatures: dict[
+        tuple[str, str, str], list[PullRequestComment]
+    ] = {}
+    for comment in comments:
+        category = _signal_category(comment)
+        signature = (
+            category,
+            _path_family(comment.path),
+            _normalize_signal_text(comment.body),
+        )
+        signatures.setdefault(signature, []).append(comment)
+
+    categories: dict[
+        str, list[tuple[tuple[str, str, str], list[PullRequestComment]]]
+    ] = {}
+    for signature, grouped_comments in signatures.items():
+        categories.setdefault(signature[0], []).append((signature, grouped_comments))
+
+    clusters: list[HistoricalSignalCluster] = []
+    for category, category_signatures in categories.items():
+        ranked_signatures = sorted(
+            category_signatures,
+            key=lambda item: (
+                -len(item[1]),
+                -max((_timestamp_value(comment.created_at) for comment in item[1]), default=0.0),
+                item[0],
+            ),
+        )
+        all_comments = [
+            comment
+            for _signature, grouped_comments in ranked_signatures
+            for comment in grouped_comments
+        ]
+        dated_comments = [comment for comment in all_comments if _timestamp_value(comment.created_at)]
+        dated_comments.sort(key=lambda comment: _timestamp_value(comment.created_at))
+
+        signature_examples: list[tuple[str, int]] = []
+        examples: list[PullRequestComment] = []
+        for _signature, grouped_comments in ranked_signatures[:MAX_CLUSTER_SIGNATURES]:
+            representative = sorted(grouped_comments, key=_comment_sort_key)[0]
+            signature_examples.append((representative.body, len(grouped_comments)))
+            if len(examples) < MAX_CLUSTER_EXAMPLES:
+                examples.append(representative)
+
+        clusters.append(
+            HistoricalSignalCluster(
+                category=category,
+                count=len(all_comments),
+                signature_count=len(ranked_signatures),
+                pr_numbers=tuple(sorted({comment.pr_number for comment in all_comments})),
+                path_families=tuple(sorted({_path_family(comment.path) for comment in all_comments})),
+                first_seen=_timestamp_day(dated_comments[0].created_at) if dated_comments else "",
+                last_seen=_timestamp_day(dated_comments[-1].created_at) if dated_comments else "",
+                signature_examples=tuple(signature_examples),
+                examples=tuple(examples),
+            )
+        )
+
+    return sorted(
+        clusters,
+        key=lambda cluster: (
+            -cluster.count,
+            -_timestamp_value(cluster.last_seen),
+            cluster.category,
+        ),
+    )
+
+
+def preventive_actions(clusters: list[HistoricalSignalCluster]) -> list[str]:
+    actions: list[str] = []
+    for cluster in clusters:
+        action = SIGNAL_PREVENTIVE_ACTIONS.get(cluster.category)
+        if action and cluster.count >= MIN_PREVENTIVE_ACTION_COUNT:
+            actions.append(
+                f"- **{SIGNAL_CATEGORY_LABELS[cluster.category]}** "
+                f"({cluster.count} historical comments): {action}"
+            )
+    return actions
+
+
 def _run_gh_stdout(args: list[str], repo_root: Path) -> str:
     result = run_gh_command(
         args,
@@ -764,6 +1161,7 @@ query($owner:String!, $name:String!, $number:Int!) {
             nodes {
               author { login }
               body
+              createdAt
             }
           }
         }
@@ -827,6 +1225,7 @@ query($owner:String!, $name:String!, $number:Int!) {
                         body if isinstance(body, str) else "",
                         bool(thread_obj.get("isResolved")),
                         bool(thread_obj.get("isOutdated")),
+                        str(comment_obj.get("createdAt") or ""),
                     )
                 )
     return comments
@@ -914,23 +1313,42 @@ def render_managed_block(findings: list[Finding], comments: list[PullRequestComm
     else:
         lines.append("- No local review-cycle findings detected in the scanned diff.")
 
-    lines.extend(["", "### Recent Copilot Review Signals"])
-    if comments:
-        lines.extend(comment.markdown_item() for comment in comments)
-    else:
-        lines.append("- No recent Copilot review comments were included in this update.")
+    actionable, historical = partition_review_comments(comments)
+    clusters = cluster_historical_comments(historical)
 
     lines.extend(
         [
             "",
-            "### Suggested Preventive Actions",
-            "- Move repeated mechanical findings into local checks where possible.",
-            "- Keep Copilot instructions focused on current, non-outdated unresolved findings.",
-            "- Treat generated or copied payloads as source/sync-contract review surfaces, not style-review surfaces.",
-            MANAGED_END,
+            "### Recent Copilot Review Signals",
             "",
+            "#### Current Actionable Comments",
         ]
     )
+    if actionable:
+        lines.extend(comment.markdown_item() for comment in actionable)
+    else:
+        lines.append("- No current, non-outdated unresolved comments were included.")
+
+    lines.extend(["", "#### Historical Signal Clusters"])
+    shown_clusters = clusters[:MAX_HISTORICAL_CLUSTERS]
+    if clusters:
+        for cluster in shown_clusters:
+            lines.extend(cluster.markdown_items())
+        if len(clusters) > len(shown_clusters):
+            lines.append(
+                "- _Historical clusters truncated: showing "
+                f"{len(shown_clusters)} of {len(clusters)} categories._"
+            )
+    else:
+        lines.append("- No historical Copilot review comments were included.")
+
+    lines.extend(["", "### Suggested Preventive Actions"])
+    actions = preventive_actions(shown_clusters)
+    if actions:
+        lines.extend(actions)
+    else:
+        lines.append("- No recurring historical category met the preventive-action threshold.")
+    lines.extend([MANAGED_END, ""])
     return "\n".join(lines)
 
 

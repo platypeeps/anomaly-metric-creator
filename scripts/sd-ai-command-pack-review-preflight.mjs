@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -19,7 +19,27 @@ const MIN_NODE_VERSION = { major: 16, minor: 9, label: '16.9.0' };
 // Git output ceiling for spawnSync calls that read diffs; Node's 1 MiB
 // default truncates large diffs and surfaces as a spawn error.
 const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+const MAX_TRELLIS_TASK_LINKS = 100;
+const MAX_TRELLIS_TASK_REFERENCE_LENGTH = 255;
+const TRELLIS_TASK_STATUSES = new Set(['planning', 'in_progress', 'review', 'completed']);
+const ACTIVE_TRELLIS_TASK_STATUSES = new Set(['planning', 'in_progress', 'review']);
 const REVIEW_CODE_PATH_PATTERN = /\.(?:cjs|js|mjs|py|sh|ts|tsx)$/;
+const REVIEW_WORKFLOW_PATH_PATTERN = /^\.github\/workflows\/[^/]+\.ya?ml$/;
+const NON_PRODUCTION_CODE_DIRECTORY_SEGMENTS = new Set([
+  'test',
+  'tests',
+  '__tests__',
+  'fixture',
+  'fixtures',
+  'vendor',
+  'vendored',
+  'third_party',
+  'node_modules',
+  'generated',
+]);
+const MAX_REVIEW_RISK_PATHS = 5;
+const MAX_CONFIGURED_REVIEW_RISK_SIGNALS = 20;
+const MAX_CONFIGURED_REVIEW_RISK_SIGNAL_LENGTH = 120;
 const REVIEW_LEARNINGS_PATH_PROVENANCE_FILE = 'docs/review-learnings.md';
 const REVIEW_LEARNINGS_MANAGED_BLOCK_PATTERN =
   /<!-- sd-review-learnings:start -->[\s\S]*?<!-- sd-review-learnings:end -->/g;
@@ -37,6 +57,89 @@ const DIRECT_BOUNDARY_SPLIT_PATTERNS = [
   /\b(?:[A-Za-z_$][A-Za-z0-9_$]*\.)?(?:readFileSync|readFile)\s*\([^\r\n]*\)\s*(?:\?\.|\.)\s*split\s*\(/,
   /\.\s*read_text\s*\([^\r\n]*\)\s*\.\s*split\s*\(/,
 ];
+const REVIEW_RISK_CATEGORY_DEFINITIONS = [
+  {
+    id: 'structured-input-types',
+    label: 'structured input and strict types',
+    patterns: [STRUCTURED_INPUT_PATTERN, ...DIRECT_BOUNDARY_SPLIT_PATTERNS],
+    variants: {
+      good: 'valid structured input with exact scalar and container types',
+      base: 'documented empty or default input',
+      failure: 'malformed input and wrong types, including bool where an integer is required',
+    },
+  },
+  {
+    id: 'subprocess-command',
+    label: 'subprocess and command execution',
+    patterns: [
+      /(?:\bspawn(?:Sync)?\s*\(|\bexec(?:File|Sync)?\s*\(|subprocess\.(?:run|Popen|check_call|check_output)|os\.system\s*\()/,
+      /^\s*(?:-\s*)?run:\s*(?:[>|][-+]?\s*$|\S)/m,
+    ],
+    variants: {
+      good: 'available command exits successfully',
+      base: 'documented optional command is unavailable',
+      failure: 'missing command, nonzero exit, and timeout',
+    },
+  },
+  {
+    id: 'environment-global-state',
+    label: 'environment and process-global state',
+    patterns: [
+      /(?:process\.env|os\.environ|\bgetenv\s*\(|\bsetenv\s*\(|\bglobal\s+[A-Za-z_]|\bglobals\s*\()/,
+      /^\s*env:\s*$/m,
+    ],
+    variants: {
+      good: 'explicit environment value with state restored',
+      base: 'unset or empty environment value and PATH',
+      failure: 'success and exception paths restore process-global state',
+    },
+  },
+  {
+    id: 'path-filesystem',
+    label: 'path and filesystem boundaries',
+    patterns: [
+      /(?:\bPath\s*\(|\bresolve\s*\(|\brealpath|\blstat|\bsymlink|readFileSync|writeFileSync|os\.path|pathlib)/,
+    ],
+    variants: {
+      good: 'regular in-root path within size limits',
+      base: 'missing, option-like, or traversal path',
+      failure: 'symlink, oversized file, and TOCTOU replacement',
+    },
+  },
+  {
+    id: 'normalization-evidence',
+    label: 'normalization and canonical evidence',
+    patterns: [
+      /(?:\bnormaliz(?:e|ed|es|ing|ation)\b|\bcanonical(?:ize|ized|ization)?\b|\bcasefold\s*\(|\bcompact_text\s*\(|\brev-parse\b|\bresolve(?:Commit|Ref)\b|hashlib|createHash\s*\(|\bsha(?:1|224|256|384|512)\b|\bdigest\s*\(|\bhexdigest\s*\(|\bchecksum\b|\bintegrity\b)/i,
+    ],
+    variants: {
+      good: 'compare and persist one canonical value',
+      base: 'equivalent raw and normalized values',
+      failure: 'symbolic, missing, or noncanonical evidence',
+    },
+  },
+  {
+    id: 'diagnostic-redaction',
+    label: 'diagnostic fidelity and redaction',
+    patterns: [
+      /(?:\b(?:redact(?:ed|ion)?|sanitiz(?:e|ed|ation)|mask(?:ed|ing)?)(?:_[A-Za-z0-9_]+)?\b|str\s*\(\s*(?:exc|error)\s*\)|\b(?:error|diagnostic)_message\b|\b(?:stderr|stdout)_detail\b)/i,
+    ],
+    variants: {
+      good: 'actionable bounded diagnostic without secrets or host paths',
+      base: 'expected empty detail uses a stable fallback',
+      failure: 'raw exception, secret, or absolute-path material is redacted',
+    },
+  },
+];
+const REVIEW_RISK_CATEGORY_IDS = new Set(REVIEW_RISK_CATEGORY_DEFINITIONS.map((category) => category.id));
+const JOURNAL_VALIDATION_FALLBACK_PATTERN =
+  /^[ \t]*(?:[-*]\s*)?(?:\[OK\]\s*)?(Validation (?:was )?not recorded for this session\.)[ \t]*$/gim;
+const JOURNAL_VALIDATION_SURFACE_PATTERN =
+  /\b(?:quality gate|full[- ]check|tests?|test suite|lint|type[- ]?check|build|ci|codeql|playwright|validation|verification)\b/i;
+const JOURNAL_VALIDATION_SUCCESS_PATTERN =
+  /\b(?:pass(?:ed|es|ing)?|verified|validated|green|successful(?:ly)?|succeeded|completed)\b/i;
+const JOURNAL_VALIDATION_NEGATION_PATTERN =
+  /\b(?:fail(?:ed|ing|ure|ures)?|skip(?:ped|ping)?|pending|not|never|without|no)\b|\b(?:wasn't|weren't|didn't|isn't)\b/i;
 
 // Declared before the module-level main run below: unlike function
 // declarations, class bindings are not hoisted out of the temporal dead
@@ -59,6 +162,7 @@ export function runReviewPreflight(options = {}) {
   runCheck('copied template diff disclosure', checkCopiedTemplateDiffDisclosure);
   runCheck('documentation path hygiene', checkDocumentationPathHygiene);
   runCheck('documentation path references', checkDocumentationPathReferences);
+  runCheck('changed Trellis task metadata integrity', checkChangedTrellisTaskMetadata);
   runCheck('completed Trellis task location', checkCompletedTrellisTaskLocation);
   runCheck('Trellis task context seeds', checkTrellisTaskContextSeeds);
   runCheck('Trellis journal records', checkTrellisJournalRecords);
@@ -161,6 +265,7 @@ function defaultConfig() {
     ],
     copiedTemplateExtraPaths: [],
     allowedLinuxHomeUsers: [],
+    reviewRiskCategorySignals: {},
     diffSizeWarningLines: 20000,
     largeFileWarningLines: 5000,
     sourceReviewWarningLines: 1000,
@@ -207,7 +312,52 @@ function loadConfig(root, explicitPath) {
     }
   }
 
+  merged.reviewRiskCategorySignals = parseReviewRiskCategorySignals(raw.reviewRiskCategorySignals, configPath);
+
   return merged;
+}
+
+function parseReviewRiskCategorySignals(value, configPath) {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isPlainObject(value)) {
+    fail(`${configPath} reviewRiskCategorySignals must be an object keyed by a known boundary-risk category.`);
+    return {};
+  }
+
+  const parsed = {};
+  for (const [categoryId, signals] of Object.entries(value)) {
+    if (!REVIEW_RISK_CATEGORY_IDS.has(categoryId)) {
+      fail(`${configPath} reviewRiskCategorySignals contains unknown category ${categoryId}.`);
+      continue;
+    }
+    if (!Array.isArray(signals) || signals.length > MAX_CONFIGURED_REVIEW_RISK_SIGNALS) {
+      fail(
+        `${configPath} reviewRiskCategorySignals.${categoryId} must be an array of at most ` +
+          `${MAX_CONFIGURED_REVIEW_RISK_SIGNALS} literal strings.`,
+      );
+      continue;
+    }
+
+    const validSignals = signals
+      .filter(
+        (signal) =>
+          typeof signal === 'string' &&
+          signal.trim().length > 0 &&
+          signal.length <= MAX_CONFIGURED_REVIEW_RISK_SIGNAL_LENGTH,
+      )
+      .map((signal) => signal.trim());
+    if (validSignals.length !== signals.length) {
+      fail(
+        `${configPath} reviewRiskCategorySignals.${categoryId} entries must be nonblank strings no longer than ` +
+          `${MAX_CONFIGURED_REVIEW_RISK_SIGNAL_LENGTH} characters.`,
+      );
+      continue;
+    }
+    parsed[categoryId] = [...new Set(validSignals)];
+  }
+  return parsed;
 }
 
 function printReviewPreflightResult(result) {
@@ -443,6 +593,343 @@ function checkDocumentationPathHygiene() {
   pass(`checked ${scanned} documentation/prompt/spec file(s) for personal absolute paths.`);
 }
 
+function checkChangedTrellisTaskMetadata() {
+  const failureStart = failures.length;
+  const diff = currentChangedPaths();
+  if (diff === null) {
+    warn('could not inspect current diff for changed Trellis task metadata.');
+    return;
+  }
+
+  const taskFiles = new Set();
+  for (const path of diff.paths) {
+    const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+    if (normalized.startsWith('.trellis/tasks/') && normalized.endsWith('/task.json')) {
+      taskFiles.add(normalized);
+    }
+  }
+
+  let inspectedFiles = 0;
+  for (const file of [...taskFiles].sort()) {
+    const loaded = loadTrellisTaskMetadataFile(file, { deletedIsMissing: true });
+    if (loaded.status === 'missing') {
+      continue;
+    }
+
+    inspectedFiles += 1;
+    if (loaded.status !== 'loaded') {
+      fail(`${file} ${loaded.message}`);
+      continue;
+    }
+
+    const artifact = parseTrellisTaskArtifactPath(file);
+    if (!artifact) {
+      fail(
+        `${file} is not in a supported Trellis task layout; use ` +
+          '.trellis/tasks/MM-DD-name/task.json or .trellis/tasks/archive/YYYY-MM/MM-DD-name/task.json.',
+      );
+      continue;
+    }
+
+    let record;
+    try {
+      record = JSON.parse(loaded.text);
+    } catch (error) {
+      fail(
+        `${file} could not be parsed as JSON while checking task metadata integrity: ` +
+          thrownValueMessage(error),
+      );
+      continue;
+    }
+
+    if (!isPlainObject(record)) {
+      fail(`${file} must contain a JSON object while checking task metadata integrity.`);
+      continue;
+    }
+
+    for (const issue of validateTrellisTaskMetadata(record, artifact.taskDir, artifact.archived)) {
+      fail(`${file} field ${issue}.`);
+    }
+    validateTrellisTaskMetadataLinks(file, artifact.taskDir, record);
+  }
+
+  if (inspectedFiles === 0) {
+    if (failures.length === failureStart) {
+      pass('no changed Trellis task metadata records require integrity checks.');
+    }
+    return;
+  }
+
+  if (failures.length === failureStart) {
+    pass(`checked ${inspectedFiles} changed Trellis task metadata record(s) for identity, lifecycle, branch, and link integrity.`);
+  }
+}
+
+export function validateTrellisTaskMetadata(record, taskDir, archived) {
+  const issues = [];
+  const idValid = typeof record.id === 'string' && record.id.trim().length > 0;
+  const nameValid = typeof record.name === 'string' && record.name.trim().length > 0;
+
+  if (!idValid) {
+    issues.push('id must be a non-empty string');
+  }
+  if (!nameValid) {
+    issues.push('name must be a non-empty string');
+  }
+  if (idValid && nameValid && record.id !== record.name) {
+    issues.push('id must equal name');
+  }
+
+  const taskDirectoryName = taskDir.slice(taskDir.lastIndexOf('/') + 1);
+  const directoryMatch = /^\d{2}-\d{2}-(.+)$/.exec(taskDirectoryName);
+  if (!directoryMatch) {
+    issues.push('name cannot be verified because the task directory must use the MM-DD-name form');
+  } else if (nameValid && record.name !== directoryMatch[1]) {
+    issues.push(`name must match the dated task directory suffix "${directoryMatch[1]}"`);
+  }
+
+  if (!TRELLIS_TASK_STATUSES.has(record.status)) {
+    issues.push('status must be one of planning, in_progress, review, completed');
+  } else if (ACTIVE_TRELLIS_TASK_STATUSES.has(record.status)) {
+    if (record.completedAt !== null) {
+      issues.push(`completedAt must be null when status is ${record.status}`);
+    }
+  } else if (record.status === 'completed') {
+    if (typeof record.completedAt !== 'string' || record.completedAt.trim().length === 0) {
+      issues.push('completedAt must be a non-empty completion timestamp when status is completed');
+    }
+    if (!archived) {
+      issues.push('status completed requires the task record to be under .trellis/tasks/archive/');
+    }
+  }
+
+  if (typeof record.base_branch !== 'string' || record.base_branch.trim().length === 0) {
+    issues.push('base_branch must be a non-empty string');
+  }
+  if (record.branch !== null && record.branch !== undefined) {
+    if (typeof record.branch !== 'string' || record.branch.trim().length === 0) {
+      issues.push('branch must be null or a non-empty string');
+    } else if (
+      typeof record.base_branch === 'string' &&
+      record.branch.trim() === record.base_branch.trim()
+    ) {
+      issues.push('branch must differ from base_branch');
+    }
+  }
+
+  if (
+    record.parent !== null &&
+    record.parent !== undefined &&
+    !isTrellisTaskDirectoryName(record.parent)
+  ) {
+    issues.push('parent must be null or a safe MM-DD-name task directory reference');
+  }
+  if (record.children !== undefined) {
+    if (!Array.isArray(record.children)) {
+      issues.push('children must be an array of task directory references');
+    } else {
+      if (record.children.length > MAX_TRELLIS_TASK_LINKS) {
+        issues.push(`children must contain at most ${MAX_TRELLIS_TASK_LINKS} task directory references`);
+      }
+      const invalidChild = record.children.find((child) => !isTrellisTaskDirectoryName(child));
+      if (invalidChild !== undefined) {
+        issues.push('children must contain only safe MM-DD-name task directory references');
+      }
+    }
+  }
+
+  return issues;
+}
+
+function validateTrellisTaskMetadataLinks(file, taskDir, record) {
+  const taskDirectoryName = taskDir.slice(taskDir.lastIndexOf('/') + 1);
+
+  if (isTrellisTaskDirectoryName(record.parent)) {
+    const parent = loadReferencedTrellisTaskRecord(file, 'parent', record.parent);
+    if (parent && (!Array.isArray(parent.children) || !parent.children.includes(taskDirectoryName))) {
+      fail(
+        `${file} field parent references ${record.parent}, but its children field does not include ${taskDirectoryName}.`,
+      );
+    }
+  }
+
+  if (!Array.isArray(record.children)) {
+    return;
+  }
+  const childNames = record.children
+    .filter(isTrellisTaskDirectoryName)
+    .slice(0, MAX_TRELLIS_TASK_LINKS);
+  for (const childName of new Set(childNames)) {
+    const child = loadReferencedTrellisTaskRecord(file, 'children', childName);
+    if (child && child.parent !== taskDirectoryName) {
+      fail(
+        `${file} field children references ${childName}, but its parent field is not ${taskDirectoryName}.`,
+      );
+    }
+  }
+}
+
+function loadReferencedTrellisTaskRecord(sourceFile, field, taskDirectoryName) {
+  const located = locateTrellisTaskRecord(taskDirectoryName);
+  if (located.error) {
+    fail(`${sourceFile} field ${field} references ${taskDirectoryName}, but the record cannot be verified: ${located.error}.`);
+    return null;
+  }
+  if (located.paths.length === 0) {
+    fail(`${sourceFile} field ${field} references missing task ${taskDirectoryName}.`);
+    return null;
+  }
+  if (located.paths.length > 1) {
+    fail(
+      `${sourceFile} field ${field} references ambiguous task ${taskDirectoryName}: ${located.paths.join(', ')}.`,
+    );
+    return null;
+  }
+
+  const referencedFile = located.paths[0];
+  const loaded = loadTrellisTaskMetadataFile(referencedFile);
+  if (loaded.status !== 'loaded') {
+    fail(
+      `${sourceFile} field ${field} references ${taskDirectoryName}, but ${referencedFile} ${loaded.message}.`,
+    );
+    return null;
+  }
+
+  let record;
+  try {
+    record = JSON.parse(loaded.text);
+  } catch (error) {
+    fail(
+      `${sourceFile} field ${field} references ${taskDirectoryName}, but ${referencedFile} could not be parsed as JSON: ` +
+        thrownValueMessage(error),
+    );
+    return null;
+  }
+  if (!isPlainObject(record)) {
+    fail(`${sourceFile} field ${field} references ${taskDirectoryName}, but ${referencedFile} does not contain a JSON object.`);
+    return null;
+  }
+  return record;
+}
+
+function locateTrellisTaskRecord(taskDirectoryName) {
+  const paths = [];
+  const activeCandidate = `.trellis/tasks/${taskDirectoryName}`;
+  const activeResult = trellisTaskRecordCandidate(activeCandidate);
+  if (activeResult.error) {
+    return { paths, error: activeResult.error };
+  }
+  if (activeResult.path) {
+    paths.push(activeResult.path);
+  }
+
+  const archiveRoot = resolve(rootDir, '.trellis/tasks/archive');
+  let monthEntries;
+  try {
+    monthEntries = readdirSync(archiveRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { paths, error: '' };
+    }
+    return { paths, error: `.trellis/tasks/archive could not be inspected: ${thrownValueMessage(error)}` };
+  }
+
+  for (const monthEntry of monthEntries) {
+    if (
+      monthEntry.isSymbolicLink() ||
+      !monthEntry.isDirectory() ||
+      !/^\d{4}-\d{2}$/.test(monthEntry.name)
+    ) {
+      continue;
+    }
+    const archivedCandidate = `.trellis/tasks/archive/${monthEntry.name}/${taskDirectoryName}`;
+    const archivedResult = trellisTaskRecordCandidate(archivedCandidate);
+    if (archivedResult.error) {
+      return { paths, error: archivedResult.error };
+    }
+    if (archivedResult.path) {
+      paths.push(archivedResult.path);
+    }
+  }
+
+  return { paths, error: '' };
+}
+
+function trellisTaskRecordCandidate(taskDir) {
+  const absoluteTaskDir = resolve(rootDir, taskDir);
+  let directoryEntry;
+  try {
+    directoryEntry = lstatSync(absoluteTaskDir);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { path: '', error: '' };
+    }
+    return { path: '', error: `${taskDir} could not be inspected: ${thrownValueMessage(error)}` };
+  }
+  if (directoryEntry.isSymbolicLink()) {
+    return { path: '', error: `${taskDir} is a symlink` };
+  }
+  if (!directoryEntry.isDirectory()) {
+    return { path: '', error: `${taskDir} is not a directory` };
+  }
+
+  const taskFile = `${taskDir}/task.json`;
+  try {
+    lstatSync(resolve(rootDir, taskFile));
+    return { path: taskFile, error: '' };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { path: '', error: '' };
+    }
+    return { path: '', error: `${taskFile} could not be inspected: ${thrownValueMessage(error)}` };
+  }
+}
+
+function loadTrellisTaskMetadataFile(file, options = {}) {
+  const absoluteFile = resolve(rootDir, file);
+  let pathEntry;
+  try {
+    pathEntry = lstatSync(absoluteFile);
+  } catch (error) {
+    if (options.deletedIsMissing && error?.code === 'ENOENT') {
+      return { status: 'missing', message: 'is missing' };
+    }
+    return { status: 'unreadable', message: `could not be inspected: ${thrownValueMessage(error)}` };
+  }
+  if (pathEntry.isSymbolicLink()) {
+    return { status: 'unsafe', message: 'is a symlink; task metadata must be a regular file' };
+  }
+  if (!pathEntry.isFile()) {
+    return { status: 'unsafe', message: 'is not a regular file; task metadata must be a regular file' };
+  }
+  if (pathEntry.size > config.untrackedFileReadLimitBytes) {
+    return {
+      status: 'oversized',
+      message: `exceeds the bounded task metadata read limit of ${config.untrackedFileReadLimitBytes} bytes`,
+    };
+  }
+
+  const content = boundedUntrackedFileText(file);
+  if (!content || content.status === 'unreadable') {
+    return { status: 'unreadable', message: 'could not be read safely as a regular file' };
+  }
+  if (content.status === 'oversized') {
+    return {
+      status: 'oversized',
+      message: `exceeds the bounded task metadata read limit of ${config.untrackedFileReadLimitBytes} bytes`,
+    };
+  }
+  return { status: 'loaded', text: content.text, message: '' };
+}
+
+function isTrellisTaskDirectoryName(value) {
+  return (
+    typeof value === 'string' &&
+    value.length <= MAX_TRELLIS_TASK_REFERENCE_LENGTH &&
+    /^\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*$/i.test(value)
+  );
+}
+
 function checkTrellisTaskContextSeeds() {
   const failureStart = failures.length;
   const diff = currentChangedPaths();
@@ -451,63 +938,79 @@ function checkTrellisTaskContextSeeds() {
     return;
   }
 
-  const taskChanges = new Map();
+  const contextFiles = new Set();
   for (const path of diff.paths) {
-    const artifact = parseTrellisTaskArtifactPath(path);
-    if (!artifact) {
+    const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+    const contextArtifact =
+      normalized.startsWith('.trellis/tasks/') &&
+      (normalized.endsWith('/implement.jsonl') || normalized.endsWith('/check.jsonl'));
+    const taskMetadata =
+      normalized.startsWith('.trellis/tasks/') && normalized.endsWith('/task.json');
+    if (!contextArtifact && !taskMetadata) {
       continue;
     }
 
-    const entry = taskChanges.get(artifact.taskDir) || {
-      archived: artifact.archived,
-      artifacts: new Set(),
-    };
-    entry.artifacts.add(artifact.artifact);
-    taskChanges.set(artifact.taskDir, entry);
+    const artifact = parseTrellisTaskArtifactPath(normalized);
+    if (!artifact) {
+      if (contextArtifact && pathEntryExists(normalized)) {
+        fail(
+          `${normalized} is not in a supported Trellis task layout; use ` +
+            '.trellis/tasks/MM-DD-name/{implement,check}.jsonl or ' +
+            '.trellis/tasks/archive/YYYY-MM/MM-DD-name/{implement,check}.jsonl.',
+        );
+      }
+      continue;
+    }
+
+    if (contextArtifact) {
+      contextFiles.add(`${artifact.taskDir}/${artifact.artifact}`);
+      continue;
+    }
+
+    const loaded = loadTrellisTaskMetadataFile(normalized, { deletedIsMissing: true });
+    if (loaded.status !== 'loaded') {
+      continue;
+    }
+    let record;
+    try {
+      record = JSON.parse(loaded.text);
+    } catch {
+      continue;
+    }
+    if (
+      isPlainObject(record) &&
+      TRELLIS_TASK_STATUSES.has(record.status) &&
+      record.status !== 'planning'
+    ) {
+      contextFiles.add(`${artifact.taskDir}/implement.jsonl`);
+      contextFiles.add(`${artifact.taskDir}/check.jsonl`);
+    }
   }
 
   let inspectedFiles = 0;
-  for (const [taskDir, change] of taskChanges) {
-    const taskFile = `${taskDir}/task.json`;
-    const requiresContext = change.archived || trellisTaskRequiresGroundedContext(taskFile);
-    if (!requiresContext) {
+  for (const file of contextFiles) {
+    if (!isRegularFile(file)) {
       continue;
     }
 
-    const contextFiles = new Set(
-      [...change.artifacts]
-        .filter((artifact) => artifact === 'implement.jsonl' || artifact === 'check.jsonl')
-        .map((artifact) => `${taskDir}/${artifact}`),
-    );
-    if (change.artifacts.has('task.json')) {
-      contextFiles.add(`${taskDir}/implement.jsonl`);
-      contextFiles.add(`${taskDir}/check.jsonl`);
-    }
-
-    for (const file of contextFiles) {
-      if (!isRegularFile(file)) {
-        continue;
-      }
-
-      inspectedFiles += 1;
-      for (const seed of findTrellisTaskContextSeedRows(file, readText(file))) {
-        fail(
-          `${seed.file}:${seed.line} still contains a generated _example seed after the task entered implementation; ` +
-            'replace it with grounded {"file": "<path>", "reason": "<why>"} context or remove the seed row.',
-        );
-      }
+    inspectedFiles += 1;
+    for (const seed of findTrellisTaskContextSeedRows(file, readText(file))) {
+      fail(
+        `${seed.file}:${seed.line} still contains a generated _example scaffold row; ` +
+          'replace it with grounded {"file": "<path>", "reason": "<why>"} context or leave the file empty.',
+      );
     }
   }
 
   if (inspectedFiles === 0) {
     if (failures.length === failureStart) {
-      pass('no changed in-progress, completed, or archived Trellis task context files require seed checks.');
+      pass('no changed Trellis task context files require scaffold checks.');
     }
     return;
   }
 
   if (failures.length === failureStart) {
-    pass(`checked ${inspectedFiles} changed in-progress, completed, or archived Trellis task context file(s) for generated _example seeds.`);
+    pass(`checked ${inspectedFiles} changed Trellis task context file(s) for generated _example scaffold rows.`);
   }
 }
 
@@ -567,23 +1070,9 @@ function checkCompletedTrellisTaskLocation() {
   }
 }
 
-function trellisTaskRequiresGroundedContext(taskFile) {
-  if (!isRegularFile(taskFile)) {
-    return false;
-  }
-
-  try {
-    const status = readJson(taskFile)?.status;
-    return status === 'in_progress' || status === 'completed';
-  } catch (error) {
-    fail(`${taskFile} could not be parsed as JSON while checking task context state: ${thrownValueMessage(error)}`);
-    return false;
-  }
-}
-
 export function parseTrellisTaskArtifactPath(path) {
   const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
-  const match = /^\.trellis\/tasks\/((?:archive\/[^/]+\/[^/]+)|[^/]+)\/(task\.json|implement\.jsonl|check\.jsonl)$/.exec(normalized);
+  const match = /^\.trellis\/tasks\/((?:archive\/\d{4}-\d{2}\/\d{2}-\d{2}-[^/]+)|\d{2}-\d{2}-[^/]+)\/(task\.json|implement\.jsonl|check\.jsonl)$/.exec(normalized);
   if (!match || match[1] === 'archive') {
     return null;
   }
@@ -693,6 +1182,7 @@ function checkTrellisJournalRecords() {
     }
 
     const validation = validateTrellisJournalSessions({
+      baselineJournalSessions,
       developerRelative,
       indexFile,
       indexSessions,
@@ -713,38 +1203,62 @@ function checkTrellisJournalRecords() {
   }
 
   pass(
-    `checked ${completedSessions} completed Trellis journal session(s) for placeholders, ` +
+    `checked ${completedSessions} completed Trellis journal session(s) for placeholders and validation consistency, ` +
       `${comparedSessions} journal/index commit list(s), and ${baselineSessionsCompared} baseline session(s) for historical edits.`,
   );
 }
 
-function addsStructuredInputRisk(text) {
-  return (
-    STRUCTURED_INPUT_PATTERN.test(text) ||
-    DIRECT_BOUNDARY_SPLIT_PATTERNS.some((pattern) => pattern.test(text))
-  );
+export function reviewRiskMatrix(text, extraSignals = {}) {
+  return REVIEW_RISK_CATEGORY_DEFINITIONS.filter((category) => {
+    if (category.patterns.some((pattern) => pattern.test(text))) {
+      return true;
+    }
+    const categorySignals = Array.isArray(extraSignals?.[category.id]) ? extraSignals[category.id] : [];
+    return categorySignals.some((signal) => typeof signal === 'string' && text.includes(signal));
+  }).map((category) => ({
+    id: category.id,
+    label: category.label,
+    variants: { ...category.variants },
+  }));
 }
 
-export function reviewRiskCategories(text) {
-  const categories = [];
-  if (addsStructuredInputRisk(text)) {
-    categories.push('parser/structured input');
+export function reviewRiskCategories(text, extraSignals = {}) {
+  return reviewRiskMatrix(text, extraSignals).map((category) => category.id);
+}
+
+function boundedReviewRiskPaths(paths) {
+  const visible = paths.slice(0, MAX_REVIEW_RISK_PATHS);
+  const hiddenCount = paths.length - visible.length;
+  return hiddenCount > 0 ? `${visible.join(', ')} (+${hiddenCount} more)` : visible.join(', ');
+}
+
+export function isBoundaryRiskReviewPath(path) {
+  const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+  if (
+    (!REVIEW_CODE_PATH_PATTERN.test(normalized) && !REVIEW_WORKFLOW_PATH_PATTERN.test(normalized)) ||
+    copiedTemplateKind(normalized) ||
+    GENERATED_REVIEW_PATHS.has(normalized)
+  ) {
+    return false;
   }
 
-  const rules = [
-    ['subprocess/external command', /(?:\bspawn(?:Sync)?\s*\(|\bexec(?:File|Sync)?\s*\(|subprocess\.(?:run|Popen|check_call|check_output)|os\.system\s*\()/],
-    ['path/filesystem boundary', /(?:\bPath\s*\(|\bresolve\s*\(|\brealpath|\blstat|\bsymlink|readFileSync|writeFileSync|os\.path|pathlib)/],
-    ['environment/global state', /(?:process\.env|os\.environ|\bgetenv\s*\(|\bsetenv\s*\(|\bglobal\s+[A-Za-z_]|\bglobals\s*\()/],
-    ['digest/integrity framing', /(?:hashlib|createHash\s*\(|\bsha(?:1|224|256|384|512)\b|\bdigest\s*\(|\bhexdigest\s*\(|\bchecksum\b|\bintegrity\b)/i],
-  ];
-
-  for (const [category, pattern] of rules) {
-    if (pattern.test(text)) {
-      categories.push(category);
-    }
+  const segments = normalized.split('/');
+  const basename = segments.pop() || '';
+  if (segments.some((segment) => NON_PRODUCTION_CODE_DIRECTORY_SEGMENTS.has(segment))) {
+    return false;
   }
 
-  return categories;
+  if (REVIEW_WORKFLOW_PATH_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  const stem = basename.replace(REVIEW_CODE_PATH_PATTERN, '');
+  return !(
+    stem.startsWith('test_') ||
+    stem.endsWith('_test') ||
+    stem.endsWith('.test') ||
+    stem.endsWith('.spec')
+  );
 }
 
 export function trellisTaskDirectory(path) {
@@ -770,7 +1284,7 @@ function checkReviewRiskSweep() {
     return;
   }
 
-  const codePaths = changed.paths.filter((path) => REVIEW_CODE_PATH_PATTERN.test(path));
+  const codePaths = changed.paths.filter(isBoundaryRiskReviewPath);
   if (codePaths.length === 0) {
     pass('no changed code paths require a first-review boundary-risk sweep.');
     return;
@@ -780,27 +1294,31 @@ function checkReviewRiskSweep() {
   if (addedCode.oversizedUntrackedPaths.length > 0) {
     warn(
       `first-review boundary-risk content scan skipped ${addedCode.oversizedUntrackedPaths.length} oversized untracked code file(s) above ` +
-        `${config.untrackedFileReadLimitBytes} bytes: ${addedCode.oversizedUntrackedPaths.join(', ')}`,
+        `${config.untrackedFileReadLimitBytes} bytes: ${boundedReviewRiskPaths(addedCode.oversizedUntrackedPaths)}`,
     );
   }
   if (addedCode.unreadableUntrackedPaths.length > 0) {
     warn(
       `first-review boundary-risk content scan skipped ${addedCode.unreadableUntrackedPaths.length} unreadable untracked code file(s): ` +
-        addedCode.unreadableUntrackedPaths.join(', '),
+        boundedReviewRiskPaths(addedCode.unreadableUntrackedPaths),
     );
   }
-  const categories = reviewRiskCategories(addedCode.text);
-  if (categories.length === 0) {
+  const matrix = reviewRiskMatrix(addedCode.text, config.reviewRiskCategorySignals);
+  if (matrix.length === 0) {
     if (addedCode.oversizedUntrackedPaths.length === 0 && addedCode.unreadableUntrackedPaths.length === 0) {
       pass(`checked ${codePaths.length} changed code path(s); no boundary-risk trigger was added.`);
     }
     return;
   }
 
+  const matrixText = matrix.map(
+    (category) =>
+      `${category.id} (${category.label}): good=${category.variants.good}; ` +
+      `base=${category.variants.base}; failure=${category.variants.failure}`,
+  ).join(' | ');
   warn(
-    `changed code adds ${categories.join(', ')} behavior; before the first remote review, cover the applicable boundary matrix: ` +
-      'malformed or unhashable input; missing commands or timeouts; option-like or traversal path values; empty env/PATH; ' +
-      'symlink/TOCTOU behavior; global-state cleanup; and multiline syntax or extension variants.',
+    `changed code adds boundary-risk categories ${matrix.map((category) => category.id).join(', ')}; ` +
+      `before the first remote review, cover or disposition this regression matrix: ${matrixText}`,
   );
 }
 
@@ -1433,9 +1951,14 @@ function boundedUntrackedFileText(path) {
 
   let descriptor;
   try {
-    descriptor = openSync(resolve(rootDir, path), 'r');
+    const noFollowFlag = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
+    descriptor = openSync(resolve(rootDir, path), fsConstants.O_RDONLY | noFollowFlag);
     const openedEntry = fstatSync(descriptor);
-    if (!openedEntry.isFile()) {
+    if (
+      !openedEntry.isFile() ||
+      openedEntry.dev !== pathEntry.dev ||
+      openedEntry.ino !== pathEntry.ino
+    ) {
       return { status: 'unreadable', text: '' };
     }
     if (openedEntry.size > config.untrackedFileReadLimitBytes) {
@@ -1604,6 +2127,7 @@ function parseNumstatZ(output) {
 }
 
 export function validateTrellisJournalSessions({
+  baselineJournalSessions = [],
   developerRelative,
   indexFile,
   indexSessions,
@@ -1615,6 +2139,9 @@ export function validateTrellisJournalSessions({
 
   const validationFailures = [];
   const sessions = new Map();
+  const baselineSessions = new Map(
+    baselineJournalSessions.map((session) => [session.number, session]),
+  );
   let completedSessions = 0;
   let comparedSessions = 0;
 
@@ -1636,6 +2163,20 @@ export function validateTrellisJournalSessions({
       for (const index of findStringIndexes(session.content, placeholder)) {
         const line = session.startLine + lineNumberAt(session.content, index) - 1;
         validationFailures.push(`${session.file}:${line} completed Session ${session.number} still contains placeholder ${placeholder}.`);
+      }
+    }
+
+    const baselineSession = baselineSessions.get(session.number);
+    const unchangedFromBaseline =
+      baselineSession &&
+      normalizeJournalSessionContent(baselineSession.content) ===
+        normalizeJournalSessionContent(session.content);
+    if (!unchangedFromBaseline) {
+      for (const fallback of findContradictoryJournalValidationFallbacks(session)) {
+        validationFailures.push(
+          `${session.file}:${fallback.line} completed Session ${session.number} claims successful validation in Summary or Main Changes, ` +
+            `but Testing still says "${fallback.text}"; record concrete validation evidence or remove the positive validation claim.`,
+        );
       }
     }
   }
@@ -1694,6 +2235,43 @@ export function parseJournalSessionsFromText(file, text) {
       completed: /^\s*(?:[-*]\s*)?(?:\[OK\]\s*)?\*\*Completed\*\*\s*$/im.test(status),
       commits: extractCommitHashes(extractMarkdownSection(content, 'Git Commits')),
     };
+  });
+}
+
+export function findContradictoryJournalValidationFallbacks(session) {
+  if (!session?.completed || !hasPositiveJournalValidationClaim(session.content)) {
+    return [];
+  }
+
+  const testing = extractMarkdownSectionRange(session.content, 'Testing');
+  if (!testing) {
+    return [];
+  }
+
+  return [...testing.content.matchAll(JOURNAL_VALIDATION_FALLBACK_PATTERN)].map((match) => ({
+    line:
+      session.startLine +
+      lineNumberAt(session.content, testing.startIndex + (match.index ?? 0)) -
+      1,
+    text: match[1],
+  }));
+}
+
+function hasPositiveJournalValidationClaim(content) {
+  return ['Summary', 'Main Changes'].some((heading) => {
+    const section = extractMarkdownSectionRange(content, heading);
+    if (!section) {
+      return false;
+    }
+
+    return section.content.split(/\r?\n/).some((line) => {
+      const claim = line.replace(/\bno failures?\b/gi, '');
+      return (
+        JOURNAL_VALIDATION_SURFACE_PATTERN.test(claim) &&
+        JOURNAL_VALIDATION_SUCCESS_PATTERN.test(claim) &&
+        !JOURNAL_VALIDATION_NEGATION_PATTERN.test(claim)
+      );
+    });
   });
 }
 
@@ -1768,16 +2346,24 @@ export function parseWorkspaceIndexSessionsFromText(file, text, options = {}) {
 }
 
 function extractMarkdownSection(markdown, heading) {
+  return extractMarkdownSectionRange(markdown, heading)?.content || '';
+}
+
+function extractMarkdownSectionRange(markdown, heading) {
   const headingMatch = new RegExp(`^###\\s+${escapeRegExp(heading)}\\s*$`, 'm').exec(markdown);
 
   if (!headingMatch) {
-    return '';
+    return null;
   }
 
-  const rest = markdown.slice((headingMatch.index ?? 0) + headingMatch[0].length);
+  const startIndex = (headingMatch.index ?? 0) + headingMatch[0].length;
+  const rest = markdown.slice(startIndex);
   const nextHeading = /^###\s+/m.exec(rest);
 
-  return nextHeading ? rest.slice(0, nextHeading.index) : rest;
+  return {
+    content: nextHeading ? rest.slice(0, nextHeading.index) : rest,
+    startIndex,
+  };
 }
 
 export function extractCommitHashes(text) {
@@ -1870,6 +2456,15 @@ function listFiles(directory) {
 
 function exists(file) {
   return existsSync(resolve(rootDir, file));
+}
+
+function pathEntryExists(file) {
+  try {
+    lstatSync(resolve(rootDir, file));
+    return true;
+  } catch (error) {
+    return error?.code !== 'ENOENT';
+  }
 }
 
 function isRegularFile(file) {
