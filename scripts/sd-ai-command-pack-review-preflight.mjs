@@ -626,7 +626,7 @@ function checkChangedTrellisTaskMetadata() {
     if (!artifact) {
       fail(
         `${file} is not in a supported Trellis task layout; use ` +
-          '.trellis/tasks/MM-DD-name/task.json or .trellis/tasks/archive/YYYY-MM/MM-DD-name/task.json.',
+          '.trellis/tasks/MM-DD-name/task.json or .trellis/tasks/archive/YYYY-MM/name/task.json.',
       );
       continue;
     }
@@ -682,9 +682,9 @@ export function validateTrellisTaskMetadata(record, taskDir, archived) {
 
   const taskDirectoryName = taskDir.slice(taskDir.lastIndexOf('/') + 1);
   const directoryMatch = /^\d{2}-\d{2}-(.+)$/.exec(taskDirectoryName);
-  if (!directoryMatch) {
+  if (!directoryMatch && !archived) {
     issues.push('name cannot be verified because the task directory must use the MM-DD-name form');
-  } else if (nameValid && record.name !== directoryMatch[1]) {
+  } else if (directoryMatch && nameValid && record.name !== directoryMatch[1]) {
     issues.push(`name must match the dated task directory suffix "${directoryMatch[1]}"`);
   }
 
@@ -956,7 +956,7 @@ function checkTrellisTaskContextSeeds() {
         fail(
           `${normalized} is not in a supported Trellis task layout; use ` +
             '.trellis/tasks/MM-DD-name/{implement,check}.jsonl or ' +
-            '.trellis/tasks/archive/YYYY-MM/MM-DD-name/{implement,check}.jsonl.',
+            '.trellis/tasks/archive/YYYY-MM/name/{implement,check}.jsonl.',
         );
       }
       continue;
@@ -1072,7 +1072,7 @@ function checkCompletedTrellisTaskLocation() {
 
 export function parseTrellisTaskArtifactPath(path) {
   const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
-  const match = /^\.trellis\/tasks\/((?:archive\/\d{4}-\d{2}\/\d{2}-\d{2}-[^/]+)|\d{2}-\d{2}-[^/]+)\/(task\.json|implement\.jsonl|check\.jsonl)$/.exec(normalized);
+  const match = /^\.trellis\/tasks\/((?:archive\/\d{4}-\d{2}\/[^/]+)|\d{2}-\d{2}-[^/]+)\/(task\.json|implement\.jsonl|check\.jsonl)$/.exec(normalized);
   if (!match || match[1] === 'archive') {
     return null;
   }

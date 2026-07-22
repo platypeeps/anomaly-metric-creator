@@ -621,6 +621,7 @@ maybe_merge_ready_open_pr() {
   local pr_merge_state
   local blocking_check_count
   local successful_check_count
+  local branch_ref_arg
   local local_head_oid
   local remote_head_oid
   local unresolved_count
@@ -672,7 +673,8 @@ maybe_merge_ready_open_pr() {
 
   local_head_oid="$(git rev-parse --verify "refs/heads/$branch^{commit}")"
   if [ -z "$FINISH_WORK_HEAD" ]; then
-    add_anomaly "SD finish-work completion was not attested for PR #$pr_number; run the sd-finish-work flow, push any resulting commits, wait for required checks, then rerun housekeeping with --finish-work-head \"$local_head_oid\"; skipped auto-merge"
+    printf -v branch_ref_arg '%q' "refs/heads/$branch"
+    add_anomaly "SD finish-work completion was not attested for PR #$pr_number; run the sd-finish-work flow, push any resulting commits, wait for required checks, then rerun housekeeping with --finish-work-head \"\$(git rev-parse --verify $branch_ref_arg)\"; skipped auto-merge"
     return 0
   fi
   if [ "$FINISH_WORK_HEAD" != "$local_head_oid" ]; then
