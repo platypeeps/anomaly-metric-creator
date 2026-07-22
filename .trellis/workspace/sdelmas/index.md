@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 43
-- **Last Active**: 2026-07-21
+- **Total Sessions**: 44
+- **Last Active**: 2026-07-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1803 | Active |
+| `journal-1.md` | ~1845 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 44 | 2026-07-22 | Update SD AI command pack to 0.30.6 | `6278825cdf0d8e2e31a6dd5357d65a0aeab1bd03`, `74497345df082ec8de0e0833a204123dd17e3bce` | `codex/update-sd-ai-command-pack-0-30-4` |
 | 43 | 2026-07-21 | Test serve_main composition wiring | `68c7176ac5936e47447cebefbf42e3d3882b8de3` | `codex/serve-main-wiring-tests` |
 | 42 | 2026-07-21 | Registry-couple MCP wall guards | `bce736517982c5e08aeadc5a8cdd9a937b0fa839`, `f47090949582c90da6380f9cb0e829d478e7d4fe` | `codex/mcp-wall-registry-guard` |
 | 41 | 2026-07-21 | Release AMC 0.4.0 | `3811df4`, `73867cb`, `639be6c`, `1823f4c` | `main` |

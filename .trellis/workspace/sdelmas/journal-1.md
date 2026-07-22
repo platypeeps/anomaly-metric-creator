@@ -1805,3 +1805,43 @@ Added focused in-memory composition coverage for eval-mode forwarding and serve 
 ### Next Steps
 
 - Task complete; merge PR #297 and run post-merge housekeeping.
+
+
+## Session 44: Update SD AI command pack to 0.30.6
+
+**Date**: 2026-07-22
+**Task**: Update SD AI command pack to 0.30.6
+**Package**: amc
+**Branch**: `codex/update-sd-ai-command-pack-0-30-4`
+
+### Summary
+
+Updated the repository-installed SD AI command pack to tagged release 0.30.6, remediated and resolved PR review feedback through the upstream source release, refreshed generated knowledge, and returned PR #298 to a green exact-head review state.
+
+### Main Changes
+
+- Installed and audited SD AI command pack 0.30.6 with matching provenance across 151 targets.
+- Replaced the stale finish-work attestation hint with a tracked-branch ref lookup and refreshed the generated command catalog and review preflight helper.
+- Replied to and resolved both PR review threads, including an evidence-backed rebuttal of the intentionally strict fleet policy identifier contract.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6278825cdf0d8e2e31a6dd5357d65a0aeab1bd03` | chore: update sd-ai-command-pack to 0.30.4 |
+| `74497345df082ec8de0e0833a204123dd17e3bce` | fix: address command pack review feedback |
+
+### Testing
+
+- [OK] scripts/sd-ai-command-pack-full-check.sh
+- [OK] installer --check --json: current, 151 targets, provenance hashes match
+- [OK] PR #298 CI green and exact-head Copilot review complete with zero unresolved threads
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
