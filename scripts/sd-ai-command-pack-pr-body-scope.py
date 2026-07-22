@@ -33,6 +33,8 @@ Exit codes:
   author is an exempt bot (``--actor`` / ``SD_AI_COMMAND_PACK_PR_BODY_SCOPE_ACTOR``).
 * ``1`` - a supplied PR body is missing a required scope section.
 * ``2`` - argument, git, config, or I/O error.
+* ``3`` - ``--prepare-tooling-body`` found an empty or mixed-scope diff and
+  intentionally left the body unchanged.
 """
 
 from __future__ import annotations
@@ -42,7 +44,9 @@ import fnmatch
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -64,6 +68,12 @@ ACTOR_ENV_VARS = (
 CONFIG_ENV_VAR = "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CONFIG"
 DEFAULT_CONFIG_PATH = Path(".sd-ai-command-pack/pr-body-scope.json")
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
+PREPARE_NOT_APPLICABLE = 3
+TOOLING_SCOPE_LABEL = "Tooling/generated scope"
+TOOLING_SCOPE_SECTION = (
+    "Tooling/generated scope:\n\n"
+    "- Changes are limited to generated or repository-bookkeeping surfaces.\n"
+)
 
 
 def _normalize_path(path: str) -> str:
@@ -104,6 +114,8 @@ DEFAULT_RULES = (
         ),
         patterns=(
             ".sd-ai-command-pack/**",
+            ".trellis/tasks/**",
+            ".trellis/workspace/**",
             ".trellis/scripts/**",
             ".trellis/agents/**",
             ".github/agents/trellis-*.agent.md",
@@ -247,11 +259,13 @@ DEFAULT_RULES = (
 def _split_changed_files(text: str) -> list[str]:
     paths: list[str] = []
     seen: set[str] = set()
-    for raw_path in text.replace("\0", "\n").splitlines():
-        stripped_path = raw_path.strip()
-        if not stripped_path:
+    nul_delimited = "\0" in text
+    raw_paths = text.split("\0") if nul_delimited else text.splitlines()
+    for raw_path in raw_paths:
+        candidate = raw_path if nul_delimited else raw_path.strip()
+        if not candidate:
             continue
-        path = _normalize_path(stripped_path)
+        path = _normalize_path(candidate)
         if path and path not in seen:
             paths.append(path)
             seen.add(path)
@@ -519,6 +533,139 @@ def _body_has_heading(body: str, headings: tuple[str, ...]) -> bool:
     return False
 
 
+def _tooling_scope_rules(rules: tuple[ScopeRule, ...]) -> tuple[ScopeRule, ...]:
+    """Return the canonical and repo-extended tooling scope rules."""
+    return tuple(
+        rule for rule in rules if rule.label.casefold() == TOOLING_SCOPE_LABEL.casefold()
+    )
+
+
+def _tooling_only_unmatched_paths(
+    paths: list[str], rules: tuple[ScopeRule, ...]
+) -> tuple[list[str], str | None]:
+    tooling_rules = _tooling_scope_rules(rules)
+    if not tooling_rules:
+        return [], f"{TOOLING_SCOPE_LABEL} rule is unavailable"
+    unmatched = [
+        path
+        for path in paths
+        if not any(
+            _matches_normalized_pattern(path, pattern)
+            for rule in tooling_rules
+            for pattern in rule.normalized_patterns
+        )
+    ]
+    return unmatched, None
+
+
+def _load_regular_utf8_file(path: Path) -> tuple[str | None, int | None, str | None]:
+    try:
+        file_stat = path.lstat()
+    except OSError as exc:
+        return None, None, f"cannot inspect PR body file {path}: {exc}"
+    if not stat.S_ISREG(file_stat.st_mode):
+        return None, None, f"PR body file must be a regular file: {path}"
+    try:
+        body = path.read_bytes().decode("utf-8", errors="strict")
+    except OSError as exc:
+        return None, None, f"cannot read PR body file {path}: {exc}"
+    except UnicodeError as exc:
+        return None, None, f"cannot decode PR body file {path}: {exc}"
+    return body, stat.S_IMODE(file_stat.st_mode), None
+
+
+def _append_tooling_scope(body: str) -> str:
+    if body.endswith("\n\n"):
+        separator = ""
+    elif body.endswith("\n"):
+        separator = "\n"
+    else:
+        separator = "\n\n"
+    return f"{body}{separator}{TOOLING_SCOPE_SECTION}"
+
+
+def _atomic_write_body(path: Path, body: str, mode: int) -> str | None:
+    temporary_path: Path | None = None
+    try:
+        descriptor, raw_temporary_path = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            dir=path.parent,
+        )
+        temporary_path = Path(raw_temporary_path)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, path)
+    except OSError as exc:
+        return f"cannot atomically update PR body file {path}: {exc}"
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                # Temporary-file cleanup is best-effort after the write attempt.
+                pass
+    return None
+
+
+def prepare_tooling_body(
+    root: Path,
+    *,
+    body_file: Path,
+    changed_files_path: Path,
+    config_path: Path | None = None,
+) -> tuple[int, list[str]]:
+    """Append the tooling section only for a proven tooling-only branch diff."""
+    changed_files, changed_error = _load_changed_files(root, changed_files_path)
+    if changed_error is not None:
+        return 2, [changed_error]
+    if not changed_files:
+        return PREPARE_NOT_APPLICABLE, [
+            "info: PR body left unchanged because the branch diff is empty."
+        ]
+
+    rules, rules_error = _rules_for_repo(root, config_path)
+    if rules_error is not None:
+        return 2, [rules_error]
+    unmatched, tooling_error = _tooling_only_unmatched_paths(changed_files, rules)
+    if tooling_error is not None:
+        return 2, [tooling_error]
+    if unmatched:
+        rendered_unmatched = ", ".join(
+            json.dumps(path, ensure_ascii=True) for path in unmatched[:5]
+        )
+        return PREPARE_NOT_APPLICABLE, [
+            "info: PR body left unchanged because the branch diff is not "
+            f"tooling/generated-only: {rendered_unmatched}"
+        ]
+
+    body, mode, body_error = _load_regular_utf8_file(body_file)
+    if body_error is not None:
+        return 2, [body_error]
+    if body is None or mode is None:
+        return 2, [f"cannot load PR body file {body_file}"]
+
+    tooling_headings = tuple(
+        heading
+        for rule in _tooling_scope_rules(rules)
+        for heading in rule.headings
+    )
+    if _body_has_heading(body, tooling_headings):
+        return 0, [
+            "info: auto-filled PR body already contains a tooling/generated "
+            "scope section; left it unchanged."
+        ]
+
+    write_error = _atomic_write_body(body_file, _append_tooling_scope(body), mode)
+    if write_error is not None:
+        return 2, [write_error]
+    return 0, [
+        f"info: appended {TOOLING_SCOPE_LABEL} to the auto-filled PR body."
+    ]
+
+
 def _resolve_actor(explicit: str | None) -> str:
     """Resolve the PR author login from the flag, then the env fallback."""
     if explicit and explicit.strip():
@@ -625,6 +772,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("repo_root", nargs="?", default=".", help="repository root")
     parser.add_argument("--body-file", type=Path, help="file containing the PR body")
     parser.add_argument(
+        "--prepare-tooling-body",
+        action="store_true",
+        help=(
+            f"append {TOOLING_SCOPE_LABEL} to --body-file only when every "
+            "path in --changed-files belongs to that category; empty or mixed "
+            "scope exits 3"
+        ),
+    )
+    parser.add_argument(
         "--changed-files",
         type=Path,
         help="newline- or NUL-delimited changed path list",
@@ -651,15 +807,29 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = _parse_args(argv[1:])
     root = Path(args.repo_root).resolve()
-    status, messages = check(
-        root,
-        body_file=args.body_file,
-        changed_files_path=args.changed_files,
-        config_path=args.config,
-        actor=args.actor,
-    )
+    if args.prepare_tooling_body:
+        if args.body_file is None or args.changed_files is None:
+            status, messages = 2, [
+                "--prepare-tooling-body requires --body-file and --changed-files"
+            ]
+        else:
+            status, messages = prepare_tooling_body(
+                root,
+                body_file=args.body_file,
+                changed_files_path=args.changed_files,
+                config_path=args.config,
+            )
+    else:
+        status, messages = check(
+            root,
+            body_file=args.body_file,
+            changed_files_path=args.changed_files,
+            config_path=args.config,
+            actor=args.actor,
+        )
     if messages:
-        print("\n".join(messages), file=sys.stderr if status else sys.stdout)
+        stream = sys.stderr if status not in (0, PREPARE_NOT_APPLICABLE) else sys.stdout
+        print("\n".join(messages), file=stream)
     return status
 
 

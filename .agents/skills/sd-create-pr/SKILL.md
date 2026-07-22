@@ -240,12 +240,82 @@ gh pr create --base "$BASE_BRANCH" --title "$PR_TITLE" --body-file "$PR_BODY_FIL
 ```
 
 Use the same `--body-file` rule when editing an existing PR body. If no custom
-body is needed, let GitHub CLI fill from the branch commits and review the
-generated PR text for placeholders or misleading scope after creation:
+body is needed, let GitHub CLI fill from the branch commits. Never run the
+automatic preparation mode for a user-provided body: preserve that body
+byte-for-byte and leave the existing strict scope validator authoritative.
+
+For the no-custom-body path, use secure regular temporary files to capture the
+exact auto-filled body and the NUL-delimited branch diff. The same Step 5 flow
+applies to standalone publication and verified `sd-ship` Stage 1 publication:
 
 ```bash
-gh pr create --base "$BASE_BRANCH" --fill
+if ! gh pr create --base "$BASE_BRANCH" --fill; then
+  printf '%s\n' "error: PR creation failed; stop before Step 6." >&2
+  exit 1
+fi
+
+PR_BODY_FILE=
+CHANGED_FILES_FILE=
+cleanup_generated_pr_body() {
+  if [ -n "$PR_BODY_FILE" ]; then
+    rm -f -- "$PR_BODY_FILE"
+  fi
+  if [ -n "$CHANGED_FILES_FILE" ]; then
+    rm -f -- "$CHANGED_FILES_FILE"
+  fi
+}
+trap cleanup_generated_pr_body EXIT HUP INT TERM
+
+if ! PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/sd-ai-command-pack-pr-body.XXXXXX"); then
+  printf '%s\n' "error: cannot create secure PR-body temporary file; stop before Step 6." >&2
+  exit 1
+fi
+if ! CHANGED_FILES_FILE=$(mktemp "${TMPDIR:-/tmp}/sd-ai-command-pack-pr-files.XXXXXX"); then
+  printf '%s\n' "error: cannot create secure changed-files temporary file; stop before Step 6." >&2
+  exit 1
+fi
+
+if ! git diff --name-only -z "$BASE_REF"...HEAD > "$CHANGED_FILES_FILE"; then
+  printf '%s\n' "error: cannot capture NUL-delimited changed paths; stop before Step 6." >&2
+  exit 1
+fi
+if ! gh pr view --json body --jq .body > "$PR_BODY_FILE"; then
+  printf '%s\n' "error: cannot fetch GitHub's auto-filled PR body; stop before Step 6." >&2
+  exit 1
+fi
+
+PREPARE_STATUS=0
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-pr-body-scope.py \
+  --prepare-tooling-body \
+  --body-file "$PR_BODY_FILE" \
+  --changed-files "$CHANGED_FILES_FILE" \
+  || PREPARE_STATUS=$?
+
+case "$PREPARE_STATUS" in
+  0)
+    if ! gh pr edit --body-file "$PR_BODY_FILE"; then
+      printf '%s\n' "error: automatic PR-body update failed; stop before Step 6." >&2
+      exit 1
+    fi
+    ;;
+  3)
+    : # The helper already reported the bounded non-error result on stdout.
+    ;;
+  *)
+    printf '%s\n' "error: automatic PR-body scope preparation failed; stop before Step 6." >&2
+    exit "$PREPARE_STATUS"
+    ;;
+esac
 ```
+
+Exit `3` is the helper's non-error mixed-scope result. Any other nonzero status,
+an unavailable helper/toolchain, a non-regular temporary body, or a failed body
+fetch/edit blocks the handoff: stop before Step 6 so review never starts with a
+known-missing tooling/generated section. The helper owns the canonical path
+classification and appends the recognized section only when every changed path
+is tooling/generated or repository bookkeeping; the skill must not duplicate
+those patterns.
 
 If `SD_AI_COMMAND_PACK_CREATE_PR_DRAFT=1`, create the PR as draft unless the
 user explicitly asked for a ready PR.

@@ -33,7 +33,9 @@ Quick links:
 - `.agents/skills/sd-finish-work/SKILL.md`: Codex-visible Trellis finish-work wrapper.
 - `.agents/skills/sd-create-pr/SKILL.md`: spec-refresh, commit, push, PR
   creation/reuse, and PR-review orchestration workflow; custom Markdown bodies
-  are materialized literally and passed to GitHub CLI with `--body-file`.
+  are materialized literally and passed to GitHub CLI with `--body-file`, while
+  tooling/generated-only auto-filled bodies gain the required scope section
+  before either standalone or `sd-ship` review handoff.
 - `.agents/skills/sd-work-backlog/SKILL.md`: sequential Trellis backlog work
   loop and canonical resumable controller for planning through clean merge.
 - `.agents/skills/sd-work-backlog/references/autonomous-loop.md`: shared
@@ -96,7 +98,10 @@ Quick links:
   review-tool runner for the review-local loop, including its `all`
   full-codebase mode.
 - `scripts/sd-ai-command-pack-review-learnings.py`: local review feedback
-  pattern scanner and managed learning-block updater.
+  pattern scanner and managed learning-block updater. It preserves current,
+  non-outdated unresolved comments as individual actionable rows, clusters
+  historical signals deterministically with bounded evidence, and proposes
+  only category-specific actions backed by recurring observations.
 - `scripts/sd-ai-command-pack-install-audit.py`: structural post-install audit
   for missing installed targets and unlisted pack-like files.
 - `scripts/sd-ai-command-pack-pr-body-scope.py`: configurable PR-body scope
@@ -139,8 +144,11 @@ Codex exposes the pack entry points as skills named `sd-help`, `sd-status`,
 `sd-test-gaps`, `sd-retro`, and `sd-update-spec`; type
 `/sd` in Codex command completion or invoke them with
 `$sd-review-pr`-style skill mentions.
-The start, continue, and finish-work wrappers run Trellis' existing
-`trellis-start`, `trellis-continue`, and `trellis-finish-work` skills as-is.
+The start and continue wrappers run Trellis' existing `trellis-start` and
+`trellis-continue` skills as-is. The finish-work wrapper uses
+`trellis-finish-work` as its primary workflow while replacing the journal
+write step with the pack session recorder so concrete change and validation
+evidence is recorded atomically.
 On Claude Code — where Trellis ships a SessionStart hook instead of a
 `trellis-start` skill — the start wrapper derives the same session context
 from `.trellis/scripts/get_context.py` directly, and the continue and
@@ -205,7 +213,9 @@ it. Use a separate request to execute the recommendation.
    otherwise it invokes the installed pack full-check script directly. The
    wrapper may perform repository prerequisites before calling the pack script,
    but it must not invoke `sd-review-pr`, a review-pr adapter, or the helper
-   itself.
+   itself. After a clean non-deferred review, review-pr resolves
+   `sd-finish-work`; that wrapper owns Trellis finish-work and records concrete
+   journal change/test evidence through the pack session recorder.
 11. Request the configured remote reviewer, defaulting to GitHub Copilot, after
    a clean local pass and again after every pushed review-fix commit made
    during the loop, unless the user explicitly asked for local-only review or
@@ -225,7 +235,9 @@ it. Use a separate request to execute the recommendation.
    updated.
 15. Run the finish-work command when the coding session is complete and you need
    the Trellis finish-work skill's quality gate, archive, journal, and commit
-   reminder behavior.
+   reminder behavior. Lifecycle commands must chain through `sd-finish-work`
+   rather than invoking Trellis directly so the pack's concrete session
+   recorder remains in the path.
 16. After the PR merges, run the housekeeping command to get back to the default
    branch, prune/delete the merged development stream, and see the condensed
    clean-state/anomaly report.
@@ -250,7 +262,12 @@ whether to keep going. Once the overall loop meets its stop conditions,
 review-pr runs
 `sd-ai-command-pack-review-learnings.py --github-pr <number> --dry-run`
 exactly once and reports any preventive follow-up without reopening the clean
-review cycle.
+review cycle. Time-window and repeated `--github-pr` scans render actionable
+comments first, then bounded historical clusters for task metadata, boundary
+validation, contract/documentation drift, generated surfaces, reviewer/test
+harness quality, and uncategorized evidence. Cluster summaries retain counts,
+PRs, path families, observed dates, and bounded examples, and explicitly report
+truncation. Preventive actions appear only for detected recurring categories.
 
 The create-pr wrapper honors `SD_AI_COMMAND_PACK_CREATE_PR_BASE` for a base
 branch override, `SD_AI_COMMAND_PACK_CREATE_PR_COMMIT_MESSAGE` when it creates
@@ -433,7 +450,7 @@ Use the script directly from any shell:
 bash scripts/sd-ai-command-pack-full-check.sh
 bash scripts/sd-ai-command-pack-review-local.sh
 bash scripts/sd-ai-command-pack-review-local.sh --full-codebase
-bash scripts/sd-ai-command-pack-housekeeping.sh
+bash scripts/sd-ai-command-pack-housekeeping.sh # cleanup-only or already merged
 bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-status.py
 bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command-pack-status.py fleet --json
 bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
@@ -481,7 +498,12 @@ runs the post-install audit, the tooling/generated file scope preflight, the
 PR-body scope preflight, current-diff CI classification when
 `scripts/classify-ci-changes.sh` exists, optional package-script checks when a
 `package.json`, Node.js, and the selected package runner are available, and
-local Prism review when `prism` is available and configured. For target repos
+local Prism review when `prism` is available and configured. The Prism lane is
+local-first: when tracked staged or unstaged changes exist, it reviews each
+non-empty Git layer and skips the committed branch range; otherwise, it reviews
+the branch range from the configured base. This avoids repeating committed
+review work during iteration without dropping either local diff layer. For
+target repos
 that provide a CI classifier, prefer `scripts/classify-ci-changes.sh` with
 support for `-- changed-file ...`; the full-check script also tolerates legacy
 `scripts/classify_ci_changes.sh` by passing a temp changed-files list directly.
@@ -533,6 +555,15 @@ copied or generated surfaces. Markdown headings without the colon, such as
 `gh pr view` should not run, pass the PR body through
 `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`.
 
+The `sd-create-pr` no-custom-body path reuses the same classifier through
+`sd-ai-command-pack-pr-body-scope.py --prepare-tooling-body`. It captures the
+exact auto-filled GitHub body and NUL-delimited `base...HEAD` paths in secure
+regular temporary files. A fully tooling/generated or Trellis-bookkeeping diff
+gets the recognized section through `gh pr edit --body-file`; exit `3` means a
+mixed or empty diff and leaves the body unchanged. Other failures stop before
+review. User-provided bodies never enter this preparation mode and remain
+byte-for-byte subject to the existing validator.
+
 The review preflight is intentionally generic and safe to run without project
 dependencies. It checks for duplicate npm override sources of truth, changed
 copied Trellis or SD command-pack surfaces without companion repo-owned
@@ -542,16 +573,22 @@ placeholder or journal/index commit drift, generated `_example` seed rows in
 changed task context after a task enters implementation, completes, or is
 archived, edits to historical
 journal sessions relative to the review base, and large diffs that are likely
-to skip remote AI review. It also emits soft first-review warnings when changed
-code adds parser/structured-input, subprocess, filesystem/path, environment or
-global-state, or digest/integrity behavior. The warning names a conservative
-boundary-test matrix for author disposition before remote review. Diff sizing
-uses the complete review-base-to-working-tree state plus untracked files; large
-untracked files are counted as large without reading the entire file. The same
-byte limit bounds the first-review boundary-risk content scan; skipped
-oversized untracked code files are named in an explicit warning. Its
-authored-source threshold excludes installed pack/Trellis mirrors, Trellis task
-and workspace records, and known generated reports. A separate warning calls
+to skip remote AI review. It also emits a soft first-review warning when changed
+production code matches the stable `structured-input-types`,
+`subprocess-command`, `environment-global-state`, `path-filesystem`,
+`normalization-evidence`, or `diagnostic-redaction` categories. Every triggered
+category includes bounded good/base/failure regression prompts for author
+disposition; detection remains advisory and does not claim that focused
+coverage exists or is missing. Diff sizing uses the complete review-base-to-
+working-tree state plus untracked files; large untracked files are counted as
+large without reading the entire file. The same byte limit bounds the first-
+review boundary-risk content scan; skipped
+oversized untracked code files are named in an explicit warning. Conventional
+test and fixture paths, vendored/generated directories, installed payload
+mirrors, and non-workflow YAML remain outside the production-risk scan, while
+`.github/workflows/*.yml` and `.yaml` participate as executable configuration.
+The authored-source threshold excludes installed pack/Trellis mirrors, Trellis
+task and workspace records, and known generated reports. A separate warning calls
 out changes spanning more than one Trellis task directory. The task-context
 check inspects `implement.jsonl` and
 `check.jsonl`; a changed qualifying `task.json` also checks both sibling files.
@@ -566,7 +603,11 @@ symlinked task entries are ignored. Target repos can tune roots,
 path-reference prefixes, integration paths, optional paths, copied-template
 paths, and the `diffSizeWarningLines`, `largeFileWarningLines`,
 `sourceReviewWarningLines`, and `untrackedFileReadLimitBytes` warning thresholds
-with `.sd-ai-command-pack/review-preflight.json`. Repos that intentionally
+with `.sd-ai-command-pack/review-preflight.json`. The config's additive
+`reviewRiskCategorySignals` object maps a stable category ID to at most 20
+literal, nonblank signals of at most 120 characters each; invalid or unknown
+category configuration fails the preflight instead of silently changing the
+matrix. Repos that intentionally
 document service-user paths under `/home/<user>/` can add those service users to
 `allowedLinuxHomeUsers` in that config. The script requires Node 16.9 or newer
 and scans regular documentation files only; symlinked docs are skipped
@@ -643,9 +684,10 @@ needed. Configure third-party full-codebase scans with
 runner falls back to `SD_AI_COMMAND_PACK_REVIEW_LOCAL_<TOOL>_COMMAND`.
 
 The PR-body scope preflight is generic and config-driven. By default it checks
-pack/Trellis generated files, housekeeping automation files, and CI/review
-tooling files for matching `Tooling/generated scope:`, `Automation scope:`, or
-`CI/review scope:` sections when a PR body is provided. Target repos can add
+pack/Trellis generated and bookkeeping files, housekeeping automation files,
+and CI/review tooling files for matching `Tooling/generated scope:`,
+`Automation scope:`, or `CI/review scope:` sections when a PR body is provided.
+Target repos can add
 runtime, docs, or other categories by committing
 `.sd-ai-command-pack/pr-body-scope.json`:
 Each rule accepts `label`, `headings`, `patterns`, and optional
@@ -736,6 +778,13 @@ entrypoint is intentionally maintained as repo documentation. If an existing
 `.obsidian-kb` folder was created by an older symlink-based helper, the refresh
 replaces pack-owned relative symlinks with real copies in the category layout
 and prunes the old mirrored generated paths.
+The root `.obsidian-kb` path may itself be a symlink when it resolves to an
+existing directory, including a directory outside the repository. Refreshes
+preserve that root symlink and write through it. A broken root symlink, a root
+symlink to a non-directory, or an occupied non-directory path fails before KB
+or ignore writes. The managed, root-anchored `/.obsidian-kb` ignore rule covers
+both a real directory and the root symlink without hiding nested paths of the
+same name.
 The helper also creates and refreshes `.obsidian-kb/Dashboard - <repo>.md`,
 a generated Markdown landing page that groups and links to the current KB
 copies, adds a brief one-line description for each linked document, points to
@@ -753,7 +802,8 @@ conflicts it could not bring current — automation should treat `3` as
 `python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run` to preview the
 refresh without writes, `--check` to verify the generated folder and ignore
 entry are current, or `--help` for the safe CLI summary. Add `--if-present` to
-any mode when automation should refresh only repositories that already have
+any mode only when an intentional guarded caller should refresh repositories
+that already have
 `.obsidian-kb`; an absent folder returns success with a visible skip reason and
 causes no writes, while an occupied or invalid path retains the normal failure.
 
@@ -777,7 +827,10 @@ Copy-Item -Recurse -Force -Path "C:\path\to\repo\.obsidian-kb\*" -Destination "C
 The housekeeping command ends a single active development stream. On an open
 PR, it runs the SD finish-work flow before actual cleanup and pushes any
 archive or journal commits that finish-work creates. It then runs the
-housekeeping script, which checks a strict auto-merge gate:
+housekeeping script with `--finish-work-head "$(git rev-parse HEAD)"`. The
+exact-head attestation is valid only after that lifecycle step and its required
+checks finish; without it, or if the branch advances afterward, the executable
+leaves an open PR unmerged. The script then checks a strict auto-merge gate:
 
 - the working tree is clean
 - the local branch head, remote branch head, and PR head all match
@@ -950,10 +1003,12 @@ pack source repository's
 [fleet rollout procedure](https://github.com/platypeeps/sd-ai-command-pack/blob/main/docs/FLEET_ROLLOUT.md)
 with the
 [fleet preflight helper](https://github.com/platypeeps/sd-ai-command-pack/blob/main/scripts/sd-ai-command-pack-fleet-preflight.py)
-deciding which consumers are stale. It processes one consumer at a time: verify a clean tree (dirty
-trees are skipped and reported, never touched), branch, install the
-release, run the consumer's full-check, open the consumer PR, watch it to
-settled, and merge through the consumer's housekeeping gate. Before review it
+deciding which consumers are stale. It runs manifest-defined canaries
+sequentially, then may overlap isolated post-canary consumer lanes within the
+configured bound: verify a clean tree (dirty trees are skipped and reported,
+never touched), branch, install the release, run the consumer's full-check,
+open the consumer PR, and watch it to settled. Housekeeping merges remain
+serialized in manifest order. Before review it
 runs the source-side fleet review classifier against the exact pre-refresh base
 and current head. A verified release/candidate ledger, exact installer
 inspection and audit, safe base/current receipts, and an installer-only diff
@@ -963,6 +1018,9 @@ names such as `loadsmith rwbp-website`, or `consumer=a,b`, filter the run;
 `no-merge` stops before merging, `dry-run` reports preflight only, and
 `remote-review` forces normal remote review, while `remote=<name>` selects the
 release-authority Git remote (default `origin`).
+In `no-merge` mode the source scheduler accepts PR-open canaries as settled,
+holds all merges, and emits no merge candidate; normal mode still requires
+canaries to be at-target or merged.
 Before it inventories consumers, preflight requires the matching local and
 remote `v<version>` tag identities, tagged version and payload, ancestry, and
 tagged plus current full-fleet candidate ledgers to agree. Missing, stale,
@@ -971,6 +1029,14 @@ consumer names also fail before mutation rather than broadening to the fleet.
 The report is a per-consumer status table plus a fleet version summary.
 Its consumer rows state `integration-only`, `remote`, or `n/a` review profile
 so avoided remote-review rounds remain visible rather than implicit.
+
+The fleet controller obtains each allowed start and deterministic merge
+candidate from the source-only
+`scripts/sd-ai-command-pack-fleet-wave-plan.py`. It rebuilds the temporary
+observation snapshot from live evidence on resume, never shares a mutable
+checkout between lanes, stops new starts and holds merges for a verified
+pack-owned blocker, and never exposes scheduler state as a public adapter
+argument.
 
 The fleet skill also records mandatory internal timing evidence with
 `scripts/sd-ai-command-pack-fleet-timing.py`. One resumable run brackets
@@ -1048,9 +1114,12 @@ Lifecycle side effects have one owner. `until=review` keeps finish-work in
 watches with `no-merge` in Stage 3, and invokes housekeeping exactly once in
 Stage 4. A blocked or timed-out watch therefore leaves the active Trellis task
 available for a later resume instead of archiving it before the PR settles.
-After finish-work, housekeeping owns one `--if-present` KB refresh before its
-merge gate so archived task documentation is current. `sd-ship` does not repeat
-that refresh.
+After finish-work, housekeeping passes `--finish-work-head` with the exact
+current commit to the shell gate and owns one normal KB refresh before merge so
+archived task documentation is current. A missing handoff leaves the PR open.
+The refresh creates an absent
+KB and preserves a valid root directory symlink. `sd-ship` does not repeat that
+refresh.
 
 When the canonical backlog controller invokes the merge-through chain, it adds
 a trusted internal `caller: sd-work-backlog` context bound to the active run,
@@ -1265,9 +1334,13 @@ ephemeral tool state and do not change what the checks validate.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_KB`: Obsidian KB freshness check mode.
   Default `auto` runs `scripts/sd-ai-command-pack-update-spec-kb.py --check`
   only when a generated `.obsidian-kb/` folder exists and skips with a warning
-  otherwise; `0` skips entirely; `required` fails when the helper, `python3`,
-  or a passing check is unavailable. A stale KB fails the full check with a
-  refresh hint.
+  otherwise. When the existing KB is stale and already ignored, `auto`
+  refreshes it once through the canonical helper, reruns `--check`, and
+  continues only after the recheck passes. Unignored state remains fail-closed
+  so full-check does not change tracked ignore configuration; missing `git` or
+  an ignore-verification error also fails with a targeted diagnostic. `0` skips
+  entirely; `required` stays read-only and fails when the helper, `python3`,
+  or a passing check is unavailable.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PACK_DRIFT=0`: skip the pack source drift
   gates (template twin parity, release-version coverage for shipped payload
   changes, and env-var documentation coverage). In `auto` mode, generic source
@@ -1292,6 +1365,9 @@ ephemeral tool state and do not change what the checks validate.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0`: skip Prism review.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=required`: fail if Prism is missing,
   unauthenticated, or has provider/model configuration failures.
+  Full-check still uses local-first scope: when tracked staged or unstaged
+  changes exist, it reviews each non-empty local layer; otherwise, it reviews
+  the committed branch range.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES`: explicit Prism rules file. Defaults to
   `.prism/rules.json` when present.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON`: severity that fails the Prism
@@ -1500,11 +1576,12 @@ checks.
 ## Housekeeping cadence
 
 Run housekeeping at the end of a development stream. From an open PR branch it
-owns finish-work before applying the merge gate; after an already-merged PR it
-performs the remaining cleanup and verification. If the command reports
-anomalies, treat them as the next manual action: dirty files, an unmerged PR,
-extra branches, open PRs/issues, or remaining Trellis tasks mean the repo is
-not yet in the expected clean state.
+owns finish-work before applying the merge gate and passes the exact current
+commit through `--finish-work-head` only after the lifecycle handoff succeeds;
+after an already-merged PR it performs the remaining cleanup and verification
+without the flag. If the command reports anomalies, treat them as the next
+manual action: dirty files, an unmerged PR, extra branches, open PRs/issues, or
+remaining Trellis tasks mean the repo is not yet in the expected clean state.
 
 ## Updating the pack
 

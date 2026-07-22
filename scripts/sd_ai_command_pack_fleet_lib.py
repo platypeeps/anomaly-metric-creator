@@ -9,15 +9,16 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-FLEET_SCHEMA_VERSION = 3
+FLEET_SCHEMA_VERSION = 4
 FLEET_PROFILE_SCHEMA_VERSION = 1
 CANDIDATE_LEDGER_SCHEMA_VERSION = 2
 MAX_CANDIDATE_TIMEOUT_SECONDS = 3600
+MAX_FLEET_CONCURRENCY = 4
 SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
 CONSUMER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 PACK_NAME = "sd-ai-command-pack"
@@ -40,6 +41,20 @@ class FleetConsumer:
     candidate_timeout_seconds: int
     candidate_prepare: tuple[tuple[str, ...], ...]
     candidate_checks: tuple[tuple[str, ...], ...]
+
+
+@dataclass(frozen=True)
+class FleetRolloutCohort:
+    name: str
+    strategy: str
+    max_concurrency: int
+    consumers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FleetRolloutPolicy:
+    default_concurrency: int
+    cohorts: tuple[FleetRolloutCohort, ...]
 
 
 @dataclass(frozen=True)
@@ -388,7 +403,140 @@ def _parse_candidate_commands(
     return tuple(parsed)
 
 
-def parse_fleet_consumers(
+def parse_fleet_rollout_policy(
+    manifest: Mapping[str, Any],
+    consumers: Sequence[FleetConsumer],
+    label: str = "fleet manifest",
+) -> FleetRolloutPolicy:
+    raw_policy = manifest.get("rolloutPolicy")
+    if not isinstance(raw_policy, dict):
+        raise FleetConfigError(f"{label} rolloutPolicy must be an object")
+    unknown_policy_fields = sorted(
+        set(raw_policy) - {"defaultConcurrency", "cohorts"}
+    )
+    if unknown_policy_fields:
+        raise FleetConfigError(
+            f"{label} rolloutPolicy has unknown field {unknown_policy_fields[0]}"
+        )
+
+    default_concurrency = raw_policy.get("defaultConcurrency")
+    if (
+        isinstance(default_concurrency, bool)
+        or not isinstance(default_concurrency, int)
+        or not 1 <= default_concurrency <= MAX_FLEET_CONCURRENCY
+    ):
+        raise FleetConfigError(
+            f"{label} rolloutPolicy defaultConcurrency must be between 1 and "
+            f"{MAX_FLEET_CONCURRENCY}"
+        )
+
+    raw_cohorts = raw_policy.get("cohorts")
+    if not isinstance(raw_cohorts, list) or not raw_cohorts:
+        raise FleetConfigError(f"{label} rolloutPolicy cohorts must be non-empty")
+
+    cohorts: list[FleetRolloutCohort] = []
+    seen_cohorts: set[str] = set()
+    configured_consumers: list[str] = []
+    known_consumers = {consumer.name: consumer.name for consumer in consumers}
+    seen_consumers: set[str] = set()
+    for index, raw_cohort in enumerate(raw_cohorts):
+        cohort_label = f"{label} rolloutPolicy cohorts[{index}]"
+        if not isinstance(raw_cohort, dict):
+            raise FleetConfigError(f"{cohort_label} must be an object")
+        unknown_fields = sorted(
+            set(raw_cohort) - {"name", "strategy", "maxConcurrency", "consumers"}
+        )
+        if unknown_fields:
+            raise FleetConfigError(
+                f"{cohort_label} has unknown field {unknown_fields[0]}"
+            )
+        name = _required_string(raw_cohort, "name", cohort_label)
+        if name in {".", ".."} or not CONSUMER_NAME_RE.fullmatch(name):
+            raise FleetConfigError(f"{cohort_label} name is not a safe identifier")
+        name_key = name.casefold()
+        if name_key in seen_cohorts:
+            raise FleetConfigError(f"duplicate fleet rollout cohort name: {name}")
+        seen_cohorts.add(name_key)
+
+        strategy = _required_string(raw_cohort, "strategy", cohort_label)
+        if strategy not in {"sequential", "bounded-parallel"}:
+            raise FleetConfigError(f"{cohort_label} has invalid strategy")
+        raw_max_concurrency = raw_cohort.get("maxConcurrency")
+        if strategy == "sequential":
+            if raw_max_concurrency is not None and (
+                isinstance(raw_max_concurrency, bool)
+                or not isinstance(raw_max_concurrency, int)
+                or raw_max_concurrency != 1
+            ):
+                raise FleetConfigError(
+                    f"{cohort_label} sequential maxConcurrency must be 1 when present"
+                )
+            max_concurrency = 1
+        else:
+            if (
+                isinstance(raw_max_concurrency, bool)
+                or not isinstance(raw_max_concurrency, int)
+                or not 2 <= raw_max_concurrency <= default_concurrency
+            ):
+                raise FleetConfigError(
+                    f"{cohort_label} bounded-parallel maxConcurrency must be between "
+                    f"2 and defaultConcurrency"
+                )
+            max_concurrency = raw_max_concurrency
+
+        raw_names = raw_cohort.get("consumers")
+        if not isinstance(raw_names, list) or not raw_names:
+            raise FleetConfigError(f"{cohort_label} consumers must be non-empty")
+        cohort_consumers: list[str] = []
+        for consumer_index, raw_name in enumerate(raw_names):
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise FleetConfigError(
+                    f"{cohort_label} consumers[{consumer_index}] must be a non-empty string"
+                )
+            consumer_key = raw_name
+            canonical_name = known_consumers.get(consumer_key)
+            if canonical_name is None:
+                raise FleetConfigError(
+                    f"{cohort_label} names unknown consumer {raw_name}"
+                )
+            if consumer_key in seen_consumers:
+                raise FleetConfigError(
+                    f"fleet rollout policy repeats consumer {canonical_name}"
+                )
+            seen_consumers.add(consumer_key)
+            cohort_consumers.append(canonical_name)
+            configured_consumers.append(canonical_name)
+        cohorts.append(
+            FleetRolloutCohort(
+                name=name,
+                strategy=strategy,
+                max_concurrency=max_concurrency,
+                consumers=tuple(cohort_consumers),
+            )
+        )
+
+    if cohorts[0].name.casefold() != "canary" or cohorts[0].strategy != "sequential":
+        raise FleetConfigError(
+            f"{label} rolloutPolicy first cohort must be sequential canary"
+        )
+    expected_consumers = [consumer.name for consumer in consumers]
+    if configured_consumers != expected_consumers:
+        missing = [name for name in expected_consumers if name not in configured_consumers]
+        if missing:
+            raise FleetConfigError(
+                f"{label} rolloutPolicy is missing consumer {missing[0]}"
+            )
+        raise FleetConfigError(
+            f"{label} rolloutPolicy consumer order must match rolloutPriority order"
+        )
+
+    return FleetRolloutPolicy(
+        default_concurrency=default_concurrency,
+        cohorts=tuple(cohorts),
+    )
+
+
+def _parse_fleet_consumers_without_policy(
     manifest: Mapping[str, Any],
     label: str = "fleet manifest",
 ) -> list[FleetConsumer]:
@@ -404,13 +552,13 @@ def parse_fleet_consumers(
     for index, item in enumerate(consumers):
         if not isinstance(item, dict):
             raise FleetConfigError(
-                f"fleet manifest consumers[{index}] must be an object"
+                f"{label} consumers[{index}] must be an object"
             )
-        label = f"fleet manifest consumer {item.get('name', index)}"
-        name = _required_string(item, "name", label)
+        consumer_label = f"{label} consumer {item.get('name', index)}"
+        name = _required_string(item, "name", consumer_label)
         if name in {".", ".."} or not CONSUMER_NAME_RE.fullmatch(name):
             raise FleetConfigError(
-                f"{label} name must be a non-path identifier using only "
+                f"{consumer_label} name must be a non-path identifier using only "
                 "letters, numbers, dots, underscores, and hyphens"
             )
         name_key = name.casefold()
@@ -418,13 +566,13 @@ def parse_fleet_consumers(
             raise FleetConfigError(f"duplicate fleet consumer name: {name}")
         seen_names.add(name_key)
 
-        github = _required_string(item, "github", label)
+        github = _required_string(item, "github", consumer_label)
         if "/" not in github:
-            raise FleetConfigError(f"{label} has invalid github slug")
-        path_hint = _required_string(item, "pathHint", label)
+            raise FleetConfigError(f"{consumer_label} has invalid github slug")
+        path_hint = _required_string(item, "pathHint", consumer_label)
         priority = item.get("rolloutPriority")
         if isinstance(priority, bool) or not isinstance(priority, int) or priority <= 0:
-            raise FleetConfigError(f"{label} has invalid rolloutPriority")
+            raise FleetConfigError(f"{consumer_label} has invalid rolloutPriority")
         if priority in seen_priorities:
             raise FleetConfigError(f"duplicate fleet rolloutPriority: {priority}")
         seen_priorities.add(priority)
@@ -436,7 +584,7 @@ def parse_fleet_consumers(
             or not 1 <= timeout <= MAX_CANDIDATE_TIMEOUT_SECONDS
         ):
             raise FleetConfigError(
-                f"{label} candidateTimeoutSeconds must be between 1 and "
+                f"{consumer_label} candidateTimeoutSeconds must be between 1 and "
                 f"{MAX_CANDIDATE_TIMEOUT_SECONDS}"
             )
 
@@ -445,24 +593,44 @@ def parse_fleet_consumers(
                 name=name,
                 github=github,
                 path_hint=path_hint,
-                platforms=_parse_platforms(item, label),
+                platforms=_parse_platforms(item, consumer_label),
                 rollout_priority=priority,
                 candidate_timeout_seconds=timeout,
                 candidate_prepare=_parse_candidate_commands(
                     item,
-                    label,
+                    consumer_label,
                     "candidatePrepare",
                     allow_empty=True,
                 ),
                 candidate_checks=_parse_candidate_commands(
                     item,
-                    label,
+                    consumer_label,
                     "candidateChecks",
                     allow_empty=False,
                 ),
             )
         )
-    return sorted(parsed, key=lambda consumer: (consumer.rollout_priority, consumer.name.casefold()))
+    ordered = sorted(
+        parsed,
+        key=lambda consumer: (consumer.rollout_priority, consumer.name.casefold()),
+    )
+    return ordered
+
+
+def parse_fleet_manifest(
+    manifest: Mapping[str, Any],
+    label: str = "fleet manifest",
+) -> tuple[list[FleetConsumer], FleetRolloutPolicy]:
+    consumers = _parse_fleet_consumers_without_policy(manifest, label)
+    return consumers, parse_fleet_rollout_policy(manifest, consumers, label)
+
+
+def parse_fleet_consumers(
+    manifest: Mapping[str, Any],
+    label: str = "fleet manifest",
+) -> list[FleetConsumer]:
+    consumers, _ = parse_fleet_manifest(manifest, label)
+    return consumers
 
 
 def load_fleet_consumers(path: Path) -> list[FleetConsumer]:
@@ -470,6 +638,15 @@ def load_fleet_consumers(path: Path) -> list[FleetConsumer]:
         load_json_object(path, "fleet manifest"),
         f"fleet manifest {path}",
     )
+
+
+def load_fleet_rollout_policy(path: Path) -> FleetRolloutPolicy:
+    manifest = load_json_object(path, "fleet manifest")
+    _, policy = parse_fleet_manifest(
+        manifest,
+        f"fleet manifest {path}",
+    )
+    return policy
 
 
 def manifest_version(manifest: Mapping[str, Any], label: str = "pack manifest") -> str:

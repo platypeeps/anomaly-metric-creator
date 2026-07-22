@@ -48,6 +48,8 @@ The script runs:
    for common entries: `typecheck`, `lint`, `test:unit`, `test:integration`,
    `build`, and `test:e2e`.
 9. Prism local review when `prism` is on `PATH` and Prism is not disabled.
+   When tracked staged or unstaged changes exist, review each non-empty local
+   layer and skip the committed branch range; otherwise, review that range.
 10. Gito review only when explicitly enabled.
 
 ## Safety Rules
@@ -70,6 +72,9 @@ The script runs:
   `.codex/`, `.gemini/`, `.opencode/`, `.agents/`, `.build/`, `.git/`,
   `.pytest_cache/`, `.obsidian-kb/`, `.trellis/`, `.ruff_cache/`, `.venv/`,
   `.sd-ai-command-pack/`, and `node_modules/`.
+- Prism scope is local-first to avoid redundant paid scans. When staged or
+  unstaged changes exist, full-check reviews those distinct Git layers and
+  defers the committed branch range until the tree is clean.
 - If the script reports skipped checks, include those skips in the final report.
 
 ## Useful Environment Variables
@@ -97,8 +102,10 @@ paths, and deprecated fallbacks.
   `python3` is unavailable. By default those availability problems warn and
   continue.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_KB=0` / `=required`: skip the Obsidian KB
-  freshness check, or fail when it cannot run. Default `auto` checks only
-  when a generated `.obsidian-kb/` folder exists.
+  freshness lane, or keep it read-only and fail when it cannot pass. Default
+  `auto` checks only when a generated `.obsidian-kb/` folder exists; if stale
+  output is already ignored, it refreshes once and requires a passing recheck.
+  Missing `git` or unverifiable ignore state fails without refreshing.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_SKIP_PACKAGE_SCRIPTS=1`: skip all package-script
   checks.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` / `=required`: skip Prism, or fail when

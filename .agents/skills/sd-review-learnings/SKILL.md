@@ -49,6 +49,13 @@ the repo wrapper.
      scripts/sd-ai-command-pack-review-learnings.py --github-pr 123 --dry-run
    ```
 
+   Current, non-outdated unresolved comments remain individual actionable
+   rows. Historical comments are deterministically deduplicated and grouped
+   into bounded task-metadata, boundary-validation, contract/documentation,
+   generated-surface, reviewer/test-harness, and fallback clusters. Each
+   cluster retains counts, PRs, path families, time bounds, and bounded
+   examples; the report names every truncated evidence dimension.
+
 4. If the repository already has a preferred review-learning file, use
    `--target PATH`. Otherwise the default is `docs/review-learnings.md`.
 
@@ -72,6 +79,9 @@ the repo wrapper.
 - Repeat `--github-pr` to inspect specific PRs. It is mutually exclusive with
   `--github-days`; `sd-review-pr` uses one PR-scoped dry run only after its
   overall review loop completes, never after each remote-review round.
+- Preventive actions are category-specific and appear only when recurring
+  historical evidence reaches the command's deterministic threshold. The
+  command does not emit generic actions for absent categories.
 - `--update` replaces only the managed `sd-review-learnings` block in the
   target file and preserves surrounding human-written content.
 - The default repository learning file is `docs/review-learnings.md`; use

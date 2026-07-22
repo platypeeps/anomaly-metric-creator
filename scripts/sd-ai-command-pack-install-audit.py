@@ -103,6 +103,7 @@ SOURCE_ONLY_ALLOWED_PACK_FILES = {
     "scripts/sd-ai-command-pack-fleet-preflight.py",
     "scripts/sd-ai-command-pack-fleet-review-classify.py",
     "scripts/sd-ai-command-pack-fleet-timing.py",
+    "scripts/sd-ai-command-pack-fleet-wave-plan.py",
     "scripts/sd_ai_command_pack_fleet_lib.py",
 }
 
