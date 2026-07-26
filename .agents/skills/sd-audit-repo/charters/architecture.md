@@ -54,8 +54,11 @@ of re-deriving the repository inventory.
   statements; flag cycles and dependencies that point the wrong way.
 - Read the composition roots (main modules, installers, CLI entry points)
   and note wiring that duplicates or contradicts the declared layout.
-- Find god components: `git ls-files | xargs wc -l | sort -rn | head`,
-  then check whether the largest files aggregate unrelated
+- Find large components with the pack-owned committed-tree inventory helper:
+  `bash scripts/sd-ai-command-pack-toolchain.sh run-python --
+  scripts/sd-ai-command-pack-audit-inventory.py --repo . --json`. Consume its
+  escaped `blob-bytes` rows; do not replace it with a whitespace-delimited
+  filename pipeline. Then check whether the largest files aggregate unrelated
   responsibilities.
 - Compare architecture claims in README or docs against the observed
   structure; flag the structural drift here and leave doc wording to the

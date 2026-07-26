@@ -14,6 +14,21 @@ This command audits and reports; it does not fix. It never edits product
 code, never creates branches or pull requests, and never creates Trellis
 tasks on its own.
 
+## Sandbox-safe tool execution
+
+Run every `gh`, `uv`, `pip`, `ruff`, or `npm` command shown in this workflow
+through `bash scripts/sd-ai-command-pack-toolchain.sh run -- <tool> [args...]`.
+The argv-safe wrapper changes only documented cache variables and preserves
+auth/config state. If it is missing or reports a cache-setup failure, stop with
+that diagnostic; do not retry the tool bare or redirect `GH_CONFIG_DIR`.
+
+## Structured decisions
+
+Read [`../sd-help/references/structured-questions.md`](../sd-help/references/structured-questions.md)
+before asking. This skill owns only `audit.followups`; use its multi-select
+shape for independent proposed follow-up tasks after the requested audit is
+complete. Running the audit itself never needs confirmation.
+
 ## When to use
 
 Run this command for the periodic formal audit: before a release, after a
@@ -29,13 +44,16 @@ The audit is charter-driven. Charters live at
 `.agents/skills/sd-audit-repo/charters/<name>.md`; that canonical path is
 shared by every platform copy of this skill. Verify the charters directory
 exists before starting; if it is missing, stop and report that the pack
-should be reinstalled. The charter roster:
+should be reinstalled. Applicability is owned by the sibling deterministic
+router at `scripts/sd-ai-command-pack-audit-route.py`; never re-create its
+fingerprints from conversation memory. The charter roster:
 
-- Always-on (12): architecture, design, correctness, security, testing,
-  documentation, bloat, performance, dependencies, tooling, release-hygiene,
-  improvements.
-- Conditional (3, fingerprint-selected): consumer-impact, observability,
-  accessibility-i18n.
+- Mandatory standard core (5): correctness, security, testing, tooling, and
+  release-hygiene. Correctness owns operational failure handling; applicable
+  deployed-service and infrastructure evidence also selects observability.
+- Evidence-routed optional (10): architecture, design, documentation, bloat,
+  performance, dependencies, improvements, consumer-impact, observability,
+  and accessibility-i18n.
 
 ## Arguments
 
@@ -43,49 +61,59 @@ Arguments arrive as free text with the invocation. Parse recognized options
 and the reserved `follow-up` flag before treating remaining bare values as the
 positional primary subject. Recognize these forms:
 
-- `dimensions=<a,b,c>` — run only the named charters. Names are the charter
-  file stems from the roster above. Unknown names are an error, not a
+- `dimensions=<a,b,c>` — add the named charters to the selected mode. Names
+  are the charter file stems from the roster above. Explicit dimensions never
+  remove the mandatory standard core. Unknown names are an error, not a
   silent skip: stop and report them before dispatching any reviewer.
-- `depth=quick|standard|deep` — default `standard`.
-  - `quick`: no verification stage; each reviewer is capped to its top
-    findings.
-  - `standard`: adversarial verification of P0/P1 findings, single refuter.
-  - `deep`: verification of P0–P2; P0 uses 2-of-3 refuter votes; the
-    correctness and security charters loop until a pass adds nothing new.
+- `depth=standard|exhaustive` — default `standard`.
+  - `standard`: run the mandatory core plus optional charters selected from
+    deterministic repository fingerprints; adversarially verify P0/P1
+    findings with one refuter.
+  - `exhaustive`: run every canonical charter and verify P0–P2 findings; P0
+    uses 2-of-3 refuter votes, and correctness plus security loop until a pass
+    adds nothing new. Use this reference mode for release, security, or other
+    policy-required assurance.
 - `follow-up` — skip the full sweep. Re-verify each open ledger item
   against the current tree (fixed / still-open / regressed), then run a
   quick regression sweep of the areas touched since the items' `last-seen`
   commits.
-- Remaining bare values are exact charter names. `sd-audit-repo security
-  testing` is equivalent to `dimensions=security,testing`. Split names on
-  whitespace or commas, preserve their order, and de-duplicate exact repeats.
+- Remaining bare values are exact additive charter names. `sd-audit-repo
+  security testing` is equivalent to `dimensions=security,testing`. Split
+  names on whitespace or commas, preserve their order, and de-duplicate exact
+  repeats.
 
-Reject bare dimensions combined with `dimensions=` before fingerprinting.
+Reject bare dimensions combined with `dimensions=` before routing.
 Reject `follow-up` combined with either dimension form because follow-up is a
 different audit mode. Validate every normalized dimension against the charter
 roster before reviewer dispatch; an unknown name or option-shaped token is an
-error and must never broaden the run to a full audit. Before fingerprinting,
-report the normalized mode, depth, and dimension set.
+error and must never broaden the run to a full audit. Before routing, report
+the normalized mode, depth, and additive dimension set.
 
 ## Pipeline
 
 The pipeline is fixed, mandatory, and ordered:
-fingerprint → dimension reviews → adversarial verification → synthesis → Trellis reconciliation → report + ledger.
-Depth and `follow-up` rules are the only sanctioned reductions, and every
-reduction is recorded in Coverage & limits.
+applicability preflight → dimension reviews → adversarial verification → synthesis → Trellis reconciliation → report + ledger.
+Mode, additive dimensions, and `follow-up` are the only sanctioned routing
+controls, and every run or omission is recorded in Coverage & limits.
 
-1. **Fingerprint** — one inventory pass: languages, size, entry points,
-   build and CI setup, test layout, docs map, and downstream-consumer
-   signals (manifest, published artifacts, dependent-repo references).
-   Select the applicable conditional charters and record the selection
-   rationale. Load `.trellis/audit/ledger.md` if present. Record the repo
-   name, `git rev-parse --short HEAD`, and the date for the report header.
-   Output: a scope brief given verbatim to every reviewer (repo map +
-   open-ledger summary), so reviewers neither re-derive the map nor
-   re-report known-open items as new.
+1. **Applicability preflight** — run
+   `bash scripts/sd-ai-command-pack-toolchain.sh run-python --
+   scripts/sd-ai-command-pack-audit-route.py --repo . --mode <depth>
+   --dimension <name>... --json` exactly once. A missing helper, nonzero exit,
+   malformed JSON, unknown schema/router version, duplicate or missing charter
+   row, or unrecognized state is a classifier failure: use exhaustive coverage
+   and record the failure; never silently omit a charter. Preserve the emitted
+   fingerprints, reasons, evidence, classification status, warnings, and every
+   charter row verbatim. Then load `.trellis/audit/ledger.md` if present and
+   add its open-item summary plus repo name, `git rev-parse --short HEAD`, and
+   date to the scope brief. The brief is given verbatim to every reviewer so
+   reviewers neither re-derive applicability nor re-report known-open items.
 2. **Dimension reviews** — one read-only sub-agent per applicable charter,
-   in parallel where the platform supports it. Input: the charter plus the
-   scope brief. Output: structured findings per the charter output schema.
+   meaning every router row whose state is `run`, in parallel where the
+   platform supports it. Input: the charter plus the scope brief. Output:
+   structured findings per the charter output schema. If a charter read or
+   reviewer fails, change that row to `failed`, preserve its error evidence,
+   and keep all other charter states visible in the partial report.
 3. **Adversarial verification** — per the depth rules, independent refuter
    agents each receive one finding with the instruction to disprove it.
    Refuted findings are dropped and logged in Coverage & limits. Findings
@@ -127,10 +155,11 @@ never by reviewers; this prevents ID collisions across parallel agents.
 
 ## Dispatch protocol
 
-- Dispatch one read-only sub-agent per applicable charter. On sub-agent
+- Dispatch one read-only sub-agent per router row in state `run`. On sub-agent
   dispatch platforms, run the reviewers in parallel. On inline platforms,
-  work through the charters sequentially in one context, and prefer
-  `depth=quick` or a `dimensions=` filter to keep the run practical.
+  work through the selected charters sequentially in one context. Do not
+  weaken the mandatory core to keep the run practical; use the router's
+  standard mode or ask the user to run exhaustive later when policy requires.
 - Every dispatch prompt starts with the Active task prefix when a Trellis
   task is active: `Active task: <task path from task.py current>` before
   the role-specific instructions.
@@ -148,8 +177,12 @@ The report has six mandatory sections: Verdict, Findings,
 Trellis reconciliation, Prioritized actions, Ledger delta, and
 Coverage & limits. No section is ever omitted, and empty sections state
 their emptiness explicitly — write `none` or an equivalent explicit
-statement rather than dropping the heading. Coverage & limits must state
-what was not reviewed and why — no silent caps.
+statement rather than dropping the heading. Coverage & limits must reproduce
+all canonical charter rows as `run|not-applicable|not-selected|failed` with
+their reason and evidence, plus router warnings and verification limits — no silent caps or omissions.
+Standard reports must say that standard is evidence-routed,
+not equivalent to exhaustive, and recommend exhaustive for release, security,
+or other policy-required assurance.
 
 ```
 # Repo Audit — <repo> @ <short-sha> — <date>
@@ -160,7 +193,7 @@ Mode: full|follow-up · Depth: … · Dimensions: …
 ## Trellis reconciliation  <tracked-accurate / tracked-stale / untracked+proposals>
 ## Prioritized actions <numbered, severity-then-effort order>
 ## Ledger delta       <new N · still-open N · fixed N · regressed N>
-## Coverage & limits  <dimensions skipped + why, verification caps, refuted-finding log>
+## Coverage & limits  <every charter state + evidence, router warnings, verification caps, refuted-finding log>
 ```
 
 Readability rules — the report and the final response must stay scannable:
@@ -228,6 +261,9 @@ clause, and `why:`/`fix:` capped at two lines — never paragraph blobs.
 - Findings without `file:line` evidence are downgraded or dropped. Do not
   let unevidenced claims into the report or the ledger.
 - Unknown `dimensions=` names stop the run before any reviewer dispatch.
+- Mandatory standard charters cannot be removed by explicit dimensions.
+- Unknown, conflicting, or failed classification falls back to exhaustive
+  coverage and remains visible in Coverage & limits.
 - Do not stage, commit, push, or open pull requests.
 - Positioning: this command complements `sd-review-local` (provider
   loop), `sd-review-pr` (PR loop), and `sd-full-check` (gate). It is the
@@ -245,5 +281,6 @@ per line, no paragraph blobs.
 - Trellis reconciliation summary, including any task proposals awaiting
   user consent.
 - Ledger delta: new N · still-open N · fixed N · regressed N.
-- Coverage gaps: dimensions skipped and why, verification caps, and the
-  refuted-finding log.
+- Coverage gaps: every charter's run/omission/failure state with reason and
+  evidence, classifier warnings, verification caps, exhaustive-mode guidance,
+  and the refuted-finding log.

@@ -16,6 +16,13 @@ and GitHub are authoritative across compaction, interruption, and resume.
 Reports from nested skills return to this controller and are never the overall
 loop's final response unless this skill records a valid stop condition.
 
+## Structured decisions
+
+Read [`../sd-help/references/structured-questions.md`](../sd-help/references/structured-questions.md)
+before asking. This skill owns `work-backlog.blocked-disposition` and
+`work-backlog.run-extension`. Do not ask at each iteration or for any routine
+lifecycle action already covered by the run-level authority contract.
+
 ## Arguments
 
 Parse the invocation before acquiring a lock or mutating repository state.
@@ -31,6 +38,9 @@ Unknown option-shaped input is an error.
   remains; never broaden to unrelated work.
 - Structured expressions support `priority:`, `package:`, `task:`, `status:`,
   and `scope:`. Unprefixed expressions use conservative task-artifact matching.
+- `selector=all` is the default. `selector=needs-design` considers only tasks
+  whose real PRDs still need an implementation-ready `design.md` or
+  `implement.md`.
 - `until=merge` is the default full lifecycle. `until=design` stops after the
   selected task's `design.md` and `implement.md` are implementation-ready.
 - Bare text cannot be mixed with explicit focus arguments. `focus=` and
@@ -70,14 +80,25 @@ Resolve `trellis-before-dev`, `sd-ship`, and
 `scripts/sd-ai-command-pack-work-loop.py` before starting. Stop if a required
 surface is missing, ambiguous, unreadable, contradictory, or unusable.
 
-Start or resume through the helper. Use `--mode designs --selector needs-design`
-only when invoked by the trusted `sd-work-designs` entry point; direct backlog
-runs use `--mode backlog --selector all`.
+Before `start`, read the helper's status JSON. Its typed `recovery.reasonCode`
+and `recovery.reference` select at most one conditional reference:
+
+- `ledger_missing|ledger_invalid` -> `references/ledger-recovery.md`;
+- `owner_stale|owner_invalid` -> `references/ownership-recovery.md`;
+- `run_stopped|context_red` -> `references/run-recovery.md`; and
+- `terminal_reconciliation` -> `references/terminal-reconciliation.md`.
+
+Load only the exact reported reference. A `normal` reason has a null reference
+and loads none of this recovery prose. Stop on an unknown code, unknown path, or
+mismatched pair rather than choosing from conversational context.
+
+Start or resume through the helper with the normalized typed selector and stop
+boundary. New runs always use the single `backlog` controller mode.
 
 ```bash
 bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
-  scripts/sd-ai-command-pack-work-loop.py start --repo . --mode backlog \
-  --selector all --until merge --json
+  scripts/sd-ai-command-pack-work-loop.py start --repo . \
+  --selector <all|needs-design> --until <design|merge> --json
 ```
 
 Pass normalized focus as repeatable `--focus`, `--focus-only`, or one
@@ -85,49 +106,6 @@ Pass normalized focus as repeatable `--focus`, `--focus-only`, or one
 state root only with an absolute path. Otherwise the helper uses the documented
 XDG, Windows local-app-data, or home-state fallback. Never create a tracked
 loop ledger in the target repository.
-
-The helper's lock is run-specific. A stale lock is not permission to steal a
-run: reconcile the ledger with live Trellis, Git, branch, and PR state first,
-then use explicit stale-lock recovery only when the prior process is gone and
-the repository is safe. Concurrent loops for one repository are forbidden.
-
-Before calling `start`, inspect the helper status. A stopped or completed red
-ledger whose task, Git, and GitHub state advanced after the run released its
-lock is a historical reconciliation case, not a resumable run. Verify all of
-the following before changing that ledger:
-
-1. The recorded task now exists below `.trellis/tasks/archive/`, its regular
-   non-symlink `task.json` is `completed`, and its ID matches the ledger task.
-2. `gh pr view` reports the delivery PR as `MERGED` and returns the exact URL,
-   full head SHA, merge commit SHA, and default base branch. If a separate
-   bookkeeping PR archived the task, verify the same complete field group for
-   that PR. Do not infer any of these values from local branch names.
-3. Every submitted commit exists locally. The checked-out default branch is
-   clean, tracks `origin/<default>`, and its local and remote-tracking tips are
-   identical to the submitted observed head.
-4. No live or ambiguous run owner exists. Use `--recover-stale-lock` only when
-   process liveness and the safe repository state above prove the lock stale.
-
-Then invoke the dedicated local-only audit operation with the preverified
-GitHub evidence:
-
-```bash
-bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
-  scripts/sd-ai-command-pack-work-loop.py reconcile-terminal --repo . \
-  --run-id <run-id> --archived-task <archive-path> \
-  --delivery-pr-number <n> --delivery-pr-url <url> \
-  --delivery-head <sha> --delivery-merge-commit <sha> \
-  --bookkeeping-pr-number <n> --bookkeeping-pr-url <url> \
-  --bookkeeping-head <sha> --bookkeeping-merge-commit <sha> \
-  --branch <default> --head <default-head> --json
-```
-
-Omit all four bookkeeping flags when there was no separate bookkeeping PR.
-The helper performs no network calls, never revives the run, and never rewrites
-its counters or historical `current` evidence. An identical verified record is
-a byte-for-byte no-op; different evidence is a contradiction. Once status
-shows a verified terminal reconciliation, treat the run and its counters as
-historical, then a later explicit work-backlog invocation may start a new run.
 
 At startup, resume, every phase boundary, and every iteration boundary:
 
@@ -137,61 +115,11 @@ At startup, resume, every phase boundary, and every iteration boundary:
 4. Reconcile observed evidence with the ledger before repeating a side effect.
 5. Heartbeat or transition only after reconciliation succeeds.
 
-If live state is verifiably ahead, record a verified live advance. If the
-ledger claims work that live state cannot prove, record red context health and
-stop instead of replaying it.
-
-A checkpoint is an overlay on its owning lifecycle phase, not a later phase.
-New checkpoints persist `checkpoint.resumePhase` while keeping a human target
-unchanged. After resuming a paused checkpoint, reconcile before inventorying or
-selecting more work. Supply every non-null current-state field shown by status;
-for a verified later phase, use the exact locally observed values:
-
-```bash
-bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
-  scripts/sd-ai-command-pack-work-loop.py reconcile --repo . \
-  --run-id <run-id> --observed-phase <observed-lifecycle-phase> \
-  --task <task> --branch <branch> --head <sha> \
-  --base-branch <base-branch> --pr-number <n> --pr-url <url> \
-  --last-shipped-sha <sha> --verified-live-advance --json
-```
-
-Omit fields that are `null`, but never omit a recorded non-null field. A
-successful later-phase recovery clears the checkpoint and records amber
-rehydration; repeat the same complete reconcile without
-`--verified-live-advance` to reach green exact agreement. Schema-v1 ledgers
-whose phase is literally `checkpoint` use a phase-valued checkpoint target as
-the owner. When a legacy target is human-only, add
-`--resume-phase <recorded-lifecycle-phase>`; do not guess it.
-
-Phase transitions and same-phase evidence have separate owners. Use
-`transition` only when the lifecycle phase changes. After a commit, PR
-publication, pushed review fix, finish-work commit, or verified merge changes
-the facts inside the current phase, record them atomically with `evidence`:
-
-Transition updates are limited to the stable iteration identity fields `task`
-and `baseBranch`. Record `branch`, `head`, `prNumber`, `prUrl`, and
-`lastShippedSha` only through `evidence`, including when establishing those
-facts immediately after a phase change.
-
-```bash
-bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
-  scripts/sd-ai-command-pack-work-loop.py evidence --repo . \
-  --run-id <run-id> --head <sha> [--pr-number <n> --pr-url <url>] \
-  [--last-shipped-sha <sha>] [--branch <default-branch>]
-```
-
-`task` and `baseBranch` are stable iteration identity. Branch changes are
-accepted only from the feature branch to the recorded base branch at a verified
-merge boundary; commit advances must be locally verifiable. A head-only update
-may continue after the recorded branch ref is removed locally, but explicit
-branch evidence must resolve and any available recorded branch must match the
-submitted head. Never use a checkpoint transition merely to replace HEAD or PR
-evidence. A successful
-evidence update or exact verified reconciliation clears an obsolete recovery
-checkpoint only when the update supplies every non-null field in the recorded
-current-state ledger; a matching phase or partial evidence is not recovery
-evidence. Real identity, branch, ancestry, or PR conflicts remain red.
+Use `transition` only when lifecycle phase changes. Use `evidence` for verified
+same-phase branch, commit, PR, or shipped-SHA changes. `task` and `baseBranch`
+remain stable iteration identity; never use a checkpoint transition to replace
+HEAD or PR evidence. If live state is ahead or contradictory, stop normal flow
+and follow only the helper-selected recovery reference.
 
 ## Candidate Inventory And Focus
 

@@ -15,6 +15,14 @@ This command fixes causes, not symptoms. It never weakens a check to get
 green, and it never merges anything — merge authority stays with the
 `sd-housekeeping` gate.
 
+## Sandbox-safe tool execution
+
+Run every `gh`, `uv`, `pip`, `ruff`, or `npm` command shown in this workflow
+through `bash scripts/sd-ai-command-pack-toolchain.sh run -- <tool> [args...]`.
+The argv-safe wrapper changes only documented cache variables and preserves
+auth/config state. If it is missing or reports a cache-setup failure, stop with
+that diagnostic; do not retry the tool bare or redirect `GH_CONFIG_DIR`.
+
 ## When to use
 
 Run this command when CI is red and the user wants it triaged: the current

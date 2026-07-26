@@ -8,8 +8,10 @@ set -u
 usage() {
   cat >&2 <<'EOF'
 Usage:
+  sd-ai-command-pack-toolchain.sh cache-env
   sd-ai-command-pack-toolchain.sh doctor [--json]
   sd-ai-command-pack-toolchain.sh python [--require-module NAME]...
+  sd-ai-command-pack-toolchain.sh run -- COMMAND [ARG]...
   sd-ai-command-pack-toolchain.sh run-python [--require-module NAME]... -- ARGS...
 EOF
   exit 2
@@ -19,6 +21,14 @@ fail() {
   printf 'sd-ai-command-pack toolchain: %s\n' "$1" >&2
   exit "${2:-1}"
 }
+
+case "${BASH_SOURCE[0]}" in
+  */*) SCRIPT_DIR="${BASH_SOURCE[0]%/*}" ;;
+  *) SCRIPT_DIR="." ;;
+esac
+if ! SCRIPT_DIR="$(cd -- "$SCRIPT_DIR" 2>/dev/null && pwd -P)"; then
+  fail "cannot resolve toolchain directory" 5
+fi
 
 repo_root() {
   if [ -n "${SD_AI_COMMAND_PACK_REPO_ROOT:-}" ]; then
@@ -32,6 +42,7 @@ REPO_ROOT="$(repo_root)"
 PYTHON_COMMAND=""
 PYTHON_SOURCE=""
 PYTHON_VERSION=""
+CACHE_ENV_OUTPUT=""
 REQUIRED_MODULES=()
 PROJECT_CHECK_CANDIDATES=()
 RUN_PYTHON_SEPARATOR=0
@@ -294,8 +305,9 @@ doctor_json() {
   shift
   PYTHONDONTWRITEBYTECODE=1 "$PYTHON_COMMAND" - \
     "$PYTHON_COMMAND" "$PYTHON_SOURCE" "$PYTHON_VERSION" "$project_check" \
-    "$REPO_ROOT" "${PYTHONPYCACHEPREFIX:-}" "${UV_CACHE_DIR:-}" \
-    "${UV_TOOL_DIR:-}" "${RUFF_CACHE_DIR:-}" \
+    "$REPO_ROOT" "${XDG_CACHE_HOME:-}" "${PYTHONPYCACHEPREFIX:-}" \
+    "${UV_CACHE_DIR:-}" "${UV_TOOL_DIR:-}" "${PIP_CACHE_DIR:-}" \
+    "${RUFF_CACHE_DIR:-}" "${NPM_CONFIG_CACHE:-}" \
     "$(tool_path_or_empty gh)" "$(tool_path_or_empty node)" \
     "$(tool_path_or_empty uv)" "$(tool_path_or_empty prism)" \
     "$(tool_path_or_empty gito)" "$(tool_path_or_empty shellcheck)" \
@@ -310,10 +322,13 @@ import sys
     python_version,
     project_check,
     repo_root,
+    xdg_cache,
     pycache,
     uv_cache,
     uv_tools,
+    pip_cache,
     ruff_cache,
+    npm_cache,
     gh,
     node,
     uv,
@@ -343,10 +358,13 @@ print(json.dumps({
         "shellcheck": shellcheck,
     },
     "cache_paths": {
+        "XDG_CACHE_HOME": xdg_cache,
         "PYTHONPYCACHEPREFIX": pycache,
         "UV_CACHE_DIR": uv_cache,
         "UV_TOOL_DIR": uv_tools,
+        "PIP_CACHE_DIR": pip_cache,
         "RUFF_CACHE_DIR": ruff_cache,
+        "NPM_CONFIG_CACHE": npm_cache,
     },
 }, sort_keys=True))
 PY
@@ -381,19 +399,40 @@ doctor_human() {
     printf '  - %s: %s\n' "$tool" "${path:-not found}"
   done
   printf 'Cache paths:\n'
+  printf '  - XDG_CACHE_HOME=%s\n' "${XDG_CACHE_HOME:-}"
   printf '  - PYTHONPYCACHEPREFIX=%s\n' "${PYTHONPYCACHEPREFIX:-}"
   printf '  - UV_CACHE_DIR=%s\n' "${UV_CACHE_DIR:-}"
   printf '  - UV_TOOL_DIR=%s\n' "${UV_TOOL_DIR:-}"
+  printf '  - PIP_CACHE_DIR=%s\n' "${PIP_CACHE_DIR:-}"
   printf '  - RUFF_CACHE_DIR=%s\n' "${RUFF_CACHE_DIR:-}"
+  printf '  - NPM_CONFIG_CACHE=%s\n' "${NPM_CONFIG_CACHE:-}"
 }
 
-configure_cache_defaults() {
-  local temp_root="${TMPDIR:-/tmp}"
-  : "${PYTHONPYCACHEPREFIX:=${temp_root%/}/sd-ai-command-pack-pycache}"
-  : "${UV_CACHE_DIR:=${temp_root%/}/sd-ai-command-pack-uv-cache}"
-  : "${UV_TOOL_DIR:=${temp_root%/}/sd-ai-command-pack-uv-tools}"
-  : "${RUFF_CACHE_DIR:=${temp_root%/}/sd-ai-command-pack-ruff-cache}"
-  export PYTHONPYCACHEPREFIX UV_CACHE_DIR UV_TOOL_DIR RUFF_CACHE_DIR
+configure_cache_environment() {
+  local helper="$SCRIPT_DIR/sd_ai_command_pack_lib.py"
+  local key value count=0
+  if [ ! -r "$helper" ]; then
+    fail "cache setup failed: shared helper is missing: $helper" 5
+  fi
+  if ! CACHE_ENV_OUTPUT="$(PYTHONDONTWRITEBYTECODE=1 "$PYTHON_COMMAND" \
+    "$helper" cache-env --repo "$REPO_ROOT" 2>/dev/null)"; then
+    fail "cache setup failed; set SD_AI_COMMAND_PACK_CACHE_ROOT to a private writable directory outside the repository" 5
+  fi
+  while IFS='=' read -r key value; do
+    key="${key%$'\r'}"
+    value="${value%$'\r'}"
+    case "$key" in
+      XDG_CACHE_HOME|PYTHONPYCACHEPREFIX|UV_CACHE_DIR|UV_TOOL_DIR|PIP_CACHE_DIR|RUFF_CACHE_DIR|NPM_CONFIG_CACHE)
+        [ -n "$value" ] || fail "cache setup returned an empty $key" 5
+        export "$key=$value"
+        count=$((count + 1))
+        ;;
+      *) fail "cache setup returned an unexpected variable: $key" 5 ;;
+    esac
+  done <<EOF
+$CACHE_ENV_OUTPUT
+EOF
+  [ "$count" -eq 7 ] || fail "cache setup returned $count variables; expected 7" 5
 }
 
 [ "$#" -ge 1 ] || usage
@@ -401,21 +440,38 @@ COMMAND="$1"
 shift
 
 case "$COMMAND" in
+  cache-env)
+    [ "$#" -eq 0 ] || usage
+    select_python
+    verify_python
+    configure_cache_environment
+    printf '%s\n' "$CACHE_ENV_OUTPUT"
+    ;;
   python)
     parse_python_options "$@"
     [ "$RUN_PYTHON_SEPARATOR" -eq 0 ] || usage
-    configure_cache_defaults
     select_python
     verify_python
+    configure_cache_environment
     printf '%s\n' "$PYTHON_COMMAND"
+    ;;
+  run)
+    [ "$#" -ge 2 ] || usage
+    [ "$1" = "--" ] || usage
+    shift
+    [ "$#" -gt 0 ] || usage
+    select_python
+    verify_python
+    configure_cache_environment
+    exec "$@"
     ;;
   run-python)
     parse_python_options "$@"
     [ "$RUN_PYTHON_SEPARATOR" -eq 1 ] || usage
     [ "${#RUN_PYTHON_ARGS[@]}" -gt 0 ] || usage
-    configure_cache_defaults
     select_python
     verify_python
+    configure_cache_environment
     exec "$PYTHON_COMMAND" "${RUN_PYTHON_ARGS[@]}"
     ;;
   doctor)
@@ -425,9 +481,9 @@ case "$COMMAND" in
       1) [ "$1" = "--json" ] || usage; JSON_MODE=1 ;;
       *) usage ;;
     esac
-    configure_cache_defaults
     select_python
     verify_python
+    configure_cache_environment
     discover_make_candidates
     discover_package_candidates
     discover_script_candidates

@@ -9,6 +9,12 @@ Use this project-local skill for `sd-help`, `/sd:help`, `/sd-help`, `$sd-help`,
 and `sd/help` style requests. It is the read-only discovery and explanation
 surface for the installed Software Delivery command pack.
 
+## Structured decisions
+
+Read [`references/structured-questions.md`](references/structured-questions.md)
+before asking. This skill owns only `help.route`; use it only when the answer
+changes an otherwise ambiguous route, never for a clearly matched command.
+
 ## When to use
 
 Use `sd-help` when the user wants to know what SD commands are available, which
