@@ -12,6 +12,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "sd-ai-command-pack-full-check.sh"
 SHELL_LIB = REPO_ROOT / "scripts" / "sd-ai-command-pack-shell-lib.sh"
+TOOLCHAIN = REPO_ROOT / "scripts" / "sd-ai-command-pack-toolchain.sh"
+PYTHON_LIB = REPO_ROOT / "scripts" / "sd_ai_command_pack_lib.py"
+TOOL_CACHE_ENV_KEYS = (
+    "SD_AI_COMMAND_PACK_CACHE_ROOT",
+    "SD_AI_COMMAND_PACK_CACHE_ENV_READY",
+    "XDG_CACHE_HOME",
+    "PYTHONPYCACHEPREFIX",
+    "UV_CACHE_DIR",
+    "UV_TOOL_DIR",
+    "PIP_CACHE_DIR",
+    "RUFF_CACHE_DIR",
+    "NPM_CONFIG_CACHE",
+)
 
 
 def _write(path: Path, text: str, *, executable: bool = False) -> None:
@@ -32,6 +45,8 @@ def _make_full_check_repo(tmp_path: Path, *, prism_statuses: str) -> tuple[Path,
     (repo / "scripts").mkdir()
     shutil.copy2(SCRIPT, repo / "scripts" / "sd-ai-command-pack-full-check.sh")
     shutil.copy2(SHELL_LIB, repo / "scripts" / "sd-ai-command-pack-shell-lib.sh")
+    shutil.copy2(TOOLCHAIN, repo / "scripts" / "sd-ai-command-pack-toolchain.sh")
+    shutil.copy2(PYTHON_LIB, repo / "scripts" / "sd_ai_command_pack_lib.py")
     _write(
         repo / "scripts" / "classify-ci-changes.sh",
         """
@@ -121,6 +136,8 @@ def _run_full_check(
     for key in list(env):
         if key.startswith("SD_AI_COMMAND_PACK_FULL_CHECK_PRISM"):
             env.pop(key)
+    for key in TOOL_CACHE_ENV_KEYS:
+        env.pop(key, None)
     env.update(
         {
             "PATH": f"{repo / 'bin'}{os.pathsep}{env['PATH']}",

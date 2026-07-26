@@ -10,6 +10,24 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "sd-ai-command-pack-pr-body-scope.py"
+PR_BODY_ENV_KEYS = (
+    "SD_AI_COMMAND_PACK_SCOPE_PR_BODY",
+    "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY",
+    "SD_AI_COMMAND_PACK_CHANGED_FILES",
+    "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHANGED_FILES",
+    "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CONFIG",
+)
+TOOL_CACHE_ENV_KEYS = (
+    "SD_AI_COMMAND_PACK_CACHE_ROOT",
+    "SD_AI_COMMAND_PACK_CACHE_ENV_READY",
+    "XDG_CACHE_HOME",
+    "PYTHONPYCACHEPREFIX",
+    "UV_CACHE_DIR",
+    "UV_TOOL_DIR",
+    "PIP_CACHE_DIR",
+    "RUFF_CACHE_DIR",
+    "NPM_CONFIG_CACHE",
+)
 
 
 def _write(path: Path, text: str) -> None:
@@ -17,19 +35,18 @@ def _write(path: Path, text: str) -> None:
     path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
 
 
+def _clean_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in PR_BODY_ENV_KEYS + TOOL_CACHE_ENV_KEYS:
+        env.pop(key, None)
+    return env
+
+
 def _run(tmp_path: Path, *, changed_files: str, body: str | None = None) -> subprocess.CompletedProcess:
     changed_file_list = tmp_path / "changed-files.txt"
     _write(changed_file_list, changed_files)
 
-    env = os.environ.copy()
-    for key in [
-        "SD_AI_COMMAND_PACK_SCOPE_PR_BODY",
-        "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY",
-        "SD_AI_COMMAND_PACK_CHANGED_FILES",
-        "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHANGED_FILES",
-        "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CONFIG",
-    ]:
-        env.pop(key, None)
+    env = _clean_environment()
     if body is not None:
         env["SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY"] = textwrap.dedent(body).lstrip()
 
@@ -48,15 +65,7 @@ def _run(tmp_path: Path, *, changed_files: str, body: str | None = None) -> subp
 
 
 def test_real_repo_check_is_non_blocking_without_pr_body() -> None:
-    env = os.environ.copy()
-    for key in [
-        "SD_AI_COMMAND_PACK_SCOPE_PR_BODY",
-        "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY",
-        "SD_AI_COMMAND_PACK_CHANGED_FILES",
-        "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHANGED_FILES",
-        "SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CONFIG",
-    ]:
-        env.pop(key, None)
+    env = _clean_environment()
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(REPO_ROOT)],
