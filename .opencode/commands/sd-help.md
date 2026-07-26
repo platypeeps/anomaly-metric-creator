@@ -9,6 +9,21 @@ In this pack, SD means Software Delivery. A skill is a project-installed Markdow
 Run the read-only Software Delivery help workflow for the user's complete
 request.
 
+Checkout trust policy — trusted-static exemption before step 1:
+
+- This command is registry-classified `trusted_static_only`: it may interpret
+  installed pack documentation as data but must not execute checkout content
+  or mutate local or remote state.
+- Include `checkout-trust: exempt (trusted_static_only)` in the final report.
+
+Structured interaction policy — apply only at declared decision boundaries:
+
+- This command declares only these decision IDs: `help.route`.
+- Use a host-native structured-question capability only when it is actually available. Otherwise ask one concise plain-text question with the same choices and consequences. Do not invent a tool name.
+- After resolving the skill, read the generated `structured-questions.md` reference installed with `sd-help` in the same skill root. Ask only when repository evidence, invocation authority, and documented safe defaults do not already resolve the decision.
+- In noninteractive work, apply the decision's declared stop, park, or report-only behavior. Record the selected answer and resulting scope in the final report.
+- A structured answer may narrow existing authority; it cannot override checkout trust, exact-head, required-review, failed-closed, no-touch, destructive-operation, or other safety gates.
+
 1. Resolve the `sd-help` skill by name using the agent's trusted skill discovery
    mechanism for installed skills.
 2. Verify that its `references/command-catalog.md` and

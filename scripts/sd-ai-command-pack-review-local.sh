@@ -600,8 +600,6 @@ run_gito_review() {
   fi
 
   load_gito_pack_env
-  prepare_gito_uv_env
-
   if [ "$REVIEW_LOCAL_SCOPE" = "all" ]; then
     local out_dir="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_ALL_GITO_OUT_DIR:-${SD_AI_COMMAND_PACK_REVIEW_LOCAL_GITO_OUT_DIR:-${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_OUT_DIR:-.build/review/gito-all}}}"
     local filters
@@ -747,6 +745,8 @@ for raw_tool in "${REQUESTED_TOOLS[@]}"; do
       ;;
   esac
 done
+
+prepare_tool_cache_env || exit 5
 
 section "Local review scope: $(review_scope_label)"
 

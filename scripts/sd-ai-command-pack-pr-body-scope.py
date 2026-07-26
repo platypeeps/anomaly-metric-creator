@@ -137,6 +137,8 @@ DEFAULT_RULES = (
             ".agents/skills/trellis-*/**",
             ".claude/commands/sd/**",
             ".claude/commands/trellis/**",
+            ".claude/rules/sd-planning-adversarial-review.md",
+            ".claude/sd-ai-command-pack/**",
             ".claude/skills/sd-*/**",
             ".claude/skills/trellis-*/**",
             ".codebuddy/commands/sd/**",

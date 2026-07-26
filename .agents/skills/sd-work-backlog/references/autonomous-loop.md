@@ -1,8 +1,8 @@
 # Autonomous Loop Planning Reference
 
 Use this reference only after `sd-work-backlog` has selected one task and
-persisted the selection. It defines planning quality for both the normal
-backlog selector and the `sd-work-designs` `needs-design` selector.
+persisted the selection. It defines planning quality for both `selector=all`
+and the typed `selector=needs-design` path.
 
 ## Converge The PRD
 

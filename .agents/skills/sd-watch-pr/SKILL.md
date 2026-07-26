@@ -15,6 +15,14 @@ This command watches and hands off; it never merges directly. The
 `sd-housekeeping` gate is the only merge authority, and this skill defers
 to that gate with its criteria unchanged.
 
+## Sandbox-safe tool execution
+
+Run every `gh`, `uv`, `pip`, `ruff`, or `npm` command shown in this workflow
+through `bash scripts/sd-ai-command-pack-toolchain.sh run -- <tool> [args...]`.
+The argv-safe wrapper changes only documented cache variables and preserves
+auth/config state. If it is missing or reports a cache-setup failure, stop with
+that diagnostic; do not retry the tool bare or redirect `GH_CONFIG_DIR`.
+
 ## When to use
 
 Run this command after a PR is open and review is requested, when the user

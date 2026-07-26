@@ -19,6 +19,15 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
+sys.dont_write_bytecode = True
+
+# This import must follow the bytecode guard for direct entrypoint invocation.
+from sd_ai_command_pack_lib import (  # noqa: E402
+    CACHE_ROOT_ENV,
+    CacheSetupError,
+    build_tool_environment,
+)
+
 SCHEMA_VERSION = 1
 MAX_LEDGER_BYTES = 64 * 1024
 MAX_HISTORY = 20
@@ -34,9 +43,20 @@ SECRET_KEY_RE = re.compile(
     r"(?:token|secret|password|credential|api[_-]?key)", re.IGNORECASE
 )
 STATUSES = frozenset({"active", "paused", "stopped", "completed"})
-MODES = frozenset({"backlog", "designs"})
+# Historical ledgers may still record ``designs``. New runs expose one public
+# controller mode and express design selection through ``selector`` instead.
+LEDGER_MODES = frozenset({"backlog", "designs"})
 SELECTORS = frozenset({"all", "needs-design"})
 UNTIL_VALUES = frozenset({"design", "merge"})
+RECOVERY_REFERENCE_BY_REASON = {
+    "context_red": "references/run-recovery.md",
+    "ledger_invalid": "references/ledger-recovery.md",
+    "ledger_missing": "references/ledger-recovery.md",
+    "owner_invalid": "references/ownership-recovery.md",
+    "owner_stale": "references/ownership-recovery.md",
+    "run_stopped": "references/run-recovery.md",
+    "terminal_reconciliation": "references/terminal-reconciliation.md",
+}
 CURRENT_FIELD_ORDER = (
     "task",
     "branch",
@@ -81,20 +101,14 @@ PHASES = (
     "stopped",
 )
 PHASE_ORDER = {phase: index for index, phase in enumerate(PHASES)}
-LIFECYCLE_PHASE_ORDER = {
-    phase: index for index, phase in enumerate(LIFECYCLE_PHASES)
-}
+LIFECYCLE_PHASE_ORDER = {phase: index for index, phase in enumerate(LIFECYCLE_PHASES)}
 RECOVERY_CHECKPOINT_STATES = frozenset({"ready", "paused", "blocked"})
 LEGAL_TRANSITIONS: dict[str, frozenset[str]] = {
     "inventory": frozenset({"selected", "checkpoint", "stopped"}),
-    "selected": frozenset(
-        {"planning", "implementing", "checkpoint", "stopped"}
-    ),
+    "selected": frozenset({"planning", "implementing", "checkpoint", "stopped"}),
     "planning": frozenset({"implementing", "checkpoint", "stopped"}),
     "implementing": frozenset({"validating", "checkpoint", "stopped"}),
-    "validating": frozenset(
-        {"implementing", "shipping", "checkpoint", "stopped"}
-    ),
+    "validating": frozenset({"implementing", "shipping", "checkpoint", "stopped"}),
     "shipping": frozenset({"validating", "followups", "checkpoint", "stopped"}),
     "followups": frozenset({"complete", "checkpoint", "stopped"}),
     "complete": frozenset({"inventory", "checkpoint", "stopped"}),
@@ -102,7 +116,13 @@ LEGAL_TRANSITIONS: dict[str, frozenset[str]] = {
     "stopped": frozenset(),
 }
 CONTEXT_SIGNALS = frozenset(
-    {"compaction", "continuation-summary", "truncated-output", "contradiction", "duplicate-side-effect"}
+    {
+        "compaction",
+        "continuation-summary",
+        "truncated-output",
+        "contradiction",
+        "duplicate-side-effect",
+    }
 )
 
 
@@ -111,8 +131,8 @@ class WorkLoopError(ValueError):
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
-        "+00:00", "Z"
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     )
 
 
@@ -135,8 +155,21 @@ def compact_text(value: object, *, limit: int = 300) -> str:
 
 def run_git(repo: Path, *args: str) -> str | None:
     try:
+        environment, _, _ = build_tool_environment(repo=repo)
+    except CacheSetupError as error:
+        detail = str(error).strip()
+        detail = detail.removeprefix("cache setup failed for external tools: ")
+        detail = detail.removeprefix("cache setup failed: ")
+        if CACHE_ROOT_ENV not in detail:
+            detail = (
+                f"{detail}; set {CACHE_ROOT_ENV} to a private writable directory "
+                "outside the repository"
+            )
+        raise WorkLoopError(f"cache setup failed: {detail}") from error
+    try:
         result = subprocess.run(
             ["git", "-C", str(repo), *args],
+            env=environment,
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -269,7 +302,9 @@ def _reject_secret_keys(value: object, *, path: str = "state") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if SECRET_KEY_RE.search(str(key)):
-                raise WorkLoopError(f"secret-like key is not allowed in loop state: {path}.{key}")
+                raise WorkLoopError(
+                    f"secret-like key is not allowed in loop state: {path}.{key}"
+                )
             _reject_secret_keys(item, path=f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -280,7 +315,9 @@ def _json_payload(value: Mapping[str, Any]) -> str:
     try:
         return json.dumps(value, indent=2, sort_keys=True) + "\n"
     except (TypeError, ValueError) as error:
-        raise WorkLoopError(f"work-loop state is not JSON serializable: {error}") from error
+        raise WorkLoopError(
+            f"work-loop state is not JSON serializable: {error}"
+        ) from error
 
 
 def _normalized_pr_url(value: object) -> str | None:
@@ -368,7 +405,10 @@ def validate_terminal_reconciliation(value: object) -> None:
         "observed",
     }:
         raise WorkLoopError("work-loop terminal reconciliation is malformed")
-    if value.get("status") != "verified" or parse_utc(value.get("reconciledAt")) is None:
+    if (
+        value.get("status") != "verified"
+        or parse_utc(value.get("reconciledAt")) is None
+    ):
         raise WorkLoopError("work-loop terminal reconciliation is malformed")
     for field, limit in (("archivedTask", 300), ("taskId", 200)):
         item = value.get(field)
@@ -407,12 +447,9 @@ def validate_state(state: Mapping[str, Any]) -> None:
         raise WorkLoopError("work-loop repository identity is malformed")
     if not isinstance(state.get("status"), str) or state["status"] not in STATUSES:
         raise WorkLoopError(f"invalid work-loop status: {state.get('status')!r}")
-    if not isinstance(state.get("mode"), str) or state["mode"] not in MODES:
+    if not isinstance(state.get("mode"), str) or state["mode"] not in LEDGER_MODES:
         raise WorkLoopError(f"invalid work-loop mode: {state.get('mode')!r}")
-    if (
-        not isinstance(state.get("selector"), str)
-        or state["selector"] not in SELECTORS
-    ):
+    if not isinstance(state.get("selector"), str) or state["selector"] not in SELECTORS:
         raise WorkLoopError(f"invalid work-loop selector: {state.get('selector')!r}")
     if not isinstance(state.get("until"), str) or state["until"] not in UNTIL_VALUES:
         raise WorkLoopError(f"invalid work-loop until value: {state.get('until')!r}")
@@ -458,8 +495,7 @@ def validate_state(state: Mapping[str, Any]) -> None:
     if not isinstance(current, dict) or not CURRENT_FIELDS.issubset(current):
         raise WorkLoopError("work-loop current state is malformed")
     if any(
-        value is not None
-        and (not isinstance(value, str) or not value.strip())
+        value is not None and (not isinstance(value, str) or not value.strip())
         for key, value in current.items()
         if key != "prNumber"
     ) or (
@@ -493,7 +529,9 @@ def validate_state(state: Mapping[str, Any]) -> None:
     ):
         raise WorkLoopError("work-loop context health is malformed")
     checkpoint = state.get("checkpoint")
-    resume_phase = checkpoint.get("resumePhase") if isinstance(checkpoint, dict) else None
+    resume_phase = (
+        checkpoint.get("resumePhase") if isinstance(checkpoint, dict) else None
+    )
     if (
         not isinstance(checkpoint, dict)
         or not {"state", "target", "reason"}.issubset(checkpoint)
@@ -517,13 +555,14 @@ def validate_state(state: Mapping[str, Any]) -> None:
     for list_key in ("iterations", "decisions", "followups"):
         if not isinstance(state.get(list_key), list):
             raise WorkLoopError(f"work-loop {list_key} history is malformed")
-    if state.get("stopReason") is not None and not isinstance(
-        state["stopReason"], str
-    ):
+    if state.get("stopReason") is not None and not isinstance(state["stopReason"], str):
         raise WorkLoopError("work-loop stop reason is malformed")
     if state.get("terminalReconciliation") is not None:
         validate_terminal_reconciliation(state["terminalReconciliation"])
-        if state["status"] not in {"stopped", "completed"} or state["phase"] != "stopped":
+        if (
+            state["status"] not in {"stopped", "completed"}
+            or state["phase"] != "stopped"
+        ):
             raise WorkLoopError(
                 "terminal reconciliation requires terminal work-loop state"
             )
@@ -593,7 +632,9 @@ def normalize_focus(
     if any(not value for value in (*preferred_values, *only_values)):
         raise WorkLoopError("focus expressions must not be empty")
     if bare_value and (preferred_values or only_values):
-        raise WorkLoopError("bare focus text cannot be mixed with focus= or focus-only=")
+        raise WorkLoopError(
+            "bare focus text cannot be mixed with focus= or focus-only="
+        )
     if preferred_values and only_values:
         raise WorkLoopError("focus and focus-only are mutually exclusive")
     originals = [bare_value] if bare_value else preferred_values or only_values
@@ -937,7 +978,9 @@ def acquire_lock(
             try:
                 lock_path.unlink()
             except OSError as error:
-                raise WorkLoopError(f"cannot recover stale work-loop lock: {error}") from error
+                raise WorkLoopError(
+                    f"cannot recover stale work-loop lock: {error}"
+                ) from error
             continue
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(_json_payload(payload))
@@ -985,9 +1028,7 @@ def acquire_terminal_lock(
     payload["runId"] = operation_id
     while True:
         try:
-            descriptor = os.open(
-                lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-            )
+            descriptor = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
             try:
                 current = read_json(lock_path)
@@ -1034,15 +1075,15 @@ def load_state_for_repo(
     state = read_json(state_path)
     validate_state(state)
     if state["repository"]["digest"] != identity["digest"]:
-        raise WorkLoopError("work-loop state belongs to a different repository identity")
+        raise WorkLoopError(
+            "work-loop state belongs to a different repository identity"
+        )
     return state, state_path, lock_path, identity
 
 
 def _terminal_state_guard(state: Mapping[str, Any], run_id: str) -> None:
     if state.get("runId") != run_id:
-        raise WorkLoopError(
-            f"state belongs to run {state.get('runId')}, not {run_id}"
-        )
+        raise WorkLoopError(f"state belongs to run {state.get('runId')}, not {run_id}")
     if state.get("status") not in {"stopped", "completed"}:
         raise WorkLoopError(
             "terminal reconciliation requires a stopped or completed work loop"
@@ -1212,15 +1253,13 @@ def validated_terminal_evidence(
 
     normalized_delivery = resolve_pr(delivery, "delivery PR")
     normalized_bookkeeping = (
-        resolve_pr(bookkeeping, "bookkeeping PR")
-        if bookkeeping is not None
-        else None
+        resolve_pr(bookkeeping, "bookkeeping PR") if bookkeeping is not None else None
     )
 
-    def require_merge_head_when_provable(
-        record: Mapping[str, Any], label: str
-    ) -> None:
-        parents = run_git(repo, "rev-list", "--parents", "-n", "1", record["mergeCommit"])
+    def require_merge_head_when_provable(record: Mapping[str, Any], label: str) -> None:
+        parents = run_git(
+            repo, "rev-list", "--parents", "-n", "1", record["mergeCommit"]
+        )
         if parents is None:
             raise WorkLoopError(f"cannot inspect {label} merge strategy")
         if len(parents.split()) > 2 and not _is_ancestor(
@@ -1233,9 +1272,9 @@ def validated_terminal_evidence(
     require_merge_head_when_provable(normalized_delivery, "delivery PR")
     if normalized_bookkeeping is not None:
         require_merge_head_when_provable(normalized_bookkeeping, "bookkeeping PR")
-    recorded_shipped = state["current"].get("lastShippedSha") or state[
-        "current"
-    ].get("head")
+    recorded_shipped = state["current"].get("lastShippedSha") or state["current"].get(
+        "head"
+    )
     resolved_recorded = _resolved_commit(repo, recorded_shipped)
     if resolved_recorded is None:
         raise WorkLoopError(
@@ -1250,9 +1289,7 @@ def validated_terminal_evidence(
             "delivery merge commit must belong to the observed default-branch history"
         )
     if normalized_bookkeeping is not None:
-        if not _is_ancestor(
-            repo, normalized_bookkeeping["mergeCommit"], observed_head
-        ):
+        if not _is_ancestor(repo, normalized_bookkeeping["mergeCommit"], observed_head):
             raise WorkLoopError(
                 "bookkeeping merge commit must belong to the observed default-branch history"
             )
@@ -1302,9 +1339,7 @@ def _inspect_terminal_run_lock(
     if not stale:
         raise WorkLoopError("terminal reconciliation rejects a live work-loop run lock")
     if not recover_stale:
-        raise WorkLoopError(
-            "stale work-loop run lock requires --recover-stale-lock"
-        )
+        raise WorkLoopError("stale work-loop run lock requires --recover-stale-lock")
     return True
 
 
@@ -1325,9 +1360,7 @@ def reconcile_terminal_state(
     )
     resolved_repo = Path(identity["root"])
     _terminal_state_guard(state, run_id)
-    _inspect_terminal_run_lock(
-        run_lock_path, state, recover_stale=recover_stale
-    )
+    _inspect_terminal_run_lock(run_lock_path, state, recover_stale=recover_stale)
     validated_terminal_evidence(
         resolved_repo,
         state,
@@ -1472,7 +1505,9 @@ def _branch_commit(repo: Path, branch: str) -> str | None:
 
 
 def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
-    return run_git(repo, "merge-base", "--is-ancestor", ancestor, descendant) is not None
+    return (
+        run_git(repo, "merge-base", "--is-ancestor", ancestor, descendant) is not None
+    )
 
 
 def _clear_recovery_checkpoint(state: dict[str, Any]) -> None:
@@ -1585,9 +1620,16 @@ def validated_evidence(
         raise WorkLoopError("cannot replace recorded pull request URL")
     if candidate.get("prUrl") is not None:
         if candidate.get("prNumber") is None:
-            raise WorkLoopError("pull request URL evidence requires a pull request number")
-        final_component = urlsplit(candidate["prUrl"]).path.rstrip("/").rsplit("/", 1)[-1]
-        if not final_component.isdigit() or int(final_component) != candidate["prNumber"]:
+            raise WorkLoopError(
+                "pull request URL evidence requires a pull request number"
+            )
+        final_component = (
+            urlsplit(candidate["prUrl"]).path.rstrip("/").rsplit("/", 1)[-1]
+        )
+        if (
+            not final_component.isdigit()
+            or int(final_component) != candidate["prNumber"]
+        ):
             raise WorkLoopError("pull request URL does not match the recorded number")
 
     evidence_repo = repo or Path(state["repository"]["root"])
@@ -1625,7 +1667,9 @@ def validated_evidence(
     if candidate_head is not None:
         resolved_head = _resolved_commit(evidence_repo, candidate_head)
         if resolved_head is None:
-            raise WorkLoopError(f"head evidence is not a local Git commit: {candidate_head}")
+            raise WorkLoopError(
+                f"head evidence is not a local Git commit: {candidate_head}"
+            )
         candidate["head"] = resolved_head
         candidate_head = resolved_head
         if (
@@ -1634,7 +1678,11 @@ def validated_evidence(
             and branch_head != resolved_head
         ):
             raise WorkLoopError("HEAD evidence does not match the recorded branch")
-        if not branch_changed and remembered_head is not None and candidate_head != remembered_head:
+        if (
+            not branch_changed
+            and remembered_head is not None
+            and candidate_head != remembered_head
+        ):
             resolved_remembered = _resolved_commit(evidence_repo, remembered_head)
             if resolved_remembered is None or not _is_ancestor(
                 evidence_repo, resolved_remembered, resolved_head
@@ -1681,10 +1729,14 @@ def validated_evidence(
             evidence_tip = candidate_head
             if branch_changed:
                 evidence_tip = (
-                    _branch_commit(evidence_repo, remembered_branch)
-                    if isinstance(remembered_branch, str)
-                    else None
-                ) or remembered_head or candidate_head
+                    (
+                        _branch_commit(evidence_repo, remembered_branch)
+                        if isinstance(remembered_branch, str)
+                        else None
+                    )
+                    or remembered_head
+                    or candidate_head
+                )
             resolved_tip = (
                 _resolved_commit(evidence_repo, evidence_tip)
                 if evidence_tip is not None
@@ -1698,9 +1750,7 @@ def validated_evidence(
                 raise WorkLoopError(
                     "lastShippedSha evidence requires a verifiable recorded head or branch"
                 )
-            if not _is_ancestor(
-                evidence_repo, resolved_shipped, resolved_tip
-            ):
+            if not _is_ancestor(evidence_repo, resolved_shipped, resolved_tip):
                 raise WorkLoopError(
                     "lastShippedSha evidence must belong to the shipped branch"
                 )
@@ -1761,9 +1811,7 @@ def reconcile_state(
     ledger_phase = state["phase"]
     try:
         owner_phase = (
-            checkpoint_owner_phase(
-                state, explicit_resume_phase=explicit_resume_phase
-            )
+            checkpoint_owner_phase(state, explicit_resume_phase=explicit_resume_phase)
             if recovery_checkpoint_active
             else ledger_phase
         )
@@ -1825,10 +1873,10 @@ def reconcile_state(
         and recovery_attempted
         and has_complete_recovery_evidence
     )
-    may_validate_recovery = should_validate_recovery and bool(
-        evidence_observations
-    ) and (
-        not mismatches or verified_live_advance
+    may_validate_recovery = (
+        should_validate_recovery
+        and bool(evidence_observations)
+        and (not mismatches or verified_live_advance)
     )
     if may_validate_recovery or (mismatches and verified_live_advance):
         try:
@@ -1881,9 +1929,9 @@ def reconcile_state(
         may_restore_health = (
             not recovery_checkpoint_active or complete_recovery_evidence
         )
-        if (
-            has_observations and may_restore_health
-        ) or state["contextHealth"]["level"] != "red":
+        if (has_observations and may_restore_health) or state["contextHealth"][
+            "level"
+        ] != "red":
             state["contextHealth"] = {
                 "level": "green",
                 "epoch": state["contextHealth"]["epoch"],
@@ -1942,6 +1990,79 @@ def record_result(
     state["current"]["task"] = compact_text(task, limit=160)
 
 
+def recovery_directive(reason_code: str) -> dict[str, str | None]:
+    """Return the one conditional recovery reference selected by typed state."""
+
+    if reason_code == "normal":
+        return {"reasonCode": reason_code, "reference": None}
+    reference = RECOVERY_REFERENCE_BY_REASON.get(reason_code)
+    if reference is None:
+        raise WorkLoopError(f"unknown recovery reason code: {reason_code}")
+    return {"reasonCode": reason_code, "reference": reference}
+
+
+def recovery_reason_code(
+    state: Mapping[str, Any],
+    *,
+    lock: Mapping[str, Any] | None,
+    lock_error: str | None,
+    terminal_lock: Mapping[str, Any] | None,
+    terminal_lock_error: str | None,
+) -> str:
+    """Classify exceptional startup state without reconstructing it from prose."""
+
+    if lock_error or terminal_lock_error:
+        return "owner_invalid"
+    repository_digest = state["repository"]["digest"]
+    if terminal_lock is not None and (
+        terminal_lock.get("repositoryDigest") != repository_digest
+    ):
+        return "owner_invalid"
+    if lock is not None and (
+        lock.get("repositoryDigest") != repository_digest
+        or lock.get("runId") != state.get("runId")
+    ):
+        return "owner_invalid"
+    if terminal_lock is not None:
+        if lock_is_stale(terminal_lock):
+            return "owner_stale"
+        return "terminal_reconciliation"
+    if lock is not None and lock_is_stale(lock):
+        return "owner_stale"
+    if state.get("terminalReconciliation") is not None:
+        return "terminal_reconciliation"
+    if state.get("status") == "stopped":
+        return "run_stopped"
+    context_health = state.get("contextHealth")
+    if isinstance(context_health, Mapping) and context_health.get("level") == "red":
+        return "context_red"
+    return "normal"
+
+
+def _read_status_lock(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Read one lock without turning read-only status into an exception path."""
+
+    if not path.is_file():
+        return None, None
+    try:
+        lock = read_json(path)
+        validate_lock(lock)
+        return lock, None
+    except WorkLoopError as error:
+        return None, compact_text(error, limit=500)
+
+
+def _status_lock_snapshot(
+    lock: Mapping[str, Any] | None, error: str | None
+) -> dict[str, Any]:
+    return {
+        "present": lock is not None or error is not None,
+        "stale": lock_is_stale(lock) if lock else False,
+        "runId": lock.get("runId") if lock else None,
+        "error": error,
+    }
+
+
 def status_snapshot(
     repo: Path,
     *,
@@ -1952,16 +2073,47 @@ def status_snapshot(
         identity = repository_identity(repo)
         root = state_root or resolve_state_root(environ=environ)
         state_path, lock_path = state_paths(identity, root)
+        terminal_lock_path = lock_path.parent / TERMINAL_LOCK_NAME
+        lock, lock_error = _read_status_lock(lock_path)
+        terminal_lock, terminal_lock_error = _read_status_lock(terminal_lock_path)
         if not state_path.is_file():
-            return {"status": "none"}
+            repository_digest = identity["digest"]
+            reason = (
+                "owner_invalid"
+                if lock_error
+                or terminal_lock_error
+                or (
+                    lock is not None
+                    and lock.get("repositoryDigest") != repository_digest
+                )
+                or (
+                    terminal_lock is not None
+                    and terminal_lock.get("repositoryDigest") != repository_digest
+                )
+                else "ledger_missing"
+                if lock is not None or terminal_lock is not None
+                else "normal"
+            )
+            return {
+                "status": "none",
+                "recovery": recovery_directive(reason),
+                "lock": _status_lock_snapshot(lock, lock_error),
+                "terminalLock": _status_lock_snapshot(
+                    terminal_lock, terminal_lock_error
+                ),
+            }
         state = read_json(state_path)
         validate_state(state)
         if state["repository"]["digest"] != identity["digest"]:
             raise WorkLoopError("repository identity does not match loop state")
-        lock: dict[str, Any] | None = None
-        if lock_path.is_file():
-            lock = read_json(lock_path)
         focus = state["focus"]
+        recovery_reason = recovery_reason_code(
+            state,
+            lock=lock,
+            lock_error=lock_error,
+            terminal_lock=terminal_lock,
+            terminal_lock_error=terminal_lock_error,
+        )
         return {
             "status": state["status"],
             "runId": state["runId"],
@@ -1987,14 +2139,18 @@ def status_snapshot(
             "terminalReconciliation": copy.deepcopy(
                 state.get("terminalReconciliation")
             ),
-            "lock": {
-                "present": lock is not None,
-                "stale": lock_is_stale(lock) if lock else False,
-                "runId": lock.get("runId") if lock else None,
-            },
+            "recovery": recovery_directive(recovery_reason),
+            "lock": _status_lock_snapshot(lock, lock_error),
+            "terminalLock": _status_lock_snapshot(
+                terminal_lock, terminal_lock_error
+            ),
         }
     except (KeyError, TypeError, WorkLoopError) as error:
-        return {"status": "invalid", "error": compact_text(error, limit=500)}
+        return {
+            "status": "invalid",
+            "error": compact_text(error, limit=500),
+            "recovery": recovery_directive("ledger_invalid"),
+        }
 
 
 def _state_root_arg(value: str | None) -> Path | None:
@@ -2016,7 +2172,9 @@ def _print(value: Mapping[str, Any], *, as_json: bool) -> None:
         for candidate in candidates:
             if not isinstance(candidate, Mapping):
                 continue
-            label = candidate.get("id") or candidate.get("task") or candidate.get("title")
+            label = (
+                candidate.get("id") or candidate.get("task") or candidate.get("title")
+            )
             evidence = candidate.get("focusEvidence")
             detail = ""
             if isinstance(evidence, list) and evidence:
@@ -2107,7 +2265,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = subparsers.add_parser("start", help="start or safely resume a loop")
     start.add_argument("--repo", type=Path, default=Path.cwd())
-    start.add_argument("--mode", choices=("backlog", "designs"))
+    start.add_argument("--mode", choices=("backlog",))
     start.add_argument("--selector", choices=("all", "needs-design"))
     start.add_argument("--until", choices=("design", "merge"))
     start.add_argument("--focus", action="append", default=[])
@@ -2141,7 +2299,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_current_arguments(evidence)
     evidence.add_argument("--json", action="store_true")
 
-    reconcile = subparsers.add_parser("reconcile", help="compare ledger with live evidence")
+    reconcile = subparsers.add_parser(
+        "reconcile", help="compare ledger with live evidence"
+    )
     reconcile.add_argument("--repo", type=Path, default=Path.cwd())
     reconcile.add_argument("--run-id", required=True)
     reconcile.add_argument("--observed-phase", choices=PHASES)
@@ -2196,7 +2356,9 @@ def build_parser() -> argparse.ArgumentParser:
     focus.add_argument("--clear", action="store_true")
     focus.add_argument("--json", action="store_true")
 
-    checkpoint = subparsers.add_parser("checkpoint", help="persist a resumable checkpoint")
+    checkpoint = subparsers.add_parser(
+        "checkpoint", help="persist a resumable checkpoint"
+    )
     checkpoint.add_argument("--repo", type=Path, default=Path.cwd())
     checkpoint.add_argument("--run-id", required=True)
     checkpoint.add_argument("--target", required=True)
@@ -2207,7 +2369,9 @@ def build_parser() -> argparse.ArgumentParser:
     stop = subparsers.add_parser("stop", help="stop, pause, or complete a loop")
     stop.add_argument("--repo", type=Path, default=Path.cwd())
     stop.add_argument("--run-id", required=True)
-    stop.add_argument("--status", choices=("paused", "stopped", "completed"), required=True)
+    stop.add_argument(
+        "--status", choices=("paused", "stopped", "completed"), required=True
+    )
     stop.add_argument("--reason", required=True)
     stop.add_argument("--json", action="store_true")
 
@@ -2275,7 +2439,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     state["updatedAt"] = utc_now()
                     state["heartbeatAt"] = state["updatedAt"]
                     atomic_write_json(state_path, state)
-                    _print(status_snapshot(args.repo, state_root=root), as_json=args.json)
+                    _print(
+                        status_snapshot(args.repo, state_root=root), as_json=args.json
+                    )
                     return 0
             state = new_state(
                 identity,
@@ -2331,7 +2497,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "reconcile":
             observations = _current_updates_from_args(args)
             observations["phase"] = args.observed_phase
-            observations = {key: value for key, value in observations.items() if value is not None}
+            observations = {
+                key: value for key, value in observations.items() if value is not None
+            }
             state = mutate_state(
                 args.repo,
                 args.run_id,
@@ -2347,9 +2515,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.command == "reconcile-terminal":
             delivery = _terminal_pr_from_args(args, "delivery", required=True)
-            bookkeeping = _terminal_pr_from_args(
-                args, "bookkeeping", required=False
-            )
+            bookkeeping = _terminal_pr_from_args(args, "bookkeeping", required=False)
             if delivery is None:
                 raise WorkLoopError("delivery PR evidence is required")
             state = reconcile_terminal_state(
@@ -2384,9 +2550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.clear and (args.prefer or args.only):
                 raise WorkLoopError("--clear cannot be combined with focus expressions")
             if not args.clear and not (args.prefer or args.only):
-                raise WorkLoopError(
-                    "focus requires --clear, --prefer, or --only"
-                )
+                raise WorkLoopError("focus requires --clear, --prefer, or --only")
             replacement = (
                 normalize_focus()
                 if args.clear
@@ -2395,9 +2559,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             def replace_focus(item: dict[str, Any]) -> None:
                 if item["current"]["task"] is not None:
-                    raise WorkLoopError(
-                        "focus can only change at a task boundary"
-                    )
+                    raise WorkLoopError("focus can only change at a task boundary")
                 if item["phase"] == "complete":
                     transition_state(item, "inventory")
                 elif item["phase"] not in {"inventory", "checkpoint"}:
@@ -2415,6 +2577,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state_root=state_root,
             )
         elif args.command == "checkpoint":
+
             def checkpoint(item: dict[str, Any]) -> None:
                 prior_phase = item["phase"]
                 resume_phase = (
@@ -2448,6 +2611,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 release_lock(lock_path, args.run_id)
         elif args.command == "stop":
+
             def stop(item: dict[str, Any]) -> None:
                 item["status"] = args.status
                 item["stopReason"] = compact_text(args.reason)

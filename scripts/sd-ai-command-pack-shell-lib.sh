@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-# Shared helpers for shipped sd-ai-command-pack shell entry points. Callers
-# define REPO_ROOT before calling helpers that need it; helpers that emit
-# warnings expect warn(), and run_gito_command expects section(), gito_max_attempts(),
+# Shared helpers for shipped sd-ai-command-pack shell entry points. Helpers that
+# emit warnings expect warn(), and run_gito_command expects section(), gito_max_attempts(),
 # gito_initial_retry_delay(), gito_max_retry_delay(), and
 # gito_command_timeout_seconds(). Callers that define the optional
 # REVIEW_LOCAL_TEMP_FILES array must install an EXIT/INT/TERM cleanup trap;
@@ -156,21 +155,63 @@ load_gito_pack_env() {
   done <"$env_file"
 }
 
-prepare_gito_uv_env() {
-  local default_tmp="${TMPDIR:-/tmp}"
-  local cache_root="${XDG_CACHE_HOME:-}"
-  if [ -n "$cache_root" ]; then
-    cache_root="${cache_root%/}/sd-ai-command-pack"
-  else
-    cache_root="${default_tmp%/}/sd-ai-command-pack-${UID:-unknown}"
+prepare_tool_cache_env() {
+  if [ "${SD_AI_COMMAND_PACK_CACHE_ENV_READY:-0}" = "1" ]; then
+    return 0
   fi
-  if [ -z "${UV_CACHE_DIR:-}" ]; then
-    export UV_CACHE_DIR="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_CACHE_DIR:-$cache_root/uv-cache}"
+  local lib_source="${BASH_SOURCE[0]}"
+  local lib_dir cache_repo_root toolchain
+  case "$lib_source" in
+    */*) lib_dir="${lib_source%/*}" ;;
+    *) lib_dir="." ;;
+  esac
+  if ! lib_dir="$(cd -- "$lib_dir" 2>/dev/null && pwd -P)"; then
+    warn "cache setup failed: cannot resolve the shared shell-library directory"
+    return 1
   fi
-  if [ -z "${UV_TOOL_DIR:-}" ]; then
-    export UV_TOOL_DIR="${SD_AI_COMMAND_PACK_REVIEW_LOCAL_UV_TOOL_DIR:-$cache_root/uv-tools}"
+  cache_repo_root="${SD_AI_COMMAND_PACK_REPO_ROOT:-${REPO_ROOT:-}}"
+  if [ -z "$cache_repo_root" ]; then
+    if ! cache_repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      warn "cache setup failed: cannot resolve the repository root"
+      return 1
+    fi
   fi
-  mkdir -p "$UV_CACHE_DIR" "$UV_TOOL_DIR"
+  toolchain="$lib_dir/sd-ai-command-pack-toolchain.sh"
+  local output key value count
+  count=0
+  if [ ! -r "$toolchain" ]; then
+    warn "cache setup failed: shared toolchain is missing: $toolchain"
+    return 1
+  fi
+  if ! output="$(SD_AI_COMMAND_PACK_REPO_ROOT="$cache_repo_root" bash "$toolchain" cache-env 2>/dev/null)"; then
+    warn "cache setup failed; set SD_AI_COMMAND_PACK_CACHE_ROOT to a private writable directory outside the repository"
+    return 1
+  fi
+  while IFS='=' read -r key value; do
+    key="${key%$'\r'}"
+    value="${value%$'\r'}"
+    case "$key" in
+      XDG_CACHE_HOME|PYTHONPYCACHEPREFIX|UV_CACHE_DIR|UV_TOOL_DIR|PIP_CACHE_DIR|RUFF_CACHE_DIR|NPM_CONFIG_CACHE)
+        if [ -z "$value" ]; then
+          warn "cache setup returned an empty $key"
+          return 1
+        fi
+        export "$key=$value"
+        count=$((count + 1))
+        ;;
+      *)
+        warn "cache setup returned an unexpected variable: $key"
+        return 1
+        ;;
+    esac
+  done <<EOF
+$output
+EOF
+  if [ "$count" -ne 7 ]; then
+    warn "cache setup returned $count variables; expected 7"
+    return 1
+  fi
+  export SD_AI_COMMAND_PACK_CACHE_ENV_READY=1
 }
 
 join_by_comma() {

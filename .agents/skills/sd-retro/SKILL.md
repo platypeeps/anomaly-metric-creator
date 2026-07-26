@@ -16,6 +16,13 @@ This command analyzes and records; it makes no code changes. The only
 writes are the journal entry (via the recorder) and, after explicit user
 consent, Trellis task artifacts. It never auto-creates tasks.
 
+## Structured decisions
+
+Read [`../sd-help/references/structured-questions.md`](../sd-help/references/structured-questions.md)
+before asking. This skill owns only `retro.followups`; use its multi-select
+shape for independent prevention tasks after recording the requested retro.
+Running or recording the retrospective itself never needs confirmation.
+
 ## When to use
 
 Run this command right after a debugging stream, incident, or gate

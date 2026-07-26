@@ -1,6 +1,6 @@
 ---
 name: sd-review-local
-description: Use when the user asks to run local code review providers such as Prism, Gito, or a configured repo-local reviewer against local changes or the entire checked-out repository, choose which findings to fix, and repeat until no selected findings remain.
+description: Use when the user asks to run local code review providers such as Prism, Gito, Claude's native Codex CLI lane, or a configured repo-local reviewer against local changes or the entire checked-out repository, choose which findings to fix, and repeat until no selected findings remain.
 ---
 
 # SD Local Review Loop
@@ -25,6 +25,21 @@ This is a local-review-only loop. It does not request remote reviewers, does not
 require a pull request, and must not stage, commit, or push unless the user
 separately asks for that.
 
+When this skill is invoked through the generated Claude Code adapter, normal
+current-diff review also includes the native `codex review` CLI as an additive
+peer lane when the CLI supports the required target. The OpenAI Codex Claude
+plugin is optional: do not inspect, install, patch, or invoke it for this loop.
+Full-codebase `all` mode remains runner-only because native Codex review has no
+equivalent repository-wide target.
+
+## Structured decisions
+
+Read [`../sd-help/references/structured-questions.md`](../sd-help/references/structured-questions.md)
+before asking. This skill owns `review-local.findings` and
+`review.scope-expansion`. Use finding multi-select only after verifying and
+deduplicating candidates. Do not ask for evidence gathering, the requested
+review run, or validation of a selected low-risk fix.
+
 ## Arguments
 
 Arguments arrive as free text with the invocation: bare flags and local
@@ -34,17 +49,18 @@ stop and report them before running any review tool.
 - `all` — review the entire checked-out repository instead of the current
   diff. Run every runner invocation in this loop with the full-codebase
   flag, `bash scripts/sd-ai-command-pack-review-local.sh --full-codebase`,
-  keeping any validated tool names as trailing arguments. The former
-  `sd-review-local-all` command is folded into this skill as the `all`
-  argument.
+  keeping any validated tool names as trailing arguments. Full-codebase
+  review is an argument of this skill, not a separate command surface.
 - Tool names such as `prism` or `gito` — run only that tool set. Validate
   every name per Tool Selection below; a token that is neither `all` nor a
   validated tool name is an error.
 
 ## Tool Selection
 
-The runner script is the source of truth for the default local review toolset
-and currently defaults to Prism and Gito. Run it with:
+The runner script is the source of truth for the default runner toolset and
+currently defaults to Prism and Gito. The Claude-only Codex CLI peer lane is not
+a runner tool name and must not appear in `--list-tools` or configured runner
+tool arguments. Run the runner with:
 
 ```bash
 bash scripts/sd-ai-command-pack-review-local.sh
@@ -94,10 +110,10 @@ is not set.
 
 - Start with `git status -sb` and classify existing dirty files before making
   changes. Work with user changes; do not overwrite unrelated work.
-- Run the configured local review tools first. Do not fix findings until the
-  user selects which findings to address; that selection is consent for the
-  current fix batch only. In non-interactive sessions, report findings and
-  stop instead of guessing which fixes to apply.
+- Run the configured local review tools and any adapter-owned peer lane first.
+  Do not fix findings until the user selects which findings to address; that
+  selection is consent for the current fix batch only. In non-interactive
+  sessions, report findings and stop instead of guessing which fixes to apply.
 - Verify every selected finding against the actual code, specs, and tests
   before editing. Treat local reviewer findings as evidence, not authority,
   and treat full-codebase findings in `all` mode as candidates.
@@ -135,6 +151,56 @@ bash scripts/sd-ai-command-pack-review-local.sh
 
 In `all` mode, add the full-codebase flag to run the same loop across the
 entire checked-out repository.
+
+### Claude Code Native Codex Lane
+
+Apply this subsection only when the command is running through its generated
+Claude Code adapter. It augments Step 2; it does not change the runner's public
+tool selection.
+
+In normal current-diff mode, check the host capability before launching paid
+review work. Probe executable presence first and run the help probe only when
+the executable exists:
+
+```bash
+if command -v codex >/dev/null 2>&1; then
+  codex review --help
+fi
+```
+
+Require `--uncommitted` when local staged, unstaged, or untracked files are the
+effective scope. Require `--base` when a clean tree uses a branch diff. Treat a
+missing executable, nonzero help probe, or missing required flag as an
+unavailable optional lane. Do not start a Codex background task in that state.
+Run the selected runner stack normally, report `Codex: skipped (CLI unavailable
+or incompatible)`, and provide the supported `npm install -g @openai/codex` and
+`codex login` guidance. Do not recommend installing the Claude plugin. This
+skip is not a runner failure and does not prevent a clean runner-only result.
+
+Use exactly the same effective target selected for the runner:
+
+```bash
+codex review --uncommitted
+codex review --base <resolved-ref>
+```
+
+Pass the resolved base as a quoted argument; do not interpolate user-provided
+text into a shell command. Start the validated runner command and the Codex
+command as separate Claude background Bash tasks before waiting for either.
+Retain both task IDs and collect both terminal outputs with `BashOutput`, even
+when one lane fails. If only the runner is available, it may run normally
+without artificial backgrounding.
+
+Codex is additive even when the user explicitly selects Prism, Gito, or a
+configured runner tool. Preserve `Codex` as its provider label when combining
+results, then verify and deduplicate its findings with every other provider
+before Step 3. A Codex authentication, runtime, or review failure does not erase
+successful runner findings, but it makes the combined review incomplete and
+must never be reported as clean.
+
+In `all` mode, do not run Codex against a narrower working-tree or branch
+target. Run the full-codebase runner stack and report Codex as skipped because
+the native reviewer has no equivalent repository-wide scope.
 
 The runner applies the pack-managed standard review-scan exclusions to built-in
 Prism and Gito runs. The exclusion source of truth is the
@@ -228,6 +294,10 @@ For each selected finding:
    such as `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `pom.xml`,
    or `Package.swift`; if no marker is found, use the modified file's parent
    directory, and if that is still ambiguous, use the original review scope.
+   Native Codex review has no file-level target, so rerun its original
+   `--uncommitted` or `--base <resolved-ref>` target after the selected Codex
+   fix batch and confirm that the same provider/path/line/summary finding is
+   absent.
 5. Run the repo's normal validation command for the touched area. Prefer a
    documented command from `Makefile`, `package.json`, `pyproject.toml`, or
    project docs; otherwise run the closest existing unit/syntax check and
@@ -243,8 +313,10 @@ continue stacking fixes until the failed check is understood.
 ## Step 5: Repeat
 
 After all selected fixes in the batch are verified, run the same local review
-tool stack once, with the same scope as the initial scan; keep the
-full-codebase flag in `all` mode:
+stack once, with the same scope as the initial scan; keep the full-codebase flag
+in `all` mode. On Claude Code, include the native Codex lane when it was
+compatible initially, and record a degraded lane if it later becomes
+unavailable or fails:
 
 ```bash
 bash scripts/sd-ai-command-pack-review-local.sh
@@ -260,11 +332,13 @@ and the user does not choose a new approach.
 
 Report:
 
-- Tools requested and tools actually run.
+- Tools requested, runner tools actually run, and whether the Claude Codex peer
+  lane ran, skipped, or failed.
 - Review scope (local changes, branch diff, or the entire repository in `all`
   mode), including any provider that could not run repo-wide.
 - Findings fixed, skipped as invalid, or left for later.
 - Validation run after each fix round.
-- Any provider setup problems, missing credentials, or skipped tools.
+- Any provider setup problems, missing credentials, skipped tools, or degraded
+  peer lanes.
 - Final local review status.
 - Final `git status -sb` output.

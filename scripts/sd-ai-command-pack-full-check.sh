@@ -435,8 +435,6 @@ run_gito_review() {
   fi
 
   load_gito_pack_env
-  prepare_gito_uv_env
-
   local base_ref
   base_ref="$(full_check_gito_base_ref)"
   local out_dir="${SD_AI_COMMAND_PACK_FULL_CHECK_GITO_OUT_DIR:-.build/review/gito}"
@@ -524,7 +522,7 @@ run_sd_ai_command_pack_kb_freshness_check() {
     return 0
   fi
 
-  if [ "$mode" != "required" ] && [ ! -d ".obsidian-kb" ]; then
+  if [ "$mode" != "required" ] && [ ! -e ".obsidian-kb" ] && [ ! -L ".obsidian-kb" ]; then
     warn "No generated .obsidian-kb folder; skipping Obsidian KB freshness check. Run 'python3 $script' to generate it."
     return 0
   fi
@@ -570,9 +568,10 @@ run_sd_ai_command_pack_kb_freshness_check() {
 
 run_pack_source_drift_gates() {
   # Deterministic pre-PR gates that only apply inside the sd-ai-command-pack
-  # source repository itself: every tracked manifest target must match its
-  # templates/ twin, and every pack env var read by shipped scripts must be
-  # documented in the installed usage guide.
+  # source repository itself: command surfaces must match the canonical
+  # registry, every tracked manifest target must match its templates/ twin,
+  # and every pack env var read by shipped scripts must be documented in the
+  # installed usage guide.
   local mode="${SD_AI_COMMAND_PACK_FULL_CHECK_PACK_DRIFT:-auto}"
 
   if is_disabled "$mode"; then
@@ -597,7 +596,15 @@ run_pack_source_drift_gates() {
     return 0
   fi
 
-  section "Pack source drift gates: template twins, release ledger, and env-var docs"
+  section "Pack source drift gates: command surfaces, template twins, release ledger, and env-var docs"
+  local surface_check="scripts/sd-ai-command-pack-surface-check.py"
+  if [ ! -f "$surface_check" ]; then
+    printf 'Shipped-surface closure validator is required but %s is missing.\n' "$surface_check" >&2
+    return 1
+  fi
+  if ! run "SD shipped-surface closure" python3 "$surface_check"; then
+    return 1
+  fi
   local release_base_ref
   release_base_ref="$(full_check_base_ref)"
   SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF="${SD_AI_COMMAND_PACK_FULL_CHECK_RELEASE_BASE_REF:-$release_base_ref}" python3 - <<'PACK_SOURCE_DRIFT_GATES'
@@ -1013,6 +1020,7 @@ run_review_preflight() {
 }
 
 main() {
+  prepare_tool_cache_env || exit 5
   section "SD AI command pack full check"
   git status -sb
   warn_unarmed_pack_source_hook

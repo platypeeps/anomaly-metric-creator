@@ -11,8 +11,14 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
+
+sys.dont_write_bytecode = True
+
+# This import must follow the bytecode guard for direct entrypoint invocation.
+from sd_ai_command_pack_lib import CacheSetupError, build_tool_environment  # noqa: E402
 
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
 PROVENANCE_FILE = Path(".sd-ai-command-pack/provenance.json")
@@ -34,6 +40,8 @@ PACK_FILE_PATTERNS = [
     ".agent/workflows/sd-*",
     ".agents/skills/sd-*/*",
     ".claude/commands/sd/*",
+    ".claude/rules/sd-planning-adversarial-review.md",
+    ".claude/sd-ai-command-pack/*",
     ".codebuddy/commands/sd/*",
     ".codebuddy/skills/sd-*/*",
     ".cursor/commands/sd-*",
@@ -68,6 +76,7 @@ PACK_FILE_PATTERNS = [
 ]
 
 LOCAL_ALLOWED_PACK_FILES = {
+    ".sd-ai-command-pack/check.json",
     ".sd-ai-command-pack/pr-body-scope.json",
     ".sd-ai-command-pack/review-preflight.json",
 }
@@ -76,6 +85,7 @@ SOURCE_ONLY_ALLOWED_PACK_FILES = {
     ".agent/skills/sd-fleet-refresh/SKILL.md",
     ".agent/workflows/sd-fleet-refresh.md",
     ".agents/skills/sd-fleet-refresh/SKILL.md",
+    ".agents/skills/sd-fleet-refresh/references/controller-recovery.md",
     ".claude/commands/sd/fleet-refresh.md",
     ".codebuddy/commands/sd/fleet-refresh.md",
     ".codebuddy/skills/sd-fleet-refresh/SKILL.md",
@@ -99,6 +109,7 @@ SOURCE_ONLY_ALLOWED_PACK_FILES = {
     ".trae/skills/sd-fleet-refresh/SKILL.md",
     ".zcode/commands/sd/fleet-refresh.md",
     "scripts/sd-ai-command-pack-fleet-candidate-check.py",
+    "scripts/sd-ai-command-pack-fleet-controller.py",
     "scripts/sd-ai-command-pack-fleet-finding-classify.py",
     "scripts/sd-ai-command-pack-fleet-preflight.py",
     "scripts/sd-ai-command-pack-fleet-review-classify.py",
@@ -155,11 +166,15 @@ LEGACY_PACK_PATHS = {
             f"use scripts/sd-ai-command-pack-{name}"
         )
         for name in (
+            "audit-route.py",
             "full-check.sh",
+            "housekeeping-result.py",
             "housekeeping.sh",
             "install-audit.py",
             "pr-body-scope.py",
+            "pr-eligibility.py",
             "record-session.py",
+            "review.py",
             "review-learnings.py",
             "review-local.sh",
             "review-preflight.mjs",
@@ -186,11 +201,13 @@ LEGACY_PACK_REFERENCES = {
     **{
         f"sd-command-pack-{name}": f"sd-ai-command-pack-{name}"
         for name in (
+            "audit-route.py",
             "full-check.sh",
             "housekeeping.sh",
             "install-audit.py",
             "pr-body-scope.py",
             "record-session.py",
+            "review.py",
             "review-learnings.py",
             "review-local.sh",
             "review-preflight.mjs",
@@ -565,15 +582,17 @@ def gitignored_paths(root: Path, relative_paths: Iterable[str]) -> set[str]:
         return set()
     input_payload = b"".join(os.fsencode(path) + b"\0" for path in candidates)
     try:
+        environment, _, _ = build_tool_environment(repo=root)
         result = subprocess.run(
             ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
             input=input_payload,
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
             timeout=GIT_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (CacheSetupError, OSError, subprocess.TimeoutExpired):
         return set()
     if result.returncode not in {0, 1}:
         return set()

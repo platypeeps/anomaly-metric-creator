@@ -37,7 +37,7 @@ The content is organized as follows:
 Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
 
 # Directory Structure
-```
+````
 .agents/
   skills/
     amc-server-compatibility/
@@ -64,6 +64,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         testing.md
         tooling.md
       SKILL.md
+    sd-check/
+      SKILL.md
     sd-continue/
       SKILL.md
     sd-create-pr/
@@ -78,10 +80,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       references/
         command-catalog.md
         examples.md
+        structured-questions.md
       SKILL.md
     sd-housekeeping/
       SKILL.md
     sd-retro/
+      SKILL.md
+    sd-review/
       SKILL.md
     sd-review-learnings/
       SKILL.md
@@ -100,14 +105,20 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-update-deps/
       SKILL.md
     sd-update-spec/
+      references/
+        architecture.md
+        obsidian-kb.md
+        repository-map.md
       SKILL.md
     sd-watch-pr/
       SKILL.md
     sd-work-backlog/
       references/
         autonomous-loop.md
-      SKILL.md
-    sd-work-designs/
+        ledger-recovery.md
+        ownership-recovery.md
+        run-recovery.md
+        terminal-reconciliation.md
       SKILL.md
     security-best-practices/
       agents/
@@ -194,6 +205,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   commands/
     sd/
       audit-repo.md
+      check.md
       continue.md
       create-pr.md
       finish-work.md
@@ -205,6 +217,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       review-learnings.md
       review-local.md
       review-pr.md
+      review.md
       ship.md
       start.md
       status.md
@@ -213,7 +226,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       update-spec.md
       watch-pr.md
       work-backlog.md
-      work-designs.md
+  rules/
+    sd-planning-adversarial-review.md
+  sd-ai-command-pack/
+    planning-adversarial-review.md
 .codex/
   agents/
     trellis-check.toml
@@ -255,6 +271,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   commands/
     sd/
       audit-repo.toml
+      check.toml
       continue.toml
       create-pr.toml
       finish-work.toml
@@ -266,6 +283,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       review-learnings.toml
       review-local.toml
       review-pr.toml
+      review.toml
       ship.toml
       start.toml
       status.toml
@@ -274,7 +292,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       update-spec.toml
       watch-pr.toml
       work-backlog.toml
-      work-designs.toml
     trellis/
       continue.toml
       finish-work.toml
@@ -323,6 +340,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     continue.prompt.md
     finish-work.prompt.md
     sd-audit-repo.prompt.md
+    sd-check.prompt.md
     sd-continue.prompt.md
     sd-create-pr.prompt.md
     sd-finish-work.prompt.md
@@ -334,6 +352,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review-learnings.prompt.md
     sd-review-local.prompt.md
     sd-review-pr.prompt.md
+    sd-review.prompt.md
     sd-ship.prompt.md
     sd-start.prompt.md
     sd-status.prompt.md
@@ -342,7 +361,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-update-spec.prompt.md
     sd-watch-pr.prompt.md
     sd-work-backlog.prompt.md
-    sd-work-designs.prompt.md
   skills/
     amc-server-compatibility/
       agents/
@@ -447,6 +465,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       finish-work.md
       start.md
     sd-audit-repo.md
+    sd-check.md
     sd-continue.md
     sd-create-pr.md
     sd-finish-work.md
@@ -458,6 +477,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review-learnings.md
     sd-review-local.md
     sd-review-pr.md
+    sd-review.md
     sd-ship.md
     sd-start.md
     sd-status.md
@@ -466,7 +486,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-update-spec.md
     sd-watch-pr.md
     sd-work-backlog.md
-    sd-work-designs.md
   lib/
     session-utils.js
     trellis-context.js
@@ -818,6 +837,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       design.md
       implement.jsonl
       implement.md
+      prd.md
+      task.json
+    07-26-refresh-sd-ai-command-pack-0-54-0/
+      check.jsonl
+      implement.jsonl
       prd.md
       task.json
     archive/
@@ -1204,18 +1228,26 @@ scripts/
   classify-ci-changes.sh
   sd_ai_command_pack_fleet_lib.py
   sd_ai_command_pack_lib.py
+  sd-ai-command-pack-audit-inventory.py
+  sd-ai-command-pack-audit-route.py
+  sd-ai-command-pack-check.py
   sd-ai-command-pack-full-check.sh
+  sd-ai-command-pack-housekeeping-result.py
   sd-ai-command-pack-housekeeping.sh
   sd-ai-command-pack-install-audit.py
   sd-ai-command-pack-pr-body-scope.py
+  sd-ai-command-pack-pr-eligibility.py
   sd-ai-command-pack-record-session.py
   sd-ai-command-pack-review-full-check.sh
   sd-ai-command-pack-review-learnings.py
+  sd-ai-command-pack-review-local.py
   sd-ai-command-pack-review-local.sh
   sd-ai-command-pack-review-preflight.mjs
   sd-ai-command-pack-review-scope.sh
+  sd-ai-command-pack-review.py
   sd-ai-command-pack-shell-lib.sh
   sd-ai-command-pack-status.py
+  sd-ai-command-pack-surface-check.py
   sd-ai-command-pack-toolchain.sh
   sd-ai-command-pack-update-spec-kb.py
   sd-ai-command-pack-work-loop.py
@@ -1373,4 +1405,4 @@ CLAUDE.md
 pyproject.toml
 README.md
 SECURITY.md
-```
+````

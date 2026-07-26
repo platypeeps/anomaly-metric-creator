@@ -252,6 +252,7 @@ main() {
   if [ -z "$REPO_ROOT" ] || ! cd -- "$REPO_ROOT"; then
     fail "cannot resolve repository root"
   fi
+  prepare_tool_cache_env || exit 5
 
   local changed_file scoped_file
   local scoped_changes=()

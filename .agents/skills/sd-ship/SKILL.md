@@ -15,6 +15,14 @@ sd-ship only sequences and reports. Each stage runs under its own skill's
 preconditions, gates, and safety rules, and the chain's stop-points sit
 between stages, never inside them.
 
+## Structured decisions
+
+Read [`../sd-help/references/structured-questions.md`](../sd-help/references/structured-questions.md)
+before asking. During its review stage this composite carries
+`review.higher-risk-fixes`, `review.scope-expansion`, and
+`review.round-extension` unchanged from `sd-review-pr`. It adds no confirmation
+between routine stages already authorized by the invocation.
+
 ## When to use
 
 Run this command when work on a feature branch should travel the whole
@@ -96,8 +104,8 @@ before Stage 1.
    publish result without entering `sd-create-pr`'s standalone review handoff.
    Record the PR number and URL for the report. If `until=pr`, stop the chain
    here without running review.
-3. Stage 2 — `sd-review-pr`: run its bounded review loop — deterministic
-   local gate, configured remote review, fixes, replies — until the loop
+3. Stage 2 — `sd-review-pr`: run its bounded review loop — typed deterministic
+   `sd-check`, configured remote review, fixes, replies — until the loop
    stops clean or blocked. Its completed loop owns the one read-only,
    PR-scoped post-cycle review-learning pass; no other ship stage repeats it.
    With `until=review`, invoke it without
@@ -113,12 +121,15 @@ before Stage 1.
    chain; this leaves the active Trellis task unarchived for a later resume.
 5. Stage 4 — `sd-housekeeping`: invoke housekeeping exactly once. Its gate
    runs finish-work, pushes any resulting task/journal commits and waits for
-   their checks, then invokes the housekeeping script with
-   `--finish-work-head "$(git rev-parse HEAD)"`. That exact-head handoff allows
-   the executable gate to own the one post-finish Obsidian KB refresh for
+   their checks, and reuses finish-work's retained schema-version-1
+   bookkeeping receipt bound to that exact final head. It then invokes the
+   housekeeping script with `--finish-work-receipt "$FINISH_WORK_RECEIPT"`;
+   eligibility independently recomputes the same validator result before
+   merge. That exact-head proof lets the executable gate own the one
+   post-finish Obsidian KB refresh for
    repositories that already have a KB, perform the merge, and report the
    post-merge state; housekeeping remains its only owner and `sd-ship` relays
-   that outcome. Never pass the handoff flag when finish-work blocked or its
+   that outcome. Never pass the receipt when finish-work blocked or its
    commits are not pushed and green.
    Under the trusted `sd-work-backlog` context, convert that report into the
    compact nested result below and return control to the parent controller.

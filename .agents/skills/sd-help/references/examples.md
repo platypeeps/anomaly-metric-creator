@@ -11,12 +11,12 @@ branch, pull request, task, and goal context when producing a final invocation.
 
 ## Planning and backlog
 
-- Plan tasks: `Use sd-help to compare sd-work-designs with sd-work-backlog.`
+- Plan tasks: `Use sd-help to explain the sd-work-backlog design selector.`
 - Work ready tasks: `Use sd-help to recommend the smallest workflow for the highest-value implementation-ready Trellis task.`
 - Prioritize CI work: `sd-work-backlog CI pipeline`
 - Strict focused loop: `sd-work-backlog focus-only="priority:P1" focus-only="scope:ci"`
-- Design only: `sd-work-designs until=design focus="release automation"`
-- Full design-first loop: `sd-work-designs CI pipeline`
+- Design only: `sd-work-backlog selector=needs-design until=design focus="release automation"`
+- Full design-first loop: `sd-work-backlog selector=needs-design CI pipeline`
 
 ## Verification and improvement
 

@@ -1,16 +1,32 @@
 ---
 name: sd-review-pr
-description: Use when the user asks to ready a pull request, run the deterministic local PR gate, optionally request the configured remote reviewer when available, address review comments or CI failures, and repeat until no actionable comments remain.
+description: Use when the user asks to ready a pull request, run the typed deterministic sd-check gate, optionally request the configured remote reviewer when available, address review comments or CI failures, and repeat until no actionable comments remain.
 ---
 
 # SD PR Review Loop
 
 Use this project-local Software Delivery skill for `sd-review-pr` and
 `/sd:review-pr` style work. It turns a draft or in-progress PR into a reviewed
-PR by running the deterministic local full-check gate first, inspecting
+PR by running the typed deterministic `sd-check` gate first, inspecting
 existing comments and CI, and requesting the configured remote reviewer after a
 clean local pass and after every pushed review-fix commit made during the loop.
 GitHub Copilot is the default remote reviewer unless a repo overrides it.
+
+## Sandbox-safe tool execution
+
+Run every `gh`, `uv`, `pip`, `ruff`, or `npm` command shown in this workflow
+through `bash scripts/sd-ai-command-pack-toolchain.sh run -- <tool> [args...]`.
+The argv-safe wrapper changes only documented cache variables and preserves
+auth/config state. If it is missing or reports a cache-setup failure, stop with
+that diagnostic; do not retry the tool bare or redirect `GH_CONFIG_DIR`.
+
+## Structured decisions
+
+Read [`../sd-help/references/structured-questions.md`](../sd-help/references/structured-questions.md)
+before asking. This skill owns `review.higher-risk-fixes`,
+`review.scope-expansion`, and `review.round-extension`. Do not ask for ordinary
+low-risk fixes, bounded polls or retries, review-thread replies or resolution,
+or other actions already authorized by this invocation.
 
 ## Invocation Mode
 
@@ -55,10 +71,9 @@ profile is never an environment variable or platform-adapter surface.
 - Do not stage unrelated work. If the working tree is dirty before the first
   review loop, classify the paths. Commit/push only changes that clearly belong
   to this PR; ask before touching anything ambiguous.
-- Run the deterministic local full-check before requesting a paid/remote
-  review. Disable Prism and Gito for this command-owned gate; those local
-  review tools run only when the user explicitly invokes `sd-full-check`,
-  or `sd-review-local` (optionally with `all`).
+- Run the typed deterministic `sd-check` result before requesting a paid/remote
+  review. The check coordinator contains no Prism, Gito, routed-review, or
+  GitHub-review dispatch lane; local review tools remain separately owned.
 - Treat preflight first-review risk, authored-source size, and multi-task scope
   warnings as required author-time dispositions before requesting remote
   review. Add focused coverage for applicable boundaries or record why a
@@ -178,8 +193,8 @@ head-mismatched, switch this invocation to the normal remote profile and report
 the classifier reason. Do not stop or ask merely because the safe fallback
 requires remote review.
 
-If the PR is draft, do not mark it ready until the deterministic local
-full-check has passed unless the user explicitly asked to mark it ready. This
+If the PR is draft, do not mark it ready until the typed deterministic
+`sd-check` result has passed unless the user explicitly asked to mark it ready. This
 keeps `ready_for_review` workflows from starting before local review is clean.
 
 ## Step 1.5: Post-Merge Handoff
@@ -207,35 +222,25 @@ merge through `gh`, including a user merging the PR while the command is still
 running. It is not a background GitHub webhook and cannot wake a closed or idle
 tool session by itself.
 
-## Step 2: Run Local Full Check
+## Step 2: Run Typed Deterministic Check
 
-Run the deterministic local full-check gate before requesting a remote review
-or accepting the integration-only profile.
-This PR-review cycle must not run Prism or Gito implicitly, even if the
-environment would normally enable them for `sd-full-check`:
+Run the installed typed `sd-check` coordinator before requesting a remote review
+or accepting the integration-only profile:
 
 ```bash
-bash scripts/sd-ai-command-pack-review-full-check.sh
+bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
+  scripts/sd-ai-command-pack-check.py --json
 ```
 
-The helper owns deterministic command selection. When the root
-`package.json` defines a non-empty string `scripts["check:full"]`, it runs
-`npm run check:full` (or the runner selected by
-`SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_RUNNER`) so repository-owned cleanup,
-database readiness, and test-environment setup execute before the pack gate.
-That package script may wrap
-`scripts/sd-ai-command-pack-full-check.sh`, but it must not invoke
-`sd-review-pr`, a review-pr platform adapter, or the helper itself.
+Require one valid schema-version-1 JSON document whose aggregate status and
+exit code agree and whose state guard passed. Repository-specific prerequisites
+and commands come only from validated `.sd-ai-command-pack/check.json` argv
+arrays. Do not discover `package.json` scripts, read the legacy full-check
+environment contract, or fall back to `sd-ai-command-pack-full-check.sh` or
+`sd-ai-command-pack-review-full-check.sh`.
 
-When no usable `check:full` package script is configured, the helper runs the
-existing `scripts/sd-ai-command-pack-full-check.sh` compatibility fallback.
-Both paths force `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` and
-`SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0`. If the helper, selected package
-runner, or fallback script is missing, or the configured command would recurse,
-stop and report its exact diagnostic. Do not fall back to remote-review-first
-review.
-
-If full-check fails, fix the smallest correct set of issues, run the relevant
+If `sd-check` does not pass, relay every non-passing row and remediation. Fix
+the smallest correct set of issues, run the relevant
 checks again, commit and push the fixes, then return to Step 1 to refresh PR
 state. Do not request remote review on code that has not passed the local gate
 unless the user explicitly asks for a remote diagnostic despite local failures.
@@ -306,7 +311,7 @@ If both `REMOTE_REVIEWER` and `REMOTE_REVIEW_REQUEST_COMMAND` are empty, skip
 remote-review requests, report that no remote reviewer is configured, and
 continue to Step 5 to inspect existing comments and CI.
 
-After deterministic local full-check passes:
+After the typed deterministic `sd-check` result passes:
 
 - If the PR is draft and the user asked to ready it, mark it ready:
 
@@ -324,10 +329,10 @@ After deterministic local full-check passes:
 - Otherwise, trigger the configured remote reviewer when no remote review has
   been requested for the current PR head during this command run.
 - Also trigger the configured remote reviewer after every pushed commit created
-  by Step 6 to address review comments, CI failures, or deterministic local
-  gate findings.
+  by Step 6 to address review comments, CI failures, or typed `sd-check`
+  findings.
   This includes fixes for review comments that existed before this command was
-  invoked; after those fixes are pushed and the deterministic local full-check
+  invoked; after those fixes are pushed and the typed deterministic `sd-check`
   passes, request a fresh remote review.
 - If the current PR head already has a completed remote review and this command
   has not pushed any fixes, inspect existing comments and CI before deciding
@@ -609,10 +614,10 @@ already satisfied.
 
 After every round that produced a code/docs change, return to Step 1 to refresh
 all PR state, rerun any trusted fleet classification for the new head, then run
-deterministic local full-check again. If the branch no longer qualifies for
+the typed deterministic `sd-check` result again. If the branch no longer qualifies for
 integration-only review, switch to the normal remote loop. Otherwise keep zero
 remote requests and re-inspect existing feedback. For the normal profile, if
-deterministic local full-check passes and remote review is configured, trigger
+the typed deterministic `sd-check` result passes and remote review is configured, trigger
 another remote review before considering the loop clean. Compare the new thread
 ids and timestamps with the refreshed snapshot, and do not request duplicate
 remote reviews for the same PR head when no review-fix commit has been pushed
@@ -620,7 +625,7 @@ since the latest requested remote review.
 
 Stop when:
 
-- deterministic local full-check passes;
+- the typed deterministic `sd-check` result passes;
 - the latest requested remote review produces no new actionable comments, or
   the exact current head remains eligible for integration-only review;
 - no review-fix commit has been pushed since the latest requested remote review
@@ -663,7 +668,7 @@ the failed attempt or retry it in the same invocation.
 
 ## Step 8: Finish Work Or Hand Off To The Merge Tail
 
-After the loop stops because deterministic local full-check passes, no
+After the loop stops because the typed deterministic `sd-check` result passes, no
 requested remote review produced new actionable comments, or the exact head
 remains integration-only eligible with no actionable existing feedback, choose
 the lifecycle owner before the final report:
@@ -695,8 +700,11 @@ When finish-work is not deferred:
    resolving `trellis-finish-work` and recording the journal through
    `scripts/sd-ai-command-pack-record-session.py`; do not bypass it with a
    direct Trellis finish-work invocation.
-4. If finish-work creates archive or journal commits, push the current branch
-   after those commits are created:
+4. Require and retain finish-work's private schema-version-1 JSON receipt for
+   the current full HEAD, including when it automatically proves a
+   post-archive review successor without creating another task or journal.
+   Do not reconstruct its reason codes. Push the current branch once only
+   after any new commits are created and the retained result passes:
 
 ```bash
 git status -sb
@@ -734,8 +742,8 @@ Report:
 - PR number and URL.
 - Project checks: configured command or reported candidates, and which project
   checks actually ran.
-- Pack full-check: whether the deterministic local gate passed with Prism/Gito
-  disabled for the `sd-review-pr` cycle.
+- SD check: aggregate status/exit, non-passing rows, configuration presence,
+  and state-guard result for the exact reviewed head.
 - Remote review rounds used: <n> of <limit> — mandatory in every report;
   write `0 of <limit>` with the classifier tag/head evidence for an
   integration-only run, or the other skip reason when no remote review ran.

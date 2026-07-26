@@ -9,9 +9,24 @@ Use this project-local Software Delivery skill for `sd-create-pr` and
 `/sd:create-pr` style work. It is an orchestration wrapper: it runs the
 installed `sd-update-spec` workflow, commits and pushes the intended branch
 changes, creates or reuses the branch pull request, then hands off to
-`sd-review-pr` for deterministic checks, configured remote reviewer requests,
+`sd-review-pr` for the typed `sd-check` gate, configured remote reviewer requests,
 Copilot-style polling when configured, fixes, CI handling, and the bounded
 review loop.
+
+## Sandbox-safe tool execution
+
+Run every `gh`, `uv`, `pip`, `ruff`, or `npm` command shown in this workflow
+through `bash scripts/sd-ai-command-pack-toolchain.sh run -- <tool> [args...]`.
+The argv-safe wrapper changes only documented cache variables and preserves
+auth/config state. If it is missing or reports a cache-setup failure, stop with
+that diagnostic; do not retry the tool bare or redirect `GH_CONFIG_DIR`.
+
+## Structured decisions
+
+Read [`../sd-help/references/structured-questions.md`](../sd-help/references/structured-questions.md)
+before asking. This skill owns only `create-pr.file-scope`; use it for genuinely
+ambiguous file inclusion, not for the normal publish or PR-reuse path. Never
+offer a question as a way to cross the force-push or destructive boundary.
 
 ## Safety Rules
 
@@ -30,12 +45,11 @@ review loop.
   tools.
 - Do not duplicate the detailed update-spec or review-pr workflows. Use
   `sd-update-spec` for repository knowledge refreshes and `sd-review-pr` for
-  local full-check, configured remote reviewer requests, review polling, fix
+  typed deterministic checks, configured remote reviewer requests, review polling, fix
   loops, CI handling, and final finish-work behavior.
 - Do not run Prism, Gito, or other local review providers directly from this
-  command. Those tools run only when the user explicitly invokes
-  `sd-full-check` or `sd-review-local` (optionally with `all`); `sd-review-pr`
-  disables Prism and Gito for its command-owned local gate.
+  command. `sd-review-pr` owns the typed `sd-check` gate and every configured
+  review-provider stage.
 - Do not create a PR from the repository default branch. If the current branch
   is the default branch, create a feature branch before continuing. Prefer
   `SD_AI_COMMAND_PACK_CREATE_PR_BRANCH` when set; otherwise derive a concise
@@ -45,6 +59,9 @@ review loop.
   after `sd-update-spec`, classify all changed and untracked paths, and stage
   only files that clearly belong to the PR. Ask before touching ambiguous
   files; in non-interactive sessions, stop by default.
+- Run the pack's deterministic review preflight against the complete intended
+  branch and working-tree diff before staging a new commit or pushing an
+  already-committed branch. Never publish when that gate is missing or fails.
 - Do not create a duplicate PR. If the current branch already has an open PR,
   reuse it and continue into `sd-review-pr`.
 - Never pass generated or user-provided Markdown through `gh pr create --body`
@@ -186,10 +203,30 @@ to include:
 Ask before staging unrelated, generated, local-only, ignored, secret-like, or
 ambiguous files. In non-interactive sessions, stop instead of guessing.
 
-Before committing, run whitespace validation on the intended diff:
+Before staging a new commit or pushing an already-committed branch, run
+whitespace validation and the deterministic pack review preflight on the
+complete intended diff. The preflight catches invalid Trellis task metadata,
+generated `_example` task-context rows, and task-context references outside
+spec/research files before publication:
 
 ```bash
+git diff --check "$BASE_REF"...HEAD
 git diff --check
+if [ ! -f scripts/sd-ai-command-pack-review-preflight.mjs ]; then
+  printf '%s\n' "error: scripts/sd-ai-command-pack-review-preflight.mjs is missing; reinstall sd-ai-command-pack before publishing." >&2
+  exit 1
+fi
+node scripts/sd-ai-command-pack-review-preflight.mjs
+```
+
+If the preflight exits nonzero, stop before staging, committing, or pushing and
+report its complete output. Do not treat a later `sd-review-pr` run as a
+substitute for this pre-publication gate.
+
+When a new commit is needed, stage only the classified intended paths and
+validate the staged diff:
+
+```bash
 git add <intended paths>
 git diff --cached --check
 ```
@@ -344,8 +381,8 @@ skill as the source of truth:
 export SD_AI_COMMAND_PACK_REVIEW_PR_SELECTOR="<pr-number-or-url>"
 ```
 
-Let `sd-review-pr` run its deterministic local full-check gate with Prism and
-Gito disabled, request the configured remote reviewer when appropriate, wait for
+Let `sd-review-pr` run its typed deterministic `sd-check` gate, request the
+configured remote reviewer when appropriate, wait for
 review completion, address actionable comments or CI failures, push review-fix
 commits, re-request review after pushed fixes, observe its configured round
 limit, run finish-work after a clean loop, and run housekeeping if it observes
@@ -356,6 +393,7 @@ the PR merged.
 Report:
 
 - Update-spec skill path and summary of spec or repository knowledge updates.
+- Pre-publication review preflight result.
 - Staged/committed paths and commit SHA, or why no commit was needed.
 - Push target and result.
 - PR number, URL, base branch, and whether the PR was created or reused.
@@ -364,7 +402,7 @@ Report:
   publish result without review.
 - Project checks: configured command or reported candidates, and which project
   checks actually ran.
-- Pack full-check: deterministic gate result with Prism/Gito disabled.
+- SD check: typed aggregate, non-passing rows, and state-guard result.
 - Optional AI review: configured remote-review rounds and outcome.
 - Comments fixed or rebutted, CI status, finish-work actions, and final
   working-tree state.
