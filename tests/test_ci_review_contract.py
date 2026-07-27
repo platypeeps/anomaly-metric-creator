@@ -41,6 +41,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             outputs:
               full_ci_requested: ${{{{ steps['full-ci'].outputs.full_ci_requested }}}}
             steps:
+              - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
               - env:
                   HEAD_REF: ${{{{ github.head_ref }}}}
                 run: uv run --python 3.14 --no-project python tools/check_branch_name.py "$HEAD_REF"
@@ -150,6 +151,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             steps:
               - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
               - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+                with:
+                  enable-cache: true
+                  prune-cache: true
               - run: uv sync --extra dev --locked --python 3.14
               - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
                 with:
@@ -231,6 +235,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
           analyze:
             if: (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'full-ci')) || github.event.label.name == 'full-ci'
             steps:
+              - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
               - name: Initialize CodeQL
                 uses: github/codeql-action/init@1111111111111111111111111111111111111111
               - name: Perform CodeQL Analysis
@@ -250,6 +255,20 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         """,
     )
     _write(
+        root / ".github/dependabot.yml",
+        """
+        version: 2
+        updates:
+          - package-ecosystem: "github-actions"
+            directory: "/"
+            schedule:
+              interval: "weekly"
+            groups:
+              codeql:
+                patterns: ["github/codeql-action/*"]
+        """,
+    )
+    _write(
         root / ".github/workflows/sd-ai-command-pack-sync.yml",
         """
         on:
@@ -261,6 +280,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         jobs:
           sync:
             steps:
+              - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
               - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
                 with:
                   python-version: "3.14"
@@ -424,6 +444,196 @@ def test_real_repo_contract_is_clean() -> None:
 
 def test_minimal_contract_fixture_passes(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("action", "old_revision", "new_revision"),
+    [
+        (
+            "actions/checkout",
+            "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+            "3d3c42e5aac5ba805825da76410c181273ba90b1",
+        ),
+        (
+            "astral-sh/setup-uv",
+            "11f9893b081a58869d3b5fccaea48c9e9e46f990",
+            "c771a70e6277c0a99b617c7a806ffedaca235ff9",
+        ),
+    ],
+)
+def test_ci_action_revision_can_advance_when_all_uses_match(
+    tmp_path: Path,
+    action: str,
+    old_revision: str,
+    new_revision: str,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            f"{action}@{old_revision}",
+            f"{action}@{new_revision}",
+        ),
+        encoding="utf-8",
+    )
+    if action == "actions/checkout":
+        for relative in (
+            ".github/workflows/codeql.yml",
+            ".github/workflows/sd-ai-command-pack-sync.yml",
+        ):
+            workflow = tmp_path / relative
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    f"{action}@{old_revision}",
+                    f"{action}@{new_revision}",
+                ),
+                encoding="utf-8",
+            )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("action", "old_revision", "new_revision"),
+    [
+        (
+            "actions/checkout",
+            "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+            "3d3c42e5aac5ba805825da76410c181273ba90b1",
+        ),
+        (
+            "astral-sh/setup-uv",
+            "11f9893b081a58869d3b5fccaea48c9e9e46f990",
+            "c771a70e6277c0a99b617c7a806ffedaca235ff9",
+        ),
+    ],
+)
+def test_ci_action_revisions_must_match(
+    tmp_path: Path,
+    action: str,
+    old_revision: str,
+    new_revision: str,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            f"{action}@{old_revision}",
+            f"{action}@{new_revision}",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert f"{action} revisions must match" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("action", "revision"),
+    [
+        ("actions/checkout", "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"),
+        ("astral-sh/setup-uv", "11f9893b081a58869d3b5fccaea48c9e9e46f990"),
+    ],
+)
+def test_ci_action_revisions_must_use_full_commit_shas(
+    tmp_path: Path,
+    action: str,
+    revision: str,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            f"{action}@{revision}",
+            f"{action}@v-next",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert f"every {action} step must use a full 40-character commit SHA" in result.stderr
+
+
+def test_checkout_revisions_must_match_across_workflows(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    pack_sync = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
+    pack_sync.write_text(
+        pack_sync.read_text(encoding="utf-8").replace(
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "actions/checkout revisions must match across workflows" in result.stderr
+
+
+def test_setup_uv_cache_requires_explicit_pruning(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    before = ci.read_text(encoding="utf-8")
+    after = before.replace("prune-cache: true\n", "", 1)
+    assert after != before
+    ci.write_text(after, encoding="utf-8")
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "setup-uv cache-enabled step must set prune-cache: true" in result.stderr
+
+
+def test_codeql_dependabot_group_is_required(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    dependabot = tmp_path / ".github/dependabot.yml"
+    dependabot.write_text(
+        dependabot.read_text(encoding="utf-8").replace(
+            'patterns: ["github/codeql-action/*"]',
+            'patterns: ["actions/checkout"]',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "CodeQL action family pattern" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "patterns: ['github/codeql-action/*']",
+        'patterns: ["actions/checkout", "github/codeql-action/*"]',
+        "patterns:\n          - 'github/codeql-action/*'",
+    ],
+)
+def test_codeql_dependabot_group_accepts_equivalent_yaml(
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    dependabot = tmp_path / ".github/dependabot.yml"
+    dependabot.write_text(
+        dependabot.read_text(encoding="utf-8").replace(
+            'patterns: ["github/codeql-action/*"]',
+            replacement,
+        ),
+        encoding="utf-8",
+    )
 
     result = _run(str(tmp_path))
 

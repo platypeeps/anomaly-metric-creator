@@ -1889,3 +1889,84 @@ Installed immutable sd-ai-command-pack v0.54.0, repaired consumer compatibility 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 46: Repair CI dependency updates
+
+**Date**: 2026-07-27
+**Task**: Repair CI dependency updates
+**Package**: amc
+**Branch**: `codex/repair-ci-dependency-updates`
+
+### Summary
+
+Consolidated and repaired GitHub Actions dependency PRs, strengthened the CI contract, and completed two Copilot review rounds.
+
+### Main Changes
+
+- Updated checkout, setup-uv, and CodeQL action pins as one internally consistent change.
+- Preserved setup-uv cache pruning and grouped future CodeQL Dependabot updates.
+- Added durable contract checks, focused tests, and Trellis specification coverage.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `df2d133a9715971e81625e64ebe0452fa9d6d9c8` | fix(ci): make action updates contract-safe |
+| `b8a62e84d51a69dafc79d7f4277c95e801518eb0` | fix: address CI contract review feedback |
+
+### Testing
+
+- [OK] Focused CI contract and Ruff lockstep suites: 88 passed
+- [OK] Typed sd-check: 7 of 7 checks passed with an unchanged state guard
+- [OK] GitHub CI: all executed checks passed
+- [OK] Copilot re-review: no new comments; zero unresolved review threads
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge PR #307 through guarded housekeeping and close superseded PRs #302-#305.
+
+
+## Session 47: Recover CI dependency update lifecycle
+
+**Date**: 2026-07-27
+**Task**: Recover CI dependency update lifecycle
+**Package**: amc
+**Branch**: `codex/repair-ci-dependency-updates`
+
+### Summary
+
+Backfilled the missing Trellis task lifecycle for reviewed PR #307 and prepared guarded completion evidence without changing implementation.
+
+### Main Changes
+
+- Created and validated a focused PRD-only recovery task bound to the feature branch and main target.
+- Refreshed the repo-local generated KB and declared the task bookkeeping scope in the PR body.
+- Archived the task only after the canonical pre-archive validator returned pre_archive_valid.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ce65718` | docs(task): add CI dependency lifecycle recovery |
+
+### Testing
+
+- [OK] Trellis task validation passed
+- [OK] Typed sd-check: 7 of 7 checks passed with an unchanged state guard
+- [OK] Obsidian KB check: 419 expected copies, no conflicts
+- [OK] Pre-archive receipt: pre_archive_valid
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge PR #307 through guarded housekeeping and close superseded PRs #302-#305.
