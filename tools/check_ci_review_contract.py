@@ -78,6 +78,124 @@ _CODEQL_ACTION_PATTERN = re.compile(
 )
 
 
+def _single_pinned_action_revision(
+    text: str,
+    action: str,
+    *,
+    path: Path,
+    violations: list[str],
+) -> str | None:
+    """Return the shared full-SHA revision for every use of ``action``."""
+    pattern = re.compile(
+        rf"^\s*(?:-\s*)?uses:\s*{re.escape(action)}@([^\s#]+)(?:\s|$)",
+        re.MULTILINE,
+    )
+    revisions = pattern.findall(text)
+    if not revisions:
+        violations.append(f"{path}: expected at least one {action} step")
+        return None
+
+    unpinned = sorted(
+        revision
+        for revision in set(revisions)
+        if re.fullmatch(r"[0-9a-f]{40}", revision) is None
+    )
+    if unpinned:
+        violations.append(
+            f"{path}: every {action} step must use a full 40-character "
+            f"commit SHA; found {', '.join(unpinned)}"
+        )
+        return None
+
+    unique_revisions = sorted(set(revisions))
+    if len(unique_revisions) != 1:
+        violations.append(
+            f"{path}: {action} revisions must match: "
+            f"{', '.join(unique_revisions)}"
+        )
+        return None
+
+    return unique_revisions[0]
+
+
+def _shared_pinned_action_revisions(
+    root: Path,
+    texts: dict[str, str],
+    action: str,
+    keys: tuple[str, ...],
+    *,
+    violations: list[str],
+) -> dict[str, str]:
+    """Validate one pinned revision across the selected workflow files."""
+    revisions: dict[str, str] = {}
+    for key in keys:
+        revision = _single_pinned_action_revision(
+            texts[key],
+            action,
+            path=root / REQUIRED_FILES[key],
+            violations=violations,
+        )
+        if revision is not None:
+            revisions[key] = revision
+
+    if len(set(revisions.values())) > 1:
+        rendered = ", ".join(
+            f"{REQUIRED_FILES[key]}@{revision}"
+            for key, revision in revisions.items()
+        )
+        violations.append(
+            f"{root / '.github/workflows'}: {action} revisions must match "
+            f"across workflows: {rendered}"
+        )
+    return revisions
+
+
+def _check_setup_uv_cache_pruning(
+    path: Path,
+    text: str,
+    violations: list[str],
+) -> None:
+    """Require v8-equivalent pruning whenever setup-uv caching is enabled."""
+    lines = text.splitlines()
+    for action_index, action_line in enumerate(lines):
+        if "uses: astral-sh/setup-uv@" not in action_line:
+            continue
+
+        step_start = action_index
+        step_indent = None
+        for candidate in range(action_index, -1, -1):
+            match = re.match(r"^(?P<indent>\s*)-\s+", lines[candidate])
+            if match is not None:
+                step_start = candidate
+                step_indent = match.group("indent")
+                break
+
+        step_end = len(lines)
+        if step_indent is not None:
+            next_step = re.compile(rf"^{re.escape(step_indent)}-\s+")
+            for candidate in range(step_start + 1, len(lines)):
+                if next_step.match(lines[candidate]):
+                    step_end = candidate
+                    break
+
+        step_block = "\n".join(lines[step_start:step_end])
+        cache_enabled = re.search(
+            r"^\s*enable-cache:\s*true\s*(?:#.*)?$",
+            step_block,
+            re.MULTILINE,
+        )
+        pruning_enabled = re.search(
+            r"^\s*prune-cache:\s*true\s*(?:#.*)?$",
+            step_block,
+            re.MULTILINE,
+        )
+        if cache_enabled is not None and pruning_enabled is None:
+            violations.append(
+                f"{path}:{action_index + 1}: setup-uv cache-enabled step "
+                "must set prune-cache: true"
+            )
+
+
 def _read(path: Path) -> tuple[str | None, str | None]:
     try:
         return path.read_text(encoding="utf-8"), None
@@ -133,7 +251,21 @@ def _yaml_mapping_block(text: str, key: str) -> str | None:
     return text[match.start() : end]
 
 
-def _check_ci(path: Path, text: str, violations: list[str]) -> None:
+def _check_ci(
+    path: Path,
+    text: str,
+    violations: list[str],
+    *,
+    checkout_revision: str | None,
+) -> None:
+    setup_uv_revision = _single_pinned_action_revision(
+        text,
+        "astral-sh/setup-uv",
+        path=path,
+        violations=violations,
+    )
+    _check_setup_uv_cache_pruning(path, text, violations)
+
     for label, needle in [
         ("change classifier job", "changes:"),
         ("lightweight lane", "lightweight_readiness:"),
@@ -382,16 +514,8 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             label="coverage combine job-level condition (must use default success dependency semantics)",
             violations=violations,
         )
-        for label, needle in [
+        coverage_requirements = [
             ("coverage combine dependencies", "needs: [test_heavy, test_light]"),
-            (
-                "coverage combine checkout",
-                "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
-            ),
-            (
-                "coverage combine uv setup",
-                "astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990",
-            ),
             ("coverage combine locked sync", "uv sync --extra dev --locked --python 3.14"),
             ("heavy coverage input", "mv coverage-data/coverage-heavy .coverage.heavy"),
             ("light coverage input", "mv coverage-data/coverage-light .coverage.light"),
@@ -399,7 +523,23 @@ def _check_ci(path: Path, text: str, violations: list[str]) -> None:
             ("coverage XML generation", "coverage xml"),
             ("coverage threshold report", "coverage report --fail-under=85"),
             ("coverage report cancellation-safe upload", "if: ${{ !cancelled() }}"),
-        ]:
+        ]
+        if checkout_revision is not None:
+            coverage_requirements.append(
+                (
+                    "coverage combine checkout",
+                    f"actions/checkout@{checkout_revision}",
+                )
+            )
+        if setup_uv_revision is not None:
+            coverage_requirements.append(
+                (
+                    "coverage combine uv setup",
+                    f"astral-sh/setup-uv@{setup_uv_revision}",
+                )
+            )
+
+        for label, needle in coverage_requirements:
             _require_contains(
                 coverage_block,
                 needle,
@@ -829,7 +969,19 @@ def check(root: Path) -> tuple[int, list[str]]:
         return 2, errors
 
     violations: list[str] = []
-    _check_ci(root / REQUIRED_FILES["ci"], texts["ci"], violations)
+    checkout_revisions = _shared_pinned_action_revisions(
+        root,
+        texts,
+        "actions/checkout",
+        ("ci", "codeql", "pack_sync"),
+        violations=violations,
+    )
+    _check_ci(
+        root / REQUIRED_FILES["ci"],
+        texts["ci"],
+        violations,
+        checkout_revision=checkout_revisions.get("ci"),
+    )
     _check_codeql(root / REQUIRED_FILES["codeql"], texts["codeql"], violations)
     _check_socket(root / REQUIRED_FILES["ci"], texts["ci"], violations)
     _check_dependabot(root / REQUIRED_FILES["dependabot"], texts["dependabot"], violations)
