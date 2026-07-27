@@ -101,7 +101,7 @@ is_trellis_runtime_path() {
     .claude/agents/trellis-*.md|.codebuddy/agents/trellis-*.md|.cursor/agents/trellis-*.md|.factory/droids/trellis-*.md|.gemini/agents/trellis-*.md|\
     .kiro/agents/trellis*.json|.opencode/agents/trellis-*.md|.pi/agents/trellis-*.md|.qoder/agents/trellis-*.md|.trae/agents/trellis-*.md|\
     .zcode/agents/trellis-*.md|.zcode/cli/agents/trellis-*.md|.codex/agents/trellis-*.toml|.codex/config.toml|.codex/hooks.json|.codex/hooks/*|\
-    .codebuddy/settings.json|.factory/settings.json|.pi/settings.json|.qoder/settings.json|\
+    .claude/settings.json|.codebuddy/settings.json|.factory/settings.json|.pi/settings.json|.qoder/settings.json|\
     .github/agents/trellis-*.agent.md)
       return 0
       ;;

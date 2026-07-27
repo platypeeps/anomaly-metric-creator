@@ -37,7 +37,7 @@ The content is organized as follows:
 Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
 
 # Directory Structure
-````
+```
 .agents/
   skills/
     amc-server-compatibility/
@@ -839,11 +839,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-26-refresh-sd-ai-command-pack-0-54-0/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1206,6 +1201,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-26-refresh-sd-ai-command-pack-0-54-0/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
   workspace/
     sdelmas/
       index.md
@@ -1405,4 +1405,4 @@ CLAUDE.md
 pyproject.toml
 README.md
 SECURITY.md
-````
+```

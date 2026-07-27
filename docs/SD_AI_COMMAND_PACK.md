@@ -1944,8 +1944,10 @@ Trellis local/runtime files such as `.trellis/.developer`,
 `.trellis/.runtime/`, `.trellis/.cache/`, Trellis backup directories,
 `.trellis/worktrees/`, and `.trellis/.template-hashes.json` without
 blanket-ignoring shareable `.trellis` workflow, spec, task, and script files.
-It also keeps shared Claude SD commands trackable while ignoring the rest of
-`.claude/` as local Claude Code state. Other AI-tool local state such as tool
+It keeps shareable `.claude/` adapter files — SD commands, the planning-review
+rule, and Trellis runtime, agents, settings, and skills — trackable while
+ignoring only local Claude Code state (`settings.local.json`, caches, logs,
+tmp). Other AI-tool local state such as tool
 caches, logs, sessions, tmp folders, Gito report/temp artifacts,
 tool-specific local state, `.opencode/node_modules/`, and root
 `node_modules/` are ignored without blanket-ignoring shareable non-Claude
@@ -1999,11 +2001,11 @@ sd-ai-command-pack-uv-tools/
 # .cursor/, .devin/, .factory/, .gemini/, .gito/, .kiro/, .kilocode/,
 # .opencode/, .pi/, .qoder/, .reasonix/, .trae/, .zcode/), with a few extras
 # (.codex/ + .opencode/ sessions/, .opencode/ state/ + node_modules/, .gemini/
-# + .claude/ settings.local.json). .claude/ is handled differently: it ignores
-# .claude/** while negating tracked .claude/commands/sd/*.md, the thin
-# planning-review rule, and its pack-owned support contract. A normal install
-# regenerates this managed block; --local-only writes the equivalent patterns
-# to .git/info/exclude instead.
+# + .claude/ settings.local.json). .claude/ uses the same commit-by-default
+# deny-list as the others, so Trellis runtime, agents, settings.json, and
+# skills are tracked; only settings.local.json and local state are ignored.
+# A normal install regenerates this managed block; --local-only writes the
+# equivalent patterns to .git/info/exclude instead.
 node_modules/
 
 # Project-local personal ignores can be added below this managed block.

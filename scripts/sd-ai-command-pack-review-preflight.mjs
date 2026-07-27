@@ -3205,6 +3205,7 @@ function isTrellisCopiedPath(path) {
     /^\.qoder\/commands\/trellis-[^/]+\.md$/.test(path) ||
     /^\.trae\/commands\/trellis-[^/]+\.md$/.test(path) ||
     path.startsWith('.zcode/commands/trellis/') ||
+    path === '.claude/settings.json' ||
     path.startsWith('.codebuddy/hooks/') ||
     path === '.codebuddy/settings.json' ||
     path.startsWith('.factory/hooks/') ||
