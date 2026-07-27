@@ -33,6 +33,7 @@ REQUIRED_FILES = {
     "ci": Path(".github/workflows/ci.yml"),
     "codeql": Path(".github/workflows/codeql.yml"),
     "dependabot": Path(".github/workflows/dependabot-auto-merge.yml"),
+    "dependabot_config": Path(".github/dependabot.yml"),
     "pack_sync": Path(".github/workflows/sd-ai-command-pack-sync.yml"),
     "pyproject": Path("pyproject.toml"),
     "precommit": Path(".pre-commit-config.yaml"),
@@ -249,6 +250,63 @@ def _yaml_mapping_block(text: str, key: str) -> str | None:
     )
     end = match.end() + next_entry.start() if next_entry is not None else len(text)
     return text[match.start() : end]
+
+
+def _yaml_list_item_block(text: str, key: str, value: str) -> str | None:
+    """Return a YAML list item and its nested block, selected by a scalar."""
+    match = re.search(
+        rf"^(?P<indent>[ \t]*)-\s+{re.escape(key)}:\s*[\"']?"
+        rf"{re.escape(value)}[\"']?\s*(?:#[^\n]*)?$",
+        text,
+        re.MULTILINE,
+    )
+    if match is None:
+        return None
+
+    indent = match.group("indent")
+    next_item = re.search(
+        rf"^{re.escape(indent)}-\s+\S",
+        text[match.end() :],
+        re.MULTILINE,
+    )
+    end = match.end() + next_item.start() if next_item is not None else len(text)
+    return text[match.start() : end]
+
+
+def _yaml_string_list_contains(text: str, key: str, value: str) -> bool:
+    """Return whether an inline or block-style YAML string list contains a value."""
+    inline = re.search(
+        rf"^\s*{re.escape(key)}:\s*\[(?P<items>[^\]]*)\]\s*(?:#[^\n]*)?$",
+        text,
+        re.MULTILINE,
+    )
+    if inline is not None:
+        items = [
+            item.strip().strip("\"'")
+            for item in inline.group("items").split(",")
+        ]
+        return value in items
+
+    block = re.search(
+        rf"^(?P<indent>[ \t]*){re.escape(key)}:\s*(?:#[^\n]*)?$",
+        text,
+        re.MULTILINE,
+    )
+    if block is None:
+        return False
+
+    indent = block.group("indent")
+    next_key = re.search(
+        rf"^{re.escape(indent)}\S[^:\n]*:\s*(?:#[^\n]*)?$",
+        text[block.end() :],
+        re.MULTILINE,
+    )
+    end = block.end() + next_key.start() if next_key is not None else len(text)
+    for line in text[block.end() : end].splitlines():
+        item = re.match(r"^\s+-\s*(?P<value>[^#]+?)\s*(?:#.*)?$", line)
+        if item is not None and item.group("value").strip().strip("\"'") == value:
+            return True
+    return False
 
 
 def _check_ci(
@@ -760,6 +818,38 @@ def _check_dependabot(path: Path, text: str, violations: list[str]) -> None:
     )
 
 
+def _check_dependabot_config(
+    path: Path,
+    text: str,
+    violations: list[str],
+) -> None:
+    github_actions = _yaml_list_item_block(
+        text,
+        "package-ecosystem",
+        "github-actions",
+    )
+    if github_actions is None:
+        violations.append(f"{path}: cannot inspect github-actions update block")
+        return
+
+    groups = _yaml_mapping_block(github_actions, "groups")
+    if groups is None:
+        violations.append(f"{path}: missing GitHub Actions dependency groups")
+        return
+
+    codeql = _yaml_mapping_block(groups, "codeql")
+    if codeql is None:
+        violations.append(f"{path}: missing CodeQL dependency group")
+        return
+
+    if not _yaml_string_list_contains(
+        codeql,
+        "patterns",
+        "github/codeql-action/*",
+    ):
+        violations.append(f"{path}: missing CodeQL action family pattern")
+
+
 def _check_pack_sync(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("weekly schedule", "cron: '17 9 * * 1'"),
@@ -985,6 +1075,11 @@ def check(root: Path) -> tuple[int, list[str]]:
     _check_codeql(root / REQUIRED_FILES["codeql"], texts["codeql"], violations)
     _check_socket(root / REQUIRED_FILES["ci"], texts["ci"], violations)
     _check_dependabot(root / REQUIRED_FILES["dependabot"], texts["dependabot"], violations)
+    _check_dependabot_config(
+        root / REQUIRED_FILES["dependabot_config"],
+        texts["dependabot_config"],
+        violations,
+    )
     _check_pack_sync(root / REQUIRED_FILES["pack_sync"], texts["pack_sync"], violations)
     _check_pyproject(root / REQUIRED_FILES["pyproject"], texts["pyproject"], violations)
     _check_precommit(root / REQUIRED_FILES["precommit"], texts["precommit"], violations)

@@ -255,6 +255,20 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         """,
     )
     _write(
+        root / ".github/dependabot.yml",
+        """
+        version: 2
+        updates:
+          - package-ecosystem: "github-actions"
+            directory: "/"
+            schedule:
+              interval: "weekly"
+            groups:
+              codeql:
+                patterns: ["github/codeql-action/*"]
+        """,
+    )
+    _write(
         root / ".github/workflows/sd-ai-command-pack-sync.yml",
         """
         on:
@@ -580,6 +594,50 @@ def test_setup_uv_cache_requires_explicit_pruning(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "setup-uv cache-enabled step must set prune-cache: true" in result.stderr
+
+
+def test_codeql_dependabot_group_is_required(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    dependabot = tmp_path / ".github/dependabot.yml"
+    dependabot.write_text(
+        dependabot.read_text(encoding="utf-8").replace(
+            'patterns: ["github/codeql-action/*"]',
+            'patterns: ["actions/checkout"]',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "CodeQL action family pattern" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "patterns: ['github/codeql-action/*']",
+        'patterns: ["actions/checkout", "github/codeql-action/*"]',
+        "patterns:\n          - 'github/codeql-action/*'",
+    ],
+)
+def test_codeql_dependabot_group_accepts_equivalent_yaml(
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    dependabot = tmp_path / ".github/dependabot.yml"
+    dependabot.write_text(
+        dependabot.read_text(encoding="utf-8").replace(
+            'patterns: ["github/codeql-action/*"]',
+            replacement,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_missing_ci_lane_fails(tmp_path: Path) -> None:
