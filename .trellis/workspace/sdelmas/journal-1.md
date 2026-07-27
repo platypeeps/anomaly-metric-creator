@@ -1930,3 +1930,43 @@ Consolidated and repaired GitHub Actions dependency PRs, strengthened the CI con
 ### Next Steps
 
 - Merge PR #307 through guarded housekeeping and close superseded PRs #302-#305.
+
+
+## Session 47: Recover CI dependency update lifecycle
+
+**Date**: 2026-07-27
+**Task**: Recover CI dependency update lifecycle
+**Package**: amc
+**Branch**: `codex/repair-ci-dependency-updates`
+
+### Summary
+
+Backfilled the missing Trellis task lifecycle for reviewed PR #307 and prepared guarded completion evidence without changing implementation.
+
+### Main Changes
+
+- Created and validated a focused PRD-only recovery task bound to the feature branch and main target.
+- Refreshed the repo-local generated KB and declared the task bookkeeping scope in the PR body.
+- Archived the task only after the canonical pre-archive validator returned pre_archive_valid.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ce65718` | docs(task): add CI dependency lifecycle recovery |
+
+### Testing
+
+- [OK] Trellis task validation passed
+- [OK] Typed sd-check: 7 of 7 checks passed with an unchanged state guard
+- [OK] Obsidian KB check: 419 expected copies, no conflicts
+- [OK] Pre-archive receipt: pre_archive_valid
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge PR #307 through guarded housekeeping and close superseded PRs #302-#305.

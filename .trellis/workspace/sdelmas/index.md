@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 46
+- **Total Sessions**: 47
 - **Last Active**: 2026-07-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1929 | Active |
+| `journal-1.md` | ~1969 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 47 | 2026-07-27 | Recover CI dependency update lifecycle | `ce65718` | `codex/repair-ci-dependency-updates` |
 | 46 | 2026-07-27 | Repair CI dependency updates | `df2d133a9715971e81625e64ebe0452fa9d6d9c8`, `b8a62e84d51a69dafc79d7f4277c95e801518eb0` | `codex/repair-ci-dependency-updates` |
 | 45 | 2026-07-26 | Refresh sd-ai-command-pack to 0.54.0 | `338ed11a9d823de081bc5c69b401e18175d657de`, `7ad0fa85749dc6251c996480dac0a120720affea`, `4417acc72faf4e2fa31977e48cc9d2cebd8f815c`, `09c8c4231c73dc285c14b6825b05c9fccb934166` | `codex/refresh-sd-ai-command-pack-0-54-0` |
 | 44 | 2026-07-22 | Update SD AI command pack to 0.30.6 | `6278825cdf0d8e2e31a6dd5357d65a0aeab1bd03`, `74497345df082ec8de0e0833a204123dd17e3bce` | `codex/update-sd-ai-command-pack-0-30-4` |
