@@ -50,6 +50,11 @@ updates:
       timezone: "America/Denver"
     commit-message:
       prefix: "ci(deps)"
+    groups:
+      # CodeQL's init and analyze actions must use the same revision. Group
+      # them so Dependabot never opens two individually unmergeable PRs.
+      codeql:
+        patterns: ["github/codeql-action/*"]
 
   # OpenCode adapter plugin manifest — keep the committed tool integration
   # dependency fresh without mixing it into the product dependency PR.

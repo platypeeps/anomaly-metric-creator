@@ -335,6 +335,95 @@ there is no older declared floor and no multi-version lane. Sources:
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
+## Scenario: GitHub Actions dependency pin updates
+
+### 1. Scope / Trigger
+
+- Trigger: any update to `actions/checkout`, `astral-sh/setup-uv`, or either
+  `github/codeql-action` step in the repository workflows.
+- This is an infrastructure contract spanning workflow execution, Dependabot
+  grouping, cache behavior, and the local CI review guard.
+
+### 2. Signatures
+
+- Workflow action reference: `uses: <owner>/<action>@<40-lowercase-hex-SHA>`.
+- Uniform-pin guard: `_single_pinned_action_revision(text, action, *, path,
+  violations) -> str | None`.
+- CodeQL Dependabot group: `patterns: ["github/codeql-action/*"]`.
+
+### 3. Contracts
+
+- Every `actions/checkout` use in `.github/workflows/ci.yml` must share one
+  full commit SHA. Every `astral-sh/setup-uv` use in that workflow must also
+  share one full commit SHA. The guard derives the accepted revision from the
+  workflow instead of hard-coding today's dependency version.
+- The coverage-combine job must use those same derived checkout and setup-uv
+  revisions. A partial update is invalid even when each individual reference
+  is pinned.
+- CodeQL `init` and `analyze` must share one full commit SHA, and Dependabot
+  must group `github/codeql-action/*` so its generated update is mergeable as
+  one unit.
+- setup-uv v9 changes the `prune-cache` default to `false`. Every CI step that
+  sets `enable-cache: true` must also set `prune-cache: true` to preserve the
+  repository's prior cache-size behavior explicitly.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Action uses a tag or short SHA | CI review contract fails with the offending revision |
+| Same action has two full SHAs in `ci.yml` | CI review contract fails with both revisions |
+| Coverage combine uses a different checkout or setup-uv SHA | CI review contract fails before remote CI |
+| CodeQL init/analyze differ | CI review contract fails; do not merge either half |
+| setup-uv cache enabled without explicit pruning | Treat as an unreviewed cache-cost behavior change |
+
+### 5. Good/Base/Bad Cases
+
+- Good: all checkout uses move to one new full SHA, all setup-uv uses move to
+  one new full SHA, cached setup-uv steps retain `prune-cache: true`, and both
+  CodeQL actions move together.
+- Base: an unrelated workflow edit leaves all existing action revisions
+  unchanged and uniform.
+- Bad: one Dependabot PR updates CodeQL `init` while `analyze` remains on the
+  previous SHA, or the contract checker is edited to bless a specific current
+  dependency SHA.
+
+### 6. Tests Required
+
+- `tests/test_ci_review_contract.py` must prove a complete action SHA advance
+  passes, mixed revisions fail, non-SHA references fail, and CodeQL
+  init/analyze drift fails.
+- `test_real_repo_contract_is_clean` must run against the edited live tree.
+- Workflow dependency changes require the repository full gate and the remote
+  full CI lane before merge.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```yaml
+- uses: astral-sh/setup-uv@v9
+- uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+- uses: actions/checkout@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+```
+
+Correct:
+
+```yaml
+- uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+  with:
+    enable-cache: true
+    prune-cache: true
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+```
+
+The correct form preserves supply-chain pinning and behavior while allowing a
+complete future dependency update to advance without editing the guard's
+source. Sources: `.github/workflows/ci.yml`;
+`.github/workflows/codeql.yml`; `.github/dependabot.yml`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`;
+`https://github.com/astral-sh/setup-uv/releases/tag/v9.0.0`.
+
 ## Scenario: CI event and lightweight guard contract
 
 ### 1. Scope / Trigger
