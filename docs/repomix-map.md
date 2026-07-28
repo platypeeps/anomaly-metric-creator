@@ -934,11 +934,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-27-replace-ruff-dependabot-pr-300/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1316,6 +1311,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           design.md
           implement.jsonl
           implement.md
+          prd.md
+          task.json
+        07-27-replace-ruff-dependabot-pr-300/
+          check.jsonl
+          implement.jsonl
           prd.md
           task.json
   workspace/
