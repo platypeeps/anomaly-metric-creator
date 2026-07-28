@@ -309,6 +309,64 @@ def _yaml_string_list_contains(text: str, key: str, value: str) -> bool:
     return False
 
 
+def _check_lightweight_uv_cache_permissions(
+    path: Path,
+    text: str,
+    violations: list[str],
+) -> None:
+    """Require a private setup-uv cache before pack-backed lightweight guards."""
+    block = _yaml_mapping_block(text, "lightweight_readiness")
+    if block is None:
+        return
+
+    setup_marker = "name: Set up uv for lightweight guards"
+    permission_marker = "name: Harden uv cache permissions for pack subprocess guards"
+    guard_marker = "name: Syntax and Trellis artifact guards"
+    permission_command = 'install -d -m 0700 -- "$UV_CACHE_DIR"'
+
+    _require_contains(
+        block,
+        setup_marker,
+        path=path,
+        label="lightweight uv setup step",
+        violations=violations,
+    )
+    _require_contains(
+        block,
+        permission_marker,
+        path=path,
+        label="lightweight uv cache permission step",
+        violations=violations,
+    )
+    _require_contains(
+        block,
+        permission_command,
+        path=path,
+        label="lightweight uv cache private-directory command",
+        violations=violations,
+    )
+    _require_contains(
+        block,
+        guard_marker,
+        path=path,
+        label="lightweight Syntax and Trellis guard step",
+        violations=violations,
+    )
+
+    positions = tuple(
+        block.find(marker)
+        for marker in (setup_marker, permission_marker, guard_marker)
+    )
+    if (
+        all(position >= 0 for position in positions)
+        and positions != tuple(sorted(positions))
+    ):
+        violations.append(
+            f"{path}: lightweight uv cache permission step must run after "
+            "setup-uv and before the Syntax and Trellis artifact guards"
+        )
+
+
 def _check_ci(
     path: Path,
     text: str,
@@ -323,6 +381,7 @@ def _check_ci(
         violations=violations,
     )
     _check_setup_uv_cache_pruning(path, text, violations)
+    _check_lightweight_uv_cache_permissions(path, text, violations)
 
     for label, needle in [
         ("change classifier job", "changes:"),
