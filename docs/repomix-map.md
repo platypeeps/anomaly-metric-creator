@@ -934,13 +934,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-27-repair-sd-pack-refresh-pr-306/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1313,10 +1306,18 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        07-27-repair-sd-pack-refresh-pr-306/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
   workspace/
     sdelmas/
       index.md
       journal-1.md
+      journal-2.md
     index.md
   .gitignore
   .version
