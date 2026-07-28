@@ -91,10 +91,11 @@ bash scripts/sd-ai-command-pack-toolchain.sh run-python -- scripts/sd-ai-command
 
 - The structured-input, subprocess, environment, filesystem, normalization,
   and diagnostic-redaction categories come from newly tracked generated
-  Trellis Claude hooks and skills, not new AMC runtime behavior. Their source
-  surfaces were preserved, portable-path/secret scanned, and will be covered
-  by the repository hook lint, command-pack audit, deterministic check, and
-  remote review gates.
+  Trellis Claude hooks and skills, not new AMC runtime behavior. Their generated
+  surfaces were portable-path/secret scanned; four fail-open/fall-through
+  handlers gained explanatory comments required by the repository hook policy,
+  with no behavior change. Repository hook lint, command-pack audit,
+  deterministic check, and remote review cover the integration.
 - The large authored-line advisory is generated-surface volume: 69 shareable
   Claude adapters and skills became trackable under the existing ignore-policy
   change. The payload is intentionally kept together so reviewers can verify

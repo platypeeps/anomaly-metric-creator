@@ -200,12 +200,12 @@ def _parse_resets_at(value: object) -> int:
         try:
             return int(float(value))
         except ValueError:
-            pass
+            pass  # Fall through to ISO-8601 parsing.
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return int(parsed.timestamp())
         except ValueError:
-            pass
+            pass  # Invalid reset values intentionally omit the countdown.
     return 0
 
 

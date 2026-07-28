@@ -182,7 +182,7 @@ def read_directory_contents(
             except Exception:
                 continue
     except Exception:
-        pass
+        pass  # Optional context directory; retain any files read before failure.
 
     return results
 
@@ -243,7 +243,7 @@ def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[tuple[str, str]]
                 except json.JSONDecodeError:
                     continue
     except Exception:
-        pass
+        pass  # Optional context; the warning below preserves fail-open behavior.
 
     if not saw_real_entry:
         print(
