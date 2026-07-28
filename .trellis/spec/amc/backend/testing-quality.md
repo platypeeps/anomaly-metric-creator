@@ -439,6 +439,9 @@ source. Sources: `.github/workflows/ci.yml`;
   [--github-output] changed-files.txt`.
 - Lightweight Python guard: `uv run --python 3.14 --no-project python
   <stdlib-only-check> [paths...]`.
+- Lightweight cache boundary: run
+  `install -d -m 0700 -- "$UV_CACHE_DIR"` after `setup-uv` and before any
+  pack-backed Python guard.
 - Shell syntax gate: `bash -n <review-tooling-shell-scripts...>`.
 
 ### 3. Contracts
@@ -457,6 +460,10 @@ source. Sources: `.github/workflows/ci.yml`;
 - Python syntax coverage includes top-level `scripts/*.py`. Both the workflow
   and pre-commit shell gates cover `sd-ai-command-pack-toolchain.sh` and
   `sd-ai-command-pack-shell-lib.sh`.
+- `setup-uv` may expose a cache directory with group/other permissions. The
+  lightweight lane must make that inherited override private before a guard
+  imports `sd_ai_command_pack_lib`; the library's fail-closed cache boundary
+  remains unchanged.
 
 ### 4. Validation & Error Matrix
 
@@ -467,15 +474,18 @@ source. Sources: `.github/workflows/ci.yml`;
 | Pack metadata or Trellis audit artifact only | lightweight lane |
 | Dependency or workflow path mixed into that diff | full application lane |
 | Python guard cannot run under managed 3.14 | lightweight job fails |
+| Inherited `UV_CACHE_DIR` permits group/other access | harden it to `0700` before pack-backed guards; never relax the library check |
 | Toolchain/shared-library shell syntax is invalid | local and remote syntax gates fail |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `.sd-ai-command-pack/manifest.json` plus
-  `.trellis/audit/ledger.md` stays lightweight and reports review tooling.
+  `.trellis/audit/ledger.md` stays lightweight, the uv cache is private, and
+  the lane reports review tooling.
 - Base: an ordinary runtime Python diff remains application-required.
 - Bad: a docs-only manual dispatch remains lightweight, or a non-`full-ci`
-  label on an armed PR rebuilds the required context from the quick lane.
+  label on an armed PR rebuilds the required context from the quick lane, or
+  pack-backed guards inherit a group/other-accessible uv cache.
 
 ### 6. Tests Required
 
@@ -483,7 +493,8 @@ source. Sources: `.github/workflows/ci.yml`;
   runtime/dependency/workflow negative cases.
 - `tests/test_ci_review_contract.py` mutation-tests the labeled auto-merge
   clause, manual-dispatch force-app, every managed-Python lightweight guard
-  command, and both syntax lists against the live repository.
+  command, private-cache setup ordering, and both syntax lists against the live
+  repository.
 - `tests/test_python_syntax_lint.py` parses all tracked Python under
   `scripts/`, `src/`, `tests/`, `tools/`, and generated hook roots.
 
@@ -492,6 +503,9 @@ source. Sources: `.github/workflows/ci.yml`;
 Wrong:
 
 ```bash
+# setup-uv cache permissions are inherited unchanged.
+uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
+
 # Manual dispatch can leave a docs-only diff app_required=false.
 bash scripts/classify-ci-changes.sh --github-output changed-files.txt
 
@@ -504,6 +518,9 @@ fi
 Correct:
 
 ```bash
+install -d -m 0700 -- "$UV_CACHE_DIR"
+uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
+
 classifier_args=(--github-output)
 if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
   classifier_args+=(--force-app)

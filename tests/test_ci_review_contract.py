@@ -84,9 +84,12 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             steps:
               - name: Set up uv for lightweight guards
                 uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+              - name: Harden uv cache permissions for pack subprocess guards
+                run: install -d -m 0700 -- "$UV_CACHE_DIR"
               - run: git diff --check "origin/$BASE_REF...HEAD"
               - run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
-              - run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
+              - name: Syntax and Trellis artifact guards
+                run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
               - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
               - run: uv run --python 3.14 --no-project python tools/check_workflow_pip.py
               - run: uv run --python 3.14 --no-project python tools/check_trellis_placeholders.py
@@ -1292,6 +1295,46 @@ def test_lightweight_guards_require_pinned_python(tmp_path: Path) -> None:
 
         assert result.returncode == 1
         assert f"pinned Python lightweight guard ({guard})" in result.stderr
+
+
+def test_lightweight_uv_cache_must_be_private_before_guards(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            'install -d -m 0700 -- "$UV_CACHE_DIR"',
+            ': # private cache setup removed',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "lightweight uv cache private-directory command" in result.stderr
+
+
+def test_lightweight_uv_cache_hardening_must_precede_guards(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    permission_step = (
+        "      - name: Harden uv cache permissions for pack subprocess guards\n"
+        "        run: install -d -m 0700 -- \"$UV_CACHE_DIR\""
+    )
+    text = text.replace(f"{permission_step}\n", "", 1)
+    guard_run = (
+        "        run: git ls-files 'scripts/*.py' 'tools/*.py' "
+        "'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' "
+        "'.gemini/hooks/*.py'"
+    )
+    text = text.replace(guard_run, f"{guard_run}\n{permission_step}", 1)
+    ci.write_text(text, encoding="utf-8")
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "must run after setup-uv and before" in result.stderr
 
 
 def test_ci_shell_syntax_must_cover_command_pack_entrypoints(tmp_path: Path) -> None:
