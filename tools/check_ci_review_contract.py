@@ -326,6 +326,13 @@ def _check_lightweight_uv_cache_permissions(
 
     _require_contains(
         block,
+        setup_marker,
+        path=path,
+        label="lightweight uv setup step",
+        violations=violations,
+    )
+    _require_contains(
+        block,
         permission_marker,
         path=path,
         label="lightweight uv cache permission step",
@@ -336,6 +343,13 @@ def _check_lightweight_uv_cache_permissions(
         permission_command,
         path=path,
         label="lightweight uv cache private-directory command",
+        violations=violations,
+    )
+    _require_contains(
+        block,
+        guard_marker,
+        path=path,
+        label="lightweight Syntax and Trellis guard step",
         violations=violations,
     )
 

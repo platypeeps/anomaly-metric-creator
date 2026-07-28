@@ -1337,6 +1337,34 @@ def test_lightweight_uv_cache_hardening_must_precede_guards(tmp_path: Path) -> N
     assert "must run after setup-uv and before" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("marker", "label"),
+    (
+        ("name: Set up uv for lightweight guards", "lightweight uv setup step"),
+        (
+            "name: Syntax and Trellis artifact guards",
+            "lightweight Syntax and Trellis guard step",
+        ),
+    ),
+)
+def test_lightweight_uv_cache_ordering_markers_are_required(
+    tmp_path: Path,
+    marker: str,
+    label: str,
+) -> None:
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(marker, "name: renamed step", 1),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert label in result.stderr
+
+
 def test_ci_shell_syntax_must_cover_command_pack_entrypoints(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
     ci = tmp_path / ".github/workflows/ci.yml"
