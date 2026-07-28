@@ -249,7 +249,10 @@ it. Use a separate request to execute the recommendation.
    during the loop, unless the user explicitly asked for local-only review or
    the trusted fleet workflow proves the exact consumer head qualifies for
    integration-only review. That profile suppresses only a new request and
-   still inspects all existing feedback, local gates, and CI.
+   still inspects all existing feedback, local gates, and CI. The workflow
+   invocation is already explicit approval for these in-scope review-fix
+   commits, PR-branch pushes, and configured GitHub review requests or
+   re-requests; do not insert a second approval prompt for them.
 13. Let both the successor `sd-review` workflow and the transitional
    `sd-review-pr` workflow reply to and resolve review threads as part of their
    normal loops once findings are fixed, rebutted with evidence, or confirmed
@@ -396,7 +399,11 @@ portable structured-question contract. Claude uses `AskUserQuestion`; other
 hosts use a native structured capability only when available and otherwise ask
 one concise plain question or apply the decision's stop, park, or report-only
 behavior. The contract does not add confirmations for routine actions already
-authorized by the invocation, and no answer can override a safety gate.
+authorized by the invocation. For publication and review workflows, that
+standing authority includes in-scope commits, pushes to the current PR branch,
+and configured GitHub review requests or re-requests; do not ask for another
+approval solely to send the diff/code through normal GitHub review. No answer
+can override a safety gate.
 
 Claude Code and Gemini CLI:
 
@@ -975,6 +982,16 @@ command surfaces, data flow, persistence, external integrations, config/env, or
 runtime/deployment topology, the wrapper updates it. Otherwise it leaves the
 overview untouched and reports `not present` or `not warranted`.
 
+When that work creates or materially updates a workflow, architecture,
+sequence, data-flow, lifecycle/state, or similar technical visual that belongs
+in the repository documentation, the architecture extension prefers the
+`archify` skill when it is available. Archify supplies the matching renderer
+and deterministic validation/delivery workflow while the target repository
+continues to own the document format, artifact location, and naming. Archify is
+not a required pack dependency: if it is unavailable, update-spec continues
+with documented repo-native visual tooling or the existing manual format and
+reports the fallback. No visual is created merely because Archify is present.
+
 The canonical update-spec skill keeps routine Trellis delegation, extension
 ordering, the normal KB command, safety, and final reporting inline. It loads no
 optional reference for a routine spec-only pass. Existing repository-map
@@ -1273,6 +1290,13 @@ names such as `loadsmith rwbp-website`, or `consumer=a,b`, filter the run;
 `no-merge` stops before merging, `dry-run` reports preflight only, and
 `remote-review` forces normal remote review, while `remote=<name>` selects the
 release-authority Git remote (default `origin`).
+Invoking normal merge-capable mode is standing approval for every eligible,
+controller-issued consumer housekeeping merge, including after in-scope
+review findings are addressed; the workflow does not ask again before those
+serialized merges. This changes no gate: exact-head review, CI, thread state,
+finish-work, housekeeping eligibility, and post-merge verification must all
+pass. `no-merge` is the explicit opt-out when the operator wants PR-open
+completion instead of an end-to-end rollout.
 In `no-merge` mode the source scheduler accepts PR-open canaries as settled,
 holds all merges, and emits no merge candidate; normal mode still requires
 canaries to be at-target or merged.
@@ -1944,8 +1968,10 @@ Trellis local/runtime files such as `.trellis/.developer`,
 `.trellis/.runtime/`, `.trellis/.cache/`, Trellis backup directories,
 `.trellis/worktrees/`, and `.trellis/.template-hashes.json` without
 blanket-ignoring shareable `.trellis` workflow, spec, task, and script files.
-It also keeps shared Claude SD commands trackable while ignoring the rest of
-`.claude/` as local Claude Code state. Other AI-tool local state such as tool
+It keeps shareable `.claude/` adapter files — SD commands, the planning-review
+rule, and Trellis runtime, agents, settings, and skills — trackable while
+ignoring only local Claude Code state (`settings.local.json`, caches, logs,
+tmp). Other AI-tool local state such as tool
 caches, logs, sessions, tmp folders, Gito report/temp artifacts,
 tool-specific local state, `.opencode/node_modules/`, and root
 `node_modules/` are ignored without blanket-ignoring shareable non-Claude
@@ -1999,11 +2025,11 @@ sd-ai-command-pack-uv-tools/
 # .cursor/, .devin/, .factory/, .gemini/, .gito/, .kiro/, .kilocode/,
 # .opencode/, .pi/, .qoder/, .reasonix/, .trae/, .zcode/), with a few extras
 # (.codex/ + .opencode/ sessions/, .opencode/ state/ + node_modules/, .gemini/
-# + .claude/ settings.local.json). .claude/ is handled differently: it ignores
-# .claude/** while negating tracked .claude/commands/sd/*.md, the thin
-# planning-review rule, and its pack-owned support contract. A normal install
-# regenerates this managed block; --local-only writes the equivalent patterns
-# to .git/info/exclude instead.
+# + .claude/ settings.local.json). .claude/ uses the same commit-by-default
+# deny-list as the others, so Trellis runtime, agents, settings.json, and
+# skills are tracked; only settings.local.json and local state are ignored.
+# A normal install regenerates this managed block; --local-only writes the
+# equivalent patterns to .git/info/exclude instead.
 node_modules/
 
 # Project-local personal ignores can be added below this managed block.

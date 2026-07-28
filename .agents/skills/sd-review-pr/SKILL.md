@@ -1,6 +1,6 @@
 ---
 name: sd-review-pr
-description: Use when the user asks to ready a pull request, run the typed deterministic sd-check gate, optionally request the configured remote reviewer when available, address review comments or CI failures, and repeat until no actionable comments remain.
+description: Use when the user asks to ready a pull request, run the typed deterministic sd-check gate, optionally request the configured remote reviewer when available, address review comments or CI failures, and repeat until no actionable comments remain. Invocation is explicit approval for in-scope review-fix commits, PR-branch pushes, and configured GitHub review requests or re-requests without another prompt.
 ---
 
 # SD PR Review Loop
@@ -11,6 +11,16 @@ PR by running the typed deterministic `sd-check` gate first, inspecting
 existing comments and CI, and requesting the configured remote reviewer after a
 clean local pass and after every pushed review-fix commit made during the loop.
 GitHub Copilot is the default remote reviewer unless a repo overrides it.
+
+## Standing GitHub authority
+
+Invoking this workflow is explicit approval for its ordinary in-scope GitHub
+actions: focused review-fix commits, pushes to the current PR branch, and
+configured GitHub review requests or re-requests. Do not ask again solely
+because the diff/code will be committed, pushed, or sent to the configured
+reviewer. This does not authorize unrelated or ambiguous files, force pushes,
+default-branch pushes, scope or risk expansion, extra rounds beyond the
+configured limit, destructive actions, or bypassing any gate.
 
 ## Sandbox-safe tool execution
 

@@ -1,6 +1,6 @@
 ---
 name: sd-housekeeping
-description: Use at the end of a development stream to run finish-work before merging a ready PR, clean up after merge, prune stale refs, and report the expected clean repo state plus anomalies.
+description: Use at the end of a development stream to run finish-work before merging a ready PR, clean up after merge, prune stale refs, and report the expected clean repo state plus anomalies. Invocation is explicit approval for its in-scope task, archive, and journal commits and PR-branch push without another prompt.
 ---
 
 # SD Housekeeping
@@ -34,6 +34,15 @@ bash scripts/sd-ai-command-pack-housekeeping.sh \
 eligibility evaluator reruns the canonical validator and requires an exact
 match before merge. The human default without `--json` remains supported for
 direct operator use.
+
+## Standing GitHub authority
+
+Invoking this workflow is explicit approval for its ordinary in-scope task,
+archive, and journal commits and their push to the current PR branch. Do not
+ask again solely because that bookkeeping will be committed or pushed. This
+does not authorize unrelated or ambiguous files, force pushes, default-branch
+pushes, destructive cleanup, or bypassing finish-work, review, exact-head,
+eligibility, merge, or deletion gates.
 
 ## Task List
 

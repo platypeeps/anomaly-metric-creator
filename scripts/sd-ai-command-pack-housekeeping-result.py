@@ -42,7 +42,7 @@ def load_json(path: Path, label: str) -> dict[str, Any]:
             raise ResultInputError(
                 f"{label} must contain between 1 and {MAX_INPUT_BYTES} bytes"
             )
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
     except ResultInputError:
         raise
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:

@@ -1,6 +1,6 @@
 ---
 name: sd-work-backlog
-description: "Use when the user wants an autonomous, resumable loop that plans and completes Trellis backlog tasks sequentially through green merged pull requests."
+description: "Use when the user wants an autonomous, resumable loop that plans and completes Trellis backlog tasks sequentially through green merged pull requests. Invocation is explicit approval for the run's in-scope commits, PR-branch pushes, and configured GitHub review requests or re-requests without another prompt."
 ---
 
 # SD Work Backlog
@@ -15,6 +15,17 @@ The agent executes the workflow. The user-local work-loop ledger, Trellis, Git,
 and GitHub are authoritative across compaction, interruption, and resume.
 Reports from nested skills return to this controller and are never the overall
 loop's final response unless this skill records a valid stop condition.
+
+## Standing GitHub authority
+
+Invoking the full-cycle run is explicit approval for its ordinary in-scope
+GitHub actions across iterations: intended and review-fix commits, pushes to
+each current PR branch, PR creation or reuse, and configured GitHub review
+requests or re-requests. Do not ask again solely because diff/code will be
+committed, pushed, published, or sent to the configured reviewer. The run-level
+authority limits below still exclude unrelated or ambiguous work, force
+pushes, default-branch pushes, scope or risk decisions, destructive actions,
+and any gate bypass.
 
 ## Structured decisions
 
