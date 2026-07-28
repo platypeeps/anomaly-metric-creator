@@ -45,3 +45,44 @@ Completed the guarded command-pack refresh lifecycle for merged PR #306 at the a
 ### Next Steps
 
 - Publish the linear follow-up PR carrying lifecycle bookkeeping and CI cache hardening.
+
+
+## Session 49: Replace Ruff Dependabot PR 300
+
+**Date**: 2026-07-27
+**Task**: Replace Ruff Dependabot PR 300
+**Package**: amc
+**Branch**: `codex/ruff-0-16-lockstep`
+
+### Summary
+
+Replaced the failing one-sided Dependabot Ruff update with a validated lockstep Ruff 0.16.0 pull request.
+
+### Main Changes
+
+- Updated the Ruff dev pin and ruff-pre-commit revision to 0.16.0 together.
+- Regenerated uv.lock with only Ruff package and platform artifact movement.
+- Created and reviewed PR 310, refreshed the generated repository map and Obsidian KB, and preserved PR 300 until the replacement merges.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c938266` | chore(deps): update Ruff to 0.16.0 |
+| `89a0d8a` | docs: refresh repository map |
+
+### Testing
+
+- [OK] Ruff lockstep checker, 7 acceptance tests, F401, F841, and both Ruff pre-commit hooks passed.
+- [OK] Deterministic full-check passed with Prism disabled and Gito skipped.
+- [OK] Full pytest suite passed: 1723 passed and 2 opt-in real-client smoke tests skipped.
+- [OK] PR 310 exact-head Copilot review produced no comments; CI, CodeQL, coverage, and aggregate gates passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

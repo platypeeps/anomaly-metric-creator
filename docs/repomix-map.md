@@ -1313,6 +1313,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-27-replace-ruff-dependabot-pr-300/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
   workspace/
     sdelmas/
       index.md

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 48
+- **Total Sessions**: 49
 - **Last Active**: 2026-07-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~44 | Active |
+| `journal-2.md` | ~85 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 49 | 2026-07-27 | Replace Ruff Dependabot PR 300 | `c938266`, `89a0d8a` | `codex/ruff-0-16-lockstep` |
 | 48 | 2026-07-27 | Complete SD command-pack refresh PR 306 | `4f12c2a` | `automation/sd-ai-command-pack-sync` |
 | 47 | 2026-07-27 | Recover CI dependency update lifecycle | `ce65718` | `codex/repair-ci-dependency-updates` |
 | 46 | 2026-07-27 | Repair CI dependency updates | `df2d133a9715971e81625e64ebe0452fa9d6d9c8`, `b8a62e84d51a69dafc79d7f4277c95e801518eb0` | `codex/repair-ci-dependency-updates` |
