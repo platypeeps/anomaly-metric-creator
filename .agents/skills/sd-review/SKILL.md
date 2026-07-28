@@ -1,6 +1,6 @@
 ---
 name: sd-review
-description: Use when the user asks to review local changes, a branch, a codebase, or a pull request through one exact-scope lifecycle that runs deterministic checks, cost-aware local providers, and the optional routed GitHub review backend.
+description: Use when the user asks to review local changes, a branch, a codebase, or a pull request through one exact-scope lifecycle that runs deterministic checks, cost-aware local providers, and the optional routed GitHub review backend. For PR scope, invocation is explicit approval for in-scope review-fix commits, PR-branch pushes, and configured GitHub review requests or re-requests without another prompt.
 ---
 
 # SD Review
@@ -14,6 +14,16 @@ reimplement those mechanisms in prose.
 This successor is self-contained. Never call, alias, or fall back to
 `sd-review-local`, `sd-review-pr`, a direct Copilot request, or a backend command
 found in configuration or a receipt.
+
+## Standing GitHub authority
+
+For PR scope, invoking this workflow is explicit approval for its ordinary
+in-scope GitHub actions: focused review-fix commits, pushes to the current PR
+branch, and configured GitHub review requests or re-requests. Do not ask again
+solely because the diff/code will be committed, pushed, or sent to the
+configured reviewer. This does not authorize unrelated or ambiguous files,
+force pushes, default-branch pushes, scope or risk expansion, extra rounds
+beyond the configured limit, destructive actions, or bypassing any gate.
 
 ## Structured decisions
 

@@ -1,6 +1,6 @@
 ---
 name: sd-ship
-description: Use when the user asks to take the current branch all the way from committed work to a merged pull request through the standard SD stages.
+description: Use when the user asks to take the current branch all the way from committed work to a merged pull request through the standard SD stages. Invocation is explicit approval for its in-scope commits, PR-branch pushes, and configured GitHub review requests or re-requests without another prompt.
 ---
 
 # SD Ship
@@ -14,6 +14,16 @@ chain with `until=` stop-points.
 sd-ship only sequences and reports. Each stage runs under its own skill's
 preconditions, gates, and safety rules, and the chain's stop-points sit
 between stages, never inside them.
+
+## Standing GitHub authority
+
+Invoking this workflow is explicit approval for its ordinary in-scope GitHub
+actions: intended and review-fix commits, pushes to the current PR branch, PR
+creation or reuse, and configured GitHub review requests or re-requests. Do not
+ask again solely because the diff/code will be committed, pushed, published,
+or sent to the configured reviewer. This does not authorize unrelated or
+ambiguous files, force pushes, default-branch pushes, scope or risk expansion,
+extra review rounds, destructive actions, or bypassing any delegated gate.
 
 ## Structured decisions
 

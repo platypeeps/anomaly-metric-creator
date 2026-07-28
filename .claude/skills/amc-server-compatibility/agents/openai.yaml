@@ -1,0 +1,4 @@
+interface:
+  display_name: "AMC Server Compatibility"
+  short_description: "Guide AMC Kubernetes/Helm simulator work"
+  default_prompt: "Use $amc-server-compatibility to implement the next AMC server-mode compatibility slice."

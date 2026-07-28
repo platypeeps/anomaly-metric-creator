@@ -1,12 +1,20 @@
 ---
 name: sd-finish-work
-description: Use when the user wants the Software Delivery finish-work command to wrap up a Trellis coding session.
+description: Use when the user wants the Software Delivery finish-work command to wrap up a Trellis coding session. Invocation is explicit approval for its in-scope task, archive, and journal commits and PR-branch push without another prompt.
 ---
 
 # SD Finish Work
 
 Wrap up the current Trellis session so task records, validation notes, and
 handoff state are ready for the user to disengage.
+
+## Standing GitHub authority
+
+Invoking this workflow is explicit approval for its ordinary in-scope task,
+archive, and journal commits and their push to the current PR branch. Do not
+ask again solely because that bookkeeping will be committed or pushed. This
+does not authorize unrelated or ambiguous files, force pushes, default-branch
+pushes, destructive actions, or bypassing finalization and exact-head gates.
 
 ## Structured decisions
 

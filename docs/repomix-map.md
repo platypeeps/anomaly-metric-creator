@@ -37,7 +37,7 @@ The content is organized as follows:
 Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
 
 # Directory Structure
-```
+````
 .agents/
   skills/
     amc-server-compatibility/
@@ -202,6 +202,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     trellis-update-spec/
       SKILL.md
 .claude/
+  agents/
+    trellis-check.md
+    trellis-implement.md
+    trellis-research.md
   commands/
     sd/
       audit-repo.md
@@ -226,10 +230,101 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       update-spec.md
       watch-pr.md
       work-backlog.md
+    trellis/
+      continue.md
+      finish-work.md
+  hooks/
+    inject-subagent-context.py
+    inject-workflow-state.py
+    session-start.py
+    statusline.py
   rules/
     sd-planning-adversarial-review.md
   sd-ai-command-pack/
     planning-adversarial-review.md
+  skills/
+    amc-server-compatibility/
+      agents/
+        openai.yaml
+      references/
+        server-compatibility-map.md
+      SKILL.md
+    security-best-practices/
+      agents/
+        openai.yaml
+      references/
+        golang-general-backend-security.md
+        javascript-express-web-server-security.md
+        javascript-general-web-frontend-security.md
+        javascript-jquery-web-frontend-security.md
+        javascript-typescript-nextjs-web-server-security.md
+        javascript-typescript-react-web-frontend-security.md
+        javascript-typescript-vue-web-frontend-security.md
+        python-django-web-server-security.md
+        python-fastapi-web-server-security.md
+        python-flask-web-server-security.md
+      LICENSE.txt
+      SKILL.md
+    trellis-before-dev/
+      SKILL.md
+    trellis-brainstorm/
+      SKILL.md
+    trellis-break-loop/
+      SKILL.md
+    trellis-channel/
+      references/
+        command-reference.md
+        forum.md
+        progress-debugging.md
+        workers.md
+        workflows.md
+      SKILL.md
+    trellis-check/
+      SKILL.md
+    trellis-meta/
+      references/
+        customize-local/
+          add-project-local-conventions.md
+          change-agents.md
+          change-context-loading.md
+          change-hooks.md
+          change-skills-or-commands.md
+          change-spec-structure.md
+          change-task-lifecycle.md
+          change-workflow.md
+          overview.md
+        local-architecture/
+          bundled-skills.md
+          context-injection.md
+          generated-files.md
+          multi-agent-channel.md
+          overview.md
+          spec-system.md
+          task-system.md
+          workflow.md
+          workspace-memory.md
+        platform-files/
+          agents.md
+          hooks-and-settings.md
+          overview.md
+          platform-map.md
+          skills-and-commands.md
+      SKILL.md
+    trellis-session-insight/
+      references/
+        cli-quick-reference.md
+        triggering-patterns.md
+      SKILL.md
+    trellis-spec-bootstrap/
+      references/
+        mcp-setup.md
+        repository-analysis.md
+        spec-task-planning.md
+        spec-writing.md
+      SKILL.md
+    trellis-update-spec/
+      SKILL.md
+  settings.json
 .codex/
   agents/
     trellis-check.toml
@@ -839,6 +934,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
+    07-27-repair-sd-pack-refresh-pr-306/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1206,6 +1308,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        07-27-recover-ci-dependency-update-lifecycle/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
   workspace/
     sdelmas/
       index.md
@@ -1405,4 +1512,4 @@ CLAUDE.md
 pyproject.toml
 README.md
 SECURITY.md
-```
+````

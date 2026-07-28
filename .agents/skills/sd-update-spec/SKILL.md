@@ -1,6 +1,6 @@
 ---
 name: sd-update-spec
-description: Use when the user wants the Software Delivery update-spec command to run Trellis update-spec and the pack's extended spec-refresh features.
+description: Use when the user wants the Software Delivery update-spec command to run Trellis update-spec, the pack's extended spec-refresh features, and optional Archify-backed repository documentation visuals.
 ---
 
 # SD Update Spec
@@ -9,7 +9,10 @@ Run the Trellis update-spec workflow for the current repository, then run the SD
 AI command pack extensions. These extensions preserve repository knowledge that
 the base Trellis skill does not own directly: repospec/Repomix refreshes,
 architecture overview touch-ups when warranted, and `.obsidian-kb` copies for
-portable Obsidian knowledge-base workflows.
+portable Obsidian knowledge-base workflows. When a workflow, architecture,
+sequence, data-flow, lifecycle/state, or similar technical visual in repository
+documentation is created or materially updated, prefer the `archify` skill if
+it is available; its absence must not block the rest of update-spec.
 
 ## Structured decisions
 
@@ -56,6 +59,9 @@ ask for a normal bounded spec refresh already requested by the user.
    - `Spec updates`: paths changed, or `none`
    - `Repospec`: refreshed path/tool, `not present`, or `no infrastructure`
    - `Architectural overview`: updated path, `not present`, or `not warranted`
+   - `Repository visuals`: `archify` plus artifact/validation evidence,
+     `repo-native` plus artifact, `not applicable`, or the graceful fallback
+     reason
    - `Obsidian KB`: `.obsidian-kb` created/refreshed, copy count, dashboard
      state, gitignore state, and any conflicts
    - `Obsidian vault copy`: example command for copying this repo's

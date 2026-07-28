@@ -1,6 +1,6 @@
 ---
 name: sd-create-pr
-description: Use when the user wants to update specs through the SD wrapper, commit and push the current branch, create or reuse a GitHub pull request, then enter the SD PR review loop.
+description: Use when the user wants to update specs through the SD wrapper, commit and push the current branch, create or reuse a GitHub pull request, then enter the SD PR review loop. Invocation is explicit approval for those in-scope commits, PR-branch pushes, and configured GitHub review requests or re-requests without another prompt.
 ---
 
 # SD Create Pull Request
@@ -12,6 +12,17 @@ changes, creates or reuses the branch pull request, then hands off to
 `sd-review-pr` for the typed `sd-check` gate, configured remote reviewer requests,
 Copilot-style polling when configured, fixes, CI handling, and the bounded
 review loop.
+
+## Standing GitHub authority
+
+Invoking this workflow is explicit approval for its ordinary in-scope GitHub
+actions: intended commits, pushes to the current PR branch, PR creation or
+reuse, and configured GitHub review requests or re-requests through
+`sd-review-pr`. Do not ask again solely because the diff/code will be
+committed, pushed, published, or sent to the configured reviewer. This does not
+authorize unrelated or ambiguous files, force pushes, default-branch pushes,
+scope or risk expansion, extra review rounds, destructive actions, or
+bypassing any gate.
 
 ## Sandbox-safe tool execution
 

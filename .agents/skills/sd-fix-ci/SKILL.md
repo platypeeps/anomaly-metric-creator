@@ -1,6 +1,6 @@
 ---
 name: sd-fix-ci
-description: Use when the user asks to triage a red CI run back to green by classifying each failing job, fixing real failures through the normal gated flow, rerunning bounded flakes, and reporting the rest.
+description: Use when the user asks to triage a red CI run back to green by classifying each failing job, fixing real failures through the normal gated flow, rerunning bounded flakes, and reporting the rest. Invocation is explicit approval for in-scope CI-fix commits and PR-branch pushes without another prompt.
 ---
 
 # SD Fix CI
@@ -14,6 +14,15 @@ report infrastructure and stale-baseline failures with evidence.
 This command fixes causes, not symptoms. It never weakens a check to get
 green, and it never merges anything — merge authority stays with the
 `sd-housekeeping` gate.
+
+## Standing GitHub authority
+
+Invoking this workflow is explicit approval for its ordinary in-scope CI-fix
+commits and pushes to the current PR branch. Do not ask again solely because a
+verified fix will be committed or pushed. A default-branch fix still goes
+through the delegated `sd-create-pr` flow, and this authority never covers
+unrelated or ambiguous files, force pushes, direct default-branch pushes,
+weakened gates, destructive actions, or merge.
 
 ## Sandbox-safe tool execution
 

@@ -2033,7 +2033,15 @@ function checkChangedTrellisTaskTopologySemantics() {
 
   const changedTaskFiles = new Set();
   const changedTaskDirectories = new Set();
+  const changedArchivedTaskRecords = new Set();
   for (const path of diff.paths) {
+    const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+    const archivedTaskRecord =
+      /^\.trellis\/tasks\/archive\/\d{4}-\d{2}\/(\d{2}-\d{2}-[^/]+)\/task\.json$/.exec(normalized);
+    if (archivedTaskRecord) {
+      changedArchivedTaskRecords.add(archivedTaskRecord[1]);
+    }
+
     const artifact = parseActiveTrellisTaskTopologyPath(path);
     if (!artifact) {
       continue;
@@ -2087,7 +2095,10 @@ function checkChangedTrellisTaskTopologySemantics() {
     const taskFile = `${taskDir}/task.json`;
     const taskLoaded = loadTrellisTaskMetadataFile(taskFile, { deletedIsMissing: true });
     if (taskLoaded.status !== 'loaded') {
-      if (!changedTaskFiles.has(taskFile)) {
+      const taskName = taskDir.slice('.trellis/tasks/'.length);
+      const movedToChangedArchive =
+        !pathEntryExists(taskDir) && changedArchivedTaskRecords.has(taskName);
+      if (!changedTaskFiles.has(taskFile) && !movedToChangedArchive) {
         fail(`${taskFile} ${taskLoaded.message} while checking active parent PRD child representation.`);
       }
       continue;
