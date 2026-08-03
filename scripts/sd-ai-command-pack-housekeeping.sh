@@ -43,6 +43,8 @@ Options:
   --finish-work-receipt <path>
                          Supply the retained schema-version-1 JSON receipt from
                          SD finish-work for independent exact-head validation.
+                         Must be an existing readable regular file; directories,
+                         symlinks, and other non-regular paths are rejected.
   --dependency-pr <number> Internal sd-update-deps mode: evaluate and merge one
                            dependency PR without Trellis finish-work evidence.
   --merge-strategy <name> Merge strategy for ready open PRs: merge, squash, or rebase. Defaults to merge.
@@ -794,44 +796,25 @@ maybe_merge_ready_open_pr() {
   merge_ready_open_pr "$pr_number" "$eligible_head" || return 0
 }
 
-cleanup_current_branch_if_merged() {
+# Perform exact-head cleanup for a branch whose PR the caller has already
+# resolved and routed as MERGED. This helper trusts that routing and never
+# re-evaluates merge eligibility or the PR lifecycle state; it re-verifies only
+# the head identities that guard the destructive Git operations. The caller
+# supplies the resolved PR identity so the working tree is inspected exactly
+# once per run.
+cleanup_merged_branch() {
   local branch="$1"
-  local pr_data
-  local pr_number
-  local pr_state
-  local pr_merged_at
-  local pr_url
-  local pr_head
-  local pr_head_oid
+  local pr_number="$2"
+  local pr_merged_at="$3"
+  local pr_url="$4"
+  local pr_head="$5"
+  local pr_head_oid="$6"
   local local_head_oid
   local ls_remote_output
   local remote_head_oid
 
-  if [ -z "$branch" ]; then
-    add_anomaly detached_head "detached HEAD; skipped branch cleanup"
-    return 0
-  fi
-  if [ -z "$DEFAULT_BRANCH" ] || [ "$branch" = "$DEFAULT_BRANCH" ]; then
-    return 0
-  fi
   if ! working_tree_is_clean; then
     add_anomaly working_tree_dirty "working tree has uncommitted changes; skipped switching and branch deletion"
-    return 0
-  fi
-  if ! have gh; then
-    add_anomaly github_cli_missing "gh not found; cannot confirm whether $branch has a merged PR"
-    return 0
-  fi
-
-  pr_data="$(view_pr_for_branch "$branch")"
-  if [ -z "$pr_data" ]; then
-    add_anomaly pull_request_unavailable "unable to resolve GitHub PR metadata for $branch; no PR was found or gh failed, so the branch was left untouched"
-    return 0
-  fi
-
-  IFS="$FIELD_SEPARATOR" read -r pr_number pr_state pr_merged_at pr_url pr_head pr_head_oid <<<"$pr_data"
-  if [ "$pr_state" != "MERGED" ]; then
-    add_anomaly pull_request_not_merged "PR #$pr_number for $branch is $pr_state, not MERGED; left the branch untouched"
     return 0
   fi
   if [ "$pr_head" != "$branch" ]; then
@@ -919,6 +902,143 @@ cleanup_current_branch_if_merged() {
     fi
   else
     add_anomaly remote_branch_unavailable "failed to check whether remote branch $REMOTE/$branch exists"
+  fi
+}
+
+# Resolve one bounded PR identity and lifecycle state for the current feature
+# branch, then route on that state so housekeeping stays the sole owner of the
+# merge-then-cleanup transition:
+#   - OPEN: keep the exact-head eligibility gate (merge only when eligible),
+#     then re-resolve the PR and clean up only if the merge actually landed; if
+#     it did not land and nothing else already explained why, record a single
+#     open-PR anomaly and leave the branch untouched.
+#   - MERGED: skip eligibility entirely and clean up using the already-resolved
+#     identity.
+#   - CLOSED: stop with one pull_request_not_merged anomaly; no merge or delete.
+#   - indeterminate: stop with one bounded identity/state anomaly (fail closed).
+route_branch_pr_lifecycle() {
+  local branch="$1"
+  local pr_data
+  local pr_number
+  local pr_state
+  local pr_merged_at
+  local pr_url
+  local pr_head
+  local pr_head_oid
+  local anomalies_before
+
+  if [ -z "$branch" ]; then
+    add_anomaly detached_head "detached HEAD; skipped branch cleanup"
+    return 0
+  fi
+  if [ -z "$DEFAULT_BRANCH" ] || [ "$branch" = "$DEFAULT_BRANCH" ]; then
+    return 0
+  fi
+  if ! have gh; then
+    add_anomaly github_cli_missing "gh not found; cannot confirm whether $branch has a merged PR"
+    return 0
+  fi
+
+  pr_data="$(view_pr_for_branch "$branch")"
+  if [ -z "$pr_data" ]; then
+    add_anomaly pull_request_unavailable "unable to resolve GitHub PR metadata for $branch; no PR was found or gh failed, so the branch was left untouched"
+    return 0
+  fi
+  IFS="$FIELD_SEPARATOR" read -r pr_number pr_state pr_merged_at pr_url pr_head pr_head_oid <<<"$pr_data"
+
+  case "$pr_state" in
+    OPEN)
+      anomalies_before=${#ANOMALIES[@]}
+      maybe_merge_ready_open_pr "$branch"
+      # Bind cleanup to what actually happened: re-resolve the PR so a merge
+      # that did not land (blocked gate, dry run, --no-auto-merge, push
+      # rejection) leaves the branch untouched.
+      pr_data="$(view_pr_for_branch "$branch")"
+      if [ -z "$pr_data" ]; then
+        add_anomaly pull_request_unavailable "unable to re-resolve GitHub PR metadata for $branch after the merge attempt; left the branch untouched"
+        return 0
+      fi
+      IFS="$FIELD_SEPARATOR" read -r pr_number pr_state pr_merged_at pr_url pr_head pr_head_oid <<<"$pr_data"
+      if [ "$pr_state" = "MERGED" ]; then
+        cleanup_merged_branch "$branch" "$pr_number" "$pr_merged_at" "$pr_url" "$pr_head" "$pr_head_oid"
+      elif [ "${#ANOMALIES[@]}" -eq "$anomalies_before" ]; then
+        add_anomaly pull_request_open "PR #$pr_number for $branch is open and was not merged; left the branch untouched"
+      fi
+      ;;
+    MERGED)
+      cleanup_merged_branch "$branch" "$pr_number" "$pr_merged_at" "$pr_url" "$pr_head" "$pr_head_oid"
+      ;;
+    CLOSED)
+      add_anomaly pull_request_not_merged "PR #$pr_number for $branch is CLOSED, not MERGED; left the branch untouched"
+      ;;
+    *)
+      add_anomaly pull_request_state_indeterminate "PR #$pr_number for $branch has an indeterminate lifecycle state (${pr_state:-empty}); left the branch untouched"
+      ;;
+  esac
+}
+
+# Retire proven-safe pack-created recovery artifacts (redundant stashes, clean
+# reachable worktrees) left by this stream, then let the read-only status report
+# classify whatever was conservatively preserved. Housekeeping is the only
+# general cleanup owner; the destructive proof gate (exact receipt match, dead
+# owner, proven cleanup predicate, no-unique-work reachability) lives in the
+# recovery helper, so a dirty, unique, foreign, mismatched, or live-owned
+# artifact is always preserved for a status decision, never forced away. A
+# missing helper or a sweep error is surfaced as one anomaly and never aborts
+# end-of-stream housekeeping.
+reconcile_recovery_artifacts() {
+  local helper="$SCRIPT_DIR/sd-ai-command-pack-recovery-artifacts.py"
+  local toolchain="$SCRIPT_DIR/sd-ai-command-pack-toolchain.sh"
+  local -a args
+  local output
+  local status
+  local retired preserved failed detail
+
+  if [ ! -r "$helper" ] || [ ! -r "$toolchain" ]; then
+    add_anomaly recovery_helper_missing "recovery-artifact reconciler is unavailable; skipped recovery cleanup and left any artifacts for a later status decision"
+    return 0
+  fi
+
+  args=(cleanup --repo . --mode housekeeping --format shell)
+  if [ "$DRY_RUN" -eq 1 ]; then
+    args+=(--dry-run)
+  fi
+
+  if output="$(bash "$toolchain" run-python -- "$helper" "${args[@]}")"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [ "$status" -ne 0 ]; then
+    add_anomaly recovery_cleanup_failed "recovery-artifact cleanup exited $status; left recovery artifacts untouched for a later status decision"
+    return 0
+  fi
+
+  # The shell format emits exactly one unit-separated summary line; take the
+  # last line defensively and require the delimiter before trusting it.
+  output="${output##*$'\n'}"
+  case "$output" in
+    *"$FIELD_SEPARATOR"*) ;;
+    *)
+      add_anomaly recovery_cleanup_incomplete "recovery-artifact cleanup returned no summary receipt; left recovery artifacts untouched for a later status decision"
+      return 0
+      ;;
+  esac
+  IFS="$FIELD_SEPARATOR" read -r retired preserved failed detail <<<"$output"
+  if ! [[ "$retired" =~ ^[0-9]+$ ]] || ! [[ "$preserved" =~ ^[0-9]+$ ]] || ! [[ "$failed" =~ ^[0-9]+$ ]]; then
+    add_anomaly recovery_cleanup_incomplete "recovery-artifact cleanup returned a malformed summary receipt; left recovery artifacts untouched for a later status decision"
+    return 0
+  fi
+
+  if [ "$retired" -gt 0 ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      add_action recovery_artifacts_retire_previewed "would retire $retired proven-safe recovery artifact(s); preserved $preserved for status review"
+    else
+      add_action recovery_artifacts_retired "retired $retired proven-safe recovery artifact(s); preserved $preserved for status review"
+    fi
+  fi
+  if [ "$failed" -gt 0 ]; then
+    add_anomaly recovery_cleanup_incomplete "${detail:-recovery-artifact cleanup could not retire $failed artifact(s)}; left them for a later status decision"
   fi
 }
 
@@ -1169,6 +1289,35 @@ run_self_test() {
   return 0
 }
 
+# Validate a supplied --finish-work-receipt path before any KB refresh, network
+# access, Git mutation, or merge-eligibility work. Require an existing readable
+# regular file; reject symlinks, missing paths, directories, and other
+# non-regular files. Diagnostics are stable and never echo the path, so no
+# host-specific or receipt-derived material leaks to stderr.
+validate_finish_work_receipt() {
+  local path="$1"
+  if [ -L "$path" ]; then
+    printf 'error: --finish-work-receipt must be a regular file, not a symlink\n' >&2
+    exit 2
+  fi
+  if [ ! -e "$path" ]; then
+    printf 'error: --finish-work-receipt path does not exist\n' >&2
+    exit 2
+  fi
+  if [ -d "$path" ]; then
+    printf 'error: --finish-work-receipt must be a regular file, not a directory\n' >&2
+    exit 2
+  fi
+  if [ ! -f "$path" ]; then
+    printf 'error: --finish-work-receipt must be a regular file\n' >&2
+    exit 2
+  fi
+  if [ ! -r "$path" ]; then
+    printf 'error: --finish-work-receipt file is not readable\n' >&2
+    exit 2
+  fi
+}
+
 main() {
   local repo_root
 
@@ -1186,6 +1335,11 @@ main() {
     exit 2
   fi
   cd "$repo_root"
+
+  if [ -n "$FINISH_WORK_RECEIPT" ]; then
+    validate_finish_work_receipt "$FINISH_WORK_RECEIPT"
+  fi
+
   prepare_tool_cache_env || exit 5
 
   if [ "$JSON_OUTPUT" -eq 1 ]; then
@@ -1221,11 +1375,17 @@ main() {
   if [ -n "$DEPENDENCY_PR" ]; then
     maybe_merge_ready_dependency_pr "$DEPENDENCY_PR"
     fast_forward_default_branch
-  elif [ "$START_BRANCH" = "$DEFAULT_BRANCH" ]; then
-    fast_forward_default_branch
   else
-    maybe_merge_ready_open_pr "$START_BRANCH"
-    cleanup_current_branch_if_merged "$START_BRANCH"
+    if [ "$START_BRANCH" = "$DEFAULT_BRANCH" ]; then
+      fast_forward_default_branch
+    else
+      route_branch_pr_lifecycle "$START_BRANCH"
+    fi
+    # Reconcile leftover recovery artifacts after the branch/merge work so the
+    # status report below reflects the post-sweep state. Skipped in the narrow
+    # dependency-PR mode, which merges one deps PR on the clean default branch
+    # and owns no recovery artifacts (mirrors its Obsidian KB-refresh skip).
+    reconcile_recovery_artifacts
   fi
 
   run_status_report

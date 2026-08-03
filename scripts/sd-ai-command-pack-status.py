@@ -1183,6 +1183,118 @@ def validate_work_loop_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def collect_recovery(repo: Path) -> dict[str, Any]:
+    """Classify pack-created recovery artifacts read-only for status.
+
+    Delegates to the recovery-artifacts helper's read-only classifier and
+    reduces the result to a bounded summary. Never creates, repairs, or deletes
+    a receipt or Git artifact.
+    """
+    helper = Path(__file__).resolve().with_name(
+        "sd-ai-command-pack-recovery-artifacts.py"
+    )
+    if not helper.is_file():
+        return {
+            "status": "unavailable",
+            "error": "recovery-artifacts helper is not installed",
+        }
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "sd_ai_command_pack_status_recovery", helper
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot construct recovery-artifacts helper loader")
+        module = importlib.util.module_from_spec(spec)
+        with suppress_bytecode_writes():
+            spec.loader.exec_module(module)
+        classified = module.classify_repository(repo)
+    except (
+        AttributeError,
+        ImportError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        SyntaxError,
+        TypeError,
+        ValueError,
+    ) as error:
+        return {"status": "invalid", "error": safe_text(error, limit=500)}
+    if not isinstance(classified, dict):
+        return {
+            "status": "invalid",
+            "error": "recovery-artifacts helper returned invalid data",
+        }
+    return summarize_recovery(classified)
+
+
+def summarize_recovery(classified: Mapping[str, Any]) -> dict[str, Any]:
+    """Reduce a recovery classification to a bounded, read-only status summary."""
+    counts: dict[str, int] = {}
+    counts_raw = classified.get("counts")
+    if isinstance(counts_raw, Mapping):
+        for key, value in counts_raw.items():
+            if (
+                isinstance(key, str)
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            ):
+                counts[safe_text(key, limit=40)] = value
+
+    actionable: list[dict[str, str]] = []
+
+    def add(kind: object, classification: object, reference: object, detail: object) -> None:
+        if len(actionable) >= MAX_ITEMS:
+            return
+        actionable.append(
+            {
+                "type": safe_text(kind, limit=40),
+                "classification": safe_text(classification, limit=40),
+                "reference": safe_text(reference, limit=200),
+                "detail": safe_text(detail, limit=200),
+            }
+        )
+
+    receipts = classified.get("receipts")
+    if isinstance(receipts, list):
+        for item in receipts:
+            if not isinstance(item, Mapping):
+                continue
+            classification = item.get("classification")
+            if classification == "active":
+                continue  # in-use artifacts are not actionable
+            add(
+                item.get("type"),
+                classification,
+                item.get("reference"),
+                item.get("detail"),
+            )
+
+    unowned = classified.get("unowned")
+    if isinstance(unowned, list):
+        for entry in unowned:
+            if isinstance(entry, Mapping):
+                add(
+                    entry.get("type"),
+                    "unowned-artifact",
+                    entry.get("reference"),
+                    entry.get("detail"),
+                )
+
+    corrupt = classified.get("corrupt")
+    if isinstance(corrupt, list):
+        for entry in corrupt:
+            if isinstance(entry, Mapping):
+                add("receipt", "corrupt", entry.get("reference"), entry.get("reason"))
+
+    return {
+        "status": "ok",
+        "counts": counts,
+        "total": sum(counts.values()),
+        "actionable": actionable,
+    }
+
+
 def parse_gh_lines(output: str, *, kind: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for line in output.splitlines()[:MAX_ITEMS]:
@@ -1510,7 +1622,7 @@ def collect_follow_ups(
         if isinstance(pr, dict) and pr.get("state") == "OPEN":
             add(
                 "action",
-                f"Continue PR #{pr.get('number')} through sd-watch-pr or sd-housekeeping.",
+                f"Continue PR #{pr.get('number')} through sd-ship or sd-housekeeping.",
                 "github.currentPr",
             )
 
@@ -1631,7 +1743,7 @@ def next_steps(report: Mapping[str, Any]) -> list[str]:
     if isinstance(github, dict) and isinstance(github.get("currentPr"), dict):
         pr = github["currentPr"]
         if pr.get("state") == "OPEN":
-            steps.append(f"Continue PR #{pr.get('number')} through sd-watch-pr or sd-housekeeping.")
+            steps.append(f"Continue PR #{pr.get('number')} through sd-ship or sd-housekeeping.")
     work_loop = report.get("workLoop")
     if isinstance(work_loop, dict):
         loop_status = work_loop.get("status")
@@ -1655,6 +1767,24 @@ def next_steps(report: Mapping[str, Any]) -> list[str]:
         ].get("level") == "red" and not terminal_verified:
             steps.append(
                 "Reconcile the red SD work-loop checkpoint with live Trellis, Git, and PR state."
+            )
+    recovery = report.get("recoveryArtifacts")
+    if isinstance(recovery, dict) and recovery.get("status") == "ok":
+        counts = recovery.get("counts")
+        counts = counts if isinstance(counts, dict) else {}
+        cleanable = counts.get("safe-cleanable")
+        if isinstance(cleanable, int) and cleanable > 0:
+            steps.append(
+                f"Retire {cleanable} safe-cleanable recovery artifact(s) via sd-housekeeping."
+            )
+        review = sum(
+            value
+            for name in ("needs-review", "unowned-artifact")
+            if isinstance((value := counts.get(name)), int)
+        )
+        if review > 0:
+            steps.append(
+                f"Inspect {review} recovery artifact(s) flagged for review before cleanup."
             )
     trellis = report.get("trellis")
     if isinstance(trellis, dict):
@@ -1718,6 +1848,7 @@ def collect_local(
     if relevant_branch is None and git.get("branch") != default:
         relevant_branch = git.get("branch")
     work_loop = collect_work_loop(repo)
+    recovery = collect_recovery(repo)
     trellis = collect_trellis(repo)
     roadmap_candidates, roadmap_diagnostics = collect_roadmap_candidates(
         repo,
@@ -1741,6 +1872,7 @@ def collect_local(
         ),
         "trellis": trellis,
         "workLoop": work_loop,
+        "recoveryArtifacts": recovery,
         "cleanupContext": {
             "sourceBranch": source_branch,
             "keepRemoteBranch": keep_remote_branch,
@@ -1758,6 +1890,11 @@ def collect_local(
         report["anomalies"].append(
             "work-loop state is invalid: "
             + safe_text(work_loop.get("error") or "unknown error", limit=400)
+        )
+    if recovery.get("status") == "invalid":
+        report["anomalies"].append(
+            "recovery-artifact state is invalid: "
+            + safe_text(recovery.get("error") or "unknown error", limit=400)
         )
     completed_outside_archive = trellis.get("completedOutsideArchive", [])
     if completed_outside_archive:
@@ -1978,6 +2115,39 @@ def render_local(report: Mapping[str, Any], *, dry_run: bool) -> None:
         print(f"- counters (loop-owned): {work_loop.get('counters') or {}}")
         if work_loop.get("stopReason"):
             print(f"- stop reason: {work_loop.get('stopReason')}")
+
+    recovery = report.get("recoveryArtifacts")
+    print("\n==> Recovery Artifacts")
+    if not isinstance(recovery, dict) or recovery.get("status") not in {"ok", "invalid"}:
+        detail = recovery.get("error") if isinstance(recovery, dict) else None
+        print(f"- state: unavailable{f' ({detail})' if detail else ''}")
+    elif recovery.get("status") == "invalid":
+        print("- state: invalid")
+        print(f"- detail: {recovery.get('error') or 'unavailable'}")
+    else:
+        counts_raw = recovery.get("counts")
+        counts = counts_raw if isinstance(counts_raw, dict) else {}
+        summary = ", ".join(
+            f"{name} {count}"
+            for name, count in sorted(counts.items())
+            if isinstance(count, int) and count > 0
+        )
+        if not summary:
+            print("- state: no tracked recovery artifacts")
+        else:
+            print(f"- tracked: {summary}")
+            actionable = recovery.get("actionable")
+            if isinstance(actionable, list) and actionable:
+                for item in actionable[:HUMAN_ITEM_LIMIT]:
+                    if not isinstance(item, dict):
+                        continue
+                    print(
+                        f"  · {item.get('type')} {item.get('reference')} "
+                        f"[{item.get('classification')}]: {item.get('detail')}"
+                    )
+                extra = len(actionable) - HUMAN_ITEM_LIMIT
+                if extra > 0:
+                    print(f"  · +{extra} more")
 
     github = report["github"]
     trellis = report["trellis"]

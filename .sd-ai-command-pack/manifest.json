@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "sd-ai-command-pack",
-  "version": "0.55.5",
+  "version": "0.64.0",
   "license": "MIT",
   "description": "Install project-local SD AI command workflows, Prism/Gito defaults, usage guide, and platform adapters into Trellis repos.",
   "requiresTrellis": true,
@@ -221,6 +221,13 @@
       "kind": "script",
       "source": "templates/scripts/sd-ai-command-pack-status.py",
       "target": "scripts/sd-ai-command-pack-status.py",
+      "install": "always"
+    },
+    {
+      "platform": "shared",
+      "kind": "script",
+      "source": "templates/scripts/sd-ai-command-pack-recovery-artifacts.py",
+      "target": "scripts/sd-ai-command-pack-recovery-artifacts.py",
       "install": "always"
     },
     {
@@ -462,6 +469,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/SKILL.md",
+      "target": ".claude/skills/sd-help/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-help/SKILL.md",
@@ -539,6 +553,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/command-catalog.md",
+      "target": ".claude/skills/sd-help/references/command-catalog.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-help/references/command-catalog.md",
@@ -604,6 +625,174 @@
     {
       "platform": "shared",
       "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".agents/skills/sd-help/references/completion-lifecycle.md",
+      "install": "always"
+    },
+    {
+      "platform": "antigravity",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".agent/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".claude/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".claude"
+    },
+    {
+      "platform": "codebuddy",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".codebuddy/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".codebuddy"
+    },
+    {
+      "platform": "devin",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".devin/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".devin"
+    },
+    {
+      "platform": "droid",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".factory/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".factory"
+    },
+    {
+      "platform": "kilo",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".kilocode/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".kilocode"
+    },
+    {
+      "platform": "kiro",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".kiro/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".kiro"
+    },
+    {
+      "platform": "pi",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".pi/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".pi"
+    },
+    {
+      "platform": "qoder",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".qoder/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".qoder"
+    },
+    {
+      "platform": "reasonix",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".reasonix/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".reasonix"
+    },
+    {
+      "platform": "trae",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/completion-lifecycle.md",
+      "target": ".trae/skills/sd-help/references/completion-lifecycle.md",
+      "anchor": ".trae"
+    },
+    {
+      "platform": "shared",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "install": "always"
+    },
+    {
+      "platform": "antigravity",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".agent/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".claude/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".claude"
+    },
+    {
+      "platform": "codebuddy",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".codebuddy/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".codebuddy"
+    },
+    {
+      "platform": "devin",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".devin/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".devin"
+    },
+    {
+      "platform": "droid",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".factory/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".factory"
+    },
+    {
+      "platform": "kilo",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".kilocode/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".kilocode"
+    },
+    {
+      "platform": "kiro",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".kiro/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".kiro"
+    },
+    {
+      "platform": "pi",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".pi/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".pi"
+    },
+    {
+      "platform": "qoder",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".qoder/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".qoder"
+    },
+    {
+      "platform": "reasonix",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".reasonix/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".reasonix"
+    },
+    {
+      "platform": "trae",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/environment-blocked-recovery.md",
+      "target": ".trae/skills/sd-help/references/environment-blocked-recovery.md",
+      "anchor": ".trae"
+    },
+    {
+      "platform": "shared",
+      "kind": "skill",
       "source": "templates/.agents/skills/sd-help/references/examples.md",
       "target": ".agents/skills/sd-help/references/examples.md",
       "install": "always"
@@ -614,6 +803,13 @@
       "source": "templates/.agents/skills/sd-help/references/examples.md",
       "target": ".agent/skills/sd-help/references/examples.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/examples.md",
+      "target": ".claude/skills/sd-help/references/examples.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -681,6 +877,90 @@
     {
       "platform": "shared",
       "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".agents/skills/sd-help/references/recovery-artifacts.md",
+      "install": "always"
+    },
+    {
+      "platform": "antigravity",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".agent/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".claude/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".claude"
+    },
+    {
+      "platform": "codebuddy",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".codebuddy/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".codebuddy"
+    },
+    {
+      "platform": "devin",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".devin/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".devin"
+    },
+    {
+      "platform": "droid",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".factory/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".factory"
+    },
+    {
+      "platform": "kilo",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".kilocode/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".kilocode"
+    },
+    {
+      "platform": "kiro",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".kiro/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".kiro"
+    },
+    {
+      "platform": "pi",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".pi/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".pi"
+    },
+    {
+      "platform": "qoder",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".qoder/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".qoder"
+    },
+    {
+      "platform": "reasonix",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".reasonix/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".reasonix"
+    },
+    {
+      "platform": "trae",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/recovery-artifacts.md",
+      "target": ".trae/skills/sd-help/references/recovery-artifacts.md",
+      "anchor": ".trae"
+    },
+    {
+      "platform": "shared",
+      "kind": "skill",
       "source": "templates/.agents/skills/sd-help/references/structured-questions.md",
       "target": ".agents/skills/sd-help/references/structured-questions.md",
       "install": "always"
@@ -691,6 +971,13 @@
       "source": "templates/.agents/skills/sd-help/references/structured-questions.md",
       "target": ".agent/skills/sd-help/references/structured-questions.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/structured-questions.md",
+      "target": ".claude/skills/sd-help/references/structured-questions.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -868,6 +1155,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-status/SKILL.md",
+      "target": ".claude/skills/sd-status/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-status/SKILL.md",
@@ -1041,6 +1335,13 @@
       "source": "templates/.agents/skills/sd-continue/SKILL.md",
       "target": ".agent/skills/sd-continue/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-continue/SKILL.md",
+      "target": ".claude/skills/sd-continue/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -1218,6 +1519,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-start/SKILL.md",
+      "target": ".claude/skills/sd-start/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-start/SKILL.md",
@@ -1391,6 +1699,13 @@
       "source": "templates/.agents/skills/sd-finish-work/SKILL.md",
       "target": ".agent/skills/sd-finish-work/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-finish-work/SKILL.md",
+      "target": ".claude/skills/sd-finish-work/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -1568,6 +1883,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-create-pr/SKILL.md",
+      "target": ".claude/skills/sd-create-pr/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-create-pr/SKILL.md",
@@ -1743,6 +2065,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/SKILL.md",
+      "target": ".claude/skills/sd-work-backlog/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-work-backlog/SKILL.md",
@@ -1818,6 +2147,13 @@
       "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
       "target": ".agent/skills/sd-work-backlog/references/autonomous-loop.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/autonomous-loop.md",
+      "target": ".claude/skills/sd-work-backlog/references/autonomous-loop.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -1897,6 +2233,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/ledger-recovery.md",
+      "target": ".claude/skills/sd-work-backlog/references/ledger-recovery.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-work-backlog/references/ledger-recovery.md",
@@ -1972,6 +2315,13 @@
       "source": "templates/.agents/skills/sd-work-backlog/references/ownership-recovery.md",
       "target": ".agent/skills/sd-work-backlog/references/ownership-recovery.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/ownership-recovery.md",
+      "target": ".claude/skills/sd-work-backlog/references/ownership-recovery.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -2051,6 +2401,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/run-recovery.md",
+      "target": ".claude/skills/sd-work-backlog/references/run-recovery.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-work-backlog/references/run-recovery.md",
@@ -2126,6 +2483,13 @@
       "source": "templates/.agents/skills/sd-work-backlog/references/terminal-reconciliation.md",
       "target": ".agent/skills/sd-work-backlog/references/terminal-reconciliation.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-work-backlog/references/terminal-reconciliation.md",
+      "target": ".claude/skills/sd-work-backlog/references/terminal-reconciliation.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -2303,6 +2667,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-audit-repo/SKILL.md",
+      "target": ".claude/skills/sd-audit-repo/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-audit-repo/SKILL.md",
@@ -2363,181 +2734,6 @@
       "kind": "skill",
       "source": "templates/.agents/skills/sd-audit-repo/SKILL.md",
       "target": ".trae/skills/sd-audit-repo/SKILL.md",
-      "anchor": ".trae"
-    },
-    {
-      "platform": "shared",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".agents/skills/sd-watch-pr/SKILL.md",
-      "install": "always"
-    },
-    {
-      "platform": "claude",
-      "kind": "command",
-      "source": "templates/.claude/commands/sd/watch-pr.md",
-      "target": ".claude/commands/sd/watch-pr.md",
-      "anchor": ".claude"
-    },
-    {
-      "platform": "cursor",
-      "kind": "command",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".cursor/commands/sd-watch-pr.md",
-      "anchor": ".cursor"
-    },
-    {
-      "platform": "gemini",
-      "kind": "command",
-      "source": "templates/.gemini/commands/sd/watch-pr.toml",
-      "target": ".gemini/commands/sd/watch-pr.toml",
-      "anchor": ".gemini"
-    },
-    {
-      "platform": "github",
-      "kind": "prompt",
-      "source": "templates/.github/prompts/sd-watch-pr.prompt.md",
-      "target": ".github/prompts/sd-watch-pr.prompt.md",
-      "anchor": ".github"
-    },
-    {
-      "platform": "opencode",
-      "kind": "command",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".opencode/commands/sd-watch-pr.md",
-      "anchor": ".opencode"
-    },
-    {
-      "platform": "antigravity",
-      "kind": "workflow",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".agent/workflows/sd-watch-pr.md",
-      "anchor": ".agent"
-    },
-    {
-      "platform": "codebuddy",
-      "kind": "command",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".codebuddy/commands/sd/watch-pr.md",
-      "anchor": ".codebuddy"
-    },
-    {
-      "platform": "devin",
-      "kind": "workflow",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".devin/workflows/sd-watch-pr.md",
-      "anchor": ".devin"
-    },
-    {
-      "platform": "droid",
-      "kind": "command",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".factory/commands/sd/watch-pr.md",
-      "anchor": ".factory"
-    },
-    {
-      "platform": "kilo",
-      "kind": "workflow",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".kilocode/workflows/sd-watch-pr.md",
-      "anchor": ".kilocode"
-    },
-    {
-      "platform": "pi",
-      "kind": "prompt",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".pi/prompts/sd-watch-pr.md",
-      "anchor": ".pi"
-    },
-    {
-      "platform": "qoder",
-      "kind": "command",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".qoder/commands/sd-watch-pr.md",
-      "anchor": ".qoder"
-    },
-    {
-      "platform": "trae",
-      "kind": "command",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".trae/commands/sd-watch-pr.md",
-      "anchor": ".trae"
-    },
-    {
-      "platform": "zcode",
-      "kind": "command",
-      "source": "templates/.commands/sd-watch-pr.md",
-      "target": ".zcode/commands/sd/watch-pr.md",
-      "anchor": ".zcode"
-    },
-    {
-      "platform": "antigravity",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".agent/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".agent"
-    },
-    {
-      "platform": "codebuddy",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".codebuddy/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".codebuddy"
-    },
-    {
-      "platform": "devin",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".devin/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".devin"
-    },
-    {
-      "platform": "droid",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".factory/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".factory"
-    },
-    {
-      "platform": "kilo",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".kilocode/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".kilocode"
-    },
-    {
-      "platform": "kiro",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".kiro/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".kiro"
-    },
-    {
-      "platform": "pi",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".pi/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".pi"
-    },
-    {
-      "platform": "qoder",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".qoder/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".qoder"
-    },
-    {
-      "platform": "reasonix",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".reasonix/skills/sd-watch-pr/SKILL.md",
-      "anchor": ".reasonix"
-    },
-    {
-      "platform": "trae",
-      "kind": "skill",
-      "source": "templates/.agents/skills/sd-watch-pr/SKILL.md",
-      "target": ".trae/skills/sd-watch-pr/SKILL.md",
       "anchor": ".trae"
     },
     {
@@ -2651,6 +2847,13 @@
       "source": "templates/.agents/skills/sd-fix-ci/SKILL.md",
       "target": ".agent/skills/sd-fix-ci/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-fix-ci/SKILL.md",
+      "target": ".claude/skills/sd-fix-ci/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -2828,6 +3031,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-update-deps/SKILL.md",
+      "target": ".claude/skills/sd-update-deps/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-update-deps/SKILL.md",
@@ -3001,6 +3211,13 @@
       "source": "templates/.agents/skills/sd-test-gaps/SKILL.md",
       "target": ".agent/skills/sd-test-gaps/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-test-gaps/SKILL.md",
+      "target": ".claude/skills/sd-test-gaps/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -3178,6 +3395,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-retro/SKILL.md",
+      "target": ".claude/skills/sd-retro/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-retro/SKILL.md",
@@ -3353,6 +3577,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/SKILL.md",
+      "target": ".claude/skills/sd-ship/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-ship/SKILL.md",
@@ -3413,6 +3644,90 @@
       "kind": "skill",
       "source": "templates/.agents/skills/sd-ship/SKILL.md",
       "target": ".trae/skills/sd-ship/SKILL.md",
+      "anchor": ".trae"
+    },
+    {
+      "platform": "shared",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".agents/skills/sd-ship/references/watch-coordinator.md",
+      "install": "always"
+    },
+    {
+      "platform": "antigravity",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".agent/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".claude/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".claude"
+    },
+    {
+      "platform": "codebuddy",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".codebuddy/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".codebuddy"
+    },
+    {
+      "platform": "devin",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".devin/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".devin"
+    },
+    {
+      "platform": "droid",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".factory/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".factory"
+    },
+    {
+      "platform": "kilo",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".kilocode/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".kilocode"
+    },
+    {
+      "platform": "kiro",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".kiro/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".kiro"
+    },
+    {
+      "platform": "pi",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".pi/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".pi"
+    },
+    {
+      "platform": "qoder",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".qoder/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".qoder"
+    },
+    {
+      "platform": "reasonix",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".reasonix/skills/sd-ship/references/watch-coordinator.md",
+      "anchor": ".reasonix"
+    },
+    {
+      "platform": "trae",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-ship/references/watch-coordinator.md",
+      "target": ".trae/skills/sd-ship/references/watch-coordinator.md",
       "anchor": ".trae"
     },
     {
@@ -3526,6 +3841,13 @@
       "source": "templates/.agents/skills/sd-review/SKILL.md",
       "target": ".agent/skills/sd-review/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-review/SKILL.md",
+      "target": ".claude/skills/sd-review/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -3703,6 +4025,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-review-pr/SKILL.md",
+      "target": ".claude/skills/sd-review-pr/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-review-pr/SKILL.md",
@@ -3876,6 +4205,13 @@
       "source": "templates/.agents/skills/sd-review-local/SKILL.md",
       "target": ".agent/skills/sd-review-local/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-review-local/SKILL.md",
+      "target": ".claude/skills/sd-review-local/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -4053,6 +4389,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-review-learnings/SKILL.md",
+      "target": ".claude/skills/sd-review-learnings/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-review-learnings/SKILL.md",
@@ -4226,6 +4569,13 @@
       "source": "templates/.agents/skills/sd-check/SKILL.md",
       "target": ".agent/skills/sd-check/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-check/SKILL.md",
+      "target": ".claude/skills/sd-check/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -4403,6 +4753,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-full-check/SKILL.md",
+      "target": ".claude/skills/sd-full-check/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-full-check/SKILL.md",
@@ -4576,6 +4933,13 @@
       "source": "templates/.agents/skills/sd-housekeeping/SKILL.md",
       "target": ".agent/skills/sd-housekeeping/SKILL.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-housekeeping/SKILL.md",
+      "target": ".claude/skills/sd-housekeeping/SKILL.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -4753,6 +5117,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-update-spec/SKILL.md",
+      "target": ".claude/skills/sd-update-spec/SKILL.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-update-spec/SKILL.md",
@@ -4828,6 +5199,13 @@
       "source": "templates/.agents/skills/sd-update-spec/references/architecture.md",
       "target": ".agent/skills/sd-update-spec/references/architecture.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-update-spec/references/architecture.md",
+      "target": ".claude/skills/sd-update-spec/references/architecture.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",
@@ -4907,6 +5285,13 @@
       "anchor": ".agent"
     },
     {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-update-spec/references/repository-map.md",
+      "target": ".claude/skills/sd-update-spec/references/repository-map.md",
+      "anchor": ".claude"
+    },
+    {
       "platform": "codebuddy",
       "kind": "skill",
       "source": "templates/.agents/skills/sd-update-spec/references/repository-map.md",
@@ -4982,6 +5367,13 @@
       "source": "templates/.agents/skills/sd-update-spec/references/obsidian-kb.md",
       "target": ".agent/skills/sd-update-spec/references/obsidian-kb.md",
       "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-update-spec/references/obsidian-kb.md",
+      "target": ".claude/skills/sd-update-spec/references/obsidian-kb.md",
+      "anchor": ".claude"
     },
     {
       "platform": "codebuddy",

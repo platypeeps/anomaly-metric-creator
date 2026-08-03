@@ -34,6 +34,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -44,6 +45,7 @@ from pathlib import Path
 from sd_ai_command_pack_lib import (
     DEFAULT_TRELLIS_TIMEOUT,
     CommandError,
+    build_environment_blocked_evidence,
     run_command,
 )
 from sd_ai_command_pack_lib import (
@@ -248,6 +250,48 @@ def patch_last_session(
     return None
 
 
+def _emit_recorded(journal: Path, *, committed: bool, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps({"outcome": "recorded", "committed": committed}))
+        return
+    if committed:
+        print(f"Recorded session in {journal} and committed the journal entry.")
+    else:
+        print(f"Recorded session in {journal} (not committed).")
+
+
+def _emit_git_metadata_block(
+    *, operation: str, checkpoint: str, diagnostic: str, as_json: bool
+) -> None:
+    """Emit the shared git-metadata block after a successful journal append.
+
+    The journal entry is already written and is re-detected (not re-appended) on
+    retry, so the mutation is partial but recoverable and the commit is safe to
+    retry once the Git write boundary is repaired. The fragment only rides the
+    stdout channel under ``--json``; the human stderr output is unchanged.
+    """
+
+    if not as_json:
+        return
+    evidence = build_environment_blocked_evidence(
+        boundary="git-metadata",
+        operation=operation,
+        checkpoint=checkpoint,
+        mutation_state="partial-recoverable",
+        retryable=True,
+        recovery_action={
+            "kind": "skill",
+            "instruction": (
+                "Repair the Git write boundary, then re-run record-session with "
+                "the same --title; it reuses the already-written journal entry "
+                "and retries the commit without duplicating it."
+            ),
+        },
+        diagnostic=diagnostic,
+    )
+    print(json.dumps({"outcome": "blocked", "environmentBlocked": evidence}))
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Record a complete Trellis session journal entry."
@@ -283,6 +327,15 @@ def main(argv: list[str]) -> int:
         "--no-commit",
         action="store_true",
         help="Leave the workspace changes uncommitted",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Emit machine-readable stdout, including a structured "
+            "environment-blocked fragment when a Git write boundary stops the "
+            "commit after the journal entry is written"
+        ),
     )
     args = parser.parse_args(argv[1:])
 
@@ -427,7 +480,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     if args.no_commit:
-        print(f"Recorded session in {journals[0]} (not committed).")
+        _emit_recorded(journals[0], committed=False, as_json=args.json)
         return 0
 
     # Stage only what this run wrote: the journal entry plus the sibling
@@ -435,28 +488,55 @@ def main(argv: list[str]) -> int:
     # workspace would sweep unrelated dirty files into the commit.
     stage = [journals[0], journals[0].parent / "index.md"]
     stage_args = [str(path) for path in stage if path.exists()]
-    added = run_git("add", "--", *stage_args)
-    if added.returncode != 0:
-        # Surface git's own output (pathspec, permission, index-lock
-        # errors), matching the commit and add_session failure paths.
-        for stream in (added.stdout, added.stderr):
-            if stream:
-                print(stream, file=sys.stderr)
-        print("error: git add failed", file=sys.stderr)
-        return 1
-    commit = run_command(
-        ["git", "commit", "-m", "chore: record journal", "--", *stage_args],
-        capture_output=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        context="commit the session journal",
-    )
-    if commit.returncode != 0:
-        print(commit.stdout, file=sys.stderr)
-        print("error: git commit failed", file=sys.stderr)
-        return 1
+    try:
+        added = run_git("add", "--", *stage_args)
+        if added.returncode != 0:
+            # Surface git's own output (pathspec, permission, index-lock
+            # errors), matching the commit and add_session failure paths.
+            for stream in (added.stdout, added.stderr):
+                if stream:
+                    print(stream, file=sys.stderr)
+            print("error: git add failed", file=sys.stderr)
+            _emit_git_metadata_block(
+                operation="stage the session journal",
+                checkpoint="journal-recorded",
+                diagnostic="\n".join(
+                    stream for stream in (added.stdout, added.stderr) if stream
+                ),
+                as_json=args.json,
+            )
+            return 1
+        commit = run_command(
+            ["git", "commit", "-m", "chore: record journal", "--", *stage_args],
+            capture_output=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            context="commit the session journal",
+        )
+        if commit.returncode != 0:
+            print(commit.stdout, file=sys.stderr)
+            print("error: git commit failed", file=sys.stderr)
+            _emit_git_metadata_block(
+                operation="commit the session journal",
+                checkpoint="journal-staged",
+                diagnostic=commit.stdout or "",
+                as_json=args.json,
+            )
+            return 1
+    except CommandError as error:
+        # git itself could not run (missing binary or timeout), never a parsed
+        # stderr guess. The journal is already written and re-detected on retry,
+        # so this is a retryable git-metadata block with no duplicated mutation.
+        print(f"error: {error}", file=sys.stderr)
+        _emit_git_metadata_block(
+            operation="run git to commit the session journal",
+            checkpoint="journal-recorded",
+            diagnostic=str(error),
+            as_json=args.json,
+        )
+        return 2
 
-    print(f"Recorded session in {journals[0]} and committed the journal entry.")
+    _emit_recorded(journals[0], committed=True, as_json=args.json)
     return 0
 
 

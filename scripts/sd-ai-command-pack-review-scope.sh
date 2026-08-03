@@ -170,38 +170,46 @@ github_pr_body_mentions_scope() {
   grep -Eiq '^[[:space:]>#*\-]*(Tooling/generated scope|Generated/tooling scope|Copied/generated scope)(:.*|[[:space:]]*)$' <<<"$body"
 }
 
-check_pr_body_scope() {
-  local scoped_count="$1"
-
-  if [[ "$scoped_count" -eq 0 ]]; then
+# Resolve what is known about the current PR body and print exactly one state
+# token. This function reports nothing and decides nothing: advisory mode and
+# enforcing mode want the same evidence but draw opposite conclusions from it,
+# so the policy lives in the callers.
+#
+# It must never exit. `fail` calls `exit 1` and the script runs under `set -e`,
+# so every subprocess here is guarded and neither `fail` nor `warn` is called.
+# Callers reach it only through `resolve_pr_body_scope_state_or_unknown`, which
+# captures with `|| true` and rewrites an empty result to `unknown:resolver_error`,
+# so a future edit that breaks either rule degrades to a named state instead of an
+# unexplained abort.
+resolve_pr_body_scope_state() {
+  # A supplied body that already satisfies the check is positive evidence, and
+  # positive evidence outranks every reason to give up below — including a
+  # disabled gh, which would otherwise report `unknown` while holding proof in
+  # hand. Enforcing mode is unaffected: both orders return 0 for this input.
+  if [ "${SD_AI_COMMAND_PACK_SCOPE_PR_BODY+x}" ] &&
+    github_pr_body_mentions_scope "$SD_AI_COMMAND_PACK_SCOPE_PR_BODY"; then
+    printf 'satisfied\n'
     return 0
   fi
 
   if is_disabled "$GH_MODE"; then
+    printf 'unknown:gh_disabled\n'
     return 0
   fi
 
   if [ "${SD_AI_COMMAND_PACK_SCOPE_PR_BODY+x}" ]; then
-    if ! github_pr_body_mentions_scope "$SD_AI_COMMAND_PACK_SCOPE_PR_BODY"; then
-      fail "tooling/generated files changed, but the provided PR body does not include a recognized tooling/generated scope section"
-    fi
+    printf 'unsatisfied:provided\n'
     return 0
   fi
 
   if ! have gh; then
-    if is_required "$GH_MODE"; then
-      fail "gh is required for tooling/generated PR scope checks but is not on PATH"
-    fi
-    warn "gh not found; skipping tooling/generated PR scope body check."
+    printf 'unknown:gh_missing\n'
     return 0
   fi
 
   local pr_json
   if ! pr_json="$(gh pr view --json body,title,url 2>/dev/null)"; then
-    if is_required "$GH_MODE"; then
-      fail "gh could not resolve the current PR for tooling/generated scope checks"
-    fi
-    warn "No current PR found; when you open it, the PR body must include $SCOPE_SECTION_HINT."
+    printf 'unknown:no_pr\n'
     return 0
   fi
 
@@ -210,20 +218,99 @@ check_pr_body_scope() {
   # JSON blob, which would risk a false pass on a heading-like title or url.
   local pr_body
   if have python3; then
-    pr_body="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("body") or "")' <<<"$pr_json")"
-  elif have jq; then
-    pr_body="$(jq -r '.body // ""' <<<"$pr_json")"
-  else
-    if is_required "$GH_MODE"; then
-      fail "tooling/generated scope check requires python3 or jq to parse the PR body, but neither is on PATH"
+    if ! pr_body="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("body") or "")' <<<"$pr_json" 2>/dev/null)"; then
+      printf 'unknown:parse_error\n'
+      return 0
     fi
-    warn "Neither python3 nor jq found; cannot parse the PR body, skipping tooling/generated PR scope body check."
+  elif have jq; then
+    if ! pr_body="$(jq -r '.body // ""' <<<"$pr_json" 2>/dev/null)"; then
+      printf 'unknown:parse_error\n'
+      return 0
+    fi
+  else
+    printf 'unknown:no_parser\n'
     return 0
   fi
 
-  if ! github_pr_body_mentions_scope "$pr_body"; then
-    fail "tooling/generated files changed, but the PR body does not include a recognized tooling/generated scope section"
+  if github_pr_body_mentions_scope "$pr_body"; then
+    printf 'satisfied\n'
+  else
+    printf 'unsatisfied:resolved\n'
   fi
+}
+
+# The only supported way to call the resolver. It is contracted to print a token
+# and never exit, but a future edit could break either half, and an empty capture
+# would then reach a caller's default arm as an unexplained state. Normalizing in
+# one place keeps both callers on the named token the contract promises, and
+# keeps them from drifting apart.
+resolve_pr_body_scope_state_or_unknown() {
+  local state
+  state="$(resolve_pr_body_scope_state || true)"
+
+  if [ -z "$state" ]; then
+    state='unknown:resolver_error'
+  fi
+
+  printf '%s\n' "$state"
+}
+
+check_pr_body_scope() {
+  local scoped_count="$1"
+
+  if [[ "$scoped_count" -eq 0 ]]; then
+    return 0
+  fi
+
+  local state
+  state="$(resolve_pr_body_scope_state_or_unknown)"
+
+  case "$state" in
+    satisfied)
+      return 0
+      ;;
+    unsatisfied:provided)
+      fail "tooling/generated files changed, but the provided PR body does not include a recognized tooling/generated scope section"
+      ;;
+    unsatisfied:resolved)
+      fail "tooling/generated files changed, but the PR body does not include a recognized tooling/generated scope section"
+      ;;
+    unknown:gh_disabled)
+      return 0
+      ;;
+    unknown:gh_missing)
+      if is_required "$GH_MODE"; then
+        fail "gh is required for tooling/generated PR scope checks but is not on PATH"
+      fi
+      warn "gh not found; skipping tooling/generated PR scope body check."
+      return 0
+      ;;
+    unknown:no_pr)
+      if is_required "$GH_MODE"; then
+        fail "gh could not resolve the current PR for tooling/generated scope checks"
+      fi
+      warn "No current PR found; when you open it, the PR body must include $SCOPE_SECTION_HINT."
+      return 0
+      ;;
+    unknown:no_parser)
+      if is_required "$GH_MODE"; then
+        fail "tooling/generated scope check requires python3 or jq to parse the PR body, but neither is on PATH"
+      fi
+      warn "Neither python3 nor jq found; cannot parse the PR body, skipping tooling/generated PR scope body check."
+      return 0
+      ;;
+    unknown:parse_error)
+      fail "tooling/generated scope check could not parse the PR body returned by gh"
+      ;;
+    unknown:resolver_error)
+      # Only reachable if the resolver stops printing a token. Named separately
+      # from `*)` so the failure says which half of the contract broke.
+      fail "tooling/generated scope check resolver returned no PR body state"
+      ;;
+    *)
+      fail "tooling/generated scope check could not determine the PR body state"
+      ;;
+  esac
 }
 
 add_category() {
@@ -289,7 +376,31 @@ main() {
   done
 
   if is_advisory "$MODE"; then
-    local advisory_message="This branch changes tooling/generated files; the PR body must include $SCOPE_SECTION_HINT. Add it before opening the PR."
+    # Advisory never fails and never consults gh-mode requiredness; that is an
+    # enforcing-mode concept, and a fatal advisory would break the contract with
+    # the review preflight, which treats this script as non-fatal.
+    local advisory_state
+    advisory_state="$(resolve_pr_body_scope_state_or_unknown)"
+
+    # Silence is the whole point: a body that already carries the section has
+    # nothing left to remind anyone about.
+    if [[ "$advisory_state" == satisfied ]]; then
+      return 0
+    fi
+
+    local advisory_message
+    case "$advisory_state" in
+      unsatisfied:*)
+        advisory_message="This branch changes tooling/generated files, but the PR body does not include $SCOPE_SECTION_HINT. Add it to the PR body."
+        ;;
+      *)
+        # Every unknown state warns. Absence of evidence is not evidence the
+        # body is fine, and an author without gh is the one who can least afford
+        # to lose the reminder.
+        advisory_message="This branch changes tooling/generated files; the PR body must include $SCOPE_SECTION_HINT. Add it before opening the PR."
+        ;;
+    esac
+
     warn "$advisory_message"
     # Stable machine marker so callers (e.g. the review preflight) surface this
     # advisory by token rather than matching the human-readable wording above.

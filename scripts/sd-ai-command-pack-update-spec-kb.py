@@ -16,17 +16,19 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import filecmp
 import functools
+import json
 import os
 import shlex
-import shutil
 import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from sd_ai_command_pack_lib import CommandError
+from sd_ai_command_pack_lib import (
+    CommandError,
+    build_environment_blocked_evidence,
+)
 from sd_ai_command_pack_lib import git_stdout as run_git_stdout
 
 KB_DIR = Path(".obsidian-kb")
@@ -38,6 +40,9 @@ KB_IGNORE_BLOCK_START = "# sd-ai-command-pack obsidian-kb start"
 KB_IGNORE_BLOCK_END = "# sd-ai-command-pack obsidian-kb end"
 DASHBOARD_MARKER = "<!-- SD-AI-COMMAND-PACK:OBSIDIAN-KB-DASHBOARD -->"
 OVERVIEW_MARKER = "<!-- SD-AI-COMMAND-PACK:LLM-KB-OVERVIEW -->"
+KB_COPY_MARKER = "<!-- SD-AI-COMMAND-PACK:KB-COPY -->"
+KB_COPY_MARKER_SUFFIX = f"\n{KB_COPY_MARKER}\n"
+KB_COPY_MARKER_SUFFIX_BYTES = KB_COPY_MARKER_SUFFIX.encode("utf-8")
 DOC_SUFFIXES = {".adoc", ".md", ".mdx", ".rst", ".txt"}
 MAP_SUFFIXES = DOC_SUFFIXES | {".json", ".xml", ".yaml", ".yml"}
 ROOT_DOC_PREFIXES = (
@@ -249,7 +254,18 @@ def is_stale_generated_kb_entry(
                 or relative_candidate in legacy_sources
             )
         )
-    return candidate.is_file() and is_managed_kb_category_path(relative_candidate)
+    # A plain file is deletable only when it ends with the pack's copy marker,
+    # the exact shape the copier writes. Location alone is not ownership: the
+    # KB root may be a symlink into an operator's vault, where a folder can
+    # share a category title, and a user note may quote the marker mid-file.
+    # Copies written before the marker existed are adopted on the next rewrite
+    # when their source still exists; copies orphaned before then are left in
+    # place.
+    return (
+        candidate.is_file()
+        and is_managed_kb_category_path(relative_candidate)
+        and file_ends_with_kb_copy_marker(candidate)
+    )
 
 
 def is_within(path: Path, root: Path) -> bool:
@@ -527,6 +543,32 @@ def file_contains_marker(path: Path, marker: str) -> bool:
     return text is not None and marker in text
 
 
+def file_ends_with_kb_copy_marker(path: Path) -> bool:
+    # Ownership proof for the prune: copies are written with the marker as a
+    # trailing suffix, so only a trailing match counts. A user note that merely
+    # quotes the marker mid-file must not look pack-owned.
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        return path.read_bytes().endswith(KB_COPY_MARKER_SUFFIX_BYTES)
+    except OSError:
+        return False
+
+
+def kb_copy_payload(source: Path) -> bytes:
+    return source.read_bytes() + KB_COPY_MARKER_SUFFIX_BYTES
+
+
+def kb_copy_is_current(source: Path, copy: Path) -> bool:
+    try:
+        expected_size = source.stat().st_size + len(KB_COPY_MARKER_SUFFIX_BYTES)
+        if copy.stat().st_size != expected_size:
+            return False
+        return copy.read_bytes() == kb_copy_payload(source)
+    except OSError:
+        return False
+
+
 def ignore_present_state(*, local: bool) -> str:
     return "local-exclude present" if local else "present"
 
@@ -706,7 +748,7 @@ def collect_copy_state(
                         f"{relative_destination.as_posix()} is occupied by a non-file",
                     )
                 )
-            elif filecmp.cmp(source, copy, shallow=False):
+            elif kb_copy_is_current(source, copy):
                 present += 1
             else:
                 issues.append(
@@ -1335,14 +1377,19 @@ def create_copies(root: Path, sources: list[Path]) -> tuple[int, int, list[str]]
         elif copy.exists() and not copy.is_file():
             conflicts.append(relative_destination.as_posix())
             continue
-        elif copy.exists() and filecmp.cmp(source, copy, shallow=False):
+        elif copy.exists() and kb_copy_is_current(source, copy):
             copied += 1
             continue
 
         # Sources are filtered to regular non-symlink files during discovery;
-        # follow_symlinks=False keeps that contract explicit so a future
-        # symlinked source cannot smuggle out-of-repo content into the KB.
-        shutil.copy2(source, copy, follow_symlinks=False)
+        # re-checking here keeps that contract explicit so a future symlinked
+        # source cannot smuggle out-of-repo content into the KB. The copy is
+        # the source plus a trailing provenance marker — the proof the prune
+        # requires before it may delete a category file.
+        if source.is_symlink():
+            conflicts.append(relative_destination.as_posix())
+            continue
+        copy.write_bytes(kb_copy_payload(source))
         copied += 1
 
     return copied, removed, conflicts
@@ -1370,6 +1417,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--if-present",
         action="store_true",
         help="skip successfully without writes when .obsidian-kb is absent",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "emit a structured environment-blocked fragment on stdout when a "
+            "filesystem or permission boundary stops the KB target refresh"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -1497,7 +1552,40 @@ def check_current(root: Path) -> int:
     return 1 if conflicts else 0
 
 
-def refresh(root: Path) -> int:
+def _emit_kb_target_block(
+    *, operation: str, checkpoint: str, mutation_state: str, error: OSError, as_json: bool
+) -> None:
+    """Emit the shared kb-target block for a linked-KB write or inspection fault.
+
+    The KB copy folder is a fully regenerable mirror: re-running the refresh
+    rewrites every generated entry and prunes stale ones, so a partial write is
+    recoverable and the operation is safe to retry once the target is writable.
+    The fragment rides stdout only under ``--json``; the human stderr line and
+    exit code are unchanged.
+    """
+
+    if not as_json:
+        return
+    evidence = build_environment_blocked_evidence(
+        boundary="kb-target",
+        operation=operation,
+        checkpoint=checkpoint,
+        mutation_state=mutation_state,
+        retryable=True,
+        recovery_action={
+            "kind": "skill",
+            "instruction": (
+                "Ensure the .obsidian-kb target (and any linked vault) is a "
+                "writable directory, then re-run the KB refresh; it regenerates "
+                "every entry and prunes stale ones without duplicating work."
+            ),
+        },
+        diagnostic=str(error),
+    )
+    print(json.dumps({"outcome": "blocked", "environmentBlocked": evidence}))
+
+
+def refresh(root: Path, *, as_json: bool = False) -> int:
     try:
         ensure_kb_root(root, create=False)
         gitignore_state = ensure_gitignore(root)
@@ -1522,6 +1610,13 @@ def refresh(root: Path) -> int:
             conflicts.append(overview_conflict)
     except OSError as error:
         print(f"error: failed to refresh {KB_DIR}: {error}", file=sys.stderr)
+        _emit_kb_target_block(
+            operation="refresh the linked Obsidian KB copies",
+            checkpoint="kb-refresh",
+            mutation_state="partial-recoverable",
+            error=error,
+            as_json=as_json,
+        )
         return 2
 
     report_kb_state(
@@ -1555,9 +1650,16 @@ def main(argv: list[str] | None = None) -> int:
             return dry_run(root)
         if args.check:
             return check_current(root)
-        return refresh(root)
+        return refresh(root, as_json=args.json)
     except OSError as error:
         print(f"error: failed to inspect {KB_DIR}: {error}", file=sys.stderr)
+        _emit_kb_target_block(
+            operation="inspect the linked Obsidian KB state",
+            checkpoint="kb-inspect",
+            mutation_state="none",
+            error=error,
+            as_json=args.json,
+        )
         return 2
 
 

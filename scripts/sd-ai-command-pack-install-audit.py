@@ -42,6 +42,7 @@ PACK_FILE_PATTERNS = [
     ".claude/commands/sd/*",
     ".claude/rules/sd-planning-adversarial-review.md",
     ".claude/sd-ai-command-pack/*",
+    ".claude/skills/sd-*/*",
     ".codebuddy/commands/sd/*",
     ".codebuddy/skills/sd-*/*",
     ".cursor/commands/sd-*",
@@ -79,6 +80,7 @@ LOCAL_ALLOWED_PACK_FILES = {
     ".sd-ai-command-pack/check.json",
     ".sd-ai-command-pack/pr-body-scope.json",
     ".sd-ai-command-pack/review-preflight.json",
+    ".sd-ai-command-pack/review.json",
 }
 
 SOURCE_ONLY_ALLOWED_PACK_FILES = {
@@ -87,6 +89,7 @@ SOURCE_ONLY_ALLOWED_PACK_FILES = {
     ".agents/skills/sd-fleet-refresh/SKILL.md",
     ".agents/skills/sd-fleet-refresh/references/controller-recovery.md",
     ".claude/commands/sd/fleet-refresh.md",
+    ".claude/skills/sd-fleet-refresh/SKILL.md",
     ".codebuddy/commands/sd/fleet-refresh.md",
     ".codebuddy/skills/sd-fleet-refresh/SKILL.md",
     ".cursor/commands/sd-fleet-refresh.md",
