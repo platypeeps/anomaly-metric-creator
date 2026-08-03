@@ -683,13 +683,15 @@ def _run_local(
     base: str,
     head: str,
     attempt_id: str,
-    artifact_root: Path,
     args: argparse.Namespace,
     local_policy: str,
 ) -> dict[str, Any]:
     script = repo / LOCAL_SCRIPT
     if not script.is_file() or script.is_symlink():
         raise ReviewError(f"missing regular local review helper: {LOCAL_SCRIPT}")
+    # The local stage owns its artifact root: an in-repo, git-ignored
+    # directory (default .build/sd-review). The coordinator's private root
+    # must stay outside the repository, so it is never forwarded here.
     command = [
         sys.executable,
         str(script),
@@ -707,8 +709,6 @@ def _run_local(
         args.successor,
         "--attempt-id",
         attempt_id,
-        "--artifact-root",
-        str(artifact_root / "local"),
         "--local-policy",
         local_policy,
         "--fix",
@@ -1812,7 +1812,6 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             base=effective_base,
             head=pr["head"] if pr else str(identity["head"]),
             attempt_id=attempt_id,
-            artifact_root=root,
             args=args,
             local_policy=local_policy,
         )

@@ -37,7 +37,7 @@ The content is organized as follows:
 Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
 
 # Directory Structure
-````
+```
 .agents/
   skills/
     amc-server-compatibility/
@@ -79,7 +79,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-help/
       references/
         command-catalog.md
+        completion-lifecycle.md
+        environment-blocked-recovery.md
         examples.md
+        recovery-artifacts.md
         structured-questions.md
       SKILL.md
     sd-housekeeping/
@@ -95,6 +98,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review-pr/
       SKILL.md
     sd-ship/
+      references/
+        watch-coordinator.md
       SKILL.md
     sd-start/
       SKILL.md
@@ -109,8 +114,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         architecture.md
         obsidian-kb.md
         repository-map.md
-      SKILL.md
-    sd-watch-pr/
       SKILL.md
     sd-work-backlog/
       references/
@@ -228,7 +231,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       test-gaps.md
       update-deps.md
       update-spec.md
-      watch-pr.md
       work-backlog.md
     trellis/
       continue.md
@@ -248,6 +250,67 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         openai.yaml
       references/
         server-compatibility-map.md
+      SKILL.md
+    sd-audit-repo/
+      SKILL.md
+    sd-check/
+      SKILL.md
+    sd-continue/
+      SKILL.md
+    sd-create-pr/
+      SKILL.md
+    sd-finish-work/
+      SKILL.md
+    sd-fix-ci/
+      SKILL.md
+    sd-full-check/
+      SKILL.md
+    sd-help/
+      references/
+        command-catalog.md
+        completion-lifecycle.md
+        environment-blocked-recovery.md
+        examples.md
+        recovery-artifacts.md
+        structured-questions.md
+      SKILL.md
+    sd-housekeeping/
+      SKILL.md
+    sd-retro/
+      SKILL.md
+    sd-review/
+      SKILL.md
+    sd-review-learnings/
+      SKILL.md
+    sd-review-local/
+      SKILL.md
+    sd-review-pr/
+      SKILL.md
+    sd-ship/
+      references/
+        watch-coordinator.md
+      SKILL.md
+    sd-start/
+      SKILL.md
+    sd-status/
+      SKILL.md
+    sd-test-gaps/
+      SKILL.md
+    sd-update-deps/
+      SKILL.md
+    sd-update-spec/
+      references/
+        architecture.md
+        obsidian-kb.md
+        repository-map.md
+      SKILL.md
+    sd-work-backlog/
+      references/
+        autonomous-loop.md
+        ledger-recovery.md
+        ownership-recovery.md
+        run-recovery.md
+        terminal-reconciliation.md
       SKILL.md
     security-best-practices/
       agents/
@@ -385,7 +448,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       test-gaps.toml
       update-deps.toml
       update-spec.toml
-      watch-pr.toml
       work-backlog.toml
     trellis/
       continue.toml
@@ -454,7 +516,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-test-gaps.prompt.md
     sd-update-deps.prompt.md
     sd-update-spec.prompt.md
-    sd-watch-pr.prompt.md
     sd-work-backlog.prompt.md
   skills/
     amc-server-compatibility/
@@ -579,7 +640,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-test-gaps.md
     sd-update-deps.md
     sd-update-spec.md
-    sd-watch-pr.md
     sd-work-backlog.md
   lib/
     session-utils.js
@@ -1351,6 +1411,7 @@ scripts/
   sd-ai-command-pack-pr-body-scope.py
   sd-ai-command-pack-pr-eligibility.py
   sd-ai-command-pack-record-session.py
+  sd-ai-command-pack-recovery-artifacts.py
   sd-ai-command-pack-review-full-check.sh
   sd-ai-command-pack-review-learnings.py
   sd-ai-command-pack-review-local.py
@@ -1518,4 +1579,4 @@ CLAUDE.md
 pyproject.toml
 README.md
 SECURITY.md
-````
+```

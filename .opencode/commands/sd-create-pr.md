@@ -1,12 +1,12 @@
 ---
-description: Create or reuse a PR after SD spec refresh, commit, and push, then run the SD PR review loop.
+description: Create or reuse a PR after SD spec refresh, commit, and push, then report the next review or ship command.
 ---
 
 # SD Create Pull Request
 
 In this pack, SD means Software Delivery. A skill is a project-installed Markdown instruction bundle resolved by the agent's trusted installed-skill resolver.
 
-Run the Software Delivery (SD) create-pr workflow. Update repository specs through the SD wrapper, commit and push intended branch changes, create or reuse the branch PR, then enter the SD PR review loop.
+Run the Software Delivery (SD) create-pr workflow. Update repository specs through the SD wrapper, commit and push intended branch changes, and create or reuse the branch PR. This command runs no review loop; it ends with the publish report and the recommended next command.
 
 Checkout trust policy — complete before step 1:
 
@@ -40,6 +40,6 @@ Structured interaction policy — apply only at declared decision boundaries:
 
 1. Resolve the `sd-create-pr` skill by name using the agent's trusted skill discovery mechanism for installed skills.
 2. If that skill is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, or requires unavailable tools, stop and report the exact blocker.
-3. Use the skill as the primary instructions. It delegates spec refresh to `sd-update-spec`, avoids duplicate PRs, refuses ambiguous staging, pushes the current branch, creates or reuses the PR, and hands off to `sd-review-pr`.
-4. Do not run Prism, Gito, or other local review providers directly from this command; `sd-review-pr` owns the typed deterministic `sd-check` gate and configured remote reviewer loop.
-5. If any delegated skill, git command, GitHub command, push, PR creation, provider call, CI check, or fix attempt fails, stop and report the command, exit status, and complete stdout/stderr output.
+3. Use the skill as the primary instructions. It delegates spec refresh to `sd-update-spec`, avoids duplicate PRs, refuses ambiguous staging, pushes the current branch, creates or reuses the PR, and reports `sd-review scope=pr` or `sd-ship` as the next command instead of running review.
+4. Do not run Prism, Gito, or other local review providers from this command; the routed `sd-review` workflow owns the typed deterministic `sd-check` gate and configured remote reviewer loop.
+5. If any delegated skill, git command, GitHub command, push, or PR creation fails, stop and report the command, exit status, and complete stdout/stderr output.
