@@ -25,6 +25,7 @@ sys.dont_write_bytecode = True
 from sd_ai_command_pack_lib import (  # noqa: E402
     CACHE_ROOT_ENV,
     CacheSetupError,
+    build_environment_blocked_evidence,
     build_tool_environment,
 )
 
@@ -38,6 +39,10 @@ STATE_HOME_ENV = "SD_AI_COMMAND_PACK_STATE_HOME"
 FOCUS_FIELDS = frozenset({"priority", "package", "task", "status", "scope"})
 FOCUS_PREFIX_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(.*)$", re.DOTALL)
 WORD_RE = re.compile(r"[A-Za-z0-9_.-]+")
+# Canonical machine-visible "blocked on an external dependency" marker: a
+# ``PARKED:`` title prefix (shared with sd-ai-command-pack-status.py so the
+# board and the selector read one convention, not a parallel one).
+PARKED_PREFIX_RE = re.compile(r"^PARKED\s*:\s*", re.IGNORECASE)
 COMMIT_RE = re.compile(r"[0-9a-f]{40,64}")
 SECRET_KEY_RE = re.compile(
     r"(?:token|secret|password|credential|api[_-]?key)", re.IGNORECASE
@@ -65,10 +70,45 @@ CURRENT_FIELD_ORDER = (
     "prNumber",
     "prUrl",
     "lastShippedSha",
+    "mergeState",
+    "finishWorkState",
+    "housekeepingState",
+    "anomalies",
 )
 CURRENT_FIELDS = frozenset(CURRENT_FIELD_ORDER)
+# The four ship-outcome fields are transient per-iteration facts: they are
+# written by the validated receipt path, survive same-iteration transitions
+# like every non-stable field, and reset with the rest of `current` at the
+# complete -> inventory boundary. None belong in STABLE_CURRENT_FIELDS (a
+# re-ship after a blocked attempt must be able to replace them) or in
+# TRANSITION_CURRENT_FIELDS (they are repo/PR facts, owned by evidence).
 STABLE_CURRENT_FIELDS = ("task", "baseBranch")
 TRANSITION_CURRENT_FIELDS = frozenset(STABLE_CURRENT_FIELDS)
+MERGE_STATES = ("merged", "open", "closed", "blocked")
+FINISH_WORK_STATES = ("completed", "blocked", "not-run")
+HOUSEKEEPING_STATES = ("healthy", "attention", "blocked")
+SHIP_RECEIPT_KIND = "sd-ship-merge-result"
+SHIP_RECEIPT_SCHEMA_VERSION = 1
+# Every receipt rejection carries exactly one of these codes as its error
+# prefix, in the same typed-reason style as RECOVERY_REFERENCE_BY_REASON.
+# They are command failures, not loop states, so they carry no recovery
+# reference.
+SHIP_RECEIPT_REASON_CODES = (
+    "ship_receipt_unreadable",
+    "ship_receipt_malformed",
+    "ship_receipt_version_unsupported",
+    "ship_receipt_run_mismatch",
+    "ship_receipt_iteration_mismatch",
+    "ship_receipt_task_mismatch",
+    "ship_receipt_pr_mismatch",
+    "ship_receipt_merge_unverified",
+)
+SHIP_RECEIPT_OUTCOME_BY_MERGE_STATE = {
+    "merged": "completed",
+    "open": "blocked",
+    "blocked": "blocked",
+    "closed": "failed",
+}
 ACTIVE_EVIDENCE_PHASES = frozenset(
     {"selected", "planning", "implementing", "validating", "shipping", "followups"}
 )
@@ -128,6 +168,47 @@ CONTEXT_SIGNALS = frozenset(
 
 class WorkLoopError(ValueError):
     """Raised when loop state is invalid or unsafe to mutate."""
+
+
+class StatePersistenceError(OSError):
+    """A user-local state or lock write hit a filesystem or permission boundary.
+
+    Subclasses OSError so the atomic-write contract and every existing OSError
+    handler keep working unchanged; it only carries the structured
+    ``environment_blocked`` evidence the CLI surfaces. Every raise site is a
+    pre-commit directory creation or an atomic-replace write, so a failure never
+    leaves a partial mutation — the prior state is intact (mutationState
+    ``none``) and the operation is safe to retry once the environment is
+    repaired.
+    """
+
+    def __init__(self, evidence: Mapping[str, Any], *, cause: OSError) -> None:
+        super().__init__(str(cause))
+        self.evidence: dict[str, Any] = dict(evidence)
+
+
+def _user_state_blocked(
+    operation: str, checkpoint: str, error: OSError
+) -> StatePersistenceError:
+    """Build a user-state environment block from a caught state-write OSError."""
+
+    evidence = build_environment_blocked_evidence(
+        boundary="user-state",
+        operation=operation,
+        checkpoint=checkpoint,
+        mutation_state="none",
+        retryable=True,
+        recovery_action={
+            "kind": "skill",
+            "instruction": (
+                "Ensure the work-loop state directory is a writable private "
+                f"directory (or set {STATE_HOME_ENV} to one), then retry "
+                f"{operation}."
+            ),
+        },
+        diagnostic=str(error),
+    )
+    return StatePersistenceError(evidence, cause=error)
 
 
 def utc_now() -> str:
@@ -288,7 +369,12 @@ def state_paths(identity: Mapping[str, str], state_root: Path) -> tuple[Path, Pa
 def ensure_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise WorkLoopError(f"state directory must not be a symlink: {path}")
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        raise _user_state_blocked(
+            "prepare the work-loop state directory", "state-directory", error
+        ) from error
     if path.is_symlink() or not path.is_dir():
         raise WorkLoopError(f"state directory is unusable: {path}")
     try:
@@ -346,6 +432,17 @@ def _normalized_pr_url(value: object) -> str | None:
     if not path:
         return None
     return urlunsplit((split.scheme.casefold(), netloc, path, "", ""))
+
+
+def _comparable_pr_url(value: str | None) -> str | None:
+    """Canonicalize a pull request URL for equivalence comparison.
+
+    Falls back to the raw text when it does not parse as a well-formed URL,
+    so malformed input still compares (and mismatches) exactly as before.
+    """
+    if value is None:
+        return None
+    return _normalized_pr_url(value) or value
 
 
 def _valid_pr_record(value: object) -> bool:
@@ -507,6 +604,13 @@ def validate_state(state: Mapping[str, Any]) -> None:
         )
     ):
         raise WorkLoopError("work-loop current state is malformed")
+    for field, allowed in (
+        ("mergeState", MERGE_STATES),
+        ("finishWorkState", FINISH_WORK_STATES),
+        ("housekeepingState", HOUSEKEEPING_STATES),
+    ):
+        if current.get(field) is not None and current[field] not in allowed:
+            raise WorkLoopError("work-loop current state is malformed")
     counters = state.get("counters")
     if (
         not isinstance(counters, dict)
@@ -591,33 +695,42 @@ def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
     payload = _json_payload(value)
     if len(payload.encode("utf-8")) > MAX_LEDGER_BYTES:
         raise WorkLoopError(f"refusing to write oversized work-loop state: {path}")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", errors="strict") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        temporary = Path(temporary_name)
         try:
-            path.chmod(0o600)
-        except OSError:
-            # The atomic write succeeded; unsupported chmod must not discard it.
-            pass
-    except Exception:
-        try:
-            os.close(descriptor)
-        except OSError:
-            # Cleanup failures must not hide the original write failure.
-            pass
-        try:
-            temporary.unlink()
-        except OSError:
-            # Cleanup failures must not hide the original write failure.
-            pass
+            with os.fdopen(descriptor, "w", encoding="utf-8", errors="strict") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            try:
+                path.chmod(0o600)
+            except OSError:
+                # The atomic write succeeded; unsupported chmod must not discard it.
+                pass
+        except Exception:
+            try:
+                os.close(descriptor)
+            except OSError:
+                # Cleanup failures must not hide the original write failure.
+                pass
+            try:
+                temporary.unlink()
+            except OSError:
+                # Cleanup failures must not hide the original write failure.
+                pass
+            raise
+    except StatePersistenceError:
         raise
+    except OSError as error:
+        # Every failure here is a temp-create or atomic-replace fault: the prior
+        # state file is untouched, so the mutation is none and retry is safe.
+        raise _user_state_blocked(
+            "persist work-loop state", "state-file", error
+        ) from error
 
 
 def normalize_focus(
@@ -734,6 +847,48 @@ def focus_match(
     return False, []
 
 
+def candidate_block_status(
+    candidate: Mapping[str, Any],
+) -> tuple[bool, str | None]:
+    """Report whether a candidate is blocked on an external dependency and why.
+
+    One convention, three surfaces: an explicit ``blocked`` flag, a
+    ``blockedOn`` dependency string, or the canonical ``PARKED:`` title prefix
+    already carried by the board and matched by the status helper. A blocked
+    candidate is never selectable; the returned reason lets the selector report
+    why it was skipped instead of silently dropping it.
+    """
+    reason = candidate.get("blockedReason") or candidate.get("blockedOn")
+    reason_text = reason.strip() if isinstance(reason, str) and reason.strip() else None
+    if candidate.get("blocked") is True:
+        return True, reason_text or "blocked"
+    title = candidate.get("title")
+    if isinstance(title, str) and PARKED_PREFIX_RE.match(title.strip()):
+        return True, reason_text or "parked"
+    if reason_text is not None and isinstance(reason, str) and candidate.get("blockedOn"):
+        return True, reason_text
+    return False, None
+
+
+def candidate_order(candidate: Mapping[str, Any]) -> int:
+    """Explicit ordering signal honored within a priority band (lower first).
+
+    Non-integer or absent values sort as ``0`` so the field is a pure,
+    deterministic tie-break refinement; PRD prose remains the source of nuance.
+    """
+    value = candidate.get("order")
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0
+
+
 def base_candidate_key(candidate: Mapping[str, Any]) -> tuple[Any, ...]:
     status_order = {"in_progress": 0, "planning": 1}
     priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
@@ -741,6 +896,7 @@ def base_candidate_key(candidate: Mapping[str, Any]) -> tuple[Any, ...]:
     return (
         status_order.get(str(candidate.get("status")), 9),
         priority_order.get(str(candidate.get("priority")), 9),
+        candidate_order(candidate),
         0 if artifacts_complete else 1,
         str(candidate.get("createdAt") or "9999-99-99"),
         str(candidate.get("id") or candidate.get("task") or "").casefold(),
@@ -771,14 +927,18 @@ def rank_candidates(
                 break
         if focus.get("mode") == "only" and band is None:
             continue
+        blocked, blocked_reason = candidate_block_status(candidate)
         item = dict(candidate)
         item["focusMatch"] = band is not None
         item["focusBand"] = band
         item["focusEvidence"] = evidence
         item["focusMatchKind"] = match_kind
+        item["blocked"] = blocked
+        item["blockedReason"] = blocked_reason
         ranked.append(item)
     ranked.sort(
         key=lambda item: (
+            1 if item["blocked"] else 0,
             item["focusBand"] if item["focusBand"] is not None else len(selectors) + 1,
             0 if item["focusMatchKind"] == "structured" else 1,
             base_candidate_key(item),
@@ -812,15 +972,7 @@ def new_state(
         "updatedAt": now,
         "heartbeatAt": now,
         "contextHealth": {"level": "green", "epoch": 0, "reasons": []},
-        "current": {
-            "task": None,
-            "branch": None,
-            "head": None,
-            "baseBranch": None,
-            "prNumber": None,
-            "prUrl": None,
-            "lastShippedSha": None,
-        },
+        "current": {key: None for key in CURRENT_FIELD_ORDER},
         "counters": {
             "completed": 0,
             "parked": 0,
@@ -909,6 +1061,92 @@ def lock_is_stale(
     return True
 
 
+def _recover_locked_path(
+    lock_path: Path,
+    *,
+    expected_run_id: str | None,
+    context: str,
+) -> None:
+    """Delete a lock previously judged stale or unreadable, verifying identity
+    at delete time.
+
+    A plain ``unlink`` by path races a concurrent recoverer: once one process
+    removes the stale lock and creates its own, a second recoverer's ``unlink``
+    would delete that fresh lock and let both runs proceed. Instead, atomically
+    rename the lock aside under a private name and delete it only while its
+    identity still matches what was judged — ``runId`` for a stale lock, or
+    unreadable for a malformed one. If a competitor already replaced the lock,
+    restore what was moved without clobbering the newer lock so the caller
+    re-observes it on the next attempt rather than recreating over it.
+    """
+    aside = lock_path.with_name(f"{lock_path.name}.recovering-{uuid.uuid4().hex}")
+    try:
+        os.rename(lock_path, aside)
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise WorkLoopError(f"cannot recover {context}: {error}") from error
+    try:
+        moved = read_json(aside)
+        validate_lock(moved)
+    except WorkLoopError:
+        matches = expected_run_id is None
+    else:
+        matches = expected_run_id is not None and moved.get("runId") == expected_run_id
+    if matches:
+        try:
+            aside.unlink()
+        except OSError as error:
+            raise WorkLoopError(f"cannot recover {context}: {error}") from error
+        return
+    # Restore choice: hardlink first (atomic, no-clobber), then an
+    # O_CREAT|O_EXCL rewrite where hardlinks are unavailable (EPERM/EXDEV/
+    # ENOSYS on some network and container mounts). Never os.rename here — it
+    # would clobber a competitor's newer lock. If both primitives fail, the
+    # aside file is the only remaining copy of a live foreign lock, so it must
+    # stay on disk and the error must name it.
+    restore_error: OSError | None = None
+    restored = False
+    try:
+        os.link(aside, lock_path)
+        restored = True
+    except FileExistsError:
+        # A newer lock already exists; it is authoritative and the aside copy
+        # is redundant.
+        restored = True
+    except OSError:
+        try:
+            payload = aside.read_bytes()
+            descriptor = os.open(
+                lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+            )
+        except FileExistsError:
+            restored = True
+        except OSError as fallback_error:
+            # Report what actually blocked the fallback; the original link
+            # failure stays chained as its __context__.
+            restore_error = fallback_error
+        else:
+            try:
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(payload)
+                restored = True
+            except OSError as write_error:
+                restore_error = write_error
+    if not restored:
+        raise WorkLoopError(
+            f"cannot recover {context}: {restore_error}; the foreign lock is "
+            f"preserved at {aside}; move it back to {lock_path} before "
+            "retrying"
+        ) from restore_error
+    try:
+        aside.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise WorkLoopError(f"cannot recover {context}: {error}") from error
+
+
 def acquire_lock(
     lock_path: Path,
     state: Mapping[str, Any],
@@ -956,12 +1194,11 @@ def acquire_lock(
                         "work-loop lock is unreadable or malformed; inspect it or retry with "
                         "--recover-stale-lock"
                     ) from error
-                try:
-                    lock_path.unlink()
-                except OSError as unlink_error:
-                    raise WorkLoopError(
-                        f"cannot recover unreadable work-loop lock: {unlink_error}"
-                    ) from unlink_error
+                _recover_locked_path(
+                    lock_path,
+                    expected_run_id=None,
+                    context="unreadable work-loop lock",
+                )
                 continue
             if current.get("runId") == state["runId"]:
                 current["heartbeatAt"] = utc_now()
@@ -975,12 +1212,11 @@ def acquire_lock(
                     f"repository has {article} {state_label} work-loop lock owned by "
                     f"run {current.get('runId')}; reconcile before recovery"
                 ) from None
-            try:
-                lock_path.unlink()
-            except OSError as error:
-                raise WorkLoopError(
-                    f"cannot recover stale work-loop lock: {error}"
-                ) from error
+            _recover_locked_path(
+                lock_path,
+                expected_run_id=current.get("runId"),
+                context="stale work-loop lock",
+            )
             continue
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(_json_payload(payload))
@@ -1049,18 +1285,26 @@ def acquire_terminal_lock(
                     "repository has a stale terminal reconciliation lock; "
                     "retry with --recover-stale-lock"
                 ) from None
-            try:
-                lock_path.unlink()
-            except OSError as error:
-                raise WorkLoopError(
-                    f"cannot recover stale terminal reconciliation lock: {error}"
-                ) from error
+            _recover_locked_path(
+                lock_path,
+                expected_run_id=current.get("runId"),
+                context="stale terminal reconciliation lock",
+            )
             continue
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(_json_payload(payload))
             stream.flush()
             os.fsync(stream.fileno())
         return operation_id
+
+
+def upgrade_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Fill current-state fields added after a persisted ledger was written."""
+    current = state.get("current")
+    if isinstance(current, dict):
+        for key in CURRENT_FIELD_ORDER:
+            current.setdefault(key, None)
+    return state
 
 
 def load_state_for_repo(
@@ -1072,7 +1316,7 @@ def load_state_for_repo(
     identity = repository_identity(repo)
     root = state_root or resolve_state_root(environ=environ)
     state_path, lock_path = state_paths(identity, root)
-    state = read_json(state_path)
+    state = upgrade_state(read_json(state_path))
     validate_state(state)
     if state["repository"]["digest"] != identity["digest"]:
         raise WorkLoopError(
@@ -1375,7 +1619,7 @@ def reconcile_terminal_state(
         operation_lock_path, state, recover_stale=recover_stale
     )
     try:
-        state = read_json(state_path)
+        state = upgrade_state(read_json(state_path))
         validate_state(state)
         if state["repository"]["digest"] != identity["digest"]:
             raise WorkLoopError(
@@ -1611,6 +1855,15 @@ def validated_evidence(
         observed = candidate.get(key)
         if remembered is not None and observed != remembered:
             raise WorkLoopError(f"cannot replace stable current-state field: {key}")
+
+    for key, allowed in (
+        ("mergeState", MERGE_STATES),
+        ("finishWorkState", FINISH_WORK_STATES),
+        ("housekeepingState", HOUSEKEEPING_STATES),
+    ):
+        value = candidate.get(key)
+        if value is not None and value not in allowed:
+            raise WorkLoopError(f"{key} evidence must be one of: {', '.join(allowed)}")
 
     remembered_pr = current.get("prNumber")
     if remembered_pr is not None and candidate.get("prNumber") != remembered_pr:
@@ -1964,6 +2217,46 @@ def record_result(
         raise WorkLoopError(f"unknown iteration outcome: {outcome}")
     if review_rounds < 0 or ci_retries < 0:
         raise WorkLoopError("review rounds and CI retries must be non-negative")
+    if pr_number is not None and (
+        isinstance(pr_number, bool) or pr_number < 1
+    ):
+        raise WorkLoopError(
+            "iteration result pull request number must be a positive integer"
+        )
+    recorded_pr = state["current"].get("prNumber")
+    recorded_url = state["current"].get("prUrl")
+    if pr_url is None:
+        normalized_url = None
+    else:
+        # Same default limit as the evidence path stores current.prUrl with;
+        # a tighter limit here truncates long URLs into a false contradiction.
+        normalized_url = compact_text(pr_url)
+        if not normalized_url:
+            raise WorkLoopError(
+                "iteration result pull request URL must not be blank when supplied"
+            )
+    if pr_number is not None and recorded_pr is not None and pr_number != recorded_pr:
+        raise WorkLoopError(
+            "iteration result pull request number contradicts recorded evidence"
+        )
+    if (
+        normalized_url is not None
+        and recorded_url is not None
+        and _comparable_pr_url(normalized_url) != _comparable_pr_url(recorded_url)
+    ):
+        raise WorkLoopError(
+            "iteration result pull request URL contradicts recorded evidence"
+        )
+    if outcome == "completed" and pr_number is not None and recorded_pr is None:
+        raise WorkLoopError(
+            "completed iteration with a pull request requires recorded"
+            " pull request evidence"
+        )
+    # Let transition_state apply its own default-limit compaction, the same
+    # normalization the stable current.task field was originally stored
+    # with; a tighter limit here truncates a long task into a false
+    # "cannot replace stable current-state field" contradiction.
+    transition_state(state, "complete", updates={"task": task})
     state["counters"][counter_key] += 1
     state["counters"]["reviewRounds"] += review_rounds
     state["counters"]["ciRetries"] += ci_retries
@@ -1974,7 +2267,7 @@ def record_result(
         "task": compact_text(task, limit=160),
         "outcome": outcome,
         "prNumber": pr_number,
-        "prUrl": compact_text(pr_url, limit=240) if pr_url else None,
+        "prUrl": normalized_url,
         "reviewRounds": review_rounds,
         "ciRetries": ci_retries,
         "completedAt": utc_now(),
@@ -1986,8 +2279,168 @@ def record_result(
     state["followups"] = (
         state["followups"] + [compact_text(item) for item in followups]
     )[-MAX_NOTES:]
-    state["phase"] = "complete"
-    state["current"]["task"] = compact_text(task, limit=160)
+
+
+def _ship_receipt_error(code: str, detail: str) -> WorkLoopError:
+    if code not in SHIP_RECEIPT_REASON_CODES:
+        raise WorkLoopError(f"unknown ship receipt reason code: {code}")
+    return WorkLoopError(f"{code}: {detail}")
+
+
+def load_ship_receipt(path: Path) -> dict[str, Any]:
+    """Parse and shape-check a schema-v1 ship result receipt, failing closed."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise _ship_receipt_error(
+            "ship_receipt_unreadable", f"cannot read {path}: {error}"
+        ) from error
+    try:
+        receipt = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise _ship_receipt_error(
+            "ship_receipt_malformed", f"receipt is not valid JSON: {error}"
+        ) from error
+    if not isinstance(receipt, dict):
+        raise _ship_receipt_error(
+            "ship_receipt_malformed", "receipt must be a JSON object"
+        )
+    schema_version = receipt.get("schemaVersion")
+    if (
+        isinstance(schema_version, bool)
+        or schema_version != SHIP_RECEIPT_SCHEMA_VERSION
+        or receipt.get("kind") != SHIP_RECEIPT_KIND
+    ):
+        raise _ship_receipt_error(
+            "ship_receipt_version_unsupported",
+            f"expected schemaVersion {SHIP_RECEIPT_SCHEMA_VERSION} and kind"
+            f" {SHIP_RECEIPT_KIND}, found"
+            f" {schema_version!r}/{receipt.get('kind')!r}",
+        )
+
+    def malformed(detail: str) -> WorkLoopError:
+        return _ship_receipt_error("ship_receipt_malformed", detail)
+
+    for key in ("runId", "task", "finalBranch", "finalHead"):
+        value = receipt.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise malformed(f"{key} must be a non-empty string")
+    pr_url = receipt.get("prUrl")
+    if not isinstance(pr_url, str) or _normalized_pr_url(pr_url) != pr_url:
+        raise malformed("prUrl must be a canonical http(s) pull request URL")
+    for key, minimum in (("iteration", 1), ("prNumber", 1)):
+        value = receipt.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+            raise malformed(f"{key} must be an integer >= {minimum}")
+    for key in ("reviewRounds", "ciRetries"):
+        value = receipt.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise malformed(f"{key} must be a non-negative integer")
+    for key, allowed in (
+        ("mergeState", MERGE_STATES),
+        ("finishWork", FINISH_WORK_STATES),
+        ("housekeeping", HOUSEKEEPING_STATES),
+    ):
+        if receipt.get(key) not in allowed:
+            raise malformed(f"{key} must be one of: {', '.join(allowed)}")
+    anomalies = receipt.get("anomalies")
+    if not isinstance(anomalies, list) or any(
+        not isinstance(item, str) or not item.strip() for item in anomalies
+    ):
+        raise malformed("anomalies must be a list of non-empty strings")
+    if receipt["mergeState"] == "merged" and (
+        receipt["finalBranch"] == "unknown" or receipt["finalHead"] == "unknown"
+    ):
+        raise malformed(
+            "a merged receipt requires a known final branch and final head"
+        )
+    return receipt
+
+
+def record_result_from_receipt(
+    state: dict[str, Any],
+    *,
+    task: str,
+    receipt: Mapping[str, Any],
+    repo: Path,
+    decisions: Sequence[str],
+    followups: Sequence[str],
+) -> None:
+    """Record an iteration result from a receipt after recomputing its claims."""
+    if receipt["runId"] != state["runId"]:
+        raise _ship_receipt_error(
+            "ship_receipt_run_mismatch",
+            f"receipt belongs to run {receipt['runId']}, not {state['runId']}",
+        )
+    if receipt["iteration"] != state["iteration"]:
+        raise _ship_receipt_error(
+            "ship_receipt_iteration_mismatch",
+            f"receipt covers iteration {receipt['iteration']},"
+            f" ledger is at {state['iteration']}",
+        )
+    # Default-limit compaction here too, matching the stable current.task
+    # normalization below so an equal-content long task never false-mismatches.
+    receipt_task = compact_text(receipt["task"])
+    if receipt_task != compact_text(task):
+        raise _ship_receipt_error(
+            "ship_receipt_task_mismatch",
+            "receipt task does not match the task being recorded",
+        )
+    current = state["current"]
+    recorded_task = current.get("task")
+    if recorded_task is not None and receipt_task != recorded_task:
+        raise _ship_receipt_error(
+            "ship_receipt_task_mismatch",
+            "receipt task does not match the selected task",
+        )
+    receipt_url = compact_text(receipt["prUrl"])
+    if current.get("prNumber") != receipt["prNumber"] or _comparable_pr_url(
+        current.get("prUrl")
+    ) != _comparable_pr_url(receipt_url):
+        raise _ship_receipt_error(
+            "ship_receipt_pr_mismatch",
+            "receipt pull request does not match the recorded evidence",
+        )
+    merge_state = receipt["mergeState"]
+    if merge_state == "merged":
+        base_branch = current.get("baseBranch")
+        if base_branch is None or receipt["finalBranch"] != base_branch:
+            raise _ship_receipt_error(
+                "ship_receipt_merge_unverified",
+                "receipt final branch does not match the recorded base branch",
+            )
+        final_head = _resolved_commit(repo, receipt["finalHead"])
+        if final_head is None:
+            raise _ship_receipt_error(
+                "ship_receipt_merge_unverified",
+                f"receipt final head is not a local commit: {receipt['finalHead']}",
+            )
+        base_tip = _branch_commit(repo, base_branch)
+        if base_tip is None or not _is_ancestor(repo, final_head, base_tip):
+            raise _ship_receipt_error(
+                "ship_receipt_merge_unverified",
+                "receipt final head is not reachable from the base branch",
+            )
+    # Receipt fields name stage outcomes (finishWork, housekeeping); the
+    # ledger's current fields carry the -State suffix shared by the other
+    # transient snapshot fields. The ledger stores only bounded compact
+    # strings; the full anomaly list stays in the ship report and journal.
+    current["mergeState"] = merge_state
+    current["finishWorkState"] = receipt["finishWork"]
+    current["housekeepingState"] = receipt["housekeeping"]
+    joined_anomalies = "; ".join(item.strip() for item in receipt["anomalies"])
+    current["anomalies"] = compact_text(joined_anomalies) if joined_anomalies else None
+    record_result(
+        state,
+        task=task,
+        outcome=SHIP_RECEIPT_OUTCOME_BY_MERGE_STATE[merge_state],
+        pr_number=receipt["prNumber"],
+        pr_url=receipt_url,
+        review_rounds=receipt["reviewRounds"],
+        ci_retries=receipt["ciRetries"],
+        decisions=decisions,
+        followups=followups,
+    )
 
 
 def recovery_directive(reason_code: str) -> dict[str, str | None]:
@@ -2102,7 +2555,7 @@ def status_snapshot(
                     terminal_lock, terminal_lock_error
                 ),
             }
-        state = read_json(state_path)
+        state = upgrade_state(read_json(state_path))
         validate_state(state)
         if state["repository"]["digest"] != identity["digest"]:
             raise WorkLoopError("repository identity does not match loop state")
@@ -2338,12 +2791,16 @@ def build_parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--outcome",
         choices=("completed", "parked", "blocked", "skipped", "failed"),
-        required=True,
     )
     result.add_argument("--pr-number", type=int)
     result.add_argument("--pr-url")
-    result.add_argument("--review-rounds", type=int, default=0)
-    result.add_argument("--ci-retries", type=int, default=0)
+    result.add_argument("--review-rounds", type=int)
+    result.add_argument("--ci-retries", type=int)
+    result.add_argument(
+        "--from-receipt",
+        type=Path,
+        help="record from a validated schema-v1 ship result receipt",
+    )
     result.add_argument("--decision", action="append", default=[])
     result.add_argument("--follow-up", action="append", default=[])
     result.add_argument("--json", action="store_true")
@@ -2400,7 +2857,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.bare_focus is not None or args.focus or args.focus_only
             )
             if state_path.is_file():
-                state = read_json(state_path)
+                state = upgrade_state(read_json(state_path))
                 validate_state(state)
                 if state["repository"]["digest"] != identity["digest"]:
                     raise WorkLoopError(
@@ -2474,7 +2931,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not isinstance(payload, list):
                 raise WorkLoopError("candidate file must contain a JSON array")
             ranked = rank_candidates(payload, state["focus"])
-            output = {"count": len(ranked), "candidates": ranked}
+            actionable = sum(1 for item in ranked if not item["blocked"])
+            output = {
+                "count": len(ranked),
+                "actionableCount": actionable,
+                "candidates": ranked,
+            }
             _print(output, as_json=args.json)
             return 0
 
@@ -2530,22 +2992,58 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state_root=state_root,
             )
         elif args.command == "result":
-            state = mutate_state(
-                args.repo,
-                args.run_id,
-                lambda item: record_result(
-                    item,
-                    task=args.task,
-                    outcome=args.outcome,
-                    pr_number=args.pr_number,
-                    pr_url=args.pr_url,
-                    review_rounds=args.review_rounds,
-                    ci_retries=args.ci_retries,
-                    decisions=args.decision,
-                    followups=args.follow_up,
-                ),
-                state_root=state_root,
-            )
+            if args.from_receipt is not None:
+                supplied = [
+                    flag
+                    for flag, value in (
+                        ("--outcome", args.outcome),
+                        ("--pr-number", args.pr_number),
+                        ("--pr-url", args.pr_url),
+                        ("--review-rounds", args.review_rounds),
+                        ("--ci-retries", args.ci_retries),
+                    )
+                    if value is not None
+                ]
+                if supplied:
+                    raise WorkLoopError(
+                        "--from-receipt supplies these values; remove"
+                        f" {', '.join(supplied)}"
+                    )
+                receipt = load_ship_receipt(args.from_receipt)
+                state = mutate_state(
+                    args.repo,
+                    args.run_id,
+                    lambda item: record_result_from_receipt(
+                        item,
+                        task=args.task,
+                        receipt=receipt,
+                        repo=args.repo,
+                        decisions=args.decision,
+                        followups=args.follow_up,
+                    ),
+                    state_root=state_root,
+                )
+            else:
+                if args.outcome is None:
+                    raise WorkLoopError(
+                        "result requires --outcome unless --from-receipt is given"
+                    )
+                state = mutate_state(
+                    args.repo,
+                    args.run_id,
+                    lambda item: record_result(
+                        item,
+                        task=args.task,
+                        outcome=args.outcome,
+                        pr_number=args.pr_number,
+                        pr_url=args.pr_url,
+                        review_rounds=args.review_rounds or 0,
+                        ci_retries=args.ci_retries or 0,
+                        decisions=args.decision,
+                        followups=args.follow_up,
+                    ),
+                    state_root=state_root,
+                )
         elif args.command == "focus":
             if args.clear and (args.prefer or args.only):
                 raise WorkLoopError("--clear cannot be combined with focus expressions")
@@ -2666,6 +3164,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         _print(state, as_json=args.json)
         return 0
+    except StatePersistenceError as error:
+        # A user-state write hit a filesystem or permission boundary. Emit the
+        # structured, retryable blocked fragment additively on stdout under
+        # --json; the stderr line and exit code are unchanged for plain callers.
+        if args.json:
+            _print(
+                {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "outcome": "blocked",
+                    "environmentBlocked": dict(error.evidence),
+                },
+                as_json=True,
+            )
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     except (WorkLoopError, OSError, UnicodeError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

@@ -26,6 +26,18 @@ the commitments in `prd.md` and `design.md`. Verify claims against repository
 code, specs, and task context rather than accepting either review lane at face
 value.
 
+Also check the task's artifacts against each other, not only against the
+repository. A measurement, count, size, path, or identifier usually appears in
+more than one of `prd.md`, `design.md`, `implement.md`, and `task.json`, and one
+artifact often cites what another "states". Correcting a figure in one place
+leaves the others asserting the old value, and correcting the cited artifact can
+invalidate the citation itself. Enumerate every occurrence of each such value
+across the task directory, confirm they agree, and confirm any cross-artifact
+citation still describes what its target actually says. Search for each value
+instead of reading the artifacts in sequence: the stale copy is the one you did
+not think to open. Widen the search past the task directory only when the value
+is also cited outside it, such as in a spec, report, or ledger.
+
 On Claude Code, capability-check the optional native Codex lane with both
 `command -v codex` and `codex exec --help`. When both succeed, launch one
 review-only `codex exec` command in a separate background Bash task before
@@ -73,12 +85,13 @@ implementation approval and prevents `task.py start`.
 
 When addressed concerns change a planning artifact, rerun the host review and,
 only if it was available in the initial round, one fresh Codex review against
-the updated artifact set. Reconcile the second-round results through the same
-ledger. Do not start a third automatic round.
+the updated artifact set. Reconcile each remediation round through the same
+ledger. Run at most two remediation rounds (three automatic rounds total); do
+not start a fourth automatic round.
 
-If a substantive concern repeats after the remediation round, or the two lanes
-remain in material conflict, stop before implementation approval or
-`task.py start` and ask the user for judgment.
+If a substantive concern persists after the permitted remediation rounds, or
+the two lanes remain in material conflict, stop before implementation approval
+or `task.py start` and ask the user for judgment.
 
 ## 5. Completion report
 
