@@ -1140,9 +1140,7 @@ def _recover_locked_path(
             "retrying"
         ) from restore_error
     try:
-        aside.unlink()
-    except FileNotFoundError:
-        pass
+        aside.unlink(missing_ok=True)
     except OSError as error:
         raise WorkLoopError(f"cannot recover {context}: {error}") from error
 

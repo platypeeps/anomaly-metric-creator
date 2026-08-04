@@ -549,8 +549,16 @@ def file_ends_with_kb_copy_marker(path: Path) -> bool:
     # quotes the marker mid-file must not look pack-owned.
     if not path.is_file() or path.is_symlink():
         return False
+    marker = KB_COPY_MARKER_SUFFIX_BYTES
     try:
-        return path.read_bytes().endswith(KB_COPY_MARKER_SUFFIX_BYTES)
+        with path.open("rb") as handle:
+            try:
+                handle.seek(-len(marker), os.SEEK_END)
+            except OSError:
+                # File shorter than the marker: seek(-N, SEEK_END) lands before
+                # the start, so read the whole (short) file from the beginning.
+                handle.seek(0)
+            return handle.read(len(marker)) == marker
     except OSError:
         return False
 

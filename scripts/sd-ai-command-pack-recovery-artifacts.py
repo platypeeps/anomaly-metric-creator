@@ -27,6 +27,7 @@ bounded.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -197,27 +198,22 @@ def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
-        try:
+        with contextlib.suppress(OSError):
             path.chmod(0o600)
-        except OSError:
-            pass
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.close(descriptor)
-        except OSError:
-            pass
-        try:
+        with contextlib.suppress(OSError):
             temporary.unlink()
-        except OSError:
-            pass
         raise
 
 
 def read_json(path: Path) -> dict[str, Any]:
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise RecoveryError(f"cannot read receipt {path.name}: {error.strerror or 'unreadable'}") from error
+    except (OSError, UnicodeError) as error:
+        detail = getattr(error, "strerror", None) or str(error) or "unreadable"
+        raise RecoveryError(f"cannot read receipt {path.name}: {detail}") from error
     if len(raw.encode("utf-8")) > MAX_RECEIPT_BYTES:
         raise RecoveryError(f"receipt is implausibly large: {path.name}")
     try:
@@ -958,18 +954,16 @@ class _CleanupLock:
             return False
         except OSError as error:
             raise RecoveryError(f"cannot create cleanup lock: {error.strerror or 'unavailable'}") from error
-        try:
+        with contextlib.suppress(OSError):
             os.write(fd, self._payload())
             os.fsync(fd)
-        except OSError:
-            pass
         self._fd = fd
         return True
 
     def _existing_owner(self) -> dict[str, Any] | None:
         try:
             raw = self._path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeError):
             return None
         try:
             value = json.loads(raw)
@@ -998,26 +992,20 @@ class _CleanupLock:
             if not self._is_stale():
                 raise RecoveryError("cleanup lock is held by a live owner; skipped")
             try:
-                self._path.unlink()
-            except FileNotFoundError:
-                pass
+                self._path.unlink(missing_ok=True)
             except OSError as error:
                 raise RecoveryError(f"cannot reclaim stale cleanup lock: {error.strerror or 'busy'}") from error
         raise RecoveryError("could not acquire cleanup lock")
 
     def release(self) -> None:
         if self._fd is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(self._fd)
-            except OSError:
-                pass
             self._fd = None
         owner = self._existing_owner()
         if self._token and owner is not None and owner.get("token") == self._token:
-            try:
+            with contextlib.suppress(OSError):
                 self._path.unlink()
-            except OSError:
-                pass
 
     def __enter__(self) -> "_CleanupLock":
         self.acquire()
@@ -1029,9 +1017,7 @@ class _CleanupLock:
 
 def _delete_receipt(path: Path) -> None:
     try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
+        path.unlink(missing_ok=True)
     except OSError as error:
         raise RecoveryError(f"cannot remove receipt {path.name}: {error.strerror or 'unremovable'}") from error
 
