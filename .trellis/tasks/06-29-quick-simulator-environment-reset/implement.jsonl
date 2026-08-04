@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "Mutation Overlay Reset section is the authoritative contract for /v1/mutations/reset: overlay-only scope, {\"scope\": \"mutation-overlay\"} field, and clock-pause byte-equality note."}
+{"file": ".trellis/spec/amc/backend/index.md", "reason": "Backend spec index for the amc server surface conventions the reset endpoint change must follow."}
