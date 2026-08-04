@@ -241,3 +241,50 @@ Moved the ops scenario-profile registry, its OpsComponentImpact/OpsScenarioProfi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 54: Wire approval-duplicate gate via pr_comment.sh (A-034)
+
+**Date**: 2026-08-04
+**Task**: Wire approval-duplicate gate via pr_comment.sh (A-034)
+**Package**: amc
+**Branch**: `sdelmas/wire-approval-duplicate-gate`
+
+### Summary
+
+Wired the previously-unused approval-duplicate gate (Option A-lite) into a live enforcement path: new tools/pr_comment.sh chains role-name + approval-duplicate gates then posts via gh pr comment. Retired audit A-034. Shipped through sd-review (gito clean; iterative fixes for word-splitting, flag-as-value, set -e/cd semantics, symlink resolution) and remote Copilot review (help exit-code + conflated line-count figures).
+
+### Main Changes
+
+- New tools/pr_comment.sh: canonical PR-comment poster chaining both body gates, redirecting the body into each gate independently; --dry-run and -- passthrough supported
+- Retargeted CLAUDE.md manual && chains at the wrapper; added Comment pre-flight wrapper subsection; recorded convention in .trellis/spec/amc/backend/documentation-review.md
+- Flipped audit A-034 to status: fixed
+- Hardening from review: flag-shaped-value guard, set -e/cd resolution, POSIX symlink-chain resolution, -h/--help exit-0 path, corrected conflated ~690-line gate vs ~1,000-line test figures
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1e1b98a` | feat(tools): wire approval-duplicate gate via pr_comment.sh (A-034) |
+| `8f2c771` | fix(tools): address review findings on pr_comment.sh wiring |
+| `62a802d` | fix(tools): reject flag-shaped values for pr_comment.sh --pr/--body-file |
+| `7c5ac63` | fix(tools): drop redundant `\|\| exit $?` and restore task.json newline convention |
+| `9fd82ee` | fix(tools): derive pr_comment.sh prog tag from $0 and guard path-resolution cd |
+| `31c68ee` | fix(tools): resolve pr_comment.sh path through symlink chain |
+| `87cdf2f` | fix: address Copilot review comments on PR #322 |
+| `4510a86` | chore(task): mark 07-17 acceptance criteria satisfied |
+
+### Testing
+
+- [OK] shellcheck tools/pr_comment.sh clean
+- [OK] sd-review gito provider clean at head 31c68ee (prism 1 low nit, fixed)
+- [OK] manual gate transcript: help exit 0/stdout, error exit 2/stderr, symlink invocation resolves repo root, flag-value guard rejects --pr --dry-run
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
