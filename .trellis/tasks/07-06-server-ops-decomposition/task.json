@@ -20,7 +20,9 @@
   "subtasks": [],
   "children": [
     "08-04-server-ops-profiles-extract",
-    "08-04-server-ops-parse-extract"
+    "08-04-server-ops-parse-extract",
+    "08-04-server-k8s-objects-tables-extract",
+    "08-04-server-k8s-tables-mypy-gate"
   ],
   "parent": null,
   "relatedFiles": [],

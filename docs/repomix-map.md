@@ -971,11 +971,16 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    08-04-server-ops-parse-extract/
+    08-04-server-k8s-objects-tables-extract/
       check.jsonl
       design.md
       implement.jsonl
       implement.md
+      prd.md
+      task.json
+    08-04-server-k8s-tables-mypy-gate/
+      check.jsonl
+      implement.jsonl
       prd.md
       task.json
     archive/
@@ -1396,6 +1401,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        08-04-server-ops-parse-extract/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         08-04-server-ops-profiles-extract/
           check.jsonl
           design.md
@@ -1489,11 +1501,14 @@ src/
     server_commands.py
     server_debug_ui.py
     server_helm.py
+    server_k8s_objects.py
+    server_k8s_tables.py
     server_kubernetes.py
     server_mcp.py
     server_mutations.py
     server_ops_parse.py
     server_ops_profiles.py
+    server_ops_support.py
     server_ops.py
     server_traces.py
     server.py

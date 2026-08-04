@@ -265,7 +265,13 @@ surfaces that are safe to split without changing public imports:
 owns the mutable overlay dataclasses and helpers, and `server_debug_ui.py` owns
 the inline debug shell. `server_ops.py` owns the ops simulation implementation:
 simulator state, command rendering, resource
-snapshots, Kubernetes-compatible API objects, and Helm release Secret encoding.
+snapshots, Kubernetes/Helm dispatch and mutation, and Helm release Secret
+encoding. Its per-kind Kubernetes **object** and **Table** builders moved down
+into two focused leaves (see `server_k8s_objects.py` / `server_k8s_tables.py`
+below); `server_ops.py` re-imports them and still owns the
+`_k8s_objects_for_resource` / `_k8s_table` dispatchers, `resource_snapshot()`,
+and `_k8s_endpointslice` (the one builder that reads `resource_snapshot` via its
+own default, so it cannot move without a reverse import).
 `server_ops_profiles.py` is the pure-data leaf holding the ops scenario-profile
 registry (`OPS_SCENARIO_PROFILES`), its `OpsComponentImpact` /
 `OpsScenarioProfile` dataclasses, the `_impact` / `_profile` builders, and the
@@ -285,6 +291,30 @@ helpers. It imports only stdlib plus `DEFAULT_NAMESPACE` from
 `server_mutations`; the staying `render_command` renderers, `_is_dry_run`,
 `_preview`, and the `_SENSITIVE_QUERY_KEYS` / snapshot-kind constants keep
 their `server_ops` homes and read the re-imported parse names.
+`server_ops_support.py` is the pure lower leaf (stdlib +
+`server_mutations.DEFAULT_NAMESPACE` only) holding the shared ops-support
+surface both `server_ops` and the two k8s leaves consume downward: the
+`DEFAULT_RELEASE` / `DEFAULT_CHART` identity constants and the
+`_snapshot_row_namespace`, `_snapshot_row_labels`, `_parse_user_timestamp`,
+`_parse_optional_timestamp`, `_string_dict`, and `_k8s_list_resource_version`
+accessors. `server_k8s_objects.py` holds the per-kind Kubernetes **object**
+builders (30 `_k8s_*` object functions) plus the metadata / owner-reference /
+label / container-state / pod-timestamp / pod-ip helpers they share; it imports
+`DEFAULT_RELEASE` + the five snapshot/timestamp accessors from
+`server_ops_support`. `server_k8s_objects.py` also becomes the home of
+`_k8s_metadata` / `_k8s_timestamp`, which `server_helm.py`'s future extraction
+depends on. `server_k8s_tables.py` holds the `meta.k8s.io/v1` **Table**
+surface: `_k8s_table`, `_k8s_column`, `_k8s_table_schema`, and the 24 per-kind
+cell builders (plus the `_k8s_default_cells` fallback); it imports
+`_k8s_list_resource_version` from `server_ops_support`. Both k8s leaves reference
+`SimulationState` only in annotations, guarded by a runtime-inert
+`if TYPE_CHECKING: from .server_ops import SimulationState` so mypy resolves the
+name without a reverse runtime import. The DAG is
+`server_mutations → server_ops_support → server_k8s_objects → server_k8s_tables`,
+with `server_ops` re-importing every moved name (the allowed direction).
+`server_k8s_objects.py` and `server_ops_support.py` are in the mypy clean-module
+gate; `server_k8s_tables.py` retains one verbatim-moved `var-annotate` gap
+(`_k8s_node_cells`'s `ready = next(...)`) and is gated in a later change.
 For each leaf, `server_ops.py` re-imports every
 name at the original block position (one-way import — the leaf never imports
 `server_ops`), so `server.py`'s alias block, the three facades, and

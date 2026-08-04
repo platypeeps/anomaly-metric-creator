@@ -32,7 +32,28 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
   Leaf 566 lines (stdlib + `DEFAULT_NAMESPACE` only); `server_ops.py`
   7,095 → 6,589 lines. 26 symbols moved verbatim, zero residual free names,
   render-oracle byte-identical over the 33-command corpus.
-- [ ] Steps 3–7 pending.
+- [x] Step 4 — `server_k8s_objects.py` + `server_k8s_tables.py`
+  (child `08-04-server-k8s-objects-tables-extract`), **resequenced ahead of
+  step 3** with explicit maintainer consent (helm step 3 parked until its k8s
+  + render primitives are extracted). The seam audit surfaced a shared-accessor
+  entanglement, so this became a **3-leaf** shape (maintainer Option A): a new
+  pure lower leaf `server_ops_support.py` (77 lines: `DEFAULT_RELEASE` /
+  `DEFAULT_CHART` + the five snapshot/timestamp accessors) feeds both k8s leaves
+  downward. `server_k8s_objects.py` 594 lines (30 object builders + shared
+  metadata/owner/label/container-state/pod-timestamp/pod-ip helpers;
+  `_k8s_metadata` / `_k8s_timestamp` now live here for the future helm step);
+  `server_k8s_tables.py` 470 lines (table/column/schema + 24 cell builders).
+  `_k8s_endpointslice` stayed in `server_ops` (reads `resource_snapshot` via its
+  own default — moving it would reverse-import). `server_ops.py`
+  6,589 → 5,590 lines (includes removing a dead `import shlex` orphaned by the
+  step-2 parse extraction). DAG:
+  `server_mutations → server_ops_support → server_k8s_objects → server_k8s_tables`,
+  `server_ops` re-imports all moved names. Behavior-identity proven by a
+  frozen-clock render-oracle (byte-identical objects + Tables + kubectl
+  get/describe corpus) and the server fuzz/eval suites. Support + objects added
+  to the mypy clean gate (27 modules); tables carries one verbatim `var-annotate`
+  gap (`_k8s_node_cells`'s `ready = next(...)`), follow-up to annotate + gate.
+- [ ] Steps 3, 5–7 pending (step 3 helm now unblocked on its k8s deps).
 
 ## Validation Plan
 
