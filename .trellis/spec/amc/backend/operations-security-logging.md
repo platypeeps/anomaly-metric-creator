@@ -151,8 +151,13 @@ unaffected.
 Reset **restores to the selected scenario baseline**: workload
 scale/restart/delete overlays, deleted pods, created/deleted generic resources,
 extra events, and the Helm release overlay. Because the snapshot renderers are
-deterministic, every rendered surface (`kubectl get …`, `helm list/history`)
-returns byte-identical to its pre-mutation baseline after reset.
+deterministic in the overlay, every rendered surface (`kubectl get …`,
+`helm list/history`) returns to its pre-mutation baseline after reset — and is
+byte-identical to that baseline when the only other render input, the simulated
+clock, is held constant. Renders that embed `state.clock.now()` (e.g.
+`kubectl get events` LAST SEEN, `helm list` UPDATED) still track the advancing
+clock in normal interactive use; the byte-equality note below covers how the
+contract tests freeze the clock to isolate the overlay.
 
 Reset intentionally **does not** touch: generated artifacts (they are the
 baseline the overlay sits on — regeneration is `--continuous-generate` or a

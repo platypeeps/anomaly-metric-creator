@@ -213,6 +213,9 @@ def test_reset_is_safe_under_concurrent_polling(amc, tmp_path):
         httpd.shutdown()
         httpd.server_close()
 
+    # The poller must have terminated: a still-live thread could append to
+    # `errors` after the assertion below or leak past the test, making it flaky.
+    assert not poller.is_alive(), "polling thread did not terminate"
     assert not errors
     assert body["scope"] == "mutation-overlay"
     assert _overlay_is_baseline(body["mutations"])
