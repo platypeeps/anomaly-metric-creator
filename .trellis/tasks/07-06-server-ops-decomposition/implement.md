@@ -24,6 +24,16 @@ Every step: monkeypatch grep → closure audit (AST/grep) → verbatim move →
 re-import stub → splice-hazard grep → tests → render-oracle diff →
 CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
 
+## Step Status
+
+- [x] Step 1 — `server_ops_profiles.py` (child `08-04-server-ops-profiles-extract`,
+  PR #321, merged). `server_ops.py` 7,095 lines after.
+- [x] Step 2 — `server_ops_parse.py` (child `08-04-server-ops-parse-extract`).
+  Leaf 566 lines (stdlib + `DEFAULT_NAMESPACE` only); `server_ops.py`
+  7,095 → 6,589 lines. 26 symbols moved verbatim, zero residual free names,
+  render-oracle byte-identical over the 33-command corpus.
+- [ ] Steps 3–7 pending.
+
 ## Validation Plan
 
 ```bash

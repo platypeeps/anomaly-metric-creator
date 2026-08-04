@@ -288,3 +288,44 @@ Wired the previously-unused approval-duplicate gate (Option A-lite) into a live 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 55: Extract server_ops_parse.py (epic 07-06 step 2)
+
+**Date**: 2026-08-04
+**Task**: Extract server_ops_parse.py (epic 07-06 step 2)
+**Package**: amc
+**Branch**: `sdelmas/extract-server-ops-parse`
+
+### Summary
+
+Extracted the client-command parse cluster (ParsedCommand, flag/alias tables, parse_command with the _parse_kubectl/_parse_helm family, and the command_fingerprint/guess_intent/_redact_* helpers) from server_ops.py into a new stdlib-only leaf server_ops_parse.py, re-imported at the original position. Import-only verbatim move: render-oracle byte-identical over a 33-command corpus; server_ops.py 7095->6589 lines. Review loop (Gito/Prism + github-code-quality) trimmed 7 genuinely-dead re-imports and rebutted the remaining findings as cross-module false positives, repo-convention (task.json newline), generated-file misreads, or pre-existing verbatim-move behavior.
+
+### Main Changes
+
+- New server_ops_parse.py leaf (26-symbol parse cluster), server_ops.py re-imports 19 used names at ParsedCommand's original position (one-way import; leaf never imports server_ops)
+- Review fix fc5bd3a: removed 7 dead re-imports (_VALUE_FLAGS, _REPEATABLE_VALUE_FLAGS, _BOOL_FLAGS, _EXPLAIN_GROUP_ALIASES, _store_flag_value, _split_explain_target, _normalize_explain_resource) and synced the module docstring
+- Docs: CLAUDE.md server-module map, architecture.md, CHANGELOG.md, docs/repomix-map.md, check_mypy_gate.py gated list
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d607689` | refactor(server): extract command parse cluster into server_ops_parse.py |
+| `fc5bd3a` | refactor(server): trim dead parse re-imports, sync module docstring |
+| `f2f606b` | chore(task): archive 08-04-server-ops-parse-extract |
+
+### Testing
+
+- [OK] render-oracle diff IDENTICAL over 33-command corpus (before/after extraction and after review fix)
+- [OK] server-family suite: 149 passed, 2 skipped (test_server/ops_fuzz/mcp/eval_mode)
+- [OK] ruff F841 clean, mypy gate clean (25 files), import smoke + __all__ resolves
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
