@@ -120,3 +120,42 @@ Installer-managed refresh of vendored sd-ai-command-pack 0.64.0 to 0.64.3 (TOCTO
 ### Next Steps
 
 - None - task complete
+
+
+## Session 51: Quick simulator environment reset scope field
+
+**Date**: 2026-08-03
+**Task**: Quick simulator environment reset scope field
+**Package**: amc
+**Branch**: `feat/quick-simulator-environment-reset`
+
+### Summary
+
+Added an additive scope field to POST /v1/mutations/reset and a contract test module pinning the overlay-only reset semantics.
+
+### Main Changes
+
+- server.py: /v1/mutations/reset returns {"scope": "mutation-overlay", "mutations": <summary>} (additive)
+- tests/test_server_reset.py: 9 contract tests — per-family + combined byte-equal-baseline (clock paused), not-reset invariants, endpoint scope field, concurrent-poll safety with thread-termination assert
+- README + operations-security-logging.md: documented overlay-only reset scope, curl one-liner, does/does-not list; qualified byte-equality to clock-held-constant
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `771ead3` | feat(server): report mutation-overlay scope on reset + contract tests |
+| `39fcbc1` | test(server): assert reset poller thread terminates; qualify byte-equality spec |
+
+### Testing
+
+- [OK] .venv/bin/pytest tests/test_server_reset.py -> 9 passed
+- [OK] PR #319 CI Result SUCCESS, mergeState CLEAN, review threads resolved
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

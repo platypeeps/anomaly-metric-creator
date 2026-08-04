@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "Reset-scope contract to validate the endpoint response shape and the not-reset invariants (traces/clock/generation preserved) against."}

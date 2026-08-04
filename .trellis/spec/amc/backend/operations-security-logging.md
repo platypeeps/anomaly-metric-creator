@@ -138,3 +138,39 @@ renderers. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
+
+## Mutation Overlay Reset
+
+`POST /v1/mutations/reset` (and the debug UI Reset button, which posts to it)
+is the quick reset path for an already-running interactive environment. It is
+**overlay-scoped**: it calls `state.mutations.reset()` and returns
+`{"scope": "mutation-overlay", "mutations": <summary>}`. The `scope` field is
+additive — existing callers that read only the `mutations` summary are
+unaffected.
+
+Reset **restores to the selected scenario baseline**: workload
+scale/restart/delete overlays, deleted pods, created/deleted generic resources,
+extra events, and the Helm release overlay. Because the snapshot renderers are
+deterministic in the overlay, every rendered surface (`kubectl get …`,
+`helm list/history`) returns to its pre-mutation baseline after reset — and is
+byte-identical to that baseline when the only other render input, the simulated
+clock, is held constant. Renders that embed `state.clock.now()` (e.g.
+`kubectl get events` LAST SEEN, `helm list` UPDATED) still track the advancing
+clock in normal interactive use; the byte-equality note below covers how the
+contract tests freeze the clock to isolate the overlay.
+
+Reset intentionally **does not** touch: generated artifacts (they are the
+baseline the overlay sits on — regeneration is `--continuous-generate` or a
+restart), recorded command traces (debug history and eval-harness scoring
+data), or the simulated clock and generation counters. A full environment
+reset, trace clearing, or clock rewind would each be a separate explicit
+operation with its own consent gates, not a widening of this endpoint.
+
+Byte-equality note for tests: `kubectl get events` (LAST SEEN) and `helm list`
+(UPDATED) embed the simulated clock, which advances on every command, so the
+reset contract tests pause the clock (`state.clock.pause()`) before capturing
+the baseline — with `now()` frozen, only the overlay can move a render. Static
+age columns (`7d`, `0s`) are constants and need no freezing. Sources:
+`README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_mutations.py`;
+`tests/test_server_reset.py`; `tests/test_server.py`.

@@ -644,7 +644,24 @@ incident-shaped Kubernetes and Helm state; operator commands and real-client
 API calls layer changes on top, and `/v1/state` exposes the current mutation
 version, deleted pods/resources, created resources, release values, release
 overlay, and continuous generation counters. The debug UI Reset button and
-`POST /v1/mutations/reset` clear this overlay. With `--continuous-generate`, the
+`POST /v1/mutations/reset` clear this overlay — a quick way to return an
+already-running environment to the selected scenario baseline without
+restarting the server:
+
+```bash
+curl -X POST http://127.0.0.1:8088/v1/mutations/reset
+# -> {"scope": "mutation-overlay", "mutations": {…baseline summary…}}
+```
+
+Reset is **overlay-scoped** (the response echoes `"scope": "mutation-overlay"`).
+It **does** restore, back to the selected scenario baseline: workload
+scale/restart/delete overlays, deleted pods, created/deleted generic resources,
+extra events, and Helm release overlays. It intentionally **does not** touch
+generated artifacts (they *are* the baseline the overlay sits on —
+regenerating is `--continuous-generate`'s job or a server restart), recorded
+command traces (debug history and eval-harness scoring data), or the simulated
+clock and generation counters. Clearing traces or rewinding the clock, if ever
+needed, would be separate explicit operations. With `--continuous-generate`, the
 server reruns the generator at the configured interval using incremented seeds,
 reloads `anomalies.csv`, refreshes the log and metric artifacts on disk, replays
 OTEL from each refreshed batch when `--otel-send` is active, and emits refreshed
