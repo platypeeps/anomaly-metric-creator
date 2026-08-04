@@ -74,12 +74,20 @@ done
 [ -f "$BODY" ] || { echo "$PROG: body file not found: $BODY" >&2; exit 2; }
 
 # Resolve the repo root from this script's own location so the gates and the
-# venv interpreter resolve regardless of the caller's working directory. Guard
-# each `cd` explicitly: a failed command substitution inside an assignment does
-# not reliably trip `set -e`, so an unresolvable path would otherwise continue
-# with an empty directory.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" || { echo "$PROG: cannot resolve script directory" >&2; exit 2; }
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)" || { echo "$PROG: cannot resolve repo root" >&2; exit 2; }
+# venv interpreter resolve regardless of the caller's working directory — or of
+# a symlink the script was invoked through (a bare `dirname "$0"` would point at
+# the symlink's directory, not the real script). POSIX sh has no `readlink -f`,
+# so walk the symlink chain manually. Each `cd` is guarded explicitly because a
+# failed command substitution inside an assignment does not reliably trip
+# `set -e`, so an unresolvable path would otherwise continue with an empty dir.
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+    link_dir="$(cd -P "$(dirname "$SOURCE")" && pwd)" || { echo "$PROG: cannot resolve script directory" >&2; exit 2; }
+    SOURCE="$(readlink "$SOURCE")"
+    case "$SOURCE" in /*) ;; *) SOURCE="$link_dir/$SOURCE" ;; esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)" || { echo "$PROG: cannot resolve script directory" >&2; exit 2; }
+REPO_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)" || { echo "$PROG: cannot resolve repo root" >&2; exit 2; }
 
 # Prefer the project venv interpreter (matches the documented chains); fall back
 # to the operator's python3.
