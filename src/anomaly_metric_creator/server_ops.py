@@ -1,8 +1,10 @@
 """Ops simulation surfaces shared by the serve-mode HTTP facade.
 
-This module owns scenario profiles, simulator state, command parsing/rendering,
+This module owns scenario profiles, simulator state, command rendering,
 resource snapshots, Kubernetes-compatible API objects, and Helm release Secret
-encoding. ``server.py`` imports and re-exports these names for compatibility.
+encoding. Client-command parsing lives in ``server_ops_parse.py`` and is
+re-imported below. ``server.py`` imports and re-exports these names for
+compatibility.
 """
 
 from __future__ import annotations
@@ -115,27 +117,26 @@ class SimulationClock:
         }
 
 
+# Client-command parsing lives in server_ops_parse.py (one-way import; the leaf
+# never imports server_ops). Re-imported here at ParsedCommand's original
+# position so the historic server_ops.<name> surface and __all__ stay stable.
+# Only names the staying renderers use or that __all__ re-exports are re-imported;
+# leaf-internal parse helpers (e.g. _split_flags's _store_flag_value, the explain
+# token splitters, the raw flag tables) stay solely in the leaf.
 from .server_ops_parse import (
     ParsedCommand as ParsedCommand,
-    _VALUE_FLAGS as _VALUE_FLAGS,
-    _REPEATABLE_VALUE_FLAGS as _REPEATABLE_VALUE_FLAGS,
-    _BOOL_FLAGS as _BOOL_FLAGS,
     _SENSITIVE_FLAG_TOKENS as _SENSITIVE_FLAG_TOKENS,
     _MODELED_FLAGS as _MODELED_FLAGS,
     _KIND_ALIASES as _KIND_ALIASES,
     _EXPLAIN_RESOURCE_TARGETS as _EXPLAIN_RESOURCE_TARGETS,
-    _EXPLAIN_GROUP_ALIASES as _EXPLAIN_GROUP_ALIASES,
     parse_command as parse_command,
     _split_flags as _split_flags,
-    _store_flag_value as _store_flag_value,
     _flag_values as _flag_values,
     _first_flag_value as _first_flag_value,
     _parse_kubectl as _parse_kubectl,
     _parse_helm as _parse_helm,
     _split_resource_token as _split_resource_token,
     _normalize_kind as _normalize_kind,
-    _split_explain_target as _split_explain_target,
-    _normalize_explain_resource as _normalize_explain_resource,
     command_fingerprint as command_fingerprint,
     guess_intent as guess_intent,
     _redact_command_for_trace as _redact_command_for_trace,
