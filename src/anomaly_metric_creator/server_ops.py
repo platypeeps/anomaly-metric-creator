@@ -1754,6 +1754,8 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
     if parsed.verb == "auth can-i":
         return CommandResult(0, "yes\n", "", "supported", "kubectl.auth.can-i")
     if parsed.verb == "get":
+        if parsed.flags.get("--watch") or parsed.flags.get("-w"):
+            return _render_get_watch(state, kind, parsed)
         if kind in _SNAPSHOT_KINDS or kind == "all":
             return CommandResult(
                 0, _render_get(state, kind, parsed), "", "supported", f"kubectl.get.{kind}"
@@ -2193,6 +2195,34 @@ def _apply_mutation_rows(state: SimulationState, snapshot: dict[str, list[dict[s
                     snapshot[kind][existing[key]] = row
                 else:
                     snapshot[kind].append(row)
+
+
+_WATCH_COMMAND_NOTE = (
+    "watch: live streaming is not available over the one-shot command API; "
+    "fetch /v1/kubeconfig and use real kubectl for --watch\n"
+)
+
+
+def _render_get_watch(
+    state: SimulationState, kind: str, parsed: ParsedCommand
+) -> CommandResult:
+    """Render `kubectl get --watch` as a one-shot table plus a partial note.
+
+    `POST /v1/commands` cannot hold a stream open, so a `--watch` request
+    renders the initial table exactly as the plain `get` would, appends one
+    stderr note pointing at real kubectl, exits 0, and classifies the trace
+    `partial` (rule `kubectl.get.<kind>.watch`) so the ignored flag surfaces
+    in the debug backlog instead of being silently swallowed.
+    """
+    if kind not in _SNAPSHOT_KINDS and kind != "all":
+        return _unsupported(parsed, f"kubectl get {kind or '<missing-kind>'} --watch")
+    return CommandResult(
+        0,
+        _render_get(state, kind, parsed),
+        _WATCH_COMMAND_NOTE,
+        "partial",
+        f"kubectl.get.{kind}.watch",
+    )
 
 
 def _render_get(state: SimulationState, kind: str, parsed: ParsedCommand) -> str:
@@ -6010,6 +6040,135 @@ def _filter_k8s_objects_by_namespace(
 def _k8s_list_resource_version(state: SimulationState) -> str:
     with state.mutations.lock:
         return str(max(1, state.mutations.version + 1))
+
+
+# Resource families a real-client `?watch=true` request streams as a bounded
+# simulated watch. Keyed `(group, version, resource)`; the core group is "".
+# v1 asserts only the two families `kubectl get --watch` most plausibly hits;
+# the stream loop itself is generic over `_k8s_objects_for_resource`, so
+# opting another modeled list path in is a one-line addition here.
+_WATCHABLE_LIST_RESOURCES = {
+    ("", "v1", "pods"),
+    ("apps", "v1", "deployments"),
+}
+
+
+def _watch_requested(query: dict[str, list[str]]) -> bool:
+    """True when the query asks for a watch (`watch=true` or `watch=1`)."""
+    return any(value in ("true", "1") for value in query.get("watch", []))
+
+
+def k8s_watch_plan(
+    state: SimulationState,
+    path: str,
+    query: dict[str, list[str]],
+) -> dict[str, str] | None:
+    """Return a watch plan for a modeled list path, else ``None``.
+
+    Fires only when the query requests a watch on a modeled *list* path (no
+    object name) for a watchable resource family. Single-object paths,
+    unmodeled resources, and non-watch requests return ``None`` so the caller
+    falls through to the existing one-shot list / unsupported handling. The
+    ``state`` argument is unused today but keeps the signature parallel with
+    the other snapshot-backed helpers.
+    """
+    if not _watch_requested(query):
+        return None
+    parts = [segment for segment in path.split("/") if segment]
+    group = version = namespace = resource = name = ""
+    if parts[:2] == ["api", "v1"]:
+        group, version = "", "v1"
+        rest = parts[2:]
+    elif parts[:1] == ["apis"] and len(parts) >= 4:
+        group, version = parts[1], parts[2]
+        rest = parts[3:]
+    else:
+        return None
+    if len(rest) == 1:
+        resource = rest[0]
+    elif len(rest) >= 3 and rest[0] == "namespaces":
+        namespace, resource = rest[1], rest[2]
+        name = rest[3] if len(rest) >= 4 else ""
+    else:
+        return None
+    if name:
+        # Watching a single named object is out of scope for v1.
+        return None
+    if (group, version, resource) not in _WATCHABLE_LIST_RESOURCES:
+        return None
+    return {
+        "group": group,
+        "version": version,
+        "namespace": namespace,
+        "resource": resource,
+        "matched_rule_id": f"k8s.{group or 'core'}.watch.{resource}",
+    }
+
+
+def k8s_watch_objects(
+    state: SimulationState,
+    plan: dict[str, str],
+    query: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    """Overlay-aware object set for a watch, mirroring the list path.
+
+    Runs the exact ``_k8s_objects_for_resource`` -> namespace filter ->
+    selector filter chain ``_k8s_resource_response`` uses, so a watch always
+    observes the same objects the equivalent list would return.
+    """
+    objects = _k8s_objects_for_resource(state, plan["group"], plan["resource"]) or []
+    objects = _filter_k8s_objects_by_namespace(plan["resource"], objects, plan["namespace"])
+    return _filter_k8s_objects(objects, query)
+
+
+def k8s_watch_object_key(obj: dict[str, Any]) -> str:
+    """Stable identity for watch diffing: ``uid`` when present, else ns/name."""
+    meta = obj.get("metadata", {})
+    uid = meta.get("uid")
+    if uid:
+        return f"uid:{uid}"
+    return f"nn:{meta.get('namespace', '')}/{meta.get('name', '')}"
+
+
+def k8s_watch_trace_response(
+    plan: dict[str, str],
+    *,
+    event_count: int,
+    refused: bool = False,
+) -> KubernetesApiResponse:
+    """Synthetic Status recorded as the watch's ``kubernetes-api`` trace.
+
+    A refused watch (over the SSE ceiling) records a partial Status 503; a
+    normal close records a supported Status naming the emitted event count.
+    The refusal Status is *also* returned to the client as the HTTP response
+    (the stream never started, so this Status body is what the client sees).
+    The normal-close Status is trace-only: the watch body was already streamed
+    to the client as newline-delimited watch events, so this Status just
+    carries the event count into ``record_kubernetes_api_call``.
+    """
+    if refused:
+        return _k8s_status_response(
+            503,
+            "watch stream refused: concurrent SSE connection limit reached",
+            "ServiceUnavailable",
+            "partial",
+            plan["matched_rule_id"],
+        )
+    return KubernetesApiResponse(
+        200,
+        {
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Success",
+            "message": f"watch closed after {event_count} event(s)",
+            "reason": "WatchClosed",
+            "code": 200,
+        },
+        "application/json; charset=utf-8",
+        "supported",
+        plan["matched_rule_id"],
+    )
 
 
 def _k8s_resource_meta(group: str, version: str, resource: str) -> dict[str, str]:

@@ -104,6 +104,8 @@ _CURATED_COMMANDS = [
     "kubectl logs pod/  --tail=-5",          # empty name, negative tail
     "kubectl get pods -l a==b!!,,=",         # mangled label selector
     "kubectl scale deployment/apigateway --replicas=notanumber",
+    "kubectl get pods --watch --wide -o json -n saas-prod",   # watch => partial
+    "kubectl get -w -n saas-prod",                             # watch, no kind
 ]
 
 _CURATED_PAYLOADS = [
@@ -161,6 +163,14 @@ _CURATED_API_PATHS = [
     "/api/v1/pods?limit=-5",
     "/api/v1/pods?limit=notanumber",
     "/apis/apps/v1/deployments?fieldSelector===",
+    # Watch shapes that must NOT open a stream: a non-true value, a single
+    # object path, and an unmodeled resource all fall back to one-shot
+    # list/get/404 handling. (A watchable list path with watch=true is a
+    # long-lived stream and is covered by test_server_watch, not here — the
+    # no-timeout fuzz GET would block on it.)
+    "/api/v1/namespaces/saas-prod/pods?watch=banana",
+    "/api/v1/namespaces/saas-prod/pods/apigateway-0?watch=true",
+    "/api/v1/namespaces/saas-prod/widgets?watch=true",
 ]
 
 
@@ -212,6 +222,12 @@ def test_fuzz_malformed_mutations_preserve_overlay(fuzz_state):
         ("DELETE", "/api/v1/namespaces/saas-prod/pods/no-such-pod", b""),
         ("PATCH", "/apis/apps/v1/namespaces/saas-prod/deployments/none",
          b'{"spec": {"replicas": "notanumber"}}'),
+        # A watch query on a refused mutation: the mutating-method path
+        # (_handle_mutating_method) never dispatches a watch stream, and a
+        # PATCH naming a missing deployment must leave the overlay untouched
+        # regardless of the query string.
+        ("PATCH", "/apis/apps/v1/namespaces/saas-prod/deployments/none?watch=true",
+         b'{"spec": {"replicas": 3}}'),
     ]
     with _running(fuzz_state) as base_url:
         baseline = json.dumps(fuzz_state.mutations.summary(), sort_keys=True)
