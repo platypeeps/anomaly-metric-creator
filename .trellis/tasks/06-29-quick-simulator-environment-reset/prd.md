@@ -15,11 +15,11 @@ Provide a quick, documented reset path for an interactive AMC simulator environm
 
 ## Acceptance Criteria
 
-- [ ] A user has a copyable command or UI path to reset the interactive environment without restarting the server.
-- [ ] After reset, created/deleted resources, workload scale/restart/delete overlays, Helm release overlays, and extra mutation events return to the selected scenario baseline.
-- [ ] If generated artifacts, traces, or clock state are intentionally not reset, the documentation says so explicitly.
-- [ ] Focused server tests cover the reset contract and at least one realistic post-reset inspection command.
-- [ ] Existing debug UI reset behavior and `/v1/mutations/reset` callers remain compatible, or migration notes/tests cover the new behavior.
+- [x] A user has a copyable command or UI path to reset the interactive environment without restarting the server.
+- [x] After reset, created/deleted resources, workload scale/restart/delete overlays, Helm release overlays, and extra mutation events return to the selected scenario baseline.
+- [x] If generated artifacts, traces, or clock state are intentionally not reset, the documentation says so explicitly.
+- [x] Focused server tests cover the reset contract and at least one realistic post-reset inspection command.
+- [x] Existing debug UI reset behavior and `/v1/mutations/reset` callers remain compatible, or migration notes/tests cover the new behavior.
 
 ## Notes
 
