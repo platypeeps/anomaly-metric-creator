@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import importlib.util
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -795,21 +798,111 @@ def collect_roadmap_candidates(
     return candidates, diagnostics
 
 
+class _UnsafeSiblingPath(OSError):
+    """Path-policy rejection for a trusted sibling-module load: symlink, any
+    non-regular node (socket / FIFO / directory), a missing path, or a platform
+    without ``O_NOFOLLOW``. Distinct from an arbitrary open/read ``OSError`` so a
+    caller can route path-policy failures through its own boundary while a real
+    I/O fault still reaches the caller's original handler."""
+
+
+class _SiblingLoadError(ImportError):
+    """The import spec/loader could not be constructed for an already path-safe
+    sibling. Subclasses ``ImportError`` so callers whose existing handlers list
+    ``ImportError`` classify it exactly as before."""
+
+
+# errno values where the path itself violates policy: a missing final component,
+# a symlinked final component (``ELOOP`` under ``O_NOFOLLOW``), or a non-directory
+# in the parent chain. Any other open/read errno is a genuine I/O fault.
+_PATH_POLICY_ERRNOS = frozenset(
+    value
+    for value in (getattr(errno, name, None) for name in ("ENOENT", "ELOOP", "ENOTDIR"))
+    if value is not None
+)
+
+
+def _read_trusted_sibling_source(path: Path) -> bytes:
+    """Read a sibling module's source with no TOCTOU window.
+
+    Fails closed when ``O_NOFOLLOW`` is unavailable. An advisory ``lstat`` picks
+    the caller branch for an unsafe path (missing / symlink / any non-regular
+    node) but never authorizes a read; the authoritative gate is the fd-anchored
+    ``O_NOFOLLOW`` open plus same-descriptor ``fstat``. ``O_NONBLOCK`` keeps a
+    FIFO from blocking the open. Executes nothing. Raises ``_UnsafeSiblingPath``
+    for a path-policy failure and lets any other open/read ``OSError`` propagate
+    unchanged.
+    """
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise _UnsafeSiblingPath("O_NOFOLLOW unavailable; refusing sibling load")
+    try:
+        advisory = os.lstat(path)
+    except OSError as error:
+        raise _UnsafeSiblingPath(str(error)) from error
+    if stat.S_ISLNK(advisory.st_mode) or not stat.S_ISREG(advisory.st_mode):
+        raise _UnsafeSiblingPath(f"{path} is not a regular file")
+    flags = (
+        os.O_RDONLY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        if error.errno in _PATH_POLICY_ERRNOS:
+            raise _UnsafeSiblingPath(str(error)) from error
+        raise
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise _UnsafeSiblingPath(f"{path} is not a regular file")
+        chunks = []
+        while True:
+            block = os.read(descriptor, 65536)
+            if not block:
+                break
+            chunks.append(block)
+    finally:
+        os.close(descriptor)
+    return b"".join(chunks)
+
+
+def _exec_sibling_module(source, path, module_name, *, register):
+    """Compile and exec already-read (fd-verified) source into a fresh module.
+
+    The module object is built with the real ``spec_from_file_location`` +
+    ``module_from_spec`` pair, so its metadata matches the retired loader
+    exactly; neither call reads or executes the file. Execution runs on the bytes
+    already read from the verified descriptor, never ``loader.exec_module``. When
+    ``register`` is true the module is placed in ``sys.modules`` before
+    ``compile`` so a compile-time failure leaves the entry registered, matching
+    the retired pre-exec registration.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise _SiblingLoadError(f"cannot construct loader for {path}")
+    module = importlib.util.module_from_spec(spec)
+    if register:
+        sys.modules[module_name] = module
+    code = compile(source, str(path), "exec")
+    # Trusted sibling; source read from an fd verified regular + non-symlink.
+    exec(code, module.__dict__)  # nosec B102
+    return module
+
+
 def collect_work_loop(repo: Path) -> dict[str, Any]:
     """Read the shared user-local loop ledger without mutating it."""
     helper = Path(__file__).resolve().with_name("sd-ai-command-pack-work-loop.py")
-    if not helper.is_file():
-        return {"status": "unavailable", "error": "work-loop helper is not installed"}
     try:
-        spec = importlib.util.spec_from_file_location(
-            "sd_ai_command_pack_status_work_loop", helper
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("cannot construct work-loop helper loader")
-        module = importlib.util.module_from_spec(spec)
+        source = _read_trusted_sibling_source(helper)
         with suppress_bytecode_writes():
-            spec.loader.exec_module(module)
+            module = _exec_sibling_module(
+                source, helper, "sd_ai_command_pack_status_work_loop", register=False
+            )
         snapshot = module.status_snapshot(repo)
+    except _UnsafeSiblingPath:
+        return {"status": "unavailable", "error": "work-loop helper is not installed"}
     except (
         AttributeError,
         ImportError,
@@ -1193,21 +1286,18 @@ def collect_recovery(repo: Path) -> dict[str, Any]:
     helper = Path(__file__).resolve().with_name(
         "sd-ai-command-pack-recovery-artifacts.py"
     )
-    if not helper.is_file():
+    try:
+        source = _read_trusted_sibling_source(helper)
+        with suppress_bytecode_writes():
+            module = _exec_sibling_module(
+                source, helper, "sd_ai_command_pack_status_recovery", register=False
+            )
+        classified = module.classify_repository(repo)
+    except _UnsafeSiblingPath:
         return {
             "status": "unavailable",
             "error": "recovery-artifacts helper is not installed",
         }
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "sd_ai_command_pack_status_recovery", helper
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("cannot construct recovery-artifacts helper loader")
-        module = importlib.util.module_from_spec(spec)
-        with suppress_bytecode_writes():
-            spec.loader.exec_module(module)
-        classified = module.classify_repository(repo)
     except (
         AttributeError,
         ImportError,
@@ -1223,6 +1313,12 @@ def collect_recovery(repo: Path) -> dict[str, Any]:
         return {
             "status": "invalid",
             "error": "recovery-artifacts helper returned invalid data",
+        }
+    expected_schema = getattr(module, "SCHEMA_VERSION", None)
+    if expected_schema is None or classified.get("schemaVersion") != expected_schema:
+        return {
+            "status": "invalid",
+            "error": "recovery-artifacts helper returned an unexpected schema version",
         }
     return summarize_recovery(classified)
 
