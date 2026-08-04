@@ -7,6 +7,15 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `amc serve` now prints a copyable inspection banner after the startup URL
+  lines: a kubeconfig fetch, namespaced `kubectl`/`helm` examples, a
+  `POST /v1/mutations/reset` hint, and an `Active scenarios:` line. The banner
+  embeds the real `--auth-token` value only on a loopback bind (a non-loopback
+  bind prints a `$AMC_TOKEN` placeholder instead), and suppresses the scenario
+  line under `--mcp-eval-mode`. Documents the interactive failure-mode recipe
+  (`amc serve --scenarios <slug>`) in the README; serve security defaults are
+  unchanged.
+
 ## 0.4.0 - 2026-07-21
 
 **Breaking release.** AMC now follows its latest-stable-CPython-only policy:

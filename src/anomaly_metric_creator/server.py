@@ -1470,6 +1470,65 @@ def _is_loopback_bind_host(host: str) -> bool:
         return False
 
 
+def _url_authority(host: str, port: int) -> str:
+    """Render ``host:port`` as a valid URL authority.
+
+    An IPv6 literal (``::1``, ``fe80::1``) must be bracketed or the
+    ``http://<host>:<port>`` form is ambiguous/invalid — ``http://::1:8088``
+    is not a parseable URL, ``http://[::1]:8088`` is. Already-bracketed and
+    IPv4/hostname values pass through unchanged.
+    """
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{host}:{port}"
+
+
+def _print_inspection_banner(
+    host: str,
+    port: int,
+    namespace: str,
+    security: "ServerSecurityConfig",
+    *,
+    eval_mode: bool,
+    active_scenarios: tuple[str, ...],
+) -> None:
+    """Print copyable kubectl/Helm/reset inspection commands after startup.
+
+    Closes the interactive-failure-mode-launcher affordance gap: the base
+    startup prints only the three URLs, so an operator has no ready recipe
+    to attach a real ``kubectl``/Helm client or reset the simulator overlay.
+
+    Security-sensitive token rendering (see design.md): a real bearer token
+    is echoed into the curl examples only on a loopback bind. On a
+    non-loopback bind the examples carry a ``$AMC_TOKEN`` placeholder
+    instead so the *printed* commands do not carry the token into a remote
+    shell history or log (the operator's own launch invocation still holds
+    it; this only keeps the banner from re-emitting it).
+
+    The ``Active scenarios`` line is suppressed entirely under
+    ``--mcp-eval-mode``: operator stdout is not an agent-reachable surface,
+    but suppressing it keeps every scenario-slug emission behind one uniform
+    ground-truth-wall rule at no cost.
+    """
+    base = f"http://{_url_authority(host, port)}"
+    if not security.auth_token:
+        auth_header = ""
+    elif _is_loopback_bind_host(host):
+        auth_header = f' -H "Authorization: Bearer {security.auth_token}"'
+    else:
+        auth_header = ' -H "Authorization: Bearer $AMC_TOKEN"'
+    print("Inspect the running environment:")
+    print(f"  curl -fsS{auth_header} {base}/v1/kubeconfig -o amc-kubeconfig")
+    print("  export KUBECONFIG=$PWD/amc-kubeconfig")
+    print(f"  kubectl get pods -n {namespace}")
+    print(f"  kubectl get events -n {namespace}")
+    print(f"  helm list -n {namespace}")
+    print(f"  curl -X POST{auth_header} {base}/v1/mutations/reset  # reset overlay")
+    if not eval_mode:
+        slugs = ", ".join(active_scenarios) if active_scenarios else "none"
+        print(f"Active scenarios: {slugs}")
+
+
 def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = None) -> None:
     if legacy_module is None:
         from . import legacy as legacy_module
@@ -1547,10 +1606,13 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         max_workers=security.max_concurrent_requests,
         max_sse=security.max_sse_connections,
     )
-    host, port = httpd.server_address
-    print(f"AMC simulator server listening on http://{host}:{port}/debug")
-    print(f"Command API: POST http://{host}:{port}/v1/commands")
-    print(f"Kubeconfig: http://{host}:{port}/v1/kubeconfig")
+    # server_address is a 2-tuple for AF_INET and a 4-tuple for AF_INET6;
+    # take the first two so an IPv6 bind cannot ValueError on unpack.
+    host, port = httpd.server_address[:2]
+    authority = _url_authority(host, port)
+    print(f"AMC simulator server listening on http://{authority}/debug")
+    print(f"Command API: POST http://{authority}/v1/commands")
+    print(f"Kubeconfig: http://{authority}/v1/kubeconfig")
     if serve_args.mcp_eval_mode:
         print(
             "MCP eval mode: ground-truth surfaces hidden "
@@ -1560,6 +1622,14 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         print("Bearer auth: enabled")
     elif not _is_loopback_bind_host(serve_args.host):
         print("WARNING: remote bind is running without bearer auth", file=sys.stderr)
+    _print_inspection_banner(
+        host,
+        port,
+        serve_args.namespace,
+        security,
+        eval_mode=serve_args.mcp_eval_mode,
+        active_scenarios=tuple(getattr(state, "active_scenarios", ()) or ()),
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
