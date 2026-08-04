@@ -2528,9 +2528,13 @@ duplicate/self-correction approval), `2` argument/IO error or a gate's
 structural failure. It is POSIX-sh operator tooling for local comment
 posting, not a CI step, so it stays out of the workflow-pip / CI-mirror
 lint scopes; it needs `gh` authenticated exactly like the raw chains it
-replaces. Prefer it over the raw `&&` chains for every `gh pr comment`
-/ `gh issue comment` body; the raw chains remain documented above as
-what the wrapper runs for each step.
+replaces. It posts through `gh pr comment` only (the approval gate is
+PR-scoped via `--pr N`), so prefer it over the raw `&&` chains for every
+`gh pr comment` body. For `gh issue comment`, `gh pr create --body-file`,
+and `gh pr review --body-file` bodies — which the PR-comment wrapper does
+not post — keep using the raw role-name chain shown earlier (the
+approval-duplicate gate does not apply outside PR comments). The raw
+chains remain documented above as what the wrapper runs for each step.
 
 ### Branch-name lint
 

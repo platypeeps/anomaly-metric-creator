@@ -42,19 +42,21 @@ usage() {
 PR=""
 BODY=""
 DRY=0
-EXTRA=""
+# Parse leading flags; `--` ends option parsing and leaves any extra `gh pr
+# comment` args in "$@" so they forward space-safely (a collapsed `$*` string
+# would word-split an argument that contains spaces). Each case shifts its own
+# tokens so the post-`--` remainder in "$@" is exact.
 while [ $# -gt 0 ]; do
     case "$1" in
-        --pr) shift; [ $# -gt 0 ] || usage; PR="$1" ;;
-        --pr=*) PR="${1#--pr=}" ;;
-        --body-file) shift; [ $# -gt 0 ] || usage; BODY="$1" ;;
-        --body-file=*) BODY="${1#--body-file=}" ;;
-        --dry-run) DRY=1 ;;
-        --) shift; EXTRA="$*"; break ;;
+        --pr) shift; [ $# -gt 0 ] || usage; PR="$1"; shift ;;
+        --pr=*) PR="${1#--pr=}"; shift ;;
+        --body-file) shift; [ $# -gt 0 ] || usage; BODY="$1"; shift ;;
+        --body-file=*) BODY="${1#--body-file=}"; shift ;;
+        --dry-run) DRY=1; shift ;;
+        --) shift; break ;;
         -h|--help) usage ;;
         *) echo "pr_comment: unknown argument: $1" >&2; usage ;;
     esac
-    shift
 done
 
 [ -n "$PR" ] || { echo "pr_comment: --pr is required" >&2; usage; }
@@ -82,6 +84,5 @@ if [ "$DRY" -eq 1 ]; then
     exit 0
 fi
 
-# Post. Any extra gh args after `--` are forwarded verbatim.
-# shellcheck disable=SC2086
-gh pr comment "$PR" --body-file "$BODY" $EXTRA
+# Post. Any extra gh args after `--` are forwarded verbatim (space-safe via "$@").
+gh pr comment "$PR" --body-file "$BODY" "$@"
