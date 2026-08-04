@@ -86,3 +86,37 @@ Replaced the failing one-sided Dependabot Ruff update with a validated lockstep 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: Refresh sd-ai-command-pack to 0.64.3
+
+**Date**: 2026-08-03
+**Task**: Refresh sd-ai-command-pack to 0.64.3
+**Package**: amc
+**Branch**: `refresh-sd-ai-command-pack-0.64.3`
+
+### Summary
+
+Installer-managed refresh of vendored sd-ai-command-pack 0.64.0 to 0.64.3 (TOCTOU helper-loader hardening); install audit passed, 4 platforms.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b415870246b834bf6246cf7a049e7ea290fa35e2` | chore: refresh sd-ai-command-pack to 0.64.3 |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
