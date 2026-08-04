@@ -896,13 +896,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-17-audit-approval-gate-wire-or-retire/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-17-audit-debris-cleanup/
       check.jsonl
       design.md
@@ -978,7 +971,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    08-04-server-ops-profiles-extract/
+    08-04-server-ops-parse-extract/
       check.jsonl
       design.md
       implement.jsonl
@@ -1391,9 +1384,23 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-17-audit-approval-gate-wire-or-retire/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         08-03-refresh-sd-ai-command-pack-0-64-3/
           check.jsonl
           implement.jsonl
+          prd.md
+          task.json
+        08-04-server-ops-profiles-extract/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
           prd.md
           task.json
   workspace/
@@ -1485,6 +1492,7 @@ src/
     server_kubernetes.py
     server_mcp.py
     server_mutations.py
+    server_ops_parse.py
     server_ops_profiles.py
     server_ops.py
     server_traces.py
@@ -1591,6 +1599,7 @@ tools/
   check_trace_payload_antipatterns.py
   check_trellis_placeholders.py
   check_workflow_pip.py
+  pr_comment.sh
 .gitignore
 .pre-commit-config.yaml
 AGENTS.md

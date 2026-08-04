@@ -264,12 +264,28 @@ surfaces that are safe to split without changing public imports:
 `server_traces.py` owns `CommandTrace` persistence/search, `server_mutations.py`
 owns the mutable overlay dataclasses and helpers, and `server_debug_ui.py` owns
 the inline debug shell. `server_ops.py` owns the ops simulation implementation:
-simulator state, command parsing/rendering, resource
+simulator state, command rendering, resource
 snapshots, Kubernetes-compatible API objects, and Helm release Secret encoding.
 `server_ops_profiles.py` is the pure-data leaf holding the ops scenario-profile
 registry (`OPS_SCENARIO_PROFILES`), its `OpsComponentImpact` /
 `OpsScenarioProfile` dataclasses, the `_impact` / `_profile` builders, and the
-`validate_ops_profiles` fail-fast validator; `server_ops.py` re-imports every
+`validate_ops_profiles` fail-fast validator.
+`server_ops_parse.py` is the stdlib-only leaf holding the client-command
+**parse cluster**: the `ParsedCommand` return dataclass, the flag/alias data
+tables (`_VALUE_FLAGS`, `_REPEATABLE_VALUE_FLAGS`, `_BOOL_FLAGS`,
+`_SENSITIVE_FLAG_TOKENS`, `_MODELED_FLAGS`, `_KIND_ALIASES`,
+`_EXPLAIN_RESOURCE_TARGETS`, `_EXPLAIN_GROUP_ALIASES`), `parse_command` with
+its `_split_flags` / `_store_flag_value` / `_flag_values` / `_first_flag_value`
+tokenizer helpers, the `_parse_kubectl` / `_parse_helm` family sub-parsers and
+their `_split_resource_token` / `_normalize_kind` / `_split_explain_target` /
+`_normalize_explain_resource` helpers, and the `command_fingerprint` /
+`guess_intent` / `_redact_command_for_trace` / `_redact_argv` /
+`_redact_parsed_flags` / `_is_sensitive_flag_name` fingerprint/redaction
+helpers. It imports only stdlib plus `DEFAULT_NAMESPACE` from
+`server_mutations`; the staying `render_command` renderers, `_is_dry_run`,
+`_preview`, and the `_SENSITIVE_QUERY_KEYS` / snapshot-kind constants keep
+their `server_ops` homes and read the re-imported parse names.
+For each leaf, `server_ops.py` re-imports every
 name at the original block position (one-way import — the leaf never imports
 `server_ops`), so `server.py`'s alias block, the three facades, and
 `server_mcp.py` keep resolving unchanged.

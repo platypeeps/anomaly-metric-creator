@@ -7,6 +7,13 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Internal: extracted the client-command parse cluster (`ParsedCommand`, the
+  flag/alias tables, `parse_command` with its `_split_flags` tokenizer helpers,
+  the `_parse_kubectl` / `_parse_helm` family sub-parsers, and the
+  `command_fingerprint` / `guess_intent` / `_redact_*` fingerprint/redaction
+  helpers) out of `server_ops.py` into a new stdlib-only leaf
+  `server_ops_parse.py`, re-imported at the original position. Import-only
+  refactor; no behavior, output, or public-import change.
 - Internal: extracted the ops scenario-profile registry
   (`OPS_SCENARIO_PROFILES`, its `OpsComponentImpact` / `OpsScenarioProfile`
   dataclasses, `_impact` / `_profile` builders, and `validate_ops_profiles`)

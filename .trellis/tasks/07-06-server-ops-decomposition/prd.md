@@ -76,6 +76,10 @@ explicitly not a split.
 - `08-04-server-ops-profiles-extract` — step 1: extract the ops
   scenario-profile registry and its dataclasses/builders/validator into
   the pure-data leaf `server_ops_profiles.py`.
+- `08-04-server-ops-parse-extract` — step 2: extract the client-command
+  parse cluster (`ParsedCommand`, flag/alias tables, `parse_command` +
+  `_parse_kubectl`/`_parse_helm`, fingerprint/redaction helpers) into the
+  stdlib-only leaf `server_ops_parse.py`.
 
 ## Notes
 

@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "08-04-server-ops-profiles-extract"
+    "08-04-server-ops-profiles-extract",
+    "08-04-server-ops-parse-extract"
   ],
   "parent": null,
   "relatedFiles": [],
