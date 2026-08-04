@@ -152,6 +152,20 @@ PRs. A publish flow should have a non-empty, non-duplicate branch diff before
 creating a pull request. Sources: `.trellis/workflow.md`;
 `.trellis/workspace/`; `.trellis/tasks/`; `CLAUDE.md`.
 
+Externally posted comment bodies (`gh pr comment`, `gh issue comment`,
+`gh pr create --body-file`, `gh pr review --body-file`) must pass two body
+gates before posting: the role-name-leak gate (`tools/check_role_name_leaks.py`,
+stdin `-` mode) and the approval-duplicate gate
+(`tools/check_approval_duplicate.py`, `--pr N` mode). `tools/pr_comment.sh` is
+the canonical wrapper that runs both gates and then posts, so the conventions
+have a live enforcement path rather than only prose; it redirects the body file
+into each gate independently (each gate reads the full body from stdin, so a
+single pipe would misfeed the second gate) and passes the 0/1/2 gate contract
+through. It is operator tooling, not a CI step. Sources: `tools/pr_comment.sh`;
+`tools/check_role_name_leaks.py`; `tools/check_approval_duplicate.py`;
+`tests/test_role_name_leaks_lint.py`; `tests/test_approval_duplicate_lint.py`;
+`CLAUDE.md`.
+
 ## Platform Adapter Policy
 
 Retain existing Codex, Claude, GitHub/Copilot, Gemini, and OpenCode Trellis

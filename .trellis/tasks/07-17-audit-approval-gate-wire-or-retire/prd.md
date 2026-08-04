@@ -19,6 +19,29 @@ task: pick one posture and implement it.
 - Option A — wire: invoke it from the comment-posting path (pack review skills / a gh wrapper) and record the convention in the canonical .trellis spec.
 - Option B — retire: delete script + tests, record the convention's demise in CLAUDE.md/CHANGELOG.
 
+## Decision (2026-08-04)
+
+**Chosen: Option A-lite (wire), per design.md's recommendation.** Rationale is
+repository-evidence-backed and follows established convention, so the wire/retire
+posture is inferable without a maintainer prompt:
+
+- The gate works and is fully covered (`tests/test_approval_duplicate_lint.py`),
+  addresses a documented recurrence (PR #86's five duplicate approvals), and is
+  stdlib-only/stable — retiring 1,700 working lines saves ~zero maintenance.
+- Every sibling comment/branch lint in the repo is *wired* (`role-name-leaks`
+  and `role-name-commit-message` hooks, `branch-name` pre-push, `ruff-lockstep`
+  in CI). Leaving only this gate unwired is the anomaly; wiring it restores the
+  convention's consistency.
+- Wiring (a new `tools/pr_comment.sh` wrapper + docs/spec records) is additive
+  and reversible; retiring is a destructive deletion. Additive is the safer
+  default under the standing authority.
+
+Executes design.md's Option A-lite exactly: `tools/pr_comment.sh` chaining
+role-name → approval-duplicate → `gh pr comment`, the two CLAUDE.md chain
+snippets pointed at the wrapper, and the convention recorded in
+`.trellis/spec/amc/backend/documentation-review.md`. No vendored `.agents/skills/`
+edits; no pack/upstream PR.
+
 ## Acceptance criteria
 
 - [ ] Exactly one of wire/retire implemented; no orphaned references remain.

@@ -2398,7 +2398,11 @@ pre-flighted before being piped through `gh`:
 
 Use this for every `gh pr comment`, `gh issue comment`, `gh pr create
 --body-file`, and `gh pr review --body-file` invocation; the `&&`
-chain keeps `gh` from posting when the body is dirty.
+chain keeps `gh` from posting when the body is dirty. The canonical
+one-shot path is `tools/pr_comment.sh` (see the **Comment pre-flight
+wrapper** subsection below), which runs this role-name gate *and* the
+approval-duplicate gate before `gh pr comment`; the raw chain above is
+what the wrapper does for its role-name step.
 
 The literal trailing marker `# role-name-lint: allow` on a line skips
 that line wholesale (the script checks `line.rstrip().endswith(...)`
@@ -2462,6 +2466,10 @@ into the existing `gh pr comment --body-file …` pre-flight slot:
     && gh pr comment <N> --body-file /tmp/body.md
 ```
 
+The canonical one-shot that wires both gates is `tools/pr_comment.sh`
+(see the **Comment pre-flight wrapper** subsection below); the raw
+chain above is what the wrapper does for its approval-gate step.
+
 Under `--pr <N>`, the script calls `gh api` to read the head SHA, the
 head commit's committer timestamp, the prior issue-comments thread
 (`--paginate`; the page-concatenated `[...][...]` output gh emits for
@@ -2492,6 +2500,37 @@ recent), `2` argument error, missing required flag, malformed JSON,
 TTY stdin, or `gh` failure. The exit-code split mirrors the
 role-name lint so an `&&` chain stops the `gh` write on a refusal
 without silencing structural script failures.
+
+### Comment pre-flight wrapper
+
+`tools/pr_comment.sh` is the canonical enforcement path for the two
+comment-body gates above. Until it landed, both the role-name lint and
+the approval-duplicate lint were documented only as manual `&&` chains
+that nothing invoked (audit item A-034: the 1,689-line approval gate had
+no enforcement path) — every sibling lint in the repo (`role-name-leaks`,
+`role-name-commit-message`, `branch-name`, `ruff-lockstep`) is wired,
+this one was the anomaly. The wrapper closes that gap by chaining
+role-name → approval-duplicate → `gh pr comment` in one command:
+
+```bash
+tools/pr_comment.sh --pr <N> --body-file /tmp/body.md          # post
+tools/pr_comment.sh --pr <N> --body-file /tmp/body.md --dry-run # gates only
+```
+
+It reads the body from a file (never a TTY) and **redirects that file
+into each gate independently** — the gates each consume the full body
+from stdin, so a single Unix pipe would feed the second gate the first
+gate's diagnostics rather than the comment. Any `gh pr comment` args
+after a `--` separator are forwarded verbatim. Exit codes pass the
+underlying gate contract through unchanged: `0` clean (comment posted
+unless `--dry-run`), `1` a gate refused the body (role-name leak or
+duplicate/self-correction approval), `2` argument/IO error or a gate's
+structural failure. It is POSIX-sh operator tooling for local comment
+posting, not a CI step, so it stays out of the workflow-pip / CI-mirror
+lint scopes; it needs `gh` authenticated exactly like the raw chains it
+replaces. Prefer it over the raw `&&` chains for every `gh pr comment`
+/ `gh issue comment` body; the raw chains remain documented above as
+what the wrapper runs for each step.
 
 ### Branch-name lint
 
