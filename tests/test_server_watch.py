@@ -51,12 +51,46 @@ def _read_ndjson(url, timeout=8):
 
 
 def _watch_in_thread(url, sink, timeout=10):
+    # Append each event as it arrives (not only at EOF) so a test can wait for
+    # the initial ADDED replay to land before mutating, instead of guessing
+    # with a fixed sleep. list.append is atomic under the GIL, so the main
+    # thread can safely read a snapshot of sink["events"] while this thread
+    # writes it.
+    sink["events"] = []
+
     def run():
-        sink["events"] = _read_ndjson(url, timeout=timeout)
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if line:
+                    sink["events"].append(json.loads(line))
 
     thread = threading.Thread(target=run)
     thread.start()
     return thread
+
+
+def _wait_for(predicate, timeout=5.0):
+    """Poll ``predicate`` until true or ``timeout`` elapses; return the result.
+
+    Replaces a fixed pre-mutation sleep: a test waits until the initial ADDED
+    replay it depends on has actually landed in the sink, so the subsequent
+    mutation is guaranteed to be observed as a post-replay change event rather
+    than folded into the initial ADDED batch under load.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def _added_name_present(sink, name):
+    return any(
+        event["type"] == "ADDED" and event["object"]["metadata"]["name"] == name
+        for event in list(sink["events"])
+    )
 
 
 def test_watch_initial_added_matches_snapshot(amc, tmp_path):
@@ -93,7 +127,9 @@ def test_watch_deployment_scale_emits_modified(amc, tmp_path):
             + "?watch=true&timeoutSeconds=2",
             sink,
         )
-        time.sleep(0.4)  # let the initial ADDED replay land before mutating
+        assert _wait_for(
+            lambda: _added_name_present(sink, "cacheservice")
+        ), "initial ADDED replay for cacheservice never arrived"
         server.run_command(
             state,
             command="kubectl scale deployment cacheservice --replicas=9 -n saas-prod",
@@ -121,7 +157,9 @@ def test_watch_pod_delete_emits_deleted(amc, tmp_path):
             + "/api/v1/namespaces/saas-prod/pods?watch=true&timeoutSeconds=2",
             sink,
         )
-        time.sleep(0.4)
+        assert _wait_for(
+            lambda: _added_name_present(sink, "cacheservice-0")
+        ), "initial ADDED replay for cacheservice-0 never arrived"
         server.run_command(
             state, command="kubectl delete pod cacheservice-0 -n saas-prod"
         )

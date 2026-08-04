@@ -222,9 +222,10 @@ def test_fuzz_malformed_mutations_preserve_overlay(fuzz_state):
         ("DELETE", "/api/v1/namespaces/saas-prod/pods/no-such-pod", b""),
         ("PATCH", "/apis/apps/v1/namespaces/saas-prod/deployments/none",
          b'{"spec": {"replicas": "notanumber"}}'),
-        # A watch query on a refused mutation: do_POST never dispatches a
-        # stream, and a PATCH naming a missing deployment must leave the
-        # overlay untouched regardless of the query string.
+        # A watch query on a refused mutation: the mutating-method path
+        # (_handle_mutating_method) never dispatches a watch stream, and a
+        # PATCH naming a missing deployment must leave the overlay untouched
+        # regardless of the query string.
         ("PATCH", "/apis/apps/v1/namespaces/saas-prod/deployments/none?watch=true",
          b'{"spec": {"replicas": 3}}'),
     ]
