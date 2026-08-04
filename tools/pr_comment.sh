@@ -79,11 +79,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PY="$REPO_ROOT/.venv/bin/python3"
 [ -x "$PY" ] || PY=python3
 
-# Gate 1: role-name leaks. Redirect the body file into stdin.
-"$PY" "$REPO_ROOT/tools/check_role_name_leaks.py" - < "$BODY" || exit $?
+# Gate 1: role-name leaks. Redirect the body file into stdin. `set -e` exits
+# with the gate's own status (0/1/2) if it fails, so no explicit `|| exit $?`.
+"$PY" "$REPO_ROOT/tools/check_role_name_leaks.py" - < "$BODY"
 
 # Gate 2: duplicate / self-correction approval. Redirect the body file into stdin.
-"$PY" "$REPO_ROOT/tools/check_approval_duplicate.py" --pr "$PR" < "$BODY" || exit $?
+"$PY" "$REPO_ROOT/tools/check_approval_duplicate.py" --pr "$PR" < "$BODY"
 
 if [ "$DRY" -eq 1 ]; then
     echo "pr_comment: gates clean; --dry-run set, not posting to PR #$PR"
