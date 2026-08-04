@@ -1,9 +1,9 @@
 # Runbook: `knowledge.obsidian-kb` review/merge false-block
 
 Durable operational note for the `sd-review` / `sd-housekeeping` merge gate.
-Source of the mechanism: `.trellis/tasks/08-03-sd-review-kb-coordinator-false-positive/research/root-cause.md`
+Source of the mechanism: `.trellis/tasks/archive/2026-08/08-03-sd-review-kb-coordinator-false-positive/research/root-cause.md`
 (confirmed 2026-08-04). Fix design:
-`.trellis/tasks/08-03-sd-review-kb-coordinator-false-positive/design.md`.
+`.trellis/tasks/archive/2026-08/08-03-sd-review-kb-coordinator-false-positive/design.md`.
 
 ## Symptom
 
