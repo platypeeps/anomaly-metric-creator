@@ -304,6 +304,44 @@ Helm 3 protobuf release objects unless the encoder changes. Sources:
 `README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.
 
+### Bounded Kubernetes watch streams
+
+Real-client watch (`GET …?watch=true` or `watch=1`) on a modeled *list* path
+dispatches to `server._send_k8s_watch` before the one-shot list branch. The
+watchable families are the `(group, version, resource)` set
+`server_ops._WATCHABLE_LIST_RESOURCES` — v1 asserts only `("", "v1", "pods")`
+and `("apps", "v1", "deployments")` — and the stream loop is generic over
+`_k8s_objects_for_resource`, so the same overlay-aware object set the list path
+returns is what the watch observes (`k8s_watch_objects` runs the identical
+snapshot -> namespace-filter -> selector-filter chain). The wire shape is
+newline-delimited JSON watch events (`{"type": "ADDED"|"MODIFIED"|"DELETED",
+"object": …}`) under `content-type: application/json` with no content-length:
+an `ADDED` replay of the current set, then a poll every
+`server._WATCH_POLL_SECONDS` (default 2.0, monkeypatchable) diffing by object
+identity (`uid`, else namespace/name) to emit change events. The stream is
+bounded — it closes at `min(timeoutSeconds, server._WATCH_MAX_SECONDS)`
+(default 300) or on the server shutdown event — and consumes one SSE slot for
+its lifetime: over the SSE ceiling it refuses with a Kubernetes `Status` 503
+(not the app JSON 503) before any stream headers, and it always releases the
+slot in `finally`, mirroring `_with_sse_slot`. Exactly one `kubernetes-api`
+`CommandTrace` is recorded per watch — supported with the emitted event count
+on close, partial on a 503 refusal (`k8s_watch_trace_response`). Single-object
+watch paths, non-`true`/`1` watch values, and unmodeled resources fall through
+to the existing one-shot get/list/404 handling; there is no
+`resourceVersion=` resume (kubectl re-lists on reconnect). The watch dispatch
+sits behind the eval-mode wall like the list path (`/api`, `/apis` are
+investigation-open).
+
+Command mode cannot hold a stream: `kubectl get <kind> --watch`/`-w` over
+`POST /v1/commands` renders the one-shot table exactly as `get`, appends one
+stderr note pointing at real kubectl (`_WATCH_COMMAND_NOTE`), exits 0, and is
+classified **partial** under rule `kubectl.get.<kind>.watch`
+(`_render_get_watch`) so the ignored flag surfaces in the debug backlog. A
+watch with no/unknown kind degrades to the normal unsupported path. Sources:
+`CLAUDE.md`; `README.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_ops.py`; `tests/test_server_watch.py`;
+`tests/test_server_ops_fuzz.py`.
+
 ## Trace Bundles
 
 `GET /v1/debug/commands/export` and `POST /v1/debug/commands/import` move

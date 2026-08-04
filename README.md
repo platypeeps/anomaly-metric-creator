@@ -638,6 +638,28 @@ ServiceAccounts, Jobs, CronJobs, HPA, PVCs, Ingresses, StatefulSets, and
 DaemonSets appear in subsequent command/API snapshots. Unsupported mutation paths
 still return Kubernetes `Status` responses and are traced for backlog analysis.
 
+Real `kubectl get --watch` (and API `?watch=true`) is supported as a **bounded**
+simulated stream for pods and deployments:
+
+```bash
+KUBECONFIG=/tmp/amc.kubeconfig kubectl get pods -n saas-prod --watch
+KUBECONFIG=/tmp/amc.kubeconfig kubectl get deployments -n saas-prod -w
+```
+
+The stream replays the current object set, then emits `ADDED`/`MODIFIED`/
+`DELETED` events as the mutation overlay changes (e.g. a `kubectl scale` or
+`kubectl delete pod` from another shell). It is deliberately finite — it closes
+on the client's `--request-timeout`/`timeoutSeconds` or a 300-second ceiling,
+whichever is shorter, and each connection consumes one of the server's bounded
+SSE slots. There is **no** `resourceVersion=` resume: kubectl re-lists on
+reconnect, so you may see the initial objects replayed once after a reconnect —
+acceptable for a simulator. Watching a single named object, an unmodeled
+resource, or passing `watch` with any other value falls back to a one-shot
+response. Over the one-shot command API (`POST /v1/commands`) a stream cannot be
+held open, so `kubectl get pods --watch` there returns the current table plus a
+note directing you to fetch `/v1/kubeconfig` and use real kubectl; that call is
+traced as `partial` so demand for it stays visible in the debug backlog.
+
 The mutable overlay is intentionally separate from the scenario catalog and
 base generated artifacts. Scenario profiles still define the baseline
 incident-shaped Kubernetes and Helm state; operator commands and real-client

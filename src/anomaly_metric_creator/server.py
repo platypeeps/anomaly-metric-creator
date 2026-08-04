@@ -42,6 +42,13 @@ from .server_traces import (
 DEFAULT_RELEASE = "simulated-saas"
 DEFAULT_CHART = "simulated-saas-0.3.0"
 DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+# Bounded Kubernetes watch stream tuning. Both are module globals so tests can
+# monkeypatch them (`server._WATCH_POLL_SECONDS = 0.05`) for fast, determin-
+# istic streams. `_WATCH_MAX_SECONDS` is the hard ceiling that keeps a watch
+# finite even under kubectl's long default timeout; a smaller `timeoutSeconds`
+# query wins.
+_WATCH_POLL_SECONDS = 2.0
+_WATCH_MAX_SECONDS = 300.0
 CORS_ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 CORS_ALLOW_HEADERS = "authorization, content-type, accept"
 
@@ -425,6 +432,10 @@ _k8s_api_resource_list = _server_ops._k8s_api_resource_list
 _k8s_resource_response = _server_ops._k8s_resource_response
 _filter_k8s_objects_by_namespace = _server_ops._filter_k8s_objects_by_namespace
 _k8s_list_resource_version = _server_ops._k8s_list_resource_version
+k8s_watch_plan = _server_ops.k8s_watch_plan
+k8s_watch_objects = _server_ops.k8s_watch_objects
+k8s_watch_object_key = _server_ops.k8s_watch_object_key
+k8s_watch_trace_response = _server_ops.k8s_watch_trace_response
 _k8s_resource_meta = _server_ops._k8s_resource_meta
 _accepts_table = _server_ops._accepts_table
 _k8s_table = _server_ops._k8s_table
@@ -567,6 +578,14 @@ def make_handler(
                     # Streamable HTTP only: a GET here is the legacy SSE
                     # transport probe, refused like the reference mock.
                     self._send_json(405, server_mcp.sse_not_supported_response())
+                    return
+                watch_plan = k8s_watch_plan(state, path, query)
+                if watch_plan is not None:
+                    # Modeled list path + `?watch=true`: stream a bounded watch
+                    # instead of the one-shot list. Unmodeled `?watch` paths
+                    # return None here and fall through to the list/unsupported
+                    # handling below.
+                    self._send_k8s_watch(path, query, watch_plan)
                     return
                 api_started = time.perf_counter()
                 api_response = kubernetes_api_response(
@@ -1117,6 +1136,128 @@ def make_handler(
                 if state.shutdown_event.wait(1.0):
                     self._send_shutdown_event()
                     return
+
+        def _send_k8s_watch(self, path, query, plan) -> None:
+            """Stream a bounded Kubernetes watch for a modeled list path.
+
+            Consumes one SSE slot (watches are long-lived), then delegates the
+            replay/poll/diff loop to ``_stream_k8s_watch`` and records exactly
+            one ``kubernetes-api`` trace with the emitted event count. Over the
+            SSE ceiling it refuses with a Kubernetes ``Status`` 503 (not the
+            app JSON 503) before any stream headers, and always releases the
+            slot in ``finally`` — the DoS-bound contract the SSE handlers use.
+            """
+            api_started = time.perf_counter()
+            server_obj = self.server
+            acquire = getattr(server_obj, "try_acquire_sse", None)
+            if acquire is not None and not acquire():
+                refusal = k8s_watch_trace_response(plan, event_count=0, refused=True)
+                record_kubernetes_api_call(
+                    state,
+                    method="GET",
+                    path=path,
+                    query=query,
+                    response=refusal,
+                    client=self.client_address[0],
+                    user_agent=self.headers.get("user-agent", ""),
+                    latency_ms=(time.perf_counter() - api_started) * 1000.0,
+                )
+                self._send_kubernetes_api_response(refusal)
+                return
+            event_count = 0
+            try:
+                event_count = self._stream_k8s_watch(path, query, plan)
+            finally:
+                release = getattr(server_obj, "release_sse", None)
+                if release is not None:
+                    release()
+                closed = k8s_watch_trace_response(plan, event_count=event_count)
+                record_kubernetes_api_call(
+                    state,
+                    method="GET",
+                    path=path,
+                    query=query,
+                    response=closed,
+                    client=self.client_address[0],
+                    user_agent=self.headers.get("user-agent", ""),
+                    latency_ms=(time.perf_counter() - api_started) * 1000.0,
+                )
+
+        def _stream_k8s_watch(self, path, query, plan) -> int:
+            """Replay the current object set as ADDED, then poll for changes.
+
+            Returns the number of watch events written. Emits one ``ADDED`` per
+            initial object, then every ``_WATCH_POLL_SECONDS`` diffs the same
+            overlay-aware object set the list path returns and emits
+            ``ADDED``/``MODIFIED``/``DELETED`` for overlay changes. Closes at
+            ``min(timeoutSeconds, _WATCH_MAX_SECONDS)`` or on the server
+            shutdown event; a client disconnect ends the stream without a
+            traceback (``_write_event_stream`` swallows BrokenPipe).
+            """
+            self._send_watch_stream_headers()
+            timeout_seconds = _query_int(query, "timeoutSeconds", 0)
+            max_seconds = _WATCH_MAX_SECONDS
+            if timeout_seconds > 0:
+                max_seconds = min(float(timeout_seconds), _WATCH_MAX_SECONDS)
+            deadline = time.monotonic() + max_seconds
+            event_count = 0
+            seen: dict[str, dict] = {}
+            for obj in k8s_watch_objects(state, plan, query):
+                seen[k8s_watch_object_key(obj)] = obj
+                if not self._write_watch_event("ADDED", obj):
+                    return event_count
+                event_count += 1
+            if not self._flush_event_stream():
+                return event_count
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return event_count
+                if state.shutdown_event.wait(min(_WATCH_POLL_SECONDS, remaining)):
+                    return event_count
+                current = {
+                    k8s_watch_object_key(obj): obj
+                    for obj in k8s_watch_objects(state, plan, query)
+                }
+                emitted = False
+                for key, obj in current.items():
+                    prev = seen.get(key)
+                    if prev is None:
+                        if not self._write_watch_event("ADDED", obj):
+                            return event_count
+                        event_count += 1
+                        emitted = True
+                    elif json.dumps(prev, sort_keys=True) != json.dumps(obj, sort_keys=True):
+                        if not self._write_watch_event("MODIFIED", obj):
+                            return event_count
+                        event_count += 1
+                        emitted = True
+                for key, obj in seen.items():
+                    if key not in current:
+                        if not self._write_watch_event("DELETED", obj):
+                            return event_count
+                        event_count += 1
+                        emitted = True
+                seen = current
+                if emitted and not self._flush_event_stream():
+                    return event_count
+
+        def _send_watch_stream_headers(self) -> None:
+            self.send_response(200)
+            self._response_bytes = 0
+            # Kubernetes watch wire shape: newline-delimited JSON objects under
+            # a plain application/json content type, streamed to EOF (no
+            # content-length), mirroring the SSE handlers' header discipline.
+            self.send_header("content-type", "application/json")
+            self.send_header("cache-control", "no-cache")
+            self.send_header("x-content-type-options", "nosniff")
+            self.send_header("referrer-policy", "no-referrer")
+            self._send_cors_headers()
+            self.end_headers()
+
+        def _write_watch_event(self, event_type: str, obj: dict) -> bool:
+            payload = json.dumps({"type": event_type, "object": obj}, sort_keys=True)
+            return self._write_event_stream((payload + "\n").encode("utf-8"))
 
         def _send_mcp_post(self) -> None:
             """Answer one streamable-HTTP MCP message at POST /mcp.

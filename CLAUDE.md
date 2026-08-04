@@ -441,6 +441,43 @@ Helm's protobuf release object.
 Every real-client request should be recorded as command family `kubernetes-api`
 so unsupported client paths remain visible in `/v1/debug/search`.
 
+**Bounded watch streams.** A real-client `GET …?watch=true` (or `watch=1`) on
+a modeled *list* path dispatches to `_send_k8s_watch` in `server.py` **before**
+the one-shot `kubernetes_api_response` branch in `do_GET`. Watchable families
+are `_WATCHABLE_LIST_RESOURCES` in `server_ops.py` — v1 asserts
+`("", "v1", "pods")` and `("apps", "v1", "deployments")` only — but the stream
+loop is generic over `_k8s_objects_for_resource`, so opting another modeled
+list path in is a one-line addition to that set. `k8s_watch_objects` runs the
+same `_k8s_objects_for_resource` → `_filter_k8s_objects_by_namespace` →
+`_filter_k8s_objects` chain the list path uses, so a watch observes exactly the
+overlay-aware set the equivalent list returns (no second state model). The wire
+shape is newline-delimited JSON watch events (`{"type":
+"ADDED"|"MODIFIED"|"DELETED", "object": …}`) under `content-type:
+application/json` with **no** content-length: an `ADDED` replay of the current
+object set, then a poll every `_WATCH_POLL_SECONDS` (module global, default 2.0,
+monkeypatched to a small value in tests) that diffs the fresh snapshot by object
+identity (`k8s_watch_object_key`: `uid`, else namespace/name) and emits change
+events. The stream is bounded — it closes at `min(timeoutSeconds,
+_WATCH_MAX_SECONDS)` (default 300) or on `state.shutdown_event` — and consumes
+one SSE slot for its lifetime through its own `try_acquire_sse`/`release_sse`
+accounting (mirroring `_with_sse_slot`), refusing over-ceiling streams with a
+Kubernetes `Status` 503 **before** any stream headers (not the app JSON 503)
+and always releasing the slot in `finally`. A client disconnect ends the stream
+without a traceback (`_write_event_stream` swallows BrokenPipe). Exactly one
+`kubernetes-api` `CommandTrace` is recorded per watch via
+`k8s_watch_trace_response` — supported with the emitted event count on a clean
+close, partial on a 503 refusal. There is no `resourceVersion=` resume
+(kubectl re-lists on reconnect — acceptable simulator behavior); single-object
+watch paths, non-`true`/`1` watch values, and unmodeled resources all fall
+through to the existing one-shot get/list/404 handling. Because
+`POST /v1/commands` cannot hold a stream open, command-mode `kubectl get <kind>
+--watch`/`-w` renders the one-shot table exactly as `get`, appends one stderr
+note (`_WATCH_COMMAND_NOTE`) pointing at real kubectl, exits 0, and classifies
+the trace **partial** under rule `kubectl.get.<kind>.watch`
+(`_render_get_watch`) so the ignored flag becomes a debug-backlog signal.
+Coverage: `tests/test_server_watch.py` (six design cases) plus watch shapes in
+`tests/test_server_ops_fuzz.py`.
+
 Security/ops boundary (the full trust model, remote-bind posture,
 credential handling, and known limits live in [SECURITY.md](SECURITY.md) at
 the repo root): loopback binds may run unauthenticated for local

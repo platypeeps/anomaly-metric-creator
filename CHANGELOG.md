@@ -7,6 +7,16 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `amc serve` now supports **bounded Kubernetes watch streams**. A real-client
+  `kubectl get pods|deployments --watch` (API `?watch=true`) streams
+  newline-delimited `ADDED`/`MODIFIED`/`DELETED` events backed by the same
+  overlay-aware snapshot the list path uses, closing on the client's
+  `timeoutSeconds` or a 300-second ceiling and consuming one bounded SSE slot
+  (over the ceiling it refuses with a Kubernetes `Status` 503). There is no
+  `resourceVersion=` resume — kubectl re-lists on reconnect. Over the one-shot
+  `POST /v1/commands` API, `kubectl get --watch` returns the current table plus
+  a note pointing at real kubectl and is traced as `partial`. Each watch records
+  one `kubernetes-api` trace with its event count.
 - `POST /v1/mutations/reset` now returns an additive `"scope":
   "mutation-overlay"` field alongside the existing `mutations` summary, making
   the reset's overlay-only contract explicit. Reset restores the selected
