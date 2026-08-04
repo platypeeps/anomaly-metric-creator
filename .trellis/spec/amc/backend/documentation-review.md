@@ -65,7 +65,7 @@ backlog slices, and follow-up decisions. User-facing docs can describe current
 capabilities and supported behavior, but they should not carry a parallel list
 of future work once the item has been converted into `.trellis/tasks/`.
 Sources: `.trellis/tasks/07-09-multi-instance-dst-splice-boundary/prd.md`;
-`.trellis/tasks/06-29-server-watch-semantics/prd.md`;
+`.trellis/tasks/archive/2026-08/06-29-server-watch-semantics/prd.md`;
 `.trellis/tasks/06-29-helm-incident-command-coverage/prd.md`; `README.md`.
 
 When consolidating older planning or handoff notes, map each still-relevant
