@@ -36,18 +36,18 @@ yaml = [
 [package.metadata]
 requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = "==2.1.0" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.26" },
-    { name = "opentelemetry-proto", specifier = ">=1.25.0" },
-    { name = "opentelemetry-proto", marker = "extra == 'dev'", specifier = ">=1.25.0" },
+    { name = "numpy", specifier = ">=2.5.1" },
+    { name = "numpy", marker = "extra == 'dev'", specifier = ">=2.5.1" },
+    { name = "opentelemetry-proto", specifier = ">=1.44.0" },
+    { name = "opentelemetry-proto", marker = "extra == 'dev'", specifier = ">=1.44.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7.0" },
-    { name = "protobuf", specifier = ">=5.27.0" },
-    { name = "protobuf", marker = "extra == 'dev'", specifier = ">=5.27.0" },
+    { name = "protobuf", specifier = ">=7.35.1" },
+    { name = "protobuf", marker = "extra == 'dev'", specifier = ">=7.35.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
-    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.3" },
+    { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6.0.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.1" },
 ]
 provides-extras = ["yaml", "dev"]

@@ -18,10 +18,17 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Topic :: System :: Monitoring",
 ]
+# Floors are the oldest combination actually exercised under the sole
+# supported interpreter (`requires-python >= 3.14`): pinned to the versions
+# `uv.lock` currently resolves so the manifest cannot advertise a lower bound
+# with no cp314 wheels (numpy 1.26 / protobuf 5.27 predate Python 3.14). Under
+# `versioning-strategy: lockfile-only` Dependabot bumps the lock, not these
+# floors, so they stay stable minimums. Keep the same floors in the `dev` and
+# `yaml` extras below.
 dependencies = [
-  "numpy>=1.26",
-  "opentelemetry-proto>=1.25.0",
-  "protobuf>=5.27.0",
+  "numpy>=2.5.1",
+  "opentelemetry-proto>=1.44.0",
+  "protobuf>=7.35.1",
 ]
 
 [project.scripts]
@@ -38,26 +45,30 @@ where = ["src"]
 # Optional runtime extra: enables YAML --instance-config files
 # (.yaml/.yml). JSON --instance-config works without this extra.
 yaml = [
-  "pyyaml>=6.0",
+  "pyyaml>=6.0.3",
 ]
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.5",
-  "numpy>=1.26",
-  "opentelemetry-proto>=1.25.0",
-  "protobuf>=5.27.0",
-  "pyyaml>=6.0",
+  "numpy>=2.5.1",
+  "opentelemetry-proto>=1.44.0",
+  "protobuf>=7.35.1",
+  "pyyaml>=6.0.3",
   # Pinned exactly: must match `rev: vX.Y.Z` in `.pre-commit-config.yaml`
   # so a local `ruff check` and the `ruff-pre-commit` hook resolve the
   # same binary. Bump both lines together.
   "ruff==0.16.1",
   "pre-commit>=3.7.0",
-  # Pinned exactly: the CI type-check step is report-only, so its finding
-  # count is only comparable across runs when every run resolves the same
-  # mypy. Single pin site (no pre-commit hook), so no lockstep script.
+  # Pinned exactly: CI runs mypy in a report-only baseline step (finding
+  # count only comparable across runs when every run resolves the same mypy)
+  # plus a gating step over the clean-module list owned by
+  # `tools/check_mypy_gate.py`. Single pin site (no pre-commit hook), so no
+  # lockstep script.
   "mypy==2.1.0",
-  # Coverage measurement in CI's full-suite lane (report-only; no
-  # threshold gate yet — see Trellis task 07-02-ci-typecheck-and-coverage).
+  # Coverage measurement in CI's full-suite lane: the coverage job combines
+  # the heavy/light partitions and gates with `coverage report
+  # --fail-under=85`, a no-regression ratchet raised toward the measured
+  # number as decomposition lands, never lowered to pass a red build.
   "pytest-cov>=7.0",
 ]
 

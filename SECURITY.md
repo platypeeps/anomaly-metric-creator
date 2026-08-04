@@ -84,11 +84,23 @@ against an adversary with host access.
   parameters, passwords, secrets, and client-key-shaped values before they
   reach memory, JSONL, SQLite, or the browser.
 - **`otel-activity.log`.** OTEL transport diagnostics mask sensitive HTTP
-  headers before writing. The current masking is an **allowlist of known
-  sensitive header names** (`Authorization`, `Cookie`, `Set-Cookie`,
-  `Proxy-Authorization`, `X-Api-Key`); hardening this to a
-  mask-unless-known-safe posture is tracked in Trellis task
-  `07-02-redaction-allowlist-hardening`.
+  headers before any value reaches the on-disk log, using **two deliberately
+  different postures** for the two trust origins
+  ([redaction.py](src/anomaly_metric_creator/redaction.py)):
+  - *Request side* (`_masked_headers`, headers this process builds) stays an
+    **allowlist-of-sensitive** (`_SENSITIVE_HEADER_NAMES`: `Authorization`,
+    `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `X-Api-Key`) — we control
+    the outbound set and only ever attach `Authorization`, so operational
+    headers like `Content-Type` stay legible.
+  - *Response side* (`_redact_sensitive_headers`, headers an untrusted
+    upstream echoes back on a 4xx/5xx) is the inverse **mask-unless-known-safe**
+    posture: every value is masked except a short allowlist of known-safe
+    operational headers (`_SAFE_RESPONSE_HEADER_NAMES`), so a credential
+    echoed under a novel name (`X-Amz-Security-Token`, `X-Vault-Token`, …)
+    defaults to masked.
+
+  Both paths share `_mask_sensitive_value`, so a schemed `Bearer`/`Basic`
+  prefix is preserved while only the credential is replaced with `***`.
 
 ## Response headers
 

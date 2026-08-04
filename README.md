@@ -81,13 +81,17 @@ Requires Python 3.14 (the project supports only the latest stable CPython;
 the floor moves forward when a new stable release lands).
 
 ```bash
-# Runtime install (uses the dependencies declared in pyproject.toml):
+# Dev environment (primary): resolve the locked dependency set + dev extra
+# into .venv/ from the committed uv.lock.
+uv sync --extra dev --locked
+
+# Runtime-only install (alternative; uses the dependencies in pyproject.toml):
 python3 -m pip install -e .
 
 # Optional: enable YAML --instance-config files (JSON works without it):
 python3 -m pip install -e '.[yaml]'
 
-# Editable install with dev extras (pytest, xdist, ruff, pre-commit, etc.):
+# Editable install with the dev extra via pip (alternative to `uv sync`):
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
@@ -308,6 +312,7 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 | `--otel-auth-token` | _unset_ | Auth token applied to every signal selected by `--otel-send`. Same precedence as `--otel-endpoint`: this token beats the `MEZMO_OTEL_LOGS_AUTH_TOKEN` / `MEZMO_OTEL_METRICS_AUTH_TOKEN` / `MEZMO_OTEL_TRACES_AUTH_TOKEN` env vars (which supply the defaults when this flag is not given). |
 | `--otel-stream-speedup` | `3600.0` | Replay speed multiplier for OTEL streaming. `1.0` is real-time, `3600.0` replays one hour of anomaly spacing per second. |
 | `--otel-stream-protocol` | `MEZMO_OTEL_STREAM_PROTOCOL` or `protobuf` | OTLP payload mode: `json` (`application/json`) or `protobuf` (`application/x-protobuf`). |
+| `--otel-stream-auth-scheme` | `MEZMO_OTEL_STREAM_AUTH_SCHEME` or `Bearer` | Auth-scheme prefix prepended to the OTEL auth token in the `Authorization` header (e.g. `Bearer <token>`). |
 
 #### Server mode (`serve`)
 
@@ -1265,10 +1270,13 @@ radius to additional components.
 
 ## Tests
 
-Dev dependencies (`pytest`, `pytest-xdist`, `numpy`, `ruff`, `pre-commit`)
-ship under the `dev` extra.
+Dev dependencies (`pytest`, `pytest-xdist`, `numpy`, `opentelemetry-proto`,
+`protobuf`, `pyyaml`, `ruff`, `pre-commit`, `mypy`, `pytest-cov`) ship under
+the `dev` extra.
 
 ```bash
+uv sync --extra dev --locked   # primary: locked dev environment into .venv/
+# or, with pip in a venv:
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest        # normal full-suite path; 4 workers by default

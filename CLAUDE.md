@@ -2705,7 +2705,8 @@ Merges are gated on GitHub Actions (the local pre-commit hooks do **not**
 run in CI):
 
 - `.github/workflows/ci.yml` — a path-classified cadence keeps the stable
-  aggregate branch-protection context `test` while selecting the cheapest
+  aggregate `test` job (which feeds the required `CI Result`
+  branch-protection context) while selecting the cheapest
   safe lane: lightweight readiness, quick test, or the full Python 3.14 path:
   concurrent `test heavy (py3.14)` and `test light (py3.14)` jobs followed by
   `coverage (py3.14)`. The light job also runs the console-script, ruff, and

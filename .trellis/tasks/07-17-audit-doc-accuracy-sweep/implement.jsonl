@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Canonical doc-review contract; the sweep corrects drift on the prose surfaces this spec governs."}
+{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "Redaction dual-posture (request-side allowlist-of-sensitive vs response-side mask-unless-known-safe) that SECURITY.md must describe accurately."}

@@ -7,6 +7,12 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Packaging: raised the declared dependency floors (`numpy`,
+  `opentelemetry-proto`, `protobuf`, `pyyaml`) to the oldest combination
+  actually exercised under the supported interpreter (`requires-python >=
+  3.14`), pinned to the versions `uv.lock` resolves so the manifest no longer
+  advertises a lower bound with no cp314 wheels. No resolved-version change
+  (`uv lock --check` clean); runtime behavior and output bytes are unchanged.
 - Internal: extracted the client-command parse cluster (`ParsedCommand`, the
   flag/alias tables, `parse_command` with its `_split_flags` tokenizer helpers,
   the `_parse_kubectl` / `_parse_helm` family sub-parsers, and the

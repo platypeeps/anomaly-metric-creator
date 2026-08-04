@@ -117,11 +117,12 @@ for project-specific rules to be hand-edited into each copied adapter.
   single most error-prone surface — review against the exact rule, not by
   intuition.
 - **Topology / coupling / saturation** (`TOPOLOGY`, `Edge`,
-  `SaturationParams`, `_compose_topology_*`, `_apply_saturation`,
-  `--topology-mode`) → `.trellis/spec/amc/backend/architecture.md`,
-  `.trellis/spec/amc/backend/scenarios-and-data.md`, and `docs/topology.md`. The
-  realistic-mode default and the `independent` deprecation alias have
-  different output bytes; locked SHA-256 hashes pin the realistic baseline.
+  `SaturationParams`, `_compose_topology_*`, `_apply_saturation`) →
+  `.trellis/spec/amc/backend/architecture.md`,
+  `.trellis/spec/amc/backend/scenarios-and-data.md`, and `docs/topology.md`.
+  Realistic coupling is the only topology mode (the `independent` contrast
+  alias was removed at the phase-9 flag day); locked SHA-256 hashes pin the
+  realistic baseline.
 - **Multi-instance / dimensions** (`Instance`, `INSTANCES`,
   `--instances-per-component`, `--instance-config`,
   `_INSTANCE_DIMENSION_COLUMNS`) → `.trellis/spec/amc/backend/architecture.md`,
@@ -134,7 +135,7 @@ for project-specific rules to be hand-edited into each copied adapter.
   `.trellis/spec/amc/backend/api-cli-server.md` and `README.md`. The
   pre-clean / summary / writer / validator views must stay aligned; they
   all derive from `_EMIT_ARTIFACT_FILES`.
-- **Validator** (`--validate-output`, `--validate-warn`,
+- **Validator** (the `validate DIR [--warn]` subcommand,
   `_validate_*` helpers, `_RECOMPUTERS`, `DERIVATIONS`) →
   `.trellis/spec/amc/backend/api-cli-server.md` and
   `.trellis/spec/amc/backend/testing-quality.md`. The
@@ -181,11 +182,14 @@ for project-specific rules to be hand-edited into each copied adapter.
 - **No module-level mutable state.** `anomalies`, `cascading_anomalies`,
   module-level RNG, module-level scenario lists were removed — keep
   per-run state on `RunContext`.
-- **Mode / flag combinations.** Any new flag must be gated against every
-  interacting flag (`--combine-only`, `--validate-output`,
-  `--emit-selection` tokens, `--inject-dst-artifact-day`,
-  `--topology-mode`, `--instances-per-component`, `--instance-config`)
-  with a clear `parse_args` error or an explicit test pair.
+- **Mode / flag combinations.** The canonical CLI surface is the `generate`
+  (default) / `combine DIR` / `validate DIR` / `serve` / `trace-bundle`
+  subcommands plus `--emit`, `--otel-send`, and `--otel-endpoint`. Any new
+  flag must be gated against every interacting surface (the `combine` /
+  `validate` subcommands, `--emit` tokens, `--otel-send`,
+  `--inject-dst-artifact-day`, `--instances-per-component`,
+  `--instance-config`) with a clear `parse_args` error or an explicit test
+  pair.
 - **Action order in `Done -` summary.** The end-of-run summary only
   names artifacts that were actually written, and prints only after
   every named writer has succeeded.
