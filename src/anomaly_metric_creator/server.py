@@ -1470,6 +1470,50 @@ def _is_loopback_bind_host(host: str) -> bool:
         return False
 
 
+def _print_inspection_banner(
+    host: str,
+    port: int,
+    namespace: str,
+    security: "ServerSecurityConfig",
+    *,
+    eval_mode: bool,
+    active_scenarios: tuple[str, ...],
+) -> None:
+    """Print copyable kubectl/Helm/reset inspection commands after startup.
+
+    Closes the interactive-failure-mode-launcher affordance gap: the base
+    startup prints only the three URLs, so an operator has no ready recipe
+    to attach a real ``kubectl``/Helm client or reset the simulator overlay.
+
+    Security-sensitive token rendering (see design.md): a real bearer token
+    is echoed into the curl examples only on a loopback bind. On a
+    non-loopback bind the examples carry a ``$AMC_TOKEN`` placeholder
+    instead so the token never lands in a remote shell history or log.
+
+    The ``Active scenarios`` line is suppressed entirely under
+    ``--mcp-eval-mode``: operator stdout is not an agent-reachable surface,
+    but suppressing it keeps every scenario-slug emission behind one uniform
+    ground-truth-wall rule at no cost.
+    """
+    base = f"http://{host}:{port}"
+    if not security.auth_token:
+        auth_header = ""
+    elif _is_loopback_bind_host(host):
+        auth_header = f' -H "Authorization: Bearer {security.auth_token}"'
+    else:
+        auth_header = ' -H "Authorization: Bearer $AMC_TOKEN"'
+    print("Inspect the running environment:")
+    print(f"  curl -fsS{auth_header} {base}/v1/kubeconfig -o amc-kubeconfig")
+    print("  export KUBECONFIG=$PWD/amc-kubeconfig")
+    print(f"  kubectl get pods -n {namespace}")
+    print(f"  kubectl get events -n {namespace}")
+    print(f"  helm list -n {namespace}")
+    print(f"  curl -X POST{auth_header} {base}/v1/mutations/reset  # reset overlay")
+    if not eval_mode:
+        slugs = ", ".join(active_scenarios) if active_scenarios else "none"
+        print(f"Active scenarios: {slugs}")
+
+
 def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = None) -> None:
     if legacy_module is None:
         from . import legacy as legacy_module
@@ -1560,6 +1604,14 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         print("Bearer auth: enabled")
     elif not _is_loopback_bind_host(serve_args.host):
         print("WARNING: remote bind is running without bearer auth", file=sys.stderr)
+    _print_inspection_banner(
+        host,
+        port,
+        serve_args.namespace,
+        security,
+        eval_mode=serve_args.mcp_eval_mode,
+        active_scenarios=tuple(getattr(state, "active_scenarios", ()) or ()),
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

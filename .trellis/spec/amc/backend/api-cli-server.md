@@ -178,6 +178,20 @@ blocked by OTEL, and must serialize continuous regeneration with OTEL replay
 when continuous mode and OTEL are both active. Sources: `CLAUDE.md`;
 `README.md`; `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
+After the three startup URL lines, `serve_main` must print a print-only
+inspection banner (`_print_inspection_banner`) with a copyable kubeconfig
+fetch, namespaced `kubectl get pods`/`get events` and `helm list` examples,
+and a `POST /v1/mutations/reset` hint. The banner is security-sensitive in one
+place: a real `--auth-token` is echoed into the curl examples only on a
+loopback bind; a non-loopback bind must render a `$AMC_TOKEN` placeholder
+instead so the token never reaches a remote shell history or log. The
+`Active scenarios:` line is suppressed entirely under `--mcp-eval-mode`
+(active slugs are the eval harness's scoring rubric). The banner changes no
+serve security default. This is the interactive failure-mode launcher: an
+environment is launched by `amc serve --scenarios <slug>`, not a separate
+command. Sources: `README.md`; `src/anomaly_metric_creator/server.py`;
+`tests/test_serve_main_wiring.py`.
+
 Serve config files are JSON or YAML objects with top-level `server` and
 `generate` maps. Config keys use long flag names with underscores; values are
 converted to flags before parsing, and explicit CLI flags come after config

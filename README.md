@@ -355,6 +355,51 @@ forwarded through the normal generation parser. Explicit CLI flags come after
 config defaults, so `--port 8090` in the example overrides the file. JSON works
 without optional dependencies; YAML requires PyYAML, matching `--instance-config`.
 
+##### Launch a failure-mode environment
+
+There is no separate launcher command: an interactive failure-mode
+environment *is* `amc serve` with a scenario selected. A "failure mode" maps
+directly onto the scenario model — pick a slug from the
+[scenario catalog](#scenario-catalog) and pass it to `--scenarios`, raising
+`--signal-level` when the slug is `high` severity:
+
+```bash
+amc serve --scenarios db_stall --signal-level high
+```
+
+The server generates artifacts for that scenario, stays running until you
+interrupt it (Ctrl-C), and serves the debug UI, command API, Kubernetes
+facade, and Helm-compatible resources for interactive inspection. An unknown
+or misspelled slug exits non-zero, naming the offending slug and the catalog.
+
+On startup, after the three URL lines, the server prints a copyable
+inspection block:
+
+```text
+Inspect the running environment:
+  curl -fsS http://127.0.0.1:8088/v1/kubeconfig -o amc-kubeconfig
+  export KUBECONFIG=$PWD/amc-kubeconfig
+  kubectl get pods -n saas-prod
+  kubectl get events -n saas-prod
+  helm list -n saas-prod
+  curl -X POST http://127.0.0.1:8088/v1/mutations/reset  # reset overlay
+Active scenarios: db_stall
+```
+
+The examples render the literal bind host and the configured `--namespace`.
+When `--auth-token` is set on a **loopback** bind, the curl lines embed the
+real bearer header for copy-paste; on a **non-loopback** bind they instead
+print a `-H "Authorization: Bearer $AMC_TOKEN"` placeholder so the token
+never lands in a remote shell history or log. Under `--mcp-eval-mode` the
+`Active scenarios:` line is suppressed entirely (the active slugs are the
+eval harness's scoring rubric). The reset hint ties into
+`POST /v1/mutations/reset`, which clears the in-memory mutation overlay
+without regenerating artifacts.
+
+Serve security defaults are unchanged by this banner: it is print-only, the
+default bind is loopback, and a non-loopback `--host` still requires
+`--auth-token` or `--allow-remote-without-auth`.
+
 Server flags:
 
 | Flag | Default | Notes |
