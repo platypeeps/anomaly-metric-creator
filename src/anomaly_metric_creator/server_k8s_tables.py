@@ -350,7 +350,9 @@ def _k8s_hpa_cells(obj: dict[str, Any]) -> list[Any]:
 
 def _k8s_node_cells(obj: dict[str, Any]) -> list[Any]:
     conditions = obj.get("status", {}).get("conditions", [])
-    ready = next((condition for condition in conditions if condition.get("type") == "Ready"), {})
+    ready: dict[str, Any] = next(
+        (condition for condition in conditions if condition.get("type") == "Ready"), {}
+    )
     role = obj.get("metadata", {}).get("labels", {}).get("kubernetes.io/role", "worker")
     version = obj.get("status", {}).get("nodeInfo", {}).get("kubeletVersion", "")
     return [

@@ -312,9 +312,11 @@ cell builders (plus the `_k8s_default_cells` fallback); it imports
 name without a reverse runtime import. The DAG is
 `server_mutations → server_ops_support → server_k8s_objects → server_k8s_tables`,
 with `server_ops` re-importing every moved name (the allowed direction).
-`server_k8s_objects.py` and `server_ops_support.py` are in the mypy clean-module
-gate; `server_k8s_tables.py` retains one verbatim-moved `var-annotate` gap
-(`_k8s_node_cells`'s `ready = next(...)`) and is gated in a later change.
+`server_k8s_objects.py`, `server_ops_support.py`, and `server_k8s_tables.py`
+are all in the mypy clean-module gate; `server_k8s_tables.py`'s single
+verbatim-moved `var-annotate` gap (`_k8s_node_cells`'s `ready` from the
+`next(..., {})` fallback) was closed with an explicit `dict[str, Any]`
+annotation when it joined the gate.
 For each leaf, `server_ops.py` re-imports every
 name at the original block position (one-way import — the leaf never imports
 `server_ops`), so `server.py`'s alias block, the three facades, and

@@ -23,13 +23,13 @@ all three leaves are type-checked.
 
 ## Acceptance Criteria
 
-- [ ] `.venv/bin/python tools/check_mypy_gate.py` exits 0 with
+- [x] `.venv/bin/python tools/check_mypy_gate.py` exits 0 with
   `server_k8s_tables.py` in the checked set.
-- [ ] `tests/test_mypy_gate_lint.py` passes with the updated count.
-- [ ] Server-family suite stays green
+- [x] `tests/test_mypy_gate_lint.py` passes with the updated count.
+- [x] Server-family suite stays green
   (`tests/test_server.py tests/test_server_ops_fuzz.py tests/test_server_mcp.py
   tests/test_server_eval_mode.py tests/test_server_watch.py`).
-- [ ] Whole suite + `pre-commit run --all-files` clean (excluding the
+- [x] Whole suite + `pre-commit run --all-files` clean (excluding the
   pre-existing workspace journal-index drift unrelated to this change).
 
 ## Notes
