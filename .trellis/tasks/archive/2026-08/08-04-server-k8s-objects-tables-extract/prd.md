@@ -47,27 +47,27 @@ combined size (~950) exceeds the epic's 800-line per-module cap:
 
 ## Acceptance Criteria
 
-- [ ] **Clean one-way leaves.** Neither new module imports `server_ops`;
+- [x] **Clean one-way leaves.** Neither new module imports `server_ops`;
       they import only stdlib, already-extracted lower leaves, and (for
       tables) `server_k8s_objects`. If the audit finds a moved builder
       calls a staying `server_ops` helper at runtime, that helper either
       moves too or the seam is redrawn — no reverse import ships. (This is
       the gate helm failed.)
-- [ ] `server_ops.py` re-imports every moved name at its original
+- [x] `server_ops.py` re-imports every moved name at its original
       position; no caller (facades, `server.py` alias block,
       `server_mcp.py`, REST paths) is edited.
-- [ ] Each new module is < 800 lines (epic per-module cap).
-- [ ] Kubernetes object + Table render-oracle output is byte-identical
+- [x] Each new module is < 800 lines (epic per-module cap).
+- [x] Kubernetes object + Table render-oracle output is byte-identical
       before and after the move (fixed corpus: `kubectl get`
       pods/deployments/configmaps/secrets/events/services with and without
       Table `Accept`, plus `-o yaml/json`).
-- [ ] Server-family tests green:
+- [x] Server-family tests green:
       `tests/test_server.py tests/test_server_ops_fuzz.py
       tests/test_server_mcp.py tests/test_server_eval_mode.py
       tests/test_server_watch.py`, then the full suite.
-- [ ] Splice-hazard grep of the deleted ranges finds no orphaned `from .`
+- [x] Splice-hazard grep of the deleted ranges finds no orphaned `from .`
       re-import stub swept into the cut.
-- [ ] CLAUDE.md server-module map and
+- [x] CLAUDE.md server-module map and
       `.trellis/spec/amc/backend/architecture.md` updated to list both new
       modules; the epic step tracker records step 4 done, the measured
       `server_ops.py` size, and that `_k8s_metadata`/`_k8s_timestamp` now
