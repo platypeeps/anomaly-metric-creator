@@ -7,6 +7,14 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `POST /v1/mutations/reset` now returns an additive `"scope":
+  "mutation-overlay"` field alongside the existing `mutations` summary, making
+  the reset's overlay-only contract explicit. Reset restores the selected
+  scenario baseline for every mutation-overlay family (workloads, deleted pods,
+  created/deleted resources, extra events, Helm release) and intentionally
+  leaves generated artifacts, command traces, and the simulated clock untouched.
+  The README serve section and the operations spec document the exact does/
+  does-not scope; no existing caller of the `mutations` summary is affected.
 - `amc serve` now prints a copyable inspection banner after the startup URL
   lines: a kubeconfig fetch, namespaced `kubectl`/`helm` examples, a
   `POST /v1/mutations/reset` hint, and an `Active scenarios:` line. The banner

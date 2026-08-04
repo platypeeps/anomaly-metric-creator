@@ -714,7 +714,18 @@ def make_handler(
                     self._send_json(200, {"clock": {"simulated_time": _format_dt(state.clock.seek(timestamp))}})
                 elif path == "/v1/mutations/reset":
                     state.mutations.reset()
-                    self._send_json(200, {"mutations": state.mutations.summary()})
+                    # scope is an additive, compatible field: reset clears only
+                    # the mutation overlay, never generated artifacts, command
+                    # traces, or the simulated clock (see the reset contract in
+                    # operations-security-logging.md). Existing callers that read
+                    # only the "mutations" key are unaffected.
+                    self._send_json(
+                        200,
+                        {
+                            "scope": "mutation-overlay",
+                            "mutations": state.mutations.summary(),
+                        },
+                    )
                 else:
                     self._send_json(404, {"error": "not found"})
             except RequestBodyTooLarge as exc:
