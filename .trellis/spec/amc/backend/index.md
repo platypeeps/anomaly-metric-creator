@@ -65,6 +65,7 @@ Sources: `.trellis/spec/amc/backend/architecture.md`;
 | [Operations, Security, and Logging](./operations-security-logging.md) | Trace persistence/search, structured logs, redaction, auth/CORS/rate limits, debug UI |
 | [Testing and Quality](./testing-quality.md) | Determinism, validation strategy, pytest/xdist, fixtures, pre-commit, CI, review checklist |
 | [Documentation and Review](./documentation-review.md) | Documentation sync, PR template lockstep, Copilot guidance, Trellis adapter policy |
+| [SD Review KB False-Block](./sd-review-kb-false-block.md) | `knowledge.obsidian-kb` review/merge false-block: mechanism, advisory posture, green-gate merge workaround |
 
 Legacy spec filenames remain as compatibility pointers only. Do not add new
 rules to `directory-structure.md`, `database-guidelines.md`,
