@@ -34,8 +34,12 @@
 
 set -eu
 
+# Program tag for usage / diagnostics, derived from the invocation so a rename
+# does not leave a stale literal behind.
+PROG="$(basename "$0")"
+
 usage() {
-    echo "usage: tools/pr_comment.sh --pr <N> --body-file <path> [--dry-run] [-- <extra gh args>]" >&2
+    echo "usage: $PROG --pr <N> --body-file <path> [--dry-run] [-- <extra gh args>]" >&2
     exit 2
 }
 
@@ -61,18 +65,21 @@ while [ $# -gt 0 ]; do
         --dry-run) DRY=1; shift ;;
         --) shift; break ;;
         -h|--help) usage ;;
-        *) echo "pr_comment: unknown argument: $1" >&2; usage ;;
+        *) echo "$PROG: unknown argument: $1" >&2; usage ;;
     esac
 done
 
-[ -n "$PR" ] || { echo "pr_comment: --pr is required" >&2; usage; }
-[ -n "$BODY" ] || { echo "pr_comment: --body-file is required" >&2; usage; }
-[ -f "$BODY" ] || { echo "pr_comment: body file not found: $BODY" >&2; exit 2; }
+[ -n "$PR" ] || { echo "$PROG: --pr is required" >&2; usage; }
+[ -n "$BODY" ] || { echo "$PROG: --body-file is required" >&2; usage; }
+[ -f "$BODY" ] || { echo "$PROG: body file not found: $BODY" >&2; exit 2; }
 
 # Resolve the repo root from this script's own location so the gates and the
-# venv interpreter resolve regardless of the caller's working directory.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# venv interpreter resolve regardless of the caller's working directory. Guard
+# each `cd` explicitly: a failed command substitution inside an assignment does
+# not reliably trip `set -e`, so an unresolvable path would otherwise continue
+# with an empty directory.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" || { echo "$PROG: cannot resolve script directory" >&2; exit 2; }
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)" || { echo "$PROG: cannot resolve repo root" >&2; exit 2; }
 
 # Prefer the project venv interpreter (matches the documented chains); fall back
 # to the operator's python3.
@@ -87,7 +94,7 @@ PY="$REPO_ROOT/.venv/bin/python3"
 "$PY" "$REPO_ROOT/tools/check_approval_duplicate.py" --pr "$PR" < "$BODY"
 
 if [ "$DRY" -eq 1 ]; then
-    echo "pr_comment: gates clean; --dry-run set, not posting to PR #$PR"
+    echo "$PROG: gates clean; --dry-run set, not posting to PR #$PR"
     exit 0
 fi
 
