@@ -254,6 +254,23 @@ def test_inspection_banner_suppresses_scenarios_under_eval_mode(
     assert "kubectl get pods -n saas-prod" in out
 
 
+def test_inspection_banner_brackets_ipv6_host(capsys):
+    # An IPv6 literal must be bracketed or the URL is invalid
+    # (http://::1:8088 does not parse; http://[::1]:8088 does).
+    security = server.ServerSecurityConfig()
+    server._print_inspection_banner(
+        "::1",
+        8088,
+        "saas-prod",
+        security,
+        eval_mode=False,
+        active_scenarios=(),
+    )
+    out = capsys.readouterr().out
+    assert "http://[::1]:8088/v1/kubeconfig" in out
+    assert "http://::1:8088" not in out
+
+
 def test_serve_unknown_scenario_slug_exits_naming_catalog(amc, tmp_path, capsys):
     with pytest.raises(SystemExit) as excinfo:
         server.serve_main(

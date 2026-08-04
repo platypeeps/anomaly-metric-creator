@@ -10,9 +10,9 @@ authoritative history is the GitHub release notes and the git commit log; the
 - `amc serve` now prints a copyable inspection banner after the startup URL
   lines: a kubeconfig fetch, namespaced `kubectl`/`helm` examples, a
   `POST /v1/mutations/reset` hint, and an `Active scenarios:` line. The banner
-  embeds a real `--auth-token` only on a loopback bind (a non-loopback bind
-  renders a `$AMC_TOKEN` placeholder), and suppresses the scenario line under
-  `--mcp-eval-mode`. Documents the interactive failure-mode launcher recipe
+  embeds the real `--auth-token` value only on a loopback bind (a non-loopback
+  bind prints a `$AMC_TOKEN` placeholder instead), and suppresses the scenario
+  line under `--mcp-eval-mode`. Documents the interactive failure-mode recipe
   (`amc serve --scenarios <slug>`) in the README; serve security defaults are
   unchanged.
 

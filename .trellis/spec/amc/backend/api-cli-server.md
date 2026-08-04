@@ -184,7 +184,8 @@ fetch, namespaced `kubectl get pods`/`get events` and `helm list` examples,
 and a `POST /v1/mutations/reset` hint. The banner is security-sensitive in one
 place: a real `--auth-token` is echoed into the curl examples only on a
 loopback bind; a non-loopback bind must render a `$AMC_TOKEN` placeholder
-instead so the token never reaches a remote shell history or log. The
+instead so the printed banner commands do not carry the token into a remote
+shell history or log (the operator's launch invocation still holds it). The
 `Active scenarios:` line is suppressed entirely under `--mcp-eval-mode`
 (active slugs are the eval harness's scoring rubric). The banner changes no
 serve security default. This is the interactive failure-mode launcher: an

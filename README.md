@@ -389,8 +389,10 @@ Active scenarios: db_stall
 The examples render the literal bind host and the configured `--namespace`.
 When `--auth-token` is set on a **loopback** bind, the curl lines embed the
 real bearer header for copy-paste; on a **non-loopback** bind they instead
-print a `-H "Authorization: Bearer $AMC_TOKEN"` placeholder so the token
-never lands in a remote shell history or log. Under `--mcp-eval-mode` the
+print a `-H "Authorization: Bearer $AMC_TOKEN"` placeholder so the printed
+commands do not carry the token into a remote shell history or log (your own
+launch command still holds it — this only stops the banner from re-emitting
+it). Under `--mcp-eval-mode` the
 `Active scenarios:` line is suppressed entirely (the active slugs are the
 eval harness's scoring rubric). The reset hint ties into
 `POST /v1/mutations/reset`, which clears the in-memory mutation overlay
