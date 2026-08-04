@@ -45,6 +45,8 @@ edits; no pack/upstream PR.
 
 ## Acceptance criteria
 
-- [ ] Exactly one of wire/retire implemented; no orphaned references remain.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
-      `.trellis/audit/ledger.md` (same-PR, per ledger rules).
+- [x] Exactly one of wire/retire implemented; no orphaned references remain.
+      (Wired — Option A-lite — via `tools/pr_comment.sh`; the raw `&&` chains
+      remain documented as what the wrapper runs, so no orphaned references.)
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
+      `.trellis/audit/ledger.md` (same-PR, per ledger rules). (A-034 flipped.)
