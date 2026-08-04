@@ -202,3 +202,42 @@ Implemented bounded Kubernetes watch semantics for amc serve: real-client GET ?w
 ### Next Steps
 
 - None - task complete
+
+
+## Session 53: Extract server_ops_profiles.py (epic step 1)
+
+**Date**: 2026-08-04
+**Task**: Extract server_ops_profiles.py (epic step 1)
+**Package**: amc
+**Branch**: `sdelmas/extract-server-ops-profiles`
+
+### Summary
+
+Moved the ops scenario-profile registry, its OpsComponentImpact/OpsScenarioProfile dataclasses, the _impact/_profile builders, and validate_ops_profiles verbatim out of the 7.7k-line server_ops.py into a new pure-data leaf server_ops_profiles.py, re-imported at the original block position. Import-only refactor with object identity preserved across leaf/server_ops/server, so output is byte-identical by construction. Added the leaf to the mypy CLEAN_MODULES gate and bumped the gate-lint count 23->24 in lockstep. PR #321.
+
+### Main Changes
+
+- New leaf server_ops_profiles.py (791 lines) holds OPS_SCENARIO_PROFILES + its dataclasses/builders/validator; server_ops.py re-imports via an as-aliased one-way stub
+- server_ops.py shrank 7862->7095 lines; six moved names kept in __all__ (rebound by the stub); server.py alias block and the three facades unchanged
+- mypy CLEAN_MODULES gains the leaf (type-checks clean); test_mypy_gate_lint expected count 23->24; docs (CLAUDE.md, architecture.md, CHANGELOG, repomix map) updated
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2f4f12c` | refactor(server): extract ops scenario profiles into server_ops_profiles.py |
+
+### Testing
+
+- [OK] Full suite: 1746 passed, 2 skipped (env-gated smoke)
+- [OK] Server-family + gate-lint tests: 152 passed (-n 0)
+- [OK] mypy gate clean (24 modules); ruff clean; object identity preserved across leaf/server_ops/server
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

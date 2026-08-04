@@ -264,8 +264,15 @@ surfaces that are safe to split without changing public imports:
 `server_traces.py` owns `CommandTrace` persistence/search, `server_mutations.py`
 owns the mutable overlay dataclasses and helpers, and `server_debug_ui.py` owns
 the inline debug shell. `server_ops.py` owns the ops simulation implementation:
-scenario profiles, simulator state, command parsing/rendering, resource
+simulator state, command parsing/rendering, resource
 snapshots, Kubernetes-compatible API objects, and Helm release Secret encoding.
+`server_ops_profiles.py` is the pure-data leaf holding the ops scenario-profile
+registry (`OPS_SCENARIO_PROFILES`), its `OpsComponentImpact` /
+`OpsScenarioProfile` dataclasses, the `_impact` / `_profile` builders, and the
+`validate_ops_profiles` fail-fast validator; `server_ops.py` re-imports every
+name at the original block position (one-way import — the leaf never imports
+`server_ops`), so `server.py`'s alias block, the three facades, and
+`server_mcp.py` keep resolving unchanged.
 `server_commands.py`, `server_kubernetes.py`, and `server_helm.py` are focused
 facades over those ops surfaces for compatibility boundaries. `server.py`
 intentionally re-exports their public names for compatibility with existing

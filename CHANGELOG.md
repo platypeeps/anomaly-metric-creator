@@ -7,6 +7,12 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Internal: extracted the ops scenario-profile registry
+  (`OPS_SCENARIO_PROFILES`, its `OpsComponentImpact` / `OpsScenarioProfile`
+  dataclasses, `_impact` / `_profile` builders, and `validate_ops_profiles`)
+  out of `server_ops.py` into a new pure-data leaf `server_ops_profiles.py`,
+  re-imported at the original position. Import-only refactor with object
+  identity preserved; no behavior, output, or public-import change.
 - `amc serve` now supports **bounded Kubernetes watch streams**. A real-client
   `kubectl get pods|deployments --watch` (API `?watch=true`) streams
   newline-delimited `ADDED`/`MODIFIED`/`DELETED` events backed by the same

@@ -805,13 +805,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    06-29-interactive-failure-mode-launcher/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     06-29-kubectl-events-compatibility/
       check.jsonl
       design.md
@@ -841,20 +834,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     06-29-persisted-server-mutation-state/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    06-29-quick-simulator-environment-reset/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    06-29-server-watch-semantics/
       check.jsonl
       design.md
       implement.jsonl
@@ -988,6 +967,18 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     07-17-audit-typed-boundaries/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    08-03-sd-review-kb-coordinator-false-positive/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    08-04-server-ops-profiles-extract/
       check.jsonl
       design.md
       implement.jsonl
@@ -1379,6 +1370,27 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
       2026-08/
+        06-29-interactive-failure-mode-launcher/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        06-29-quick-simulator-environment-reset/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        06-29-server-watch-semantics/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         08-03-refresh-sd-ai-command-pack-0-64-3/
           check.jsonl
           implement.jsonl
@@ -1473,6 +1485,7 @@ src/
     server_kubernetes.py
     server_mcp.py
     server_mutations.py
+    server_ops_profiles.py
     server_ops.py
     server_traces.py
     server.py
@@ -1543,6 +1556,8 @@ tests/
   test_server_hardening.py
   test_server_mcp.py
   test_server_ops_fuzz.py
+  test_server_reset.py
+  test_server_watch.py
   test_server.py
   test_shapes.py
   test_sync_agent_skills.py
