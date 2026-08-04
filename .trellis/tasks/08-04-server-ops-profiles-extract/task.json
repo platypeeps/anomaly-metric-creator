@@ -12,7 +12,7 @@
   "assignee": "sdelmas",
   "createdAt": "2026-08-04",
   "completedAt": null,
-  "branch": null,
+  "branch": "sdelmas/extract-server-ops-profiles",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
