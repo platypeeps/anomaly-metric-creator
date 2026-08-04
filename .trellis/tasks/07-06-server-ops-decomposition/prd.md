@@ -71,6 +71,12 @@ explicitly not a split.
 - [ ] CLAUDE.md and `.trellis/spec/amc/backend/architecture.md` module
       maps updated in each PR.
 
+## Child Tasks
+
+- `08-04-server-ops-profiles-extract` — step 1: extract the ops
+  scenario-profile registry and its dataclasses/builders/validator into
+  the pure-data leaf `server_ops_profiles.py`.
+
 ## Notes
 
 - Epic — break into child tasks once design.md fixes boundaries; do not

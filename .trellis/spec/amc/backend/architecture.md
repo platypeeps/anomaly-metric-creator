@@ -168,7 +168,12 @@ name mapping may still come from the live registry. Sources: `CLAUDE.md`;
 
 Keep `server.py` as the stdlib HTTP facade for `amc serve`. Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
-commands, Kubernetes objects, and Helm Secret encoding; `server_traces.py` for
+commands, Kubernetes objects, and Helm Secret encoding;
+`server_ops_profiles.py` for the pure-data ops scenario-profile registry
+(`OPS_SCENARIO_PROFILES`, its `OpsComponentImpact` / `OpsScenarioProfile`
+dataclasses, `_impact` / `_profile` builders, and `validate_ops_profiles`),
+re-imported by `server_ops.py` at the original block position (one-way import,
+no reverse dependency); `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
 `server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP
@@ -180,6 +185,7 @@ the import-time-validated `MCP_TOOLS` registry live in `server_mcp.py`.
 Sources:
 `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_ops_profiles.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`;

@@ -37,6 +37,7 @@ CLEAN_MODULES: tuple[str, ...] = (
     "src/anomaly_metric_creator/server_kubernetes.py",
     "src/anomaly_metric_creator/server_mcp.py",
     "src/anomaly_metric_creator/server_mutations.py",
+    "src/anomaly_metric_creator/server_ops_profiles.py",
     "src/anomaly_metric_creator/timeutil.py",
 )
 
