@@ -4,11 +4,25 @@
 
 sd-review coordinator's builtin knowledge.obsidian-kb check reports a stale copy count (438 vs expected 441) and returns 'blocked' even when the standalone refresh/check (scripts/sd-ai-command-pack-update-spec-kb.py --check) passes clean (441 copies, exit 0). Root cause (observed on PR #316, head 3bd8df8): the coordinator rebuilds/counts the KB from committed content in its /tmp/sd-review-{source,target}-* snapshot, which excludes the gitignored, untracked .obsidian-kb working-tree refresh, so it undercounts by the files whose KB copies only exist in the live working tree. The KB artifact is gitignored and never ships, and the authoritative GitHub merge gate (CI Result + conversation resolution) was CLEAN, so #316 was merged via the green gate with the block documented. Follow-up: confirm the coordinator's KB check should read the live working tree (or be advisory), file upstream at platypeeps/sd-ai-command-pack if confirmed. Vendored tooling; needs upstream approval before any upstream PR.
 
+**CORRECTION (confirmed in `research/root-cause.md`):** the original `/tmp`-snapshot
+undercount hypothesis above is **refuted**. `_run_check` builds no snapshot; the
+coordinator's KB row reads the same live working tree the standalone `--check`
+does. The real mechanism is that `.obsidian-kb` is a symlink to a **live external
+Obsidian vault** (gitignored, untracked, mutating independent of HEAD), so the
+`--check` fails non-deterministically (present != expected mid-edit) and the
+coordinator memoizes that transient failure against a state key that excludes the
+gitignored artifact. The specific "438/441" figures were the PR #316 observation
+under the refuted framing; the confirmed evidence is the non-deterministic count
+swing recorded in `research/root-cause.md`.
+
 ## Requirements
 
-- Reproduce the divergence deterministically: capture the coordinator's
-  `knowledge.obsidian-kb` builtin count vs `scripts/sd-ai-command-pack-update-spec-kb.py --check`
-  on the same head, and identify exactly which KB copies the coordinator omits.
+- Characterize the divergence: capture the coordinator's
+  `knowledge.obsidian-kb` verdict vs `scripts/sd-ai-command-pack-update-spec-kb.py --check`
+  on the same head. (Confirmed non-deterministic, not a fixed undercount — the
+  coordinator omits *no* copies; it reads the same live working tree the
+  standalone `--check` does, and the count swings with the external vault. See
+  `research/root-cause.md`.)
 - Determine the coordinator's KB source of truth: confirm whether it reads the
   live working tree or a `/tmp/sd-review-{source,target}-*` snapshot that
   excludes the gitignored `.obsidian-kb`.
@@ -22,7 +36,10 @@ sd-review coordinator's builtin knowledge.obsidian-kb check reports a stale copy
 ## Acceptance Criteria
 
 - [ ] Root cause is confirmed with a reproducible command sequence and a written
-      explanation of the count divergence (attach the observed 438/441 case).
+      explanation of the count divergence. (The specific 438/441 case was the
+      PR #316 observation under the refuted undercount framing; the confirmed
+      evidence is the non-deterministic count swing + the `_run_check`/
+      `kb_freshness_row`/`check_current` code trace in `research/root-cause.md`.)
 - [ ] A decision is recorded on whether the check reads the working tree or
       becomes advisory, with rationale tied to the artifact being gitignored.
 - [ ] Either the upstream fix/issue is filed (with approval) or a documented
