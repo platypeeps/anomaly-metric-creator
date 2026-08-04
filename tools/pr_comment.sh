@@ -38,9 +38,20 @@ set -eu
 # does not leave a stale literal behind.
 PROG="$(basename "$0")"
 
+usage_line() {
+    echo "usage: $PROG --pr <N> --body-file <path> [--dry-run] [-- <extra gh args>]"
+}
+
+# Error path: usage to stderr, exit 2 (a misuse is not a success).
 usage() {
-    echo "usage: $PROG --pr <N> --body-file <path> [--dry-run] [-- <extra gh args>]" >&2
+    usage_line >&2
     exit 2
+}
+
+# Explicit -h/--help: usage to stdout, exit 0 (asking for help is not an error).
+show_help() {
+    usage_line
+    exit 0
 }
 
 PR=""
@@ -64,7 +75,7 @@ while [ $# -gt 0 ]; do
         --body-file=*) BODY="${1#--body-file=}"; shift ;;
         --dry-run) DRY=1; shift ;;
         --) shift; break ;;
-        -h|--help) usage ;;
+        -h|--help) show_help ;;
         *) echo "$PROG: unknown argument: $1" >&2; usage ;;
     esac
 done

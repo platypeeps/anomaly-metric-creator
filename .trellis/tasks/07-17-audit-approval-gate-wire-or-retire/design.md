@@ -11,8 +11,9 @@ documents a manual `&&` chain, and no hook/workflow/skill runs it.
 
 **Recommendation: wire, minimally (Option A-lite).** Rationale: the gate
 works, has full test coverage, addresses a documented recurrence, and the
-wiring cost is one small wrapper — deleting 1,700 working lines to save
-zero maintenance (it's stdlib-only and stable) is the worse trade. The
+wiring cost is one small wrapper — deleting the ~690-line gate and its
+separate ~1,000-line test suite to save zero maintenance (it's stdlib-only
+and stable) is the worse trade. The
 task-start gate: confirm the maintainer still wants the convention; if
 not, flip to Option B below (both paths are fully specified here so the
 implementing session just executes the chosen one).

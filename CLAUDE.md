@@ -2506,8 +2506,9 @@ without silencing structural script failures.
 `tools/pr_comment.sh` is the canonical enforcement path for the two
 comment-body gates above. Until it landed, both the role-name lint and
 the approval-duplicate lint were documented only as manual `&&` chains
-that nothing invoked (audit item A-034: the 1,689-line approval gate had
-no enforcement path) — every sibling lint in the repo (`role-name-leaks`,
+that nothing invoked (audit item A-034: the approval-duplicate gate — a
+~690-line script plus its separate ~1,000-line test suite — had no
+enforcement path) — every sibling lint in the repo (`role-name-leaks`,
 `role-name-commit-message`, `branch-name`, `ruff-lockstep`) is wired,
 this one was the anomaly. The wrapper closes that gap by chaining
 role-name → approval-duplicate → `gh pr comment` in one command:

@@ -363,7 +363,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - why: scenario re-tunes silently rot the hard-coded lists.
 - fix: helpers to conftest; generalize the catalog-derived windows.
 
-## A-034 — 1,689-line approval-duplicate gate wired into nothing
+## A-034 — approval-duplicate gate wired into nothing
 - status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: bloat

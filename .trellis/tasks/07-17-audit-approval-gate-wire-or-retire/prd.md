@@ -27,7 +27,8 @@ posture is inferable without a maintainer prompt:
 
 - The gate works and is fully covered (`tests/test_approval_duplicate_lint.py`),
   addresses a documented recurrence (PR #86's five duplicate approvals), and is
-  stdlib-only/stable — retiring 1,700 working lines saves ~zero maintenance.
+  stdlib-only/stable — retiring the ~690-line gate script (its test suite is
+  a separate ~1,000 lines) would remove stable code and save ~zero maintenance.
 - Every sibling comment/branch lint in the repo is *wired* (`role-name-leaks`
   and `role-name-commit-message` hooks, `branch-name` pre-push, `ruff-lockstep`
   in CI). Leaving only this gate unwired is the anomaly; wiring it restores the
