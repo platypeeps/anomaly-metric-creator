@@ -80,6 +80,14 @@ explicitly not a split.
   parse cluster (`ParsedCommand`, flag/alias tables, `parse_command` +
   `_parse_kubectl`/`_parse_helm`, fingerprint/redaction helpers) into the
   stdlib-only leaf `server_ops_parse.py`.
+- `08-04-server-k8s-objects-tables-extract` — step 4 (resequenced ahead of
+  step 3 helm, with maintainer consent): extract the per-kind Kubernetes
+  object builders into `server_k8s_objects.py` and the `meta.k8s.io/v1` Table
+  surface into `server_k8s_tables.py`, plus the shared lower leaf
+  `server_ops_support.py` that both consume downward (maintainer Option A).
+- `08-04-server-k8s-tables-mypy-gate` — follow-up to the step-4 task: annotate
+  the one verbatim-moved `var-annotate` gap in `server_k8s_tables.py` and add
+  the module to the mypy clean-module gate.
 
 ## Notes
 

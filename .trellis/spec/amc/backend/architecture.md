@@ -168,7 +168,19 @@ name mapping may still come from the live registry. Sources: `CLAUDE.md`;
 
 Keep `server.py` as the stdlib HTTP facade for `amc serve`. Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
-command rendering, Kubernetes objects, and Helm Secret encoding;
+command rendering, the `_k8s_objects_for_resource` / `_k8s_table` dispatchers,
+`resource_snapshot()`, and Helm Secret encoding;
+`server_ops_support.py` for the pure lower leaf shared downward by the ops and
+k8s surfaces (`DEFAULT_RELEASE` / `DEFAULT_CHART` and the snapshot-row /
+timestamp / string-coercion / list-resource-version accessors);
+`server_k8s_objects.py` for the per-kind Kubernetes object builders plus the
+metadata / owner / label / container-state / pod-timestamp / pod-ip helpers
+(also the home of `_k8s_metadata` / `_k8s_timestamp` that the future
+`server_helm` extraction depends on); `server_k8s_tables.py` for the
+`meta.k8s.io/v1` Table surface (`_k8s_table`, `_k8s_column`,
+`_k8s_table_schema`, and the per-kind cell builders); the two k8s leaves import
+their shared accessors from `server_ops_support` and reference `SimulationState`
+only under an `if TYPE_CHECKING` guard, so the runtime dependency stays one-way;
 `server_ops_profiles.py` for the pure-data ops scenario-profile registry
 (`OPS_SCENARIO_PROFILES`, its `OpsComponentImpact` / `OpsScenarioProfile`
 dataclasses, `_impact` / `_profile` builders, and `validate_ops_profiles`);
@@ -189,6 +201,9 @@ the import-time-validated `MCP_TOOLS` registry live in `server_mcp.py`.
 Sources:
 `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_ops_support.py`;
+`src/anomaly_metric_creator/server_k8s_objects.py`;
+`src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
 `src/anomaly_metric_creator/server_ops_parse.py`;
 `src/anomaly_metric_creator/server_traces.py`;

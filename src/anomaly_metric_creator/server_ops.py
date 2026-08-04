@@ -15,7 +15,6 @@ import csv
 import datetime as _dt
 import gzip
 import json
-import shlex
 import threading
 import time
 import urllib.parse
@@ -38,8 +37,16 @@ from .server_traces import (
     CommandTraceStore,
 )
 
-DEFAULT_RELEASE = "simulated-saas"
-DEFAULT_CHART = "simulated-saas-0.3.0"
+from .server_ops_support import (
+    DEFAULT_RELEASE as DEFAULT_RELEASE,
+    DEFAULT_CHART as DEFAULT_CHART,
+    _snapshot_row_namespace as _snapshot_row_namespace,
+    _snapshot_row_labels as _snapshot_row_labels,
+    _parse_user_timestamp as _parse_user_timestamp,
+    _parse_optional_timestamp as _parse_optional_timestamp,
+    _string_dict as _string_dict,
+    _k8s_list_resource_version as _k8s_list_resource_version,
+)
 DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 _K8S_ADVERTISED_VERSION = "1.36.2"
 _K8S_ADVERTISED_TAG = f"v{_K8S_ADVERTISED_VERSION}"
@@ -410,10 +417,6 @@ _EXPLAIN_RESOURCE_DESCRIPTIONS = {
     "endpointslices": "EndpointSlice exposes Service endpoint subsets for real kubectl clients.",
     "ingress": "Ingress exposes the simulator edge route for the API gateway.",
 }
-
-
-def _snapshot_row_namespace(row: dict[str, Any], default_namespace: str = DEFAULT_NAMESPACE) -> str:
-    return str(row.get("namespace") or default_namespace)
 
 
 def _snapshot_row_key(row: dict[str, Any], default_namespace: str = DEFAULT_NAMESPACE) -> str:
@@ -1179,21 +1182,6 @@ def _snapshot_row_matches_namespace(kind: str, row: dict[str, Any], namespace: s
     if namespace == "*" or not _snapshot_kind_namespaced(kind):
         return True
     return _snapshot_row_namespace(row) == namespace
-
-
-def _snapshot_row_labels(kind: str, row: dict[str, Any]) -> dict[str, str]:
-    component = row.get("component") or row.get("owner") or row.get("service") or row.get("name", "")
-    labels = {
-        "app.kubernetes.io/instance": DEFAULT_RELEASE,
-        "app.kubernetes.io/name": str(component),
-        "name": str(row.get("name", "")),
-    }
-    raw_labels = row.get("labels")
-    if isinstance(raw_labels, dict):
-        labels.update({str(key): str(value) for key, value in raw_labels.items()})
-    if kind == "secrets":
-        labels.update({"owner": "helm", "name": DEFAULT_RELEASE})
-    return labels
 
 
 def _snapshot_row_matches_field_selector(kind: str, row: dict[str, Any], selector: str) -> bool:
@@ -2879,12 +2867,6 @@ def _generic_resource_metadata(
     return result
 
 
-def _string_dict(value: Any) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(key): str(item) for key, item in value.items()}
-
-
 def _configmap_keys_from_flags(parsed: ParsedCommand | None) -> dict[str, str]:
     if parsed is None:
         return {}
@@ -3606,25 +3588,6 @@ def _preview(value: str, limit: int = 240) -> str:
 
 def _format_dt(value: _dt.datetime) -> str:
     return value.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _parse_user_timestamp(value: str) -> _dt.datetime:
-    value = value.strip()
-    if value.endswith("Z"):
-        value = value[:-1]
-    value = value.replace("T", " ")
-    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        with contextlib.suppress(ValueError):
-            return _dt.datetime.strptime(value, fmt)
-    raise ValueError(f"unsupported timestamp format: {value!r}")
-
-
-def _parse_optional_timestamp(value: str | None) -> _dt.datetime | None:
-    if not value:
-        return None
-    with contextlib.suppress(ValueError):
-        return _parse_user_timestamp(value)
-    return None
 
 
 class RequestBodyTooLarge(ValueError):
@@ -4766,11 +4729,6 @@ def _filter_k8s_objects_by_namespace(
     ]
 
 
-def _k8s_list_resource_version(state: SimulationState) -> str:
-    with state.mutations.lock:
-        return str(max(1, state.mutations.version + 1))
-
-
 # Resource families a real-client `?watch=true` request streams as a bounded
 # simulated watch. Keyed `(group, version, resource)`; the core group is "".
 # v1 asserts only the two families `kubectl get --watch` most plausibly hits;
@@ -4928,459 +4886,33 @@ def _k8s_resource_meta(group: str, version: str, resource: str) -> dict[str, str
     return {"api_version": api_version, "kind": kind, "list_kind": f"{kind}List"}
 
 
-def _accepts_table(accept_header: str) -> bool:
-    return "as=Table" in accept_header and "g=meta.k8s.io" in accept_header
-
-
-def _k8s_table(state: SimulationState, resource: str, objects: list[dict[str, Any]]) -> dict[str, Any]:
-    columns, cell_builder = _k8s_table_schema(resource)
-    return {
-        "kind": "Table",
-        "apiVersion": "meta.k8s.io/v1",
-        "metadata": {"resourceVersion": _k8s_list_resource_version(state)},
-        "columnDefinitions": columns,
-        "rows": [
-            {
-                "cells": cell_builder(obj),
-                "object": {
-                    "kind": "PartialObjectMetadata",
-                    "apiVersion": "meta.k8s.io/v1",
-                    "metadata": obj.get("metadata", {}),
-                },
-            }
-            for obj in objects
-        ],
-    }
-
-
-def _k8s_column(name: str, column_type: str = "string") -> dict[str, str]:
-    return {
-        "name": name,
-        "type": column_type,
-        "format": "name" if name == "Name" else "",
-        "description": name,
-    }
-
-
-def _k8s_table_schema(resource: str):
-    if resource == "pods":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Ready"),
-                _k8s_column("Status"),
-                _k8s_column("Restarts", "integer"),
-                _k8s_column("Age"),
-            ],
-            _k8s_pod_cells,
-        )
-    if resource == "deployments":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Ready"),
-                _k8s_column("Up-to-date", "integer"),
-                _k8s_column("Available", "integer"),
-                _k8s_column("Age"),
-            ],
-            _k8s_deployment_cells,
-        )
-    if resource == "services":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Type"),
-                _k8s_column("Cluster-IP"),
-                _k8s_column("External-IP"),
-                _k8s_column("Port(s)"),
-                _k8s_column("Age"),
-            ],
-            _k8s_service_cells,
-        )
-    if resource == "endpoints":
-        return (
-            [_k8s_column("Name"), _k8s_column("Endpoints"), _k8s_column("Age")],
-            _k8s_endpoints_cells,
-        )
-    if resource == "endpointslices":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("AddressType"),
-                _k8s_column("Ports"),
-                _k8s_column("Endpoints", "integer"),
-                _k8s_column("Age"),
-            ],
-            _k8s_endpointslice_cells,
-        )
-    if resource == "events":
-        return (
-            [
-                _k8s_column("Last Seen"),
-                _k8s_column("Type"),
-                _k8s_column("Reason"),
-                _k8s_column("Object"),
-                _k8s_column("Message"),
-            ],
-            _k8s_event_cells,
-        )
-    if resource == "horizontalpodautoscalers":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Reference"),
-                _k8s_column("Targets"),
-                _k8s_column("Minpods", "integer"),
-                _k8s_column("Maxpods", "integer"),
-                _k8s_column("Replicas", "integer"),
-                _k8s_column("Age"),
-            ],
-            _k8s_hpa_cells,
-        )
-    if resource == "nodes":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Status"),
-                _k8s_column("Roles"),
-                _k8s_column("Age"),
-                _k8s_column("Version"),
-            ],
-            _k8s_node_cells,
-        )
-    if resource == "replicasets":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Desired", "integer"),
-                _k8s_column("Current", "integer"),
-                _k8s_column("Ready", "integer"),
-                _k8s_column("Age"),
-            ],
-            _k8s_replicaset_cells,
-        )
-    if resource == "daemonsets":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Desired", "integer"),
-                _k8s_column("Current", "integer"),
-                _k8s_column("Ready", "integer"),
-                _k8s_column("Up-to-date", "integer"),
-                _k8s_column("Available", "integer"),
-                _k8s_column("Age"),
-            ],
-            _k8s_daemonset_cells,
-        )
-    if resource == "persistentvolumeclaims":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Status"),
-                _k8s_column("Volume"),
-                _k8s_column("Capacity"),
-                _k8s_column("Access Modes"),
-                _k8s_column("Storageclass"),
-                _k8s_column("Age"),
-            ],
-            _k8s_pvc_cells,
-        )
-    if resource == "statefulsets":
-        return (
-            [_k8s_column("Name"), _k8s_column("Ready"), _k8s_column("Age")],
-            _k8s_statefulset_cells,
-        )
-    if resource == "ingresses":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Class"),
-                _k8s_column("Hosts"),
-                _k8s_column("Address"),
-                _k8s_column("Ports"),
-                _k8s_column("Age"),
-            ],
-            _k8s_ingress_cells,
-        )
-    if resource == "secrets":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Type"),
-                _k8s_column("Data", "integer"),
-                _k8s_column("Age"),
-            ],
-            _k8s_secret_cells,
-        )
-    if resource == "configmaps":
-        return (
-            [_k8s_column("Name"), _k8s_column("Data", "integer"), _k8s_column("Age")],
-            _k8s_configmap_cells,
-        )
-    if resource == "serviceaccounts":
-        return (
-            [_k8s_column("Name"), _k8s_column("Secrets", "integer"), _k8s_column("Age")],
-            _k8s_serviceaccount_cells,
-        )
-    if resource == "jobs":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Completions"),
-                _k8s_column("Duration"),
-                _k8s_column("Age"),
-            ],
-            _k8s_job_cells,
-        )
-    if resource == "cronjobs":
-        return (
-            [
-                _k8s_column("Name"),
-                _k8s_column("Schedule"),
-                _k8s_column("Suspend"),
-                _k8s_column("Active", "integer"),
-                _k8s_column("Last Schedule"),
-                _k8s_column("Age"),
-            ],
-            _k8s_cronjob_cells,
-        )
-    if resource == "namespaces":
-        return (
-            [_k8s_column("Name"), _k8s_column("Status"), _k8s_column("Age")],
-            _k8s_namespace_cells,
-        )
-    return ([_k8s_column("Name"), _k8s_column("Age")], _k8s_default_cells)
-
-
-def _k8s_pod_cells(obj: dict[str, Any]) -> list[Any]:
-    statuses = obj.get("status", {}).get("containerStatuses", [])
-    ready = sum(1 for status in statuses if status.get("ready"))
-    restarts = sum(int(status.get("restartCount", 0)) for status in statuses)
-    return [
-        obj["metadata"]["name"],
-        f"{ready}/{len(statuses) or 1}",
-        _k8s_pod_display_status(obj),
-        restarts,
-        "7d",
-    ]
-
-
-def _k8s_pod_display_status(obj: dict[str, Any]) -> str:
-    statuses = obj.get("status", {}).get("containerStatuses", [])
-    for status in statuses:
-        state = status.get("state", {})
-        if "waiting" in state:
-            return state["waiting"].get("reason", "Waiting")
-        if "terminated" in state:
-            return state["terminated"].get("reason", "Terminated")
-    return obj.get("status", {}).get("phase", "Unknown")
-
-
-def _k8s_deployment_cells(obj: dict[str, Any]) -> list[Any]:
-    spec = obj.get("spec", {})
-    status = obj.get("status", {})
-    replicas = int(spec.get("replicas", 0))
-    ready = int(status.get("readyReplicas", 0))
-    return [
-        obj["metadata"]["name"],
-        f"{ready}/{replicas}",
-        int(status.get("updatedReplicas", 0)),
-        int(status.get("availableReplicas", 0)),
-        "7d",
-    ]
-
-
-def _k8s_service_cells(obj: dict[str, Any]) -> list[Any]:
-    spec = obj.get("spec", {})
-    ports = ",".join(
-        f"{port.get('port')}/{port.get('protocol', 'TCP')}"
-        for port in spec.get("ports", [])
-    )
-    return [
-        obj["metadata"]["name"],
-        spec.get("type", "ClusterIP"),
-        spec.get("clusterIP", "<none>"),
-        "<none>",
-        ports,
-        "7d",
-    ]
-
-
-def _k8s_endpoints_cells(obj: dict[str, Any]) -> list[Any]:
-    subsets = obj.get("subsets", [])
-    endpoints = []
-    for subset in subsets:
-        ports = subset.get("ports", [])
-        port = ports[0].get("port", 8080) if ports else 8080
-        for address in subset.get("addresses", []):
-            endpoints.append(f"{address.get('ip')}:{port}")
-    return [obj["metadata"]["name"], ",".join(endpoints) or "<none>", "7d"]
-
-
-def _k8s_endpointslice_cells(obj: dict[str, Any]) -> list[Any]:
-    ports = ",".join(str(port.get("port", "")) for port in obj.get("ports", []))
-    return [
-        obj["metadata"]["name"],
-        obj.get("addressType", "IPv4"),
-        ports,
-        len(obj.get("endpoints", [])),
-        "7d",
-    ]
-
-
-def _k8s_event_cells(obj: dict[str, Any]) -> list[Any]:
-    involved = obj.get("involvedObject", {})
-    return [
-        "0s",
-        obj.get("type", ""),
-        obj.get("reason", ""),
-        f"{involved.get('kind', '').lower()}/{involved.get('name', '')}",
-        obj.get("message", ""),
-    ]
-
-
-def _k8s_hpa_cells(obj: dict[str, Any]) -> list[Any]:
-    spec = obj.get("spec", {})
-    status = obj.get("status", {})
-    target = spec.get("scaleTargetRef", {})
-    current = status.get("currentMetrics", [{}])[0].get("resource", {}).get("current", {})
-    desired = spec.get("metrics", [{}])[0].get("resource", {}).get("target", {})
-    current_pct = current.get("averageUtilization", 0)
-    desired_pct = desired.get("averageUtilization", 0)
-    return [
-        obj["metadata"]["name"],
-        f"{target.get('kind', 'Deployment')}/{target.get('name', '')}",
-        f"{current_pct}%/{desired_pct}%",
-        int(spec.get("minReplicas", 0)),
-        int(spec.get("maxReplicas", 0)),
-        int(status.get("currentReplicas", 0)),
-        "7d",
-    ]
-
-
-def _k8s_node_cells(obj: dict[str, Any]) -> list[Any]:
-    conditions = obj.get("status", {}).get("conditions", [])
-    ready = next((condition for condition in conditions if condition.get("type") == "Ready"), {})
-    role = obj.get("metadata", {}).get("labels", {}).get("kubernetes.io/role", "worker")
-    version = obj.get("status", {}).get("nodeInfo", {}).get("kubeletVersion", "")
-    return [
-        obj["metadata"]["name"],
-        "Ready" if ready.get("status") == "True" else "NotReady",
-        role,
-        "30d",
-        version,
-    ]
-
-
-def _k8s_replicaset_cells(obj: dict[str, Any]) -> list[Any]:
-    status = obj.get("status", {})
-    return [
-        obj["metadata"]["name"],
-        int(status.get("replicas", 0)),
-        int(status.get("fullyLabeledReplicas", status.get("replicas", 0))),
-        int(status.get("readyReplicas", 0)),
-        "7d",
-    ]
-
-
-def _k8s_daemonset_cells(obj: dict[str, Any]) -> list[Any]:
-    status = obj.get("status", {})
-    return [
-        obj["metadata"]["name"],
-        int(status.get("desiredNumberScheduled", 0)),
-        int(status.get("currentNumberScheduled", 0)),
-        int(status.get("numberReady", 0)),
-        int(status.get("updatedNumberScheduled", 0)),
-        int(status.get("numberAvailable", 0)),
-        "7d",
-    ]
-
-
-def _k8s_pvc_cells(obj: dict[str, Any]) -> list[Any]:
-    spec = obj.get("spec", {})
-    status = obj.get("status", {})
-    return [
-        obj["metadata"]["name"],
-        status.get("phase", ""),
-        spec.get("volumeName", ""),
-        status.get("capacity", {}).get("storage", ""),
-        ",".join(status.get("accessModes", [])),
-        spec.get("storageClassName", ""),
-        "7d",
-    ]
-
-
-def _k8s_statefulset_cells(obj: dict[str, Any]) -> list[Any]:
-    status = obj.get("status", {})
-    return [
-        obj["metadata"]["name"],
-        f"{int(status.get('readyReplicas', 0))}/{int(status.get('replicas', 0))}",
-        "7d",
-    ]
-
-
-def _k8s_ingress_cells(obj: dict[str, Any]) -> list[Any]:
-    spec = obj.get("spec", {})
-    status = obj.get("status", {})
-    rules = spec.get("rules", [])
-    ingress = status.get("loadBalancer", {}).get("ingress", [])
-    return [
-        obj["metadata"]["name"],
-        spec.get("ingressClassName", ""),
-        ",".join(rule.get("host", "") for rule in rules),
-        ",".join(item.get("ip", "") for item in ingress),
-        "80,443",
-        "7d",
-    ]
-
-
-def _k8s_secret_cells(obj: dict[str, Any]) -> list[Any]:
-    return [
-        obj["metadata"]["name"],
-        obj.get("type", "Opaque"),
-        len(obj.get("data", {})),
-        "7d",
-    ]
-
-
-def _k8s_configmap_cells(obj: dict[str, Any]) -> list[Any]:
-    return [obj["metadata"]["name"], len(obj.get("data", {})), "7d"]
-
-
-def _k8s_serviceaccount_cells(obj: dict[str, Any]) -> list[Any]:
-    return [obj["metadata"]["name"], len(obj.get("secrets", [])), "7d"]
-
-
-def _k8s_job_cells(obj: dict[str, Any]) -> list[Any]:
-    status = obj.get("status", {})
-    succeeded = int(status.get("succeeded", 0))
-    completions = int(obj.get("spec", {}).get("completions", 1))
-    return [obj["metadata"]["name"], f"{succeeded}/{completions}", "2m14s", "6d"]
-
-
-def _k8s_cronjob_cells(obj: dict[str, Any]) -> list[Any]:
-    spec = obj.get("spec", {})
-    status = obj.get("status", {})
-    return [
-        obj["metadata"]["name"],
-        spec.get("schedule", ""),
-        str(spec.get("suspend", False)),
-        len(status.get("active", [])),
-        "18h",
-        "7d",
-    ]
-
-
-def _k8s_namespace_cells(obj: dict[str, Any]) -> list[Any]:
-    return [
-        obj["metadata"]["name"],
-        obj.get("status", {}).get("phase", "Active"),
-        "7d",
-    ]
-
-
-def _k8s_default_cells(obj: dict[str, Any]) -> list[Any]:
-    return [obj.get("metadata", {}).get("name", ""), "7d"]
+from .server_k8s_tables import (
+    _accepts_table as _accepts_table,
+    _k8s_table as _k8s_table,
+    _k8s_column as _k8s_column,
+    _k8s_table_schema as _k8s_table_schema,
+    _k8s_pod_cells as _k8s_pod_cells,
+    _k8s_pod_display_status as _k8s_pod_display_status,
+    _k8s_deployment_cells as _k8s_deployment_cells,
+    _k8s_service_cells as _k8s_service_cells,
+    _k8s_endpoints_cells as _k8s_endpoints_cells,
+    _k8s_endpointslice_cells as _k8s_endpointslice_cells,
+    _k8s_event_cells as _k8s_event_cells,
+    _k8s_hpa_cells as _k8s_hpa_cells,
+    _k8s_node_cells as _k8s_node_cells,
+    _k8s_replicaset_cells as _k8s_replicaset_cells,
+    _k8s_daemonset_cells as _k8s_daemonset_cells,
+    _k8s_pvc_cells as _k8s_pvc_cells,
+    _k8s_statefulset_cells as _k8s_statefulset_cells,
+    _k8s_ingress_cells as _k8s_ingress_cells,
+    _k8s_secret_cells as _k8s_secret_cells,
+    _k8s_configmap_cells as _k8s_configmap_cells,
+    _k8s_serviceaccount_cells as _k8s_serviceaccount_cells,
+    _k8s_job_cells as _k8s_job_cells,
+    _k8s_cronjob_cells as _k8s_cronjob_cells,
+    _k8s_namespace_cells as _k8s_namespace_cells,
+    _k8s_default_cells as _k8s_default_cells,
+)
 
 
 def _k8s_objects_for_resource(
@@ -5447,387 +4979,38 @@ def _k8s_objects_for_resource(
     return None
 
 
-def _k8s_namespace(state: SimulationState) -> dict[str, Any]:
-    return {
-        "apiVersion": "v1",
-        "kind": "Namespace",
-        "metadata": _k8s_metadata(state, state.namespace),
-        "status": {"phase": "Active"},
-    }
-
-
-def _k8s_pod(state: SimulationState, pod: dict[str, Any]) -> dict[str, Any]:
-    ready = pod["ready"].split("/")[0] == pod["ready"].split("/")[1]
-    status_text = pod["status"]
-    phase = "Failed" if status_text == "Error" else "Running"
-    component = pod["component"]
-    namespace = _snapshot_row_namespace(pod, state.namespace)
-    replicaset_name = f"{component}-6d9f7c8b9d"
-    return {
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": _k8s_metadata(
-            state,
-            pod["name"],
-            namespace=namespace,
-            labels=_k8s_workload_labels(component),
-            resource_version=pod.get("resource_version"),
-            owner_references=[
-                _k8s_owner_reference(
-                    "apps/v1",
-                    "ReplicaSet",
-                    replicaset_name,
-                    f"amc-{namespace}-{replicaset_name}",
-                )
-            ],
-        ),
-        "spec": {
-            "nodeName": pod["node"],
-            "containers": [{
-                "name": component,
-                "image": f"simulated-saas/{component}:0.3.0",
-                "ports": [{"containerPort": 8080, "protocol": "TCP"}],
-            }],
-        },
-        "status": {
-            "phase": phase,
-            "podIP": _stable_pod_ip(pod["name"]),
-            "hostIP": "10.0.0.10",
-            "startTime": _k8s_timestamp(state.clock.start_time),
-            "conditions": [
-                {"type": "Initialized", "status": "True"},
-                {"type": "Ready", "status": "True" if ready else "False"},
-                {"type": "ContainersReady", "status": "True" if ready else "False"},
-                {"type": "PodScheduled", "status": "True"},
-            ],
-            "containerStatuses": [{
-                "name": component,
-                "ready": ready,
-                "restartCount": pod["restarts"],
-                "image": f"simulated-saas/{component}:0.3.0",
-                "imageID": f"simulated-saas/{component}@sha256:simulated",
-                "state": _k8s_container_state(state, status_text),
-            }],
-        },
-    }
-
-
-def _k8s_configmap(state: SimulationState, configmap: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": _k8s_metadata_for_row(state, configmap),
-        "data": configmap["keys"],
-    }
-
-
-def _k8s_secret(state: SimulationState, secret: dict[str, Any]) -> dict[str, Any]:
-    data_count = int(secret.get("data", 0) or 0)
-    return {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": _k8s_metadata_for_row(state, secret),
-        "type": secret.get("type", "Opaque"),
-        "data": {f"key{index}": "c2ltdWxhdGVk" for index in range(max(1, data_count))},
-    }
-
-
-def _k8s_serviceaccount(state: SimulationState, serviceaccount: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "v1",
-        "kind": "ServiceAccount",
-        "metadata": _k8s_metadata_for_row(state, serviceaccount),
-        "secrets": [],
-    }
-
-
-def _k8s_deployment(state: SimulationState, deployment: dict[str, Any]) -> dict[str, Any]:
-    replicas = int(str(deployment["ready"]).split("/", 1)[1])
-    ready_replicas = int(str(deployment["ready"]).split("/", 1)[0])
-    name = deployment["name"]
-    labels = _snapshot_row_labels("deployments", deployment)
-    selector = _row_selector(deployment, name)
-    template_labels = _row_template_labels(deployment, labels, selector)
-    return {
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": _k8s_metadata_for_row(
-            state,
-            deployment,
-            labels=labels,
-            include_generation=True,
-        ),
-        "spec": {
-            "replicas": replicas,
-            "selector": {"matchLabels": selector},
-            "template": {
-                "metadata": {"labels": template_labels},
-                "spec": {"containers": [{"name": name, "image": f"simulated-saas/{name}:0.3.0"}]},
-            },
-        },
-        "status": {
-            "replicas": replicas,
-            "readyReplicas": ready_replicas,
-            "updatedReplicas": deployment["up_to_date"],
-            "availableReplicas": deployment["available"],
-            "observedGeneration": int(deployment.get("observed_generation", deployment.get("generation", 1)) or 1),
-            "conditions": [{
-                "type": "Available",
-                "status": "True" if ready_replicas else "False",
-                "reason": deployment["status"],
-                "message": f"deployment is {deployment['status']}",
-            }],
-        },
-    }
-
-
-def _k8s_replicaset(state: SimulationState, replicaset: dict[str, Any]) -> dict[str, Any]:
-    owner = replicaset["owner"]
-    namespace = _snapshot_row_namespace(replicaset, state.namespace)
-    return {
-        "apiVersion": "apps/v1",
-        "kind": "ReplicaSet",
-        "metadata": _k8s_metadata(
-            state,
-            replicaset["name"],
-            namespace=namespace,
-            labels=_k8s_workload_labels(owner),
-            resource_version=replicaset.get("resource_version"),
-            owner_references=[
-                _k8s_owner_reference(
-                    "apps/v1",
-                    "Deployment",
-                    owner,
-                    f"amc-{namespace}-{owner}",
-                )
-            ],
-        ),
-        "spec": {
-            "replicas": replicaset["desired"],
-            "selector": {"matchLabels": {"app.kubernetes.io/name": owner}},
-        },
-        "status": {
-            "replicas": replicaset["current"],
-            "fullyLabeledReplicas": replicaset["current"],
-            "readyReplicas": replicaset["ready"],
-            "availableReplicas": replicaset["ready"],
-        },
-    }
-
-
-def _k8s_daemonset(state: SimulationState, daemonset: dict[str, Any]) -> dict[str, Any]:
-    name = daemonset["name"]
-    labels = _snapshot_row_labels("daemonsets", daemonset)
-    selector = _row_selector(daemonset, name)
-    return {
-        "apiVersion": "apps/v1",
-        "kind": "DaemonSet",
-        "metadata": _k8s_metadata_for_row(state, daemonset, labels=labels),
-        "spec": {
-            "selector": {"matchLabels": selector},
-            "template": {
-                "metadata": {"labels": _row_template_labels(daemonset, labels, selector)},
-                "spec": {"containers": [{"name": name, "image": "simulated-saas/agent:0.3.0"}]},
-            },
-        },
-        "status": {
-            "desiredNumberScheduled": daemonset["desired"],
-            "currentNumberScheduled": daemonset["current"],
-            "numberReady": daemonset["ready"],
-            "updatedNumberScheduled": daemonset["up_to_date"],
-            "numberAvailable": daemonset["available"],
-        },
-    }
-
-
-def _k8s_statefulset(state: SimulationState, sts: dict[str, Any]) -> dict[str, Any]:
-    replicas = int(str(sts["ready"]).split("/", 1)[1])
-    ready_replicas = int(str(sts["ready"]).split("/", 1)[0])
-    name = sts["name"]
-    labels = _snapshot_row_labels("statefulsets", sts)
-    selector = _row_selector(sts, name)
-    return {
-        "apiVersion": "apps/v1",
-        "kind": "StatefulSet",
-        "metadata": _k8s_metadata_for_row(state, sts, labels=labels, include_generation=True),
-        "spec": {
-            "replicas": replicas,
-            "serviceName": name,
-            "selector": {"matchLabels": selector},
-        },
-        "status": {
-            "replicas": replicas,
-            "readyReplicas": ready_replicas,
-            "observedGeneration": int(sts.get("observed_generation", sts.get("generation", 1)) or 1),
-        },
-    }
-
-
-def _k8s_service(state: SimulationState, service: dict[str, Any]) -> dict[str, Any]:
-    port = int(service.get("port", 8080) or 8080)
-    selector = service.get("selector")
-    if not isinstance(selector, dict):
-        selector = {"app.kubernetes.io/name": service["name"]}
-    return {
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": _k8s_metadata_for_row(
-            state,
-            service,
-            labels=_snapshot_row_labels("services", service),
-        ),
-        "spec": {
-            "type": service["type"],
-            "clusterIP": service["cluster_ip"],
-            "ports": [{"name": "http", "port": port, "protocol": "TCP", "targetPort": port}],
-            "selector": {str(key): str(value) for key, value in selector.items()},
-        },
-    }
-
-
-def _k8s_endpoints(state: SimulationState, endpoint: dict[str, Any]) -> dict[str, Any]:
-    addresses = []
-    for item in endpoint["endpoints"].split(","):
-        ip, _, _port = item.partition(":")
-        if ip:
-            addresses.append({"ip": ip})
-    return {
-        "apiVersion": "v1",
-        "kind": "Endpoints",
-        "metadata": _k8s_metadata_for_row(state, endpoint),
-        "subsets": [{
-            "addresses": addresses,
-            "ports": [{"name": "http", "port": 8080, "protocol": "TCP"}],
-        }],
-    }
-
-
-def _k8s_event(state: SimulationState, event: dict[str, str], index: int) -> dict[str, Any]:
-    involved_kind, _, involved_name = event["object"].partition("/")
-    first_seen = _parse_optional_timestamp(event.get("first_seen")) or state.clock.now()
-    last_seen = _parse_optional_timestamp(event.get("last_seen")) or state.clock.now()
-    return {
-        "apiVersion": "v1",
-        "kind": "Event",
-        "metadata": _k8s_metadata(
-            state,
-            f"{involved_name}.{index}",
-            namespace=state.namespace,
-        ),
-        "involvedObject": {
-            "kind": involved_kind.title() if involved_kind else "Pod",
-            "namespace": state.namespace,
-            "name": involved_name or event["object"],
-        },
-        "reason": event["reason"],
-        "message": event["message"],
-        "type": event["type"],
-        "count": int(event.get("count", 1) or 1),
-        "firstTimestamp": _k8s_timestamp(first_seen),
-        "lastTimestamp": _k8s_timestamp(last_seen),
-        "source": {"component": "amc-simulator"},
-    }
-
-
-def _k8s_hpa(state: SimulationState, hpa: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "autoscaling/v2",
-        "kind": "HorizontalPodAutoscaler",
-        "metadata": _k8s_metadata_for_row(state, hpa),
-        "spec": {
-            "scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": hpa["name"]},
-            "minReplicas": hpa["minpods"],
-            "maxReplicas": hpa["maxpods"],
-            "metrics": [{
-                "type": "Resource",
-                "resource": {
-                    "name": "cpu",
-                    "target": {"type": "Utilization", "averageUtilization": 80},
-                },
-            }],
-        },
-        "status": {
-            "currentReplicas": hpa["replicas"],
-            "desiredReplicas": hpa["replicas"],
-            "currentMetrics": [{
-                "type": "Resource",
-                "resource": {
-                    "name": "cpu",
-                    "current": {"averageUtilization": int(str(hpa["targets"]).split("%", 1)[0])},
-                },
-            }],
-        },
-    }
-
-
-def _k8s_job(state: SimulationState, job: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": _k8s_metadata_for_row(state, job),
-        "spec": {"completions": 1, "parallelism": 1},
-        "status": {"succeeded": 1, "ready": 0},
-    }
-
-
-def _k8s_cronjob(state: SimulationState, cronjob: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "batch/v1",
-        "kind": "CronJob",
-        "metadata": _k8s_metadata_for_row(state, cronjob),
-        "spec": {
-            "schedule": cronjob["schedule"],
-            "suspend": cronjob["suspend"] == "True",
-            "jobTemplate": {"spec": {"template": {"spec": {"restartPolicy": "OnFailure"}}}},
-        },
-        "status": {"active": [], "lastScheduleTime": _k8s_timestamp(state.clock.now())},
-    }
-
-
-def _k8s_pvc(state: SimulationState, pvc: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "v1",
-        "kind": "PersistentVolumeClaim",
-        "metadata": _k8s_metadata_for_row(state, pvc),
-        "spec": {
-            "accessModes": [pvc["access_modes"]],
-            "resources": {"requests": {"storage": pvc["capacity"]}},
-            "storageClassName": pvc["storageclass"],
-            "volumeName": pvc["volume"],
-        },
-        "status": {
-            "phase": pvc["status"],
-            "accessModes": [pvc["access_modes"]],
-            "capacity": {"storage": pvc["capacity"]},
-        },
-    }
-
-
-def _k8s_ingress(state: SimulationState, ingress: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "networking.k8s.io/v1",
-        "kind": "Ingress",
-        "metadata": _k8s_metadata_for_row(state, ingress),
-        "spec": {
-            "ingressClassName": ingress["class"],
-            "rules": [{
-                "host": ingress["hosts"],
-                "http": {
-                    "paths": [{
-                        "path": "/",
-                        "pathType": "Prefix",
-                        "backend": {
-                            "service": {
-                                "name": ingress["name"],
-                                "port": {"number": 8080},
-                            },
-                        },
-                    }],
-                },
-            }],
-        },
-        "status": {"loadBalancer": {"ingress": [{"ip": ingress["address"]}]}},
-    }
+from .server_k8s_objects import (
+    _k8s_namespace as _k8s_namespace,
+    _k8s_pod as _k8s_pod,
+    _k8s_configmap as _k8s_configmap,
+    _k8s_secret as _k8s_secret,
+    _k8s_serviceaccount as _k8s_serviceaccount,
+    _k8s_deployment as _k8s_deployment,
+    _k8s_replicaset as _k8s_replicaset,
+    _k8s_daemonset as _k8s_daemonset,
+    _k8s_statefulset as _k8s_statefulset,
+    _k8s_service as _k8s_service,
+    _k8s_endpoints as _k8s_endpoints,
+    _k8s_event as _k8s_event,
+    _k8s_hpa as _k8s_hpa,
+    _k8s_job as _k8s_job,
+    _k8s_cronjob as _k8s_cronjob,
+    _k8s_pvc as _k8s_pvc,
+    _k8s_ingress as _k8s_ingress,
+    _k8s_node as _k8s_node,
+    _k8s_pod_metrics as _k8s_pod_metrics,
+    _k8s_node_metrics as _k8s_node_metrics,
+    _k8s_metadata as _k8s_metadata,
+    _k8s_metadata_for_row as _k8s_metadata_for_row,
+    _row_selector as _row_selector,
+    _row_template_labels as _row_template_labels,
+    _selector_string as _selector_string,
+    _k8s_owner_reference as _k8s_owner_reference,
+    _k8s_workload_labels as _k8s_workload_labels,
+    _k8s_container_state as _k8s_container_state,
+    _k8s_timestamp as _k8s_timestamp,
+    _stable_pod_ip as _stable_pod_ip,
+)
 
 
 def _k8s_endpointslice(
@@ -5862,49 +5045,6 @@ def _k8s_endpointslice(
             }
             for pod in pods
         ],
-    }
-
-
-def _k8s_node(state: SimulationState, node: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "v1",
-        "kind": "Node",
-        "metadata": _k8s_metadata(state, node["name"], labels={"kubernetes.io/role": node["roles"]}),
-        "status": {
-            "capacity": {"cpu": "4", "memory": "16384Mi", "pods": "110"},
-            "allocatable": {"cpu": "3900m", "memory": "15000Mi", "pods": "110"},
-            "conditions": [{
-                "type": "Ready",
-                "status": "True" if node["status"] == "Ready" else "False",
-                "reason": node["status"],
-            }],
-            "nodeInfo": {"kubeletVersion": node["version"], "osImage": "AMC Linux"},
-        },
-    }
-
-
-def _k8s_pod_metrics(state: SimulationState, pod: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "metrics.k8s.io/v1beta1",
-        "kind": "PodMetrics",
-        "metadata": _k8s_metadata_for_row(state, pod),
-        "timestamp": _k8s_timestamp(state.clock.now()),
-        "window": "30s",
-        "containers": [{
-            "name": pod["component"],
-            "usage": {"cpu": f"{pod['cpu_m']}m", "memory": f"{pod['memory_mi']}Mi"},
-        }],
-    }
-
-
-def _k8s_node_metrics(state: SimulationState, node: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "apiVersion": "metrics.k8s.io/v1beta1",
-        "kind": "NodeMetrics",
-        "metadata": _k8s_metadata(state, node["name"]),
-        "timestamp": _k8s_timestamp(state.clock.now()),
-        "window": "30s",
-        "usage": {"cpu": f"{node['cpu_m']}m", "memory": f"{node['memory_mi']}Mi"},
     }
 
 
@@ -6014,135 +5154,6 @@ def _helm_release_payload(state: SimulationState, revision: dict[str, Any]) -> d
     }
 
 
-def _k8s_metadata(
-    state: SimulationState,
-    name: str,
-    *,
-    namespace: str = "",
-    labels: dict[str, str] | None = None,
-    annotations: dict[str, str] | None = None,
-    resource_version: str | int | None = None,
-    generation: int | None = None,
-    deletion_timestamp: str = "",
-    owner_references: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
-        "name": name,
-        "uid": "amc-" + (namespace + "-" if namespace else "") + name,
-        "resourceVersion": str(resource_version or "1"),
-        "creationTimestamp": _k8s_timestamp(state.clock.start_time),
-        "labels": labels or {},
-    }
-    if namespace:
-        metadata["namespace"] = namespace
-    if generation is not None:
-        metadata["generation"] = generation
-    if deletion_timestamp:
-        metadata["deletionTimestamp"] = _k8s_timestamp(_parse_user_timestamp(deletion_timestamp))
-    if annotations:
-        metadata["annotations"] = annotations
-    if owner_references:
-        metadata["ownerReferences"] = owner_references
-    return metadata
-
-
-def _k8s_metadata_for_row(
-    state: SimulationState,
-    row: dict[str, Any],
-    *,
-    name: str | None = None,
-    namespace: str | None = None,
-    labels: dict[str, str] | None = None,
-    annotations: dict[str, str] | None = None,
-    include_generation: bool = False,
-    owner_references: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    row_labels = _string_dict(row.get("labels"))
-    row_annotations = _string_dict(row.get("annotations"))
-    generation = None
-    if include_generation:
-        generation = int(row.get("generation", 1) or 1)
-    return _k8s_metadata(
-        state,
-        name or str(row["name"]),
-        namespace=namespace or _snapshot_row_namespace(row, state.namespace),
-        labels=labels if labels is not None else row_labels,
-        annotations=annotations if annotations is not None else row_annotations,
-        resource_version=row.get("resource_version"),
-        generation=generation,
-        deletion_timestamp=str(row.get("deletion_timestamp", "")),
-        owner_references=owner_references or row.get("owner_references"),
-    )
-
-
-def _row_selector(row: dict[str, Any], name: str) -> dict[str, str]:
-    selector = row.get("selector")
-    if isinstance(selector, dict):
-        return {str(key): str(value) for key, value in selector.items()}
-    return {"app.kubernetes.io/name": name}
-
-
-def _row_template_labels(
-    row: dict[str, Any],
-    labels: dict[str, str],
-    selector: dict[str, str],
-) -> dict[str, str]:
-    template_labels = row.get("template_labels")
-    if isinstance(template_labels, dict):
-        return {str(key): str(value) for key, value in template_labels.items()}
-    return {**labels, **selector}
-
-
-def _selector_string(selector: dict[str, str]) -> str:
-    return ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
-
-
-def _k8s_owner_reference(
-    api_version: str,
-    kind: str,
-    name: str,
-    uid: str,
-) -> dict[str, Any]:
-    return {
-        "apiVersion": api_version,
-        "kind": kind,
-        "name": name,
-        "uid": uid,
-        "controller": True,
-        "blockOwnerDeletion": True,
-    }
-
-
-def _k8s_workload_labels(component: str) -> dict[str, str]:
-    return {
-        "app.kubernetes.io/name": component,
-        "app.kubernetes.io/instance": DEFAULT_RELEASE,
-        "app.kubernetes.io/managed-by": "Helm",
-    }
-
-
-def _k8s_container_state(state: SimulationState, status_text: str) -> dict[str, Any]:
-    if status_text == "Running":
-        return {"running": {"startedAt": _k8s_timestamp(state.clock.start_time)}}
-    if status_text == "CrashLoopBackOff":
-        return {
-            "waiting": {
-                "reason": "CrashLoopBackOff",
-                "message": "back-off restarting failed container",
-            },
-        }
-    if status_text == "Error":
-        return {
-            "terminated": {
-                "reason": "Error",
-                "exitCode": 1,
-                "startedAt": _k8s_timestamp(state.clock.start_time),
-                "finishedAt": _k8s_timestamp(state.clock.now()),
-            },
-        }
-    return {"waiting": {"reason": status_text}}
-
-
 def _filter_k8s_objects(
     objects: list[dict[str, Any]],
     query: dict[str, list[str]],
@@ -6233,17 +5244,6 @@ def _nested_field(obj: dict[str, Any], path: str) -> Any:
         else:
             return None
     return value
-
-
-def _k8s_timestamp(value: _dt.datetime) -> str:
-    if value.tzinfo is not None:
-        value = value.astimezone(_dt.timezone.utc).replace(tzinfo=None)
-    return value.replace(microsecond=0).isoformat() + "Z"
-
-
-def _stable_pod_ip(name: str) -> str:
-    value = sum(ord(ch) for ch in name)
-    return f"10.244.{value % 200}.{(value // 5) % 240 + 10}"
 
 
 def _api_trace_body(response: KubernetesApiResponse) -> str:
