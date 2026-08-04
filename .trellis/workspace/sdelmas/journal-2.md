@@ -159,3 +159,46 @@ Added an additive scope field to POST /v1/mutations/reset and a contract test mo
 ### Next Steps
 
 - None - task complete
+
+
+## Session 52: Bounded Kubernetes watch streams (server-watch-semantics)
+
+**Date**: 2026-08-04
+**Task**: Bounded Kubernetes watch streams (server-watch-semantics)
+**Package**: amc
+**Branch**: `feat/server-watch-semantics`
+
+### Summary
+
+Implemented bounded Kubernetes watch semantics for amc serve: real-client GET ?watch=true streams NDJSON ADDED/MODIFIED/DELETED events for pods and apps/v1 deployments (bounded by timeout/300s ceiling/shutdown, one SSE slot, one kubernetes-api trace), and command-mode kubectl get --watch renders the one-shot table plus a note and is classified partial. Backed by the same resource_snapshot()/SimulationMutations surface as the list path. Shipped as PR #320.
+
+### Main Changes
+
+- Real-client watch dispatch (server._send_k8s_watch/_stream_k8s_watch) streaming newline-delimited watch events with bounded lifetime and one SSE slot
+- server_ops watch helpers (_WATCHABLE_LIST_RESOURCES, k8s_watch_plan/objects/object_key/trace_response) reusing the list path's snapshot->namespace->selector chain
+- Command-mode _render_get_watch: one-shot table + real-kubectl note, classified partial under kubectl.get.<kind>.watch
+- Review fixes: dict-equality object diff (was json.dumps), de-flaked sleep-based test sync, corrected a comment and a docstring per Copilot
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a2ddbaf` | feat: support bounded Kubernetes watch streams |
+| `4dc29df` | perf: compare watch objects by dict equality, not JSON round-trip |
+| `59e7a8e` | test: de-flake watch tests and fix a misleading fuzz comment |
+| `70dbfc9` | docs: address Copilot review comments on watch comments/docstring |
+
+### Testing
+
+- [OK] tests/test_server_watch.py + tests/test_server_ops_fuzz.py: 13 passed
+- [OK] full suite: 1746 passed, 2 skipped
+- [OK] deterministic sd-check gate: 7/7 passed; ruff + mypy gate clean
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
