@@ -35,17 +35,17 @@ swing recorded in `research/root-cause.md`.
 
 ## Acceptance Criteria
 
-- [ ] Root cause is confirmed with a reproducible command sequence and a written
+- [x] Root cause is confirmed with a reproducible command sequence and a written
       explanation of the count divergence. (The specific 438/441 case was the
       PR #316 observation under the refuted undercount framing; the confirmed
       evidence is the non-deterministic count swing + the `_run_check`/
       `kb_freshness_row`/`check_current` code trace in `research/root-cause.md`.)
-- [ ] A decision is recorded on whether the check reads the working tree or
+- [x] A decision is recorded on whether the check reads the working tree or
       becomes advisory, with rationale tied to the artifact being gitignored.
-- [ ] Either the upstream fix/issue is filed (with approval) or a documented
+- [x] Either the upstream fix/issue is filed (with approval) or a documented
       local workaround (e.g. the merge-via-green-GitHub-gate path used for
       PR #316) is captured in the SD spec/runbook so the loop is not blocked.
-- [ ] No regression to the real merge gate: CI Result + conversation resolution
+- [x] No regression to the real merge gate: CI Result + conversation resolution
       remain the authoritative gate; the KB check never gates GitHub merge.
 
 ## Notes
