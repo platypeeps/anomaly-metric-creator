@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Canonical PR/Review-surfaces spec: records the comment pre-flight convention (role-name + approval-duplicate gates via tools/pr_comment.sh) this task wires."}

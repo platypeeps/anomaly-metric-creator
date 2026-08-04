@@ -363,15 +363,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - why: scenario re-tunes silently rot the hard-coded lists.
 - fix: helpers to conftest; generalize the catalog-derived windows.
 
-## A-034 — 1,689-line approval-duplicate gate wired into nothing
-- status: open
+## A-034 — approval-duplicate gate wired into nothing
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: bloat
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-04 @ pending-pr
 - evidence:
   - tools/check_approval_duplicate.py + tests — referenced only by CHANGELOG/CLAUDE.md; absent from hooks/workflows/agent trees/spec
-- why: largest tool has no enforcement path; pure carrying cost.
+- why: fixed; wired (Option A-lite) via the canonical `tools/pr_comment.sh` wrapper (role-name → approval-duplicate → `gh pr comment`), pointed at from both CLAUDE.md chain snippets and recorded in `.trellis/spec/amc/backend/documentation-review.md`, so the gate now has a live enforcement path.
 - fix: wire where comments are posted, or retire and record the decision.
 
 ## A-035 — classify_ci_changes.sh shim never executed but carried in three allowlists

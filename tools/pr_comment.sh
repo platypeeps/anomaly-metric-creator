@@ -1,0 +1,121 @@
+#!/bin/sh
+# tools/pr_comment.sh — canonical PR-comment poster.
+#
+# Pre-flights a comment body through the repo's two comment-body gates, then
+# posts it with `gh pr comment`. The gates are the enforcement path for two
+# conventions that previously lived only in prose (CLAUDE.md documented a manual
+# `&&` chain that nothing invoked):
+#
+#   1. role-name leaks    — tools/check_role_name_leaks.py   (stdin `-` mode)
+#   2. duplicate / self-correction APPROVED comments
+#                         — tools/check_approval_duplicate.py (`--pr N` mode)
+#
+# Each gate reads the FULL body from stdin, so the wrapper redirects the body
+# file into each gate independently. This is NOT a single Unix pipe: the first
+# gate consumes stdin and relays only its own diagnostics, so
+# `gate1 - < body | gate2 --pr N` would feed gate2 gate1's output, not the
+# comment. The approval gate also refuses a TTY stdin, so the wrapper always
+# redirects the file.
+#
+# Usage:
+#   tools/pr_comment.sh --pr <N> --body-file <path> [--dry-run] [-- <extra gh args>]
+#
+# Exit codes (first failing gate wins; the gate's own 0/1/2 contract passes
+# through unchanged):
+#   0  clean (and, unless --dry-run, the comment was posted)
+#   1  a gate refused the body (role-name leak, or duplicate/self-correction
+#      approval)
+#   2  argument / IO error, or a gate's structural failure
+#
+# This is operator tooling for local comment posting, not a CI step; keep it out
+# of the workflow-pip / CI-mirror lint scopes. It needs `gh` authenticated for
+# the post (and for the approval gate's `--pr` head/comment lookups), exactly
+# like the raw chain it replaces.
+
+set -eu
+
+# Program tag for usage / diagnostics, derived from the invocation so a rename
+# does not leave a stale literal behind.
+PROG="$(basename "$0")"
+
+usage_line() {
+    echo "usage: $PROG --pr <N> --body-file <path> [--dry-run] [-- <extra gh args>]"
+}
+
+# Error path: usage to stderr, exit 2 (a misuse is not a success).
+usage() {
+    usage_line >&2
+    exit 2
+}
+
+# Explicit -h/--help: usage to stdout, exit 0 (asking for help is not an error).
+show_help() {
+    usage_line
+    exit 0
+}
+
+PR=""
+BODY=""
+DRY=0
+# Parse leading flags; `--` ends option parsing and leaves any extra `gh pr
+# comment` args in "$@" so they forward space-safely (a collapsed `$*` string
+# would word-split an argument that contains spaces). Each case shifts its own
+# tokens so the post-`--` remainder in "$@" is exact.
+#
+# `--pr` and `--body-file` reject a dash-prefixed value (`[ "${1#-}" = "$1" ]`
+# is true only when the next token does not start with `-`), so a missing value
+# followed by another option — `--pr --dry-run` — errors via usage instead of
+# silently binding `--dry-run` as the PR number. The `--flag=value` forms are
+# the escape hatch for the rare value that legitimately begins with `-`.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --pr) shift; { [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; } || usage; PR="$1"; shift ;;
+        --pr=*) PR="${1#--pr=}"; shift ;;
+        --body-file) shift; { [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; } || usage; BODY="$1"; shift ;;
+        --body-file=*) BODY="${1#--body-file=}"; shift ;;
+        --dry-run) DRY=1; shift ;;
+        --) shift; break ;;
+        -h|--help) show_help ;;
+        *) echo "$PROG: unknown argument: $1" >&2; usage ;;
+    esac
+done
+
+[ -n "$PR" ] || { echo "$PROG: --pr is required" >&2; usage; }
+[ -n "$BODY" ] || { echo "$PROG: --body-file is required" >&2; usage; }
+[ -f "$BODY" ] || { echo "$PROG: body file not found: $BODY" >&2; exit 2; }
+
+# Resolve the repo root from this script's own location so the gates and the
+# venv interpreter resolve regardless of the caller's working directory — or of
+# a symlink the script was invoked through (a bare `dirname "$0"` would point at
+# the symlink's directory, not the real script). POSIX sh has no `readlink -f`,
+# so walk the symlink chain manually. Each `cd` is guarded explicitly because a
+# failed command substitution inside an assignment does not reliably trip
+# `set -e`, so an unresolvable path would otherwise continue with an empty dir.
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+    link_dir="$(cd -P "$(dirname "$SOURCE")" && pwd)" || { echo "$PROG: cannot resolve script directory" >&2; exit 2; }
+    SOURCE="$(readlink "$SOURCE")"
+    case "$SOURCE" in /*) ;; *) SOURCE="$link_dir/$SOURCE" ;; esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)" || { echo "$PROG: cannot resolve script directory" >&2; exit 2; }
+REPO_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)" || { echo "$PROG: cannot resolve repo root" >&2; exit 2; }
+
+# Prefer the project venv interpreter (matches the documented chains); fall back
+# to the operator's python3.
+PY="$REPO_ROOT/.venv/bin/python3"
+[ -x "$PY" ] || PY=python3
+
+# Gate 1: role-name leaks. Redirect the body file into stdin. `set -e` exits
+# with the gate's own status (0/1/2) if it fails, so no explicit `|| exit $?`.
+"$PY" "$REPO_ROOT/tools/check_role_name_leaks.py" - < "$BODY"
+
+# Gate 2: duplicate / self-correction approval. Redirect the body file into stdin.
+"$PY" "$REPO_ROOT/tools/check_approval_duplicate.py" --pr "$PR" < "$BODY"
+
+if [ "$DRY" -eq 1 ]; then
+    echo "$PROG: gates clean; --dry-run set, not posting to PR #$PR"
+    exit 0
+fi
+
+# Post. Any extra gh args after `--` are forwarded verbatim (space-safe via "$@").
+gh pr comment "$PR" --body-file "$BODY" "$@"
