@@ -93,6 +93,20 @@ COPILOT_REQUIRED_NEEDLES = [
     ("tooling generated scope section", "Tooling/generated scope:"),
     ("docs user-facing scope section", "Docs/user-facing scope:"),
     ("runtime server scope section", "Runtime/server scope:"),
+    ("canonical CLI surface anchor", "canonical CLI surface"),
+    ("required branch-protection context name", "CI Result"),
+]
+
+# Removed CLI flags that must never reappear in the Copilot instructions as
+# current surface. Each was deleted at a CLI flag day; the instructions file
+# now names the canonical subcommand/flag surface instead. Re-introducing any
+# of these tokens (the drift this anchor guards against) fails the contract.
+COPILOT_FORBIDDEN_NEEDLES = [
+    ("removed --topology-mode flag", "--topology-mode"),
+    ("removed --validate-output flag", "--validate-output"),
+    ("removed --validate-warn flag", "--validate-warn"),
+    ("removed --combine-only flag", "--combine-only"),
+    ("removed --emit-selection flag", "--emit-selection"),
 ]
 
 EDGE_CASE_NEEDLES = [
@@ -253,6 +267,18 @@ def _require_contains(
         violations.append(f"{path}: missing {label}: {needle!r}")
 
 
+def _require_absent(
+    text: str,
+    needle: str,
+    *,
+    path: Path,
+    label: str,
+    violations: list[str],
+) -> None:
+    if needle in text:
+        violations.append(f"{path}: {label} must not appear: {needle!r}")
+
+
 def _section_text(text: str, heading: str) -> str:
     lines = text.splitlines()
     collected: list[str] = []
@@ -322,6 +348,8 @@ def _check_copilot_text(root: Path, text: str, violations: list[str]) -> None:
     path = root / REQUIRED_FILES["copilot"]
     for label, needle in COPILOT_REQUIRED_NEEDLES:
         _require_contains(text, needle, path=path, label=label, violations=violations)
+    for label, needle in COPILOT_FORBIDDEN_NEEDLES:
+        _require_absent(text, needle, path=path, label=label, violations=violations)
     for needle in EDGE_CASE_NEEDLES:
         _require_contains(
             text,

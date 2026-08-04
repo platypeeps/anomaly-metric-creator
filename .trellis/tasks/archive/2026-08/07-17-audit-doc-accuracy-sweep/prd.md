@@ -26,7 +26,7 @@ flags, and several reference surfaces lag the current CI/dependency reality.
 
 ## Acceptance criteria
 
-- [ ] Grep sweeps for each stale literal come back empty.
-- [ ] check_copilot_instruction_contract anchors added where noted.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] Grep sweeps for each stale literal come back empty.
+- [x] check_copilot_instruction_contract anchors added where noted.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).

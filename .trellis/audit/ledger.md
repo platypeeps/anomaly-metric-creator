@@ -276,7 +276,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - why: fixed; the pacing contract is exact and independent of runner scheduling jitter.
 
 ## A-026 — SECURITY.md describes superseded redaction posture as current; cites completed task as pending
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: documentation
 - first-seen: 2026-07-17 @ b0df00b
@@ -287,7 +287,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: rewrite to the shipped dual posture; drop the task pointer.
 
 ## A-027 — Copilot review instructions present five removed CLI flags and removed mode as current
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: documentation
 - first-seen: 2026-07-17 @ b0df00b
@@ -298,7 +298,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: replace with canonical surface; add contract anchors.
 
 ## A-028 — pyproject dev-extra comments claim report-only mypy/coverage (three reviewer sightings)
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: documentation
 - first-seen: 2026-07-17 @ b0df00b
@@ -309,7 +309,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: update both comments + task pointer.
 
 ## A-029 — CLAUDE.md names `test` as the branch-protection context, contradicting `CI Result`
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: documentation
 - first-seen: 2026-07-17 @ b0df00b
@@ -320,7 +320,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: reword to "application aggregate feeding the required CI Result".
 
 ## A-030 — README enumerates only half the dev extra
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: documentation
 - first-seen: 2026-07-17 @ b0df00b
@@ -496,7 +496,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: record upstream URL + release; note the refresh procedure.
 
 ## A-046 — Declared version floors predate the py3.14 policy (numpy>=1.26 unsatisfiable on 3.14)
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: dependencies
 - first-seen: 2026-07-17 @ b0df00b
@@ -691,7 +691,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: scheduled sync workflow, PR-on-change, reuse the auto-merge gate.
 
 ## A-064 — Dev-install docs teach unlocked pip while CI enforces the uv lock
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: improvements
 - first-seen: 2026-07-17 @ b0df00b
@@ -748,7 +748,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - notes: fixed by task 07-06-validate-impl-split-and-cleanup (2026-07-18)
 
 ## A-069 — MEZMO_OTEL_STREAM_AUTH_SCHEME missing from the README env contract
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: consumer-impact
 - first-seen: 2026-07-17 @ b0df00b

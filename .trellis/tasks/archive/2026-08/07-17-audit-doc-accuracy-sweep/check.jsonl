@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Verify corrected prose matches the doc-review contract and no phantom-flag or stale-posture references remain."}
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "New Copilot-contract forbidden-needle test must satisfy the test-hygiene and determinism gates this spec defines."}

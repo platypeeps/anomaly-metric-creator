@@ -85,7 +85,9 @@ def _write_minimal_contract(root: Path) -> None:
         `tools/check_copilot_instruction_contract.py`,
         `scripts/sd-ai-command-pack-pr-body-scope.py`,
         `.sd-ai-command-pack/pr-body-scope.json`, and
-        `scripts/classify-ci-changes.sh` in lockstep.
+        `scripts/classify-ci-changes.sh` in lockstep. The required
+        branch-protection context `CI Result` aggregates the jobs, and the
+        canonical CLI surface is the subcommand set plus `--emit`.
 
         ## Review-cycle reduction
 
@@ -224,6 +226,18 @@ def test_missing_review_cycle_anchor_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "review-cycle reduction heading" in result.stderr
+
+
+def test_reintroduced_phantom_flag_fails(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    instructions = tmp_path / ".github/instructions/anomaly-metric-creator.instructions.md"
+    with instructions.open("a", encoding="utf-8") as handle:
+        handle.write("\nGate against `--topology-mode` combinations.\n")
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "removed --topology-mode flag must not appear" in result.stderr
 
 
 def test_pr_template_heading_mismatch_fails(tmp_path: Path) -> None:
