@@ -329,3 +329,43 @@ Extracted the client-command parse cluster (ParsedCommand, flag/alias tables, pa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 56: Fix stale security, reviewer, and reference docs (A-026..A-069)
+
+**Date**: 2026-08-04
+**Task**: Fix stale security, reviewer, and reference docs (A-026..A-069)
+**Package**: amc
+**Branch**: `sdelmas/audit-doc-accuracy-sweep`
+
+### Summary
+
+Doc-accuracy sweep: corrected SECURITY.md redaction posture, removed 5 phantom CLI flags from Copilot instructions + added a forbidden-needle contract lint, raised dependency floors to the cp314-resolved versions, and refreshed README/CLAUDE/pyproject reference surfaces. Closed audit ledger items A-026/027/028/029/030/046/064/069.
+
+### Main Changes
+
+- SECURITY.md: rewrote otel-activity.log redaction bullet to the shipped dual posture (request-side allowlist-of-sensitive, response-side mask-unless-known-safe, shared _mask_sensitive_value)
+- Copilot instructions: dropped 5 removed flags, added canonical-CLI-surface anchor; new COPILOT_FORBIDDEN_NEEDLES + _require_absent() so a reintroduced phantom flag fails the contract lint
+- pyproject: raised floors (numpy>=2.5.1, opentelemetry-proto>=1.44.0, protobuf>=7.35.1, pyyaml>=6.0.3) in all 3 sites; uv.lock metadata-only refresh (no resolved-version drift)
+- README/CLAUDE/CHANGELOG: completed dev-extra list, uv sync --locked primary install, OTEL auth-scheme row, CI Result aggregate naming
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `886faeb` | docs(audit): fix stale security, reviewer, and reference docs |
+
+### Testing
+
+- [OK] node review-preflight: 0 failures (after fixing 3 task-artifact blockers)
+- [OK] sd-review scope=pr: ready, gito+prism clean
+- [OK] full not-heavy suite (prior): 1703 passed, 2 skipped
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
