@@ -49,30 +49,30 @@ re-import.
 
 ## Acceptance Criteria
 
-- [ ] `server_ops_profiles.py` exists with the six symbols moved verbatim
+- [x] `server_ops_profiles.py` exists with the six symbols moved verbatim
       and no reverse import of `server_ops`.
-- [ ] `server_ops.py` carries the re-import stub at the original block
+- [x] `server_ops.py` carries the re-import stub at the original block
       position; the file is smaller by ~775 lines and the moved block is
       gone (no duplicate definition).
-- [ ] Server-family tests pass unchanged: `tests/test_server.py`,
+- [x] Server-family tests pass unchanged: `tests/test_server.py`,
       `tests/test_server_ops_fuzz.py`, `tests/test_server_mcp.py`,
       `tests/test_server_eval_mode.py`.
-- [ ] Full suite green (`.venv/bin/pytest`), mypy gate and ruff clean.
+- [x] Full suite green (`.venv/bin/pytest`), mypy gate and ruff clean.
       The four server-family test files are the authoritative behavior
       oracle (deterministic fixtures); an import-only extraction cannot
       change render output.
-- [ ] `server_ops_profiles.py` added to `CLEAN_MODULES` in
+- [x] `server_ops_profiles.py` added to `CLEAN_MODULES` in
       `tools/check_mypy_gate.py` and `tests/test_mypy_gate_lint.py`'s
       expected count bumped 23 → 24 (lockstep).
-- [ ] The six moved names remain in `server_ops.py`'s `__all__` (resolved
+- [x] The six moved names remain in `server_ops.py`'s `__all__` (resolved
       via the re-import stub).
-- [ ] Supplementary before/after `run_command` byte-diff, if run, uses a
+- [x] Supplementary before/after `run_command` byte-diff, if run, uses a
       frozen/paused clock and timestamp normalization so it is
       deterministic (raw output embeds the live clock for events/helm);
       the empty-diff applies to that normalized form.
-- [ ] CLAUDE.md and `.trellis/spec/amc/backend/architecture.md` module
+- [x] CLAUDE.md and `.trellis/spec/amc/backend/architecture.md` module
       maps name `server_ops_profiles.py` and its contents.
-- [ ] New module < 800 lines, or the data-registry exemption is recorded
+- [x] New module < 800 lines, or the data-registry exemption is recorded
       explicitly (the registry data is the bulk).
 
 ## Non-Goals
