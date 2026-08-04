@@ -23,7 +23,8 @@
     "08-04-server-ops-parse-extract",
     "08-04-server-k8s-objects-tables-extract",
     "08-04-server-k8s-tables-mypy-gate",
-    "08-04-server-ops-support-render-primitives"
+    "08-04-server-ops-support-render-primitives",
+    "08-04-server-helm-impl-extract"
   ],
   "parent": null,
   "relatedFiles": [],
