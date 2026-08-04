@@ -85,7 +85,7 @@ the floor moves forward when a new stable release lands).
 # into .venv/ from the committed uv.lock.
 uv sync --extra dev --locked
 
-# Runtime-only install (alternative; uses the dependencies in pyproject.toml):
+# Editable install, runtime deps only — no dev/yaml extras (alternative to uv sync):
 python3 -m pip install -e .
 
 # Optional: enable YAML --instance-config files (JSON works without it):
