@@ -46,11 +46,17 @@ DRY=0
 # comment` args in "$@" so they forward space-safely (a collapsed `$*` string
 # would word-split an argument that contains spaces). Each case shifts its own
 # tokens so the post-`--` remainder in "$@" is exact.
+#
+# `--pr` and `--body-file` reject a dash-prefixed value (`[ "${1#-}" = "$1" ]`
+# is true only when the next token does not start with `-`), so a missing value
+# followed by another option — `--pr --dry-run` — errors via usage instead of
+# silently binding `--dry-run` as the PR number. The `--flag=value` forms are
+# the escape hatch for the rare value that legitimately begins with `-`.
 while [ $# -gt 0 ]; do
     case "$1" in
-        --pr) shift; [ $# -gt 0 ] || usage; PR="$1"; shift ;;
+        --pr) shift; { [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; } || usage; PR="$1"; shift ;;
         --pr=*) PR="${1#--pr=}"; shift ;;
-        --body-file) shift; [ $# -gt 0 ] || usage; BODY="$1"; shift ;;
+        --body-file) shift; { [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; } || usage; BODY="$1"; shift ;;
         --body-file=*) BODY="${1#--body-file=}"; shift ;;
         --dry-run) DRY=1; shift ;;
         --) shift; break ;;
