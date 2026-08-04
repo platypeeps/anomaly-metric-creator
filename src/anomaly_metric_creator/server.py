@@ -1227,7 +1227,7 @@ def make_handler(
                             return event_count
                         event_count += 1
                         emitted = True
-                    elif json.dumps(prev, sort_keys=True) != json.dumps(obj, sort_keys=True):
+                    elif prev != obj:
                         if not self._write_watch_event("MODIFIED", obj):
                             return event_count
                         event_count += 1
