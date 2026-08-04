@@ -43,10 +43,10 @@ DEFAULT_RELEASE = "simulated-saas"
 DEFAULT_CHART = "simulated-saas-0.3.0"
 DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 # Bounded Kubernetes watch stream tuning. Both are module globals so tests can
-# monkeypatch them (`server._WATCH_POLL_SECONDS = 0.05`) for fast, determin-
-# istic streams. `_WATCH_MAX_SECONDS` is the hard ceiling that keeps a watch
-# finite even under kubectl's long default timeout; a smaller `timeoutSeconds`
-# query wins.
+# monkeypatch them (`server._WATCH_POLL_SECONDS = 0.05`) for fast,
+# deterministic streams. `_WATCH_MAX_SECONDS` is the hard ceiling that keeps a
+# watch finite even under kubectl's long default timeout; a smaller
+# `timeoutSeconds` query wins.
 _WATCH_POLL_SECONDS = 2.0
 _WATCH_MAX_SECONDS = 300.0
 CORS_ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"

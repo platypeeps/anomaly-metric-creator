@@ -6136,12 +6136,15 @@ def k8s_watch_trace_response(
     event_count: int,
     refused: bool = False,
 ) -> KubernetesApiResponse:
-    """Synthetic response recorded as the watch's ``kubernetes-api`` trace.
+    """Synthetic Status recorded as the watch's ``kubernetes-api`` trace.
 
     A refused watch (over the SSE ceiling) records a partial Status 503; a
     normal close records a supported Status naming the emitted event count.
-    Neither body is streamed to the client — the response only carries trace
-    metadata into ``record_kubernetes_api_call``.
+    The refusal Status is *also* returned to the client as the HTTP response
+    (the stream never started, so this Status body is what the client sees).
+    The normal-close Status is trace-only: the watch body was already streamed
+    to the client as newline-delimited watch events, so this Status just
+    carries the event count into ``record_kubernetes_api_call``.
     """
     if refused:
         return _k8s_status_response(
