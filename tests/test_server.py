@@ -3504,6 +3504,43 @@ def test_sse_ceiling_refusal_increments_state_refusal_counter(amc, tmp_path):
     assert refusals == {"worker_cap": 0, "sse": 1, "rate_limit": 0}
 
 
+def test_worker_cap_refusal_increments_state_refusal_counter(amc, tmp_path):
+    """A-075: a worker-cap 503 (refused in ``process_request`` before a worker
+    thread is spawned) is counted on the shared ``state.refusals`` tally.
+
+    Drains the bounded server's worker semaphore and drives ``process_request``
+    in-process with a fake request, so the exact ``_refuse_saturated`` path that
+    emits ``_SATURATED_503`` runs its ``record("worker_cap")`` call. No client
+    connects during the drain, so nothing else touches the semaphore.
+    """
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    httpd, _base_url = server.start_test_server(state)
+    try:
+        assert httpd._worker_semaphore is not None
+        while httpd._worker_semaphore.acquire(blocking=False):
+            pass  # exhaust every permit so the next process_request refuses
+
+        sent: list[bytes] = []
+        shut: list[object] = []
+        # Avoid real socket teardown on the fake request.
+        httpd.shutdown_request = lambda req: shut.append(req)  # type: ignore[method-assign]
+
+        class _FakeRequest:
+            def sendall(self, data: bytes) -> None:
+                sent.append(data)
+
+        fake = _FakeRequest()
+        httpd.process_request(fake, ("127.0.0.1", 0))
+
+        assert sent == [server._SATURATED_503]
+        assert shut == [fake]
+        refusals = state.refusals.snapshot()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert refusals == {"worker_cap": 1, "sse": 0, "rate_limit": 0}
+
+
 def test_request_id_joins_structured_record_and_command_trace(amc, tmp_path):
     """A-077: the per-request id is the join key between the structured request
     record and the CommandTrace recorded while handling that same request."""
