@@ -24,8 +24,8 @@ pollute the overlay (the API path 404s correctly); plus four smaller races/guard
 
 ## Acceptance criteria
 
-- [ ] POST /v1/time/resume on a running clock leaves now() unchanged.
-- [ ] kubectl delete of a ghost resource exits nonzero on BOTH entry paths; overlay untouched.
-- [ ] Regression tests for each P3 guard.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] POST /v1/time/resume on a running clock leaves now() unchanged.
+- [x] kubectl delete of a ghost resource exits nonzero on BOTH entry paths; overlay untouched.
+- [x] Regression tests for each P3 guard.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).
