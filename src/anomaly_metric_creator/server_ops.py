@@ -2873,7 +2873,6 @@ from .server_helm_impl import (  # noqa: F401  (re-import at original position)
     _render_helm_install,
     _render_helm_upgrade,
     _helm_value_overrides,
-    _helm_operation_note,
     _render_helm_rollback,
 )
 
