@@ -53,7 +53,23 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
   get/describe corpus) and the server fuzz/eval suites. Support + objects added
   to the mypy clean gate (27 modules); tables carries one verbatim `var-annotate`
   gap (`_k8s_node_cells`'s `ready = next(...)`), follow-up to annotate + gate.
-- [ ] Steps 3, 5–7 pending (step 3 helm now unblocked on its k8s deps).
+- [x] Step 3 precursor — `server_command_render.py` (child
+  `08-04-server-ops-support-render-primitives`, PR #331). New pure leaf (90
+  lines): `CommandResult` + `_table` / `_is_dry_run` / `_unsupported` /
+  `_exposed_active_scenarios`, re-exporting `_format_dt` from `server_mutations`
+  (duplicate `server_ops` copy deleted — single source). `server_ops`
+  re-imports every moved name at the `CommandResult` block position; the leaf's
+  only `from .server_ops` is a `TYPE_CHECKING`-guarded `SimulationState`
+  annotation (`from __future__ import annotations` → stringized, never
+  evaluated), so the one-way runtime rule holds. `server_ops.py`
+  5,590 → **5,540** lines. Leaf added to the mypy clean gate (29 modules).
+  Behavior-identity proven by a render-oracle byte-identical over a 14-command
+  corpus in both normal and `--mcp-eval-mode` states (the eval-mode
+  `_exposed_active_scenarios` redaction path exercised). This closes the last
+  render-primitive coupling so the later `server_helm_impl` extraction imports
+  them one-way without an epic resequence.
+- [ ] Steps 5–7 pending; step 3 helm (`server_helm_impl.py`) now fully
+  unblocked on its k8s + render-primitive deps.
 
 ## Validation Plan
 
