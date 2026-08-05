@@ -469,7 +469,16 @@ By default the server binds loopback. Binding a non-loopback host such as
 `--allow-remote-without-auth` is passed explicitly. Health probes
 (`/healthz` and `/readyz`) and the static debug console shell (`/debug` and
 `/`) remain unauthenticated; every JSON/debug data endpoint and the Kubernetes
-facade require `Authorization: Bearer TOKEN` when a token is configured. The
+facade require `Authorization: Bearer TOKEN` when a token is configured.
+`/readyz` is a real readiness check: it returns `200 {"ready": true}` only when
+every artifact the run declared it would emit is present on disk **and** the
+continuous-generation thread has not failed; otherwise it returns
+`503 {"ready": false, "reason": "artifacts"|"generation"}` naming the failing
+dimension (so a `--no-generate` run over an empty directory or a crashed regen
+thread reports not-ready instead of a false green). Unhandled 500s return a
+generic body; the exception detail and a capped traceback tail go to the
+operator error sink — the structured error log with `--structured-log`,
+otherwise stderr. The
 debug console prompts for that bearer token and stores it in browser
 `localStorage`; `/debug?token=TOKEN` can also bootstrap the browser session.
 Command/API traces redact bearer tokens, token-like query values, passwords,

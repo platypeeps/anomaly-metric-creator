@@ -8,6 +8,7 @@ wall (no tool response may carry scenario slugs or anomaly descriptions).
 
 import datetime as _dt
 import json
+import types
 import urllib.error
 import urllib.request
 
@@ -851,3 +852,28 @@ def test_http_mcp_requires_bearer_auth_when_configured(amc, tmp_path):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_mcp_internal_error_records_traceback_to_stderr(amc, tmp_path, monkeypatch, capsys):
+    # A-076: a raising tool handler sends the client only type+message (no
+    # traceback in the body), but routes the traceback to the operator stderr
+    # sink so the crash is debuggable in the default posture.
+    state = _build_state(amc, tmp_path)
+
+    def boom(_state, _arguments):
+        raise RuntimeError("mcp-tool-boom")
+
+    monkeypatch.setitem(
+        server_mcp._TOOLS_BY_NAME,
+        "get_current_time",
+        types.SimpleNamespace(name="get_current_time", handler=boom),
+    )
+    status, body = _rpc(state, "tools/call", {"name": "get_current_time", "arguments": {}})
+    assert status == 200
+    assert body["error"]["code"] == server_mcp.INTERNAL_ERROR
+    assert "RuntimeError: mcp-tool-boom" in body["error"]["message"]
+    assert "Traceback" not in json.dumps(body)
+
+    err = capsys.readouterr().err
+    assert "[serve-error] mcp.get_current_time: RuntimeError: mcp-tool-boom" in err
+    assert "Traceback (most recent call last):" in err

@@ -497,3 +497,47 @@ Flattened amc serve MCP window tools and the command-trace store so narrow queri
 ### Next Steps
 
 - None - task complete
+
+
+## Session 60: Serve error plane observable by default (PR A: A-071..A-074, A-076)
+
+**Date**: 2026-08-05
+**Task**: Serve error plane observable by default (PR A: A-071..A-074, A-076)
+**Package**: amc
+**Branch**: `sdelmas/serve-error-visibility-sinks`
+
+### Summary
+
+PR A of task 07-17-audit-serve-error-visibility: made the amc serve error plane observable by default. One operator error sink (structured log or stderr [serve-error] block) carrying exception type/message/capped traceback tail; client 500 bodies stay generic. Background continuous-generation/OTEL arms and the MCP internal-error path route through the sink. Mutating-method boundary gets a catch-all; a raising Kubernetes API mutation now also records its failed trace in the kubernetes-api debug ring. Real two-dimension /readyz (artifacts present AND generation-thread healthy; 503 names the failing dimension, eval-wall-safe). Review: fixed a _capture_traceback_tail off-by-one (strict line cap), added an _ErrorSink Protocol to type the sink across the one-way module DAG, recorded the failed-k8s-mutation trace, and switched Protocol stubs to explicit pass. Planning finalization: task stays open for PR B (A-075 refusal counters, A-077 per-request id).
+
+### Main Changes
+
+- server_ops.py: _record_server_error/_emit_error_record operator error sink; _capture_traceback_tail strict line cap; _ErrorSink Protocol typing the sink over the one-way DAG
+- server.py: _handle_mutating_method catch-all returns generic 500 (Status/JSON) and records the failed k8s API mutation trace; two-dimension _readyz_check
+- SimulationState.request_logger carries the sink to background threads; serve_main reordered so the logger exists first
+- task PRD: added unchecked A-075/A-077 acceptance criteria so the completion boundary reflects PR B remaining
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d908588` | feat(server): make serve error plane observable by default (A-071..A-074, A-076) |
+| `9ee939f` | fix(server): make _capture_traceback_tail a strict line cap |
+| `2cddb11` | refactor(server): give the operator error sink a typed Protocol |
+| `8f2c431` | fix(server): record failed k8s API mutation trace; pass-body Protocol stubs |
+| `ce81628` | docs(task): add A-075/A-077 acceptance criteria as PR B follow-ups |
+
+### Testing
+
+- [OK] .venv/bin/pytest -k 'patch_kubernetes_api_unexpected_exception or capture_traceback_tail or readyz or record_server_error or mutating_kubernetes_api or body_limit_and_mutating' -n0 -> 14 passed
+- [OK] ruff check src/ tests/ -> clean; tools/check_mypy_gate.py -> 30 files, no issues
+- [OK] sd-review scope=pr -> ready (local prism/gito clean, Copilot 0 new comments, all threads resolved)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

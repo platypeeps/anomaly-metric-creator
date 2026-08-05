@@ -55,6 +55,15 @@ requests require `Authorization: Bearer TOKEN`. `/v1/kubeconfig` embeds the
 token for real clients. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
+`/readyz` is a two-dimension readiness check (`_readyz_check`): `200 {"ready":
+true}` only when every artifact the run declared it would emit (via
+`_collect_emitted_filenames`) is on disk AND the continuous-generation thread
+has not failed; otherwise `503 {"ready": false, "reason":
+"artifacts"|"generation"}`. The reason names only the failing dimension, never
+scenario content, so it stays eval-wall-safe (the endpoint is auth-exempt and
+eval-open). Sources: `README.md`; `SECURITY.md`;
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
 Request body caps return JSON `413` for app endpoints and Kubernetes `Status`
 objects for Kubernetes API endpoints. Rate limits return JSON `429` for app
 endpoints and Kubernetes `Status` with `reason: TooManyRequests` for API
@@ -91,6 +100,22 @@ Structured request logging is opt-in through `--structured-log` or
 exception rows, redacts query secrets, and records bearer auth only as
 present/absent. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+The error plane always has one operator sink, independent of the opt-in access
+log. `_record_server_error` / `_emit_error_record` write an error record — type,
+message, and a capped (~30-line) `traceback.format_exc()` tail — to the
+structured logger when configured, otherwise to a stderr block. Every HTTP 500
+boundary (`do_GET` / `do_POST` / `_handle_mutating_method`), the MCP
+internal-error path, and the background continuous-generation / OTEL failure
+arms route through it (`state.request_logger` carries the sink to the background
+threads). Client response bodies stay generic (`{"error": "internal server
+error"}` or a Kubernetes `Status`); detail never reaches a client body, and the
+operator-side traceback is outside the eval-mode ground-truth wall. Request
+(access) logging stays opt-in; only the error arm is always-on. Sources:
+`SECURITY.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_mcp.py`; `tests/test_server.py`;
+`tests/test_server_mcp.py`.
 
 Never write bearer tokens, auth tokens, passwords, cookies, API keys,
 kubeconfig client keys, token-like query parameters, or command secrets to

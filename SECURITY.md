@@ -45,7 +45,12 @@ When `--auth-token` is set, every endpoint requires
 [server.py:804](src/anomaly_metric_creator/server.py:804)) **except** these
 intentionally unauthenticated surfaces:
 
-- `GET /healthz` and `GET /readyz` — liveness/readiness probes.
+- `GET /healthz` and `GET /readyz` — liveness/readiness probes. `/readyz`
+  returns `503 {"ready": false, "reason": "<dimension>"}` when the declared
+  artifacts are missing (e.g. `--no-generate` over an empty dir) or the
+  continuous-generation thread has failed; the reason names only the failing
+  dimension (`artifacts`/`generation`), never scenario content, so it stays
+  eval-wall-safe.
 - `GET /` and `GET /debug` — the static debug-console HTML shell (it carries
   no data; its own JavaScript must then present the bearer token on every
   data request).
@@ -88,6 +93,15 @@ the agent's command history in eval mode is on-disk persistence
   request log, and the debug UI redact bearer tokens, token-like query
   parameters, passwords, secrets, and client-key-shaped values before they
   reach memory, JSONL, SQLite, or the browser.
+- **Error detail goes only to the operator sink.** Every unhandled 500
+  (`do_GET` / `do_POST` / `_handle_mutating_method`) and the MCP
+  internal-error path return a generic body (`{"error": "internal server
+  error"}` or a Kubernetes `Status`); the exception type, message, and a
+  capped traceback tail go **only** to the operator error sink — the
+  structured error log when `--structured-log` is set, otherwise a stderr
+  block. Detail (which can carry filesystem paths or other internals) never
+  reaches a client response body. The traceback tail is operator-side and
+  therefore outside the eval-mode ground-truth wall.
 - **`otel-activity.log`.** OTEL transport diagnostics mask sensitive HTTP
   headers before any value reaches the on-disk log, using **two deliberately
   different postures** for the two trust origins

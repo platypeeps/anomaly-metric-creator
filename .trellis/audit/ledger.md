@@ -774,47 +774,47 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: decide + document N-1 adapter or matching-version policy.
 
 ## A-071 — Default serve posture discards unhandled-500 detail irrecoverably; request-plane silent
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Verified
 - dimension: observability
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-05 @ pending-pr
 - evidence:
-  - server.py:535-536 log_message no-op; :1541-1543 logger None by default; empirically 500 detail reaches no sink, not even the trace ring
-- why: an auth-enabled operator still can't see brute-force attempts or 500 causes. (Refuted from P1: escaped exceptions do traceback via socketserver handle_error; 401/429 silence requires opted-in flags; silence is documented design.)
+  - server_ops.py `_emit_error_record` writes the error record to the structured logger when present and a stderr block otherwise; `_write_structured_logs` always routes a remembered error through it (request/access log stays opt-in). tests/test_server.py::test_get_500_writes_stderr_block_without_logger.
+- why: fixed; a default-flags 500 now leaves its detail (with traceback) in the stderr sink instead of vanishing.
 - fix: stderr fallback for the error-record arm when no logger; nudge --structured-log with hardening flags.
 
 ## A-072 — Background-thread failures recorded only into /v1/state; invisible under eval mode
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: observability
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-05 @ pending-pr
 - evidence:
-  - server.py:1669-1674,1704-1707; server_ops.py:3874-3880 — str(exc) only; /v1/state rubric-hidden in eval mode
-- why: a failing regen loop serves stale data forever unobservably; SystemExit(2)'s diagnostic is "2".
+  - `_record_continuous_generation_failure` and the OTEL `_stream_current_otel_once` except arm both call `_record_server_error` (traceback tail to stderr/structured log via `state.request_logger`); SystemExit is summarized as `SystemExit(code=...)`. tests/test_server.py::test_continuous_generation_records_system_exit.
+- why: fixed; a background regen/OTEL failure is now visible on the operator sink even under eval mode, and the exit code is explicit.
 - fix: WARNING + traceback tail to stderr/structured log in both arms.
 
 ## A-073 — PUT/PATCH/DELETE dispatch has no catch-all boundary
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: observability
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-05 @ pending-pr
 - evidence:
-  - server.py:750-803 — narrow handlers only, unlike do_GET/do_POST
-- why: mutating-facade bugs drop the connection (reset, status 0) with no 500 or error record.
+  - `_handle_mutating_method` now wraps its dispatch in an except-Exception boundary: Kubernetes `Status` 500 for API paths, JSON 500 for app paths, error remembered for the operator sink. tests/test_server.py::test_patch_kubernetes_api_unexpected_exception_returns_status_500.
+- why: fixed; a raising mutating handler returns a 500 instead of resetting the connection.
 - fix: same except-Exception boundary, Status-shaped for API paths.
 
 ## A-074 — /readyz hardcodes ready and verifies nothing
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: observability
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-05 @ pending-pr
 - evidence:
-  - server.py:550-551; load_anomaly_rows silently returns [] on missing artifacts
-- why: harness scripts gating on readyz get a false green under misconfig or failed regen.
+  - `_readyz_check` verifies every declared-emit artifact is on disk (keyed off `_collect_emitted_filenames`) and that the continuous-generation thread has not failed; /readyz returns 503 `{"ready": false, "reason": "<dimension>"}` otherwise. tests/test_server.py::test_readyz_http_503_names_dimension_on_empty_dir and the `_readyz_check` unit tests.
+- why: fixed; a --no-generate empty dir or a failed regen now returns 503 naming the failing dimension.
 - fix: reflect artifact presence + generation-thread health; 503 naming the dimension.
 
 ## A-075 — DoS-bound refusals (worker-cap 503, SSE 503, 429) counted nowhere
@@ -829,14 +829,14 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: refusal counters in summary() + first-trip log line per window.
 
 ## A-076 — No boundary captures a stack trace; error records are type+message only
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: observability
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-05 @ pending-pr
 - evidence:
-  - server.py:1030-1034; server_mcp.py:1243-1253; no `import traceback` package-wide
-- why: diagnosing server_ops failures requires local repro instead of reading the record.
+  - `_capture_traceback_tail` (capped ~30 lines) feeds `_record_server_error` / `_remember_structured_error`, so the HTTP 500 boundaries and the MCP internal-error path record the traceback tail to the operator sink; client bodies stay type+message. tests/test_server_mcp.py::test_mcp_internal_error_records_traceback_to_stderr.
+- why: fixed; error records now carry a traceback tail on the operator sink without leaking it into client responses.
 - fix: traceback.format_exc() into the structured record + trace stderr; client bodies unchanged.
 
 ## A-077 — Structured request records carry no request/trace id join key

@@ -39,6 +39,7 @@ from .server_ops import (
     _format_dt,
     _normalize_kind,
     _preview,
+    _record_server_error,
     _redact_parsed_flags,
     _snapshot_row_namespace,
     command_fingerprint,
@@ -1324,9 +1325,18 @@ def _tools_call(
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
     except Exception as exc:
-        # A tool bug is a protocol-level internal error; keep the type and
-        # message but never a traceback.
+        # A tool bug is a protocol-level internal error. The client-facing
+        # message keeps the type and message but never a traceback; the operator
+        # sink (stderr or the structured log) gets the traceback tail via
+        # _record_server_error so a tool crash is debuggable in the default
+        # posture. request_logger is None unless serve_main wired one, in which
+        # case the helper falls back to stderr.
         message = f"{type(exc).__name__}: {exc}"
+        _record_server_error(
+            getattr(state, "request_logger", None),
+            where=f"mcp.{name}",
+            exc=exc,
+        )
         _record_mcp_trace(
             state, tool_name=name, arguments=arguments, client=client,
             support_status="partial", matched_rule_id=f"mcp.{name}",

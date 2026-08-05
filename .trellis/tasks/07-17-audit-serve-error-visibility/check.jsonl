@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "Verify error-sink and /readyz behavior against the documented operator-sink and two-dimension readiness contracts, including eval-wall safety of the reason string."}
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Pre-PR review gates (doc/spec sync, validator branch coverage, single-source-of-truth, test determinism) the error-plane change must satisfy."}
+{"file": ".trellis/spec/amc/backend/error-handling.md", "reason": "Confirm no exception detail leaks into a client response body at any 500 boundary."}

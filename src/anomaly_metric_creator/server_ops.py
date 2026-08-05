@@ -13,13 +13,15 @@ import contextlib
 import csv
 import datetime as _dt
 import json
+import sys
 import threading
 import time
+import traceback
 import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .server_mutations import (
     DEFAULT_NAMESPACE,
@@ -198,6 +200,110 @@ class ContinuousGenerationStatus:
             }
 
 
+# Cap the traceback tail that reaches an operator sink. A capped tail keeps the
+# failing frame(s) without letting a deep recursion flood stderr or the JSONL
+# error log on every retry.
+class _ErrorSink(Protocol):
+    """Structural interface for the operator error/request sink.
+
+    The only concrete implementation is ``server.StructuredRequestLogger``, which
+    lives in ``server.py`` and cannot be imported here (the module DAG is one-way:
+    ``server`` imports ``server_ops``, never the reverse). Declaring the interface
+    structurally lets ``SimulationState.request_logger`` and the sink helpers carry
+    a precise type instead of ``Any`` while preserving the one-way import.
+    """
+
+    def log_request(self, record: dict[str, Any]) -> None:
+        pass
+
+    def log_error(self, record: dict[str, Any]) -> None:
+        pass
+
+
+_ERROR_TRACEBACK_MAX_LINES = 30
+
+
+def _capture_traceback_tail(*, max_lines: int = _ERROR_TRACEBACK_MAX_LINES) -> str:
+    """Return the current exception's formatted traceback, capped to the tail.
+
+    Reads ``traceback.format_exc()`` so it must be called while an exception is
+    being handled (inside the ``except`` block or a helper it calls). Returns an
+    empty string when no exception is active.
+    """
+    text = traceback.format_exc()
+    if not text or text.strip() == "NoneType: None":
+        return ""
+    lines = text.rstrip("\n").split("\n")
+    if len(lines) > max_lines:
+        # Strict cap: the truncation marker counts against ``max_lines`` so the
+        # returned block is never longer than the configured flood guard. Reserve
+        # one slot for the marker and keep the last ``max_lines - 1`` tail lines
+        # (marker-only when ``max_lines <= 1``, so a tiny cap can't reintroduce a
+        # ``lines[-0:]`` whole-list slice).
+        marker = "...(traceback truncated)..."
+        keep = max_lines - 1
+        lines = [marker, *lines[-keep:]] if keep > 0 else [marker]
+    return "\n".join(lines)
+
+
+def _emit_error_record(request_logger: _ErrorSink | None, record: dict[str, Any]) -> None:
+    """Write one error record to the structured logger, or a stderr block when
+    no logger is configured.
+
+    The either/or is deliberate: with ``--structured-log`` the record lands as a
+    JSONL ``error`` event; without it (the default posture) the same detail —
+    including the traceback tail — still reaches stderr, so a default-flags 500
+    is never silent. Detail is operator-side only and must never reach a client
+    response body (SECURITY.md contract). The traceback text may embed the
+    exception message; stderr and the structured log are operator surfaces, so
+    this stays outside the eval-mode ground-truth wall (it never reads or writes
+    the anomaly manifest or scenario catalog).
+    """
+    if request_logger is not None:
+        request_logger.log_error(record)
+        return
+    where = record.get("where") or "request"
+    header = (
+        f"[serve-error] {where}: "
+        f"{record.get('error_type', 'Error')}: {record.get('message', '')}"
+    )
+    lines = [header]
+    path = record.get("path")
+    if path:
+        lines.append(f"  path: {path}")
+    tail = record.get("traceback")
+    if tail:
+        lines.append(tail)
+    sys.stderr.write("\n".join(lines) + "\n")
+    sys.stderr.flush()
+
+
+def _record_server_error(
+    request_logger: _ErrorSink | None,
+    *,
+    where: str,
+    exc: BaseException,
+    path: str | None = None,
+) -> None:
+    """Capture ``exc`` (type, message, traceback tail) to the operator error
+    sink via :func:`_emit_error_record`.
+
+    Call from inside the active ``except`` block so the traceback is available.
+    Used by the HTTP 500 boundaries, the mutating-method boundary, the
+    background continuous-generation / OTEL arms, and the MCP internal-error
+    path so every error plane has one operator-visible sink by default.
+    """
+    record: dict[str, Any] = {
+        "where": where,
+        "error_type": type(exc).__name__,
+        "message": str(exc),
+        "traceback": _capture_traceback_tail(),
+    }
+    if path is not None:
+        record["path"] = path
+    _emit_error_record(request_logger, record)
+
+
 @dataclass
 class SimulationState:
     legacy: Any
@@ -213,6 +319,12 @@ class SimulationState:
     generation: ContinuousGenerationStatus = field(default_factory=ContinuousGenerationStatus)
     otel_status: dict[str, Any] = field(default_factory=dict)
     shutdown_event: threading.Event = field(default_factory=threading.Event)
+    # Optional structured-log sink, wired by ``serve_main`` after the state is
+    # built. Background arms (continuous generation, OTEL streaming) read it to
+    # route a failure through ``_record_server_error``; ``None`` means the
+    # helper falls back to a stderr block, so background failures are visible
+    # even without ``--structured-log``.
+    request_logger: _ErrorSink | None = None
     # Eval mode hides every ground-truth-bearing surface (the anomaly
     # manifest, the scenario catalog, the report-log rendering of the
     # manifest, and the debug console) so an agent under evaluation cannot
@@ -2630,9 +2742,23 @@ def _record_continuous_generation_failure(
     state: SimulationState,
     exc: BaseException,
 ) -> None:
+    # A raising background regen used to leave only ``str(exc)`` on the
+    # eval-hidden /v1/state (a bare "2" for SystemExit). Summarize the exit code
+    # explicitly and route type/message/traceback to the operator error sink so
+    # the failure is visible in the default posture too. Called from inside the
+    # regen ``except`` block, so ``_capture_traceback_tail`` sees the traceback.
+    if isinstance(exc, SystemExit):
+        detail = f"SystemExit(code={exc.code!r})"
+    else:
+        detail = str(exc) or exc.__class__.__name__
     with state.generation.lock:
-        state.generation.last_error = str(exc) or exc.__class__.__name__
+        state.generation.last_error = detail
         state.generation.thread = "failed"
+    _record_server_error(
+        getattr(state, "request_logger", None),
+        where="continuous-generate",
+        exc=exc,
+    )
 
 
 def _generic_resource_row(
