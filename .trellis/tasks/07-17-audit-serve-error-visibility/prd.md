@@ -26,11 +26,11 @@ refusals are uncounted, and no sink ever gets a traceback.
 
 ## Acceptance criteria
 
-- [ ] A forced 500 with default flags leaves its detail in at least one operator-visible sink.
-- [ ] kubectl PATCH against a raising handler gets a 500, not a connection reset.
-- [ ] readyz returns 503 under --no-generate with an empty dir.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
-      `.trellis/audit/ledger.md` (same-PR, per ledger rules).
+- [x] A forced 500 with default flags leaves its detail in at least one operator-visible sink. _(PR A.)_
+- [x] kubectl PATCH against a raising handler gets a 500, not a connection reset. _(PR A.)_
+- [x] readyz returns 503 under --no-generate with an empty dir. _(PR A.)_
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
+      `.trellis/audit/ledger.md` (same-PR, per ledger rules). _(A-071..A-074/A-076 in PR A; A-075/A-077 in PR B — all seven now fixed.)_
 - [x] A-075 — refusal counters (worker-cap 503 / SSE 503 / 429) surface in
       `state.summary()` (`/v1/state.refusals`) with a first-trip stderr line. _(PR B.)_
 - [x] A-077 — per-request id lands in structured records and is threaded into
