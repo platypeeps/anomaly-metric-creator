@@ -503,9 +503,22 @@ cannot read the rubric out of the server:
 
 ```bash
 amc serve --mcp-eval-mode --auth-token "$EVAL_TOKEN" \
+  --persist-command-db eval-traces.sqlite \
   --duration-days 3 --scenarios cache_leak_restart \
   --components apigateway,cacheservice,database,mqservice
 ```
+
+**Persist the command traces — in eval mode this is the harness's only way to
+recover them.** The `/v1/debug/*` surfaces (including
+`/v1/debug/commands/export`) are `404`'d in eval mode precisely because the
+agent must not reach them, and the in-memory command ring dies with the
+process — so a harness that follows the recipe without a persistence flag ends
+the run with no retrievable record of what the agent did. `--persist-command-db
+PATH` writes a durable SQLite store; `--persist-command-log PATH` writes JSONL
+instead if you prefer a flat file. `--debug-ring-size` is irrelevant to this
+retrieval — it only sizes the volatile ring the export surface exposes, which
+eval mode hides. Read the persisted store offline with `amc trace-bundle`
+(see [Usage](#usage)) after the run.
 
 Eval mode returns `404` for every ground-truth-bearing surface — the anomaly
 manifest (`/v1/anomalies`), the scenario catalog (`/v1/scenarios`), `/v1/state`

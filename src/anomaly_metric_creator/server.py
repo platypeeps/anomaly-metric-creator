@@ -1770,6 +1770,22 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
             "MCP eval mode: ground-truth surfaces hidden "
             "(manifest, scenarios, /v1/state, log stream, debug console)"
         )
+        if (
+            serve_args.persist_command_db is None
+            and serve_args.persist_command_log is None
+        ):
+            # Eval mode 404s the /v1/debug command-trace export and the ring
+            # dies with the process, so with no persistence a harness recovers
+            # no record of the agent's activity. Operator stderr is not an
+            # agent-reachable surface, so this stays wall-safe.
+            print(
+                "WARNING: eval mode has no --persist-command-db/"
+                "--persist-command-log; command traces live only in the "
+                "in-memory ring and are unrecoverable after shutdown (the "
+                "/v1/debug export surface is rubric-hidden in eval mode). "
+                "Pass --persist-command-db PATH to retain scoring evidence.",
+                file=sys.stderr,
+            )
     if security.auth_token:
         print("Bearer auth: enabled")
     elif not _is_loopback_bind_host(serve_args.host):

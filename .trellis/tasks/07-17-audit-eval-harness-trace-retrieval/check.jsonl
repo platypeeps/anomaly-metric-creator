@@ -1,1 +1,1 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/index.md", "reason": "Backend conventions to verify the serve_main warning and README recipe against, including the eval-mode ground-truth wall (operator stderr must stay agent-unreachable)."}

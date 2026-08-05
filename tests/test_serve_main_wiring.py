@@ -254,6 +254,40 @@ def test_inspection_banner_suppresses_scenarios_under_eval_mode(
     assert "kubectl get pods -n saas-prod" in out
 
 
+_EVAL_PERSIST_WARNING = "eval mode has no --persist-command-db"
+
+
+@pytest.mark.parametrize(
+    ("extra_argv", "expect_warning"),
+    [
+        # Eval mode without any persistence flag: the only combination that warns.
+        (["--mcp-eval-mode"], True),
+        # Eval mode with each persistence flag: no warning.
+        (["--mcp-eval-mode", "--persist-command-db", "traces.sqlite"], False),
+        (["--mcp-eval-mode", "--persist-command-log", "traces.jsonl"], False),
+        # Non-eval mode without persistence: no warning (retrieval is open).
+        ([], False),
+    ],
+)
+def test_serve_main_warns_on_eval_mode_without_persistence(
+    monkeypatch, amc, tmp_path, capsys, extra_argv, expect_warning
+):
+    _run_serve_with_stub(
+        monkeypatch,
+        amc,
+        tmp_path,
+        ["--port", "0", *extra_argv],
+        server_address=("127.0.0.1", 43210),
+    )
+    err = capsys.readouterr().err
+    if expect_warning:
+        assert _EVAL_PERSIST_WARNING in err
+        # The warning must name the remedy flag, not just the problem.
+        assert "--persist-command-db PATH" in err
+    else:
+        assert _EVAL_PERSIST_WARNING not in err
+
+
 def test_inspection_banner_brackets_ipv6_host(capsys):
     # An IPv6 literal must be bracketed or the URL is invalid
     # (http://::1:8088 does not parse; http://[::1]:8088 does).
