@@ -188,7 +188,7 @@ def test_otel_status_concurrent_access_is_lock_safe(amc, tmp_path):
     state = _state(amc, tmp_path)
     workers = 8
     bumps_per_worker = 200
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
     # Parties = 8 bump threads + 1 read thread + this main thread.
     barrier = threading.Barrier(workers + 2)
 
@@ -197,7 +197,7 @@ def test_otel_status_concurrent_access_is_lock_safe(amc, tmp_path):
             barrier.wait()
             for _ in range(bumps_per_worker):
                 state.bump_otel_status("stream_batches")
-        except BaseException as exc:  # pragma: no cover - failure path
+        except Exception as exc:  # pragma: no cover - failure path
             errors.append(exc)
 
     def read():
@@ -208,7 +208,7 @@ def test_otel_status_concurrent_access_is_lock_safe(amc, tmp_path):
                 # write would raise "dictionary changed size during iteration".
                 state.otel_status_snapshot()
                 state.summary()
-        except BaseException as exc:  # pragma: no cover - failure path
+        except Exception as exc:  # pragma: no cover - failure path
             errors.append(exc)
 
     threads = [threading.Thread(target=bump) for _ in range(workers)]
