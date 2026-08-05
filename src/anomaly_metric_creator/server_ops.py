@@ -383,9 +383,14 @@ class SimulationState:
     otel_status: dict[str, Any] = field(default_factory=dict)
     # Guards otel_status against a torn read from /v1/state (audit A-014): the
     # background OTEL / continuous-generation threads mutate this dict while
-    # ``summary()`` runs on an HTTP handler thread. All keys are pre-seeded at
-    # build time so the dict never changes size at runtime; the lock makes the
-    # summary snapshot and grouped multi-key writes atomic.
+    # ``summary()`` runs on an HTTP handler thread. Thread-safety rests on the
+    # lock alone, not on the key set being fixed: every writer
+    # (``update_otel_status`` / ``bump_otel_status``) mutates under this lock
+    # and ``otel_status_snapshot`` copies the dict under it, so the reader never
+    # iterates the live dict — a writer adding a new key can never race the
+    # snapshot into a "dictionary changed size during iteration". Call sites
+    # today only ever write a known, stable key set, so no resize happens in
+    # practice; the lock is what makes that safe regardless.
     otel_status_lock: threading.Lock = field(default_factory=threading.Lock)
     shutdown_event: threading.Event = field(default_factory=threading.Event)
     # Optional structured-log sink, wired by ``serve_main`` after the state is
