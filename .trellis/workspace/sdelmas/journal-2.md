@@ -541,3 +541,48 @@ PR A of task 07-17-audit-serve-error-visibility: made the amc serve error plane 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 61: Ship PR B of 07-17: DoS-refusal counters (A-075) + request-id join key (A-077)
+
+**Date**: 2026-08-05
+**Task**: Ship PR B of 07-17: DoS-refusal counters (A-075) + request-id join key (A-077)
+**Package**: amc
+**Branch**: `sdelmas/serve-error-refusal-counters`
+
+### Summary
+
+Implemented and shipped PR B (#339) of task 07-17-audit-serve-error-visibility: RefusalCounters shared with the bounded server (worker-cap 503 / both SSE 503s / rate-limit 429 each recorded, surfaced as /v1/state.refusals with a one-shot [serve-refusal] stderr line, outside the eval-mode wall), and a per-request uuid join key threaded from handle_one_request into structured records and CommandTrace (payload-only, rides payload_json). Review found only false positives (imports present at server_ops:16-17; _increment validated at its sole caller); extracted _increment to clarify lock scope. Copilot APPROVED the exact head; CI Result green. Task 07-17 archived with all seven ledger items (A-071..A-077) fixed across PR A + PR B.
+
+### Main Changes
+
+- server_ops.RefusalCounters: thread-safe worker_cap/sse/rate_limit tally, shared via SimulationState.refusals default_factory, surfaced in summary() as /v1/state.refusals with a one-per-kind first-trip stderr line (A-075)
+- server.py: request_id=uuid4().hex[:12] minted in handle_one_request, added to structured base_record and threaded into run_command / record_kubernetes_api_call / MCP _record_mcp_trace via payload-only CommandTrace.request_id (A-077)
+- Both SSE-503 refusal sites counted (_with_sse_slot + k8s watch); rate-limit 429 and worker-cap 503 counted at their sites
+- Refactor: extracted RefusalCounters._increment so stderr IO stays off the lock and static-analyzer misreads of the cross-block local dissolve
+- Docs/ledger: CLAUDE.md + operations-security-logging.md refusals & request_id paragraphs, CHANGELOG Unreleased bullet, ledger A-075/A-077 -> fixed; task 07-17 archived
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d3e8b31` | feat(server): count DoS-bound refusals and add per-request id join key (A-075, A-077) |
+| `e5d4c8d` | refactor(server): extract RefusalCounters._increment for clearer lock scope |
+| `79ffbff` | chore(task): finalize 07-17 — set branch, tick satisfied acceptance criteria |
+| `4ecd6da` | chore(task): archive 07-17-audit-serve-error-visibility |
+
+### Testing
+
+- [OK] .venv/bin/pytest tests/test_server.py tests/test_server_eval_mode.py tests/test_server_mcp.py tests/test_server_ops_fuzz.py tests/test_serve_main_wiring.py -n 0 — 190 passed, 2 skipped
+- [OK] .venv/bin/pytest (full) — 1779 passed, 2 skipped
+- [OK] .venv/bin/pre-commit run --all-files — all hooks pass
+- [OK] Copilot review APPROVED head e5d4c8d; CI Result pass
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
