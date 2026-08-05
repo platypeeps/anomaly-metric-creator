@@ -46,7 +46,12 @@ def test_serve_main_threads_eval_mode_to_build_state(
 
 
 def test_serve_main_maps_every_security_flag(monkeypatch, amc, tmp_path):
-    state = SimpleNamespace(shutdown_event=threading.Event())
+    # Mirror the real build_state: it always attaches a RefusalCounters that
+    # serve_main threads into the bounded server (A-075).
+    state = SimpleNamespace(
+        shutdown_event=threading.Event(),
+        refusals=server._server_ops.RefusalCounters(),
+    )
     captured = {}
 
     monkeypatch.setattr(server, "build_state", lambda *args, **kwargs: state)
@@ -66,12 +71,13 @@ def test_serve_main_maps_every_security_flag(monkeypatch, amc, tmp_path):
 
     class StubServer:
         def __init__(
-            self, address, received_handler, *, max_workers, max_sse
+            self, address, received_handler, *, max_workers, max_sse, refusals=None
         ):
             captured["address"] = address
             captured["handler"] = received_handler
             captured["max_workers"] = max_workers
             captured["max_sse"] = max_sse
+            captured["refusals"] = refusals
             self.server_address = ("127.0.0.1", 43210)
 
         def serve_forever(self):
@@ -129,6 +135,10 @@ def test_serve_main_maps_every_security_flag(monkeypatch, amc, tmp_path):
     assert captured["handler"] is handler
     assert captured["max_workers"] == security.max_concurrent_requests
     assert captured["max_sse"] == security.max_sse_connections
+    # A-075: the bounded server shares the state's refusal counters so a
+    # worker-cap 503 (pre-handler) feeds the same tally as the SSE/rate-limit
+    # refusals.
+    assert captured["refusals"] is state.refusals
     assert captured["served"] is True
     assert captured["closed"] is True
     assert state.shutdown_event.is_set()
@@ -152,6 +162,7 @@ def _run_serve_with_stub(
     state = SimpleNamespace(
         shutdown_event=threading.Event(),
         active_scenarios=tuple(active_scenarios),
+        refusals=server._server_ops.RefusalCounters(),
     )
     monkeypatch.setattr(server, "build_state", lambda *a, **k: state)
     monkeypatch.setattr(
@@ -162,7 +173,7 @@ def _run_serve_with_stub(
     monkeypatch.setattr(server, "make_handler", lambda *a, **k: object())
 
     class StubServer:
-        def __init__(self, address, handler, *, max_workers, max_sse):
+        def __init__(self, address, handler, *, max_workers, max_sse, refusals=None):
             self.server_address = server_address
 
         def serve_forever(self):

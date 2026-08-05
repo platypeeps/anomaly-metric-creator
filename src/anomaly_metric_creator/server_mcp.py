@@ -1231,6 +1231,7 @@ def _record_mcp_trace(
     stdout: str,
     stderr: str,
     latency_ms: float,
+    request_id: str = "",
 ) -> None:
     """Record one MCP tools/call as a CommandTrace (family ``mcp``).
 
@@ -1278,12 +1279,13 @@ def _record_mcp_trace(
         latency_ms=round(latency_ms, 3),
         fingerprint=command_fingerprint(parsed, support_status),
         guessed_intent=f"mcp tool call: {tool_name}" if tool_name else "mcp tool call",
+        request_id=request_id,
     )
     state.traces.record(trace)
 
 
 def _tools_call(
-    state: Any, req_id: Any, params: dict[str, Any], *, client: str
+    state: Any, req_id: Any, params: dict[str, Any], *, client: str, request_id: str = ""
 ) -> tuple[int, dict[str, Any]]:
     started = time.perf_counter()
     name = params.get("name")
@@ -1299,6 +1301,7 @@ def _tools_call(
             matched_rule_id="mcp.unknown_tool", exit_code=1,
             stdout="", stderr=message,
             latency_ms=(time.perf_counter() - started) * 1000.0,
+            request_id=request_id,
         )
         return 200, _error_response(req_id, INVALID_PARAMS, message)
     arguments = params.get("arguments") or {}
@@ -1309,6 +1312,7 @@ def _tools_call(
             support_status="unsupported", matched_rule_id="mcp.invalid_arguments",
             exit_code=1, stdout="", stderr=message,
             latency_ms=(time.perf_counter() - started) * 1000.0,
+            request_id=request_id,
         )
         return 200, _error_response(req_id, INVALID_PARAMS, message)
     try:
@@ -1323,6 +1327,7 @@ def _tools_call(
             support_status="supported", matched_rule_id=f"mcp.{name}",
             exit_code=1, stdout="", stderr=str(exc),
             latency_ms=(time.perf_counter() - started) * 1000.0,
+            request_id=request_id,
         )
     except Exception as exc:
         # A tool bug is a protocol-level internal error. The client-facing
@@ -1342,6 +1347,7 @@ def _tools_call(
             support_status="partial", matched_rule_id=f"mcp.{name}",
             exit_code=1, stdout="", stderr=message,
             latency_ms=(time.perf_counter() - started) * 1000.0,
+            request_id=request_id,
         )
         return 200, _error_response(req_id, INTERNAL_ERROR, message)
     else:
@@ -1356,18 +1362,21 @@ def _tools_call(
             support_status="supported", matched_rule_id=f"mcp.{name}",
             exit_code=0, stdout=serialized, stderr="",
             latency_ms=(time.perf_counter() - started) * 1000.0,
+            request_id=request_id,
         )
     return 200, {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
 def handle_mcp_http_post(
-    state: Any, raw_body: bytes, *, client: str = "mcp"
+    state: Any, raw_body: bytes, *, client: str = "mcp", request_id: str = ""
 ) -> tuple[int, dict[str, Any] | None]:
     """Answer one streamable-HTTP POST: ``(http_status, json_body | None)``.
 
     ``None`` bodies are 202 Accepted responses to notifications, which the
     streamable HTTP transport answers without content. ``client`` is the
-    caller identity recorded on each tools/call CommandTrace.
+    caller identity recorded on each tools/call CommandTrace; ``request_id`` is
+    the per-HTTP-request join key (A-077) threaded onto that trace so it can be
+    joined to the structured request/error record for the same request.
     """
     try:
         payload = json.loads(raw_body.decode("utf-8"))
@@ -1401,7 +1410,7 @@ def handle_mcp_http_post(
     elif method == "tools/list":
         result = _tools_list_result()
     elif method == "tools/call":
-        return _tools_call(state, req_id, params, client=client)
+        return _tools_call(state, req_id, params, client=client, request_id=request_id)
     else:
         return 200, _error_response(
             req_id, METHOD_NOT_FOUND, f"method not found: {method}"

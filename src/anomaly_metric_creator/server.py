@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -246,13 +247,26 @@ class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, *args: Any, max_workers: int, max_sse: int, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        max_workers: int,
+        max_sse: int,
+        refusals: Any = None,
+        **kwargs: Any,
+    ) -> None:
         self._worker_semaphore = (
             threading.BoundedSemaphore(max_workers) if max_workers > 0 else None
         )
         self._sse_semaphore = (
             threading.BoundedSemaphore(max_sse) if max_sse > 0 else None
         )
+        # Shared RefusalCounters (from SimulationState) so a worker-cap refusal —
+        # which happens in process_request before any handler exists — still
+        # reaches the same tally the handler-side SSE / rate-limit refusals feed
+        # (A-075). ``None`` leaves the count unwired (defensive; the serve
+        # entrypoints always pass state.refusals).
+        self._refusals = refusals
         super().__init__(*args, **kwargs)
 
     def process_request(self, request: Any, client_address: Any) -> None:
@@ -271,6 +285,8 @@ class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
                 self._worker_semaphore.release()
 
     def _refuse_saturated(self, request: Any) -> None:
+        if self._refusals is not None:
+            self._refusals.record("worker_cap")
         with contextlib.suppress(OSError):
             request.sendall(_SATURATED_503)
         self.shutdown_request(request)
@@ -541,6 +557,11 @@ def make_handler(
             self._response_status = 0
             self._response_bytes = 0
             self._structured_error: dict[str, str] | None = None
+            # A-077: one id per request, minted at the single shared dispatch
+            # entry so it covers do_GET / do_POST / the mutating methods. It is
+            # the join key between the structured request/error record and every
+            # CommandTrace recorded while handling this request.
+            self._request_id = uuid.uuid4().hex[:12]
             try:
                 super().handle_one_request()
             finally:
@@ -616,6 +637,7 @@ def make_handler(
                         client=self.client_address[0],
                         user_agent=self.headers.get("user-agent", ""),
                         latency_ms=(time.perf_counter() - api_started) * 1000.0,
+                        request_id=self._request_id,
                     )
                     self._send_kubernetes_api_response(api_response)
                     return
@@ -721,6 +743,7 @@ def make_handler(
                         client=self.client_address[0],
                         user_agent=self.headers.get("user-agent", ""),
                         latency_ms=(time.perf_counter() - api_started) * 1000.0,
+                        request_id=self._request_id,
                     )
                     self._send_kubernetes_api_response(api_response)
                     return
@@ -731,6 +754,7 @@ def make_handler(
                         command=payload.get("command"),
                         argv=payload.get("argv"),
                         client=self.client_address[0],
+                        request_id=self._request_id,
                     )
                     self._send_json(200, result)
                 elif path == "/v1/debug/commands/import":
@@ -841,6 +865,7 @@ def make_handler(
                         client=self.client_address[0],
                         user_agent=self.headers.get("user-agent", ""),
                         latency_ms=(time.perf_counter() - api_started) * 1000.0,
+                        request_id=self._request_id,
                     )
                     self._send_kubernetes_api_response(api_response)
                     return
@@ -882,6 +907,7 @@ def make_handler(
                                 if api_started is not None
                                 else 0.0
                             ),
+                            request_id=self._request_id,
                         )
                     self._send_kubernetes_api_response(api_response)
                 else:
@@ -901,6 +927,7 @@ def make_handler(
             decision = rate_limiter.check(self.client_address[0], bucket)
             if decision.allowed:
                 return False
+            state.refusals.record("rate_limit")
             headers = {"retry-after": str(decision.retry_after_seconds)}
             if _is_kubernetes_api_path(path):
                 self._send_kubernetes_api_response(
@@ -1055,6 +1082,7 @@ def make_handler(
             server_obj = self.server
             acquire = getattr(server_obj, "try_acquire_sse", None)
             if acquire is not None and not acquire():
+                state.refusals.record("sse")
                 self._send_json(503, {"error": "SSE connection limit reached"})
                 return
             try:
@@ -1145,6 +1173,7 @@ def make_handler(
             )
             base_record = {
                 "timestamp": now,
+                "request_id": getattr(self, "_request_id", ""),
                 "method": getattr(self, "command", ""),
                 "path": parsed.path,
                 "query": _redact_query(query),
@@ -1222,6 +1251,10 @@ def make_handler(
             server_obj = self.server
             acquire = getattr(server_obj, "try_acquire_sse", None)
             if acquire is not None and not acquire():
+                # Same SSE-ceiling refusal as _with_sse_slot, but the watch path
+                # refuses with a Kubernetes Status rather than the app JSON 503;
+                # count it on the same tally so both SSE-503 sites are visible.
+                state.refusals.record("sse")
                 refusal = k8s_watch_trace_response(plan, event_count=0, refused=True)
                 record_kubernetes_api_call(
                     state,
@@ -1232,6 +1265,7 @@ def make_handler(
                     client=self.client_address[0],
                     user_agent=self.headers.get("user-agent", ""),
                     latency_ms=(time.perf_counter() - api_started) * 1000.0,
+                    request_id=self._request_id,
                 )
                 self._send_kubernetes_api_response(refusal)
                 return
@@ -1252,6 +1286,7 @@ def make_handler(
                     client=self.client_address[0],
                     user_agent=self.headers.get("user-agent", ""),
                     latency_ms=(time.perf_counter() - api_started) * 1000.0,
+                    request_id=self._request_id,
                 )
 
         def _stream_k8s_watch(self, path, query, plan) -> int:
@@ -1345,7 +1380,7 @@ def make_handler(
                 self._send_json(413, server_mcp.body_too_large_response(str(exc)))
                 return
             status, body = server_mcp.handle_mcp_http_post(
-                state, raw, client=self.client_address[0]
+                state, raw, client=self.client_address[0], request_id=self._request_id
             )
             if body is None:
                 # Notification: 202 Accepted with no content.
@@ -1842,6 +1877,7 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         make_handler(state, security=security, request_logger=request_logger),
         max_workers=security.max_concurrent_requests,
         max_sse=security.max_sse_connections,
+        refusals=state.refusals,
     )
     # server_address is a 2-tuple for AF_INET and a 4-tuple for AF_INET6;
     # take the first two so an IPv6 bind cannot ValueError on unpack.
@@ -2141,6 +2177,7 @@ def start_test_server(
         make_handler(state, security=security, request_logger=request_logger),
         max_workers=resolved.max_concurrent_requests,
         max_sse=resolved.max_sse_connections,
+        refusals=state.refusals,
     )
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

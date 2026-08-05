@@ -502,7 +502,16 @@ that behavior in `server_ops.py` and expose command-specific entrypoints
 through `server_commands.py`; `server.py` should stay the HTTP/serve facade.
 Every call is recorded as a `CommandTrace` in a thread-safe ring buffer, with
 optional JSONL persistence via `--persist-command-log` and optional SQLite
-persistence via `--persist-command-db`. The SQLite store reloads recent traces
+persistence via `--persist-command-db`. Each trace carries a `request_id`
+(audit A-077): `handle_one_request` mints a `uuid4().hex[:12]` once per HTTP
+request at the single shared dispatch entry, threads it into the structured
+request/error records and into every trace recorded while handling that request
+(`run_command`, `record_kubernetes_api_call`, and the MCP `_record_mcp_trace`),
+so a structured record and its trace share a join key. `CommandTrace.request_id`
+is payload-only — it rides `to_dict` / `from_dict` (live echo, JSONL, export)
+with no dedicated SQLite column, so there is no schema migration; it still
+round-trips a SQLite restart because the store persists the full `to_dict` blob
+in `payload_json` and reloads via `from_dict`. The SQLite store reloads recent traces
 on restart, keeps durable counts, records a schema version in
 `command_trace_meta`, optionally caps retained rows via
 `--persist-command-retention`, and backs filtered search by raw command,
@@ -677,7 +686,17 @@ snapshots, generic created/deleted resources are merged into snapshot lists,
 extra events are appended to event views, and Helm release mutations replace the
 revision list and values used by `helm list/status/history/get values` and the
 Helm Secret API. `/v1/state` exposes the overlay summary and generation counters
-so the debug UI can show whether the simulator is drifting from its baseline.
+so the debug UI can show whether the simulator is drifting from its baseline. It
+also exposes `refusals` — the DoS-bound refusal tally (audit A-075): a shared
+thread-safe `RefusalCounters` (`server_ops.py`, held on `SimulationState` and
+passed into `_BoundedThreadingHTTPServer`) counts the worker-cap `503`
+(`_refuse_saturated`, pre-handler), the app-SSE and Kubernetes-watch SSE-ceiling
+`503`s, and the rate-limit `429` (`_send_rate_limited`) under the fixed kinds
+`worker_cap` / `sse` / `rate_limit`. The first trip of each kind writes one
+`[serve-refusal]` stderr line (capped one-per-kind-per-process so a sustained
+attacker cannot amplify it into stderr spam); `/v1/state.refusals` carries the
+live count. The kinds are content-free, so the endpoint's eval-mode hiding is a
+property of `/v1/state`, not of the counts.
 `POST /v1/mutations/reset` clears only this overlay; it must not regenerate files
 or alter the frozen scenario catalog.
 

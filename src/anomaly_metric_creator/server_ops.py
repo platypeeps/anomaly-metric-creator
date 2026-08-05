@@ -304,6 +304,57 @@ def _record_server_error(
     _emit_error_record(request_logger, record)
 
 
+# Kinds of DoS-bound request refusal counted by ``RefusalCounters``. Fixed
+# vocabulary: worker-thread cap (raw 503 before a worker spawns), SSE-slot
+# ceiling (JSON 503), and per-client rate limit (429). No scenario content —
+# eval-wall-safe.
+_REFUSAL_KINDS = ("worker_cap", "sse", "rate_limit")
+
+
+class RefusalCounters:
+    """Thread-safe tally of DoS-bound request refusals (A-075).
+
+    The bounded server, SSE ceiling, and rate limiter each shed load to keep a
+    reachable instance from exhausting threads/streams/CPU, but those refusals
+    were previously invisible in the default posture: nothing counted them and
+    nothing logged them. This counts each kind and exposes the totals on
+    ``SimulationState.summary()`` (``/v1/state.refusals``) so an operator can see
+    the instance is shedding load. Increments are the only mutation and take the
+    lock per refusal (never per request), so the lock stays off the hot path.
+
+    The first trip of each kind emits one stderr line so saturation is visible
+    even when structured request logging is off. It is capped at one line per
+    kind per process on purpose: per-window re-logging under a sustained attack
+    would turn the refusal path into its own stderr-amplification vector, so the
+    first-trip line announces the condition and ``/v1/state.refusals`` carries
+    the live count thereafter.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counts = dict.fromkeys(_REFUSAL_KINDS, 0)
+        self._logged: set[str] = set()
+
+    def record(self, kind: str) -> None:
+        if kind not in self._counts:
+            raise KeyError(f"unknown refusal kind: {kind!r}")
+        with self._lock:
+            self._counts[kind] += 1
+            first_trip = kind not in self._logged
+            if first_trip:
+                self._logged.add(kind)
+        if first_trip:
+            sys.stderr.write(
+                f"[serve-refusal] first {kind} refusal — instance shedding "
+                "load; see /v1/state.refusals for the running count\n"
+            )
+            sys.stderr.flush()
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._counts)
+
+
 @dataclass
 class SimulationState:
     legacy: Any
@@ -325,6 +376,13 @@ class SimulationState:
     # helper falls back to a stderr block, so background failures are visible
     # even without ``--structured-log``.
     request_logger: _ErrorSink | None = None
+    # DoS-bound refusal tally (A-075), shared with the bounded server so
+    # worker-cap / SSE-ceiling / rate-limit refusals surface on
+    # ``summary()``. Default-factory keeps direct SimulationState() constructions
+    # (tests) working; ``serve_main`` / ``start_test_server`` pass the same
+    # instance into ``_BoundedThreadingHTTPServer`` so both sides increment one
+    # counter.
+    refusals: RefusalCounters = field(default_factory=RefusalCounters)
     # Eval mode hides every ground-truth-bearing surface (the anomaly
     # manifest, the scenario catalog, the report-log rendering of the
     # manifest, and the debug console) so an agent under evaluation cannot
@@ -352,6 +410,7 @@ class SimulationState:
             "unsupported_group_count": self.traces.unsupported_fingerprint_count(),
             "otel": self.otel_status,
             "generation": self.generation.to_dict(),
+            "refusals": self.refusals.snapshot(),
             "mutations": self.mutations.summary(),
             "profiles": [
                 {
@@ -544,6 +603,7 @@ def run_command(
     command: str | None = None,
     argv: list[str] | tuple[str, ...] | None = None,
     client: str = "api",
+    request_id: str = "",
 ) -> dict[str, Any]:
     started = time.perf_counter()
     received = _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -577,6 +637,7 @@ def run_command(
         latency_ms=round(latency_ms, 3),
         fingerprint=fingerprint,
         guessed_intent=guess_intent(parsed),
+        request_id=request_id,
     )
     state.traces.record(trace)
     # The stored trace keeps the real active_scenarios: the walled
@@ -4078,6 +4139,7 @@ def record_kubernetes_api_call(
     client: str,
     user_agent: str,
     latency_ms: float,
+    request_id: str = "",
 ) -> None:
     trace_query = _redact_query(query)
     raw_input = method + " " + path
@@ -4111,6 +4173,7 @@ def record_kubernetes_api_call(
         latency_ms=round(latency_ms, 3),
         fingerprint=_api_fingerprint(method, path),
         guessed_intent=_api_guess_intent(path, response),
+        request_id=request_id,
     )
     state.traces.record(trace)
 

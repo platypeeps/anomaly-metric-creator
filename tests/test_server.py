@@ -3458,3 +3458,76 @@ def test_real_kubectl_binary_smoke_when_available(amc, tmp_path):
         assert "scheduler-backfill" in run_kubectl(["get", "jobs", "-n", "saas-prod"])
         assert "cacheservice-slice" in run_kubectl(["get", "endpointslices", "-n", "saas-prod"])
         assert "yes" in run_kubectl(["auth", "can-i", "get", "pods", "-n", "saas-prod"])
+
+
+def test_rate_limit_refusal_increments_state_refusal_counter(amc, tmp_path):
+    """A-075: a 429 rate-limit refusal is counted and surfaces on /v1/state.refusals."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    security = server.ServerSecurityConfig(rate_limit_per_minute=1)
+    with _running_test_server(state, security=security) as base_url:
+        # /v1/state is not a rate-limited bucket, so reading it never consumes
+        # the command budget.
+        before = _get_json(base_url + "/v1/state")["refusals"]
+        assert before == {"worker_cap": 0, "sse": 0, "rate_limit": 0}
+        command = urllib.request.Request(
+            base_url + "/v1/commands",
+            data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(command, timeout=5) as response:
+            assert response.status == 200
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(command, timeout=5)
+        assert excinfo.value.code == 429
+        excinfo.value.read()
+        after = _get_json(base_url + "/v1/state")["refusals"]
+    assert after == {"worker_cap": 0, "sse": 0, "rate_limit": 1}
+
+
+def test_sse_ceiling_refusal_increments_state_refusal_counter(amc, tmp_path):
+    """A-075: an SSE-ceiling 503 (app SSE stream) is counted on /v1/state.refusals."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    httpd, base_url = server.start_test_server(state)
+    # Force the SSE ceiling so the stream refuses before any event-stream headers.
+    httpd.try_acquire_sse = lambda: False
+    try:
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(base_url + "/v1/debug/events", timeout=5)
+        assert excinfo.value.code == 503
+        body = json.loads(excinfo.value.read().decode("utf-8"))
+        assert body["error"] == "SSE connection limit reached"
+        refusals = _get_json(base_url + "/v1/state")["refusals"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert refusals == {"worker_cap": 0, "sse": 1, "rate_limit": 0}
+
+
+def test_request_id_joins_structured_record_and_command_trace(amc, tmp_path):
+    """A-077: the per-request id is the join key between the structured request
+    record and the CommandTrace recorded while handling that same request."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    log_path = tmp_path / "server-requests.jsonl"
+    request_logger = server.StructuredRequestLogger(log_path)
+    with _running_test_server(state, request_logger=request_logger) as base_url:
+        command = urllib.request.Request(
+            base_url + "/v1/commands",
+            data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(command, timeout=5) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    trace_request_id = body["trace"]["request_id"]
+    # 12 hex chars from uuid4().hex[:12]; never blank on an HTTP-handled request.
+    assert trace_request_id and len(trace_request_id) == 12
+
+    records = _read_jsonl_records_until(log_path, 1)
+    request_records = [
+        record
+        for record in records
+        if record["event"] == "request" and record["path"] == "/v1/commands"
+    ]
+    assert request_records, records
+    assert request_records[0]["request_id"] == trace_request_id
