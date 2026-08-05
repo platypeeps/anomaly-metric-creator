@@ -265,6 +265,17 @@ _EVAL_PERSIST_WARNING = "eval mode has no --persist-command-db"
         # Eval mode with each persistence flag: no warning.
         (["--mcp-eval-mode", "--persist-command-db", "traces.sqlite"], False),
         (["--mcp-eval-mode", "--persist-command-log", "traces.jsonl"], False),
+        # Eval mode with both persistence flags at once: still no warning.
+        (
+            [
+                "--mcp-eval-mode",
+                "--persist-command-db",
+                "traces.sqlite",
+                "--persist-command-log",
+                "traces.jsonl",
+            ],
+            False,
+        ),
         # Non-eval mode without persistence: no warning (retrieval is open).
         ([], False),
     ],
