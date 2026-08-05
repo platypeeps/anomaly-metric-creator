@@ -411,3 +411,47 @@ Extracted CommandResult + _table/_is_dry_run/_unsupported/_exposed_active_scenar
 ### Next Steps
 
 - None - task complete
+
+
+## Session 58: Fix eval recipe trace-evidence loss (A-066)
+
+**Date**: 2026-08-04
+**Task**: Fix eval recipe trace-evidence loss (A-066)
+**Package**: amc
+**Branch**: `sdelmas/audit-eval-harness-trace-retrieval`
+
+### Summary
+
+serve_main now emits a wall-safe stderr warning when --mcp-eval-mode runs without --persist-command-db/--persist-command-log, since eval mode 404s the /v1/debug trace export and the in-memory ring dies with the process. README eval recipe + SECURITY.md document the persistence-based retrieval path (read offline via amc trace-bundle); ledger A-066 flipped to fixed. Copilot review: fixed a split README code span and named --persist-command-log as an equally sufficient remedy.
+
+### Main Changes
+
+- serve_main prints _EVAL_NO_PERSIST_WARNING to stderr when eval mode lacks command-trace persistence (module constant shared with the wiring test as single source of truth)
+- README eval recipe gains --persist-command-db + rationale; SECURITY.md documents the sanctioned harness-side retrieval path; both name --persist-command-log as an alternative
+- Audit ledger A-066 open -> fixed
+- Parametrized wiring test covers 5 flag combos (eval-only warns; eval+db, eval+log, eval+both, non-eval stay silent)
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `327e0e5` | fix(server): warn when eval mode runs without command-trace persistence (A-066) |
+| `db62edc` | test(serve): cover eval mode with both persistence flags set |
+| `e39deb1` | refactor(server): hoist eval-no-persistence warning to a module constant |
+| `9b3b215` | docs(server): fix split README code span, name both persistence flags in remedy |
+
+### Testing
+
+- [OK] pytest tests/test_serve_main_wiring.py -> 14 passed
+- [OK] full 'not heavy' suite -> 1707 passed, 2 skipped (pre-review)
+- [OK] ruff + mypy gate clean; CI Result green on head 9b3b215
+- [OK] Copilot review clean on final head (8/8 files, no new comments)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -70,7 +70,12 @@ identifiers from every investigation-open surface (ConfigMap data,
 `kubectl exec … env`, `helm get values`, the Helm release payload, pod
 `scenario_ids`, and the `/v1/commands` trace echo). Eval mode is a
 containment boundary for a *cooperative* evaluation harness, not a defense
-against an adversary with host access.
+against an adversary with host access. Because the `/v1/debug` command-trace
+export is one of those hidden surfaces, the sanctioned harness-side path to
+the agent's command history in eval mode is on-disk persistence
+(`--persist-command-db` / `--persist-command-log`), read offline with
+`amc trace-bundle`; without it the traces are unrecoverable after shutdown and
+`serve` prints a startup warning.
 
 ## Credential handling
 

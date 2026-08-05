@@ -22,7 +22,7 @@ evidence. Related-but-distinct from open task 07-06-eval-mode-symptom-log-artifa
 
 ## Acceptance criteria
 
-- [ ] README eval section carries the persist flag + rationale.
-- [ ] Optional: warning emitted for eval-mode-without-persistence.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] README eval section carries the persist flag + rationale.
+- [x] Optional: warning emitted for eval-mode-without-persistence.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).

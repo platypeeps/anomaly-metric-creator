@@ -713,7 +713,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: cheap windows-latest collect-only job.
 
 ## A-066 — Documented eval recipe loses the harness's trace evidence
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: consumer-impact
 - first-seen: 2026-07-17 @ b0df00b

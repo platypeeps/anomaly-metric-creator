@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 57
+- **Total Sessions**: 58
 - **Last Active**: 2026-08-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~410 | Active |
+| `journal-2.md` | ~454 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 58 | 2026-08-04 | Fix eval recipe trace-evidence loss (A-066) | `327e0e5`, `db62edc`, `e39deb1`, `9b3b215` | `sdelmas/audit-eval-harness-trace-retrieval` |
 | 57 | 2026-08-04 | Extract server_command_render leaf (epic 07-06 helm precursor) | `20c4ed2`, `2474c2b`, `dbbe6b6` | `sdelmas/server-command-render-extract` |
 | 56 | 2026-08-04 | Fix stale security, reviewer, and reference docs (A-026..A-069) | `886faeb` | `sdelmas/audit-doc-accuracy-sweep` |
 | 55 | 2026-08-04 | Extract server_ops_parse.py (epic 07-06 step 2) | `d607689`, `fc5bd3a`, `f2f606b` | `sdelmas/extract-server-ops-parse` |

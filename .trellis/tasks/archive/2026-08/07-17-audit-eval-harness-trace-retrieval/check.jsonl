@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/amc/backend/index.md", "reason": "Backend conventions to verify the serve_main warning and README recipe against, including the eval-mode ground-truth wall (operator stderr must stay agent-unreachable)."}
