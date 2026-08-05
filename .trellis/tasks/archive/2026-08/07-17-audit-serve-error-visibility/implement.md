@@ -21,14 +21,17 @@
 
 **PR B (counters + join key):**
 
-7. Refusal counters on the bounded server + limiter, surfaced in
-   `state.summary()`; first-trip stderr line; SSE-cap trip test asserts
-   the counter (A-075).
-8. Request id minted at dispatch entry; added to structured records and
-   CommandTrace payloads (payload-only, no SQLite schema change);
-   join-key test: one request produces matching ids in both sinks
-   (A-077).
-9. Flip A-075/A-077 → `fixed`; draft PR → checklist → merge.
+7. [x] `RefusalCounters` (server_ops.py) shared with `_BoundedThreadingHTTPServer`;
+   worker-cap `503`, both SSE `503`s (`_with_sse_slot` + watch), and rate-limit
+   `429` each `record()`; surfaced as `refusals` on `/v1/state`; one-per-kind
+   first-trip stderr line; rate-limit + SSE-cap trip tests assert the counter
+   (A-075).
+8. [x] `request_id` (`uuid4().hex[:12]`) minted in `handle_one_request`; added to
+   structured records (`base_record`) and threaded into `run_command` /
+   `record_kubernetes_api_call` / MCP `_record_mcp_trace` via payload-only
+   `CommandTrace.request_id` (rides `payload_json`, no SQLite column); join-key
+   test: one request → matching id in structured record and trace (A-077).
+9. [x] Flipped A-075/A-077 → `fixed` in ledger; draft PR → checklist → merge (ship).
 
 ## Validation Plan
 

@@ -22,6 +22,17 @@ authoritative history is the GitHub release notes and the git commit log; the
   the continuous-generation thread failed, instead of an unconditional
   `{"ready": true}`. Harness scripts gating on `/readyz` will now see the real
   not-ready condition. Generated artifact bytes and locked hashes are unchanged.
+- `amc serve` now makes load-shedding and cross-sink incident reconstruction
+  observable by default (audit A-075/A-077). DoS-bound refusals — the
+  worker-thread-cap `503`, the SSE-ceiling `503`s, and the rate-limit `429` —
+  are counted per kind and surfaced as `refusals` on `/v1/state`, with a
+  one-per-kind `[serve-refusal]` stderr line on first trip so saturation is
+  visible even without `--structured-log`. Every request also carries a
+  `request_id` (a `uuid4` prefix minted once per request) that lands in the
+  structured request/error records and on every `CommandTrace` (`request_id`,
+  a payload-only field — no SQLite schema change), so a request record and its
+  trace share a join key. No new flags; generated artifact bytes and locked
+  hashes are unchanged.
 - Internal: `amc serve` MCP/trace hot paths made flat instead of
   history-linear (audit A-039/A-040/A-041/A-042). The MCP window tools
   (`get_metric_histogram`, `group_metrics_by_field`, `get_correlated_timeline`)

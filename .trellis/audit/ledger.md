@@ -818,15 +818,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: reflect artifact presence + generation-thread health; 503 naming the dimension.
 
 ## A-075 — DoS-bound refusals (worker-cap 503, SSE 503, 429) counted nowhere
-- status: open
+- status: fixed
 - severity: P2 · effort: M · confidence: Plausible
 - dimension: observability
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-05 @ pending-pr
 - evidence:
-  - server.py:251-269 raw refusal before a handler exists; no counters in state.summary()
-- why: saturation is indistinguishable from network trouble; no sizing signal.
-- fix: refusal counters in summary() + first-trip log line per window.
+  - `RefusalCounters` (server_ops.py) is a thread-safe tally shared with `_BoundedThreadingHTTPServer`; the worker-cap 503 (`_refuse_saturated`), the app-SSE and watch-SSE 503s, and the rate-limit 429 (`_send_rate_limited`) each `record()` their kind. `SimulationState.summary()` surfaces `refusals` on `/v1/state`, and the first trip of each kind writes one `[serve-refusal]` stderr line (capped one-per-kind-per-process so a sustained attacker cannot amplify it). tests/test_server.py::test_rate_limit_refusal_increments_state_refusal_counter, ::test_sse_ceiling_refusal_increments_state_refusal_counter, tests/test_serve_main_wiring.py (refusals threaded into the bounded server).
+- why: fixed; saturation now has a running per-kind count on /v1/state plus a first-trip stderr signal even without --structured-log.
+- fix: refusal counters in summary() + first-trip log line (per-process-per-kind).
 
 ## A-076 — No boundary captures a stack trace; error records are type+message only
 - status: fixed
@@ -840,12 +840,12 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: traceback.format_exc() into the structured record + trace stderr; client bodies unchanged.
 
 ## A-077 — Structured request records carry no request/trace id join key
-- status: open
+- status: fixed
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: observability
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-05 @ pending-pr
 - evidence:
-  - server.py:1049-1064 — no id field; CommandTrace ids never written into request records
-- why: cross-sink incident reconstruction is timestamp guesswork.
+  - `handle_one_request` mints `uuid4().hex[:12]` once per request (the single shared dispatch entry). It lands in the structured request/error `base_record` (`request_id`) and threads into every CommandTrace recorded while handling the request — `run_command`, `record_kubernetes_api_call`, and the MCP `_record_mcp_trace` — via a new payload-only `CommandTrace.request_id` (in `to_dict`/`from_dict`, no SQLite column). tests/test_server.py::test_request_id_joins_structured_record_and_command_trace.
+- why: fixed; a structured request/error record and its CommandTrace now share a join key, so cross-sink incident reconstruction is exact, not timestamp guesswork.
 - fix: per-request id minted in handle_one_request, threaded into trace recording.

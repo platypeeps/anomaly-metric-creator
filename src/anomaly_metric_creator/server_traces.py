@@ -59,6 +59,16 @@ class CommandTrace:
     latency_ms: float
     fingerprint: str
     guessed_intent: str
+    # Per-request join key (A-077): the ``uuid4().hex[:12]`` the HTTP handler
+    # mints once per request, so a trace can be joined to the structured
+    # request/error record for the same request. Payload-only — carried in
+    # ``to_dict`` / ``from_dict`` (JSONL, export, live API), with no dedicated
+    # SQLite column, so there is no schema migration. It still survives a SQLite
+    # restart because the store persists the whole ``to_dict`` blob in
+    # ``payload_json`` and reloads via ``from_dict``. Defaulted so non-HTTP
+    # callers (tests, MCP) and any older payload without the key construct a
+    # trace unchanged.
+    request_id: str = ""
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "CommandTrace":
@@ -86,6 +96,7 @@ class CommandTrace:
             latency_ms=float(payload.get("latency_ms", 0.0)),
             fingerprint=payload.get("fingerprint", ""),
             guessed_intent=payload.get("guessed_intent", ""),
+            request_id=payload.get("request_id", ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,6 +124,7 @@ class CommandTrace:
             "latency_ms": self.latency_ms,
             "fingerprint": self.fingerprint,
             "guessed_intent": self.guessed_intent,
+            "request_id": self.request_id,
         }
 
 

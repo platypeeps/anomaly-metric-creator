@@ -88,6 +88,25 @@ the trust boundary and the remote-bind decision. Sources: `README.md`;
 `CLAUDE.md`; `SECURITY.md`; `src/anomaly_metric_creator/server.py`;
 `tests/test_server_hardening.py`; `tests/test_server.py`.
 
+Those DoS-bound refusals are counted so saturation is observable by default
+(A-075). `RefusalCounters` (server_ops.py) is a thread-safe tally shared with
+`_BoundedThreadingHTTPServer`: the worker-cap `503` (`_refuse_saturated`, which
+fires before any handler exists), both SSE-ceiling `503`s (the app streams via
+`_with_sse_slot` and the Kubernetes watch path), and the rate-limit `429`
+(`_send_rate_limited`) each `record()` their kind (`worker_cap` / `sse` /
+`rate_limit`). `SimulationState.summary()` surfaces the running counts as
+`refusals` on `/v1/state`, and the first trip of each kind writes one
+`[serve-refusal]` stderr line so saturation is visible even without
+`--structured-log`. The stderr line is capped one-per-kind-per-process on
+purpose: per-window re-logging under a sustained attack would make the refusal
+path its own stderr-amplification vector, so the first-trip line announces the
+condition and `/v1/state.refusals` carries the live count thereafter. The
+counter kinds are fixed strings with no scenario content, so `/v1/state` staying
+eval-hidden is a wall property of that endpoint, not of the counts. Sources:
+`CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`;
+`tests/test_serve_main_wiring.py`.
+
 `--cors-allow-origin` is the only CORS enablement path. Preflight requests are
 answered without bearer auth, and normal responses include access-control
 headers only for the configured origin or `*`. Sources: `README.md`;
@@ -100,6 +119,22 @@ Structured request logging is opt-in through `--structured-log` or
 exception rows, redacts query secrets, and records bearer auth only as
 present/absent. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+Every request carries a `request_id` join key (A-077): `handle_one_request`
+mints a `uuid4().hex[:12]` once per request at the single shared dispatch entry,
+so it covers `do_GET` / `do_POST` / the mutating methods. It lands in the
+structured request and error records (`base_record["request_id"]`) and threads
+into every `CommandTrace` recorded while handling the request — `run_command`,
+`record_kubernetes_api_call`, and the MCP `_record_mcp_trace` — via the
+payload-only `CommandTrace.request_id`. That field rides `to_dict` / `from_dict`
+(live API echo, JSONL, export) with no dedicated SQLite column, so no schema
+migration is needed; it still round-trips a SQLite restart because the store
+persists the whole `to_dict` blob in `payload_json` and reloads via `from_dict`.
+A structured request/error record and its trace therefore share one key, making
+cross-sink incident reconstruction exact rather than timestamp guesswork.
+Sources: `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_traces.py`;
+`src/anomaly_metric_creator/server_mcp.py`; `tests/test_server.py`.
 
 The error plane always has one operator sink, independent of the opt-in access
 log. `_record_server_error` / `_emit_error_record` write an error record — type,
