@@ -189,7 +189,13 @@ dataclasses, `_impact` / `_profile` builders, and `validate_ops_profiles`);
 `_parse_kubectl` / `_parse_helm` family sub-parsers, and the
 `command_fingerprint` / `guess_intent` / `_redact_*` fingerprint/redaction
 helpers), each re-imported by `server_ops.py` at the original block position
-(one-way import, no reverse dependency); `server_traces.py` for
+(one-way import, no reverse dependency); `server_command_render.py` for the
+`CommandResult` return dataclass and the general render/command primitives
+`_table` / `_is_dry_run` / `_unsupported` / `_exposed_active_scenarios` shared by
+the command renderers and the future `server_helm_impl` leaf (a pure sibling
+leaf importing only `ParsedCommand` from `server_ops_parse` and re-exporting the
+byte-identical `_format_dt` from `server_mutations`, with `SimulationState` under
+a `TYPE_CHECKING` guard); `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
 `server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP
@@ -206,6 +212,7 @@ Sources:
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
 `src/anomaly_metric_creator/server_ops_parse.py`;
+`src/anomaly_metric_creator/server_command_render.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`;

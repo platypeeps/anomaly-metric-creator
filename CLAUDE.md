@@ -288,9 +288,21 @@ their `_split_resource_token` / `_normalize_kind` / `_split_explain_target` /
 `guess_intent` / `_redact_command_for_trace` / `_redact_argv` /
 `_redact_parsed_flags` / `_is_sensitive_flag_name` fingerprint/redaction
 helpers. It imports only stdlib plus `DEFAULT_NAMESPACE` from
-`server_mutations`; the staying `render_command` renderers, `_is_dry_run`,
+`server_mutations`; the staying `render_command` renderers,
 `_preview`, and the `_SENSITIVE_QUERY_KEYS` / snapshot-kind constants keep
 their `server_ops` homes and read the re-imported parse names.
+`server_command_render.py` is the pure leaf (stdlib + `ParsedCommand` from
+`server_ops_parse` + a `_format_dt` re-export from `server_mutations`) holding
+the `CommandResult` return dataclass and the general render/command primitives
+`_table`, `_is_dry_run`, `_unsupported`, and `_exposed_active_scenarios` that
+the command renderers and the future `server_helm_impl` leaf share.
+`_format_dt` is not redefined here — its byte-identical `server_mutations` copy
+is the single source, re-exported by both this leaf and `server_ops` (the
+former duplicate `server_ops` body was deleted). `SimulationState` is used only
+in the `_exposed_active_scenarios` annotation, guarded by the same runtime-inert
+`if TYPE_CHECKING: from .server_ops import SimulationState`. `_is_dry_run` is
+not in `server_ops.__all__` (intra-module only); the other four names plus
+`_format_dt` stay in `server_ops.__all__`, bound by the re-import stub.
 `server_ops_support.py` is the pure lower leaf (stdlib +
 `server_mutations.DEFAULT_NAMESPACE` only) holding the shared ops-support
 surface both `server_ops` and the two k8s leaves consume downward: the
@@ -311,8 +323,11 @@ cell builders (plus the `_k8s_default_cells` fallback); it imports
 `if TYPE_CHECKING: from .server_ops import SimulationState` so mypy resolves the
 name without a reverse runtime import. The DAG is
 `server_mutations → server_ops_support → server_k8s_objects → server_k8s_tables`,
-with `server_ops` re-importing every moved name (the allowed direction).
-`server_k8s_objects.py`, `server_ops_support.py`, and `server_k8s_tables.py`
+with `server_command_render` a sibling leaf below `server_ops` importing only
+`server_ops_parse` (`ParsedCommand`) and `server_mutations` (`_format_dt`), and
+`server_ops` re-importing every moved name (the allowed direction).
+`server_k8s_objects.py`, `server_ops_support.py`, `server_command_render.py`,
+and `server_k8s_tables.py`
 are all in the mypy clean-module gate; `server_k8s_tables.py`'s single
 verbatim-moved `var-annotate` gap (`_k8s_node_cells`'s `ready` from the
 `next(..., {})` fallback) was closed with an explicit `dict[str, Any]`

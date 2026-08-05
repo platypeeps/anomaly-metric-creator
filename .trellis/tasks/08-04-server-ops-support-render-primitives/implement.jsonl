@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/08-04-server-ops-support-render-primitives/research/precursor-closure-audit.md", "reason": "Verified move-set line ranges, per-symbol one-way closure, and the new-leaf recommendation the design/implement plan executes."}
+{"file": ".trellis/spec/amc/backend/architecture.md", "reason": "Server module map + one-way leaf DAG the new server_command_render leaf must slot into."}
