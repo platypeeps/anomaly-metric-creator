@@ -134,9 +134,18 @@ def _window_boundary_strings(from_ms: int, to_ms: int) -> tuple[str, str]:
     the gate only avoids parsing rows that would have been discarded
     anyway.
     """
-    lo_dt = _EPOCH_UTC + _dt.timedelta(milliseconds=from_ms)
     ceil_ms = -(-to_ms // 1000) * 1000  # smallest whole second >= to_ms
-    hi_dt = _EPOCH_UTC + _dt.timedelta(milliseconds=ceil_ms)
+    try:
+        lo_dt = _EPOCH_UTC + _dt.timedelta(milliseconds=from_ms)
+        hi_dt = _EPOCH_UTC + _dt.timedelta(milliseconds=ceil_ms)
+    except OverflowError:
+        # An extreme (but type-valid) epoch-ms window overflows datetime /
+        # timedelta arithmetic. That is an invalid argument, not an internal
+        # tool bug, so surface it as a validated McpToolError (INVALID_PARAMS)
+        # rather than letting the OverflowError read as INTERNAL_ERROR.
+        raise McpToolError(
+            "'from_ms'/'to_ms' are outside the representable time range"
+        ) from None
     fmt = "%Y-%m-%d %H:%M:%S"
     return lo_dt.strftime(fmt), hi_dt.strftime(fmt)
 

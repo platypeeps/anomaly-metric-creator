@@ -234,14 +234,19 @@ class CommandTraceStore:
         failed statement never strands a half-open transaction on the
         shared connection.
         """
-        if self._conn is None:
-            raise RuntimeError("sqlite persistence is not configured")
         with self._sqlite_lock:
+            # Check and bind under the lock: a concurrent close() also holds
+            # _sqlite_lock while nulling _conn, so reading it outside the lock
+            # could yield None (or a just-closed connection) if close() lands
+            # in the gap. Bind a local so commit/rollback cannot hit None.
+            conn = self._conn
+            if conn is None:
+                raise RuntimeError("sqlite persistence is not configured")
             try:
-                yield self._conn
-                self._conn.commit()
+                yield conn
+                conn.commit()
             except Exception:
-                self._conn.rollback()
+                conn.rollback()
                 raise
 
     def list(self, limit: int | None = None) -> list[dict[str, Any]]:

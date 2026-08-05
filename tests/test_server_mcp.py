@@ -246,6 +246,25 @@ def test_get_metric_histogram_argument_validation(mcp_state):
         assert needle in result["content"][0]["text"]
 
 
+def test_window_tools_extreme_epoch_ms_is_validated_not_internal_error(mcp_state):
+    # An extreme (but type-valid) epoch-ms window overflows the datetime /
+    # timedelta arithmetic the A-039 lexicographic gate introduced. It must
+    # degrade to a validated argument error (McpToolError -> INVALID_PARAMS),
+    # not an unhandled OverflowError read as an internal tool bug.
+    extreme = 10**25  # far beyond timedelta's representable range
+    for tool, extra in [
+        ("get_metric_histogram",
+         {"component": "apigateway", "metric": "requests_per_sec"}),
+        ("group_metrics_by_field", {"field": "component"}),
+        ("get_correlated_timeline", {}),
+    ]:
+        result = _call_tool(mcp_state, tool, {
+            **extra, "from_ms": extreme, "to_ms": extreme + 86_400_000,
+        })
+        assert result["isError"] is True, tool
+        assert "representable" in result["content"][0]["text"], tool
+
+
 # ------------------------------------------------------------------
 # A-039: window pre-filter (lexicographic string gate + layout-gated break)
 #

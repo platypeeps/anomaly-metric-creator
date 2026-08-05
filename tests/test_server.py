@@ -1593,6 +1593,20 @@ def test_command_trace_sqlite_import_serializes_replace_with_sqlite_lock(tmp_pat
     assert all(observed)
 
 
+def test_command_trace_sqlite_use_after_close_raises_runtime_error(tmp_path):
+    # ``_locked_conn`` re-reads ``self._conn`` inside ``_sqlite_lock`` and
+    # raises a clear RuntimeError when persistence has been torn down. After
+    # ``close()`` a sqlite-backed operation must degrade to that RuntimeError,
+    # never an AttributeError from ``None.execute`` (the race the review flagged
+    # when the None-check sat outside the lock).
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.close()
+
+    with pytest.raises(RuntimeError, match="sqlite persistence is not configured"):
+        store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+
 def _summary_trace(tid, ts, *, fingerprint, support_status, guessed_intent):
     return server.CommandTrace(
         id=tid,
