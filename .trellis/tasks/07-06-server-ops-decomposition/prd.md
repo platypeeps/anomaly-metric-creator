@@ -88,6 +88,12 @@ explicitly not a split.
 - `08-04-server-k8s-tables-mypy-gate` — follow-up to the step-4 task: annotate
   the one verbatim-moved `var-annotate` gap in `server_k8s_tables.py` and add
   the module to the mypy clean-module gate.
+- `08-04-server-ops-support-render-primitives` — step-3 precursor: extract
+  `CommandResult` and the general render/command primitives
+  (`_table`/`_is_dry_run`/`_unsupported`/`_exposed_active_scenarios`) into the
+  new pure leaf `server_command_render.py` and dedupe `_format_dt` onto
+  `server_mutations`, so the later helm extraction imports them one-way without
+  an epic resequence.
 
 ## Notes
 

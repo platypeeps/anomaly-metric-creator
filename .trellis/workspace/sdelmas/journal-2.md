@@ -369,3 +369,45 @@ Doc-accuracy sweep: corrected SECURITY.md redaction posture, removed 5 phantom C
 ### Next Steps
 
 - None - task complete
+
+
+## Session 57: Extract server_command_render leaf (epic 07-06 helm precursor)
+
+**Date**: 2026-08-04
+**Task**: Extract server_command_render leaf (epic 07-06 helm precursor)
+**Package**: amc
+**Branch**: `sdelmas/server-command-render-extract`
+
+### Summary
+
+Extracted CommandResult + _table/_is_dry_run/_unsupported/_exposed_active_scenarios verbatim out of server_ops.py into new pure leaf server_command_render.py, deduped _format_dt onto server_mutations, and closed the last render-primitive coupling blocking the parked server_helm_impl step-3 extraction. Verbatim move, one-way runtime import (SimulationState TYPE_CHECKING-only), render-oracle byte-identical over a 14-command corpus in normal + eval modes. PR #331.
+
+### Main Changes
+
+- New pure leaf server_command_render.py (90 lines): CommandResult dataclass + render/command primitives; server_ops re-imports every name at the CommandResult block position
+- _format_dt deduped: leaf and server_ops both re-export the byte-identical server_mutations copy; duplicate server_ops body deleted (single source of truth)
+- server_ops.py 5,590 to 5,540 lines; leaf added to mypy clean gate (29 modules); CLAUDE.md + architecture.md DAG updated; epic 07-06 implement.md step-3-precursor status recorded
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `20c4ed2` | refactor(server): extract CommandResult + render primitives to server_command_render leaf |
+| `2474c2b` | docs(task): record server_command_render precursor step status in epic 07-06 implement.md |
+| `dbbe6b6` | chore(task): record branch for 08-04-server-ops-support-render-primitives |
+
+### Testing
+
+- [OK] render-oracle before/after byte-identical (cmp) over 14-command corpus, normal + --mcp-eval-mode
+- [OK] one-way runtime import grep: sole from .server_ops is TYPE_CHECKING-guarded SimulationState
+- [OK] server_ops.CommandResult is server_command_render.CommandResult identity holds; server + server_mcp import clean
+- [OK] mypy clean gate exit 0 (29 modules); full suite 1746 passed / 2 skipped
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -153,13 +153,14 @@ from .server_ops_parse import (
 )
 
 
-@dataclass(frozen=True)
-class CommandResult:
-    exit_code: int
-    stdout: str
-    stderr: str
-    support_status: str
-    matched_rule_id: str
+from .server_command_render import (
+    CommandResult as CommandResult,
+    _exposed_active_scenarios as _exposed_active_scenarios,
+    _is_dry_run as _is_dry_run,
+    _table as _table,
+    _unsupported as _unsupported,
+)
+from .server_mutations import _format_dt as _format_dt
 
 
 @dataclass(frozen=True)
@@ -488,15 +489,6 @@ def run_command(
     }
 
 
-def _is_dry_run(parsed: ParsedCommand) -> bool:
-    raw = parsed.flags.get("--dry-run")
-    if raw is None:
-        return False
-    if raw is True:
-        return True
-    return str(raw).strip().lower() not in {"", "false", "none", "0"}
-
-
 def render_command(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
     if parsed.parse_error:
         return CommandResult(2, "", parsed.parse_error + "\n", "unsupported", "parse.error")
@@ -681,16 +673,6 @@ def _render_helm(state: SimulationState, parsed: ParsedCommand) -> CommandResult
             "helm.uninstall",
         )
     return _unsupported(parsed, f"helm {parsed.verb or '<missing-verb>'}")
-
-
-def _unsupported(parsed: ParsedCommand, label: str) -> CommandResult:
-    return CommandResult(
-        1,
-        "",
-        f"{label} is not implemented by the simulator yet\n",
-        "unsupported",
-        "unsupported",
-    )
 
 
 def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]:
@@ -3376,23 +3358,6 @@ def _component_scenarios(state: SimulationState, component: str) -> list[str]:
     return matches
 
 
-def _exposed_active_scenarios(state: SimulationState) -> tuple[str, ...]:
-    """Active scenario slugs for investigation-open ops surfaces.
-
-    Empty in eval mode (`amc serve --mcp-eval-mode`). The active scenarios
-    are the eval harness's scoring rubric, so no ops surface reachable by
-    the agent under evaluation — ConfigMap data, ``kubectl exec ... env``,
-    ``helm get values``, the Helm release payload, or pod ``scenario_ids``
-    — may name them. The value collapses to empty rather than a marker
-    string so eval output is indistinguishable from a legitimate
-    zero-scenario run (fingerprint-resistant). Behavioral signals
-    (unhealthy pods, events, ``ScenarioInfluenced`` status) are
-    deliberately unaffected: the agent must still observe the *symptoms*,
-    just not the labels.
-    """
-    return () if state.eval_mode else state.active_scenarios
-
-
 def _exposed_component_scenarios(state: SimulationState, component: str) -> list[str]:
     """Per-component scenario slugs for pod snapshot rows; empty in eval
     mode. See :func:`_exposed_active_scenarios` for the rationale. The
@@ -3568,26 +3533,11 @@ def _find_named(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     return None
 
 
-def _table(headers: list[str], rows: list[list[str]]) -> str:
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(str(cell)))
-    lines = ["  ".join(header.ljust(widths[i]) for i, header in enumerate(headers))]
-    for row in rows:
-        lines.append("  ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row)))
-    return "\n".join(lines) + "\n"
-
-
 def _preview(value: str, limit: int = 240) -> str:
     value = value.strip()
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
-
-
-def _format_dt(value: _dt.datetime) -> str:
-    return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class RequestBodyTooLarge(ValueError):

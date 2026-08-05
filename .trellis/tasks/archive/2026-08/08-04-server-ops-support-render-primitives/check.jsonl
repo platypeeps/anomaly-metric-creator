@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/08-04-server-ops-support-render-primitives/research/precursor-closure-audit.md", "reason": "One-way closure, __all__ membership, and byte-identity expectations the check verifies against server_ops.py + server_command_render.py."}
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Pre-PR checklist gates (doc sync, single-source-of-truth, mypy/coverage) this extraction PR must clear."}

@@ -31,6 +31,7 @@ CLEAN_MODULES: tuple[str, ...] = (
     "src/anomaly_metric_creator/scenarios.py",
     "src/anomaly_metric_creator/scenarios_impl.py",
     "src/anomaly_metric_creator/schema.py",
+    "src/anomaly_metric_creator/server_command_render.py",
     "src/anomaly_metric_creator/server_commands.py",
     "src/anomaly_metric_creator/server_debug_ui.py",
     "src/anomaly_metric_creator/server_helm.py",
