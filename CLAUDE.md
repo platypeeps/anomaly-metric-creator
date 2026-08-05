@@ -628,9 +628,24 @@ backlog. Mutations are checked against the overlay-aware
 a resource the snapshot does not contain returns a 404 `Status` and leaves
 the overlay untouched (a refused mutation must never leave partial state —
 the deployment-scale path once wrote `set_workload` before its own 404
-check). The generic 500 boundary in `server.py` returns
-`{"error": "internal server error"}`; exception detail goes only to the
-structured error log, never the response body.
+check). The generic 500 boundaries in `server.py` (`do_GET`, `do_POST`, and —
+after task `07-17-audit-serve-error-visibility` — `_handle_mutating_method`
+for PUT/PATCH/DELETE, Status-shaped for API paths) return
+`{"error": "internal server error"}` (or a Kubernetes `Status`); exception
+detail never reaches the response body. Detail goes to one operator error
+sink via `_record_server_error` / `_emit_error_record` (in `server_ops.py`,
+re-imported by `server.py`): the type, message, and a capped (~30-line)
+`traceback.format_exc()` tail land in the structured error log when
+`--structured-log` is configured, otherwise in a stderr block — so a
+default-flags 500 is never silent. The same helper carries the traceback tail
+for the MCP internal-error path and the background continuous-generation /
+OTEL failure arms (which read the sink off `state.request_logger`); request
+(access) logging stays opt-in, only the error arm is always-on. The traceback
+is operator-side and stays outside the eval-mode ground-truth wall. `/readyz`
+is a real two-dimension check (`_readyz_check`): `503 {"ready": false,
+"reason": "artifacts"|"generation"}` when a declared-emit artifact is missing
+or the continuous-generation thread failed, naming only the dimension (never
+scenario content).
 `tests/test_server_ops_fuzz.py` is the seeded malformed-input corpus
 (commands, argv shapes, API paths, mutation bodies) that pins the
 graceful-degradation contract.

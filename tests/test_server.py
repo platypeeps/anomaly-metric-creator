@@ -2386,6 +2386,154 @@ def test_post_unexpected_exception_returns_server_error(amc, tmp_path, monkeypat
         assert "boom" not in json.dumps(body)
 
 
+def test_record_server_error_stderr_fallback(capsys):
+    # A-071/A-076: with no structured logger, the error detail (including a
+    # traceback tail) still reaches stderr so a default-flags failure is not
+    # silent.
+    try:
+        raise RuntimeError("boom-detail")
+    except RuntimeError as exc:
+        server._record_server_error(None, where="unit-test", exc=exc, path="/x")
+    err = capsys.readouterr().err
+    assert "[serve-error] unit-test: RuntimeError: boom-detail" in err
+    assert "  path: /x" in err
+    assert "Traceback (most recent call last):" in err
+    assert "boom-detail" in err
+
+
+def test_record_server_error_uses_logger_when_present(capsys):
+    records = []
+
+    class _Logger:
+        def log_error(self, record):
+            records.append(record)
+
+    try:
+        raise ValueError("logged-detail")
+    except ValueError as exc:
+        server._record_server_error(_Logger(), where="unit-test", exc=exc)
+    # Structured sink used; nothing on stderr.
+    assert capsys.readouterr().err == ""
+    assert len(records) == 1
+    record = records[0]
+    assert record["where"] == "unit-test"
+    assert record["error_type"] == "ValueError"
+    assert record["message"] == "logged-detail"
+    assert "Traceback (most recent call last):" in record["traceback"]
+
+
+def test_get_500_writes_stderr_block_without_logger(amc, tmp_path, monkeypatch, capsys):
+    # A-071: forced 500 with default flags (request_logger None) leaves its
+    # detail in the stderr sink; the client body stays generic.
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    with _running_test_server(state) as base_url:
+        def fail_command(*args, **kwargs):
+            raise RuntimeError("stderr-boom")
+
+        monkeypatch.setattr(server, "run_command", fail_command)
+        request = urllib.request.Request(
+            base_url + "/v1/commands",
+            data=json.dumps({"command": "kubectl get pods -n saas-prod"}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(request, timeout=5)
+        assert excinfo.value.code == 500
+        body = json.loads(excinfo.value.read().decode("utf-8"))
+        assert body["error"] == "internal server error"
+    err = capsys.readouterr().err
+    assert "[serve-error] request: RuntimeError: stderr-boom" in err
+    assert "Traceback (most recent call last):" in err
+
+
+def test_patch_kubernetes_api_unexpected_exception_returns_status_500(
+    amc, tmp_path, monkeypatch
+):
+    # A-073: a raising mutating handler yields a Kubernetes Status 500, not a
+    # dropped connection, and the failure is recorded.
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    with _running_test_server(state) as base_url:
+        def boom(*args, **kwargs):
+            raise RuntimeError("patch-boom")
+
+        monkeypatch.setattr(server, "kubernetes_api_mutating_response", boom)
+        request = urllib.request.Request(
+            base_url + "/apis/apps/v1/namespaces/saas-prod/deployments/apigateway/scale",
+            data=json.dumps({"spec": {"replicas": 5}}).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="PATCH",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(request, timeout=5)
+        assert excinfo.value.code == 500
+        body = json.loads(excinfo.value.read().decode("utf-8"))
+        assert body["kind"] == "Status"
+        assert body["code"] == 500
+        assert "patch-boom" not in json.dumps(body)
+
+
+def test_readyz_check_artifacts_missing(amc, tmp_path):
+    # A-074: an empty output dir (nothing generated) is not ready.
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    ready, reason = server._readyz_check(state)
+    assert ready is False
+    assert reason == "artifacts"
+
+
+def test_readyz_check_healthy_when_declared_files_present(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    expected = state.legacy._collect_emitted_filenames(
+        emit_selection=state.args.emit_selection,
+        components=state.components,
+        combine=bool(getattr(state.args, "combine", False)),
+    )
+    assert expected  # the run declares at least one artifact
+    for filename in expected:
+        (tmp_path / filename).write_text("x")
+    ready, reason = server._readyz_check(state)
+    assert ready is True
+    assert reason == ""
+
+
+def test_readyz_check_failed_generation_thread(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    expected = state.legacy._collect_emitted_filenames(
+        emit_selection=state.args.emit_selection,
+        components=state.components,
+        combine=bool(getattr(state.args, "combine", False)),
+    )
+    for filename in expected:
+        (tmp_path / filename).write_text("x")
+    state.generation.thread = "failed"
+    ready, reason = server._readyz_check(state)
+    assert ready is False
+    assert reason == "generation"
+
+
+def test_readyz_http_503_names_dimension_on_empty_dir(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    with _running_test_server(state) as base_url:
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(base_url + "/readyz", timeout=5)
+        assert excinfo.value.code == 503
+        body = json.loads(excinfo.value.read().decode("utf-8"))
+        assert body == {"ready": False, "reason": "artifacts"}
+
+
+def test_readyz_http_200_when_ready(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    expected = state.legacy._collect_emitted_filenames(
+        emit_selection=state.args.emit_selection,
+        components=state.components,
+        combine=bool(getattr(state.args, "combine", False)),
+    )
+    for filename in expected:
+        (tmp_path / filename).write_text("x")
+    with _running_test_server(state) as base_url:
+        assert _get_json(base_url + "/readyz") == {"ready": True}
+
+
 def test_mutating_kubernetes_api_updates_simulated_state(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     with _running_test_server(state) as base_url:
@@ -2914,7 +3062,9 @@ def test_continuous_generation_records_system_exit(amc, tmp_path, monkeypatch):
     assert state.generation.thread == "failed"
     assert state.generation.generation_count == 0
     assert state.generation.last_seed == int(state.args.seed) + 1
-    assert state.generation.last_error == "bad generated args"
+    # A-072: SystemExit is summarized with its code, not just str(exc), so a
+    # bare-code exit ("2") is no longer an opaque last_error.
+    assert state.generation.last_error == "SystemExit(code='bad generated args')"
 
 
 def test_continuous_generation_marks_otel_disabled_without_streaming(amc, tmp_path, monkeypatch):

@@ -356,6 +356,9 @@ _render_apply = _server_ops._render_apply
 _resource_from_manifest_name = _server_ops._resource_from_manifest_name
 _mutation_snapshot_kind = _server_ops._mutation_snapshot_kind
 _record_continuous_generation_failure = _server_ops._record_continuous_generation_failure
+_record_server_error = _server_ops._record_server_error
+_capture_traceback_tail = _server_ops._capture_traceback_tail
+_emit_error_record = _server_ops._emit_error_record
 _generic_resource_row = _server_ops._generic_resource_row
 _generic_resource_metadata = _server_ops._generic_resource_metadata
 _string_dict = _server_ops._string_dict
@@ -559,7 +562,15 @@ def make_handler(
                     self._send_text(200, "ok\n")
                     return
                 if path == "/readyz":
-                    self._send_json(200, {"ready": True})
+                    ready, reason = _readyz_check(state)
+                    if ready:
+                        self._send_json(200, {"ready": True})
+                    else:
+                        # 503 + failing dimension: the previous unconditional
+                        # {"ready": true} masked a --no-generate empty dir and a
+                        # failed regen thread. Harness scripts gating on /readyz
+                        # now see the real not-ready condition.
+                        self._send_json(503, {"ready": False, "reason": reason})
                     return
                 if state.eval_mode and _rubric_endpoint(path):
                     # Hidden before auth and before the debug-shell branch:
@@ -781,55 +792,77 @@ def make_handler(
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             query = urllib.parse.parse_qs(parsed.query)
-            if state.eval_mode and _rubric_endpoint(path):
-                # Same fingerprint-resistant ordering as do_GET/do_POST: a
-                # PUT/PATCH/DELETE to a hidden endpoint 404s before auth, so a
-                # rubric path is indistinguishable from a nonexistent one.
-                self._send_json(404, {"error": "not found"})
-                return
-            if not self._is_authorized():
-                self._send_unauthorized(path)
-                return
-            if self._send_rate_limited(path):
-                return
-            if _is_kubernetes_api_path(path):
-                api_started = time.perf_counter()
-                try:
-                    payload = (
-                        _read_json_body(self, security.max_body_bytes)
-                        if method in {"PUT", "PATCH"} else {}
+            try:
+                if state.eval_mode and _rubric_endpoint(path):
+                    # Same fingerprint-resistant ordering as do_GET/do_POST: a
+                    # PUT/PATCH/DELETE to a hidden endpoint 404s before auth, so
+                    # a rubric path is indistinguishable from a nonexistent one.
+                    self._send_json(404, {"error": "not found"})
+                    return
+                if not self._is_authorized():
+                    self._send_unauthorized(path)
+                    return
+                if self._send_rate_limited(path):
+                    return
+                if _is_kubernetes_api_path(path):
+                    api_started = time.perf_counter()
+                    try:
+                        payload = (
+                            _read_json_body(self, security.max_body_bytes)
+                            if method in {"PUT", "PATCH"} else {}
+                        )
+                    except RequestBodyTooLarge as exc:
+                        api_response = _k8s_status_response(
+                            413,
+                            str(exc),
+                            "RequestEntityTooLarge",
+                            "unsupported",
+                            "k8s.body.too_large",
+                        )
+                    except ValueError as exc:
+                        api_response = _k8s_status_response(
+                            400,
+                            str(exc),
+                            "BadRequest",
+                            "unsupported",
+                            "k8s.body.invalid",
+                        )
+                    else:
+                        api_response = kubernetes_api_mutating_response(state, method, path, payload)
+                    record_kubernetes_api_call(
+                        state,
+                        method=method,
+                        path=path,
+                        query=query,
+                        response=api_response,
+                        client=self.client_address[0],
+                        user_agent=self.headers.get("user-agent", ""),
+                        latency_ms=(time.perf_counter() - api_started) * 1000.0,
                     )
-                except RequestBodyTooLarge as exc:
-                    api_response = _k8s_status_response(
-                        413,
-                        str(exc),
-                        "RequestEntityTooLarge",
-                        "unsupported",
-                        "k8s.body.too_large",
-                    )
-                except ValueError as exc:
-                    api_response = _k8s_status_response(
-                        400,
-                        str(exc),
-                        "BadRequest",
-                        "unsupported",
-                        "k8s.body.invalid",
+                    self._send_kubernetes_api_response(api_response)
+                    return
+                self._send_json(405, {"error": f"{method} is not supported"})
+            except Exception as exc:
+                # PUT/PATCH/DELETE previously had no catch-all: a raising
+                # handler reset the connection with no record. Mirror the
+                # do_GET/do_POST boundary — Status-shaped 500 for Kubernetes API
+                # paths, JSON 500 for app paths — and remember the error so the
+                # request finalizer routes its detail (with traceback) to the
+                # operator sink. Client bodies stay generic (detail never in the
+                # body, per the SECURITY.md contract).
+                self._remember_structured_error(exc)
+                if _is_kubernetes_api_path(path):
+                    self._send_kubernetes_api_response(
+                        _k8s_status_response(
+                            500,
+                            "internal server error",
+                            "InternalError",
+                            "unsupported",
+                            "k8s.internal_error",
+                        )
                     )
                 else:
-                    api_response = kubernetes_api_mutating_response(state, method, path, payload)
-                record_kubernetes_api_call(
-                    state,
-                    method=method,
-                    path=path,
-                    query=query,
-                    response=api_response,
-                    client=self.client_address[0],
-                    user_agent=self.headers.get("user-agent", ""),
-                    latency_ms=(time.perf_counter() - api_started) * 1000.0,
-                )
-                self._send_kubernetes_api_response(api_response)
-                return
-            self._send_json(405, {"error": f"{method} is not supported"})
+                    self._send_json(500, {"error": "internal server error"})
 
         def _is_authorized(self) -> bool:
             if not security.auth_token:
@@ -1058,13 +1091,24 @@ def make_handler(
             return True
 
         def _remember_structured_error(self, exc: BaseException) -> None:
+            # Capture the traceback tail now, while the exception is still being
+            # handled (called from the do_GET/do_POST except blocks). Deferring
+            # to _write_structured_logs would lose it: format_exc() reads the
+            # active exception, which is cleared once the except block exits.
             self._structured_error = {
                 "error_type": type(exc).__name__,
                 "message": str(exc),
+                "traceback": _capture_traceback_tail(),
             }
 
         def _write_structured_logs(self) -> None:
-            if request_logger is None:
+            # Request (access) logging stays opt-in via --structured-log — an
+            # access log by default is documented non-goal. But the error arm
+            # must always reach a sink: when an error was remembered, emit it
+            # through _emit_error_record, which writes the structured record when
+            # a logger exists and a stderr block when it does not, so a
+            # default-flags 500 is never silent.
+            if request_logger is None and self._structured_error is None:
                 return
             raw_path = getattr(self, "path", "")
             parsed = urllib.parse.urlparse(raw_path)
@@ -1092,9 +1136,13 @@ def make_handler(
                 "duration_ms": duration_ms,
                 "response_bytes": int(getattr(self, "_response_bytes", 0) or 0),
             }
-            request_logger.log_request(base_record)
+            if request_logger is not None:
+                request_logger.log_request(base_record)
             if self._structured_error is not None:
-                request_logger.log_error({**base_record, **self._structured_error})
+                _emit_error_record(
+                    request_logger,
+                    {"where": "request", **base_record, **self._structured_error},
+                )
 
         def _flush_event_stream(self) -> bool:
             try:
@@ -1738,6 +1786,14 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         persist_command_retention=serve_args.persist_command_retention,
         eval_mode=serve_args.mcp_eval_mode,
     )
+    # Build the structured-log sink before the background threads start and
+    # attach it to the state, so a continuous-generation / OTEL failure in the
+    # first interval routes through _record_server_error to the configured
+    # logger rather than only stderr. None is the default (stderr fallback).
+    request_logger = None
+    if serve_args.structured_log or serve_args.structured_log_file is not None:
+        request_logger = StructuredRequestLogger(serve_args.structured_log_file)
+    state.request_logger = request_logger
     generation_stop = _start_continuous_generation(
         state,
         generate_argv,
@@ -1758,9 +1814,6 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         max_sse_connections=serve_args.max_sse_connections,
         socket_timeout_seconds=serve_args.socket_timeout_seconds,
     )
-    request_logger = None
-    if serve_args.structured_log or serve_args.structured_log_file is not None:
-        request_logger = StructuredRequestLogger(serve_args.structured_log_file)
     httpd = _BoundedThreadingHTTPServer(
         (serve_args.host, serve_args.port),
         make_handler(state, security=security, request_logger=request_logger),
@@ -1816,6 +1869,38 @@ def _generation_argv_without_otel(generate_argv: list[str]) -> list[str]:
     # this override prevents legacy main() from streaming and blocking server
     # startup or the continuous generation loop.
     return [*generate_argv, "--otel-send", "none"]
+
+
+def _readyz_check(state: SimulationState) -> tuple[bool, str]:
+    """Two-dimension readiness for /readyz.
+
+    Returns ``(ready, reason)``. ``reason`` names the failing dimension only —
+    ``"artifacts"`` or ``"generation"`` — never scenario content, so the
+    endpoint stays eval-wall-safe (it is auth-exempt and eval-open by design).
+
+    - artifacts: every filename the run *declared* it would emit (derived from
+      the same ``_collect_emitted_filenames`` registry the pre-clean and schema
+      views use, keyed off the run's emit selection — not a hardcoded list) is
+      present on disk. A ``--no-generate`` run over an empty dir fails here.
+    - generation: the continuous-generation worker's last pass did not fail. A
+      ``disabled`` thread (no continuous generation) is healthy.
+    """
+    try:
+        expected = state.legacy._collect_emitted_filenames(
+            emit_selection=getattr(state.args, "emit_selection", ()),
+            components=state.components,
+            combine=bool(getattr(state.args, "combine", False)),
+        )
+    except Exception:
+        # A registry lookup failure is itself an unready signal rather than a
+        # 500 on the health probe.
+        return False, "artifacts"
+    for filename in expected:
+        if not (state.output_dir / filename).exists():
+            return False, "artifacts"
+    if state.generation.thread == "failed":
+        return False, "generation"
+    return True, ""
 
 
 def _start_continuous_generation(
@@ -1944,6 +2029,15 @@ def _stream_current_otel_once(state: SimulationState, *, idle_thread_state: str)
     except Exception as exc:  # pragma: no cover - defensive thread boundary
         state.otel_status["thread"] = "failed"
         state.otel_status["error"] = str(exc)
+        # Also route to the operator error sink: the /v1/state otel_status.error
+        # is eval-hidden, so without this a background OTEL failure is invisible
+        # in the default posture. Inside the except block, so the traceback tail
+        # is captured.
+        _record_server_error(
+            getattr(state, "request_logger", None),
+            where="otel-stream",
+            exc=exc,
+        )
         return
     state.otel_status["thread"] = idle_thread_state
     state.otel_status["last_completed_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -2015,6 +2109,10 @@ def start_test_server(
     """Start an ephemeral server for tests and return (server, base_url)."""
 
     resolved = security or ServerSecurityConfig()
+    # Keep the state's background-arm sink in step with the handler's request
+    # sink so tests that drive a failing regen/OTEL pass through this entry
+    # point see the same _record_server_error routing serve_main wires up.
+    state.request_logger = request_logger
     httpd = _BoundedThreadingHTTPServer(
         ("127.0.0.1", 0),
         make_handler(state, security=security, request_logger=request_logger),

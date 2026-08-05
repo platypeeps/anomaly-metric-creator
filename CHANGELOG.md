@@ -7,6 +7,21 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `amc serve` error plane is now observable by default (audit
+  A-071/A-072/A-073/A-076). Every unhandled 500 (`do_GET` / `do_POST` and now
+  PUT/PATCH/DELETE via `_handle_mutating_method`, Status-shaped for Kubernetes
+  API paths) plus the MCP internal-error path and the background
+  continuous-generation / OTEL failure arms route the exception type, message,
+  and a capped traceback tail to one operator sink — the structured error log
+  with `--structured-log`, otherwise stderr — so a default-flags failure is no
+  longer silent. Client response bodies stay generic (detail never leaks into a
+  body). A raising mutating handler now returns a 500 instead of resetting the
+  connection. **Behavior change:** `/readyz` is now a real readiness check —
+  it returns `503 {"ready": false, "reason": "artifacts"|"generation"}` when a
+  declared-emit artifact is missing (e.g. `--no-generate` over an empty dir) or
+  the continuous-generation thread failed, instead of an unconditional
+  `{"ready": true}`. Harness scripts gating on `/readyz` will now see the real
+  not-ready condition. Generated artifact bytes and locked hashes are unchanged.
 - Internal: `amc serve` MCP/trace hot paths made flat instead of
   history-linear (audit A-039/A-040/A-041/A-042). The MCP window tools
   (`get_metric_histogram`, `group_metrics_by_field`, `get_correlated_timeline`)
