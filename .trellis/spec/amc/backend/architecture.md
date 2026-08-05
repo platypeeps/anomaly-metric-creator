@@ -175,8 +175,8 @@ k8s surfaces (`DEFAULT_RELEASE` / `DEFAULT_CHART` and the snapshot-row /
 timestamp / string-coercion / list-resource-version accessors);
 `server_k8s_objects.py` for the per-kind Kubernetes object builders plus the
 metadata / owner / label / container-state / pod-timestamp / pod-ip helpers
-(also the home of `_k8s_metadata` / `_k8s_timestamp` that the future
-`server_helm` extraction depends on); `server_k8s_tables.py` for the
+(also the home of `_k8s_metadata` / `_k8s_timestamp` that the
+`server_helm_impl` leaf depends on); `server_k8s_tables.py` for the
 `meta.k8s.io/v1` Table surface (`_k8s_table`, `_k8s_column`,
 `_k8s_table_schema`, and the per-kind cell builders); the two k8s leaves import
 their shared accessors from `server_ops_support` and reference `SimulationState`
@@ -192,10 +192,14 @@ helpers), each re-imported by `server_ops.py` at the original block position
 (one-way import, no reverse dependency); `server_command_render.py` for the
 `CommandResult` return dataclass and the general render/command primitives
 `_table` / `_is_dry_run` / `_unsupported` / `_exposed_active_scenarios` shared by
-the command renderers and the future `server_helm_impl` leaf (a pure sibling
+the command renderers and the `server_helm_impl` leaf (a pure sibling
 leaf importing only `ParsedCommand` from `server_ops_parse` and re-exporting the
 byte-identical `_format_dt` from `server_mutations`, with `SimulationState` under
-a `TYPE_CHECKING` guard); `server_traces.py` for
+a `TYPE_CHECKING` guard); `server_helm_impl.py` for the top helm leaf (the 20
+helm renderers, release/notes model, and double-base64 gzip Secret encoders,
+importing one-way from `server_command_render`, `server_k8s_objects`,
+`server_mutations`, `server_ops_parse`, and `server_ops_support`, and imported
+only by `server_ops`); `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
 `server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP
@@ -213,6 +217,7 @@ Sources:
 `src/anomaly_metric_creator/server_ops_profiles.py`;
 `src/anomaly_metric_creator/server_ops_parse.py`;
 `src/anomaly_metric_creator/server_command_render.py`;
+`src/anomaly_metric_creator/server_helm_impl.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
