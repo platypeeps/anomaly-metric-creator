@@ -1,7 +1,7 @@
 {
   "id": "server-helm-impl-extract",
   "name": "server-helm-impl-extract",
-  "title": "PARKED: Extract server_helm_impl.py from server_ops.py",
+  "title": "Extract server_helm_impl.py from server_ops.py",
   "description": "Epic 07-06 step 3: verbatim-extract the Helm renderer + release/notes helper + Secret-encoding cluster from server_ops.py into a new server_helm_impl.py leaf, re-imported by server_ops.py at original positions. Behavior-identical (render-oracle + fuzz corpus). CLAUDE.md + architecture spec map updated.",
   "status": "in_progress",
   "dev_type": null,
@@ -16,13 +16,13 @@
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
-  "pr_url": null,
+  "pr_url": "https://github.com/platypeeps/anomaly-metric-creator/pull/332",
   "subtasks": [],
   "children": [],
   "parent": "07-06-server-ops-decomposition",
   "relatedFiles": [],
-  "notes": "PARKED 2026-08-04: blocked on epic-resequencing decision. Helm leaf depends on 7 non-helm shared helpers (_table, _format_dt, _is_dry_run, _unsupported, _exposed_active_scenarios, _k8s_metadata, _k8s_timestamp) defined in server_ops.py; one-way rule blocks a clean leaf until k8s-object (step 4) + render-primitive (step 6) leaves exist. See design.md.",
-  "blocked": true,
-  "blockedOn": "epic-07-06 resequencing decision (do steps 4+6 before helm)",
+  "notes": "UNBLOCKED 2026-08-04: epic Option-A resequence landed all blocker primitives in lower leaves (server_command_render, server_mutations, server_k8s_objects, server_ops_support), so the helm leaf extracts clean one-way. Implemented on branch sdelmas/server-helm-impl-extract (PR #332): 20 helm symbols moved verbatim, server_ops.py 5,540 -> 5,135 lines, new leaf 490 lines in mypy clean gate; render-oracle byte-identical. See design.md.",
+  "blocked": false,
+  "blockedOn": null,
   "meta": {}
 }
