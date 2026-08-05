@@ -21,7 +21,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .server_mutations import (
     DEFAULT_NAMESPACE,
@@ -203,6 +203,21 @@ class ContinuousGenerationStatus:
 # Cap the traceback tail that reaches an operator sink. A capped tail keeps the
 # failing frame(s) without letting a deep recursion flood stderr or the JSONL
 # error log on every retry.
+class _ErrorSink(Protocol):
+    """Structural interface for the operator error/request sink.
+
+    The only concrete implementation is ``server.StructuredRequestLogger``, which
+    lives in ``server.py`` and cannot be imported here (the module DAG is one-way:
+    ``server`` imports ``server_ops``, never the reverse). Declaring the interface
+    structurally lets ``SimulationState.request_logger`` and the sink helpers carry
+    a precise type instead of ``Any`` while preserving the one-way import.
+    """
+
+    def log_request(self, record: dict[str, Any]) -> None: ...
+
+    def log_error(self, record: dict[str, Any]) -> None: ...
+
+
 _ERROR_TRACEBACK_MAX_LINES = 30
 
 
@@ -229,7 +244,7 @@ def _capture_traceback_tail(*, max_lines: int = _ERROR_TRACEBACK_MAX_LINES) -> s
     return "\n".join(lines)
 
 
-def _emit_error_record(request_logger: Any, record: dict[str, Any]) -> None:
+def _emit_error_record(request_logger: _ErrorSink | None, record: dict[str, Any]) -> None:
     """Write one error record to the structured logger, or a stderr block when
     no logger is configured.
 
@@ -262,7 +277,7 @@ def _emit_error_record(request_logger: Any, record: dict[str, Any]) -> None:
 
 
 def _record_server_error(
-    request_logger: Any,
+    request_logger: _ErrorSink | None,
     *,
     where: str,
     exc: BaseException,
@@ -307,7 +322,7 @@ class SimulationState:
     # route a failure through ``_record_server_error``; ``None`` means the
     # helper falls back to a stderr block, so background failures are visible
     # even without ``--structured-log``.
-    request_logger: Any = None
+    request_logger: _ErrorSink | None = None
     # Eval mode hides every ground-truth-bearing surface (the anomaly
     # manifest, the scenario catalog, the report-log rendering of the
     # manifest, and the debug console) so an agent under evaluation cannot
