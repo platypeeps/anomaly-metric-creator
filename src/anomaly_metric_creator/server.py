@@ -1685,7 +1685,8 @@ _EVAL_NO_PERSIST_WARNING = (
     "WARNING: eval mode has no --persist-command-db/--persist-command-log; "
     "command traces live only in the in-memory ring and are unrecoverable "
     "after shutdown (the /v1/debug export surface is rubric-hidden in eval "
-    "mode). Pass --persist-command-db PATH to retain scoring evidence."
+    "mode). Pass --persist-command-db PATH (or --persist-command-log PATH) "
+    "to retain scoring evidence."
 )
 
 
