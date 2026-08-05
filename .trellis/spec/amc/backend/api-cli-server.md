@@ -212,6 +212,48 @@ visible in debug search and backlog views. Sources: `CLAUDE.md`; `README.md`;
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
 
+Server request handlers run under a `ThreadingHTTPServer`, so every per-request
+path must stay flat as the run's data and trace history grow — a poll that is
+linear in history size is a defect, not just slow. Three standing hot-path
+conventions:
+
+- **Trace store owns one long-lived SQLite connection and one long-lived JSONL
+  append handle**, never `sqlite3.connect` per operation or `open(persist,"a")`
+  per insert. The connection is opened once with `check_same_thread=False` and
+  touched only through `_locked_conn` (acquires `_sqlite_lock`, commits on clean
+  exit, rolls back on error); the JSONL handle is written under its own
+  `_jsonl_lock` off the ring `_lock` and flushed per write for durability.
+  `_locked_conn` is non-reentrant, so a method that re-enters the store (e.g.
+  `_replace_sqlite_traces` calling `_load_sqlite_tail`) must release the guard
+  first. SQLite retention runs immediately per insert because
+  `test_command_trace_sqlite_retention_*` asserts trimmed state right after the
+  insert; do not batch it behind an insert counter.
+- **`/v1/state` reports the unsupported-command count via
+  `unsupported_fingerprint_count()` (`COUNT(DISTINCT fingerprint)` /
+  in-memory set), never `len(unsupported_summary())`.** The full
+  `unsupported_summary()` is memoized on a store generation
+  (`_sqlite_gen` under `_sqlite_lock`, or the ring `_version` under `_lock`) so
+  repeated `/v1/debug/unsupported` polls at an unchanged head are O(1); the
+  generation and the rows must be read in the *same* locked section so the
+  cached `(gen, summary)` pair is internally consistent. The memoized result
+  stays byte-identical to `_unsupported_summary_from_traces`, pinned by an
+  oracle test in `tests/test_server.py`.
+- **MCP window-scan tools string-gate CSV rows before `strptime`.** The
+  per-component CSV timestamp column is fixed-width and sorts lexicographically,
+  so `_tool_get_metric_histogram` / `_tool_group_metrics_by_field` /
+  `_tool_get_correlated_timeline` build `[lo, hi)` boundary strings once per call
+  (`_window_boundary_strings`: floor `lo`, ceil `hi` to the whole second so the
+  gate is a conservative superset) and skip out-of-window rows before any parse.
+  The exact `from_ms <= ms < to_ms` check still decides inclusion, so output is
+  identical. The loop may `break` past `hi` only when `_layout_allows_break` is
+  true — the dimensionless wide layout with no DST splice; the dim-aware
+  per-instance-block layout and DST-injected runs are non-monotonic and must
+  parse-gate without breaking. Sources: `CLAUDE.md`;
+  `src/anomaly_metric_creator/server_traces.py`;
+  `src/anomaly_metric_creator/server_mcp.py`;
+  `src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`;
+  `tests/test_server_mcp.py`.
+
 ## MCP Facade and Eval Mode
 
 `amc serve` exposes an MCP (Model Context Protocol) endpoint at `POST /mcp`: a

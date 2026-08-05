@@ -116,6 +116,48 @@ def _rfc3339(dt: _dt.datetime) -> str:
     return _as_utc(dt).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _window_boundary_strings(from_ms: int, to_ms: int) -> tuple[str, str]:
+    """Lexicographic CSV-timestamp bounds for a ``[from_ms, to_ms)`` window.
+
+    The per-component CSV timestamp column is fixed-width
+    ``%Y-%m-%d %H:%M:%S[.%f]`` and therefore sorts lexicographically in
+    chronological order, so a cheap string comparison against
+    ``row[0]`` can gate a row out *before* the (comparatively expensive)
+    ``strptime`` parse. Both bounds are deliberately conservative
+    supersets: ``lo`` floors ``from_ms`` to the whole second and ``hi``
+    ceils ``to_ms`` to the whole second, so any row inside
+    ``[from_ms, to_ms)`` always survives the string gate (a fractional or
+    integer-second CSV timestamp that lands on the same whole second as a
+    boundary compares ``>= lo`` and ``< hi``). The caller still applies the
+    exact ``from_ms <= ms < to_ms`` range check to every gated-in row, so
+    the output is identical to the parse-every-row path by construction —
+    the gate only avoids parsing rows that would have been discarded
+    anyway.
+    """
+    lo_dt = _EPOCH_UTC + _dt.timedelta(milliseconds=from_ms)
+    ceil_ms = -(-to_ms // 1000) * 1000  # smallest whole second >= to_ms
+    hi_dt = _EPOCH_UTC + _dt.timedelta(milliseconds=ceil_ms)
+    fmt = "%Y-%m-%d %H:%M:%S"
+    return lo_dt.strftime(fmt), hi_dt.strftime(fmt)
+
+
+def _layout_allows_break(state: Any, dim_cols: tuple) -> bool:
+    """Whether a scan may ``break`` once ``row[0] >= hi`` boundary string.
+
+    A file's rows are globally monotonic in time only on the
+    dimensionless (wide) layout with no DST splice. The dim-aware
+    long-form CSV is written as contiguous per-instance blocks, so its
+    timestamps reset at each block boundary and an early break would skip
+    later instances' in-window rows. ``--inject-dst-artifact-day`` also
+    duplicates an hour into the wide layout, breaking monotonicity. In
+    both cases only the parse-gate applies (no break), which is still a
+    pure speedup with identical output.
+    """
+    if dim_cols:
+        return False
+    return getattr(state.args, "inject_dst_artifact_day", 0) == 0
+
+
 # ------------------------------------------------------------------
 # Tool argument helpers
 # ------------------------------------------------------------------
@@ -233,8 +275,11 @@ def _tool_get_metric_histogram(state: Any, arguments: dict[str, Any]) -> dict[st
     maxs: list[float | None] = [None] * n_buckets
 
     parse_ts = state.legacy._parse_csv_timestamp
+    lo_str, hi_str = _window_boundary_strings(from_ms, to_ms)
     with csv_path.open(encoding="utf-8", newline="") as f:
         header = f.readline().rstrip("\n").split(",")
+        dim_cols, _metric_cols = state.legacy._classify_component_csv_header(header)
+        allow_break = _layout_allows_break(state, dim_cols)
         try:
             col = header.index(metric)
         except ValueError:
@@ -248,9 +293,19 @@ def _tool_get_metric_histogram(state: Any, arguments: dict[str, Any]) -> dict[st
             ) from None
         for line in f:
             row = line.rstrip("\n").split(",")
+            ts = row[0]
+            # Cheap lexicographic gate before strptime: skip rows outside
+            # the window's whole-second envelope; the exact range check
+            # below still decides inclusion so output is unchanged.
+            if ts < lo_str:
+                continue
+            if ts >= hi_str:
+                if allow_break:
+                    break
+                continue
             if len(row) <= col:
                 continue
-            ms = _epoch_ms(parse_ts(row[0]))
+            ms = _epoch_ms(parse_ts(ts))
             if not from_ms <= ms < to_ms:
                 continue
             cell = row[col]
@@ -366,6 +421,7 @@ def _tool_group_metrics_by_field(state: Any, arguments: dict[str, Any]) -> dict[
         )
 
     parse_ts = state.legacy._parse_csv_timestamp
+    lo_str, hi_str = _window_boundary_strings(from_ms, to_ms)
     counts: dict[str, int] = {}
     sums: dict[str, float] = {}
     mins: dict[str, float] = {}
@@ -377,6 +433,7 @@ def _tool_group_metrics_by_field(state: Any, arguments: dict[str, Any]) -> dict[
         if not entry["exists"]:
             continue
         dim_cols = entry["dim_cols"]
+        allow_break = _layout_allows_break(state, dim_cols)
         metric_cols = entry["metric_cols"]
         if metric_filter is not None and metric_filter not in metric_cols:
             continue
@@ -388,7 +445,16 @@ def _tool_group_metrics_by_field(state: Any, arguments: dict[str, Any]) -> dict[
             f.readline()
             for line in f:
                 row = line.rstrip("\n").split(",")
-                ms = _epoch_ms(parse_ts(row[0]))
+                ts = row[0]
+                # Lexicographic pre-filter before strptime (see
+                # _window_boundary_strings); exact range check follows.
+                if ts < lo_str:
+                    continue
+                if ts >= hi_str:
+                    if allow_break:
+                        break
+                    continue
+                ms = _epoch_ms(parse_ts(ts))
                 if not from_ms <= ms < to_ms:
                     continue
                 for metric_idx, metric_name in enumerate(metric_cols):
@@ -479,6 +545,7 @@ def _tool_get_correlated_timeline(state: Any, arguments: dict[str, Any]) -> dict
         active = [c for c in active if c in set(requested)]
 
     parse_ts = state.legacy._parse_csv_timestamp
+    lo_str, hi_str = _window_boundary_strings(from_ms, to_ms)
     per_component: dict[str, dict[str, Any]] = {}
     all_events: list[dict[str, Any]] = []
     for component in active:
@@ -489,10 +556,20 @@ def _tool_get_correlated_timeline(state: Any, arguments: dict[str, Any]) -> dict
         with path.open(encoding="utf-8", newline="") as f:
             header = f.readline().rstrip("\n").split(",")
             dim_cols, metric_cols = state.legacy._classify_component_csv_header(header)
+            allow_break = _layout_allows_break(state, dim_cols)
             offset = 1 + len(dim_cols)
             for line in f:
                 row = line.rstrip("\n").split(",")
-                ms = _epoch_ms(parse_ts(row[0]))
+                ts = row[0]
+                # Lexicographic pre-filter before strptime (see
+                # _window_boundary_strings); exact range check follows.
+                if ts < lo_str:
+                    continue
+                if ts >= hi_str:
+                    if allow_break:
+                        break
+                    continue
+                ms = _epoch_ms(parse_ts(ts))
                 if not from_ms <= ms < to_ms:
                     continue
                 for metric_idx, metric_name in enumerate(metric_cols):

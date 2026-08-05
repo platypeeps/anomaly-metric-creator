@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
 from collections import Counter, deque
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -115,7 +117,24 @@ class CommandTrace:
 
 
 class CommandTraceStore:
-    """Thread-safe ring buffer plus optional JSONL/SQLite persistence."""
+    """Thread-safe ring buffer plus optional JSONL/SQLite persistence.
+
+    Concurrency / resource discipline (server is a ThreadingHTTPServer):
+
+    - ``_lock`` guards the in-memory ring (``_items`` / ``_version`` /
+      ``_next_id`` / ``_summary_cache``).
+    - ``_sqlite_lock`` guards the single long-lived sqlite connection
+      (``_conn``, opened once with ``check_same_thread=False``). The
+      connection is **never** touched outside :meth:`_locked_conn`; a bare
+      sqlite3 connection is not safe for concurrent use, so every read and
+      write serializes through that one lock. Opening one connection for
+      the store's lifetime (instead of ``sqlite3.connect`` per operation)
+      is the A-041 hot-path fix.
+    - ``_jsonl_lock`` guards the long-lived JSONL append handle
+      (``_jsonl_handle``, opened once and flushed per write) so JSONL
+      persistence stays off the ring lock. External rotation/deletion of
+      the JSONL file requires a server restart to re-open the handle.
+    """
 
     def __init__(
         self,
@@ -132,14 +151,46 @@ class CommandTraceStore:
         self._items: deque[CommandTrace] = deque(maxlen=limit)
         self._next_id = 1
         self._version = 0
+        # Memoized unsupported-summary keyed on ``_version`` so repeated
+        # debug-UI polls at an unchanged trace head are O(1) instead of
+        # re-deserializing the whole non-supported history (A-040).
+        self._summary_cache: tuple[int, list[dict[str, Any]]] | None = None
+        # Monotonic sqlite mutation generation; bumped under ``_sqlite_lock``
+        # whenever persisted rows change, so it keys ``_summary_cache`` for
+        # the sqlite path without the pre-commit ``_version`` skew.
+        self._sqlite_gen = 0
         self._lock = threading.Lock()
-        self._sqlite_write_lock = threading.Lock()
+        self._sqlite_lock = threading.Lock()
+        self._jsonl_lock = threading.Lock()
+        self._jsonl_handle = None
+        self._conn: sqlite3.Connection | None = None
         if persist_path is not None:
             persist_path.parent.mkdir(parents=True, exist_ok=True)
+            self._jsonl_handle = open(persist_path, "a", encoding="utf-8")
         if sqlite_path is not None:
             sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(
+                sqlite_path, timeout=5.0, check_same_thread=False
+            )
+            self._conn.row_factory = sqlite3.Row
             self._init_sqlite()
             self._load_sqlite_tail()
+
+    def close(self) -> None:
+        """Release the long-lived JSONL handle and sqlite connection.
+
+        Best-effort and idempotent; the store is normally process-lived so
+        the OS reclaims these at exit, but tests and explicit teardown can
+        call this to avoid dangling handles.
+        """
+        with self._jsonl_lock:
+            if self._jsonl_handle is not None:
+                self._jsonl_handle.close()
+                self._jsonl_handle = None
+        with self._sqlite_lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
 
     @property
     def version(self) -> int:
@@ -156,14 +207,42 @@ class CommandTraceStore:
         with self._lock:
             self._items.append(trace)
             self._version += 1
-            persist_path = self._persist_path
-            sqlite_path = self._sqlite_path
-            if persist_path is not None:
-                with open(persist_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(trace.to_dict(), sort_keys=True) + "\n")
-        if sqlite_path is not None:
-            with self._sqlite_write_lock:
-                self._insert_sqlite(trace)
+        # JSONL and sqlite persistence run outside the ring lock; each has
+        # its own lock, so a slow disk cannot stall in-memory readers.
+        if self._jsonl_handle is not None:
+            self._append_jsonl(trace)
+        if self._sqlite_path is not None:
+            self._insert_sqlite(trace)
+
+    def _append_jsonl(self, trace: CommandTrace) -> None:
+        line = json.dumps(trace.to_dict(), sort_keys=True) + "\n"
+        with self._jsonl_lock:
+            handle = self._jsonl_handle
+            if handle is None:
+                return
+            handle.write(line)
+            handle.flush()
+
+    @contextlib.contextmanager
+    def _locked_conn(self) -> Iterator[sqlite3.Connection]:
+        """Yield the long-lived sqlite connection under ``_sqlite_lock``.
+
+        The connection is opened once (``check_same_thread=False``) and is
+        never used outside this guard, since a single sqlite3 connection is
+        not safe for concurrent use across the server's worker threads.
+        Commits on clean exit; rolls back and re-raises on error so a
+        failed statement never strands a half-open transaction on the
+        shared connection.
+        """
+        if self._conn is None:
+            raise RuntimeError("sqlite persistence is not configured")
+        with self._sqlite_lock:
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def list(self, limit: int | None = None) -> list[dict[str, Any]]:
         if self._sqlite_path is not None:
@@ -189,25 +268,91 @@ class CommandTraceStore:
 
     def count(self) -> int:
         if self._sqlite_path is not None:
-            with self._connect() as conn:
+            with self._locked_conn() as conn:
                 row = conn.execute("SELECT count(*) FROM command_traces").fetchone()
             return int(row[0])
         with self._lock:
             return len(self._items)
 
-    def unsupported_summary(self) -> list[dict[str, Any]]:
+    def unsupported_fingerprint_count(self) -> int:
+        """Distinct-fingerprint count of non-supported traces.
+
+        The ``/v1/state`` poll only needs this scalar. Computing it with a
+        SQL ``COUNT(DISTINCT fingerprint)`` (or a memory-side set) keeps the
+        cost flat as the trace history grows, instead of deserializing the
+        whole non-supported history via :meth:`unsupported_summary` just to
+        take ``len(...)``. Equal by construction to
+        ``len(self.unsupported_summary())`` (the summary groups by
+        fingerprint over exactly the non-supported traces).
+        """
         if self._sqlite_path is not None:
-            traces = [
-                CommandTrace.from_dict(item)
-                for item in self._list_sqlite(status_not="supported", limit=None)
-            ]
-            return _unsupported_summary_from_traces(traces)
+            with self._locked_conn() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(DISTINCT fingerprint) FROM command_traces "
+                    "WHERE support_status != 'supported'"
+                ).fetchone()
+            return int(row[0])
         with self._lock:
+            return len({
+                trace.fingerprint
+                for trace in self._items
+                if trace.support_status != "supported"
+            })
+
+    def unsupported_summary(self) -> list[dict[str, Any]]:
+        """Fingerprint-grouped summary of non-supported traces.
+
+        Byte-identical to recomputing from scratch, but memoized so the
+        debug UI's repeated ``/v1/debug/unsupported`` polls at an unchanged
+        trace head are O(1) instead of re-deserializing the whole
+        non-supported history each tick (A-040).
+
+        Cache correctness under the ThreadingHTTPServer: the sqlite path
+        keys on ``_sqlite_gen`` (bumped under ``_sqlite_lock`` on every
+        mutation) and reads the generation and the rows in the *same*
+        locked section, so the cached ``(gen, summary)`` pair is always
+        internally consistent — the in-memory ``_version`` bumps *before*
+        the sqlite commit and would allow a one-tick-stale cache, so it is
+        deliberately not used as the sqlite key. The memory path keys on
+        ``_version``, read atomically with the ring snapshot under
+        ``_lock``.
+        """
+        if self._sqlite_path is not None:
+            with self._locked_conn() as conn:
+                gen = self._sqlite_gen
+                cached = self._summary_cache
+                if cached is not None and cached[0] == gen:
+                    return cached[1]
+                rows = conn.execute(
+                    "SELECT payload_json FROM command_traces "
+                    "WHERE support_status != 'supported' ORDER BY id DESC"
+                ).fetchall()
+            # Deserialize + group outside the sqlite lock: rows already
+            # correspond to ``gen`` (no mutation can interleave the two
+            # reads above), so writers are not blocked by the CPU work.
+            traces = [
+                CommandTrace.from_dict(json.loads(row["payload_json"]))
+                for row in rows
+            ]
+            summary = _unsupported_summary_from_traces(traces)
+            with self._sqlite_lock:
+                if self._summary_cache is None or gen >= self._summary_cache[0]:
+                    self._summary_cache = (gen, summary)
+            return summary
+        with self._lock:
+            version = self._version
+            cached = self._summary_cache
+            if cached is not None and cached[0] == version:
+                return cached[1]
             unsupported = [
                 trace for trace in self._items
                 if trace.support_status != "supported"
             ]
-        return _unsupported_summary_from_traces(unsupported)
+        summary = _unsupported_summary_from_traces(unsupported)
+        with self._lock:
+            if self._summary_cache is None or version >= self._summary_cache[0]:
+                self._summary_cache = (version, summary)
+        return summary
 
     def search(
         self,
@@ -281,8 +426,7 @@ class CommandTraceStore:
                 raise ValueError(f"trace import entry {index} is invalid: {exc}") from exc
         if self._sqlite_path is not None:
             previous_version = self.version
-            with self._sqlite_write_lock:
-                self._replace_sqlite_traces(traces)
+            self._replace_sqlite_traces(traces)
             self._ensure_import_version_change(previous_version)
         else:
             with self._lock:
@@ -311,21 +455,14 @@ class CommandTraceStore:
             return [trace.to_dict() for trace in self._items]
 
     def _export_sqlite_traces(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             rows = conn.execute(
                 "SELECT payload_json FROM command_traces ORDER BY id ASC"
             ).fetchall()
         return [self._row_to_payload(row) for row in rows]
 
-    def _connect(self) -> sqlite3.Connection:
-        if self._sqlite_path is None:
-            raise RuntimeError("sqlite persistence is not configured")
-        conn = sqlite3.connect(self._sqlite_path, timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        return conn
-
     def _init_sqlite(self) -> None:
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
@@ -420,8 +557,9 @@ class CommandTraceStore:
         return True
 
     def _load_sqlite_tail(self) -> None:
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             self._enforce_sqlite_retention(conn)
+            self._sqlite_gen += 1
             rows = conn.execute(
                 "SELECT id, payload_json FROM command_traces ORDER BY id DESC LIMIT ?",
                 (self._limit,),
@@ -441,7 +579,7 @@ class CommandTraceStore:
 
     def _insert_sqlite(self, trace: CommandTrace) -> None:
         payload = trace.to_dict()
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO command_traces (
@@ -500,6 +638,7 @@ class CommandTraceStore:
                     ),
                 )
             self._enforce_sqlite_retention(conn)
+            self._sqlite_gen += 1
 
     def _enforce_sqlite_retention(self, conn: sqlite3.Connection) -> None:
         if not self._sqlite_retention:
@@ -538,14 +677,14 @@ class CommandTraceStore:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             rows = conn.execute(sql, params).fetchall()
         with self._lock:
             version = self._version
         return [{"version": version, **self._row_to_payload(row)} for row in rows]
 
     def _get_sqlite(self, trace_id: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             row = conn.execute(
                 "SELECT payload_json FROM command_traces WHERE id = ?",
                 (trace_id,),
@@ -590,7 +729,7 @@ class CommandTraceStore:
             params.append(_sqlite_json_string_like_pattern(scenario_id))
         where_sql = "WHERE " + " AND ".join(where) if where else ""
         try:
-            with self._connect() as conn:
+            with self._locked_conn() as conn:
                 total_row = conn.execute(
                     f"SELECT count(*) AS total FROM command_traces {where_sql}",
                     params,
@@ -648,7 +787,7 @@ class CommandTraceStore:
             where.append("active_scenarios_json LIKE ? ESCAPE '\\'")
             params.append(_sqlite_json_string_like_pattern(scenario_id))
         where_sql = "WHERE " + " AND ".join(where)
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             total_row = conn.execute(
                 f"SELECT count(*) AS total FROM command_traces {where_sql}",
                 params,
@@ -689,7 +828,7 @@ class CommandTraceStore:
         params.extend([like] * 6)
 
     def _replace_sqlite_traces(self, traces: list[CommandTrace]) -> None:
-        with self._connect() as conn:
+        with self._locked_conn() as conn:
             conn.execute("DELETE FROM command_traces")
             if self._sqlite_fts_enabled:
                 conn.execute("DELETE FROM command_traces_fts")
@@ -749,6 +888,7 @@ class CommandTraceStore:
                         ),
                     )
             self._enforce_sqlite_retention(conn)
+            self._sqlite_gen += 1
         self._load_sqlite_tail()
 
 

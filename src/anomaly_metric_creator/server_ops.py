@@ -237,7 +237,7 @@ class SimulationState:
             "components": list(self.components),
             "anomaly_count": self.generated_row_count(),
             "command_trace_count": self.traces.count(),
-            "unsupported_group_count": len(self.traces.unsupported_summary()),
+            "unsupported_group_count": self.traces.unsupported_fingerprint_count(),
             "otel": self.otel_status,
             "generation": self.generation.to_dict(),
             "mutations": self.mutations.summary(),
@@ -747,6 +747,13 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
         })
         endpoint_ips: list[str] = []
         deleted_for_component: list[str] = []
+        # Loop-invariant per component: hoist above the replica loop so a
+        # high --instances-per-component run does not recompute the profile
+        # scan / mutations-lock walk once per pod. The returned lists are
+        # read-only downstream, so sharing one object across pods is
+        # output-identical.
+        component_scenario_ids = _exposed_component_scenarios(state, component)
+        component_events = _component_events(state, component)
         for index in range(replicas):
             pod_name = _pod_name(component, index)
             if pod_name in deleted_pods:
@@ -765,8 +772,8 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
                 "pod_ip": pod_ip,
                 "cpu_m": health["cpu_m"],
                 "memory_mi": health["memory_mi"],
-                "scenario_ids": _exposed_component_scenarios(state, component),
-                "events": _component_events(state, component),
+                "scenario_ids": component_scenario_ids,
+                "events": component_events,
                 "resource_version": resource_version,
             })
         for replacement_index, deleted_pod_name in enumerate(deleted_for_component):
@@ -784,8 +791,8 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
                 "pod_ip": pod_ip,
                 "cpu_m": health["cpu_m"],
                 "memory_mi": health["memory_mi"],
-                "scenario_ids": _exposed_component_scenarios(state, component),
-                "events": _component_events(state, component),
+                "scenario_ids": component_scenario_ids,
+                "events": component_events,
                 "recreated_from": deleted_pod_name,
                 "resource_version": resource_version,
             })

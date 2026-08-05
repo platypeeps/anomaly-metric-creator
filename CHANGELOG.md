@@ -7,6 +7,19 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Internal: `amc serve` MCP/trace hot paths made flat instead of
+  history-linear (audit A-039/A-040/A-041/A-042). The MCP window tools
+  (`get_metric_histogram`, `group_metrics_by_field`, `get_correlated_timeline`)
+  now gate CSV rows on a lexicographic timestamp-window string before
+  `strptime` and break past the window on the monotonic wide layout;
+  `/v1/state` reports the unsupported-command count via
+  `COUNT(DISTINCT fingerprint)` and the debug-UI unsupported summary is memoized
+  on a trace-store generation, so repeated polls at an unchanged head are O(1);
+  the trace store now holds one long-lived SQLite connection and one long-lived
+  JSONL append handle instead of reopening both per insert; and
+  `resource_snapshot()` hoists per-component-invariant lists above the
+  per-replica loop. All changes are output-identical — no artifact bytes, no
+  command/trace responses, and no locked hashes change.
 - Packaging: raised the declared dependency floors (`numpy`,
   `opentelemetry-proto`, `protobuf`, `pyyaml`) to the oldest combination
   actually exercised under the supported interpreter (`requires-python >=

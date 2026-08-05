@@ -1,1 +1,1 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/index.md", "reason": "Verify hot-path changes keep the MCP ground-truth wall, byte-identical trace-summary/output contracts, SQLite trace-store durability, and eval-mode invariants intact."}
