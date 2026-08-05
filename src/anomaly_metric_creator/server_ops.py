@@ -213,9 +213,11 @@ class _ErrorSink(Protocol):
     a precise type instead of ``Any`` while preserving the one-way import.
     """
 
-    def log_request(self, record: dict[str, Any]) -> None: ...
+    def log_request(self, record: dict[str, Any]) -> None:
+        pass
 
-    def log_error(self, record: dict[str, Any]) -> None: ...
+    def log_error(self, record: dict[str, Any]) -> None:
+        pass
 
 
 _ERROR_TRACEBACK_MAX_LINES = 30

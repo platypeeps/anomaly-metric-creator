@@ -2490,6 +2490,15 @@ def test_patch_kubernetes_api_unexpected_exception_returns_status_500(
         assert body["code"] == 500
         assert "patch-boom" not in json.dumps(body)
 
+        # The failed mutation must still land in the kubernetes-api trace ring
+        # (the /v1/debug backlog), classified unsupported — otherwise the raise
+        # leaves no record, the exact A-073 gap this boundary closes.
+        query = urllib.parse.urlencode({"family": "kubernetes-api", "q": "PATCH"})
+        search = _get_json(base_url + "/v1/debug/search?" + query)
+        assert search["total"] == 1
+        assert search["items"][0]["support_status"] == "unsupported"
+        assert search["items"][0]["matched_rule_id"] == "k8s.internal_error"
+
 
 def test_readyz_check_artifacts_missing(amc, tmp_path):
     # A-074: an empty output dir (nothing generated) is not ready.

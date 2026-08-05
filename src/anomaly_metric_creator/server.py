@@ -792,6 +792,9 @@ def make_handler(
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             query = urllib.parse.parse_qs(parsed.query)
+            # Bound before the try so the catch-all can compute a latency even
+            # when the exception fires before the Kubernetes API branch runs.
+            api_started: float | None = None
             try:
                 if state.eval_mode and _rubric_endpoint(path):
                     # Same fingerprint-resistant ordering as do_GET/do_POST: a
@@ -852,15 +855,35 @@ def make_handler(
                 # body, per the SECURITY.md contract).
                 self._remember_structured_error(exc)
                 if _is_kubernetes_api_path(path):
-                    self._send_kubernetes_api_response(
-                        _k8s_status_response(
-                            500,
-                            "internal server error",
-                            "InternalError",
-                            "unsupported",
-                            "k8s.internal_error",
-                        )
+                    api_response = _k8s_status_response(
+                        500,
+                        "internal server error",
+                        "InternalError",
+                        "unsupported",
+                        "k8s.internal_error",
                     )
+                    # A raising Kubernetes API mutation must still land in the
+                    # kubernetes-api trace ring (the debug backlog), like the
+                    # success path above — otherwise the failed mutation is
+                    # invisible to /v1/debug/search. Suppress a re-raise from the
+                    # recorder itself (e.g. the original exception came from it):
+                    # the operator sink already holds the error detail.
+                    with contextlib.suppress(Exception):
+                        record_kubernetes_api_call(
+                            state,
+                            method=method,
+                            path=path,
+                            query=query,
+                            response=api_response,
+                            client=self.client_address[0],
+                            user_agent=self.headers.get("user-agent", ""),
+                            latency_ms=(
+                                (time.perf_counter() - api_started) * 1000.0
+                                if api_started is not None
+                                else 0.0
+                            ),
+                        )
+                    self._send_kubernetes_api_response(api_response)
                 else:
                     self._send_json(500, {"error": "internal server error"})
 
