@@ -533,10 +533,13 @@ def build_state(
             sqlite_retention=persist_command_retention,
         ),
         mutations=SimulationMutations(extra_event_limit=trace_limit),
-        # Every key the background OTEL / continuous-generation writers ever set
-        # is pre-seeded here so the dict never changes size at runtime — a
-        # concurrent /v1/state summary() copy can never observe a mid-resize dict
-        # (audit A-014). Value-only reassignment under otel_status_lock is safe.
+        # Convention (not a safety mechanism): every key the background OTEL /
+        # continuous-generation writers ever set is pre-seeded here so the
+        # schema is stable and /v1/state always reports the full field set.
+        # Thread-safety is provided by otel_status_lock, not by this seeding —
+        # every read (otel_status_snapshot) and write (update/bump) holds the
+        # lock, so even a writer adding an unforeseen key cannot race the
+        # snapshot copy (audit A-014).
         otel_status={
             "enabled": bool(getattr(args, "otel_enabled", False)),
             "signals": sorted(getattr(args, "otel_signal_selection", None) or []),
