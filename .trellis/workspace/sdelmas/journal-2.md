@@ -455,3 +455,45 @@ serve_main now emits a wall-safe stderr warning when --mcp-eval-mode runs withou
 ### Next Steps
 
 - None - task complete
+
+
+## Session 59: Prune MCP tool scans and trace-store hot paths (audit A-039..A-042)
+
+**Date**: 2026-08-04
+**Task**: Prune MCP tool scans and trace-store hot paths (audit A-039..A-042)
+**Package**: amc
+**Branch**: `sdelmas/mcp-query-performance`
+
+### Summary
+
+Flattened amc serve MCP window tools and the command-trace store so narrow queries and debug-UI polls no longer scale with run data / trace history. All output-identical: no artifact bytes or locked hashes change.
+
+### Main Changes
+
+- A-039: lexicographic [lo,hi) window pre-filter before strptime in the three MCP window tools; break past hi only on the monotonic wide non-DST layout via _layout_allows_break.
+- A-040: /v1/state count via unsupported_fingerprint_count() (COUNT(DISTINCT fingerprint)); full unsupported_summary memoized on a store generation (_sqlite_gen / _version).
+- A-041: one long-lived SQLite connection + one long-lived JSONL append handle instead of reopening both per insert; close() releases both.
+- A-042: hoisted per-component-invariant lists above the per-replica loop in resource_snapshot().
+- Review fixes: _window_boundary_strings catches OverflowError and raises McpToolError (INVALID_PARAMS); _locked_conn re-reads _conn under _sqlite_lock to close a TOCTOU race with close().
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b282d55` | perf(server): flatten MCP query + trace-store hot paths (audit A-039..A-042) |
+| `fdf3397` | fix(server): harden MCP window overflow + trace-store close race (PR #337 review) |
+
+### Testing
+
+- [OK] focused: tests/test_server_mcp.py tests/test_server.py -> 134 passed, 2 skipped
+- [OK] full suite earlier: 1760 passed, 2 skipped
+- [OK] tools/check_mypy_gate.py -> no issues in 30 files; pre-commit + review preflight clean
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

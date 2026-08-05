@@ -1,5 +1,4 @@
 import base64
-import builtins
 import contextlib
 import datetime as _dt
 import gzip
@@ -9,6 +8,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -1429,35 +1429,41 @@ def test_command_trace_sqlite_persistence_and_search(amc, tmp_path):
     assert "kubectl debug" in summary[0]["fingerprint"]
 
 
-def test_command_trace_jsonl_persistence_writes_under_store_lock(tmp_path, monkeypatch):
+def test_command_trace_jsonl_persistence_writes_off_the_ring_lock(tmp_path):
     persist_path = tmp_path / "commands.jsonl"
     store = server.CommandTraceStore(persist_path=persist_path)
     writes = []
+    real_handle = store._jsonl_handle
 
     class _CaptureFile:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
         def write(self, line):
-            assert store._lock.locked()
+            # JSONL persistence uses a long-lived handle written under its
+            # own lock, off the in-memory ring lock (A-041), so a slow disk
+            # cannot stall ring readers.
+            assert store._jsonl_lock.locked()
+            assert not store._lock.locked()
             writes.append(line)
+            real_handle.write(line)
 
-    def _open(path, mode, *, encoding=None):
-        assert path == persist_path
-        assert mode == "a"
-        assert encoding == "utf-8"
-        assert store._lock.locked()
-        return _CaptureFile()
+        def flush(self):
+            real_handle.flush()
 
-    monkeypatch.setattr(builtins, "open", _open)
+        def close(self):
+            real_handle.close()
+
+    store._jsonl_handle = _CaptureFile()
 
     store.record(_trace(1, "2026-06-25T12:01:00Z"))
 
     assert len(writes) == 1
     assert json.loads(writes[0])["id"] == 1
+
+    # The flush-per-write contract makes the record durable immediately.
+    store.close()
+    with persist_path.open(encoding="utf-8") as fh:
+        lines = [line for line in fh if line.strip()]
+    assert len(lines) == 1
+    assert json.loads(lines[0])["id"] == 1
 
 
 def test_command_trace_import_rejects_non_object_trace_entries():
@@ -1549,37 +1555,234 @@ def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tm
     assert [item["id"] for item in store.list()] == [4, 3]
 
 
-def test_command_trace_sqlite_record_serializes_insert_with_write_lock(tmp_path, monkeypatch):
+def test_command_trace_sqlite_record_serializes_insert_with_sqlite_lock(tmp_path, monkeypatch):
     db_path = tmp_path / "commands.sqlite"
     store = server.CommandTraceStore(sqlite_path=db_path)
     observed = []
 
-    def capture_insert(trace):
-        observed.append(store._sqlite_write_lock.locked())
+    # The long-lived connection is only ever touched under ``_sqlite_lock``
+    # (via ``_locked_conn``); ``_enforce_sqlite_retention`` runs inside that
+    # locked section during an insert, so it observes the lock held.
+    def capture_retention(conn):
+        observed.append(store._sqlite_lock.locked())
 
-    monkeypatch.setattr(store, "_insert_sqlite", capture_insert)
+    monkeypatch.setattr(store, "_enforce_sqlite_retention", capture_retention)
 
     store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
 
     assert observed == [True]
 
 
-def test_command_trace_sqlite_import_serializes_replace_with_write_lock(tmp_path, monkeypatch):
+def test_command_trace_sqlite_import_serializes_replace_with_sqlite_lock(tmp_path, monkeypatch):
     db_path = tmp_path / "commands.sqlite"
     store = server.CommandTraceStore(sqlite_path=db_path)
     observed = []
 
-    def capture_replace(traces):
-        observed.append(store._sqlite_write_lock.locked())
-        store._next_id = max((trace.id for trace in traces), default=0) + 1
+    def capture_retention(conn):
+        observed.append(store._sqlite_lock.locked())
 
-    monkeypatch.setattr(store, "_replace_sqlite_traces", capture_replace)
+    monkeypatch.setattr(store, "_enforce_sqlite_retention", capture_retention)
 
     store.import_payload({
         "traces": [_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods").to_dict()],
     })
 
-    assert observed == [True]
+    # Replace and the subsequent tail reload each enforce retention inside
+    # their own locked section, so every observation sees the lock held.
+    assert observed
+    assert all(observed)
+
+
+def test_command_trace_sqlite_use_after_close_raises_runtime_error(tmp_path):
+    # ``_locked_conn`` re-reads ``self._conn`` inside ``_sqlite_lock`` and
+    # raises a clear RuntimeError when persistence has been torn down. After
+    # ``close()`` a sqlite-backed operation must degrade to that RuntimeError,
+    # never an AttributeError from ``None.execute`` (the race the review flagged
+    # when the None-check sat outside the lock).
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.close()
+
+    with pytest.raises(RuntimeError, match="sqlite persistence is not configured"):
+        store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+
+def _summary_trace(tid, ts, *, fingerprint, support_status, guessed_intent):
+    return server.CommandTrace(
+        id=tid,
+        received_at_wall_time=ts,
+        simulated_time=ts,
+        raw_input=f"kubectl weird {fingerprint} {tid}",
+        argv=("kubectl", "weird", fingerprint, str(tid)),
+        client="debug-ui",
+        command_family="kubectl",
+        verb="weird",
+        resource_kind="",
+        resource_name="",
+        namespace="saas-prod",
+        parsed_flags={"n": tid},
+        support_status=support_status,
+        matched_rule_id="",
+        active_scenarios=("cache_leak_restart",),
+        exit_code=1,
+        stdout_preview="",
+        stderr_preview="",
+        stdout="out",
+        stderr="err",
+        latency_ms=1.0,
+        fingerprint=fingerprint,
+        guessed_intent=guessed_intent,
+    )
+
+
+_SUMMARY_FIXTURE = [
+    ("fp.a", "unsupported", "intent-a1"),
+    ("fp.b", "partial", "intent-b1"),
+    ("fp.a", "partial", "intent-a2"),
+    ("fp.a", "unsupported", "intent-a3"),
+    ("fp.c", "supported", "intent-c"),   # excluded from the summary
+    ("fp.b", "unsupported", "intent-b2"),
+]
+
+
+def _build_summary_traces():
+    return [
+        _summary_trace(
+            index + 1,
+            f"2026-06-25T12:0{index + 1}:00Z",
+            fingerprint=fp,
+            support_status=status,
+            guessed_intent=intent,
+        )
+        for index, (fp, status, intent) in enumerate(_SUMMARY_FIXTURE)
+    ]
+
+
+def _reference_summary(traces, *, descending):
+    from anomaly_metric_creator import server_traces
+
+    unsupported = [t for t in traces if t.support_status != "supported"]
+    # Backends feed the canonical grouping in different orders: the sqlite
+    # store reads rows ORDER BY id DESC, while the in-memory ring iterates
+    # insertion order (id ASC). Match whichever the backend under test uses
+    # so example ordering / guessed_intent selection line up exactly.
+    unsupported.sort(key=lambda t: t.id, reverse=descending)
+    return server_traces._unsupported_summary_from_traces(unsupported)
+
+
+def test_unsupported_summary_sqlite_matches_reference_grouping(tmp_path):
+    # A-040 byte-identity oracle: the sqlite-backed unsupported_summary must
+    # produce exactly what the canonical Python grouping produces over the
+    # same non-supported traces (same order, examples, counters).
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path, limit=100)
+    traces = _build_summary_traces()
+    for trace in traces:
+        store.record(trace)
+
+    got = store.unsupported_summary()
+    assert got == _reference_summary(traces, descending=True)
+    # Memoized second call is still byte-identical.
+    assert store.unsupported_summary() == got
+    # The /v1/state count path agrees with the summary length.
+    assert store.unsupported_fingerprint_count() == len(got)
+    assert len(got) == 2  # fp.a, fp.b (fp.c is supported)
+    store.close()
+
+
+def test_unsupported_summary_memory_matches_reference_grouping(tmp_path):
+    store = server.CommandTraceStore(limit=100)
+    traces = _build_summary_traces()
+    for trace in traces:
+        store.record(trace)
+
+    got = store.unsupported_summary()
+    assert got == _reference_summary(traces, descending=False)
+    assert store.unsupported_summary() == got
+    assert store.unsupported_fingerprint_count() == len(got)
+
+
+def test_unsupported_summary_cache_invalidates_on_new_record(tmp_path):
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path, limit=100)
+    for trace in _build_summary_traces():
+        store.record(trace)
+    first = store.unsupported_summary()
+    assert store.unsupported_fingerprint_count() == len(first)
+
+    store.record(_summary_trace(
+        99, "2026-06-25T12:59:00Z",
+        fingerprint="fp.d", support_status="unsupported", guessed_intent="d",
+    ))
+    second = store.unsupported_summary()
+    assert len(second) == len(first) + 1
+    assert store.unsupported_fingerprint_count() == len(second)
+    assert {group["fingerprint"] for group in second} == {"fp.a", "fp.b", "fp.d"}
+    store.close()
+
+
+def test_command_trace_jsonl_appends_all_records_durably(tmp_path):
+    # A-041: the long-lived append handle records every trace, in order,
+    # flushed durable — a second process/store reading the file sees them.
+    persist_path = tmp_path / "commands.jsonl"
+    store = server.CommandTraceStore(persist_path=persist_path)
+    for index in range(5):
+        store.record(_trace(index + 1, f"2026-06-25T12:0{index}:00Z"))
+
+    with persist_path.open(encoding="utf-8") as fh:
+        ids = [json.loads(line)["id"] for line in fh if line.strip()]
+    assert ids == [1, 2, 3, 4, 5]
+    store.close()
+
+
+def test_command_trace_sqlite_concurrent_record_and_read_is_consistent(tmp_path):
+    # A-041: the single long-lived connection is shared across threads under
+    # one lock; concurrent records + reads must not raise or corrupt state.
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path, limit=500)
+    errors = []
+    total = 40
+
+    def writer(start):
+        try:
+            for offset in range(total // 2):
+                tid = start + offset
+                store.record(_trace(
+                    tid,
+                    f"2026-06-25T13:{tid % 60:02d}:00Z",
+                    f"kubectl get pods marker-{tid}",
+                ))
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    def reader():
+        try:
+            for _ in range(50):
+                store.count()
+                store.unsupported_fingerprint_count()
+                store.list(limit=5)
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=writer, args=(1,)),
+        threading.Thread(target=writer, args=(1 + total // 2,)),
+        threading.Thread(target=reader),
+        threading.Thread(target=reader),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert store.count() == total
+
+    # Reload from disk sees exactly the persisted rows.
+    reloaded = server.CommandTraceStore(sqlite_path=db_path, limit=500)
+    assert reloaded.count() == total
+    store.close()
+    reloaded.close()
 
 
 def test_command_trace_sqlite_search_reports_backend_and_schema(amc, tmp_path):

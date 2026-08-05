@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/amc/backend/index.md", "reason": "Canonical backend conventions the hot-path fixes must preserve: MCP ground-truth wall, server_mcp/server_traces/server_ops module boundaries, atomic-write and seed-determinism contracts, and eval-mode surface rules."}

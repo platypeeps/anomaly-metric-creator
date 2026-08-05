@@ -246,6 +246,156 @@ def test_get_metric_histogram_argument_validation(mcp_state):
         assert needle in result["content"][0]["text"]
 
 
+def test_window_tools_extreme_epoch_ms_is_validated_not_internal_error(mcp_state):
+    # An extreme (but type-valid) epoch-ms window overflows the datetime /
+    # timedelta arithmetic the A-039 lexicographic gate introduced. It must
+    # degrade to a validated argument error (McpToolError -> INVALID_PARAMS),
+    # not an unhandled OverflowError read as an internal tool bug.
+    extreme = 10**25  # far beyond timedelta's representable range
+    for tool, extra in [
+        ("get_metric_histogram",
+         {"component": "apigateway", "metric": "requests_per_sec"}),
+        ("group_metrics_by_field", {"field": "component"}),
+        ("get_correlated_timeline", {}),
+    ]:
+        result = _call_tool(mcp_state, tool, {
+            **extra, "from_ms": extreme, "to_ms": extreme + 86_400_000,
+        })
+        assert result["isError"] is True, tool
+        assert "representable" in result["content"][0]["text"], tool
+
+
+# ------------------------------------------------------------------
+# A-039: window pre-filter (lexicographic string gate + layout-gated break)
+#
+# The scan tools string-gate each CSV row before parsing and, on the
+# dimensionless (wide) layout only, break past the window's upper bound.
+# These tests prove the gate/break never drops an in-window row by
+# comparing the tool output to a from-scratch full scan (no break) — for
+# both the wide layout (break path) and the dim-aware long-form layout
+# (per-instance blocks, where a break would wrongly skip later instances'
+# in-window rows).
+# ------------------------------------------------------------------
+
+def _csv_window_count_sum(amc, csv_path, metric, from_ms, to_ms):
+    """Full-scan oracle: (count, sum) of in-window cells for ``metric``.
+
+    Parses every data row with no break and no string gate, mirroring the
+    pre-A-039 behavior the tools must remain byte-identical to.
+    """
+    with csv_path.open(encoding="utf-8") as f:
+        header = f.readline().rstrip("\n").split(",")
+        col = header.index(metric)
+        count = 0
+        total = 0.0
+        for line in f:
+            row = line.rstrip("\n").split(",")
+            if len(row) <= col:
+                continue
+            ms = int(
+                amc._parse_csv_timestamp(row[0])
+                .replace(tzinfo=_dt.timezone.utc)
+                .timestamp()
+                * 1000
+            )
+            if not from_ms <= ms < to_ms:
+                continue
+            cell = row[col]
+            if not cell:
+                continue
+            count += 1
+            total += float(cell)
+    return count, total
+
+
+def _histogram_totals(payload):
+    buckets = payload["buckets"]
+    count = sum(b["count"] for b in buckets)
+    total = sum(b["mean"] * b["count"] for b in buckets if b["count"])
+    return count, total
+
+
+def test_get_metric_histogram_mid_window_break_path_matches_full_scan(amc, mcp_state):
+    # Wide (dimensionless) layout: the break fires partway through the day.
+    # A mid-day window forces the break to skip later rows; the totals must
+    # still equal a no-break full scan.
+    component = "apigateway"
+    metric = amc.COMPONENTS[component][0].name
+    start = amc.START
+    from_ms = _epoch_ms(start + _dt.timedelta(hours=9))
+    to_ms = _epoch_ms(start + _dt.timedelta(hours=12))
+
+    payload = _call_tool(mcp_state, "get_metric_histogram", {
+        "component": component, "metric": metric,
+        "from_ms": from_ms, "to_ms": to_ms,
+    })["structuredContent"]
+
+    csv_path = mcp_state.output_dir / f"{component}.csv"
+    expected_count, expected_sum = _csv_window_count_sum(
+        amc, csv_path, metric, from_ms, to_ms
+    )
+    assert expected_count > 0  # non-empty guard
+    got_count, got_sum = _histogram_totals(payload)
+    assert got_count == expected_count
+    assert got_sum == pytest.approx(expected_sum)
+
+
+def test_get_metric_histogram_late_window_long_form_keeps_all_instances(amc, mcp_n2_state):
+    # Dim-aware long-form CSV: rows are per-instance blocks, so timestamps
+    # reset at each block. A late window lands in each block's tail; the
+    # no-break gate must scan every block, so the totals cover BOTH
+    # instances (a wrong break would stop inside instance 0's block and
+    # drop instance 1's in-window rows entirely).
+    component = "apigateway"
+    metric = amc.COMPONENTS[component][0].name
+    start = amc.START
+    from_ms = _epoch_ms(start + _dt.timedelta(hours=21))
+    to_ms = _epoch_ms(start + _dt.timedelta(days=1))
+
+    payload = _call_tool(mcp_n2_state, "get_metric_histogram", {
+        "component": component, "metric": metric,
+        "from_ms": from_ms, "to_ms": to_ms,
+    })["structuredContent"]
+
+    csv_path = mcp_n2_state.output_dir / f"{component}.csv"
+    # Sanity: the CSV really is the dim-aware long-form layout.
+    with csv_path.open(encoding="utf-8") as f:
+        header = f.readline().rstrip("\n").split(",")
+    dim_cols, _metric_cols = amc._classify_component_csv_header(header)
+    assert dim_cols  # long-form layout under test
+
+    expected_count, expected_sum = _csv_window_count_sum(
+        amc, csv_path, metric, from_ms, to_ms
+    )
+    assert expected_count > 0
+    got_count, got_sum = _histogram_totals(payload)
+    assert got_count == expected_count
+    assert got_sum == pytest.approx(expected_sum)
+    # Two instances each contribute their in-window rows.
+    assert got_count == 2 * (expected_count // 2)
+    assert expected_count % 2 == 0
+
+
+def test_group_metrics_by_pod_late_window_long_form_keeps_all_instances(amc, mcp_n2_state):
+    # Same no-break guarantee via the group_metrics scan site: a late
+    # window must still see both pods (instance blocks), each with the same
+    # per-instance in-window row count.
+    start = amc.START
+    from_ms = _epoch_ms(start + _dt.timedelta(hours=21))
+    to_ms = _epoch_ms(start + _dt.timedelta(days=1))
+
+    payload = _call_tool(mcp_n2_state, "group_metrics_by_field", {
+        "field": "pod",
+        "from_ms": from_ms, "to_ms": to_ms,
+        "agg": "count",
+    })["structuredContent"]
+
+    counts = {b["value"]: b["count"] for b in payload["buckets"]}
+    assert set(counts) == {"pod-0", "pod-1"}
+    assert counts["pod-0"] == counts["pod-1"]
+    assert counts["pod-0"] > 0
+
+
 # ------------------------------------------------------------------
 # Analysis tools (phase 2)
 # ------------------------------------------------------------------

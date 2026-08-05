@@ -22,7 +22,7 @@ debug UI's 1.5s poll pays two O(full-history) SQLite deserializations per tick.
 
 ## Acceptance criteria
 
-- [ ] Narrow-window get_metric_histogram is ~milliseconds; behavior unchanged (existing MCP tests green).
-- [ ] /v1/state cost is flat as trace history grows (benchmark or complexity argument in PR).
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] Narrow-window get_metric_histogram is ~milliseconds; behavior unchanged (existing MCP tests green).
+- [x] /v1/state cost is flat as trace history grows (benchmark or complexity argument in PR).
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).

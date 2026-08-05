@@ -419,47 +419,51 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: delete; fetch from /v1/debug/resources if needed.
 
 ## A-039 — MCP analysis tools re-scan and parse every CSV row per call; window never prunes
-- status: open
+- status: fixed
 - severity: P2 · effort: M · confidence: Plausible
 - dimension: performance
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-04 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/server_mcp.py:252-262/392-400/496-504 — parse-before-filter, no break on sorted input; measured 0.137s/component regardless of window (~2s per timeline call)
-- why: primary consumers pay full 700k-row parses for narrow queries; multiplies under concurrent agents.
-- fix: lexicographic string window bounds before strptime + break past `to`; hoist column index.
+  - src/anomaly_metric_creator/server_mcp.py — the three window-scan tools (`_tool_get_metric_histogram`, `_tool_group_metrics_by_field`, `_tool_get_correlated_timeline`) build lexicographic `[lo, hi)` boundary strings once per call and gate each row on `row[0]` before any `strptime`; the upper gate also breaks the loop on the dimensionless (wide) layout, guarded by `_layout_allows_break` so the dim-aware per-instance-block layout only parse-gates.
+  - tests/test_server_mcp.py — mid-window break-path and late-window long-form no-break oracles compare tool output to a from-scratch full scan for both layouts.
+- why: fixed; narrow-window scans no longer parse every row, and the wide layout stops at the window end — output byte-identical by construction (gated-in rows still pass the exact range check).
+- fix: lexicographic string window bounds before strptime + layout-gated break past `to`; column index already hoisted.
 
 ## A-040 — unsupported_summary() deserializes full non-supported history per call; UI polls it 2×/1.5s
-- status: open
+- status: fixed
 - severity: P2 · effort: M · confidence: Plausible
 - dimension: performance
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-04 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/server_traces.py:198-204 fetchall + per-row from_dict; server_ops.py:985 uses it for a len(); debug UI setInterval 1500
-- why: with SQLite persistence the poll cost grows unbounded for the server's life.
-- fix: SQL GROUP BY aggregation or cache keyed on store version.
+  - src/anomaly_metric_creator/server_traces.py — new `unsupported_fingerprint_count()` answers the `/v1/state` poll with `COUNT(DISTINCT fingerprint)` (flat as history grows); `unsupported_summary()` is memoized on a sqlite mutation generation (`_sqlite_gen`) / ring `_version` so repeated `/v1/debug/unsupported` polls at an unchanged head are O(1) and byte-identical.
+  - src/anomaly_metric_creator/server_ops.py — `/v1/state` now calls `unsupported_fingerprint_count()` instead of `len(unsupported_summary())`.
+  - tests/test_server.py — byte-identity oracle (sqlite + memory) vs the canonical `_unsupported_summary_from_traces`, plus cache-invalidation coverage.
+- why: fixed; the `/v1/state` count is flat, and the full-summary poll no longer re-deserializes the whole history when the trace head is unchanged.
+- fix: `COUNT(DISTINCT fingerprint)` for the count consumer; version-keyed memo for the full summary (chosen over SQL GROUP BY for guaranteed byte-identity without relying on SQLite window functions).
 
 ## A-041 — record() rebuilds persistence resources per trace; JSONL write under the main lock
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: performance
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-04 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/server_traces.py:155-166/320-325/442-502 — per-insert connect + retention query + FTS rewrite
-- why: every request pays connection setup; workers serialize on disk I/O.
-- fix: long-lived connection + persistent handle; retention every N inserts.
+  - src/anomaly_metric_creator/server_traces.py — one long-lived sqlite connection (`_conn`, `check_same_thread=False`) opened once and used only under `_locked_conn`/`_sqlite_lock`; one long-lived JSONL append handle written under `_jsonl_lock`, off the ring lock, flushed per write; `close()` releases both.
+  - tests/test_server.py — JSONL off-ring-lock + multi-record durability, and a concurrent record/read + reload consistency test over the shared connection.
+- why: fixed; requests no longer pay `sqlite3.connect` per operation or open the JSONL file per insert, and persistence I/O is off the in-memory ring lock.
+- fix: long-lived connection + persistent JSONL handle. Deviation: per-insert retention kept immediate (not every-N) to preserve the locked immediate-retention contract in test_command_trace_sqlite_retention_* (count/get/search assert trimmed state right after insert); retention is a no-op early-return when unconfigured, so the batching win was marginal.
 
 ## A-042 — resource_snapshot() recomputes component-invariant lists once per pod
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: performance
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-04 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/server_ops.py:2022-2056 — per-replica calls to per-component helpers (lock each)
-- why: ~280 redundant builds per snapshot per request at max fan-out.
+  - src/anomaly_metric_creator/server_ops.py — `_exposed_component_scenarios(state, component)` and `_component_events(state, component)` are computed once above the `for index in range(replicas)` loop in `resource_snapshot()` and reused for every pod (including recreated pods); the returned lists are read-only downstream so sharing is output-identical.
+- why: fixed; the profile-scan + mutations-lock walk runs once per component instead of once per replica (~280x → ~14x at max fan-out).
 - fix: hoist per-component values above the replica loop.
 
 ## A-043 — .opencode/package.json declares an unused, unpinned npm dependency with no lockfile
