@@ -31,3 +31,7 @@ refusals are uncounted, and no sink ever gets a traceback.
 - [ ] readyz returns 503 under --no-generate with an empty dir.
 - [ ] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).
+- [ ] A-075 — refusal counters (worker-cap 503 / SSE 503 / 429) surface in
+      `state.summary()` with a first-trip log line. _(PR B — follow-up.)_
+- [ ] A-077 — per-request id lands in structured records and is threaded into
+      trace recording as a join key. _(PR B — follow-up.)_
