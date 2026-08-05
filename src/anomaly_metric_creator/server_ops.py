@@ -335,15 +335,21 @@ class RefusalCounters:
         self._counts = dict.fromkeys(_REFUSAL_KINDS, 0)
         self._logged: set[str] = set()
 
+    def _increment(self, kind: str) -> bool:
+        """Count one refusal under the lock; return whether it is the first
+        of its kind (so the caller can emit the one-shot stderr line off the
+        lock)."""
+        with self._lock:
+            self._counts[kind] += 1
+            if kind in self._logged:
+                return False
+            self._logged.add(kind)
+            return True
+
     def record(self, kind: str) -> None:
         if kind not in self._counts:
             raise KeyError(f"unknown refusal kind: {kind!r}")
-        with self._lock:
-            self._counts[kind] += 1
-            first_trip = kind not in self._logged
-            if first_trip:
-                self._logged.add(kind)
-        if first_trip:
+        if self._increment(kind):
             sys.stderr.write(
                 f"[serve-refusal] first {kind} refusal — instance shedding "
                 "load; see /v1/state.refusals for the running count\n"
