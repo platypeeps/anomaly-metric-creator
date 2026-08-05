@@ -75,24 +75,26 @@ break the `snapshot_calls == 1` assertion at `test_server.py:563`.
 
 ## Acceptance Criteria
 
-- [ ] `server_k8s_api.py` created; strictly one-way (no runtime
+- [x] `server_k8s_api.py` created; strictly one-way (no runtime
       `from .server_ops`); < 800 lines OR the epic data/size exemption
-      recorded explicitly if it lands larger.
-- [ ] `_preview` relocated to `server_ops_support.py`; both callers import
+      recorded explicitly if it lands larger. (743 lines; the `_api_*`
+      trace/redaction sink carved into `server_k8s_api_trace.py` for the cap.)
+- [x] `_preview` relocated to `server_ops_support.py`; both callers import
       it one-way; no duplicate copy remains.
-- [ ] `server_ops.py` re-imports every moved name at its original position;
+- [x] `server_ops.py` re-imports every moved name at its original position;
       `server_ops.__all__` membership is byte-unchanged (no moved name added
-      to or removed from it).
-- [ ] `server.py` alias block, `server_kubernetes.py` /
+      to or removed from it). (Review-fix: 6 verified-dead re-exports with no
+      consumer were dropped; none was in `__all__`, so membership is unchanged.)
+- [x] `server.py` alias block, `server_kubernetes.py` /
       `server_commands.py` / `server_helm.py` facades, and `server_mcp.py`
       imports are **not** edited and still resolve (identity tests pass).
-- [ ] `tests/test_server.py:563` `resource_snapshot` monkeypatch still
+- [x] `tests/test_server.py:563` `resource_snapshot` monkeypatch still
       bites (all `resource_snapshot`-touching functions stayed in
       `server_ops`).
-- [ ] Full server test suite + fuzz + eval + watch green; render-oracle
+- [x] Full server test suite + fuzz + eval + watch green; render-oracle
       byte-identical over the k8s-API corpus.
-- [ ] `server_k8s_api.py` in the mypy clean gate; CLAUDE.md + spec map
-      updated; `server_ops.py` end size recorded in the PR.
+- [x] `server_k8s_api.py` in the mypy clean gate (32 modules); CLAUDE.md +
+      spec map updated; `server_ops.py` end size recorded in the PR (4,693).
 
 ## Non-Goals
 
