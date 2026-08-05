@@ -2,7 +2,7 @@
   "id": "server-k8s-api-extract",
   "name": "server-k8s-api-extract",
   "title": "Extract server_k8s_api.py from server_ops.py",
-  "description": "Epic step 5: extract the Kubernetes REST facade (discovery/OpenAPI/kubeconfig + kubernetes_api_response + _k8s_api_resource_list + _k8s_objects_for_resource dispatch + REST helpers) from server_ops.py into the one-way leaf server_k8s_api.py using the legacy.py role-swap pattern.",
+  "description": "Epic step 5: extract the pure Kubernetes REST-facade builder/filter/format layer (discovery/OpenAPI-structural/kubeconfig + _k8s_api_resource_list + response builders + selector/namespace filters + non-snapshot mutation-parse + request-body readers) from server_ops.py into the one-way leaf server_k8s_api.py (with the _api_* trace/redaction sink in server_k8s_api_trace.py) using the legacy.py role-swap pattern. The resource_snapshot-bound dispatch spine (kubernetes_api_response, _k8s_objects_for_resource, mutating/group/core/resource dispatchers, OpenAPI document builders) stays in server_ops.py.",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,

@@ -368,7 +368,7 @@ helpers (`_WATCHABLE_LIST_RESOURCES`, `k8s_watch_plan`,
 mutation-parse helpers (`_k8s_mutation_target`, `_payload_replicas`,
 `_k8s_scale`, …), the request-body readers, and `render_kubeconfig`. It
 imports one-way from the lower leaves only (`server_mutations`,
-`server_traces`, `server_ops_parse`, `server_ops_support`,
+`server_ops_parse`, `server_ops_support`,
 `server_k8s_objects`) plus the runtime-inert
 `if TYPE_CHECKING: from .server_ops import SimulationState`.
 `server_k8s_api_trace.py` is the sibling sink leaf carved off `server_k8s_api`

@@ -51,12 +51,9 @@ from .server_ops_support import (
 # conceptual position so the historic server_ops.<name> surface and __all__ stay
 # stable; the leaf never imports server_ops (TYPE_CHECKING SimulationState only).
 from .server_k8s_api import (
-    DEFAULT_MAX_BODY_BYTES as DEFAULT_MAX_BODY_BYTES,
     _K8S_ADVERTISED_VERSION as _K8S_ADVERTISED_VERSION,
     _K8S_ADVERTISED_TAG as _K8S_ADVERTISED_TAG,
     _K8S_ADVERTISED_GIT_VERSION as _K8S_ADVERTISED_GIT_VERSION,
-    _query_int as _query_int,
-    _query_str as _query_str,
 )
 
 
@@ -554,7 +551,6 @@ def load_anomaly_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-from .server_k8s_api_trace import _SENSITIVE_QUERY_KEYS as _SENSITIVE_QUERY_KEYS
 _SNAPSHOT_KINDS = {
     "namespaces",
     "pods",
@@ -4242,8 +4238,6 @@ def _k8s_resource_response(
 
 from .server_k8s_api import (
     _filter_k8s_objects_by_namespace as _filter_k8s_objects_by_namespace,
-    _WATCHABLE_LIST_RESOURCES as _WATCHABLE_LIST_RESOURCES,
-    _watch_requested as _watch_requested,
     k8s_watch_plan as k8s_watch_plan,
 )
 

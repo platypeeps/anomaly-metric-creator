@@ -4,8 +4,11 @@ One-way leaf extracted from ``server_ops.py`` (epic
 ``07-06-server-ops-decomposition`` step 5). Owns the snapshot-free half of the
 real-client Kubernetes API surface: response/dataclass builders, discovery and
 OpenAPI-structural helpers, label/field selector filters, the pure watch
-helpers, mutation-parse helpers, the API trace/fingerprint/redaction cluster,
-request-body readers, and ``render_kubeconfig``.
+helpers, mutation-parse helpers, request-body readers, and
+``render_kubeconfig``. The self-contained ``_api_*``
+trace/fingerprint/redaction sink lives in the sibling leaf
+``server_k8s_api_trace.py`` (one-way ``trace → api``), carved off for the
+800-line cap.
 
 Strictly one-way: it imports only stdlib and the lower leaves
 (``server_mutations``, ``server_ops_parse``, ``server_ops_support``,

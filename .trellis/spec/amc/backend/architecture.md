@@ -206,7 +206,7 @@ discovery/`_k8s_api_resource_list` data builders, the structural non-snapshot
 OpenAPI helpers, label/field/namespace filters, the pure watch helpers, the
 non-snapshot mutation-parse helpers, request-body readers, and
 `render_kubeconfig`), importing one-way from `server_mutations` /
-`server_traces` / `server_ops_parse` / `server_ops_support` /
+`server_ops_parse` / `server_ops_support` /
 `server_k8s_objects` with `SimulationState` under a `TYPE_CHECKING` guard;
 `server_k8s_api_trace.py` for the sibling sink leaf carved off it for the
 800-line cap (the `_api_*` fingerprint helpers, `_is_kubernetes_api_path`,
