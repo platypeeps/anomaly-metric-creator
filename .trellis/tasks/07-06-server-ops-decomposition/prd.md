@@ -94,6 +94,15 @@ explicitly not a split.
   new pure leaf `server_command_render.py` and dedupe `_format_dt` onto
   `server_mutations`, so the later helm extraction imports them one-way without
   an epic resequence.
+- `08-04-server-helm-impl-extract` — step 3: extract the 20 helm symbols
+  (renderers, release/notes model, and the double-base64 gzip Secret encoders)
+  into the top helm leaf `server_helm_impl.py`, importing one-way from the five
+  lower leaves and imported only by `server_ops`.
+- `08-05-server-k8s-api-extract` — step 5: extract the pure Kubernetes
+  REST-facade builder/filter/format layer into `server_k8s_api.py` (with the
+  `_api_*` trace/redaction sink carved into `server_k8s_api_trace.py` for the
+  800-line cap); the `resource_snapshot`-bound dispatch spine stays in
+  `server_ops.py`.
 
 ## Notes
 

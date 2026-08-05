@@ -89,7 +89,26 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
   (helm called 7 staying `server_ops` primitives) was resolved by the
   step-1/2/4 + render-primitive resequence, so no synthetic module or callback
   seam was needed.
-- [ ] Steps 5–7 pending.
+- [x] Step 5 — `server_k8s_api.py` + `server_k8s_api_trace.py` (child
+  `08-05-server-k8s-api-extract`). Extracted the pure Kubernetes REST-facade
+  builder/filter/format layer; the `resource_snapshot`-bound dispatch spine
+  (`kubernetes_api_response`, mutating/group/core/resource dispatchers,
+  `_k8s_objects_for_resource`, `_k8s_endpointslice`, `k8s_watch_objects`,
+  `record_kubernetes_api_call`, OpenAPI document builders) stayed — a closure
+  audit found it bound to `resource_snapshot` (monkeypatched in `server_ops`'s
+  namespace by `tests/test_server.py`), so moving it would reverse-import.
+  Companion `_preview` move down into `server_ops_support.py`. Primary leaf
+  measured 892 lines (≥ 800 cap) so the self-contained `_api_*`
+  trace/fingerprint/redaction sink was carved into `server_k8s_api_trace.py`
+  (one-way `trace → api`). Sizes: `server_ops.py` 5,440 → **4,693**;
+  `server_k8s_api.py` 743; `server_k8s_api_trace.py` 172. `server_ops.__all__`
+  byte-unchanged (227 entries). Both leaves in the mypy clean gate (32
+  modules). Behavior-identity proven by a frozen-clock render-oracle
+  byte-identical over a 64-section corpus (get/describe/scale/delete,
+  discovery, OpenAPI v2/v3, watch, `get all`, kubeconfig) plus the server /
+  fuzz / eval / watch suites. Follow-up recorded: move `_openapi_paths` +
+  snapshot-kind constants to let the OpenAPI document builders move too.
+- [ ] Steps 6–7 pending.
 
 ## Validation Plan
 

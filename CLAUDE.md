@@ -312,8 +312,11 @@ not in `server_ops.__all__` (intra-module only); the other four names plus
 surface both `server_ops` and the two k8s leaves consume downward: the
 `DEFAULT_RELEASE` / `DEFAULT_CHART` identity constants and the
 `_snapshot_row_namespace`, `_snapshot_row_labels`, `_parse_user_timestamp`,
-`_parse_optional_timestamp`, `_string_dict`, and `_k8s_list_resource_version`
-accessors. `server_k8s_objects.py` holds the per-kind Kubernetes **object**
+`_parse_optional_timestamp`, `_string_dict`, `_k8s_list_resource_version`
+accessors, and `_preview` (the command/trace output-truncation helper,
+moved down in the step-5 k8s-API extraction because it has both staying
+callers in `server_ops` — `run_command`, `record_kubernetes_api_call` — and
+callers that moved into the k8s-API trace leaf). `server_k8s_objects.py` holds the per-kind Kubernetes **object**
 builders (30 `_k8s_*` object functions) plus the metadata / owner-reference /
 label / container-state / pod-timestamp / pod-ip helpers they share; it imports
 `DEFAULT_RELEASE` + the five snapshot/timestamp accessors from
@@ -349,12 +352,41 @@ with `server_command_render` a sibling leaf below `server_ops` importing only
 only by `server_ops`), and
 `server_ops` re-importing every moved name (the allowed direction).
 `server_k8s_objects.py`, `server_ops_support.py`, `server_command_render.py`,
-`server_helm_impl.py`,
+`server_helm_impl.py`, `server_k8s_api.py`, `server_k8s_api_trace.py`,
 and `server_k8s_tables.py`
 are all in the mypy clean-module gate; `server_k8s_tables.py`'s single
 verbatim-moved `var-annotate` gap (`_k8s_node_cells`'s `ready` from the
 `next(..., {})` fallback) was closed with an explicit `dict[str, Any]`
 annotation when it joined the gate.
+`server_k8s_api.py` (epic step 5) is the pure Kubernetes REST-facade
+**builder/filter/format** leaf: the `KubernetesApiResponse` return dataclass
+and JSON/text/status response builders, discovery/`_k8s_api_resource_list`/
+`_k8s_resource_meta` data builders, the structural (non-snapshot) OpenAPI
+helpers, the label/field selector + namespace filters, the pure watch
+helpers (`_WATCHABLE_LIST_RESOURCES`, `k8s_watch_plan`,
+`k8s_watch_trace_response`, `k8s_watch_object_key`), the non-snapshot
+mutation-parse helpers (`_k8s_mutation_target`, `_payload_replicas`,
+`_k8s_scale`, …), the request-body readers, and `render_kubeconfig`. It
+imports one-way from the lower leaves only (`server_mutations`,
+`server_ops_parse`, `server_ops_support`,
+`server_k8s_objects`) plus the runtime-inert
+`if TYPE_CHECKING: from .server_ops import SimulationState`.
+`server_k8s_api_trace.py` is the sibling sink leaf carved off `server_k8s_api`
+for the 800-line cap: the `_api_*` fingerprint/namespace/kind/name/intent
+helpers, `_is_kubernetes_api_path`, `_rate_limit_bucket`, and the
+query/secret redaction (`_redact_query`, `_is_sensitive_query_key`,
+`_SENSITIVE_QUERY_KEYS`, `_redact_large_secret_data`, `_api_trace_body`); it
+imports one-way from `server_k8s_api` (and `server_ops_support._preview`) and
+nothing reverse. The **`resource_snapshot`-bound dispatch spine stays in
+`server_ops.py`** (`kubernetes_api_response`, the mutating/group/core/resource
+dispatchers, `_k8s_objects_for_resource`, `_k8s_endpointslice`,
+`k8s_watch_objects`, `record_kubernetes_api_call`, and the OpenAPI
+**document** builders) — those functions call `resource_snapshot` (or
+`_render_logs`/explain helpers), which lives above the leaf tier and is
+monkeypatched in `server_ops`'s namespace by `tests/test_server.py`, so they
+cannot move without a reverse import. Moving `_openapi_paths` + the
+snapshot-kind constants is the recorded follow-up that would let the OpenAPI
+document builders move too.
 For each leaf, `server_ops.py` re-imports every
 name at the original block position (one-way import — the leaf never imports
 `server_ops`), so `server.py`'s alias block, the three facades, and
