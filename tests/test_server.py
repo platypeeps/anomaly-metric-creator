@@ -2422,6 +2422,24 @@ def test_record_server_error_uses_logger_when_present(capsys):
     assert "Traceback (most recent call last):" in record["traceback"]
 
 
+@pytest.mark.parametrize("max_lines", [1, 2, 5, 8])
+def test_capture_traceback_tail_strict_cap(max_lines):
+    # A-076: the truncation marker counts against ``max_lines`` so the flooding
+    # guard is a strict cap (marker + tail must never total max_lines + 1).
+    def _recurse(n):
+        if n:
+            _recurse(n - 1)
+        raise RuntimeError("deep-boom")
+
+    try:
+        _recurse(20)
+    except RuntimeError:
+        tail = server._capture_traceback_tail(max_lines=max_lines)
+    lines = tail.split("\n")
+    assert len(lines) <= max_lines
+    assert lines[0] == "...(traceback truncated)..."
+
+
 def test_get_500_writes_stderr_block_without_logger(amc, tmp_path, monkeypatch, capsys):
     # A-071: forced 500 with default flags (request_logger None) leaves its
     # detail in the stderr sink; the client body stays generic.

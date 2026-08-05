@@ -218,7 +218,14 @@ def _capture_traceback_tail(*, max_lines: int = _ERROR_TRACEBACK_MAX_LINES) -> s
         return ""
     lines = text.rstrip("\n").split("\n")
     if len(lines) > max_lines:
-        lines = ["...(traceback truncated)...", *lines[-max_lines:]]
+        # Strict cap: the truncation marker counts against ``max_lines`` so the
+        # returned block is never longer than the configured flood guard. Reserve
+        # one slot for the marker and keep the last ``max_lines - 1`` tail lines
+        # (marker-only when ``max_lines <= 1``, so a tiny cap can't reintroduce a
+        # ``lines[-0:]`` whole-list slice).
+        marker = "...(traceback truncated)..."
+        keep = max_lines - 1
+        lines = [marker, *lines[-keep:]] if keep > 0 else [marker]
     return "\n".join(lines)
 
 
