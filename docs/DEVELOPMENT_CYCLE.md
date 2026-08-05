@@ -128,8 +128,8 @@ Two exact Python-tool pins have no automated bump path and must be bumped by
 hand from this checklist. Dependabot cannot reach either: the `uv` ecosystem
 runs `versioning-strategy: lockfile-only`, which leaves `pyproject.toml`'s
 manifest untouched (and `mypy` is an exact `==`, not a `>=` floor Dependabot
-would move), and `socketsecurity` is a bare workflow `pip install`, not a
-tracked ecosystem at all.
+would move), and `socketsecurity` is installed by a direct workflow
+`python -m pip install` step, not a tracked ecosystem at all.
 
 - **`mypy==2.1.0`** — `pyproject.toml` `dev` extra. Pinned exactly so the
   report-only baseline error count stays comparable across runs. To bump: raise

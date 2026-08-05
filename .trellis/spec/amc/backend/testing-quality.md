@@ -269,7 +269,8 @@ pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 
 Two other exact `==` pins have no automated update path — Dependabot's
 `lockfile-only` `uv` strategy cannot move a manifest `==`, and the workflow
-`pip install` is not a tracked ecosystem: `mypy==` in `pyproject.toml`'s `dev`
+`python -m pip install` step is not a tracked ecosystem: `mypy==` in
+`pyproject.toml`'s `dev`
 extra and `socketsecurity==` in `.github/workflows/ci.yml`. Their manual bump
 procedure (raise the pin, then verify the mypy baseline count is unchanged and
 the gated clean-module list still passes / the Socket job stays green) lives in
