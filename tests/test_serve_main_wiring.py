@@ -254,7 +254,9 @@ def test_inspection_banner_suppresses_scenarios_under_eval_mode(
     assert "kubectl get pods -n saas-prod" in out
 
 
-_EVAL_PERSIST_WARNING = "eval mode has no --persist-command-db"
+# Assert against the module's own warning constant so the test tracks the
+# single source of truth rather than a hand-copied substring.
+_EVAL_PERSIST_WARNING = server._EVAL_NO_PERSIST_WARNING
 
 
 @pytest.mark.parametrize(
