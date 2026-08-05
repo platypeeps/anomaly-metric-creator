@@ -1,17 +1,14 @@
 # Extract server_helm_impl.py (step 3)
 
-> **PARKED 2026-08-04** — planning-phase closure audit (see `design.md`)
-> found the helm cluster depends on **7 non-helm shared helpers defined in
-> `server_ops.py`** (`_table`, `_format_dt`, `_is_dry_run`, `_unsupported`,
-> `_exposed_active_scenarios`, `_k8s_metadata`, `_k8s_timestamp`). The
-> one-way import rule forbids the helm leaf from calling into `server_ops`,
-> so helm cannot be a clean leaf until those primitives are extracted
-> first. Helm's Secret-encoding path is a k8s-object producer, so it
-> naturally sequences *after* the k8s-object (step 4) and render-primitive
-> (step 6) leaves. **Blocked on an epic-resequencing decision**
-> (design.md Option A recommended: do steps 4 + 6 before helm). Resumes
-> once the maintainer confirms the order. The move-set + oracle baseline
-> are ready for whichever order is chosen.
+> **UNBLOCKED 2026-08-04** — the planning closure audit's blocker (7 non-helm
+> primitives + 2 constants defined in `server_ops.py`) is fully resolved.
+> Option A (resequence) shipped: `_table`/`_is_dry_run`/`_unsupported`/
+> `_exposed_active_scenarios`/`CommandResult` are in `server_command_render.py`
+> (PR #331), `_format_dt` in `server_mutations.py`, `_k8s_metadata`/
+> `_k8s_timestamp` in `server_k8s_objects.py`, and `DEFAULT_RELEASE`/
+> `DEFAULT_CHART` in `server_ops_support.py` (PR #327). Helm is now the top
+> leaf and extracts clean one-way — see the refreshed move-set + closure in
+> `design.md`.
 
 ## Parent
 
@@ -23,7 +20,7 @@ executes one extraction PR against them.
 
 ## Goal
 
-Extract the Helm cluster out of the ~6,589-line
+Extract the Helm cluster out of the 5,540-line
 `src/anomaly_metric_creator/server_ops.py` into a new leaf
 `src/anomaly_metric_creator/server_helm_impl.py`, changing **zero**
 HTTP/command/MCP/Kubernetes-API behavior. `server_ops.py` re-imports
@@ -64,9 +61,12 @@ Any staying dispatcher (a general command router that merely *calls*
 
 ## Acceptance Criteria
 
-- [ ] New `server_helm_impl.py` never imports `server_ops` (one-way
-      leaf); it imports only stdlib plus already-extracted lower leaves
-      (`server_mutations`, `server_ops_parse`, `server_ops_profiles`).
+- [ ] New `server_helm_impl.py` never imports `server_ops` at runtime
+      (one-way leaf); it imports only stdlib plus already-extracted lower
+      leaves (`server_command_render`, `server_k8s_objects`,
+      `server_mutations`, `server_ops_parse`, `server_ops_support`). The sole
+      `from .server_ops import SimulationState` sits under `if TYPE_CHECKING:`
+      with `from __future__ import annotations` (stringized, never evaluated).
 - [ ] `server_ops.py` re-imports every moved name at its original
       conceptual position; no caller (facades, `server.py` alias block,
       `server_mcp.py`, Helm Secret REST objects) is edited.
