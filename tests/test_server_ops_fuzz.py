@@ -106,6 +106,13 @@ _CURATED_COMMANDS = [
     "kubectl scale deployment/apigateway --replicas=notanumber",
     "kubectl get pods --watch --wide -o json -n saas-prod",   # watch => partial
     "kubectl get -w -n saas-prod",                             # watch, no kind
+    # A-013 ghost/nameless mutation shapes: each must render a structured
+    # nonzero result without mutating the overlay, mirroring the REST facade.
+    "kubectl delete pods ghost-xyz -n saas-prod",             # ghost pod delete
+    "kubectl delete deployment ghost-dep -n saas-prod",       # ghost deploy delete
+    "kubectl delete configmap ghost-cm -n saas-prod",         # ghost generic delete
+    "kubectl scale deployment/ghost-dep --replicas=3 -n saas-prod",  # ghost scale
+    "kubectl scale deployment --replicas=3 -n saas-prod",     # nameless scale usage
 ]
 
 _CURATED_PAYLOADS = [
@@ -238,6 +245,25 @@ def test_fuzz_malformed_mutations_preserve_overlay(fuzz_state):
                 assert body.get("kind") == "Status", (method, path, body)
         # Refused mutations must not leave partial overlay state behind.
         assert json.dumps(fuzz_state.mutations.summary(), sort_keys=True) == baseline
+
+
+def test_ghost_command_mutations_preserve_overlay(fuzz_state):
+    # A-013: the /v1/commands renderers must refuse a mutation naming a
+    # resource absent from the overlay-aware snapshot without recording a
+    # phantom overlay write — the same contract the REST facade enforces.
+    ghost_commands = [
+        "kubectl delete pods ghost-xyz -n saas-prod",
+        "kubectl delete deployment ghost-dep -n saas-prod",
+        "kubectl delete configmap ghost-cm -n saas-prod",
+        "kubectl scale deployment/ghost-dep --replicas=3 -n saas-prod",
+        "kubectl scale deployment --replicas=3 -n saas-prod",
+    ]
+    baseline = json.dumps(fuzz_state.mutations.summary(), sort_keys=True)
+    for cmd in ghost_commands:
+        result = server.run_command(fuzz_state, command=cmd, client="fuzz")["result"]
+        assert result["exit_code"] != 0, (cmd, result)
+        assert result["stdout"] == "", (cmd, result)
+    assert json.dumps(fuzz_state.mutations.summary(), sort_keys=True) == baseline
 
 
 def test_unbalanced_quote_command_is_structured_not_raised(fuzz_state):

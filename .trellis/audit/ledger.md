@@ -125,7 +125,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - notes: fixed by task 07-06-validate-impl-split-and-cleanup (2026-07-18)
 
 ## A-012 — SimulationClock.resume() on a running clock silently rewinds simulated time
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: correctness
 - first-seen: 2026-07-17 @ b0df00b
@@ -136,7 +136,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: guard so resume on a running clock is a no-op.
 
 ## A-013 — Command-mode kubectl delete/scale/patch succeed on nonexistent resources and pollute the overlay
-- status: open
+- status: fixed
 - severity: P2 · effort: M · confidence: Plausible
 - dimension: correctness
 - first-seen: 2026-07-17 @ b0df00b
@@ -147,7 +147,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: snapshot check before mutation; NotFound CommandResult on miss; nameless scale = usage error.
 
 ## A-014 — state.otel_status unsynchronized dict serialized live by /v1/state
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: correctness
 - first-seen: 2026-07-17 @ b0df00b
@@ -158,7 +158,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: lock + copy in summary(), or pre-seed keys.
 
 ## A-015 — Failed continuous-generation pass leaves memory/disk split-brain
-- status: open
+- status: fixed
 - severity: P3 · effort: M · confidence: Plausible
 - dimension: correctness
 - first-seen: 2026-07-17 @ b0df00b
@@ -169,7 +169,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: reload rows from disk on failure or surface the inconsistency.
 
 ## A-016 — _iter_component_rows PEP-479 RuntimeError on zero-byte CSV
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: correctness
 - first-seen: 2026-07-17 @ b0df00b
@@ -180,7 +180,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: next(reader, None) + skip with warning.
 
 ## A-017 — Negative ?limit= inverts or unbounds trace listing
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: correctness
 - first-seen: 2026-07-17 @ b0df00b

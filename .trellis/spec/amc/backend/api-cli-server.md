@@ -340,6 +340,22 @@ explicit allowlists rather than any non-empty subresource path. Sources:
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_kubernetes.py`; `tests/test_server.py`.
 
+The two entry points to the one simulated cluster — `/v1/commands` renderers
+and the REST facade `kubernetes_api_mutating_response` — must agree on resource
+existence. A mutation naming a resource absent from the overlay-aware
+`resource_snapshot()` resolves against the snapshot *before* any overlay write
+and refuses without mutating: the REST path returns a 404 `Status`, and the
+command renderers (`_render_delete` for pods/deployments/generic,
+`_render_scale`'s deployment branch, `_render_patch`'s deployment branch)
+return a `NotFound` `CommandResult` (`_not_found`, nonzero exit). A nameless
+`kubectl scale deployment` is a usage error (`kubectl.scale.usage`), never a
+default to `apigateway`. The generic (non-deployment) patch branch keeps upsert
+semantics on both paths. A refused mutation must leave the overlay
+byte-identical (audit A-013). Sources:
+`src/anomaly_metric_creator/server_ops.py`;
+`tests/test_sim_mutation_correctness.py`; `tests/test_server_ops_fuzz.py`;
+`tests/test_server.py`.
+
 Helm compatibility uses simulator JSON inside double-base64 gzip
 `helm.sh/release.v1` Secret payloads; do not document or treat these as native
 Helm 3 protobuf release objects unless the encoder changes. Sources:

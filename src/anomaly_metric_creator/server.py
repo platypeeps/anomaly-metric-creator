@@ -1978,11 +1978,9 @@ def _start_continuous_generation(
     if not enabled:
         return None
     if stream_otel:
-        state.otel_status["thread"] = "waiting"
-        state.otel_status["continuous"] = True
+        state.update_otel_status(thread="waiting", continuous=True)
     else:
-        state.otel_status["thread"] = "disabled"
-        state.otel_status["continuous"] = False
+        state.update_otel_status(thread="disabled", continuous=False)
 
     stop_event = threading.Event()
 
@@ -1996,7 +1994,7 @@ def _start_continuous_generation(
         with state.generation.lock:
             state.generation.thread = "stopped"
         if stream_otel:
-            state.otel_status["thread"] = "stopped"
+            state.update_otel_status(thread="stopped")
 
     thread = threading.Thread(target=_run, name="amc-continuous-generation", daemon=True)
     stop_event.worker_thread = thread
@@ -2067,7 +2065,7 @@ def _run_continuous_generation_once(
 def _start_otel_background(state: SimulationState) -> None:
     args = state.args
     if not getattr(args, "otel_enabled", False):
-        state.otel_status["thread"] = "disabled"
+        state.update_otel_status(thread="disabled")
         return
 
     def _run() -> None:
@@ -2079,15 +2077,16 @@ def _start_otel_background(state: SimulationState) -> None:
 
 def _stream_current_otel_once(state: SimulationState, *, idle_thread_state: str) -> None:
     if not getattr(state.args, "otel_enabled", False):
-        state.otel_status["thread"] = "disabled"
+        state.update_otel_status(thread="disabled")
         return
-    state.otel_status["thread"] = "running"
-    state.otel_status["last_started_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    state.update_otel_status(
+        thread="running",
+        last_started_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+    )
     try:
         _run_otel_streams(state)
     except Exception as exc:  # pragma: no cover - defensive thread boundary
-        state.otel_status["thread"] = "failed"
-        state.otel_status["error"] = str(exc)
+        state.update_otel_status(thread="failed", error=str(exc))
         # Also route to the operator error sink: the /v1/state otel_status.error
         # is eval-hidden, so without this a background OTEL failure is invisible
         # in the default posture. Inside the except block, so the traceback tail
@@ -2098,9 +2097,11 @@ def _stream_current_otel_once(state: SimulationState, *, idle_thread_state: str)
             exc=exc,
         )
         return
-    state.otel_status["thread"] = idle_thread_state
-    state.otel_status["last_completed_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
-    state.otel_status["stream_batches"] = int(state.otel_status.get("stream_batches", 0)) + 1
+    state.update_otel_status(
+        thread=idle_thread_state,
+        last_completed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+    )
+    state.bump_otel_status("stream_batches")
 
 
 def _run_otel_streams(state: SimulationState) -> None:
@@ -2137,7 +2138,7 @@ def _run_otel_streams(state: SimulationState) -> None:
             activity_log_path=args.otel_activity_log,
             verbose=args.otel_verbose,
         )
-        state.otel_status["signal_events_sent"] = sent
+        state.update_otel_status(signal_events_sent=sent)
     if args.otel_emit_gauges:
         component_csv_paths = {
             c: args.output_dir / f"{c}.csv" for c in sorted(args.components)
@@ -2157,7 +2158,7 @@ def _run_otel_streams(state: SimulationState) -> None:
             verbose=args.otel_verbose,
             append_activity_log=not args.otel_gauges_only,
         )
-        state.otel_status["gauge_requests_sent"] = sent
+        state.update_otel_status(gauge_requests_sent=sent)
 
 
 def start_test_server(

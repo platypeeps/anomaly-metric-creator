@@ -637,7 +637,18 @@ backlog. Mutations are checked against the overlay-aware
 a resource the snapshot does not contain returns a 404 `Status` and leaves
 the overlay untouched (a refused mutation must never leave partial state —
 the deployment-scale path once wrote `set_workload` before its own 404
-check). The generic 500 boundaries in `server.py` (`do_GET`, `do_POST`, and —
+check). The command-mode renderers must stay in parity with that API path
+(task `07-17-audit-sim-mutation-correctness`, audit A-013):
+`_render_delete` (pods / deployments / generic), `_render_scale` (deployment
+branch), and `_render_patch` (deployment branch) each resolve the name against
+`resource_snapshot()` *before* any `set_workload` / `delete_pod` /
+`delete_resource` write and return a `NotFound` `CommandResult`
+(`_not_found`) on a miss — so a `kubectl delete/scale/patch` of a ghost
+resource exits nonzero on both `/v1/commands` and the REST facade with the
+overlay untouched, and a nameless `kubectl scale deployment` is a usage error
+(`kubectl.scale.usage`) instead of defaulting to `apigateway`. The generic
+(non-deployment) `_render_patch` branch keeps its upsert semantics, matching
+the API generic PATCH/PUT path. The generic 500 boundaries in `server.py` (`do_GET`, `do_POST`, and —
 after task `07-17-audit-serve-error-visibility` — `_handle_mutating_method`
 for PUT/PATCH/DELETE, Status-shaped for API paths) return
 `{"error": "internal server error"}` (or a Kubernetes `Status`); exception

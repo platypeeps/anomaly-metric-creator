@@ -7,6 +7,24 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `amc serve` simulator clock and command-mutation correctness fixes (audit
+  A-012..A-017). **Behavior change:** a command-mode `kubectl delete`, `scale`,
+  or `patch` naming a resource absent from the (overlay-aware) snapshot now
+  exits nonzero with an `Error from server (NotFound)` message and leaves the
+  overlay untouched — matching the REST facade, which already 404'd — instead
+  of succeeding and recording a phantom mutation. A nameless `kubectl scale
+  deployment --replicas=N` (no resource name) is now a usage error
+  (`kubectl.scale.usage`) rather than silently scaling `apigateway`.
+  `SimulationClock.resume()` on a clock that is already running is now a no-op
+  instead of rewinding simulated time. `/v1/state`'s `otel` block is copied
+  under a lock so a concurrent background writer can no longer trip a transient
+  500. A continuous-generation pass that fails after atomically publishing a
+  new `anomalies.csv` now reloads the on-disk rows so `/v1/anomalies` and the
+  MCP tools stop serving a stale in-memory copy. A negative `?limit=` on trace
+  listing is clamped to `0` on both the memory and SQLite backends (it used to
+  invert the memory slice and mean "unbounded" in SQLite). A zero-byte
+  per-component CSV now warns and yields no rows instead of raising. Generated
+  artifact bytes and locked hashes are unchanged.
 - `amc serve` error plane is now observable by default (audit
   A-071/A-072/A-073/A-076). Every unhandled 500 (`do_GET` / `do_POST` and now
   PUT/PATCH/DELETE via `_handle_mutating_method`, Status-shaped for Kubernetes
