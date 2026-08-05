@@ -52,42 +52,48 @@ bytes identical.
 
 ## Acceptance Criteria
 
-- [ ] `CommandResult` + `_table` + `_format_dt` + `_is_dry_run` +
+- [x] `CommandResult` + `_table` + `_format_dt` + `_is_dry_run` +
       `_unsupported` + `_exposed_active_scenarios` are defined in the chosen
-      lower leaf; the leaf imports **nothing** from `server_ops` (one-way rule
-      holds — grep: no `from .server_ops` / `import server_ops` in the leaf).
-- [ ] `server_ops.py` re-imports every moved name at its original conceptual
+      lower leaf (`server_command_render.py`); the leaf imports **nothing at
+      runtime** from `server_ops` (one-way rule holds). The sole
+      `from .server_ops import SimulationState` sits under `if TYPE_CHECKING:`
+      with `from __future__ import annotations`, so it is stringized and never
+      evaluated at runtime — the epic's sanctioned k8s-leaf annotation pattern.
+- [x] `server_ops.py` re-imports every moved name at its original conceptual
       position; grep of the moved ranges confirms no swept-up `^from \.`
       re-import block (splice-hazard rule).
-- [ ] Every existing compatibility consumer still resolves unchanged:
+- [x] Every existing compatibility consumer still resolves unchanged:
       `server.py` alias block, `server_commands.py` / `server_kubernetes.py` /
       `server_helm.py` facades, `server_mcp.py` imports, and every
       `from .server_ops import CommandResult` / `server_ops.CommandResult`
       site.
-- [ ] `_format_dt` duplication resolved per the audit (import the existing
+- [x] `_format_dt` duplication resolved per the audit (import the existing
       `server_mutations` copy or move the canonical one — no third copy).
-- [ ] Targeted suites pass `-n 0`:
+- [x] Targeted suites pass `-n 0`:
       `tests/test_server.py tests/test_server_ops_fuzz.py
       tests/test_server_mcp.py tests/test_server_eval_mode.py`.
-- [ ] Full suite green: `.venv/bin/pytest`.
-- [ ] Render-oracle byte-identical before/after over the fixed command list
+- [x] Full suite green: `.venv/bin/pytest`.
+- [x] Render-oracle byte-identical before/after over the fixed command list
       (`kubectl get pods/deployments/events`, `describe`, `logs`,
       `helm list/status/history`) captured via `run_command`.
-- [ ] The chosen leaf is in the mypy clean gate (`tools/check_mypy_gate.py`)
+- [x] The chosen leaf is in the mypy clean gate (`tools/check_mypy_gate.py`)
       with no new `var-annotate`/type gap; a verbatim-inherited gap is closed
       with an explicit annotation before the leaf joins the gate (mirrors the
       tables `_k8s_node_cells` fix).
-- [ ] Docs updated in the same PR: CLAUDE.md server module map and
+- [x] Docs updated in the same PR: CLAUDE.md server module map and
       `.trellis/spec/amc/backend/architecture.md`; the DAG line updated for the
       new/extended leaf's position.
-- [ ] Measured `server_ops.py` end line count recorded in the PR body and the
+- [x] Measured `server_ops.py` end line count recorded in the PR body and the
       epic `implement.md` step status.
-- [ ] Pre-PR checklist (all 15 headings) worked before the PR leaves draft.
+- [x] Pre-PR checklist (all 15 headings) worked before the PR leaves draft.
 
 ## Verification (falsifiable)
 
-- One-way import: `grep -nE 'from \.server_ops|import server_ops' <leaf>.py`
-  -> **0 hits**. Any hit = fail.
+- One-way runtime import: the only `from .server_ops` line in the leaf must sit
+  under `if TYPE_CHECKING:` (the `SimulationState` annotation). Verify with
+  `grep -nE 'from \.server_ops|import server_ops' server_command_render.py`
+  -> exactly one hit, and it is the `TYPE_CHECKING`-guarded `SimulationState`
+  import; any **runtime** (unguarded) hit = fail.
 - Compat resolve: import `anomaly_metric_creator.server` and `.server_mcp`
   cleanly, and assert `server_ops.CommandResult is <leaf>.CommandResult`
   (identity preserved through the re-import stub).
