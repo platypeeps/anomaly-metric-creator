@@ -631,3 +631,46 @@ Closed audit A-012..A-017 in one PR (#340): SimulationClock.resume() no-op on a 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 63: Extract server_k8s_api.py from server_ops.py (epic 07-06 step 5)
+
+**Date**: 2026-08-05
+**Task**: Extract server_k8s_api.py from server_ops.py (epic 07-06 step 5)
+**Package**: amc
+**Branch**: `sdelmas/server-k8s-api-extract`
+
+### Summary
+
+Role-swap extraction of the pure Kubernetes REST-facade builder/filter/format layer out of server_ops.py into the one-way leaf server_k8s_api.py, with the _api_* trace/redaction sink carved into server_k8s_api_trace.py for the 800-line cap. The resource_snapshot-bound dispatch spine stayed in server_ops.py (monkeypatch-pinned). _preview moved down to server_ops_support.py. Review-fix pass dropped 6 verified-dead re-exports and corrected four doc surfaces; 5 Copilot findings fixed, 5 rebutted as cross-module re-export/CodeQL-isolation false positives.
+
+### Main Changes
+
+- New leaf server_k8s_api.py (743 lines): KubernetesApiResponse + response builders, discovery/_k8s_api_resource_list data builders, structural OpenAPI helpers, selector/namespace filters, pure watch helpers, non-snapshot mutation-parse, request-body readers, render_kubeconfig
+- New sink leaf server_k8s_api_trace.py (172 lines): _api_* fingerprint/redaction cluster, one-way trace -> api
+- _preview relocated to server_ops_support.py; server_ops.py 5,440 -> 4,693 lines; server_ops.__all__ byte-unchanged (227 entries)
+- Review-fix: removed 6 zero-consumer re-exports (DEFAULT_MAX_BODY_BYTES, _query_int, _query_str, _SENSITIVE_QUERY_KEYS, _WATCHABLE_LIST_RESOURCES, _watch_requested); corrected leaf docstring + CLAUDE.md + architecture.md + task.json (server_traces / spine-stayed accuracy)
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8374369` | refactor(server): extract k8s REST-facade pure layer into server_k8s_api leaf (epic step 5) |
+| `ae25817` | refactor(server): drop dead k8s_api re-exports; fix extraction docs |
+| `cc9d5a9` | docs(task): check off 08-05 acceptance criteria (all verified this cycle) |
+
+### Testing
+
+- [OK] import anomaly_metric_creator.server succeeds (re-import seam + server.py alias block resolve)
+- [OK] mypy clean gate: 32 source files, no issues (both leaves gated)
+- [OK] tests/test_server.py + fuzz + mcp + eval + watch: 186 passed, 2 skipped (-n 0)
+- [OK] render-oracle byte-identical over 64-section k8s-API corpus; review preflight 0 failures
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
