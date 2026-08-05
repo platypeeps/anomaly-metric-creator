@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 61
+- **Total Sessions**: 62
 - **Last Active**: 2026-08-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~585 | Active |
+| `journal-2.md` | ~630 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 62 | 2026-08-05 | audit-sim-mutation-correctness: simulator clock + command-mutation correctness (A-012..A-017) | `4cb9adc`, `96b68f6`, `ad554a5`, `d5af17b` | `sdelmas/sim-mutation-correctness` |
 | 61 | 2026-08-05 | Ship PR B of 07-17: DoS-refusal counters (A-075) + request-id join key (A-077) | `d3e8b31`, `e5d4c8d`, `79ffbff`, `4ecd6da` | `sdelmas/serve-error-refusal-counters` |
 | 60 | 2026-08-05 | Serve error plane observable by default (PR A: A-071..A-074, A-076) | `d908588`, `9ee939f`, `2cddb11`, `8f2c431`, `ce81628` | `sdelmas/serve-error-visibility-sinks` |
 | 59 | 2026-08-04 | Prune MCP tool scans and trace-store hot paths (audit A-039..A-042) | `b282d55`, `fdf3397` | `sdelmas/mcp-query-performance` |
