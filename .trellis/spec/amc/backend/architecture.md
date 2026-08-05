@@ -171,8 +171,9 @@ behavior belongs in focused modules: `server_ops.py` for simulation state,
 command rendering, the `_k8s_objects_for_resource` / `_k8s_table` dispatchers,
 `resource_snapshot()`, and Helm Secret encoding;
 `server_ops_support.py` for the pure lower leaf shared downward by the ops and
-k8s surfaces (`DEFAULT_RELEASE` / `DEFAULT_CHART` and the snapshot-row /
-timestamp / string-coercion / list-resource-version accessors);
+k8s surfaces (`DEFAULT_RELEASE` / `DEFAULT_CHART`, the snapshot-row /
+timestamp / string-coercion / list-resource-version accessors, and `_preview`,
+the output-truncation helper moved down in the step-5 k8s-API extraction);
 `server_k8s_objects.py` for the per-kind Kubernetes object builders plus the
 metadata / owner / label / container-state / pod-timestamp / pod-ip helpers
 (also the home of `_k8s_metadata` / `_k8s_timestamp` that the
@@ -199,7 +200,24 @@ a `TYPE_CHECKING` guard); `server_helm_impl.py` for the top helm leaf (the 20
 helm renderers, release/notes model, and double-base64 gzip Secret encoders,
 importing one-way from `server_command_render`, `server_k8s_objects`,
 `server_mutations`, `server_ops_parse`, and `server_ops_support`, and imported
-only by `server_ops`); `server_traces.py` for
+only by `server_ops`); `server_k8s_api.py` for the pure Kubernetes REST-facade
+builder/filter/format leaf (`KubernetesApiResponse` + response builders,
+discovery/`_k8s_api_resource_list` data builders, the structural non-snapshot
+OpenAPI helpers, label/field/namespace filters, the pure watch helpers, the
+non-snapshot mutation-parse helpers, request-body readers, and
+`render_kubeconfig`), importing one-way from `server_mutations` /
+`server_traces` / `server_ops_parse` / `server_ops_support` /
+`server_k8s_objects` with `SimulationState` under a `TYPE_CHECKING` guard;
+`server_k8s_api_trace.py` for the sibling sink leaf carved off it for the
+800-line cap (the `_api_*` fingerprint helpers, `_is_kubernetes_api_path`,
+`_rate_limit_bucket`, and query/secret redaction), importing one-way from
+`server_k8s_api`. The `resource_snapshot`-bound dispatch spine
+(`kubernetes_api_response`, the mutating/group/core/resource dispatchers,
+`_k8s_objects_for_resource`, `_k8s_endpointslice`, `k8s_watch_objects`,
+`record_kubernetes_api_call`, and the OpenAPI document builders) stays in
+`server_ops.py` because it calls `resource_snapshot` — monkeypatched in
+`server_ops`'s namespace by `tests/test_server.py` — and cannot move without a
+reverse import; `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
 `server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP

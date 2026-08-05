@@ -78,3 +78,10 @@ def _string_dict(value: Any) -> dict[str, str]:
 def _k8s_list_resource_version(state: SimulationState) -> str:
     with state.mutations.lock:
         return str(max(1, state.mutations.version + 1))
+
+
+def _preview(value: str, limit: int = 240) -> str:
+    value = value.strip()
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3] + "..."
