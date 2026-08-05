@@ -265,8 +265,12 @@ surfaces that are safe to split without changing public imports:
 owns the mutable overlay dataclasses and helpers, and `server_debug_ui.py` owns
 the inline debug shell. `server_ops.py` owns the ops simulation implementation:
 simulator state, command rendering, resource
-snapshots, Kubernetes/Helm dispatch and mutation, and Helm release Secret
-encoding. Its per-kind Kubernetes **object** and **Table** builders moved down
+snapshots, and Kubernetes/Helm dispatch and mutation. The Helm renderers,
+release/notes model, and Helm release Secret encoding moved down into the
+`server_helm_impl.py` leaf (see below); `server_ops.py` re-imports them and
+still owns the staying `_render_helm` dispatch caller and the
+`_k8s_objects_for_resource` Helm-Secret producer path. Its per-kind Kubernetes
+**object** and **Table** builders moved down
 into two focused leaves (see `server_k8s_objects.py` / `server_k8s_tables.py`
 below); `server_ops.py` re-imports them and still owns the
 `_k8s_objects_for_resource` / `_k8s_table` dispatchers, `resource_snapshot()`,
@@ -314,19 +318,38 @@ builders (30 `_k8s_*` object functions) plus the metadata / owner-reference /
 label / container-state / pod-timestamp / pod-ip helpers they share; it imports
 `DEFAULT_RELEASE` + the five snapshot/timestamp accessors from
 `server_ops_support`. `server_k8s_objects.py` also becomes the home of
-`_k8s_metadata` / `_k8s_timestamp`, which `server_helm.py`'s future extraction
+`_k8s_metadata` / `_k8s_timestamp`, which the `server_helm_impl.py` leaf
 depends on. `server_k8s_tables.py` holds the `meta.k8s.io/v1` **Table**
 surface: `_k8s_table`, `_k8s_column`, `_k8s_table_schema`, and the 24 per-kind
 cell builders (plus the `_k8s_default_cells` fallback); it imports
 `_k8s_list_resource_version` from `server_ops_support`. Both k8s leaves reference
 `SimulationState` only in annotations, guarded by a runtime-inert
 `if TYPE_CHECKING: from .server_ops import SimulationState` so mypy resolves the
-name without a reverse runtime import. The DAG is
+name without a reverse runtime import. `server_helm_impl.py` is the top helm
+leaf: it holds the 20 helm symbols (renderers `_render_helm` + the
+`_render_helm_*` family, the `_helm_value_overrides` / `_helm_operation_note`
+helpers, the `_helm_release` / `_helm_release_revisions` / `_helm_notes` /
+`_helm_current_description` release-and-notes model, and the
+`_helm_secret_objects` / `_helm_secret_object` / `_helm_encoded_release_data` /
+`_helm_release_payload` double-base64 gzip Secret encoders). It imports one-way
+from five lower leaves — `server_command_render` (`CommandResult`, `_table`,
+`_unsupported`, `_is_dry_run`, `_exposed_active_scenarios`), `server_k8s_objects`
+(`_k8s_metadata`, `_k8s_timestamp`), `server_mutations` (`_format_dt`),
+`server_ops_parse` (`ParsedCommand`, `_flag_values`, `_first_flag_value`), and
+`server_ops_support` (`DEFAULT_RELEASE`, `DEFAULT_CHART`) — plus the runtime-inert
+`if TYPE_CHECKING: from .server_ops import SimulationState`; nothing but
+`server_ops` imports it (the allowed direction). It became a clean leaf only
+after epic step 3's resequence moved those five leaves' primitives down first
+(the closure audit found helm otherwise called seven staying `server_ops`
+helpers). The DAG is
 `server_mutations → server_ops_support → server_k8s_objects → server_k8s_tables`,
 with `server_command_render` a sibling leaf below `server_ops` importing only
-`server_ops_parse` (`ParsedCommand`) and `server_mutations` (`_format_dt`), and
+`server_ops_parse` (`ParsedCommand`) and `server_mutations` (`_format_dt`),
+`server_helm_impl` the top leaf importing the five leaves above (and imported
+only by `server_ops`), and
 `server_ops` re-importing every moved name (the allowed direction).
 `server_k8s_objects.py`, `server_ops_support.py`, `server_command_render.py`,
+`server_helm_impl.py`,
 and `server_k8s_tables.py`
 are all in the mypy clean-module gate; `server_k8s_tables.py`'s single
 verbatim-moved `var-annotate` gap (`_k8s_node_cells`'s `ready` from the

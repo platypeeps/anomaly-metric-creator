@@ -68,8 +68,28 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
   `_exposed_active_scenarios` redaction path exercised). This closes the last
   render-primitive coupling so the later `server_helm_impl` extraction imports
   them one-way without an epic resequence.
-- [ ] Steps 5–7 pending; step 3 helm (`server_helm_impl.py`) now fully
-  unblocked on its k8s + render-primitive deps.
+- [x] Step 3 — `server_helm_impl.py` (child
+  `08-04-server-helm-impl-extract`). New top helm leaf (490 lines): 20 helm
+  symbols moved verbatim in 4 contiguous blocks (renderers `_render_helm` +
+  `_render_helm_*` family, `_helm_value_overrides` / `_helm_operation_note`,
+  the `_helm_release` / `_helm_release_revisions` / `_helm_notes` /
+  `_helm_current_description` model, and the `_helm_secret_objects` /
+  `_helm_secret_object` / `_helm_encoded_release_data` / `_helm_release_payload`
+  double-base64 gzip Secret encoders). One-way imports from five lower leaves
+  (`server_command_render`, `server_k8s_objects`, `server_mutations`,
+  `server_ops_parse`, `server_ops_support`); the only `from .server_ops` is a
+  `TYPE_CHECKING` `SimulationState` annotation. `server_ops` re-imports all 20
+  at each block's original position (four callers keep resolving:
+  `render_command`, `resource_snapshot` ×2, `_k8s_objects_for_resource`); orphaned
+  `import base64` / `import gzip` (helm-only) removed. `server_ops.py`
+  5,540 → **5,135** lines. Leaf added to the mypy clean gate (30 modules).
+  Behavior-identity proven by a render-oracle byte-identical over a 24-command
+  helm corpus in both normal and `--mcp-eval-mode` states plus a direct
+  `_helm_secret_objects` payload-bytes dump. The epic's blocker
+  (helm called 7 staying `server_ops` primitives) was resolved by the
+  step-1/2/4 + render-primitive resequence, so no synthetic module or callback
+  seam was needed.
+- [ ] Steps 5–7 pending.
 
 ## Validation Plan
 

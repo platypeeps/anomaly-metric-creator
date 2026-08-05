@@ -3,7 +3,7 @@
   "name": "server-helm-impl-extract",
   "title": "PARKED: Extract server_helm_impl.py from server_ops.py",
   "description": "Epic 07-06 step 3: verbatim-extract the Helm renderer + release/notes helper + Secret-encoding cluster from server_ops.py into a new server_helm_impl.py leaf, re-imported by server_ops.py at original positions. Behavior-identical (render-oracle + fuzz corpus). CLAUDE.md + architecture spec map updated.",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",
