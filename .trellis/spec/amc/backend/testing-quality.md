@@ -267,6 +267,17 @@ pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 `.pre-commit-config.yaml`; `CLAUDE.md`; `.github/workflows/ci.yml`;
 `tests/test_ruff_lockstep_lint.py`.
 
+Two other exact `==` pins have no automated update path — Dependabot's
+`lockfile-only` `uv` strategy cannot move a manifest `==`, and the workflow
+`python -m pip install` step is not a tracked ecosystem: `mypy==` in
+`pyproject.toml`'s `dev`
+extra and `socketsecurity==` in `.github/workflows/ci.yml`. Their manual bump
+procedure (raise the pin, then verify the mypy baseline count is unchanged and
+the gated clean-module list still passes / the Socket job stays green) lives in
+the "Pinned CI tool bumps" subsection of `docs/DEVELOPMENT_CYCLE.md`, pointed at
+from the pre-PR CI-hygiene heading. Sources: `pyproject.toml`;
+`.github/workflows/ci.yml`; `docs/DEVELOPMENT_CYCLE.md`; `CLAUDE.md`.
+
 ## Local and Remote Review Gates
 
 Use `scripts/sd-ai-command-pack-full-check.sh` as the local review gate rather than

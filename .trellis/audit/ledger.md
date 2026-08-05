@@ -463,7 +463,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: hoist per-component values above the replica loop.
 
 ## A-043 — .opencode/package.json declares an unused, unpinned npm dependency with no lockfile
-- status: open
+- status: fixed
 - severity: P2 · effort: S · confidence: Plausible
 - dimension: dependencies
 - first-seen: 2026-07-17 @ b0df00b
@@ -474,7 +474,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: remove (plus the Dependabot entry) or pin exactly + commit a lockfile.
 
 ## A-044 — mypy== and CI socketsecurity== pins have no automated update path
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: dependencies
 - first-seen: 2026-07-17 @ b0df00b
@@ -485,7 +485,7 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: periodic-bump checklist or Dependabot-visible pin location.
 
 ## A-045 — Vendored security-best-practices skill has no upstream provenance or refresh story
-- status: open
+- status: fixed
 - severity: P3 · effort: S · confidence: Plausible
 - dimension: dependencies
 - first-seen: 2026-07-17 @ b0df00b

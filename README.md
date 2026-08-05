@@ -121,6 +121,20 @@ scripts/update_repomix
 The refresh script requires the `repomix` CLI on `PATH` and rewrites the
 generated artifact in place.
 
+## Agent skills
+
+Repo-local agent skills live under `.agents/skills` (the canonical source) and
+are mirrored byte-for-byte into `.claude`, `.codex`, `.gemini`, `.github`, and
+`.opencode` by `scripts/sync-agent-skills.py`. Edit the canonical copy, then run
+`python scripts/sync-agent-skills.py` to fan out and
+`python scripts/sync-agent-skills.py --check` to verify every mirror matches.
+
+`security-best-practices` is **vendored from upstream**
+[`openai/skills`](https://github.com/openai/skills) (`skills/.curated/security-best-practices`,
+Apache-2.0), not authored here. Its
+[`PROVENANCE.md`](.agents/skills/security-best-practices/PROVENANCE.md) records
+the vendored upstream commit and the re-vendor + fan-out refresh procedure.
+
 ## Usage
 
 ```bash

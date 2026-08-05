@@ -124,6 +124,28 @@ and update the CI contract guard and its mutation tests. Sources:
 `tests/test_server.py`; `tools/check_ci_review_contract.py`;
 `tests/test_ci_review_contract.py`; `README.md`.
 
+Two exact Python-tool pins have no automated bump path and must be bumped by
+hand from this checklist. Dependabot cannot reach either: the `uv` ecosystem
+runs `versioning-strategy: lockfile-only`, which leaves `pyproject.toml`'s
+manifest untouched (and `mypy` is an exact `==`, not a `>=` floor Dependabot
+would move), and `socketsecurity` is installed by a direct workflow
+`python -m pip install` step, not a tracked ecosystem at all.
+
+- **`mypy==2.1.0`** — `pyproject.toml` `dev` extra. Pinned exactly so the
+  report-only baseline error count stays comparable across runs. To bump: raise
+  the pin, run `.venv/bin/pip install -e '.[dev]'`, run the report-only mypy
+  step (whole `[tool.mypy]` `files` set) and confirm the baseline count is
+  unchanged or improved, then run the gated
+  `python tools/check_mypy_gate.py` and confirm the clean-module list is still
+  error-free. A new mypy release that reclassifies errors in the gated modules
+  blocks the bump until the modules are fixed — never drop a module to pass.
+- **`socketsecurity==2.1.0`** — `.github/workflows/ci.yml` (the Socket job's
+  `python -m pip install`). To bump: raise the pin and confirm the Socket job
+  stays green (or fast-skips) on a PR that touches dependency/security-relevant
+  files so the job actually runs. The job no-ops to success until the
+  `SOCKET_SECURITY_API_KEY` secret is set, so verify against a run where the
+  secret is present.
+
 CodeQL is advisory on PRs and not a required branch-protection context
 (`CI Result` is the only required check): it analyzes
 opened/reopened/ready_for_review PRs and `full-ci`-labeled updates, skips on

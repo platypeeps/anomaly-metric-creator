@@ -56,14 +56,7 @@ updates:
       codeql:
         patterns: ["github/codeql-action/*"]
 
-  # OpenCode adapter plugin manifest — keep the committed tool integration
-  # dependency fresh without mixing it into the product dependency PR.
-  - package-ecosystem: "npm"
-    directory: "/.opencode"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "America/Denver"
-    commit-message:
-      prefix: "chore(opencode-deps)"
+  # No npm ecosystem entry: OpenCode regenerates .opencode/package.json
+  # (pinned to the locally installed opencode version) and its lockfile on
+  # every launch, so the manifest is a gitignored per-developer runtime
+  # artifact, not a committed dependency for Dependabot to bump (audit A-043).
