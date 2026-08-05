@@ -105,6 +105,12 @@ class SimulationClock:
 
     def resume(self) -> _dt.datetime:
         with self._lock:
+            if not self._paused:
+                # Already running — resume is a no-op. Resetting _base_wall here
+                # would discard the elapsed time accrued since the last base and
+                # rewind simulated time (audit A-012); return the live sim time.
+                elapsed = max(0.0, time.time() - self._base_wall) * self.speedup
+                return self._base_sim + _dt.timedelta(seconds=elapsed)
             self._base_wall = time.time()
             self._paused = False
             return self._base_sim
@@ -375,6 +381,17 @@ class SimulationState:
     mutations: SimulationMutations = field(default_factory=SimulationMutations)
     generation: ContinuousGenerationStatus = field(default_factory=ContinuousGenerationStatus)
     otel_status: dict[str, Any] = field(default_factory=dict)
+    # Guards otel_status against a torn read from /v1/state (audit A-014): the
+    # background OTEL / continuous-generation threads mutate this dict while
+    # ``summary()`` runs on an HTTP handler thread. Thread-safety rests on the
+    # lock alone, not on the key set being fixed: every writer
+    # (``update_otel_status`` / ``bump_otel_status``) mutates under this lock
+    # and ``otel_status_snapshot`` copies the dict under it, so the reader never
+    # iterates the live dict — a writer adding a new key can never race the
+    # snapshot into a "dictionary changed size during iteration". Call sites
+    # today only ever write a known, stable key set, so no resize happens in
+    # practice; the lock is what makes that safe regardless.
+    otel_status_lock: threading.Lock = field(default_factory=threading.Lock)
     shutdown_event: threading.Event = field(default_factory=threading.Event)
     # Optional structured-log sink, wired by ``serve_main`` after the state is
     # built. Background arms (continuous generation, OTEL streaming) read it to
@@ -414,7 +431,7 @@ class SimulationState:
             "anomaly_count": self.generated_row_count(),
             "command_trace_count": self.traces.count(),
             "unsupported_group_count": self.traces.unsupported_fingerprint_count(),
-            "otel": self.otel_status,
+            "otel": self.otel_status_snapshot(),
             "generation": self.generation.to_dict(),
             "refusals": self.refusals.snapshot(),
             "mutations": self.mutations.summary(),
@@ -428,6 +445,23 @@ class SimulationState:
             ],
             "active_anomalies": self.active_anomalies(limit=20),
         }
+
+    def otel_status_snapshot(self) -> dict[str, Any]:
+        """Return a consistent copy of otel_status under the lock (A-014)."""
+        with self.otel_status_lock:
+            return dict(self.otel_status)
+
+    def update_otel_status(self, **changes: Any) -> None:
+        """Apply one or more otel_status field updates atomically (A-014)."""
+        with self.otel_status_lock:
+            self.otel_status.update(changes)
+
+    def bump_otel_status(self, key: str, amount: int = 1) -> int:
+        """Increment an integer otel_status counter under the lock (A-014)."""
+        with self.otel_status_lock:
+            new_value = int(self.otel_status.get(key, 0)) + amount
+            self.otel_status[key] = new_value
+            return new_value
 
     def active_anomalies(self, limit: int = 50) -> list[dict[str, str]]:
         now = self.clock.now()
@@ -499,11 +533,25 @@ def build_state(
             sqlite_retention=persist_command_retention,
         ),
         mutations=SimulationMutations(extra_event_limit=trace_limit),
+        # Convention (not a safety mechanism): every key the background OTEL /
+        # continuous-generation writers ever set is pre-seeded here so the
+        # schema is stable and /v1/state always reports the full field set.
+        # Thread-safety is provided by otel_status_lock, not by this seeding —
+        # every read (otel_status_snapshot) and write (update/bump) holds the
+        # lock, so even a writer adding an unforeseen key cannot race the
+        # snapshot copy (audit A-014).
         otel_status={
             "enabled": bool(getattr(args, "otel_enabled", False)),
             "signals": sorted(getattr(args, "otel_signal_selection", None) or []),
             "gauges": bool(getattr(args, "otel_emit_gauges", False)),
             "thread": "not_started",
+            "continuous": False,
+            "last_started_at": None,
+            "last_completed_at": None,
+            "error": "",
+            "stream_batches": 0,
+            "signal_events_sent": 0,
+            "gauge_requests_sent": 0,
         },
         eval_mode=eval_mode,
     )
@@ -779,9 +827,15 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
             )
         return _unsupported(parsed, "kubectl rollout undo")
     if parsed.verb == "scale":
-        return CommandResult(0, _render_scale(state, parsed), "", "supported", "kubectl.scale")
+        scale_result = _render_scale(state, parsed)
+        if isinstance(scale_result, CommandResult):
+            return scale_result
+        return CommandResult(0, scale_result, "", "supported", "kubectl.scale")
     if parsed.verb == "delete":
-        return CommandResult(0, _render_delete(state, parsed), "", "supported", "kubectl.delete")
+        delete_result = _render_delete(state, parsed)
+        if isinstance(delete_result, CommandResult):
+            return delete_result
+        return CommandResult(0, delete_result, "", "supported", "kubectl.delete")
     if parsed.verb == "patch":
         return _render_patch(state, parsed)
     if parsed.verb == "diff":
@@ -2227,10 +2281,26 @@ def _is_deployment_rollout_target(parsed: ParsedCommand) -> bool:
     return parsed.resource_kind == "deployments" and bool(parsed.resource_name)
 
 
-def _render_scale(state: SimulationState, parsed: ParsedCommand) -> str:
+def _render_scale(state: SimulationState, parsed: ParsedCommand) -> str | CommandResult:
     if parsed.resource_kind not in {"deployments", "deployment", "deploy", ""}:
         return f"{_normalized_resource_prefix(parsed.resource_kind)}/{parsed.resource_name} scaled\n"
-    component = parsed.resource_name or "apigateway"
+    name = parsed.resource_name
+    if not name:
+        # A nameless scale used to default to apigateway and mutate its
+        # workload — real kubectl rejects an empty resource name, and silently
+        # scaling an arbitrary default pollutes the overlay (audit A-013).
+        return CommandResult(
+            1,
+            "",
+            "error: resource(s) were provided, but no name was specified\n",
+            "supported",
+            "kubectl.scale.usage",
+        )
+    # Resolve the target against the overlay-aware snapshot before any write —
+    # the same order the API deployment-scale path enforces (audit A-013).
+    if _find_named(resource_snapshot(state)["deployments"], name) is None:
+        return _not_found("deployments", name)
+    component = name
     replicas = _parsed_replicas(parsed)
     now = state.clock.now()
     state.mutations.set_workload(
@@ -2251,14 +2321,21 @@ def _render_scale(state: SimulationState, parsed: ParsedCommand) -> str:
     return f"deployment.apps/{component} scaled\n"
 
 
-def _render_delete(state: SimulationState, parsed: ParsedCommand) -> str:
+def _render_delete(state: SimulationState, parsed: ParsedCommand) -> str | CommandResult:
     kind = parsed.resource_kind
     name = parsed.resource_name
     now = state.clock.now()
     if kind in {"pods", "pod"} and name:
+        # Resolve against the overlay-aware snapshot before deleting — a ghost
+        # name used to record a phantom deletion in the overlay while the API
+        # path 404'd (audit A-013). Same order the API pods-delete branch uses.
+        if _find_named(resource_snapshot(state)["pods"], name) is None:
+            return _not_found("pods", name)
         state.mutations.delete_pod(name, now=now)
         return f"pod \"{name}\" deleted\n"
     if kind in {"deployments", "deployment", "deploy"} and name:
+        if _find_named(resource_snapshot(state)["deployments"], name) is None:
+            return _not_found("deployments", name)
         state.mutations.set_workload(
             name,
             now=now,
@@ -2278,6 +2355,11 @@ def _render_delete(state: SimulationState, parsed: ParsedCommand) -> str:
         return f"deployment.apps \"{name}\" deleted\n"
     snapshot_kind = _mutation_snapshot_kind(kind)
     if snapshot_kind and name:
+        # Generic modeled kind: mirror the API generic-delete existence guard
+        # (``resource_snapshot(...).get(kind, [])``) so a ghost generic resource
+        # 404s on both entry paths instead of recording a phantom delete.
+        if _find_named(resource_snapshot(state).get(snapshot_kind, []), name) is None:
+            return _not_found(snapshot_kind, name)
         state.mutations.delete_resource(snapshot_kind, name, now=now, namespace=parsed.namespace)
     prefix = _resource_prefix(snapshot_kind or _KIND_ALIASES.get(kind, kind) or "resource")
     return f"{prefix} \"{name}\" deleted\n"
@@ -2301,6 +2383,15 @@ def _render_patch(state: SimulationState, parsed: ParsedCommand) -> CommandResul
     payload = parsed_payload
     now = state.clock.now()
     replicas = _payload_replicas(payload)
+    if snapshot_kind == "deployments" and name:
+        # Patching a deployment that is not in the overlay-aware snapshot must
+        # 404 before any write, matching the API deployment-patch path — the
+        # command path used to set_workload on a ghost name (audit A-013). The
+        # generic (non-deployment) branch below keeps its upsert semantics,
+        # which the API generic PATCH/PUT path also uses, so the two stay in
+        # parity.
+        if _find_named(resource_snapshot(state)["deployments"], name) is None:
+            return _not_found("deployments", name)
     if snapshot_kind == "deployments" and replicas is not None:
         state.mutations.set_workload(
             name,
@@ -2826,6 +2917,21 @@ def _record_continuous_generation_failure(
         where="continuous-generate",
         exc=exc,
     )
+    # Split-brain guard (audit A-015): a failed pass may have already
+    # atomically published a new anomalies.csv before failing on a later
+    # artifact. Disk is truth for published artifacts (every writer uses an
+    # atomic replace, so the file is never partial), so reload it into state —
+    # otherwise /v1/anomalies and the MCP tools keep serving a stale in-memory
+    # copy that disagrees with what is on disk. File-must-exist + best-effort:
+    # a pre-write failure that left no file keeps the prior rows rather than
+    # wiping state to empty. Reuses the generation.lock swap via
+    # replace_generated_rows.
+    anomalies_path = state.output_dir / "anomalies.csv"
+    if anomalies_path.exists():
+        try:
+            state.replace_generated_rows(load_anomaly_rows(anomalies_path))
+        except Exception:  # pragma: no cover - defensive disk-read boundary
+            pass
 
 
 def _generic_resource_row(

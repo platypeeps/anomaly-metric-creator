@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import heapq
+import sys
 from pathlib import Path
 
 from .artifacts import _atomic_artifact_open
@@ -79,7 +80,21 @@ def _iter_component_rows(component: str, csv_path: Path):
     """
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
-        header = next(reader)
+        header = next(reader, None)
+        if not header:
+            # Zero-byte / header-less CSV, or a leading blank line that yields
+            # an empty header row ``[]`` (not ``None``) — both are treated the
+            # same: without this an ``[]`` header would fall through to
+            # ``metric_cols = []`` and silently emit metric-less rows. A
+            # generated run never produces one (every component CSV is written
+            # with a header), so this only guards hand-staged debris in a
+            # combine/gauge input directory — skip it with a warning instead of
+            # raising StopIteration (A-016).
+            print(
+                f"WARNING: {csv_path} has no header row; skipping.",
+                file=sys.stderr,
+            )
+            return
         # Detect the Phase 2 dimension column block. The block is the full
         # ``_INSTANCE_DIMENSION_COLUMNS`` tuple in canonical order starting at
         # column 1, written verbatim by ``generate_component`` — a partial /

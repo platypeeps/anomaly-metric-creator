@@ -599,12 +599,15 @@ def test_openapi_v3_discovery_derives_group_versions_from_explain_targets(monkey
 def test_kubectl_delete_ingress_uses_stable_resource_prefix(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
 
+    # Delete the modeled ``apigateway`` ingress (not a ghost name): A-013 now
+    # 404s a delete of a resource absent from the snapshot, so this asserts the
+    # stable prefix on the success path.
     result = server.run_command(
         state,
-        command="kubectl delete ingress public-edge -n saas-prod",
+        command="kubectl delete ingress apigateway -n saas-prod",
     )
 
-    assert result["result"]["stdout"] == 'ingress "public-edge" deleted\n'
+    assert result["result"]["stdout"] == 'ingress "apigateway" deleted\n'
     assert "ingre " not in result["result"]["stdout"]
 
 

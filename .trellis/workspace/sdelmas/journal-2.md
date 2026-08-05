@@ -586,3 +586,48 @@ Implemented and shipped PR B (#339) of task 07-17-audit-serve-error-visibility: 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 62: audit-sim-mutation-correctness: simulator clock + command-mutation correctness (A-012..A-017)
+
+**Date**: 2026-08-05
+**Task**: audit-sim-mutation-correctness: simulator clock + command-mutation correctness (A-012..A-017)
+**Package**: amc
+**Branch**: `sdelmas/sim-mutation-correctness`
+
+### Summary
+
+Closed audit A-012..A-017 in one PR (#340): SimulationClock.resume() no-op on a running clock; command-mode kubectl delete/scale/patch existence-check against the overlay-aware snapshot with kubectl-shaped NotFound + nonzero exit (parity with the REST facade), nameless scale = usage error; otel_status serialized under a lock with a snapshot copy; failed continuous-generation pass reloads published anomalies.csv from disk; _iter_component_rows guards zero-byte/blank-header CSVs; CommandTraceStore.list clamps negative/zero limit identically on both backends.
+
+### Main Changes
+
+- resume() paused-guard so a running clock is not rewound (A-012)
+- _render_scale/_render_delete/_render_patch resolve the target via resource_snapshot() before any overlay write; _not_found on miss; nameless scale -> kubectl.scale.usage (A-013)
+- otel_status_lock + otel_status_snapshot/update_otel_status/bump_otel_status; /v1/state copies under the lock (A-014)
+- _record_continuous_generation_failure reloads on-disk anomalies.csv (A-015)
+- csv_layout._iter_component_rows guards empty/blank header (A-016); CommandTraceStore.list clamps max(0, limit) before both backends (A-017)
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4cb9adc` | fix(server): simulator clock resume + command-mutation existence parity (A-012..A-017) |
+| `96b68f6` | fix(server): address Copilot review on A-016 header guard + test except scope |
+| `ad554a5` | docs(server): clarify otel_status thread-safety rests on the lock, not pre-seeding |
+| `d5af17b` | docs(server): reword build_state otel_status comment to match the lock-safety framing |
+
+### Testing
+
+- [OK] tests/test_sim_mutation_correctness.py + test_gauges_file.py + test_combine.py: 72 passed
+- [OK] deterministic sd-check: all rows passed (incl. knowledge.obsidian-kb)
+- [OK] Copilot review of final head d5af17b: no new comments; all 4 review threads resolved
+- [OK] CI Result SUCCESS on d5af17b; mergeState CLEAN
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

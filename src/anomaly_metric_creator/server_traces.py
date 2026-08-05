@@ -262,13 +262,20 @@ class CommandTraceStore:
                 raise
 
     def list(self, limit: int | None = None) -> list[dict[str, Any]]:
+        # Clamp a negative limit to 0 so both backends agree (audit A-017):
+        # the memory path's ``items[-limit:]`` would otherwise slice off the
+        # front for a negative value, and SQLite's ``LIMIT -1`` means "no
+        # limit" — opposite behaviors from the same caller-supplied value.
+        # ``limit == 0`` returns an empty list on both paths.
+        if limit is not None:
+            limit = max(0, limit)
         if self._sqlite_path is not None:
             return self._list_sqlite(limit=limit)
         with self._lock:
             items = list(self._items)
             version = self._version
         if limit is not None:
-            items = items[-limit:]
+            items = items[-limit:] if limit else []
         return [
             {"version": version, **trace.to_dict()}
             for trace in reversed(items)
