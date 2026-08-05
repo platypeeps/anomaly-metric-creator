@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 59
-- **Last Active**: 2026-08-04
+- **Total Sessions**: 60
+- **Last Active**: 2026-08-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~497 | Active |
+| `journal-2.md` | ~541 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 60 | 2026-08-05 | Serve error plane observable by default (PR A: A-071..A-074, A-076) | `d908588`, `9ee939f`, `2cddb11`, `8f2c431`, `ce81628` | `sdelmas/serve-error-visibility-sinks` |
 | 59 | 2026-08-04 | Prune MCP tool scans and trace-store hot paths (audit A-039..A-042) | `b282d55`, `fdf3397` | `sdelmas/mcp-query-performance` |
 | 58 | 2026-08-04 | Fix eval recipe trace-evidence loss (A-066) | `327e0e5`, `db62edc`, `e39deb1`, `9b3b215` | `sdelmas/audit-eval-harness-trace-retrieval` |
 | 57 | 2026-08-04 | Extract server_command_render leaf (epic 07-06 helm precursor) | `20c4ed2`, `2474c2b`, `dbbe6b6` | `sdelmas/server-command-render-extract` |
