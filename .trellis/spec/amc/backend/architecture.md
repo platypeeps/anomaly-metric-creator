@@ -211,7 +211,7 @@ non-snapshot mutation-parse helpers, request-body readers, and
 `server_k8s_api_trace.py` for the sibling sink leaf carved off it for the
 800-line cap (the `_api_*` fingerprint helpers, `_is_kubernetes_api_path`,
 `_rate_limit_bucket`, and query/secret redaction), importing one-way from
-`server_k8s_api`. The `resource_snapshot`-bound dispatch spine
+`server_k8s_api` plus `server_ops_support._preview`. The `resource_snapshot`-bound dispatch spine
 (`kubernetes_api_response`, the mutating/group/core/resource dispatchers,
 `_k8s_objects_for_resource`, `_k8s_endpointslice`, `k8s_watch_objects`,
 `record_kubernetes_api_call`, and the OpenAPI document builders) stays in

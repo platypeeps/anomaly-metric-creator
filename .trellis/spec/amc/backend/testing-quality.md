@@ -346,6 +346,71 @@ there is no older declared floor and no multi-version lane. Sources:
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
+The `full-ci` label's lifetime is deliberately **asymmetric** between the two
+workflows, and unifying them is a regression in either direction. The
+application and Socket jobs in `ci.yml` honor it **one-shot** — only at the
+`labeled` event, so a later plain `synchronize` drops the cost-gated full
+matrix/scan back to the quick lane unless auto-merge is armed or
+dependency/workflow files changed. `codeql.yml` honors it **persistently**: its
+`synchronize` arm re-checks the label set
+(`contains(github.event.pull_request.labels.*.name, 'full-ci')`) on every push,
+so security analysis runs for the life of a flagged PR. Do not make CodeQL
+one-shot; that cuts security coverage. `tools/check_ci_review_contract.py` pins
+both semantics — a positive anchor on codeql's persistent re-check and a
+`_require_not_contains` guard keeping that form out of `ci.yml`. Sources:
+`.github/workflows/ci.yml`; `.github/workflows/codeql.yml`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
+
+The aggregate `test` job is guarded with `if: ${{ !cancelled() }}`, never
+`always()`. When arming auto-merge triggers a fresh full run that cancels the
+in-progress lane, the aggregate is cancelled *with* the run: its `test` context
+reports `cancelled`, the required `CI Result` aggregate cannot pass, and
+auto-merge waits for the superseding run's real verdict. `always()` would
+instead run the aggregate during cancellation and evaluate
+`test "cancelled" = "success"` — a transient red on every auto-merge-armed PR.
+The contract guard pins the `!cancelled()` form so a revert is caught. A
+superseded `main`-push commit's backstop run is deliberately *not* cancelled
+(per-commit concurrency groups), so a merge burst spends N runner suites; that
+is the accepted cost of the "every merge commit gets a completed verdict"
+guarantee, not a bug. Sources: `.github/workflows/ci.yml`;
+`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
+
+All events run on the standard `ubuntu-latest` runner. The org's
+`ubuntu-latest-m` larger runner stopped being served on 2026-07-04 — main-push
+jobs sat queued for hours with `runner_id=0`, so the post-merge backstop never
+ran — and larger runners bill per-minute besides. Public-repository standard
+runners provide 4 vCPU, 16 GB RAM, and 14 GB SSD with free minutes, so wall
+clock rather than billed minutes is the optimization target; that 16 GB ceiling
+is why the suite is split by the `heavy` marker instead of run in one worker
+pool (a prior full `-n 2` run OOM-died after 32 minutes holding the N=3 / 7-day
+fixtures across workers). Sources: `.github/workflows/ci.yml`;
+`tests/conftest.py`; `docs/DEVELOPMENT_CYCLE.md`.
+
+Coverage and mypy each run as a **report-only + gated** pair in the full lane.
+mypy: a report-only baseline step (`continue-on-error: true`) over the whole
+`[tool.mypy]` `files` set — `legacy.py` and the server layer are the known-messy
+~137-error baseline — plus a gating step running
+`mypy --follow-imports=silent` over the currently-clean modules, failing on any
+error there. The command and gated list are owned by `tools/check_mypy_gate.py`,
+which CI and the local review preflight both invoke; `--follow-imports=silent`
+checks imports for inference but reports only errors originating in the listed
+files, so importing still-dirty `legacy.py` does not leak into the gate. Grow
+that list as decomposition extracts clean modules; never drop one to silence a
+regression. Coverage: each pytest job runs `--cov=src/anomaly_metric_creator`
+with no inline report, renames its hidden `.coverage` to a visible lane-specific
+artifact, and uploads it; the coverage job combines both, generates
+`coverage.xml`, and only then gates with `coverage report --fail-under=85` — a
+no-regression ratchet ~3 points below the measured 88% for xdist/partition
+jitter headroom, ratcheted **up** as decomposition lands and never lowered to
+pass a red build. XML generation precedes the threshold step and `coverage.xml`
+uploads with `if: ${{ !cancelled() }}` so it publishes even when the gate trips.
+`[tool.coverage.run] relative_files = true` makes raw data portable across job
+checkouts, and `COVERAGE_CORE=sysmon` keeps tracing overhead inside the job
+timeout. The `--cov` flags stay CI-only — `addopts` / `required_plugins`
+deliberately do not reference pytest-cov, so local runs pay no tracing cost.
+Sources: `.github/workflows/ci.yml`; `tools/check_mypy_gate.py`;
+`pyproject.toml`; `tests/test_mypy_gate_lint.py`.
+
 ## Scenario: GitHub Actions dependency pin updates
 
 ### 1. Scope / Trigger
@@ -603,16 +668,279 @@ changelog/version impact. Sources:
 `CLAUDE.md`; `.github/PULL_REQUEST_TEMPLATE.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`.
 
+These 15 headings map to the recurring review gates identified by the full
+sweep of ~750 Copilot comments through PR #122 plus the 0.4.0 release-hygiene
+audit. Confirm each heading before removing draft status, or write "N/A —
+_reason_". The bullets under each heading are guidance for what to verify, not
+extra checklist entries to copy verbatim. `.github/PULL_REQUEST_TEMPLATE.md`
+prefills the same 15 headings as Markdown `- [ ]` lines and must mirror — not
+redefine — them; when a heading is renamed, added, or removed here, update the
+template, the Copilot instructions, and
+`tools/check_copilot_instruction_contract.py` in the same diff.
+
+Doc/comment-vs-code drift is the single most-flagged pattern (~30% of all
+review comments), so **Doc / docstring sync** is the highest-leverage heading to
+actually run rather than skim.
+
+### Scope & description
+
+- The PR description names every behavior change in the diff — RNG model,
+  registries, module-level state, default-output bytes, public-helper
+  signatures, CLI/env semantics, doc surface. If the diff is broader than the
+  description, split the PR or update the description.
+- A diff touching RNG, `RunContext`, registries, or module-level state calls
+  that out explicitly, and the test plan covers determinism.
+
+### Validators and schema checks
+
+- For every field a new validator inspects, enumerate non-canonical inputs:
+  `None`, `NaN`, `±inf`, negative, `bool` (a subtype of `int`), empty string,
+  unhashable, wrong container type.
+- Type-check *before* a membership test or numeric op, so the validator's own
+  `ValueError` fires instead of a raw exception from deeper in: `x in VALID_SET`
+  raises `TypeError` on an unhashable list/dict — gate with `isinstance(x, str)`
+  first; `math.isfinite(x)` raises `OverflowError` on an arbitrarily large `int`
+  at import time — guard or skip the float path for non-float numerics.
+- `schema.json` (and any `--instance-config` or other hand-editable input read
+  back at runtime) is **untrusted**: every field the *reader* consumes needs the
+  same type + finiteness guards as the writer-side check. A `NaN`/`±inf` that a
+  JSON loader happily parses silently defeats range and zero-variance checks
+  downstream (`np.std` returns `NaN`; every comparison against it is `False`).
+- Every *branch* of a discriminator is validated: callable **and** constant
+  `Edge.weight`; cascade **and** primary specs; step **and** span paths; `*args`
+  **and** fixed-arity callables.
+- Dispatch tables (`_RECOMPUTERS`, `DERIVATIONS`, …) raise on unknown keys and
+  never return `None` or fall through silently. Antipatterns to grep for:
+  `table.get(key)` on a dispatch table (use `table[key]` so registry drift fails
+  loudly); a dispatcher function returning a sentinel or "soft violation" for an
+  unrecognized metric/component instead of raising `KeyError` (the caller cannot
+  distinguish "fine" from "no recomputer"); a dispatcher branch falling through
+  to a bare `return` when no `if`/`elif` matched.
+
+### Doc / docstring sync
+
+- Every changed function with a docstring has its docstring updated in the same
+  diff.
+- Grep every changed symbol name against the Trellis specs, `README.md`, and
+  `docs/`, and update prose that describes it.
+- When you change a default, precedence rule, count, edge list, or dispatch
+  order, grep for the *old value/word* across the docstring, in-file section
+  headers, CLI `--help` strings, `README.md`, `docs/*.md`, and the specs. A
+  behavior change fans out across all of them (flipping `--topology-mode` to
+  `realistic` left `docs/topology.md` stale; moving subcommand dispatch before
+  `parse_args` left the `docs/application-flow.md` mermaid wrong).
+- Magnitude/percentage values baked into description strings (a scenario's
+  `(35% errors)`, a docstring's `350 rows`) must match the generator.
+- Count words drift silently as a list grows — "four slices", "three modes",
+  "8 specs". Re-count after adding or removing an item.
+- A new `tools/check_*.py` whose docstring was copy-pasted from a sibling must
+  have its mode/call counts and examples re-verified line-by-line (PR #92
+  inherited "three modes / three calls" while having two modes and four `gh`
+  calls).
+- After any bulk find/replace, re-read every touched docstring for orphaned
+  grammar — each fragment is filed as its own review comment (PR #80).
+
+### Single source of truth
+
+- No hand-rolled emit→filename, metric→component, or component→derivation maps
+  alongside a canonical registry.
+- `_COMBINE_OUTPUT_FILENAME` is used by the actual combine writer, not only the
+  cleanup/summary path.
+- `Instance` dimension fields have multiple drift sites — `_valid_instance_fields`
+  and the `Instance(**{...})` constructor kwargs in `_load_instance_config` —
+  both derive from `_INSTANCE_DIMENSION_COLUMNS`, never a hand-listed copy
+  (#64). Same for any "canonical first entry" *positional* convention (a
+  `break`-after-first over `_TOPOLOGY_LOAD_METRICS`): make it explicit, not
+  implicit in iteration order (#47).
+
+### Completeness
+
+- A PR title implying a class of fix ("add `clip_min` to non-negative metrics")
+  means grepping for all instances and confirming coverage.
+- When a change adds a *second* code path for the same data — wide vs long-form
+  CSV, anonymous vs named-instance, 4-col vs 10-col gauges, lambda-baked vs
+  per-instance topology — list every transform, guard, default, and splice the
+  original path applies and confirm each is re-applied. Recurring misses:
+  `_splice_dst_artifact` dropped on the long-form writer (#63); a
+  `header[0] == "timestamp"` check missing from dim-detection (#67); an eagerly
+  evaluated `config_map.get(name, list(INSTANCES[name]))` default that crashed
+  the unconfigured branch (#64).
+
+### Mode / flag combinations
+
+- List every other CLI flag, env var, and `--emit` token that interacts with a
+  new flag. Gate invalid combinations in `parse_args` with a clear message, or
+  add a test.
+- New `parse_args` checks must not spuriously reject the `combine`/`validate`
+  subcommands or non-default `--emit` invocations.
+
+### Test path determinism
+
+- Every new code path has a test whose input deterministically exercises it (no
+  reliance on "the default seed happens to do X"). Each new CLI flag is covered
+  in isolation, not only in the most-permissive bundle.
+- If `expected` is derived from a registry, assert it is non-empty *before* the
+  membership/equality check. An empty `expected` passes vacuously in several
+  shapes: `expected.issubset(actual)` (`∅ ⊆ actual`), `for m in expected:
+  assert …` (zero iterations), `actual == expected` (both empty),
+  `expected & actual == expected`, `actual.issuperset(expected)`. Three of four
+  vacuous-test bugs on PR #50 had this shape. Where emptiness is legitimately
+  possible, assert that *condition* explicitly and gate the membership check
+  behind it.
+- Pair every "negative" assertion (the dropped scenario's output is absent) with
+  a positive one (a retained scenario's output survives), and for a dropped
+  scenario assert its *cascade* specs are absent too (cascade leakage went
+  undetected on #13/#16). A file-existence assertion must also read ≥1 data row.
+- String matching that must be exact uses anchored regex or full-token equality,
+  never bare `in`: version-pin parsing (a `ruff==0.15.17` regex must end-anchor
+  or a `; python_version<…` marker slips through, #117), flag-presence tests
+  (`"--emit" in out` false-positives once `--emit-selection` exists, #101/#104),
+  trailing-marker escape hatches (`# allow` matched mid-line fires inside string
+  literals, #89).
+- Avoid tautological boolean assertions: `assert A or B` where `B` is
+  unconditionally true always passes (#68). A "negative" test must also assert
+  the run reached the intended code path.
+
+### Performance in hot paths
+
+- No per-row re-parsing of strings or re-computation of hoistable constants. A
+  timestamp re-`strptime`d once per data point is a real hotspot at gauge-stream
+  scale (#30).
+- No broad `try/except` in a per-row loop whose body has side effects such as
+  RNG draws. Resolve a generator's arity once per spec, not once per row (#37).
+- Per-`(component, instance)` loops multiply cost by N: hoist per-component file
+  scans above the instance loop, and do not re-open the same CSV from the start
+  for each instance block (#67).
+
+### Action order in user-facing output
+
+- The end-of-run `Done - … written to …` summary names only artifacts the run
+  actually wrote, and prints only after every writer it names has succeeded.
+
+### Test hygiene
+
+- No unused imports or helpers in new test files (ruff F401 via pre-commit).
+- New test files reuse the session-scoped `amc` fixture and do not re-import
+  `legacy.py` via `importlib.util.spec_from_file_location`. The
+  `amc-no-direct-spec-load` hook (`tools/check_amc_module_load.py`) catches this
+  structurally. When a fresh module instance is genuinely needed, route through
+  `conftest._load_amc()` or annotate the line with `# amc-load: allow`.
+- An in-process `main()` call must not leave mutated module/session state (a
+  filtered cascade registry, `MEZMO_OTEL_*` env vars) visible to later tests —
+  under parallel xdist that becomes an order-dependent flake. An autouse
+  env-isolation fixture must out-scope the session fixtures it protects (#17).
+
+### Test resource cost
+
+- The AST-backed `tools/check_test_resource_cost.py` guard rejects executable
+  `read_bytes()`, `readlines()`, and `read_text().splitlines()` under `tests/`;
+  a trailing `# resource-lint: allow` is for reviewed, deliberately small
+  artifacts only.
+- Fixtures generating full 1-day, 7-day, or N>1-instance datasets reuse the
+  session-scoped fixtures in `tests/conftest.py` rather than redefining
+  module-scoped duplicates (PR #67 had three separate 264 MiB N=3 fixtures).
+- Hash large files with the shared streaming `conftest.sha256_path`, and count
+  rows with `sum(1 for _ in f)` rather than `readlines()`.
+
+### Cross-platform test guards
+
+- **POSIX-only modules** (`resource`, `pwd`, `grp`, `fcntl`, `termios`, `tty`):
+  guard with `pytest.importorskip("resource")` inside the test body, or a
+  module-top `pytest.skip(..., allow_module_level=True)` *before* the import. An
+  unconditional top-of-module `import resource` fails collection on Windows.
+- **POSIX-only names on cross-platform modules** (`select.epoll`,
+  `signal.SIGSTOP`, `os.fork`): `importorskip` is the wrong guard because the
+  module imports fine. Use a module-top platform skip before a `from … import`,
+  or `pytest.skipif(not hasattr(select, "epoll"), …)` on the individual test.
+
+### Default-behavior changes
+
+- If a default parameter value or fallback path changes (unseeded
+  `RandomState`, a required arg replacing an optional one), the PR description
+  names it and tests cover both caller shapes.
+- Production determinism regressions are as load-bearing as test ones: a `set`
+  iterated to build output-ordered rows, an unseeded `RandomState` fallback, an
+  `id()`-based identity, or float `datetime.timestamp()*1e9` all break the seed
+  guarantee (#9/#19/#37).
+
+### CI / workflow / dependency hygiene
+
+- Pin third-party actions and in-workflow installs to exact versions; use
+  `python -m pip`, never bare `pip`, after `actions/setup-python`.
+- A job's `permissions:` grants exactly the scopes its steps need. Gate
+  secret-bearing triggers on actor/permission, and remember a fork
+  `pull_request` gets no secrets.
+- Two-place version pins are lint-enforced in lockstep; a Dependabot bump must
+  not silently raise a declared `>=` floor (`versioning-strategy:
+  lockfile-only`), and the `package-ecosystem` must match a lockfile that
+  exists. Exact `==` pins Dependabot cannot reach have a manual path in the
+  "Pinned CI tool bumps" section of `docs/DEVELOPMENT_CYCLE.md`.
+- Docs that tell users to run a tool ensure it is in the `dev` extra; `addopts`
+  plugin flags require a matching `required_plugins`; workflow shell snippets
+  must not assume runner-image tools without installing them.
+- A new `tools/check_*.py` honors the `0`/`1`/`2` exit contract in its own
+  docstring: a decode/IO failure exits `2`, not a traceback and not `1`; check
+  `path.exists()` before skip-rules; parse `gh api --paginate` page-by-page;
+  use anchored matching for markers and pins.
+
+### Changelog / version impact
+
+- User-visible behavior, compatibility changes, supported Python floors, and
+  release-process changes update `CHANGELOG.md` in the same PR, or the PR states
+  why no entry is warranted.
+- A release PR keeps `pyproject.toml`, the editable project entry in `uv.lock`,
+  the promoted changelog heading, tag name, GitHub Release, and `amc --version`
+  aligned.
+
+Sources: `.github/PULL_REQUEST_TEMPLATE.md`;
+`.github/instructions/anomaly-metric-creator.instructions.md`;
+`tools/check_copilot_instruction_contract.py`;
+`tools/check_test_resource_cost.py`; `tools/check_amc_module_load.py`;
+`docs/DEVELOPMENT_CYCLE.md`; `docs/REVIEW_PATTERNS.md`.
+
+PRs open as **draft** and walk this checklist before draft status is removed, so
+issues are caught before Copilot's first review rather than after. Sources:
+`.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`.
+
 When a recurring issue is mechanical and greppable, prefer a `tools/check_*.py`
-lint plus tests over prose-only rules. Sources: `CLAUDE.md`;
+lint plus tests over prose-only rules — the `ruff-lockstep` / `role-name-leaks`
+/ `branch-name` lints reliably stop their patterns, whereas prose rules have
+not (the test-resource-cost rules recurred across several PRs after being
+documented). Sources:
 `.pre-commit-config.yaml`; `tests/test_role_name_leaks_lint.py`;
 `tests/test_branch_name_lint.py`; `tests/test_ruff_lockstep_lint.py`;
 `tests/test_workflow_pip_lint.py`.
 
-Treat Copilot and AI review comments as actionable by default, but verify them
-against current `HEAD`, code comments, and actual trust boundaries before
-fixing. Sources: `CLAUDE.md`;
-`.github/instructions/anomaly-metric-creator.instructions.md`.
+### Known Copilot false positives (verify, don't reflexively fix)
+
+The maintainer accepted ~98% of Copilot's flags across 122 PRs, so the default
+is to treat a flag as actionable. The recurring exceptions, worth recognizing so
+they do not cost a review cycle:
+
+- **Cumulative-diff re-flagging.** Copilot reviews the PR's *cumulative* diff,
+  so it re-flags an issue already fixed in a later commit of the same PR. Verify
+  against current `HEAD` before "fixing" it again (#80).
+- **Triplicated drift.** The same stale sentence flagged from three nearby hunks
+  is one defect, not three — fix once (#14/#20/#27).
+- **"`contents: read` breaks the setup-uv / Actions cache."** False. The cache
+  authenticates with `ACTIONS_RUNTIME_TOKEN`, independent of the `GITHUB_TOKEN`
+  `permissions:` block (#117).
+- **"Secrets can be referenced in a step-level `if:`."** False at job *and* step
+  level. Mapping the secret to `env` and gating on a derived step output is
+  required, not a workaround to remove (#118).
+- **"Skip the preflight cell-cap when `--emit` excludes `metrics`."** False —
+  `generate_component()` still allocates the full array and runs the pipeline
+  regardless of emit selection; only the final write is gated, so the OOM the
+  cap prevents still happens. Only the `combine`/`validate` subcommands (which
+  `return` before generation) are safe skips (#35).
+
+For any version-sensitive claim about a tool's semantics (Actions, uv,
+Dependabot, pytest), confirm against current docs before accepting — Copilot's
+confident-but-wrong claims cluster there. Otherwise treat Copilot and AI review
+comments as actionable by default, verifying against current `HEAD`, code
+comments, and actual trust boundaries before fixing. Sources:
+`.github/instructions/anomaly-metric-creator.instructions.md`;
+`.github/workflows/ci.yml`; `docs/REVIEW_PATTERNS.md`.
 
 ## Verification Commands
 

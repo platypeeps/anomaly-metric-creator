@@ -204,3 +204,55 @@ Finally, `.trellis/spec/amc/backend/index.md:96` § Quality Check prescribes the
 minimum gate for docs-only Trellis/spec consolidation — `get_context.py`, a
 placeholder scan, and a Markdown-link check. This task is exactly that shape, so
 those run in step 6.
+
+## Step-0 disposition table (complete, reconciles to 3,106)
+
+Line spans are against `CLAUDE.md` at commit `be4d5bc` (post-merge, 3,106
+lines). Classification is at content-block granularity, so several sections
+carry two dispositions.
+
+| Span | Lines | Section | Disposition | Home / destination |
+| --- | ---: | --- | --- | --- |
+| 1–158 | 158 | Head: module map + extraction ledger | COVERED | `architecture.md:62-253` § Module Boundaries |
+| 159–160 | 2 | `## Architecture` heading | STAYS | scaffolding |
+| 161–184 | 24 | Core generation pattern | COVERED | `architecture.md:48` "vectorized hot path … build timestamp arrays, draw natural metric values, apply anomaly overrides, recompute derived metrics, round/cast, apply drops" |
+| 185–190 | 6 | Entry point | COVERED | `api-cli-server.md:12` "`main(argv=None)` … must remain import-safe" |
+| 191–256 | 66 | CLI surface | COVERED | `api-cli-server.md:17-62`; `docs/application-flow.md` (`_ADVANCED_DESTS`, `--help-all`) |
+| 257–769 | 512 / 1 | Server mode and ops simulation | COVERED / **MOVE** | `architecture.md:169-253`, `api-cli-server.md:173-431`, `operations-security-logging.md`. MOVE: the `server_k8s_api_trace → server_ops_support._preview` import edge, absent from `architecture.md:211` |
+| 770–865 | 66 / 30 | Output directory hygiene | COVERED / **MOVE** | `api-cli-server.md:120-140` § Output Contracts. MOVE: the two-posture redaction rule (response side mask-unless-known-safe via `_SAFE_RESPONSE_HEADER_NAMES`; request side allowlist-of-sensitive) — zero hits repo-wide outside `CLAUDE.md` |
+| 866–942 | 65 / 12 | Combine step | COVERED / **MOVE** | `api-cli-server.md:167`. MOVE: wide/long layout dispatch and `assume_monotonic_wide_components` — zero hits elsewhere |
+| 943–1023 | 81 | Output schema document | COVERED | `api-cli-server.md:142`; `scenarios-and-data.md:126`; `README.md` |
+| 1024–1167 | 104 / 40 | Multi-instance fan-out | COVERED / RETIRE | `architecture.md:288`; `README.md`. RETIRE: "Every phase of the multi-instance plan has shipped" narrative |
+| 1168–1328 | 121 / 40 | Per-instance topology (phase 8) | COVERED / RETIRE | `docs/topology.md:82-112` § Per-instance routing dispatch |
+| 1329–1368 | 40 | MetricSpec schema metadata | COVERED | `scenarios-and-data.md:83`; `README.md` |
+| 1369–1471 | 103 | Output validator | COVERED | `api-cli-server.md:151-165` |
+| 1472–1555 | 66 / 18 | Gauge metric file | COVERED / **MOVE** | `api-cli-server.md`. MOVE: the long-form FD pre-flight (`RLIMIT_NOFILE`, `_ensure_long_form_fd_capacity`) — zero hits elsewhere |
+| 1556–1604 | 49 | OTEL dimension attributes | COVERED | `testing-quality.md:24-27` (`_INSTANCE_DIMENSION_COLUMNS` single source); `README.md` |
+| 1605–1618 | 14 | Metric specs | COVERED | `scenarios-and-data.md:83`; source |
+| 1619–1632 | 14 | Derived metrics | COVERED | `architecture.md:48` |
+| 1633–1673 | 41 | Anomaly injection schema | COVERED | `scenarios-and-data.md:40-64`; `README.md` |
+| 1674–1863 | 178 / 12 | Topology graph | COVERED / **MOVE** | `docs/topology.md`; `README.md#topology-graph-v1`. MOVE: the cascade-vs-topology overlap note (sharp step at the recorded row over a smooth load-shaped band) that `docs/topology.md:74` links back to |
+| 1864–1943 | 80 | Saturation feedback | COVERED | `docs/topology.md:156-164` |
+| 1944–2051 | 68 / 40 | LLM token-throttle | COVERED / RETIRE | `docs/topology.md:149-155` |
+| 2052–2191 | 140 | Scenario registry | COVERED | `scenarios-and-data.md:3-71` |
+| 2192–2350 | 159 | Modifying the script (6 subsections) | COVERED | `scenarios-and-data.md:73-101` |
+| 2351–2474 | 124 | Pre-PR checklist body | **MOVE** | `testing-quality.md` § Review Checklist (today a heading list only) |
+| 2475–2481 | 7 | Reviewer-before-ready gate | COVERED | `documentation-review.md:114` |
+| 2482–2510 | 29 | Known Copilot false-positives | **MOVE** | `testing-quality.md:612` (today a 3-line summary) |
+| 2511–2561 | 51 | External-comment role-name lint | COVERED | `check_role_name_leaks.py` docstring (53 lines); `documentation-review.md:155-167` |
+| 2562–2644 | 83 | Approval-duplicate lint | COVERED | `check_approval_duplicate.py` docstring (82 lines) |
+| 2645–2680 | 36 | Comment pre-flight wrapper | COVERED | `tools/pr_comment.sh` header; `documentation-review.md:155-167` |
+| 2681–2766 | 86 | Branch-name lint | COVERED | `check_branch_name.py` docstring (71 lines) |
+| 2767–2794 | 28 | Ruff version lockstep lint | COVERED | `check_ruff_lockstep.py` docstring (44 lines); `testing-quality.md:264` |
+| 2795–2953 | 110 / 49 | Continuous integration and Dependabot | COVERED / **MOVE** | `testing-quality.md:322-347,551-593`. MOVE: coverage threshold (`--fail-under=85`, `COVERAGE_CORE=sysmon`, `relative_files`), the `!cancelled()` aggregate guard, the `ubuntu-latest-m` runner history, and the `full-ci` **one-shot** half of the application/CodeQL asymmetry |
+| 2954–2983 | 30 | Workflow pip lint | COVERED | `check_workflow_pip.py` docstring (38 lines) |
+| 2984–2990 | 7 | Tests | COVERED | `testing-quality.md:78-107` |
+| 2991–3064 | 74 | Parallel execution (xdist) | COVERED | `testing-quality.md:109-138` |
+| 3065–3106 | 42 | Scenario selector test layout | RETIRE | a per-file test map, derivable from `tests/` and already drifting |
+
+**Reconciliation.** COVERED 2,667 + MOVE 275 + RETIRE 162 + STAYS 2 = **3,106**.
+
+STAYS is 2 lines of the old file; the ~350-line replacement head is new
+content (module-ownership map, extraction/re-import invariant, RNG determinism
+contract, spec routing table, and the pointers each cut leaves behind), so the
+≤400 target in `prd.md` holds without raising it.

@@ -123,6 +123,52 @@ Sources: `docs/topology.md`; `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_topology_registry.py`;
 `tests/test_topology_llm.py`.
 
+The two mechanisms are allowed to overlap on the same column and must both be
+kept. Topology is the path for "load on a source raises the downstream
+baseline / elevates downstream latency and error rate"; a cascade is the path
+for "metric X takes a specific value at exactly row Y". A cascade override is a
+single-row step write applied *after* saturation composition, so it still pins
+its targeted cell regardless of upstream load while saturation only lifts the
+surrounding band. Cascades targeting `error_rate` on `apigateway` or
+`authservice` are the most overlap-prone — saturation also elevates those
+columns under load — but stay distinguishable: the cascade produces a sharp
+step at the recorded row, saturation a smooth load-shaped band underneath it.
+Do not remove a cascade on the grounds that saturation now produces a similar
+downstream effect. The same ordering holds per instance: a per-instance
+`instance_filter` override is applied after the natural-column draw, so a
+cascade write at row `i` for instance `K` wins at exactly that cell regardless
+of the saturation-driven baseline computed for that pod. Sources:
+`docs/topology.md`; `src/anomaly_metric_creator/generation.py`;
+`src/anomaly_metric_creator/topology_compose.py`;
+`src/anomaly_metric_creator/topology_instances.py`;
+`tests/test_scenario_deviation.py`; `tests/test_topology_multi_instance.py`.
+
+A `dtype="int"` cast runs inside `generate_component()` after the anomaly
+override pass and *before* both the derivation pass and the `topology_capture`
+snapshot, so derived columns and downstream coupling signals consume the same
+whole-integer values the CSV records. `main()` always passes
+`apply_dtype_int_cast=True`; the kwarg survives for programmatic callers that
+need the pre-cast fractional contrast. Sources:
+`src/anomaly_metric_creator/generation.py`;
+`src/anomaly_metric_creator/generation_helpers.py`;
+`tests/test_correctness.py`.
+
+One `anomalies.csv` manifest entry is recorded per
+`(timestamp, component, metric)` regardless of instance count: a spec with an
+`instance_filter` records exactly one entry no matter how many instances
+matched, and none on a zero-match (which also warns on stderr and skips the
+spec). Sources: `src/anomaly_metric_creator/generation.py`;
+`tests/test_instances_per_component.py`.
+
+OTLP dimension attributes are emitted from the non-empty
+`_INSTANCE_DIMENSION_COLUMNS` cells of each row on the gauge and anomaly-counter
+payload builders. In v1 no anomaly row carries dimensions — `anomalies.csv` is
+single-instance — so the counter-path extension is structurally inert today but
+keeps the JSON and protobuf shapes aligned with the gauge path; log and trace
+builders stay on the base attribute set. Sources:
+`src/anomaly_metric_creator/otlp.py`;
+`src/anomaly_metric_creator/otel_stream.py`; `tests/test_otel_gauges.py`.
+
 `schema.json` must serialize active component metrics, optional dimensions,
 declared files, run metadata, and topology snapshot in deterministic JSON.
 Validator behavior should be updated with schema changes, and schema version
