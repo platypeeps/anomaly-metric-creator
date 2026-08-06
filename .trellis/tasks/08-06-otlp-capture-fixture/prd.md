@@ -68,7 +68,8 @@ task becomes selectable when that PR merges.
 
 ## Acceptance criteria
 
-- [ ] `grep -c '^\s*class _Handler' tests/test_cli.py` returns 0.
+- [ ] `grep -cE '^[[:space:]]*class _Handler' tests/test_cli.py` returns 0.
+      (POSIX class, not `\s` — BSD `grep` does not treat `\s` as whitespace.)
 - [ ] `grep -c 'HTTPServer' tests/test_cli.py` returns 0 — no start/stop
       scaffold survives in the file.
 - [ ] `capture_otlp_server` is defined exactly once, in `tests/conftest.py`.
@@ -87,7 +88,7 @@ task becomes selectable when that PR merges.
 
 - CLAUDE.md's test-hygiene guidance should name `capture_otlp_server` as the
   canonical OTLP capture harness once it exists — the epic's `implement.md`
-  lists this under documentation updates. That bullet and `run_tool`'s can land
-  together in whichever of the two PRs is second.
+  lists this under documentation updates. That bullet and the matching one for
+  `run_tool` can land together in whichever of the two PRs is second.
 - ~500 lines of boilerplate is the ledger's estimate of the win; the measured
   22 classes × 8–13 lines plus scaffolds is consistent with it.

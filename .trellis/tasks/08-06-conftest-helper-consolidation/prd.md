@@ -89,9 +89,11 @@ is not blocked on anything.
 
 ## Acceptance criteria
 
-- [ ] `grep -c 'def _column_values\|def _aligned_columns\|def _exclude_anomaly_rows' tests/test_topology*.py`
-      returns 0; the three helpers exist once, in `tests/conftest.py`.
-- [ ] `grep -n '_EXCLUSION_WINDOWS = \[' tests/` returns no hits — no
+- [ ] `grep -rnE 'def (_column_values|_aligned_columns|_exclude_anomaly_rows)\(' tests/`
+      matches only `tests/conftest.py`; the three helpers exist once. (Use
+      `-rnE`, not `-c` over a glob: a multi-file `grep -c` prints a per-file
+      count line for every file, so it can never "return 0".)
+- [ ] `grep -rn '_EXCLUSION_WINDOWS = \[' tests/` returns no hits — no
       hand-written window list remains.
 - [ ] The superset proof from requirement 3 is recorded in the PR body: for
       each of the 5 fanout and 7 saturation hand-written windows, the derived
