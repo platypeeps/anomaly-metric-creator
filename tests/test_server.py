@@ -1824,6 +1824,36 @@ def test_command_trace_sqlite_import_clears_superseded_fts_rows(tmp_path):
     assert [row["trace_id"] for row in _fts_rows(db_path)] == [1]
 
 
+def test_command_trace_sqlite_per_row_fts_delete_cannot_reach_absent_traces(
+    tmp_path,
+):
+    # The test above says the bulk clear is required; this one says *why*, so
+    # the claim is pinned by the suite rather than by a hand-run mutation.
+    # ``delete_fts_first=True`` only drops the FTS row for the trace being
+    # written, so it can never evict a trace that the replacement set omits.
+    # That is what makes the bulk clear load-bearing on its own, independent
+    # of how ``delete_fts_first`` is derived.
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    if not store._sqlite_fts_enabled:
+        store.close()
+        pytest.skip("sqlite build has no FTS5 support")
+
+    store.record(_trace(99, "2026-06-25T11:00:00Z", "kubectl get nodes"))
+    superseding = _trace(1, "2026-06-25T12:01:00Z", "kubectl get pods")
+
+    # Drive the row writer directly with the import path's per-row settings but
+    # without any bulk clear -- i.e. exactly the state a dropped clear leaves.
+    with store._locked_conn() as conn:
+        store._insert_trace_row(
+            conn, superseding, superseding.to_dict(), delete_fts_first=True
+        )
+    store.close()
+
+    # Trace 99 survives: no per-row delete was ever issued for its id.
+    assert [row["trace_id"] for row in _fts_rows(db_path)] == [1, 99]
+
+
 def _summary_trace(tid, ts, *, fingerprint, support_status, guessed_intent):
     return server.CommandTrace(
         id=tid,

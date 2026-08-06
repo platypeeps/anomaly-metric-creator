@@ -68,8 +68,9 @@ Two parameters carry load-bearing contracts:
   flag cannot go stale if that clear is removed. Treat that as defense in depth
   only — the bulk clear is independently required, because it drops FTS rows
   for traces *absent* from the replacement set, which no per-row delete can
-  reach. Deleting the clear still fails the import test. Both halves are
-  pinned:
+  reach. Deleting the clear still fails the import test;
+  `test_command_trace_sqlite_per_row_fts_delete_cannot_reach_absent_traces`
+  pins the reason directly. Both halves are pinned:
   `test_command_trace_sqlite_record_replaces_rather_than_duplicates_fts_row`
   fails if the per-row delete is dropped, and
   `test_command_trace_sqlite_import_clears_superseded_fts_rows` fails if the

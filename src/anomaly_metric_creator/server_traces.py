@@ -888,9 +888,8 @@ class CommandTraceStore:
             # so the flag cannot go stale on its own. That is defense in
             # depth only: the clear is independently required, because it
             # drops FTS rows for traces *absent* from ``traces``, which no
-            # per-row delete can reach. Verified by deleting the clear --
-            # ``test_command_trace_sqlite_import_clears_superseded_fts_rows``
-            # still fails, flag derivation notwithstanding.
+            # per-row delete can reach -- pinned by
+            # ``test_command_trace_sqlite_per_row_fts_delete_cannot_reach_absent_traces``.
             fts_bulk_cleared = False
             if self._sqlite_fts_enabled:
                 conn.execute("DELETE FROM command_traces_fts")
