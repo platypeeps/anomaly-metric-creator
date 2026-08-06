@@ -58,12 +58,18 @@ Two parameters carry load-bearing contracts:
   computes `trace.to_dict()` *outside* its `_locked_conn()`; `_replace_sqlite_traces`
   computes it *inside* the lock, per row. A helper that called `to_dict()` itself
   would pull that serialization under the SQLite lock on every recorded command.
-  This is the same off-lock discipline as the JSONL handle (A-041).
+  This is the same off-lock discipline as the JSONL handle (A-041). Pinned by
+  `test_command_trace_sqlite_record_serializes_payload_off_the_sqlite_lock`,
+  which observes `_sqlite_lock.locked()` from inside `to_dict`.
 - **`delete_fts_first` is `True` only for the live-insert path**, which can
   overwrite an existing trace id and must drop that id's stale FTS row first.
   The import path passes `False` — correct *only because* it bulk-clears
   `command_traces_fts` once before its loop. Remove that bulk clear and the flag
-  becomes wrong.
+  becomes wrong. Both halves are pinned:
+  `test_command_trace_sqlite_record_replaces_rather_than_duplicates_fts_row`
+  fails if the per-row delete is dropped, and
+  `test_command_trace_sqlite_import_clears_superseded_fts_rows` fails if the
+  bulk clear is — verified by mutating each in turn.
 
 Sources: `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`;
 `.trellis/audit/ledger.md` (A-031).
