@@ -58,15 +58,17 @@ are merged and A-031/A-032/A-033/A-037 all read `status: fixed`.
 - [ ] One OTLP capture harness and one exclusion-window computation remain.
       Every command below must be runnable as written and is stated with its
       expected output:
-      - `grep -rn 'def capture_otlp_server' tests/` matches only
-        `tests/conftest.py`.
+      - `grep -rn 'def capture_otlp_server' tests/` returns exactly one line,
+        in `tests/conftest.py`.
       - `grep -rn '_EXCLUSION_WINDOWS = \[' tests/` returns no hits — every
         remaining window set is catalog-derived rather than hand-written.
       - `grep -rnE 'def [a-z_]*exclusion_windows' tests/ | grep -v 'def test_'`
-        matches only `tests/conftest.py` — the derivation itself exists once.
-        The absence check above cannot establish this: it proves no *hand-written*
-        list survives, not that the derived computation was not copied. The
-        `grep -v` drops test functions such as
+        returns exactly one line, in `tests/conftest.py` — the derivation
+        itself exists once. The absence check above cannot establish this: it
+        proves no *hand-written* list survives, not that the derived
+        computation was not copied. Each check states a count as well as a
+        location, because confinement to one file still passes with two
+        definitions inside it. The `grep -v` drops test functions such as
         `test_anomaly_exclusion_windows_use_span_columns`, which are unrelated.
       (`-rn`, not `-c` over a glob: a multi-file `grep -c` prints a per-file
       count line for every file, so it can never "return 0". Each child PRD
