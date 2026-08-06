@@ -3,7 +3,8 @@
 ## Goal
 
 Get `src/anomaly_metric_creator/server_traces.py` into
-`tools/check_mypy_gate.py`'s `CLEAN_MODULES` list (34 modules today), so the
+`tools/check_mypy_gate.py`'s `CLEAN_MODULES` tuple (34 file paths today, sorted;
+the new entry sits between `server_ops_support.py` and `timeutil.py`), so the
 trace store is type-checked in CI like the rest of the package.
 
 ## Why it is blocked now
@@ -51,8 +52,10 @@ a prose rule whenever the pattern is greppable — which this one is.
      bare builtin — `Sequence[...]`, `typing.List[...]`, or quoted
      annotations. Non-breaking, but leaves the trap for future edits.
 - Resolve the remaining `no-any-return` at `server_traces.py:717`.
-- Add `server_traces` to `CLEAN_MODULES` in `tools/check_mypy_gate.py` in the
-  same change, so the gate enforces the result.
+- Add `"src/anomaly_metric_creator/server_traces.py"` to `CLEAN_MODULES` in
+  `tools/check_mypy_gate.py` in the same change, so the gate enforces the
+  result. `CLEAN_MODULES` is a `tuple[str, ...]` of repo-relative **file
+  paths**, not module basenames, and it is kept in sorted order.
 - If option 2 is chosen, add a mechanical lint (with tests, per repo
   convention) rejecting a bare `list[...]` annotation inside
   `CommandTraceStore`, and drop the prose note in favour of pointing at it.
@@ -71,8 +74,9 @@ module's typing debt.
 ## Acceptance Criteria
 
 - [ ] `mypy --strict src/anomaly_metric_creator/server_traces.py` reports 0 errors.
-- [ ] `server_traces` appears in `CLEAN_MODULES` and `tools/check_mypy_gate.py`
-      exits 0.
+- [ ] `python3 tools/check_mypy_gate.py --list` includes
+      `src/anomaly_metric_creator/server_traces.py`, and
+      `python3 tools/check_mypy_gate.py` exits 0.
 - [ ] Full suite green; no behavior change to the trace store.
 - [ ] If the store method was renamed, every call site is updated and the
       `legacy.py` re-import surface is unchanged for existing importers.
