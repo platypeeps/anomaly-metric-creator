@@ -4,14 +4,14 @@
 
 Command traces live in a thread-safe in-memory ring buffer by default.
 `--persist-command-log` writes JSONL, and `--persist-command-db` enables SQLite
-persistence owned by `server_traces.py`. Sources: `README.md`; `CLAUDE.md`;
+persistence owned by `server_traces.py`. Sources: `README.md`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 The SQLite trace store records `COMMAND_TRACE_DB_SCHEMA_VERSION`, stores JSON
 payloads plus indexed columns, uses WAL mode and a dedicated SQLite write lock,
 reloads recent traces on startup, supports bounded retention, uses FTS5 when
-available, and falls back to LIKE search otherwise. Sources: `CLAUDE.md`;
+available, and falls back to LIKE search otherwise. Sources:
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`.
 
 JSONL append, SQLite insert, and SQLite history replacement are write paths in
@@ -22,7 +22,7 @@ must not surface records already trimmed from persisted history. Sources:
 
 Online debug search and offline bundle search must use shared
 `trace_matches_search()` and `unsupported_summary_from_traces()` helpers so
-filters and unsupported grouping stay aligned. Sources: `CLAUDE.md`;
+filters and unsupported grouping stay aligned. Sources:
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
@@ -37,7 +37,7 @@ in-memory predicates when exactness cannot be guaranteed. Sources:
 
 Imported trace bundles and persisted trace data are untrusted input. Decode and
 validate the full payload before replacing persisted history, and reject
-booleans for integer fields. Sources: `CLAUDE.md`;
+booleans for integer fields. Sources:
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
@@ -46,13 +46,13 @@ booleans for integer fields. Sources: `CLAUDE.md`;
 
 Loopback binds may run unauthenticated for local workshops. Non-loopback
 `--host` values require `--auth-token` unless the operator explicitly passes
-`--allow-remote-without-auth`. Sources: `README.md`; `CLAUDE.md`;
+`--allow-remote-without-auth`. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 When bearer auth is enabled, `/healthz`, `/readyz`, `/`, and `/debug` remain
 loadable, but JSON/debug data, command, kubeconfig, and Kubernetes/Helm API
 requests require `Authorization: Bearer TOKEN`. `/v1/kubeconfig` embeds the
-token for real clients. Sources: `README.md`; `CLAUDE.md`;
+token for real clients. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 `/readyz` is a two-dimension readiness check (`_readyz_check`): `200 {"ready":
@@ -67,7 +67,7 @@ eval-open). Sources: `README.md`; `SECURITY.md`;
 Request body caps return JSON `413` for app endpoints and Kubernetes `Status`
 objects for Kubernetes API endpoints. Rate limits return JSON `429` for app
 endpoints and Kubernetes `Status` with `reason: TooManyRequests` for API
-endpoints. Sources: `README.md`; `CLAUDE.md`;
+endpoints. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 Because the server is a `ThreadingHTTPServer` spawning one worker per
@@ -85,7 +85,7 @@ per-client buckets each window so the limiter's own table stays bounded on a
 public bind. These bounds harden the surface behind the auth gate but do not
 make an unauthenticated remote bind a supported posture — see `SECURITY.md` for
 the trust boundary and the remote-bind decision. Sources: `README.md`;
-`CLAUDE.md`; `SECURITY.md`; `src/anomaly_metric_creator/server.py`;
+`SECURITY.md`; `src/anomaly_metric_creator/server.py`;
 `tests/test_server_hardening.py`; `tests/test_server.py`.
 
 Those DoS-bound refusals are counted so saturation is observable by default
@@ -103,21 +103,21 @@ path its own stderr-amplification vector, so the first-trip line announces the
 condition and `/v1/state.refusals` carries the live count thereafter. The
 counter kinds are fixed strings with no scenario content, so `/v1/state` staying
 eval-hidden is a wall property of that endpoint, not of the counts. Sources:
-`CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`;
 `tests/test_serve_main_wiring.py`.
 
 `--cors-allow-origin` is the only CORS enablement path. Preflight requests are
 answered without bearer auth, and normal responses include access-control
 headers only for the configured origin or `*`. Sources: `README.md`;
-`CLAUDE.md`; `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+`src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 ## Redaction and Structured Logs
 
 Structured request logging is opt-in through `--structured-log` or
 `--structured-log-file`; it emits JSONL request summaries and request-handling
 exception rows, redacts query secrets, and records bearer auth only as
-present/absent. Sources: `README.md`; `CLAUDE.md`;
+present/absent. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 Every request carries a `request_id` join key (A-077): `handle_one_request`
@@ -132,7 +132,7 @@ migration is needed; it still round-trips a SQLite restart because the store
 persists the whole `to_dict` blob in `payload_json` and reloads via `from_dict`.
 A structured request/error record and its trace therefore share one key, making
 cross-sink incident reconstruction exact rather than timestamp guesswork.
-Sources: `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+Sources: `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_mcp.py`; `tests/test_server.py`.
 
@@ -155,7 +155,7 @@ operator-side traceback is outside the eval-mode ground-truth wall. Request
 Never write bearer tokens, auth tokens, passwords, cookies, API keys,
 kubeconfig client keys, token-like query parameters, or command secrets to
 memory traces, JSONL logs, SQLite rows, OTEL logs, or debug UI payloads.
-Sources: `README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+Sources: `README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_redact_sensitive_headers.py`;
 `tests/test_server.py`.
@@ -188,7 +188,7 @@ posture. Sources: `src/anomaly_metric_creator/redaction.py`;
 `otel-activity.log` is transport diagnostics, not a broad application log. The
 main signal stream starts it fresh, the gauge pass appends during the same run,
 gauges-only streaming starts it fresh, and verbose request bodies are gated by
-`--otel-verbose`. Sources: `CLAUDE.md`; `README.md`;
+`--otel-verbose`. Sources: `README.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/conftest.py`;
 `tests/test_otel_gauges.py`; `tests/test_redact_sensitive_headers.py`.
 
@@ -197,14 +197,14 @@ gauges-only streaming starts it fresh, and verbose request bodies are gated by
 The debug UI is inline HTML/CSS/JS served from `server_debug_ui.py`/`GET
 /debug` to avoid a frontend build chain. The static shell may be accessible
 without bearer auth, but data requests must attach the token when auth is
-enabled. Sources: `CLAUDE.md`; `README.md`;
+enabled. Sources: `README.md`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 Debug UI data should come from the same command traces, resource snapshots,
 mutation overlay, scenario catalog, and fake Kubernetes object paths that the
 command/API surfaces use. Do not create a separate debug-only state model.
-Sources: `CLAUDE.md`; `README.md`;
+Sources: `README.md`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_mutations.py`; `tests/test_server.py`.
@@ -219,7 +219,7 @@ preserve the same user-visible behavior. Sources:
 
 Unsupported and partial commands should be captured and grouped by normalized
 fingerprint so real operator/tool behavior becomes a backlog for future command
-renderers. Sources: `README.md`; `CLAUDE.md`;
+renderers. Sources: `README.md`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
@@ -256,6 +256,6 @@ Byte-equality note for tests: `kubectl get events` (LAST SEEN) and `helm list`
 reset contract tests pause the clock (`state.clock.pause()`) before capturing
 the baseline — with `now()` frozen, only the overlay can move a render. Static
 age columns (`7d`, `0s`) are constants and need no freezing. Sources:
-`README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
 `tests/test_server_reset.py`; `tests/test_server.py`.

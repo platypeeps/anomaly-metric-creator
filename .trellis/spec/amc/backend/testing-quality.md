@@ -5,7 +5,7 @@
 Preserve deterministic output for a fixed `--seed`. Avoid unordered set
 iteration in output order, unseeded RNG fallbacks, `id()`-based identity, and
 float timestamp arithmetic where integer `timedelta` math is available.
-Sources: `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
+Sources: `src/anomaly_metric_creator/legacy.py`;
 `tests/test_determinism.py`; `tests/test_correctness.py`;
 `tests/test_schema_file.py`; `tests/test_gauges_file.py`.
 
@@ -24,7 +24,7 @@ contract. Sources: `tests/test_instances_per_component.py`;
 Use canonical registries and helpers instead of parallel maps:
 `COMPONENTS`, `SCENARIOS`, `DERIVATIONS`, `TOPOLOGY`,
 `_EMIT_ARTIFACT_FILES`, `_COMBINE_OUTPUT_FILENAME`,
-`_INSTANCE_DIMENSION_COLUMNS`, and related helpers. Sources: `CLAUDE.md`;
+`_INSTANCE_DIMENSION_COLUMNS`, and related helpers. Sources:
 `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/scenario_catalog.py`;
 `src/anomaly_metric_creator/scenarios_impl.py`; `tests/test_registry.py`;
@@ -32,7 +32,7 @@ Use canonical registries and helpers instead of parallel maps:
 
 Dispatch tables should raise for unknown internal keys. Use strict indexing on
 strict registries and let tolerant callers opt in locally with narrow
-`try/except KeyError`. Sources: `CLAUDE.md`;
+`try/except KeyError`. Sources:
 `src/anomaly_metric_creator/legacy.py`; `tests/test_validate_output.py`;
 `tests/test_scenarios.py`.
 
@@ -55,7 +55,7 @@ call. Sources: `src/anomaly_metric_creator/scenario_builders.py`;
 Validate shape and type before membership tests, numeric operations, casts, or
 iteration. Reject `None`, `NaN`, infinities, booleans as integers, negative
 values, wrong containers, unhashables, empty strings, and wrong discriminator
-branches where relevant. Sources: `CLAUDE.md`;
+branches where relevant. Sources:
 `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_instance_config.py`;
@@ -65,7 +65,7 @@ branches where relevant. Sources: `CLAUDE.md`;
 Read-back files and payloads such as `schema.json`, `--instance-config`, serve
 config files, command trace imports, and trace bundles must be validated on the
 reader side even when the local writer normally creates them. Sources:
-`README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/legacy.py`;
+`README.md`; `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
 `src/anomaly_metric_creator/validate_cells.py`;
 `src/anomaly_metric_creator/validate_topology.py`;
@@ -79,19 +79,19 @@ reader side even when the local writer normally creates them. Sources:
 
 Tests live in `tests/`, write only to `tmp_path` or scoped temporary
 directories, and should drive behavior through the installed/module surfaces
-that users exercise. Sources: `CLAUDE.md`; `README.md`; `tests/conftest.py`;
+that users exercise. Sources: `README.md`; `tests/conftest.py`;
 `tests/test_cli.py`; `tests/test_server.py`.
 
 Use the session-scoped `amc` fixture and helpers in `tests/conftest.py`,
 especially `_load_amc`, `run_capture`, `sha256_path`, and heavy-fixture
 classification. Do not create duplicate module-scoped implementations of
-expensive 1-day, 7-day, or N-instance datasets. Sources: `CLAUDE.md`;
+expensive 1-day, 7-day, or N-instance datasets. Sources:
 `README.md`; `tests/conftest.py`; `.pre-commit-config.yaml`;
 `tests/test_run_capture_helper.py`; `tests/test_heavy_marker.py`.
 
 Stream large generated files in tests. Use `sha256_path` or line iteration
 instead of `Path.read_bytes()`, `readlines()`, or `read_text().splitlines()` on
-multi-hundred-MB CSVs. Sources: `CLAUDE.md`; `tests/conftest.py`;
+multi-hundred-MB CSVs. Sources: `tests/conftest.py`;
 `tests/test_correctness.py`; `tests/test_gauges_file.py`;
 `tools/check_test_resource_cost.py`.
 
@@ -103,7 +103,7 @@ generated data. Sources: `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
 `tools/check_test_resource_cost.py`; `tests/test_test_resource_cost_lint.py`.
 
 Tests that use POSIX-only modules or attributes must guard collection on
-platforms where those APIs are missing. Sources: `CLAUDE.md`; `tests/`;
+platforms where those APIs are missing. Sources: `tests/`;
 `.github/workflows/ci.yml`.
 
 ## Pytest, Ruff, and Pre-Commit
@@ -115,14 +115,14 @@ local full-suite command. A shared session fixture can be instantiated on
 `min(consuming files, workers)` processes even under loadfile distribution;
 four workers are the measured saturation point for the file-granular suite.
 Sources:
-`pyproject.toml`; `README.md`; `CLAUDE.md`; `tests/conftest.py`;
+`pyproject.toml`; `README.md`; `tests/conftest.py`;
 `.github/workflows/ci.yml`.
 
 Use `-n 0` for true in-process serial runs such as `pdb`; `-n 1` still spawns
 an xdist worker subprocess. The heavy/light CI partition is a memory-isolation
 strategy, not the normal local speed path: on the 2026-07-20 checkout, the
 complete default run took 253.36s while the serial heavy partition alone took
-345.01s. Sources: `README.md`; `CLAUDE.md`;
+345.01s. Sources: `README.md`;
 `pyproject.toml`.
 
 The `heavy` marker is auto-applied by `tests/conftest.py` based on fixture
@@ -134,7 +134,7 @@ shadow fixture to a heavy name. CI runs both partitions under two-worker xdist
 with `--dist loadfile`; the selectors keep the GB-scale fixtures out of the
 light worker pool while preserving file-owned fixture locality. Sources:
 `tests/conftest.py`; `pyproject.toml`;
-`.github/workflows/ci.yml`; `CLAUDE.md`; `README.md`;
+`.github/workflows/ci.yml`; `README.md`;
 `tests/test_heavy_marker.py`.
 
 ## Scenario: CI test partition worker contract
@@ -224,13 +224,12 @@ shared writer, co-locate their file-owned fixtures so `loadfile` creates each
 artifact exactly once. Cache each output's streaming `sha256_path` digest,
 retain an independent absolute hash guard per entry point, and compare the
 runtime digests directly; shared structural assertions then need only scan one
-of the byte-identical outputs. Sources: `tests/test_gauges_file.py`;
-`CLAUDE.md`.
+of the byte-identical outputs. Sources: `tests/test_gauges_file.py`.
 
 Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 `.pre-commit-config.yaml`; run `.venv/bin/ruff check tests/` or
 `.venv/bin/pre-commit run --all-files` for touched test hygiene. Sources:
-`pyproject.toml`; `.pre-commit-config.yaml`; `README.md`; `CLAUDE.md`;
+`pyproject.toml`; `.pre-commit-config.yaml`; `README.md`;
 `.github/workflows/ci.yml`.
 
 Additional mechanical guards catch recent review-churn patterns before PR
@@ -264,7 +263,7 @@ acceptance test, and is not wired into pre-commit or CI. Sources:
 Ruff is pinned in two places that must stay in lockstep: the `ruff==` dev-extra
 pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 `.pre-commit-config.yaml`. Sources: `pyproject.toml`;
-`.pre-commit-config.yaml`; `CLAUDE.md`; `.github/workflows/ci.yml`;
+`.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
 `tests/test_ruff_lockstep_lint.py`.
 
 Two other exact `==` pins have no automated update path — Dependabot's
@@ -276,7 +275,7 @@ procedure (raise the pin, then verify the mypy baseline count is unchanged and
 the gated clean-module list still passes / the Socket job stays green) lives in
 the "Pinned CI tool bumps" subsection of `docs/DEVELOPMENT_CYCLE.md`, pointed at
 from the pre-PR CI-hygiene heading. Sources: `pyproject.toml`;
-`.github/workflows/ci.yml`; `docs/DEVELOPMENT_CYCLE.md`; `CLAUDE.md`.
+`.github/workflows/ci.yml`; `docs/DEVELOPMENT_CYCLE.md`.
 
 ## Local and Remote Review Gates
 
@@ -654,7 +653,7 @@ sync the locked Python 3.14 development environment on `windows-latest`, then
 run `pytest --collect-only -q`. The job must use `continue-on-error: true` and
 must not appear in the `test` or `CI Result` dependency lists. Sources:
 `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`;
-`tests/test_ci_review_contract.py`; `CLAUDE.md`;
+`tests/test_ci_review_contract.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
 
 ## Review Checklist
@@ -665,7 +664,7 @@ mode/flag combinations, deterministic test paths, hot-path performance,
 user-facing output order, test hygiene, test resource cost, cross-platform
 guards, default-behavior changes, CI/workflow/dependency hygiene, and
 changelog/version impact. Sources:
-`CLAUDE.md`; `.github/PULL_REQUEST_TEMPLATE.md`;
+`.github/PULL_REQUEST_TEMPLATE.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`.
 
 These 15 headings map to the recurring review gates identified by the full
@@ -954,6 +953,6 @@ git diff --check
 ```
 
 Run the narrowest focused regression first, then affected files/suites, then
-broader checks when blast radius warrants it. Sources: `CLAUDE.md`; `README.md`;
+broader checks when blast radius warrants it. Sources: `README.md`;
 `pyproject.toml`; `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
 `tests/`.

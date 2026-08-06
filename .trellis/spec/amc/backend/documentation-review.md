@@ -33,6 +33,17 @@ the current pass. Sources:
 `.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/design.md`;
 `AGENTS.md`.
 
+A spec's `Sources:` footer must not cite `CLAUDE.md`. `CLAUDE.md` is derived
+*from* this directory, so citing it as a source is circular — it makes a
+restatement look like evidence. The exception is a section whose subject is
+`CLAUDE.md`'s own role or its status as a lockstep mirror, which is why
+`Canonical Documentation Roles`, `Docs Sync`, `PR and Review Surfaces`, and
+`index.md` § Source Precedence still name it. 89 such citations were removed
+across the six behavior specs; none lost its evidence, because every one of
+them already cited the code, test, or `README.md` path that substantiates the
+rule. Sources: `.trellis/spec/amc/backend/index.md`;
+`.trellis/tasks/archive/2026-08/08-05-claude-md-context-refactor/implement.md`.
+
 When cutting prose from one surface on the grounds that another already covers
 it, a grep hit on a module name, flag name, or keyword is **not** coverage.
 Name the specific contract the prose asserts, then quote the destination

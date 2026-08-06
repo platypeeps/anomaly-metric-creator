@@ -10,7 +10,7 @@ script names; the top-level script remains a compatibility shim. Sources:
 `tests/test_cli.py`.
 
 `main(argv=None)` is the generation entry point and must remain import-safe:
-importing the module should not generate files. Sources: `CLAUDE.md`;
+importing the module should not generate files. Sources:
 `src/anomaly_metric_creator/legacy.py`; `tests/conftest.py`;
 `tests/test_package_facades.py`.
 
@@ -21,7 +21,7 @@ The supported subcommands are `generate` (implicit default), `combine DIR`,
 `trace-bundle {summary,search,unsupported,export-csv} BUNDLE`. `combine`,
 `validate`, and `trace-bundle` use dedicated parsers and must not route through
 the generation parser; `serve` parses server flags first and forwards remaining
-generation flags to the normal parser. Sources: `CLAUDE.md`; `README.md`;
+generation flags to the normal parser. Sources: `README.md`;
 `docs/application-flow.md`; `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
@@ -31,7 +31,7 @@ generation flags to the normal parser. Sources: `CLAUDE.md`; `README.md`;
 The canonical artifact flag is `--emit` with tokens `metrics`, `logs`,
 `traces`, `gauges`, `schema`, and `combined`. `combined` **and** `gauges` each
 require `metrics` (the parser rejects the combination otherwise); `schema` has
-no artifact dependency. Sources: `README.md`; `CLAUDE.md`;
+no artifact dependency. Sources: `README.md`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_emit_selection_hygiene.py`;
 `tests/test_cli_surface.py`.
@@ -39,7 +39,7 @@ no artifact dependency. Sources: `README.md`; `CLAUDE.md`;
 The canonical OTEL selection flag is `--otel-send` with `logs`, `metrics`,
 `traces`, `gauges`, `all`, or `none`. Streaming is off unless selected; selected
 signals are authoritative and unselected endpoints must not leak in from env
-defaults. Sources: `README.md`; `CLAUDE.md`;
+defaults. Sources: `README.md`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_cli.py`;
 `tests/test_otel_gauges.py`; `tests/test_cli_surface.py`.
@@ -55,7 +55,7 @@ configured retry path. Sources: `README.md`;
 
 New flags must be placed in the right parser/group, reconciled through the
 existing namespace flow, tested in isolation, and checked against interacting
-flags and subcommands. Sources: `CLAUDE.md`; `README.md`;
+flags and subcommands. Sources: `README.md`;
 `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_cli_surface.py`;
@@ -121,7 +121,7 @@ Sources: `pyproject.toml`; `uv.lock`;
 
 Generated artifacts live under `--output-dir`; cleanup must remove stale files
 for artifacts/components that this run will not regenerate while leaving
-unknown user files alone. Sources: `CLAUDE.md`; `README.md`;
+unknown user files alone. Sources: `README.md`;
 `docs/application-flow.md`; `src/anomaly_metric_creator/legacy.py`;
 `tests/test_emit_selection_hygiene.py`; `tests/test_reporting_artifacts.py`.
 
@@ -135,7 +135,7 @@ never `open(final_path, "w")`, and their filename must reach the registries
 `_known_artifact_filenames()` reads so stale `*.tmp` siblings are swept. Files
 this run will regenerate are therefore not deleted by pre-clean (true deletion
 is reserved for files the run will not emit). `./otel-activity.log` is exempt:
-it lives outside `--output-dir` and appends within a run. Sources: `CLAUDE.md`;
+it lives outside `--output-dir` and appends within a run. Sources:
 `src/anomaly_metric_creator/artifacts.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_atomic_writes.py`.
 
@@ -164,7 +164,7 @@ coupling regression (Pearson is undefined), and the violation message must name
 both-sides form.
 Unknown-file validation tolerates dot-prefixed sidecars such as `.DS_Store` but
 continues to hard-fail undeclared non-dot artifact files, including stale
-`*.tmp` debris. Sources: `README.md`; `CLAUDE.md`;
+`*.tmp` debris. Sources: `README.md`;
 `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/validate_impl.py`;
 `src/anomaly_metric_creator/validate_cells.py`;
@@ -175,7 +175,7 @@ continues to hard-fail undeclared non-dot artifact files, including stale
 
 `combine DIR` reads existing per-component CSVs and writes
 `combined_metrics_unified.csv`; it must not pre-clean inputs or regenerate
-`schema.json` or `gauges.csv`. Sources: `README.md`; `CLAUDE.md`;
+`schema.json` or `gauges.csv`. Sources: `README.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
 `tests/test_combine.py`; `docs/application-flow.md`.
 
@@ -223,7 +223,7 @@ paths never trip it because they stream one handle per component. Sources:
 `amc serve` must generate once before listening unless `--no-generate` is set,
 must append `--otel-send none` to startup generation so the listener is not
 blocked by OTEL, and must serialize continuous regeneration with OTEL replay
-when continuous mode and OTEL are both active. Sources: `CLAUDE.md`;
+when continuous mode and OTEL are both active. Sources:
 `README.md`; `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 After the three startup URL lines, `serve_main` must print a print-only
@@ -244,18 +244,18 @@ command. Sources: `README.md`; `src/anomaly_metric_creator/server.py`;
 Serve config files are JSON or YAML objects with top-level `server` and
 `generate` maps. Config keys use long flag names with underscores; values are
 converted to flags before parsing, and explicit CLI flags come after config
-defaults so they win. Sources: `README.md`; `CLAUDE.md`;
+defaults so they win. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
 The command API accepts either a command string or argv list, parses through
 the simulator command parser, returns deterministic stdout/stderr/exit-code
-triples, and never shells out. Sources: `README.md`; `CLAUDE.md`;
+triples, and never shells out. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_commands.py`; `tests/test_server.py`.
 
 Every command or real-client Kubernetes API request should create a
 `CommandTrace` so supported, partial, and unsupported operator behavior remains
-visible in debug search and backlog views. Sources: `CLAUDE.md`; `README.md`;
+visible in debug search and backlog views. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
@@ -296,7 +296,7 @@ conventions:
   identical. The loop may `break` past `hi` only when `_layout_allows_break` is
   true — the dimensionless wide layout with no DST splice; the dim-aware
   per-instance-block layout and DST-injected runs are non-monotonic and must
-  parse-gate without breaking. Sources: `CLAUDE.md`;
+  parse-gate without breaking. Sources:
   `src/anomaly_metric_creator/server_traces.py`;
   `src/anomaly_metric_creator/server_mcp.py`;
   `src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`;
@@ -324,7 +324,7 @@ minimal-argument entry in the registry-coupled eval/non-eval sweep in
 `MCP_TOOLS`. Its structural guard scans each handler and transitively called
 module-local helpers for rubric-bearing state or files; only the eval-gated
 `get_logs` and `deduplicate_logs` call graphs may reach `metric_report.log`.
-Sources: `CLAUDE.md`; `README.md`;
+Sources: `README.md`;
 `src/anomaly_metric_creator/server_mcp.py`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server_mcp.py`;
 `tests/test_server_eval_mode.py`.
@@ -346,7 +346,7 @@ active-scenario identifier may appear on any investigation-open surface — the
 `metric_report.log` is a verbatim manifest rendering), and the active scenario
 slugs are withheld from the ConfigMap `SCENARIOS` key, pod `scenario_ids`,
 `kubectl exec … env`, `helm get values`, the Helm release payload, and the
-`/v1/commands` trace echo. Sources: `CLAUDE.md`; `README.md`;
+`/v1/commands` trace echo. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_mcp.py`;
@@ -357,7 +357,7 @@ slugs are withheld from the ConfigMap `SCENARIOS` key, pod `scenario_ids`,
 The stdlib server exposes app endpoints (`/v1/state`, `/v1/commands`,
 `/v1/debug/...`, `/v1/logs/stream`, time controls, and mutation reset) plus a
 Kubernetes-compatible facade for real `kubectl` and Helm clients. Sources:
-`README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_kubernetes.py`;
 `src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.
 
@@ -365,7 +365,7 @@ The Kubernetes facade must be backed by `resource_snapshot()` and
 `SimulationMutations`, not a second resource model. It includes discovery,
 Table responses, core resources, workloads, metrics, authorization reviews,
 pod logs, and Helm-shaped release Secret storage for Helm 4 compatibility.
-Sources: `README.md`; `CLAUDE.md`;
+Sources: `README.md`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_kubernetes.py`;
 `src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.
@@ -407,7 +407,7 @@ byte-identical (audit A-013). Sources:
 Helm compatibility uses simulator JSON inside double-base64 gzip
 `helm.sh/release.v1` Secret payloads; do not document or treat these as native
 Helm 3 protobuf release objects unless the encoder changes. Sources:
-`README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server_ops.py`;
+`README.md`; `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_helm.py`; `tests/test_server.py`.
 
 ### Bounded Kubernetes watch streams
@@ -444,7 +444,7 @@ stderr note pointing at real kubectl (`_WATCH_COMMAND_NOTE`), exits 0, and is
 classified **partial** under rule `kubectl.get.<kind>.watch`
 (`_render_get_watch`) so the ignored flag surfaces in the debug backlog. A
 watch with no/unknown kind degrades to the normal unsupported path. Sources:
-`CLAUDE.md`; `README.md`; `src/anomaly_metric_creator/server.py`;
+`README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`; `tests/test_server_watch.py`;
 `tests/test_server_ops_fuzz.py`.
 
@@ -454,14 +454,14 @@ watch with no/unknown kind degrades to the normal unsupported path. Sources:
 portable command-trace JSON histories between live stores. `amc trace-bundle`
 must consume the exported shape offline for summary, search, unsupported
 grouping, and CSV export without starting the HTTP server. Sources:
-`README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
+`README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
 
 Bundle import/read paths validate top-level shape, API/schema version, trace
 entries, declared trace counts, and integer fields before coercion; booleans
-are not accepted as integers. Sources: `CLAUDE.md`;
+are not accepted as integers. Sources:
 `src/anomaly_metric_creator/trace_bundle.py`;
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_trace_bundle.py`;
 `tests/test_server.py`.
