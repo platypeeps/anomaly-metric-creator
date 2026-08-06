@@ -233,13 +233,27 @@ def _workspace_journal_paths(root: Path, paths: list[Path]) -> list[Path]:
             and path.name.startswith("journal-")
         }
     )
-    if journal_paths or root / "index.md" not in paths:
-        return journal_paths
-    return _tracked_workspace_journal_paths(root)
+    # pre-commit shards a large file list across several invocations in
+    # arbitrary order, so one batch can hold `index.md` with no journal while
+    # another holds a single journal with no index. `index.md` is always read
+    # whole from disk, so comparing a whole index against whichever journals
+    # happened to land in this batch reports every unbatched session as
+    # missing. Always widen to the full tracked set so the result is
+    # batch-order independent.
+    deduplicated: dict[Path, Path] = {}
+    for path in (*journal_paths, *_tracked_workspace_journal_paths(root)):
+        if path.is_file():
+            deduplicated.setdefault(path.resolve(), path)
+    return sorted(deduplicated.values())
 
 
 def _tracked_workspace_journal_paths(root: Path) -> list[Path]:
-    """Return tracked sibling journals when pre-commit batches index.md alone."""
+    """Return every tracked journal under ``root``, whatever this batch holds.
+
+    Listed by directory and filtered in Python rather than by a ``journal-*.md``
+    pathspec: glob and ``:/`` magic pathspecs both go inert under
+    ``GIT_LITERAL_PATHSPECS=1``, which would silently return no journals.
+    """
 
     try:
         repo_result = subprocess.run(
@@ -259,10 +273,9 @@ def _tracked_workspace_journal_paths(root: Path) -> list[Path]:
     except ValueError:
         return []
 
-    pathspec = f":/{relative_root.as_posix()}/journal-*.md"
     try:
         files_result = subprocess.run(
-            ["git", "-C", str(repo_root), "ls-files", "--", pathspec],
+            ["git", "-C", str(repo_root), "ls-files", "--", relative_root.as_posix()],
             capture_output=True,
             check=False,
             text=True,
@@ -272,9 +285,14 @@ def _tracked_workspace_journal_paths(root: Path) -> list[Path]:
     if files_result.returncode != 0:
         return []
 
+    tracked = [
+        Path(line)
+        for line in files_result.stdout.splitlines()
+        if Path(line).name.startswith("journal-") and Path(line).suffix == ".md"
+    ]
     if root.is_absolute():
-        return sorted(repo_root / path for path in files_result.stdout.splitlines())
-    return sorted(Path(path) for path in files_result.stdout.splitlines())
+        return sorted(repo_root / path for path in tracked)
+    return sorted(tracked)
 
 
 def _check_workspace_journal_commit_consistency(
@@ -290,10 +308,13 @@ def _check_workspace_journal_commit_consistency(
             "commit-list consistency"
         ]
     if not journal_paths:
+        # `journal_paths` is the full tracked set, not just this batch's share.
+        # An empty result therefore means no *tracked* journal — an untracked
+        # one may still sit on disk, which discovery excludes on purpose.
         if any(path == index_path for path in paths):
             return [
-                f"{index_path}: workspace journal files are missing from input; "
-                "cannot verify journal/index commit-list consistency"
+                f"{index_path}: no tracked workspace journal file exists beside "
+                "the index; cannot verify journal/index commit-list consistency"
             ]
         return []
 

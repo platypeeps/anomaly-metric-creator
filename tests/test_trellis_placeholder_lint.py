@@ -422,7 +422,14 @@ def test_index_session_missing_from_journals_exits_one(tmp_path: Path) -> None:
     assert "index.md" in result.stderr
 
 
-def test_index_without_journal_input_exits_one(tmp_path: Path) -> None:
+def test_index_only_batch_outside_a_git_repo_exits_one(tmp_path: Path) -> None:
+    """Journal discovery is git-tracked-only, so it finds nothing outside a repo.
+
+    Deliberate: a filesystem scan would also pick up untracked scratch journals,
+    which `test_untracked_journal_is_not_discovered_for_index_only_git_batch`
+    requires stay excluded.
+    """
+
     index_path, _journal_path = _workspace_artifacts(
         tmp_path,
         index_history_row=(
@@ -455,7 +462,7 @@ def test_index_without_journal_input_exits_one(tmp_path: Path) -> None:
     result = _run(index_path)
 
     assert result.returncode == 1
-    assert "workspace journal files are missing from input" in result.stderr
+    assert "no tracked workspace journal file exists beside the index" in result.stderr
     assert "index.md" in result.stderr
 
 
@@ -544,7 +551,83 @@ def test_untracked_journal_is_not_discovered_for_index_only_git_batch(
     result = _run_in(repo, str(Path(index_path).relative_to(repo)))
 
     assert result.returncode == 1
-    assert "workspace journal files are missing from input" in result.stderr
+    assert "no tracked workspace journal file exists beside the index" in result.stderr
+
+
+def test_sharded_single_journal_batch_sees_every_tracked_journal(
+    tmp_path: Path,
+) -> None:
+    """pre-commit shards its file list, so a batch can hold one journal alone.
+
+    `index.md` is always read whole from disk. Comparing it against only the
+    journals that landed in this batch reported every session held by a sibling
+    journal as missing — 64 false violations on the real workspace.
+    """
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    index_path, first_journal_path = _workspace_artifacts(
+        repo,
+        index_history_row=(
+            "| 1 | 2026-06-27 | First thing | `abc1234` | `codex/example` |"
+        ),
+        journal_text="""# Journal - sdelmas
+
+## Session 1: First thing
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abc1234` | (see git log) |
+""",
+    )
+    # Session 2 lives in a second tracked journal and in the index, exactly as
+    # the real workspace rotates journal-1.md -> journal-2.md.
+    index_file = Path(index_path)
+    index_file.write_text(
+        index_file.read_text(encoding="utf-8")
+        + "| 2 | 2026-06-28 | Second thing | `def5678` | `codex/example` |\n",
+        encoding="utf-8",
+    )
+    second_journal_path = Path(first_journal_path).with_name("journal-2.md")
+    second_journal_path.write_text(
+        """# Journal - sdelmas
+
+## Session 2: Second thing
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `def5678` | (see git log) |
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], capture_output=True, check=True, cwd=repo, text=True)
+    subprocess.run(
+        [
+            "git",
+            "add",
+            str(index_file.relative_to(repo)),
+            str(Path(first_journal_path).relative_to(repo)),
+            str(second_journal_path.relative_to(repo)),
+        ],
+        capture_output=True,
+        check=True,
+        cwd=repo,
+        text=True,
+    )
+
+    # The shard that holds journal-2.md alone: no index, no sibling journal.
+    result = _run_in(repo, str(second_journal_path.relative_to(repo)))
+
+    assert result.returncode == 0, result.stderr
+
+    # And the mirror shard holding journal-1.md alone.
+    mirror = _run_in(repo, str(Path(first_journal_path).relative_to(repo)))
+
+    assert mirror.returncode == 0, mirror.stderr
 
 
 def test_unpassed_journal_file_is_not_included_in_consistency_check(
