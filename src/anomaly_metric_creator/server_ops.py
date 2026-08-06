@@ -1941,164 +1941,22 @@ def _minimal_k8s_object(state: SimulationState, api_version: str, kind: str) -> 
     }
 
 
-def _openapi_schema_from_value(
-    value: Any,
-    *,
-    root_kind: str,
-    path: tuple[str, ...],
-    description: str = "",
-) -> dict[str, Any]:
-    field_description = description or _explain_field_description(root_kind, path)
-    if isinstance(value, bool):
-        return {"type": "boolean", "description": field_description}
-    if isinstance(value, int):
-        return {"type": "integer", "format": "int32", "description": field_description}
-    if isinstance(value, float):
-        return {"type": "number", "format": "double", "description": field_description}
-    if isinstance(value, dict):
-        return {
-            "type": "object",
-            "title": _explain_title(root_kind, path),
-            "description": field_description,
-            "properties": {
-                str(key): _openapi_schema_from_value(item, root_kind=root_kind, path=(*path, str(key)))
-                for key, item in value.items()
-            },
-        }
-    if isinstance(value, list):
-        item_value = value[0] if value else {}
-        return {
-            "type": "array",
-            "description": field_description,
-            "items": _openapi_schema_from_value(item_value, root_kind=root_kind, path=(*path, "items")),
-        }
-    return {"type": "string", "description": field_description}
-
-
-def _explain_field_description(root_kind: str, path: tuple[str, ...]) -> str:
-    if not path:
-        return f"{root_kind} schema projected from the AMC simulator Kubernetes facade."
-    dotted = ".".join(part for part in path if part != "items")
-    return f"{dotted} field projected from AMC's simulator-backed {root_kind} object."
-
-
-def _explain_title(root_kind: str, path: tuple[str, ...]) -> str:
-    if not path:
-        return root_kind
-    if path[-1] == "metadata":
-        return "ObjectMeta"
-    words = [root_kind, *(part for part in path if part != "items")]
-    return "".join(word[:1].upper() + word[1:] for word in words if word)
-
-
-def _explain_schema_at_path(schema: dict[str, Any], field_path: str) -> dict[str, Any] | None:
-    node = schema
-    for part in [item for item in field_path.split(".") if item]:
-        node = _explain_display_schema(node)
-        properties = node.get("properties")
-        if not isinstance(properties, dict) or part not in properties:
-            return None
-        child = properties[part]
-        if not isinstance(child, dict):
-            return None
-        node = child
-    return node
-
-
-def _format_explain(
-    schema_info: dict[str, Any],
-    field_path: str,
-    field_schema: dict[str, Any],
-    recursive: bool,
-) -> str:
-    lines = [
-        f"KIND:       {schema_info['kind']}",
-        f"VERSION:    {schema_info['api_version']}",
-        "",
-    ]
-    if field_path:
-        lines.extend([
-            f"FIELD:      {field_path} {_explain_type_label(field_schema)}",
-            "",
-        ])
-    lines.extend([
-        "DESCRIPTION:",
-        "    " + str(field_schema.get("description", "")).strip(),
-        "",
-    ])
-    properties = _explain_properties(field_schema)
-    if properties:
-        lines.append("FIELDS:")
-        if recursive:
-            lines.extend(_format_recursive_explain_fields(properties, depth=1, max_depth=5))
-        else:
-            for name, child in properties.items():
-                lines.append(f"  {name:<20} {_explain_type_label(child)}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _format_recursive_explain_fields(
-    properties: dict[str, Any],
-    *,
-    depth: int,
-    max_depth: int,
-) -> list[str]:
-    lines: list[str] = []
-    indent = "  " * depth
-    for name, child in properties.items():
-        if not isinstance(child, dict):
-            continue
-        lines.append(f"{indent}{name:<20} {_explain_type_label(child)}")
-        if depth >= max_depth:
-            continue
-        child_properties = _explain_properties(child)
-        if child_properties:
-            lines.extend(
-                _format_recursive_explain_fields(
-                    child_properties,
-                    depth=depth + 1,
-                    max_depth=max_depth,
-                )
-            )
-    return lines
-
-
-def _explain_properties(schema: dict[str, Any]) -> dict[str, Any]:
-    display_schema = _explain_display_schema(schema)
-    properties = display_schema.get("properties")
-    return properties if isinstance(properties, dict) else {}
-
-
-def _explain_display_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    if schema.get("type") == "array":
-        items = schema.get("items")
-        if isinstance(items, dict):
-            return items
-    return schema
-
-
-def _explain_type_label(schema: dict[str, Any]) -> str:
-    schema_type = schema.get("type")
-    if schema_type == "array":
-        items = schema.get("items")
-        item_label = _explain_type_name(items) if isinstance(items, dict) else "Object"
-        return f"<[]{item_label}>"
-    return f"<{_explain_type_name(schema)}>"
-
-
-def _explain_type_name(schema: dict[str, Any]) -> str:
-    schema_type = schema.get("type")
-    if schema_type == "object":
-        title = schema.get("title")
-        return str(title) if title else "Object"
-    if schema_type == "integer":
-        return "integer"
-    if schema_type == "number":
-        return "number"
-    if schema_type == "boolean":
-        return "boolean"
-    return "string"
+# The pure explain / OpenAPI schema formatters live in the one-way leaf
+# server_ops_explain.py (epic step 6a). Re-imported at the moved block's
+# original position so server_ops.<name> and __all__ stay stable; the leaf
+# has no intra-package imports and never imports server_ops.
+from .server_ops_explain import (
+    _openapi_schema_from_value as _openapi_schema_from_value,
+    _explain_field_description as _explain_field_description,
+    _explain_title as _explain_title,
+    _explain_schema_at_path as _explain_schema_at_path,
+    _format_explain as _format_explain,
+    _format_recursive_explain_fields as _format_recursive_explain_fields,
+    _explain_properties as _explain_properties,
+    _explain_display_schema as _explain_display_schema,
+    _explain_type_label as _explain_type_label,
+    _explain_type_name as _explain_type_name,
+)
 
 
 def _render_rollout_status(state: SimulationState, parsed: ParsedCommand) -> str:
@@ -2513,61 +2371,15 @@ def _deep_merge_patch(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, 
     return base
 
 
-def _apply_json_patch(target: dict[str, Any], operations: list[Any]) -> str:
-    for operation in operations:
-        if not isinstance(operation, dict):
-            return "JSON patch operations must be objects"
-        op = str(operation.get("op", ""))
-        path = str(operation.get("path", ""))
-        if op not in {"add", "replace", "remove"}:
-            return f"JSON patch operation {op!r} is not modeled"
-        if not path.startswith("/"):
-            return f"JSON patch path {path!r} must start with /"
-        if op == "remove":
-            error = _remove_json_pointer(target, path)
-        else:
-            error = _set_json_pointer(target, path, operation.get("value"))
-        if error:
-            return error
-    return ""
-
-
-def _json_pointer_parts(path: str) -> list[str]:
-    return [
-        part.replace("~1", "/").replace("~0", "~")
-        for part in path.lstrip("/").split("/")
-        if part
-    ]
-
-
-def _set_json_pointer(target: dict[str, Any], path: str, value: Any) -> str:
-    parts = _json_pointer_parts(path)
-    if not parts:
-        return "JSON patch root replacement is not modeled"
-    cursor: dict[str, Any] = target
-    for part in parts[:-1]:
-        child = cursor.setdefault(part, {})
-        if not isinstance(child, dict):
-            return f"JSON patch path {path!r} crosses a non-object value"
-        cursor = child
-    cursor[parts[-1]] = value
-    return ""
-
-
-def _remove_json_pointer(target: dict[str, Any], path: str) -> str:
-    parts = _json_pointer_parts(path)
-    if not parts:
-        return "JSON patch root removal is not modeled"
-    cursor: dict[str, Any] = target
-    for part in parts[:-1]:
-        child = cursor.get(part)
-        if not isinstance(child, dict):
-            return f"JSON patch path {path!r} does not exist"
-        cursor = child
-    if parts[-1] not in cursor:
-        return f"JSON patch path {path!r} does not exist"
-    del cursor[parts[-1]]
-    return ""
+# The RFC-6902 JSON-pointer patch operations live in the one-way leaf
+# server_ops_payloads.py (epic step 6a), re-imported at their original
+# position; the leaf never imports server_ops.
+from .server_ops_payloads import (
+    _apply_json_patch as _apply_json_patch,
+    _json_pointer_parts as _json_pointer_parts,
+    _set_json_pointer as _set_json_pointer,
+    _remove_json_pointer as _remove_json_pointer,
+)
 
 
 def _render_diff(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
@@ -2702,98 +2514,13 @@ def _manifest_apply_targets(
     return targets
 
 
-def _load_manifest_documents(path: Path) -> list[dict[str, Any]] | CommandResult:
-    suffix = path.suffix.lower()
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return CommandResult(
-            1,
-            "",
-            f"error: unable to read manifest {path}: {exc}\n",
-            "partial",
-            "kubectl.apply.manifest.read",
-        )
-    try:
-        if suffix == ".json":
-            raw = json.loads(text)
-            documents = raw if isinstance(raw, list) else [raw]
-        elif suffix in {".yaml", ".yml"}:
-            try:
-                import yaml  # type: ignore[import-not-found]
-            except ModuleNotFoundError:
-                return CommandResult(
-                    1,
-                    "",
-                    f"error: PyYAML is required to parse manifest {path}\n",
-                    "partial",
-                    "kubectl.apply.manifest.yaml",
-                )
-            try:
-                documents = list(yaml.safe_load_all(text))
-            except yaml.YAMLError as exc:
-                return CommandResult(
-                    1,
-                    "",
-                    f"error: invalid manifest {path}: {exc}\n",
-                    "partial",
-                    "kubectl.apply.manifest.parse",
-                )
-        else:
-            return CommandResult(
-                1,
-                "",
-                f"error: unsupported manifest extension for {path}; use .json, .yaml, or .yml\n",
-                "partial",
-                "kubectl.apply.manifest.extension",
-            )
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        return CommandResult(
-            1,
-            "",
-            f"error: invalid manifest {path}: {exc}\n",
-            "partial",
-            "kubectl.apply.manifest.parse",
-        )
-    return _normalize_manifest_documents(documents, str(path))
-
-
-def _normalize_manifest_documents(documents: list[Any], source: str) -> list[dict[str, Any]] | CommandResult:
-    normalized: list[dict[str, Any]] = []
-    for index, document in enumerate(documents, start=1):
-        if document is None:
-            continue
-        if not isinstance(document, dict):
-            return CommandResult(
-                1,
-                "",
-                f"error: manifest {source} document {index} must be a Kubernetes object\n",
-                "partial",
-                "kubectl.apply.manifest.shape",
-            )
-        if str(document.get("kind", "")).lower() == "list":
-            items = document.get("items")
-            if not isinstance(items, list):
-                return CommandResult(
-                    1,
-                    "",
-                    f"error: manifest {source} document {index} List.items must be a list\n",
-                    "partial",
-                    "kubectl.apply.manifest.shape",
-                )
-            for item_index, item in enumerate(items, start=1):
-                if not isinstance(item, dict):
-                    return CommandResult(
-                        1,
-                        "",
-                        f"error: manifest {source} document {index} item {item_index} must be a Kubernetes object\n",
-                        "partial",
-                        "kubectl.apply.manifest.shape",
-                    )
-                normalized.append(item)
-            continue
-        normalized.append(document)
-    return normalized
+# The manifest document reader lives in the one-way leaf
+# server_ops_payloads.py (epic step 6a), re-imported at its original
+# position; the leaf never imports server_ops.
+from .server_ops_payloads import (
+    _load_manifest_documents as _load_manifest_documents,
+    _normalize_manifest_documents as _normalize_manifest_documents,
+)
 
 
 def _manifest_apply_target(
