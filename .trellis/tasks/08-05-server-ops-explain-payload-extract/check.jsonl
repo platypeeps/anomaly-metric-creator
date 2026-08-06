@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/amc/backend/architecture.md", "reason": "Module boundaries, the server leaf DAG, and the one-way import direction the two new leaves must obey."}
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Mypy clean-module gate, determinism/validation conventions, and the pre-PR review checklist this extraction is measured against."}
+{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "Command-render, k8s/Helm facade, and redaction contracts that the moved explain/patch/manifest helpers must keep byte-identical."}
