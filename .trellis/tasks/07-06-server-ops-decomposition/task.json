@@ -25,7 +25,8 @@
     "08-04-server-k8s-tables-mypy-gate",
     "08-04-server-ops-support-render-primitives",
     "08-04-server-helm-impl-extract",
-    "08-05-server-k8s-api-extract"
+    "08-05-server-k8s-api-extract",
+    "08-05-server-ops-explain-payload-extract"
   ],
   "parent": null,
   "relatedFiles": [],

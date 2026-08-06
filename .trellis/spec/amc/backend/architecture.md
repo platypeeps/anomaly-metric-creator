@@ -217,7 +217,20 @@ non-snapshot mutation-parse helpers, request-body readers, and
 `record_kubernetes_api_call`, and the OpenAPI document builders) stays in
 `server_ops.py` because it calls `resource_snapshot` — monkeypatched in
 `server_ops`'s namespace by `tests/test_server.py` — and cannot move without a
-reverse import; `server_traces.py` for
+reverse import. That same binding blocks the originally-planned render-dispatch
+extraction: `_render_get`, `_render_describe`, `_render_scale`, `_render_delete`,
+`_render_patch`, and `_render_diff` all call `resource_snapshot`, so splitting
+them out needs a live provider seam rather than a plain move. What was movable
+without one is out: `server_ops_explain.py` for the ten pure `kubectl explain` /
+OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
+`_format_explain` and its recursive-field/type-label helpers) — the only leaf in
+the package with no intra-package import at all — while the state-bound
+`_render_explain` / `_explain_schema_for_kind` stay behind and call into it;
+and `server_ops_payloads.py` for declarative request-payload handling (the
+RFC-6902 `_apply_json_patch` / `_json_pointer_parts` / `_set_json_pointer` /
+`_remove_json_pointer` operations and the `_load_manifest_documents` /
+`_normalize_manifest_documents` reader), importing one-way from
+`server_command_render` for `CommandResult` only. `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
 `server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP
@@ -234,6 +247,8 @@ Sources:
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
 `src/anomaly_metric_creator/server_ops_parse.py`;
+`src/anomaly_metric_creator/server_ops_explain.py`;
+`src/anomaly_metric_creator/server_ops_payloads.py`;
 `src/anomaly_metric_creator/server_command_render.py`;
 `src/anomaly_metric_creator/server_helm_impl.py`;
 `src/anomaly_metric_creator/server_traces.py`;
