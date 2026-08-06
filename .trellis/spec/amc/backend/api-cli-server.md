@@ -158,7 +158,11 @@ topology-coupling check short-circuits under it. Sources: `README.md`;
 presence, row counts, timestamps, cell types/ranges, dimensions, derived
 metrics, anomaly ordering, and topology coupling, and return nonzero on hard
 violations unless `--warn` is passed. `validate_output` returns structured
-`Violation` objects whose string form preserves the historic prose output.
+`Violation` objects whose string form preserves the historic prose output. A
+zero-variance source or target column in the topology-coupling check is itself a
+coupling regression (Pearson is undefined), and the violation message must name
+**which side** was constant rather than the ambiguous "source or target"
+both-sides form.
 Unknown-file validation tolerates dot-prefixed sidecars such as `.DS_Store` but
 continues to hard-fail undeclared non-dot artifact files, including stale
 `*.tmp` debris. Sources: `README.md`; `CLAUDE.md`;
