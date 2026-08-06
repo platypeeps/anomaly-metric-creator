@@ -227,8 +227,9 @@ OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_pat
 the package with no intra-package import at all — while the state-bound
 `_render_explain` / `_explain_schema_for_kind` stay behind and call into it;
 and `server_ops_payloads.py` for declarative request-payload handling (the
-RFC-6902 `_apply_json_patch` / `_json_pointer_parts` / `_set_json_pointer` /
-`_remove_json_pointer` operations and the `_load_manifest_documents` /
+RFC 6902 JSON Patch `_apply_json_patch` plus its RFC 6901 JSON Pointer
+`_json_pointer_parts` / `_set_json_pointer` / `_remove_json_pointer`
+operations, and the `_load_manifest_documents` /
 `_normalize_manifest_documents` reader), importing one-way from
 `server_command_render` for `CommandResult` only. `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and

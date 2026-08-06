@@ -2371,9 +2371,9 @@ def _deep_merge_patch(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, 
     return base
 
 
-# The RFC-6902 JSON-pointer patch operations live in the one-way leaf
-# server_ops_payloads.py (epic step 6a), re-imported at their original
-# position; the leaf never imports server_ops.
+# The RFC 6902 JSON Patch operations (RFC 6901 JSON Pointer paths) live in
+# the one-way leaf server_ops_payloads.py (epic step 6a), re-imported at
+# their original position; the leaf never imports server_ops.
 from .server_ops_payloads import (
     _apply_json_patch as _apply_json_patch,
     _json_pointer_parts as _json_pointer_parts,

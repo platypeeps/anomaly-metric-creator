@@ -117,8 +117,9 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
   lines) holds the ten pure `kubectl explain` / OpenAPI schema formatters from
   the contiguous block `server_ops.py:1944-2101` and is the **first leaf in the
   epic with no intra-package import at all**; `server_ops_payloads.py` (172
-  lines) holds the RFC-6902 JSON-pointer patch ops (`2516-2570`) plus the
-  manifest document reader (`2705-2796`), importing only `CommandResult` from
+  lines) holds the RFC 6902 JSON Patch ops with RFC 6901 pointer paths
+  (`2516-2570`) plus the manifest document reader (`2705-2796`), importing
+  only `CommandResult` from
   `server_command_render`. The state-bound `_render_explain` /
   `_explain_schema_for_kind` and `_manifest_apply_target(s)` stay in
   `server_ops` and call the moved helpers through the re-import stubs.

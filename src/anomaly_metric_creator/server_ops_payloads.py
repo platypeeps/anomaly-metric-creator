@@ -2,9 +2,9 @@
 
 Epic step 6a of the ``server_ops.py`` decomposition (task
 ``08-05-server-ops-explain-payload-extract``). Two clusters moved here
-verbatim: the RFC-6902 JSON-pointer patch operations used by
-``kubectl patch --type=json``, and the manifest document reader used by
-``kubectl apply -f`` / ``diff`` / ``create``.
+verbatim: the RFC 6902 JSON Patch operations — whose ``path`` values are
+RFC 6901 JSON Pointers — used by ``kubectl patch --type=json``, and the
+manifest document reader used by ``kubectl apply -f`` / ``diff`` / ``create``.
 
 Both are pure with respect to simulation state — nothing here touches
 ``SimulationState`` or ``resource_snapshot``. This module never imports

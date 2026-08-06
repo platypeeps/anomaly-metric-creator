@@ -107,8 +107,8 @@ explicitly not a split.
   planned step 6 after a closure audit showed the render-dispatch split is not
   implementable as designed: extract the ten pure `kubectl explain` / OpenAPI
   schema formatters into `server_ops_explain.py` (the epic's first leaf with no
-  intra-package import) and the RFC-6902 JSON-pointer patch ops plus the
-  manifest document reader into `server_ops_payloads.py`. The state-bound
+  intra-package import) and the RFC 6902 JSON Patch ops (RFC 6901 pointer
+  paths) plus the manifest document reader into `server_ops_payloads.py`. The state-bound
   `_render_explain` / `_explain_schema_for_kind` and `_manifest_apply_target(s)`
   stay in `server_ops.py`; the blocked render-dispatch split becomes step 6b.
 
