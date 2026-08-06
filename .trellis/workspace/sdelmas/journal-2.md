@@ -674,3 +674,56 @@ Role-swap extraction of the pure Kubernetes REST-facade builder/filter/format la
 ### Next Steps
 
 - None - task complete
+
+
+## Session 64: CLAUDE.md context-cost refactor: 3,106 lines to 259
+
+**Date**: 2026-08-05
+**Task**: CLAUDE.md context-cost refactor: 3,106 lines to 259
+**Package**: amc
+**Branch**: `main`
+
+### Summary
+
+Cut CLAUDE.md from 3,106 lines / 195 KB / ~77.9k tokens to 259 lines / 16 KB / ~4k tokens, reclaiming 26% of every context window. The file is loaded in full on every session start and compaction, and its own first paragraph already declared .trellis/spec/amc/backend/index.md canonical before restating ~3,000 lines of it.
+
+Classified every line span in a 37-row disposition table reconciling exactly to COVERED 2,667 + MOVE 275 + RETIRE 162 + STAYS 2 = 3,106. The evidence rule that made this safe: a grep hit on a module or flag name is not coverage — name the contract the prose asserts and quote the destination sentence. That caught three contracts with zero coverage anywhere in the repo, which were relocated rather than deleted: the long-form RLIMIT_NOFILE / _ensure_long_form_fd_capacity preflight and assume_monotonic_wide_components (api-cli-server.md), and the two-posture header-redaction asymmetry (operations-security-logging.md). A keyword sweep would have lost all three.
+
+RETIRE was sentence-level, not paragraph-level: past-tense project voice routinely wraps a live present-tense clause. Eight such anchors were preserved by relocation, including the schema reader still honoring topology_mode: independent and the apply_dtype_int_cast kwarg surviving for programmatic callers.
+
+What survives in CLAUDE.md: module-ownership map, extraction / re-import invariant, determinism contract, pipeline order, working rules, review readiness, repository-lints table, and a routing table into the specs. The 15 pre-PR checklist headings now have one canonical home in testing-quality.md with all mirrors repointed. 13 stale citations fixed across 13 files.
+
+Both reusable conventions were written into documentation-review.md so the next consolidation does not relearn them.
+
+PR #342 merged at 90a1a21. CI Result pass on all lanes. Copilot raised 4 findings: one real (a circular Sources footer this PR caused, fixed in d92c67d), one factually wrong (rebutted with a quote from testing-quality.md:264-266), two correct in kind but out of scope (3 of 73 pre-existing CLAUDE.md Sources citations; fixing a sample would reduce consistency, and some footers stay correct because that content really does still live in CLAUDE.md).
+
+Two things left open and stated rather than implied: pre-commit run --all-files is 12 of 13 hooks, the failure being a pre-existing workspace-journal gap in .trellis/workspace/sdelmas/index.md (sessions 20-63) that fails identically on clean main and does not run in CI; and no Trellis task was created for the 72-footer Sources sweep because that needs user consent, so it is logged in the archived implement.md instead.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be4d5bc` | (see git log) |
+| `ae603aa` | (see git log) |
+| `d8d9c19` | (see git log) |
+| `6549a2b` | (see git log) |
+| `8e65ed9` | (see git log) |
+| `8e01b37` | (see git log) |
+| `d92c67d` | (see git log) |
+| `90a1a21` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
