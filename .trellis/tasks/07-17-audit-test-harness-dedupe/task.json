@@ -18,7 +18,11 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-06-trace-row-insert-dedupe",
+    "08-06-conftest-helper-consolidation",
+    "08-06-otlp-capture-fixture"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

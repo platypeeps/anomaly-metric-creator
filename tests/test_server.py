@@ -1610,6 +1610,192 @@ def test_command_trace_sqlite_use_after_close_raises_runtime_error(tmp_path):
         store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
 
 
+# ``_insert_sqlite`` and ``_replace_sqlite_traces`` share one row writer,
+# ``_insert_trace_row`` (audit A-031). Every read path rebuilds traces from
+# ``payload_json`` alone, so a reload-and-compare test cannot see drift in the
+# other 20 columns -- these read the raw rows instead.
+_TRACE_COLUMNS = (
+    "id",
+    "received_at_wall_time",
+    "simulated_time",
+    "raw_input",
+    "command_family",
+    "verb",
+    "resource_kind",
+    "resource_name",
+    "namespace",
+    "support_status",
+    "matched_rule_id",
+    "fingerprint",
+    "guessed_intent",
+    "active_scenarios_json",
+    "exit_code",
+    "stdout_preview",
+    "stderr_preview",
+    "stdout",
+    "stderr",
+    "latency_ms",
+    "payload_json",
+)
+
+
+def _raw_trace_row(db_path, trace_id):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM command_traces WHERE id = ?", (trace_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return None if row is None else {key: row[key] for key in row.keys()}
+
+
+def _expected_trace_columns(trace):
+    return {
+        "id": trace.id,
+        "received_at_wall_time": trace.received_at_wall_time,
+        "simulated_time": trace.simulated_time,
+        "raw_input": trace.raw_input,
+        "command_family": trace.command_family,
+        "verb": trace.verb,
+        "resource_kind": trace.resource_kind,
+        "resource_name": trace.resource_name,
+        "namespace": trace.namespace,
+        "support_status": trace.support_status,
+        "matched_rule_id": trace.matched_rule_id,
+        "fingerprint": trace.fingerprint,
+        "guessed_intent": trace.guessed_intent,
+        "active_scenarios_json": json.dumps(
+            list(trace.active_scenarios), sort_keys=True
+        ),
+        "exit_code": trace.exit_code,
+        "stdout_preview": trace.stdout_preview,
+        "stderr_preview": trace.stderr_preview,
+        "stdout": trace.stdout,
+        "stderr": trace.stderr,
+        "latency_ms": trace.latency_ms,
+        "payload_json": json.dumps(trace.to_dict(), sort_keys=True),
+    }
+
+
+def _fts_rows(db_path, trace_id=None):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    sql = (
+        "SELECT trace_id, raw_input, stdout, stderr, fingerprint, "
+        "guessed_intent, matched_rule_id FROM command_traces_fts"
+    )
+    params = ()
+    if trace_id is not None:
+        sql += " WHERE trace_id = ?"
+        params = (trace_id,)
+    try:
+        rows = conn.execute(sql + " ORDER BY trace_id ASC", params).fetchall()
+    finally:
+        conn.close()
+    return [{key: row[key] for key in row.keys()} for row in rows]
+
+
+@pytest.mark.parametrize("write_path", ["record", "import"])
+def test_command_trace_sqlite_writes_every_column_on_both_paths(tmp_path, write_path):
+    # Guards the shared ``_insert_trace_row``: the live-insert and
+    # bundle-import paths must persist all 21 columns identically. Asserted on
+    # the raw row because ``list``/``get``/``search`` only deserialize
+    # ``payload_json`` and would pass even if the rest were dropped.
+    db_path = tmp_path / f"commands-{write_path}.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    trace = _trace(
+        7,
+        "2026-06-25T12:07:00Z",
+        "kubectl logs cacheservice-0 --tail 5",
+        active_scenarios=("zeta_scenario", "alpha_scenario"),
+    )
+
+    if write_path == "record":
+        store.record(trace)
+    else:
+        store.import_payload({"traces": [trace.to_dict()]})
+    store.close()
+
+    row = _raw_trace_row(db_path, 7)
+    assert row is not None
+    assert set(row) == set(_TRACE_COLUMNS)
+    assert row == _expected_trace_columns(trace)
+
+
+@pytest.mark.parametrize("write_path", ["record", "import"])
+def test_command_trace_sqlite_writes_fts_rows_on_both_paths(tmp_path, write_path):
+    # Asserted against ``command_traces_fts`` directly: ``search()`` silently
+    # falls back to a LIKE scan over ``command_traces`` when FTS5 is
+    # unavailable, so a passing search would not prove the FTS write happened.
+    db_path = tmp_path / f"fts-{write_path}.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    if not store._sqlite_fts_enabled:
+        store.close()
+        pytest.skip("sqlite build has no FTS5 support")
+
+    traces = [
+        _trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"),
+        _trace(2, "2026-06-25T12:02:00Z", "kubectl get services"),
+    ]
+    if write_path == "record":
+        for trace in traces:
+            store.record(trace)
+    else:
+        store.import_payload({"traces": [trace.to_dict() for trace in traces]})
+    store.close()
+
+    rows = _fts_rows(db_path)
+    assert [row["trace_id"] for row in rows] == [1, 2]
+    assert rows[1] == {
+        "trace_id": 2,
+        "raw_input": "kubectl get services",
+        "stdout": "",
+        "stderr": "",
+        "fingerprint": "kubectl.get.pods",
+        "guessed_intent": "Inspect pods",
+        "matched_rule_id": "kubectl.get.pods",
+    }
+
+
+def test_command_trace_sqlite_record_replaces_rather_than_duplicates_fts_row(tmp_path):
+    # ``_insert_sqlite`` passes ``delete_fts_first=True`` because it can
+    # overwrite an existing id. Without that delete the FTS mirror accumulates
+    # a stale second row and search returns the superseded text.
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    if not store._sqlite_fts_enabled:
+        store.close()
+        pytest.skip("sqlite build has no FTS5 support")
+
+    store.record(_trace(3, "2026-06-25T12:03:00Z", "kubectl get pods"))
+    store.record(_trace(3, "2026-06-25T12:09:00Z", "kubectl get configmaps"))
+    store.close()
+
+    rows = _fts_rows(db_path, trace_id=3)
+    assert len(rows) == 1
+    assert rows[0]["raw_input"] == "kubectl get configmaps"
+
+
+def test_command_trace_sqlite_import_clears_superseded_fts_rows(tmp_path):
+    # ``_replace_sqlite_traces`` passes ``delete_fts_first=False`` -- correct
+    # only because it bulk-clears ``command_traces_fts`` before the loop. If
+    # that clear were dropped, the pre-import trace would linger here.
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    if not store._sqlite_fts_enabled:
+        store.close()
+        pytest.skip("sqlite build has no FTS5 support")
+
+    store.record(_trace(99, "2026-06-25T11:00:00Z", "kubectl get nodes"))
+    replacement = _trace(1, "2026-06-25T12:01:00Z", "kubectl get pods")
+    store.import_payload({"traces": [replacement.to_dict()]})
+    store.close()
+
+    assert [row["trace_id"] for row in _fts_rows(db_path)] == [1]
+
+
 def _summary_trace(tid, ts, *, fingerprint, support_status, guessed_intent):
     return server.CommandTrace(
         id=tid,
