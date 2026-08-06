@@ -55,7 +55,22 @@ are merged and A-031/A-032/A-033/A-037 all read `status: fixed`.
 ## Acceptance criteria
 
 - [ ] All suites green; no golden-hash changes.
-- [ ] grep shows one OTLP harness definition and one exclusion-window computation.
+- [ ] One OTLP capture harness and one exclusion-window computation remain.
+      Both commands must be runnable as written and are stated with their
+      expected output:
+      - `grep -rn 'def capture_otlp_server' tests/` matches only
+        `tests/conftest.py`.
+      - `grep -rn '_EXCLUSION_WINDOWS = \[' tests/` returns no hits — every
+        remaining window set is catalog-derived rather than hand-written.
+      - `grep -rnE 'def [a-z_]*exclusion_windows' tests/ | grep -v 'def test_'`
+        matches only `tests/conftest.py` — the derivation itself exists once.
+        The absence check above cannot establish this: it proves no *hand-written*
+        list survives, not that the derived computation was not copied. The
+        `grep -v` drops test functions such as
+        `test_anomaly_exclusion_windows_use_span_columns`, which are unrelated.
+      (`-rn`, not `-c` over a glob: a multi-file `grep -c` prints a per-file
+      count line for every file, so it can never "return 0". The children's
+      PRDs carry the same corrected forms.)
 - [ ] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (in the same PR as the fix — this epic's
       convention; the ledger itself states no such rule).
