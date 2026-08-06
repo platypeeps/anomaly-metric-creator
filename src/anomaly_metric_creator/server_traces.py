@@ -614,12 +614,23 @@ class CommandTraceStore:
         ``payload`` is passed in rather than derived here so each caller keeps
         computing ``trace.to_dict()`` where it already does: ``_insert_sqlite``
         does so *outside* its ``_locked_conn()``, and pulling that work under
-        the SQLite lock would add latency to every recorded command.
+        the SQLite lock would add latency to every recorded command. Pinned by
+        ``test_command_trace_sqlite_record_serializes_payload_off_the_sqlite_lock``.
 
         ``delete_fts_first`` drops this trace's existing FTS row before
         re-inserting. ``_insert_sqlite`` needs it because it may overwrite an
         existing id; ``_replace_sqlite_traces`` does not, because it clears the
-        whole FTS table once before its loop.
+        whole FTS table once before its loop -- so this argument is only
+        correct while that bulk clear survives. Both halves are pinned:
+        ``test_command_trace_sqlite_record_replaces_rather_than_duplicates_fts_row``
+        fails if the per-row delete is dropped, and
+        ``test_command_trace_sqlite_import_clears_superseded_fts_rows`` fails
+        if the bulk clear is.
+
+        Note ``payload`` is annotated ``dict[str, Any]``: ``dict`` resolves to
+        the builtin here, but ``list`` does not -- this class defines a
+        ``list()`` method that shadows it inside the class body. Never annotate
+        with a bare ``list[...]`` in ``CommandTraceStore``.
         """
         conn.execute(
             """

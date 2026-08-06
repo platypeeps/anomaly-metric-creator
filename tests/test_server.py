@@ -1576,6 +1576,34 @@ def test_command_trace_sqlite_record_serializes_insert_with_sqlite_lock(tmp_path
     assert observed == [True]
 
 
+def test_command_trace_sqlite_record_serializes_payload_off_the_sqlite_lock(
+    tmp_path, monkeypatch
+):
+    # ``_insert_sqlite`` computes ``trace.to_dict()`` before entering
+    # ``_locked_conn``, so payload serialization stays off the SQLite lock on
+    # the hot record path. That is why ``_insert_trace_row`` takes ``payload``
+    # as a parameter instead of deriving it: a helper that called
+    # ``to_dict()`` itself would pull this work under the lock, and nothing
+    # else in the suite would notice (it is a latency regression, not a
+    # correctness one). The import path deliberately serializes inside the
+    # lock and is covered by the replace-path test below.
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    observed = []
+    real_to_dict = server.CommandTrace.to_dict
+
+    def observing_to_dict(self):
+        observed.append(store._sqlite_lock.locked())
+        return real_to_dict(self)
+
+    monkeypatch.setattr(server.CommandTrace, "to_dict", observing_to_dict)
+
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+    assert observed
+    assert not any(observed)
+
+
 def test_command_trace_sqlite_import_serializes_replace_with_sqlite_lock(tmp_path, monkeypatch):
     db_path = tmp_path / "commands.sqlite"
     store = server.CommandTraceStore(sqlite_path=db_path)
