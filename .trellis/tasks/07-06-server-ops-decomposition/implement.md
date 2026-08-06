@@ -100,7 +100,8 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
   Companion `_preview` move down into `server_ops_support.py`. Primary leaf
   measured 892 lines (≥ 800 cap) so the self-contained `_api_*`
   trace/fingerprint/redaction sink was carved into `server_k8s_api_trace.py`
-  (one-way `trace → api`). Sizes: `server_ops.py` 5,440 → **4,693**;
+  (one-way `trace → api`). Sizes: `server_ops.py` 5,440 → **4,693** (4,687 by
+  the time step 6a began, after later unrelated merges);
   `server_k8s_api.py` 743; `server_k8s_api_trace.py` 172. `server_ops.__all__`
   byte-unchanged (227 entries). Both leaves in the mypy clean gate (32
   modules). Behavior-identity proven by a frozen-clock render-oracle
@@ -108,7 +109,48 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
   discovery, OpenAPI v2/v3, watch, `get all`, kubeconfig) plus the server /
   fuzz / eval / watch suites. Follow-up recorded: move `_openapi_paths` +
   snapshot-kind constants to let the OpenAPI document builders move too.
-- [ ] Steps 6–7 pending.
+- [x] Step 6a — `server_ops_explain.py` + `server_ops_payloads.py` (child
+  `08-05-server-ops-explain-payload-extract`). **Inserted ahead of the planned
+  step 6**, which a read-only AST closure audit showed is not implementable as
+  designed (see 6b below). Extracted the two clusters proven free of
+  `SimulationState` and `resource_snapshot`: `server_ops_explain.py` (178
+  lines) holds the ten pure `kubectl explain` / OpenAPI schema formatters from
+  the contiguous block `server_ops.py:1944-2101` and is the **first leaf in the
+  epic with no intra-package import at all**; `server_ops_payloads.py` (172
+  lines) holds the RFC 6902 JSON Patch ops with RFC 6901 pointer paths
+  (`2516-2570`) plus the manifest document reader (`2705-2796`), importing
+  only `CommandResult` from
+  `server_command_render`. The state-bound `_render_explain` /
+  `_explain_schema_for_kind` and `_manifest_apply_target(s)` stay in
+  `server_ops` and call the moved helpers through the re-import stubs.
+  `server_ops.py` **4,687 → 4,414** lines. Both leaves added to the mypy clean
+  gate (34 modules); `server_ops.__all__` byte-identical (227 entries, verified
+  by AST source-segment diff, not a grep). Behavior-identity proven by a
+  frozen-clock render oracle byte-identical over a 72-record corpus
+  (`explain` plain/`--recursive`/field-path/unsupported, `patch` JSON-patch
+  add/remove/replace/bad-op/bad-payload/merge, `apply -f` json/yaml/malformed/
+  wrong-extension/missing) in **both** normal and eval-mode states. Note: the
+  patch corpus must be driven through `run_command(argv=[...])` — a
+  command-string form gets its JSON payload shlex-stripped and never reaches
+  `_apply_json_patch` at all.
+
+- [ ] Step 6b — `server_ops_render.py` + `server_ops_render_workloads.py`,
+  **blocked on a design decision**. The original step 6 assumed the render
+  dispatch could move like the earlier leaves. It cannot: `_render_get`
+  (`:1171`), `_render_get_all` (`:1290`), `_render_describe` (`:1358`),
+  `_logs_target_pods` (`:1700`), `_render_top` (`:1780`), `_render_scale`
+  (`:2273`), `_render_delete` (`:2304`), `_render_patch` (`:2365`),
+  `_patch_base_payload` (`:2473`), and `_render_diff` (`:2586`) all call
+  `resource_snapshot`, whose own closure (22 definitions / 783 lines plus at
+  least 4 module-level constants) reaches `SimulationState`, `SimulationClock`,
+  `RefusalCounters`, `ContinuousGenerationStatus`, and `_ErrorSink` — the
+  runtime dataclasses step 7 says must stay. Moving the renderers therefore
+  needs a **named, weak-referenceable live provider seam** (the legacy-epic
+  callback pattern) on a hot render path, which also changes where
+  `resource_snapshot` monkeypatching bites. Decide the seam before planning
+  this step.
+
+- [ ] Step 7 — close-out, pending 6b.
 
 ## Validation Plan
 

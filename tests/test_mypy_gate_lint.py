@@ -27,7 +27,7 @@ def test_list_mode_owns_the_expected_clean_module_set() -> None:
 
     assert result.returncode == 0, result.stderr
     modules = result.stdout.splitlines()
-    assert len(modules) == 32
+    assert len(modules) == 34
     assert modules[0] == "src/anomaly_metric_creator/__init__.py"
     assert modules[-1] == "src/anomaly_metric_creator/timeutil.py"
     assert {
@@ -37,6 +37,8 @@ def test_list_mode_owns_the_expected_clean_module_set() -> None:
         "src/anomaly_metric_creator/scenarios_impl.py",
         "src/anomaly_metric_creator/server_k8s_api.py",
         "src/anomaly_metric_creator/server_k8s_api_trace.py",
+        "src/anomaly_metric_creator/server_ops_explain.py",
+        "src/anomaly_metric_creator/server_ops_payloads.py",
     } <= set(modules)
     assert len(modules) == len(set(modules))
     assert all((REPO_ROOT / module).is_file() for module in modules)
