@@ -56,7 +56,7 @@ are merged and A-031/A-032/A-033/A-037 all read `status: fixed`.
 
 - [ ] All suites green; no golden-hash changes.
 - [ ] One OTLP capture harness and one exclusion-window computation remain.
-      Both commands must be runnable as written and are stated with their
+      Every command below must be runnable as written and is stated with its
       expected output:
       - `grep -rn 'def capture_otlp_server' tests/` matches only
         `tests/conftest.py`.
@@ -69,8 +69,11 @@ are merged and A-031/A-032/A-033/A-037 all read `status: fixed`.
         `grep -v` drops test functions such as
         `test_anomaly_exclusion_windows_use_span_columns`, which are unrelated.
       (`-rn`, not `-c` over a glob: a multi-file `grep -c` prints a per-file
-      count line for every file, so it can never "return 0". The children's
-      PRDs carry the same corrected forms.)
+      count line for every file, so it can never "return 0". Each child PRD
+      carries the command for the half it owns — the fixture check in
+      `08-06-otlp-capture-fixture`, both window checks in
+      `08-06-conftest-helper-consolidation` — so the epic-level criterion is a
+      roll-up, not the only place either check exists.)
 - [ ] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (in the same PR as the fix — this epic's
       convention; the ledger itself states no such rule).

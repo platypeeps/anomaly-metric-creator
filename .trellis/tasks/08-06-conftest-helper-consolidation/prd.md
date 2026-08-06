@@ -95,6 +95,14 @@ is not blocked on anything.
       count line for every file, so it can never "return 0".)
 - [ ] `grep -rn '_EXCLUSION_WINDOWS = \[' tests/` returns no hits — no
       hand-written window list remains.
+- [ ] `grep -rnE 'def [a-z_]*exclusion_windows' tests/ | grep -v 'def test_'`
+      matches only `tests/conftest.py` — the derivation itself exists once.
+      The absence check above cannot establish this: it proves no *hand-written*
+      list survives, not that the generalized computation was copied per caller,
+      which would recreate A-033 in a new shape. The `grep -v` drops test
+      functions such as `test_anomaly_exclusion_windows_use_span_columns` in
+      `test_validate_output.py`, which are unrelated. Pre-change this returns
+      one hit, `tests/test_topology_llm.py:116`.
 - [ ] The superset proof from requirement 3 is recorded in the PR body: for
       each of the 5 fanout and 7 saturation hand-written windows, the derived
       window that covers it.
