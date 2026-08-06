@@ -12,7 +12,7 @@
   "assignee": "sdelmas",
   "createdAt": "2026-08-06",
   "completedAt": null,
-  "branch": null,
+  "branch": "sdelmas/08-06-trace-row-insert-dedupe",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
