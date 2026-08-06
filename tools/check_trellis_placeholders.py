@@ -308,12 +308,13 @@ def _check_workspace_journal_commit_consistency(
             "commit-list consistency"
         ]
     if not journal_paths:
-        # `journal_paths` is the full tracked set, not just this batch's share,
-        # so an empty result means the workspace really has no journal file.
+        # `journal_paths` is the full tracked set, not just this batch's share.
+        # An empty result therefore means no *tracked* journal — an untracked
+        # one may still sit on disk, which discovery excludes on purpose.
         if any(path == index_path for path in paths):
             return [
-                f"{index_path}: no workspace journal file exists beside the index; "
-                "cannot verify journal/index commit-list consistency"
+                f"{index_path}: no tracked workspace journal file exists beside "
+                "the index; cannot verify journal/index commit-list consistency"
             ]
         return []
 

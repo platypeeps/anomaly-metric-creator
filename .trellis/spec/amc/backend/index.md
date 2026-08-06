@@ -15,29 +15,29 @@ Before editing runtime code, tests, docs, CI, hooks, or platform adapters:
    `.trellis/workflow.md`.
 2. For generation, registry, module-boundary, or topology changes, read
    [Architecture](./architecture.md) and
-   [Scenarios and Data](./scenarios-and-data.md). Sources: `CLAUDE.md`;
+   [Scenarios and Data](./scenarios-and-data.md). Sources:
    `src/anomaly_metric_creator/legacy.py`; `tests/test_scenarios.py`;
    `docs/topology.md`.
 3. For CLI, server, API, schema, validation, or trace-bundle changes, read
    [API, CLI, and Server](./api-cli-server.md). Sources: `README.md`;
-   `CLAUDE.md`; `src/anomaly_metric_creator/cli.py`;
+   `src/anomaly_metric_creator/cli.py`;
    `src/anomaly_metric_creator/server.py`;
    `src/anomaly_metric_creator/trace_bundle.py`.
 4. For command traces, SQLite persistence, request logs, auth, CORS, rate
    limits, Kubernetes/Helm facades, or debug UI work, read
    [Operations, Security, and Logging](./operations-security-logging.md).
-   Sources: `README.md`; `CLAUDE.md`; `.trellis/tasks/`;
+   Sources: `README.md`; `.trellis/tasks/`;
    `src/anomaly_metric_creator/server_traces.py`;
    `src/anomaly_metric_creator/server_ops.py`;
    `src/anomaly_metric_creator/server_debug_ui.py`.
 5. For tests, validators, deterministic output, CI, dependencies, or review
    readiness, read [Testing and Quality](./testing-quality.md). Sources:
-   `CLAUDE.md`; `README.md`; `pyproject.toml`;
+   `README.md`; `pyproject.toml`;
    `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
    `tests/conftest.py`.
 6. For documentation, PR descriptions, GitHub/Copilot review guidance, or
    agent-platform files, read [Documentation and Review](./documentation-review.md).
-   Sources: `AGENTS.md`; `CLAUDE.md`; `README.md`;
+   Sources: `AGENTS.md`; `README.md`;
    `.github/PULL_REQUEST_TEMPLATE.md`;
    `.github/instructions/anomaly-metric-creator.instructions.md`;
    `.agents/`; `.codex/`; `.claude/`; `.gemini/`; `.opencode/`.

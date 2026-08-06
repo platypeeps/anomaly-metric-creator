@@ -462,7 +462,7 @@ def test_index_only_batch_outside_a_git_repo_exits_one(tmp_path: Path) -> None:
     result = _run(index_path)
 
     assert result.returncode == 1
-    assert "no workspace journal file exists beside the index" in result.stderr
+    assert "no tracked workspace journal file exists beside the index" in result.stderr
     assert "index.md" in result.stderr
 
 
@@ -551,7 +551,7 @@ def test_untracked_journal_is_not_discovered_for_index_only_git_batch(
     result = _run_in(repo, str(Path(index_path).relative_to(repo)))
 
     assert result.returncode == 1
-    assert "no workspace journal file exists beside the index" in result.stderr
+    assert "no tracked workspace journal file exists beside the index" in result.stderr
 
 
 def test_sharded_single_journal_batch_sees_every_tracked_journal(
