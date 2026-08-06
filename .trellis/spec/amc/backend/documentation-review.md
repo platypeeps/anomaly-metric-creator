@@ -33,6 +33,27 @@ the current pass. Sources:
 `.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/design.md`;
 `AGENTS.md`.
 
+When cutting prose from one surface on the grounds that another already covers
+it, a grep hit on a module name, flag name, or keyword is **not** coverage.
+Name the specific contract the prose asserts, then quote the destination
+sentence that states that contract. Two "already covered" claims failed this
+test during the `CLAUDE.md` consolidation, and three contracts turned out to
+have zero coverage anywhere in the repo — they needed relocation, not deletion.
+A consolidation pass should reconcile its dispositions against the source file's
+line count so no span is silently unclassified. Sources:
+`.trellis/tasks/08-05-claude-md-context-refactor/design.md`;
+`.trellis/tasks/08-05-claude-md-context-refactor/implement.md`.
+
+Retiring historical narrative is sentence-level work, not paragraph-level.
+Passages written in past-tense project voice ("Phase N landed…", "PR #NN
+widened…") routinely carry a live present-tense clause inside them — "the
+reader still honors", "the kwarg survives", "no longer parses", "must not" —
+and a paragraph delete drops a rule. Keep every clause asserting present
+behavior; delete only the framing and superseded tuning history. Sources:
+`.trellis/tasks/08-05-claude-md-context-refactor/design.md`;
+`.trellis/spec/amc/backend/api-cli-server.md`;
+`.trellis/spec/amc/backend/scenarios-and-data.md`.
+
 Generated/local runtime state such as `.trellis/.runtime/`, session journals,
 and task archives should not be the only source for product conventions. Use
 them as historical context, then verify against code, tests, docs, or active
