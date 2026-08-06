@@ -1025,23 +1025,38 @@ the `gauges.csv` invariant.
 
 `COMPONENTS` declares one MetricSpec list per logical component, and
 `INSTANCES` is the parallel module-level registry of `Instance`
-objects that name each emitting *replica* (id, host, pod, az, region,
-tenant). Phase 1 landed the `Instance` dataclass, the
-`INSTANCES = {name: [Instance()] for name in COMPONENTS}` default,
-`_validate_instances_registry` / `_validate_instance_list` import-time
-checks, and the `RunContext.instances` thread that passes the per-run
-per-component list into `generate_component(..., instances=...)`.
-Phase 2 wired the CLI:
+objects that name each emitting *replica*. `Instance` is a frozen
+dataclass holding six optional dimension fields (`id`, `host`, `pod`,
+`az`, `region`, `tenant`); the module-level default is
+`INSTANCES = {name: [Instance()] for name in COMPONENTS}`, guarded by
+the `_validate_instances_registry` / `_validate_instance_list`
+import-time checks. The active per-run map lives on
+`RunContext.instances: dict[str, list[Instance]]` and is passed into
+`generate_component(..., instances=...)`: a single anonymous
+`Instance()` (all fields `None`) emits CSV byte-identical to the
+pre-multi-instance baseline (no dimension columns); named instances or
+`len > 1` add the `(id, host, pod, az, region, tenant)` prefix block
+and multiply the row count by the per-component instance count.
 
-- `--instances-per-component N` (default `1`, range `[1,
-  MAX_INSTANCES_PER_COMPONENT=20]`) — when `N > 1`, `main()` replaces
-  `ctx.instances` with `{name: [Instance(id=f"i{k}", pod=f"pod-{k}")
-  for k in range(N)] for name in COMPONENTS}` (host / az / region /
-  tenant remain `None` in v1; Phase 3 will plug them in via
-  `--instance-config PATH`). `N == 1` keeps the module-level
-  anonymous-`Instance()` map and emits today's byte-identical
-  output.
-- `PREFLIGHT_CELL_CAP` now multiplies by `args.instances_per_component`
+Three flag paths populate `ctx.instances` in `main()` (mutually
+exclusive at parse time):
+
+- `--instance-config` absent and `--instances-per-component 1`
+  (default) → `{name: list(INSTANCES[name]) for name in COMPONENTS}`.
+  Today's byte-identical output path.
+- `--instances-per-component N` (N in `[1,
+  MAX_INSTANCES_PER_COMPONENT=20]`) → every component fans out to the
+  same `[Instance(id=f"i{k}", pod=f"pod-{k}") for k in range(N)]`
+  (host / az / region / tenant remain `None`; use `--instance-config`
+  to set them).
+- `--instance-config PATH` → per-component fan-out is loaded from a
+  YAML (`.yaml`/`.yml`) or JSON (`.json`) file via
+  `_load_instance_config(path)`. The file's top-level `components` map
+  keys components to lists of `Instance`-field dicts; components *not*
+  listed fall back to `list(INSTANCES[name])` (anonymous default), so a
+  partial config keeps untouched components on the byte-identical path.
+
+`PREFLIGHT_CELL_CAP` multiplies by `args.instances_per_component`
   so the same `--allow-huge-output` gate that catches metric-cell
   blowups catches instance-cell blowups too. The error message lists
   `--instances-per-component` alongside `--interval-seconds`,
@@ -1085,6 +1100,62 @@ raises `ValueError` even when the call bypasses `parse_args`. The
 single-instance default (`N == 1`) keeps every flag combination
 historically permitted, so existing one-instance workflows do not
 need to change.
+
+`_load_instance_config(path)` is called from `main()` (after
+`parse_args` returns) and raises `ValueError` (caught immediately
+and re-raised via `sys.exit`) for every schema violation: top-level
+value not a mapping, missing `components` key, `components` value
+not a mapping, unknown component name (must be in `COMPONENTS`),
+per-component value not a list, empty per-component list,
+per-component count exceeding `MAX_INSTANCES_PER_COMPONENT`,
+non-dict entry, unknown `Instance` field (the comparison handles
+non-string YAML keys via `sorted(..., key=repr)` so the error
+message stays a `ValueError` rather than a sorting `TypeError`),
+and duplicate `Instance.id` within a component (the last check is
+delegated to `_validate_instance_list`). YAML parse errors,
+JSON `JSONDecodeError`, and OS I/O errors are also caught inside
+the loader and re-raised as `ValueError` with the file path
+prefix so users see an actionable error rather than a raw
+traceback. PyYAML in particular emits multi-line messages with
+embedded line/column markers (e.g. `"in \"<unicode string>\",
+line 3, column 10"`); the wrapped `ValueError` preserves that
+text verbatim because the line/column information is the most
+useful debugging signal — the prefix tells the user *which*
+file failed, the body tells them *where in the file*. `parse_args` runs
+*before* the loader and is responsible only for the flag-shape
+checks: the `--instance-config` and `--instances-per-component`
+mutually-exclusive `argparse` group, the file existence check,
+and the suffix-must-be-in-`{.yaml, .yml, .json}` check. Schema
+validation (everything else in the list above) happens later, in
+the loader.
+
+PyYAML is an *optional* runtime dependency: the YAML branch imports
+it lazily inside `_load_instance_config` and raises a clear
+"install with `pip install pyyaml`" error on `ImportError`. JSON
+configs work with the stdlib. The `[yaml]` extra in `pyproject.toml`
+declares the dependency for users who want YAML support; the `dev`
+extra always pulls it in so the test suite can exercise both
+formats.
+
+The DST mutual exclusion stands on design grounds, not on a
+correctness gap: the long-form CSV writer routes through the shared
+`_format_csv_row_block` helper, which applies `_splice_dst_artifact`
+regardless of the writer branch, but the multi-instance long-form CSV
+produces per-instance row blocks — running `_splice_dst_artifact` per
+block would surface non-monotonic timestamps inside each block, which
+`heapq.merge` in `gauges.csv` / `combined_metrics_unified.csv` cannot
+resolve.
+
+When adding fields to `Instance`, add the new field name to
+`_INSTANCE_DIMENSION_COLUMNS`. Both the `_load_instance_config`
+validator (`_valid_instance_fields = frozenset(_INSTANCE_DIMENSION_COLUMNS)`)
+and the `Instance(**{f: entry.get(f) for f in _INSTANCE_DIMENSION_COLUMNS})`
+constructor pick the new field up automatically, so config-key
+acceptance and constructor population stay in lockstep without a
+second edit. The remaining lockstep edit sites are: (1) the
+README CLI table row example (cosmetic, lists supported keys for
+users), and (2) `_validate_instance_list` if the new field needs
+uniqueness or shape checks beyond what the dataclass enforces.
 
 Locked SHA-256 N=3 golden hashes at 1d and 7d live in
 `tests/test_instances_per_component.py` (`N3_ONE_DAY_HASHES` /
@@ -1977,99 +2048,6 @@ check would catch.
 
 Mirror these invariants in `tests/test_topology_registry.py` when
 adding new edges or constraints.
-
-### Multi-instance fan-out
-
-`Instance` is a frozen dataclass holding six optional dimension
-fields (`id`, `host`, `pod`, `az`, `region`, `tenant`). The active
-per-run map lives on `RunContext.instances: dict[str, list[Instance]]`
-and is consumed by `generate_component()`: when the list is a single
-anonymous `Instance()` (all fields `None`), CSV output is byte-
-identical to the pre-Phase-1 baseline (no dimension columns); when
-the list has named instances or `len > 1`, every per-component CSV
-gains a `(id, host, pod, az, region, tenant)` prefix block and the
-row count multiplies by the per-component instance count.
-
-Three flag paths populate `ctx.instances` in `main()` (mutually
-exclusive at parse time):
-
-- `--instance-config` absent and `--instances-per-component 1`
-  (default) → `{name: list(INSTANCES[name]) for name in COMPONENTS}`,
-  where the module-level `INSTANCES[name]` defaults to
-  `[Instance()]`. Today's byte-identical output path.
-- `--instances-per-component N` (N in `[1, MAX_INSTANCES_PER_COMPONENT]`,
-  `MAX_INSTANCES_PER_COMPONENT = 20`) → every component fans out to
-  the same `[Instance(id=f"i{k}", pod=f"pod-{k}") for k in range(N)]`.
-- `--instance-config PATH` (Phase 3) → per-component
-  fan-out is loaded from a YAML (`.yaml`/`.yml`) or JSON (`.json`)
-  file via `_load_instance_config(path)`. The file's top-level
-  `components` map keys components to lists of `Instance`-field
-  dicts; components *not* listed fall back to `list(INSTANCES[name])`
-  (anonymous default), so a partial config keeps untouched
-  components on the byte-identical path.
-
-`_load_instance_config(path)` is called from `main()` (after
-`parse_args` returns) and raises `ValueError` (caught immediately
-and re-raised via `sys.exit`) for every schema violation: top-level
-value not a mapping, missing `components` key, `components` value
-not a mapping, unknown component name (must be in `COMPONENTS`),
-per-component value not a list, empty per-component list,
-per-component count exceeding `MAX_INSTANCES_PER_COMPONENT`,
-non-dict entry, unknown `Instance` field (the comparison handles
-non-string YAML keys via `sorted(..., key=repr)` so the error
-message stays a `ValueError` rather than a sorting `TypeError`),
-and duplicate `Instance.id` within a component (the last check is
-delegated to `_validate_instance_list`). YAML parse errors,
-JSON `JSONDecodeError`, and OS I/O errors are also caught inside
-the loader and re-raised as `ValueError` with the file path
-prefix so users see an actionable error rather than a raw
-traceback. PyYAML in particular emits multi-line messages with
-embedded line/column markers (e.g. `"in \"<unicode string>\",
-line 3, column 10"`); the wrapped `ValueError` preserves that
-text verbatim because the line/column information is the most
-useful debugging signal — the prefix tells the user *which*
-file failed, the body tells them *where in the file*. `parse_args` runs
-*before* the loader and is responsible only for the flag-shape
-checks: the `--instance-config` and `--instances-per-component`
-mutually-exclusive `argparse` group, the file existence check,
-and the suffix-must-be-in-`{.yaml, .yml, .json}` check. Schema
-validation (everything else in the list above) happens later, in
-the loader.
-
-PyYAML is an *optional* runtime dependency: the YAML branch imports
-it lazily inside `_load_instance_config` and raises a clear
-"install with `pip install pyyaml`" error on `ImportError`. JSON
-configs work with the stdlib. The `[yaml]` extra in `pyproject.toml`
-declares the dependency for users who want YAML support; the `dev`
-extra always pulls it in so the test suite can exercise both
-formats.
-
-Both multi-instance paths (`--instances-per-component > 1` and
-`--instance-config`) are mutually exclusive with
-`--inject-dst-artifact-day > 0`: `parse_args` rejects the combination
-with a clear message naming the active flag, and
-`generate_component()` carries a matching defense-in-depth
-`ValueError` for direct callers that bypass the CLI. After
-the long-form CSV writer routes through the shared
-`_format_csv_row_block` helper, which applies `_splice_dst_artifact`
-regardless of the writer branch — the parse-time guard now stands
-on design grounds (the multi-instance long-form CSV produces
-per-instance row blocks; running `_splice_dst_artifact` per block
-would surface non-monotonic timestamps inside each block, which
-`heapq.merge` in `gauges.csv` / `combined_metrics_unified.csv`
-cannot resolve), not on the earlier correctness gap where the
-long-form path silently dropped the duplicated hour entirely.
-
-When adding fields to `Instance`, add the new field name to
-`_INSTANCE_DIMENSION_COLUMNS`. Both the `_load_instance_config`
-validator (`_valid_instance_fields = frozenset(_INSTANCE_DIMENSION_COLUMNS)`)
-and the `Instance(**{f: entry.get(f) for f in _INSTANCE_DIMENSION_COLUMNS})`
-constructor pick the new field up automatically, so config-key
-acceptance and constructor population stay in lockstep without a
-second edit. The remaining lockstep edit sites are: (1) the
-README CLI table row example (cosmetic, lists supported keys for
-users), and (2) `_validate_instance_list` if the new field needs
-uniqueness or shape checks beyond what the dataclass enforces.
 
 ### Scenario registry
 
