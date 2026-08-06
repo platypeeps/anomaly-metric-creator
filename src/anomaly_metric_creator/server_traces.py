@@ -146,6 +146,11 @@ class CommandTraceStore:
       (``_jsonl_handle``, opened once and flushed per write) so JSONL
       persistence stays off the ring lock. External rotation/deletion of
       the JSONL file requires a server restart to re-open the handle.
+
+    Annotation hazard: :meth:`list` shadows the builtin throughout this class
+    body, so a bare ``list[...]`` annotation on any method here resolves to
+    the method and fails to type-check. Use ``Sequence``/``tuple``, or quote
+    the annotation. ``dict`` and ``tuple`` are unshadowed and safe.
     """
 
     def __init__(
@@ -618,8 +623,6 @@ class CommandTraceStore:
         Both contracts are pinned by tests; see the trace-persistence section
         of ``.trellis/spec/amc/backend/operations-security-logging.md``.
 
-        Annotate with ``dict``/``tuple`` but never a bare ``list[...]`` inside
-        this class -- ``CommandTraceStore.list`` shadows the builtin.
         """
         conn.execute(
             """
@@ -646,6 +649,10 @@ class CommandTraceStore:
                 trace.matched_rule_id,
                 trace.fingerprint,
                 trace.guessed_intent,
+                # ``list(...)`` normalizes the tuple/list split at the CSV and
+                # bundle-import boundaries so the stored JSON is the same array
+                # either way. Declaration order is preserved, not sorted --
+                # ``sort_keys`` only affects objects.
                 json.dumps(list(trace.active_scenarios), sort_keys=True),
                 trace.exit_code,
                 trace.stdout_preview,
@@ -877,12 +884,21 @@ class CommandTraceStore:
     def _replace_sqlite_traces(self, traces: list[CommandTrace]) -> None:
         with self._locked_conn() as conn:
             conn.execute("DELETE FROM command_traces")
+            # Derived from whether the bulk clear ran, not hard-coded False,
+            # so the flag cannot go stale on its own. That is defense in
+            # depth only: the clear is independently required, because it
+            # drops FTS rows for traces *absent* from ``traces``, which no
+            # per-row delete can reach. Verified by deleting the clear --
+            # ``test_command_trace_sqlite_import_clears_superseded_fts_rows``
+            # still fails, flag derivation notwithstanding.
+            fts_bulk_cleared = False
             if self._sqlite_fts_enabled:
                 conn.execute("DELETE FROM command_traces_fts")
+                fts_bulk_cleared = True
             for trace in traces:
                 payload = trace.to_dict()
                 self._insert_trace_row(
-                    conn, trace, payload, delete_fts_first=False
+                    conn, trace, payload, delete_fts_first=not fts_bulk_cleared
                 )
             self._enforce_sqlite_retention(conn)
             self._sqlite_gen += 1

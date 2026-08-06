@@ -63,9 +63,13 @@ Two parameters carry load-bearing contracts:
   which observes `_sqlite_lock.locked()` from inside `to_dict`.
 - **`delete_fts_first` is `True` only for the live-insert path**, which can
   overwrite an existing trace id and must drop that id's stale FTS row first.
-  The import path passes `False` — correct *only because* it bulk-clears
-  `command_traces_fts` once before its loop. Remove that bulk clear and the flag
-  becomes wrong. Both halves are pinned:
+  The import path derives the flag from whether its bulk clear of
+  `command_traces_fts` actually ran, rather than hard-coding `False`, so the
+  flag cannot go stale if that clear is removed. Treat that as defense in depth
+  only — the bulk clear is independently required, because it drops FTS rows
+  for traces *absent* from the replacement set, which no per-row delete can
+  reach. Deleting the clear still fails the import test. Both halves are
+  pinned:
   `test_command_trace_sqlite_record_replaces_rather_than_duplicates_fts_row`
   fails if the per-row delete is dropped, and
   `test_command_trace_sqlite_import_clears_superseded_fts_rows` fails if the
