@@ -100,21 +100,26 @@ to the compatibility surface (`server.py` alias block, the three facades,
 
 ## Acceptance criteria
 
-- [ ] `server_ops.py` shrinks from 4,687 to ~4,400 lines; both new leaves
-      measured and recorded in the PR body.
-- [ ] A frozen-clock render-oracle diff over a fixed command corpus that
+- [x] `server_ops.py` shrinks from 4,687 to ~4,400 lines; both new leaves
+      measured and recorded in the PR body. **Measured:** `server_ops.py`
+      4,414; `server_ops_explain.py` 178; `server_ops_payloads.py` 172.
+      Recorded in PR #344.
+- [x] A frozen-clock render-oracle diff over a fixed command corpus that
       exercises `kubectl explain` (plain, `--recursive`, field-path
       forms), `kubectl patch` (JSON-patch and merge-patch), and
       `kubectl apply -f` (`.json`, `.yaml`, missing file, malformed
       document) is **byte-identical** before and after, in both normal and
-      `--mcp-eval-mode` states.
-- [ ] `.venv/bin/pytest tests/test_server.py tests/test_server_ops_fuzz.py
+      `--mcp-eval-mode` states. **Byte-identical over a 72-record corpus.**
+- [x] `.venv/bin/pytest tests/test_server.py tests/test_server_ops_fuzz.py
       tests/test_server_mcp.py tests/test_server_eval_mode.py -n 0` passes.
-- [ ] Full `.venv/bin/pytest` and `.venv/bin/pre-commit run --all-files`
-      pass.
-- [ ] `python3 tools/check_mypy_gate.py` passes with both leaves listed.
-- [ ] No diff to `server.py`, `server_commands.py`, `server_kubernetes.py`,
-      `server_helm.py`, or `server_mcp.py`.
+      **178 passed, 2 skipped.**
+- [x] Full `.venv/bin/pytest` and `.venv/bin/pre-commit run --all-files`
+      pass. **1797 passed, 2 skipped; pre-commit 13/13.**
+- [x] `python3 tools/check_mypy_gate.py` passes with both leaves listed.
+      **`Success: no issues found in 34 source files`.**
+- [x] No diff to `server.py`, `server_commands.py`, `server_kubernetes.py`,
+      `server_helm.py`, or `server_mcp.py`. **`git diff origin/main...HEAD`
+      over those five paths is empty.**
 
 ## Non-goals
 
