@@ -35,8 +35,19 @@ run concurrently — take them in listed order and rebase the second onto the
 first to avoid a conftest conflict.
 
 1. `08-06-trace-row-insert-dedupe` — A-031 (production, behavior-identical).
+   **Merged** 2026-08-06 as PR #345; archived under
+   `.trellis/tasks/archive/2026-08/`. A-031 reads `status: fixed`.
 2. `08-06-conftest-helper-consolidation` — A-033 + A-037 (conftest helpers).
+   Next actionable child.
 3. `08-06-otlp-capture-fixture` — A-032 (OTLP capture fixture, largest diff).
+   Carries `blocked: true` / `blockedOn: 08-06-conftest-helper-consolidation`
+   in its `task.json` so the ordering above is machine-readable rather than
+   implied by position; child 2's acceptance criteria clear those markers when
+   its PR merges.
+
+Both remaining children were converted from stub PRDs to concrete
+requirements and acceptance criteria on 2026-08-06, against measured evidence
+at main `29ee1bf`.
 
 Each child flips only its own ledger items. This parent closes when all three
 are merged and A-031/A-032/A-033/A-037 all read `status: fixed`.
