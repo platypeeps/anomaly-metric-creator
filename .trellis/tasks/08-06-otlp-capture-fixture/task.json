@@ -21,6 +21,8 @@
   "children": [],
   "parent": "07-17-audit-test-harness-dedupe",
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "BLOCKED 2026-08-06: child 3 of epic 07-17-audit-test-harness-dedupe. Adds capture_otlp_server to tests/conftest.py, the same file child 2 (08-06-conftest-helper-consolidation) edits; the epic's implement.md fixes the order A-037 -> A-033 -> A-032 so this larger diff rebases onto a settled conftest. Child 2's acceptance criteria clear this marker when its PR merges. See prd.md.",
+  "meta": {},
+  "blocked": true,
+  "blockedOn": "08-06-conftest-helper-consolidation (shared tests/conftest.py; rebase after it merges)"
 }
