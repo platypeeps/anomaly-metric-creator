@@ -779,3 +779,52 @@ Epic 07-06 step 6a: moved the ten pure kubectl explain / OpenAPI schema formatte
 ### Next Steps
 
 - None - task complete
+
+
+## Session 66: A-031: dedupe the SQLite trace INSERT across both CommandTraceStore write paths
+
+**Date**: 2026-08-06
+**Task**: A-031: dedupe the SQLite trace INSERT across both CommandTraceStore write paths
+**Package**: amc
+**Branch**: `sdelmas/08-06-trace-row-insert-dedupe`
+
+### Summary
+
+Extracted the duplicated 21-column command_traces INSERT and its FTS mirror from _insert_sqlite and _replace_sqlite_traces into one _insert_trace_row helper, then converged a 7-round local review that turned two prose contracts into mechanically enforced ones. server_traces.py 1,025 -> 998 lines.
+
+### Main Changes
+
+- Extracted _insert_trace_row(conn, trace, payload, *, delete_fts_first); payload stays a parameter so _insert_sqlite keeps serializing outside its _locked_conn()
+- Derived delete_fts_first in _replace_sqlite_traces from whether its bulk FTS clear ran, instead of hard-coding False
+- Added 8 tests: raw per-column assertions on both write paths, direct command_traces_fts queries, off-lock payload serialization, and why the bulk clear cannot be replaced by the per-row delete
+- Recorded the row-writer contract and two trace-store test gotchas in the operations-security-logging spec; flipped audit A-031 to fixed with symbol-anchored evidence
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `17c5e2f` | refactor(server-traces): extract shared _insert_trace_row (audit A-031) |
+| `00bccc5` | chore(task): tick A-031 acceptance criteria with measured evidence |
+| `2d90b9e` | docs(spec): record the trace-store row-writer contract and two test gotchas |
+| `5a7596d` | test(server_traces): pin _insert_trace_row's two parameter contracts |
+| `db93eb0` | docs(server_traces): move _insert_trace_row rationale to the spec |
+| `3646758` | refactor(server_traces): derive delete_fts_first from the bulk clear |
+| `5fc3fcb` | test(server_traces): pin why the FTS bulk clear is load-bearing |
+| `06223c4` | docs(ledger): keep A-031 why: as the problem, not the fix |
+
+### Testing
+
+- [OK] Full suite: 1805 passed, 2 skipped in 229.97s
+- [OK] pytest tests/test_server.py -k 'sqlite or fts' -n 0: 21 passed, 103 deselected
+- [OK] pre-commit run --all-files: no failures
+- [OK] Byte oracle over both write paths, pre- vs post-change: IDENTICAL (16 rows, fts=True)
+- [OK] Mutation-checked 4 invariants: delete_fts_first inversion, to_dict under the lock, bulk-clear removal, per-row delete widened to full-table
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
