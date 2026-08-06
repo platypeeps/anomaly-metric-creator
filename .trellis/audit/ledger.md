@@ -338,8 +338,8 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - last-seen: 2026-08-06 @ pending-pr
 - evidence:
   - src/anomaly_metric_creator/server_traces.py — `CommandTraceStore._insert_sqlite` vs `._replace_sqlite_traces` held identical ~55-line INSERT + FTS blocks. (Cited by symbol, not line: the audit's original `:442`/`:691` had drifted to `:604`/`:854` by the time of the fix, and the fix itself moves both methods again.)
-- why: fixed; both paths now call one `_insert_trace_row`, so the 21-column INSERT and the FTS mirror exist once. New tests assert every column on the raw row for both paths, because all read paths rebuild from `payload_json` alone and could not have caught column drift.
-- fix: extracted `_insert_trace_row(conn, trace, payload, *, delete_fts_first)`. `payload` is a parameter rather than derived inside the helper: `_insert_sqlite` computes `to_dict()` outside its `_locked_conn()`, and folding it in would move that work under the SQLite lock.
+- why: a column added to `CommandTrace` had to be wired into both copies, and a miss would break either insert or bundle import silently.
+- fix: extracted `_insert_trace_row(conn, trace, payload, *, delete_fts_first)`, so the 21-column INSERT and the FTS mirror exist once. `payload` is a parameter rather than derived inside the helper: `_insert_sqlite` computes `to_dict()` outside its `_locked_conn()`, and folding it in would move that work under the SQLite lock. `_replace_sqlite_traces` derives `delete_fts_first` from whether its bulk FTS clear ran. New tests assert every column on the raw row for both paths, because all read paths rebuild from `payload_json` alone and could not have caught column drift.
 
 ## A-032 — 22 inline copies of the OTLP capture-server harness in test_cli.py
 - status: open
