@@ -148,7 +148,6 @@ writer only ever emits `topology_mode: "realistic"` — the `independent` contra
 alias no longer parses — but **the reader still honors `"independent"`** so
 documents produced under the historic mode keep validating, and the validator's
 topology-coupling check short-circuits under it. Sources: `README.md`;
-`CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
 `src/anomaly_metric_creator/validate_impl.py`; `tests/test_schema_file.py`;

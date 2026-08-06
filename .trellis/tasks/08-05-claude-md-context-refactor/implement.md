@@ -314,6 +314,39 @@ is a comment or docstring line:
 +    # ambiguous "source or target" both-sides form — api-cli-server.md promises
 ```
 
+### Deferred: circular `CLAUDE.md` citations in spec `Sources:` footers
+
+Copilot flagged four spec `Sources:` footers that cite `CLAUDE.md` for content
+`CLAUDE.md` now routes *to* rather than holds. The observation is correct in
+kind, but it is a **systematic, mostly pre-existing** condition, not a defect
+this task introduced: `.trellis/spec/amc/backend/*.md` carries 112 `CLAUDE.md`
+citations, 73 of them inside `Sources:` footers. `git blame` puts three of the
+four flagged lines on `3811df4e` (0.4.0 release), `3dcd9449` (PR #140), and
+`de0024ee` (validator refactor).
+
+Only one was this task's doing — the schema / `topology_mode` reader-compat
+footer in `api-cli-server.md`, reflowed by `ae603aa` while the moved contract
+was added under it. That one is fixed here. The other 72 are left alone
+deliberately: fixing 3 of 73 makes the corpus *less* consistent, and the sweep
+needs per-line judgment because some footers remain correct — the determinism
+contract, the extraction / re-import invariant, and the module-ownership map
+really do still live in `CLAUDE.md`.
+
+Follow-up shape when it is taken up: classify each of the 73 footers as "content
+still in `CLAUDE.md`" (keep) vs "content routed away" (drop the citation), in
+one mechanical pass with no prose changes.
+
+### Rebutted review finding
+
+`tools/check_ruff_lockstep.py:9` — Copilot claimed `testing-quality.md` "only
+references the lint and does not actually summarize the two-pin contract," so
+the docstring's "summarized in ..." pointer is misleading. Verified false
+against `HEAD`: `testing-quality.md:264-266` states it directly — "Ruff is
+pinned in two places that must stay in lockstep: the `ruff==` dev-extra pin in
+`pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
+`.pre-commit-config.yaml`." That is the two-pin contract, summarized. Pointer
+kept.
+
 ### Gate results
 
 `ROLE_OK`, `COPILOT_OK`, `CI_OK`, `GET_CONTEXT_OK`, `PLACEHOLDER_OK`,
