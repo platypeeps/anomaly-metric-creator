@@ -18,7 +18,7 @@ into a real coupling:
   ``p95_llm_latency_ms`` lift via the logistic ``latency_multiplier``
   and ``llm_api_error_rate`` lifts via the additive ``error_offset``.
 
-Decision (documented in CLAUDE.md): no synthetic ``token_limiter``
+Decision (documented in docs/topology.md): no synthetic ``token_limiter``
 virtual node — apigateway already serves as the metering authority
 for LLM-bound traffic in the v1 graph. The midpoint is expressed in
 ``apigateway.requests_per_sec`` units (i.e. the same scale as the

@@ -1,5 +1,6 @@
-# See README.md "Test-hygiene lint" and CLAUDE.md "Pre-PR checklist >
-# Test hygiene" for the rules these hooks enforce. Install with
+# See README.md "Test-hygiene lint" and the "Test hygiene" heading under
+# "Review Checklist" in .trellis/spec/amc/backend/testing-quality.md for the
+# rules these hooks enforce. Install with
 # `pre-commit install` after `pip install -e ".[dev]"`.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -122,7 +123,8 @@ repos:
       # PACKAGE==VERSION` is also fine). PR #118 shipped a bare `pip install`
       # in the former standalone Socket workflow; this catches the pattern
       # structurally. Exempt a line
-      # with a trailing `# pip-lint: allow`. See CLAUDE.md "Workflow pip lint".
+      # with a trailing `# pip-lint: allow`. See the
+      # tools/check_workflow_pip.py module docstring.
       - id: workflow-pip
         name: forbid bare or unpinned 'pip install' in workflows
         entry: python tools/check_workflow_pip.py

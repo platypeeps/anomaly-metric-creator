@@ -9,7 +9,7 @@ This is a packaged Python project whose canonical implementation lives in
 `anomaly-metric-creator.py` file is a thin compatibility shim, and the
 installed `amc` / `anomaly-metric-creator` console scripts dispatch through
 `anomaly_metric_creator.cli`. The authoritative development conventions live in
-`.trellis/spec/amc/backend/index.md`; `CLAUDE.md` is an expanded historical/source
+`.trellis/spec/amc/backend/index.md`; `CLAUDE.md` is an orientation/routing adapter
 guide, and `README.md` documents the user-facing surface. Read the relevant
 Trellis spec plus the supporting source docs before reviewing a change — do not
 produce overview-only or generic Python feedback. If a change touches behavior
@@ -111,7 +111,7 @@ for project-specific rules to be hand-edited into each copied adapter.
 
 - **Anomaly / scenario change** (`SCENARIOS`, `register_cascade`, anomaly
   generators, `--scenarios` / `--exclude-scenarios` / `--anomaly-count`) →
-  `.trellis/spec/amc/backend/scenarios-and-data.md`, with `CLAUDE.md` as expanded
+  `.trellis/spec/amc/backend/scenarios-and-data.md`, with `CLAUDE.md` as orientation
   source detail. The dispatch rule for
   generator arity (2-arg / step-3 / span-5, with `*args` rules) is the
   single most error-prone surface — review against the exact rule, not by
@@ -146,7 +146,7 @@ for project-specific rules to be hand-edited into each copied adapter.
   `README.md` *CLI flags* lists the user-facing surface; every new flag
   needs at least one test exercising it in isolation.
 - **Tests** (anything in `tests/`) → `.trellis/spec/amc/backend/testing-quality.md`,
-  with `CLAUDE.md` as expanded historical/source detail.
+  with `CLAUDE.md` as orientation and routing only.
 
 ## Hard invariants — flag any diff that breaks these
 
@@ -227,7 +227,7 @@ confirmed but the diff does not support:
 2. **Validators and schema checks** — non-canonical inputs enumerated;
    every discriminator branch validated; dispatch tables strict.
 3. **Doc / docstring sync** — changed docstrings updated; changed
-   symbol names grepped against `CLAUDE.md` and `README.md`.
+   symbol names grepped against `.trellis/spec/amc/backend/`, `README.md`, and `docs/`.
 4. **Single source of truth** — no parallel registries.
 5. **Completeness** — fix is applied to every instance the title
    implies, not just one.

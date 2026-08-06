@@ -16,9 +16,12 @@ duplicate agent rulebook. Sources: `README.md`;
 `docs/application-flow.md`; `docs/topology.md`; `.trellis/tasks/`;
 `.trellis/spec/amc/backend/`.
 
-`CLAUDE.md` remains a valuable historical and expanded source document, but new
-durable conventions should be added to Trellis first and only summarized or
-linked from adapter docs when needed. Sources: `CLAUDE.md`; `AGENTS.md`;
+`CLAUDE.md` is the Claude Code adapter, sized to be loaded on every session:
+the module-ownership map, the extraction / re-import invariant, the determinism
+contract, the fixed generation-pipeline order, and a routing table into these
+specs. Durable conventions go into Trellis first; `CLAUDE.md` links them rather
+than restating them, and pre-refactor detail stays recoverable through
+`git log`. Sources: `CLAUDE.md`; `AGENTS.md`;
 `.trellis/spec/amc/backend/index.md`.
 
 ## Citation Rule

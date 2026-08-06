@@ -71,7 +71,7 @@ That scenario declares a multi-component blast radius via
 `components_touched=("gpu_inference", "llm_analytics")`, but that is a
 scenario-level cascade (handled through `cascade_specs`), **not** a
 `TOPOLOGY` edge — see the
-[scenarios vs. topology overlap note in CLAUDE.md](../CLAUDE.md#topology-graph)
+[cascade-vs-topology overlap note](../.trellis/spec/amc/backend/scenarios-and-data.md#topology-and-schema-data)
 for the distinction. The same cascade-vs-topology distinction applies
 to the other standalone components: several carry scenarios
 (`mq_jam` on `mqservice`, `payment_5xx` on `paymentservice`,

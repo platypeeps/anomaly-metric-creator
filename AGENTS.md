@@ -5,7 +5,7 @@ This repository's authoritative development conventions live in
 Trellis backend specs before editing code, docs, tests, CI, or platform
 adapters. Sources: `.trellis/spec/amc/backend/index.md`, `.trellis/workflow.md`.
 
-[CLAUDE.md](CLAUDE.md) is retained as an expanded historical/source guide for
+[CLAUDE.md](CLAUDE.md) is the Claude Code adapter: orientation and routing for
 the SCENARIOS-based architecture, the `Scenario` dataclass, per-scenario
 `days_required` semantics, the import-time `_validate_scenarios_registry()`
 invariants, and the lockstep checklist for adding metrics, components, or
@@ -54,7 +54,7 @@ python3 -m venv .venv
 | `docs/repomix-map.md` | Generated Repomix repository map |
 | `scripts/update_repomix` | Refreshes `docs/repomix-map.md` |
 | `.trellis/spec/amc/backend/index.md` | Canonical development conventions |
-| `CLAUDE.md` | Expanded historical/source guide, invariants, pre-PR checklist source material |
+| `CLAUDE.md` | Claude Code adapter: module-ownership map, extraction and determinism invariants, spec routing |
 | `README.md` | User-facing docs, CLI reference, scenario catalog |
 <!-- TRELLIS:START -->
 # Trellis Instructions

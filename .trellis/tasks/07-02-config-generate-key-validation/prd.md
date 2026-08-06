@@ -58,7 +58,9 @@ key that collides with nothing) is silently dropped.
       from the real parser surface, with a non-empty guard so the test can't go
       vacuously green).
 - [ ] The precedence test (CLI flag overrides config value) still passes.
-- [ ] CLAUDE.md's serve `--config` description notes the symmetric validation.
+- [ ] The serve `--config` description in
+      `.trellis/spec/amc/backend/api-cli-server.md` § Serve Mode notes the
+      symmetric validation.
 
 ## Notes
 

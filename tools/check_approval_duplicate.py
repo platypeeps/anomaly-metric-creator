@@ -620,7 +620,7 @@ def _print_violations(diagnostics: list[str]) -> None:
         "\nApproval-comment writes are gated on (author, commit OID). "
         "Edit the existing comment instead of posting a new one, or "
         "push a new commit to invalidate the duplicate-check window. "
-        "Policy lives in CLAUDE.md under 'Approval-duplicate lint'.",
+        "Policy lives in this script's module docstring.",
         file=sys.stderr,
     )
 
