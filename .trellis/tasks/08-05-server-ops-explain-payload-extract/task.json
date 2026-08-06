@@ -12,7 +12,7 @@
   "assignee": "sdelmas",
   "createdAt": "2026-08-05",
   "completedAt": null,
-  "branch": null,
+  "branch": "sdelmas/08-05-server-ops-explain-payload-extract",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
