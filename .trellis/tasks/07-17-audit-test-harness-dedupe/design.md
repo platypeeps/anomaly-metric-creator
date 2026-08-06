@@ -4,7 +4,8 @@
 
 Four duplication clusters with live drift. One is production code (the
 ~55-line SQLite INSERT duplicated across two store methods,
-server_traces.py:442 vs :691); three are test harnesses (22 inline OTLP
+server_traces.py:604 vs :854 — the audit's `:442`/`:691` drifted; re-verified
+at HEAD 802eb46 on 2026-08-06); three are test harnesses (22 inline OTLP
 capture servers in test_cli.py; the topology CSV helpers copied 4× with
 already-diverged exclusion-window lists; ~6-line `_run` boilerplate in
 15+ lint test files).
@@ -13,11 +14,28 @@ already-diverged exclusion-window lists; ~6-line `_run` boilerplate in
 
 ### PR 1 — A-031 (production, behavior-identical)
 
-Extract `_insert_trace_row(conn, trace, *, delete_fts_first: bool)` used
-by both `_insert_sqlite` and `_replace_sqlite_traces`. Byte-identical SQL
+Extract `_insert_trace_row(conn, trace, payload, *, delete_fts_first: bool)`
+used by both `_insert_sqlite` and `_replace_sqlite_traces`. Byte-identical SQL
 strings move verbatim; the only parameterized difference is the
-FTS-delete-first branch the import path needs. Store tests + trace-bundle
-round-trip tests are the oracle.
+FTS-delete-first branch.
+
+**Signature corrected 2026-08-06:** this originally read
+`_insert_trace_row(conn, trace, *, delete_fts_first)`, which implies the
+helper computes `trace.to_dict()` itself. It must not. `_insert_sqlite`
+computes that payload *outside* its `_locked_conn()` (`server_traces.py:605`
+vs `:606`), so an internally-computing helper would move it under the SQLite
+lock on every recorded command. `payload` is therefore an explicit parameter
+and each caller keeps its existing binding site.
+
+**Corrected 2026-08-06:** this paragraph originally said the delete-first
+branch is what "the import path needs". That is backwards. The *live insert*
+path needs it — `_insert_sqlite` deletes the one FTS row by `trace_id`
+(`server_traces.py:642-646`) because it may overwrite an existing id. The
+import path does not: `_replace_sqlite_traces` bulk-clears the whole FTS table
+once up front (`:855-858`). So `_insert_sqlite` passes
+`delete_fts_first=True` and `_replace_sqlite_traces` passes `False`.
+
+Store tests are the oracle; see the corrected Validation section below.
 
 ### PR 2 — test harness dedupe (A-032, A-033, A-037)
 
@@ -72,8 +90,12 @@ the 15+ lint test files (PR 2); `.trellis/audit/ledger.md` flips.
 
 ## Validation
 
-- PR 1: `pytest tests/test_server.py tests/test_trace_bundle.py -n 0`
-  (store + import/export round-trips).
+- PR 1: `pytest tests/test_server.py -n 0` (store inserts + the
+  `import_payload` replace path). **Corrected 2026-08-06:** this line
+  originally also named `tests/test_trace_bundle.py`. That file covers
+  `trace_bundle.py` offline analysis and never constructs a
+  `CommandTraceStore`, so it witnesses neither SQLite write path;
+  `import_payload` is referenced only from `tests/test_server.py`.
 - PR 2: full suite; `rg -c '_Handler' tests/test_cli.py` shows the
   collapse; one exclusion-window computation
   (`rg '_EXCLUSION_WINDOWS' tests/` → conftest only).

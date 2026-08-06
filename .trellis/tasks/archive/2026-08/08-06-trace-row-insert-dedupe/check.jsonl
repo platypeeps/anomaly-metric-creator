@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Review Checklist headings and the heavy/light partition the pre-PR walk must satisfy; also the known-Copilot-false-positive catalogue to check flags against."}
+{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "Verifies the behavior-identity claim: the persisted trace columns, FTS row contents, and retention behavior must be unchanged by the extraction."}

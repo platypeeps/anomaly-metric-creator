@@ -146,6 +146,11 @@ class CommandTraceStore:
       (``_jsonl_handle``, opened once and flushed per write) so JSONL
       persistence stays off the ring lock. External rotation/deletion of
       the JSONL file requires a server restart to re-open the handle.
+
+    Annotation hazard: :meth:`list` shadows the builtin throughout this class
+    body, so a bare ``list[...]`` annotation on any method here resolves to
+    the method and fails to type-check. Use ``Sequence``/``tuple``, or quote
+    the annotation. ``dict`` and ``tuple`` are unshadowed and safe.
     """
 
     def __init__(
@@ -601,66 +606,91 @@ class CommandTraceStore:
             max_id = int(max_row["max_id"] or 0)
             self._next_id = max_id + 1
 
-    def _insert_sqlite(self, trace: CommandTrace) -> None:
-        payload = trace.to_dict()
-        with self._locked_conn() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO command_traces (
-                    id, received_at_wall_time, simulated_time, raw_input,
-                    command_family, verb, resource_kind, resource_name,
-                    namespace, support_status, matched_rule_id, fingerprint,
-                    guessed_intent, active_scenarios_json, exit_code,
-                    stdout_preview, stderr_preview, stdout, stderr,
-                    latency_ms, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    trace.id,
-                    trace.received_at_wall_time,
-                    trace.simulated_time,
-                    trace.raw_input,
-                    trace.command_family,
-                    trace.verb,
-                    trace.resource_kind,
-                    trace.resource_name,
-                    trace.namespace,
-                    trace.support_status,
-                    trace.matched_rule_id,
-                    trace.fingerprint,
-                    trace.guessed_intent,
-                    json.dumps(list(trace.active_scenarios), sort_keys=True),
-                    trace.exit_code,
-                    trace.stdout_preview,
-                    trace.stderr_preview,
-                    trace.stdout,
-                    trace.stderr,
-                    trace.latency_ms,
-                    json.dumps(payload, sort_keys=True),
-                ),
-            )
-            if self._sqlite_fts_enabled:
+    def _insert_trace_row(
+        self,
+        conn: sqlite3.Connection,
+        trace: CommandTrace,
+        payload: dict[str, Any],
+        *,
+        delete_fts_first: bool,
+    ) -> None:
+        """Write one trace to ``command_traces`` and its FTS mirror.
+
+        ``payload`` is a parameter, not a ``trace.to_dict()`` call here, so
+        ``_insert_sqlite`` keeps serializing outside its ``_locked_conn()``.
+        ``delete_fts_first`` is unnecessary for ``_replace_sqlite_traces``
+        only because that path bulk-clears the FTS table before its loop.
+        Both contracts are pinned by tests; see the trace-persistence section
+        of ``.trellis/spec/amc/backend/operations-security-logging.md``.
+
+        """
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO command_traces (
+                id, received_at_wall_time, simulated_time, raw_input,
+                command_family, verb, resource_kind, resource_name,
+                namespace, support_status, matched_rule_id, fingerprint,
+                guessed_intent, active_scenarios_json, exit_code,
+                stdout_preview, stderr_preview, stdout, stderr,
+                latency_ms, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                trace.id,
+                trace.received_at_wall_time,
+                trace.simulated_time,
+                trace.raw_input,
+                trace.command_family,
+                trace.verb,
+                trace.resource_kind,
+                trace.resource_name,
+                trace.namespace,
+                trace.support_status,
+                trace.matched_rule_id,
+                trace.fingerprint,
+                trace.guessed_intent,
+                # ``list(...)`` normalizes the tuple/list split at the CSV and
+                # bundle-import boundaries so the stored JSON is the same array
+                # either way. Declaration order is preserved, not sorted --
+                # ``sort_keys`` only affects objects.
+                json.dumps(list(trace.active_scenarios), sort_keys=True),
+                trace.exit_code,
+                trace.stdout_preview,
+                trace.stderr_preview,
+                trace.stdout,
+                trace.stderr,
+                trace.latency_ms,
+                json.dumps(payload, sort_keys=True),
+            ),
+        )
+        if self._sqlite_fts_enabled:
+            if delete_fts_first:
                 conn.execute(
                     "DELETE FROM command_traces_fts WHERE trace_id = ?",
                     (trace.id,),
                 )
-                conn.execute(
-                    """
-                    INSERT INTO command_traces_fts(
-                        trace_id, raw_input, stdout, stderr, fingerprint,
-                        guessed_intent, matched_rule_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        trace.id,
-                        trace.raw_input,
-                        trace.stdout,
-                        trace.stderr,
-                        trace.fingerprint,
-                        trace.guessed_intent,
-                        trace.matched_rule_id,
-                    ),
-                )
+            conn.execute(
+                """
+                INSERT INTO command_traces_fts(
+                    trace_id, raw_input, stdout, stderr, fingerprint,
+                    guessed_intent, matched_rule_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace.id,
+                    trace.raw_input,
+                    trace.stdout,
+                    trace.stderr,
+                    trace.fingerprint,
+                    trace.guessed_intent,
+                    trace.matched_rule_id,
+                ),
+            )
+
+    def _insert_sqlite(self, trace: CommandTrace) -> None:
+        payload = trace.to_dict()
+        with self._locked_conn() as conn:
+            self._insert_trace_row(conn, trace, payload, delete_fts_first=True)
             self._enforce_sqlite_retention(conn)
             self._sqlite_gen += 1
 
@@ -854,63 +884,21 @@ class CommandTraceStore:
     def _replace_sqlite_traces(self, traces: list[CommandTrace]) -> None:
         with self._locked_conn() as conn:
             conn.execute("DELETE FROM command_traces")
+            # Derived from whether the bulk clear ran, not hard-coded False,
+            # so the flag cannot go stale on its own. That is defense in
+            # depth only: the clear is independently required, because it
+            # drops FTS rows for traces *absent* from ``traces``, which no
+            # per-row delete can reach -- pinned by
+            # ``test_command_trace_sqlite_per_row_fts_delete_cannot_reach_absent_traces``.
+            fts_bulk_cleared = False
             if self._sqlite_fts_enabled:
                 conn.execute("DELETE FROM command_traces_fts")
+                fts_bulk_cleared = True
             for trace in traces:
                 payload = trace.to_dict()
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO command_traces (
-                        id, received_at_wall_time, simulated_time, raw_input,
-                        command_family, verb, resource_kind, resource_name,
-                        namespace, support_status, matched_rule_id, fingerprint,
-                        guessed_intent, active_scenarios_json, exit_code,
-                        stdout_preview, stderr_preview, stdout, stderr,
-                        latency_ms, payload_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        trace.id,
-                        trace.received_at_wall_time,
-                        trace.simulated_time,
-                        trace.raw_input,
-                        trace.command_family,
-                        trace.verb,
-                        trace.resource_kind,
-                        trace.resource_name,
-                        trace.namespace,
-                        trace.support_status,
-                        trace.matched_rule_id,
-                        trace.fingerprint,
-                        trace.guessed_intent,
-                        json.dumps(list(trace.active_scenarios), sort_keys=True),
-                        trace.exit_code,
-                        trace.stdout_preview,
-                        trace.stderr_preview,
-                        trace.stdout,
-                        trace.stderr,
-                        trace.latency_ms,
-                        json.dumps(payload, sort_keys=True),
-                    ),
+                self._insert_trace_row(
+                    conn, trace, payload, delete_fts_first=not fts_bulk_cleared
                 )
-                if self._sqlite_fts_enabled:
-                    conn.execute(
-                        """
-                        INSERT INTO command_traces_fts(
-                            trace_id, raw_input, stdout, stderr, fingerprint,
-                            guessed_intent, matched_rule_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            trace.id,
-                            trace.raw_input,
-                            trace.stdout,
-                            trace.stderr,
-                            trace.fingerprint,
-                            trace.guessed_intent,
-                            trace.matched_rule_id,
-                        ),
-                    )
             self._enforce_sqlite_retention(conn)
             self._sqlite_gen += 1
         self._load_sqlite_tail()

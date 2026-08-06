@@ -16,14 +16,35 @@ boilerplate re-defined in 15+ test files.
 
 ## Scope (ledger items)
 
-- A-031 — extract _insert_trace_row(conn, trace, *, delete_fts_first) shared by _insert_sqlite and _replace_sqlite_traces.
+- A-031 — extract _insert_trace_row(conn, trace, payload, *, delete_fts_first) shared by _insert_sqlite and _replace_sqlite_traces. (Signature corrected 2026-08-06: `payload` is an explicit parameter, not computed inside the helper — see design.md.)
 - A-032 — conftest capture_otlp_server fixture modeled on test_otel_gauges._MockCollector; collapse the 22 inline classes; keep genuinely divergent handlers as variants.
 - A-033 — move _column_values/_aligned_columns/_exclude_anomaly_rows to conftest; replace both hard-coded _EXCLUSION_WINDOWS lists with test_topology_llm's SCENARIOS-derived computation.
 - A-037 — conftest run_tool() helper for the lint tests; decide shared-lib vs documented-standalone for the two contract checkers.
+
+## Task map (added 2026-08-06)
+
+This parent is an epic; each child ships its own PR. `design.md` grouped the
+work as two PRs (prod, then all three test items). The test-side PR was split
+once more at the sequence points `implement.md` already defined, because a
+single PR touching `test_cli.py`'s 22 capture servers, four topology files,
+and 15+ lint test files is not a reviewable diff.
+
+Ordering: child 1 is fully independent (production only). Children 2 and 3
+both add to `tests/conftest.py`, so they are **not** disjoint and should not
+run concurrently — take them in listed order and rebase the second onto the
+first to avoid a conftest conflict.
+
+1. `08-06-trace-row-insert-dedupe` — A-031 (production, behavior-identical).
+2. `08-06-conftest-helper-consolidation` — A-033 + A-037 (conftest helpers).
+3. `08-06-otlp-capture-fixture` — A-032 (OTLP capture fixture, largest diff).
+
+Each child flips only its own ledger items. This parent closes when all three
+are merged and A-031/A-032/A-033/A-037 all read `status: fixed`.
 
 ## Acceptance criteria
 
 - [ ] All suites green; no golden-hash changes.
 - [ ] grep shows one OTLP harness definition and one exclusion-window computation.
 - [ ] Closing PR flips each covered ledger item to `status: fixed` in
-      `.trellis/audit/ledger.md` (same-PR, per ledger rules).
+      `.trellis/audit/ledger.md` (in the same PR as the fix — this epic's
+      convention; the ledger itself states no such rule).

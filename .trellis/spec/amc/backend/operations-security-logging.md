@@ -42,6 +42,67 @@ booleans for integer fields. Sources:
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
 
+### One row writer: `_insert_trace_row`
+
+Both SQLite write paths — `CommandTraceStore._insert_sqlite` (live insert) and
+`._replace_sqlite_traces` (bundle import) — go through the single
+`_insert_trace_row(conn, trace, payload, *, delete_fts_first)`. Do not
+reintroduce a second copy of the `command_traces` INSERT or the
+`command_traces_fts` row insert; a schema column added to one copy and missed
+in the other breaks insert or import silently, which is what audit A-031
+recorded.
+
+Two parameters carry load-bearing contracts:
+
+- **`payload` is passed in, never computed inside the helper.** `_insert_sqlite`
+  computes `trace.to_dict()` *outside* its `_locked_conn()`; `_replace_sqlite_traces`
+  computes it *inside* the lock, per row. A helper that called `to_dict()` itself
+  would pull that serialization under the SQLite lock on every recorded command.
+  This is the same off-lock discipline as the JSONL handle (A-041). Pinned by
+  `test_command_trace_sqlite_record_serializes_payload_off_the_sqlite_lock`,
+  which observes `_sqlite_lock.locked()` from inside `to_dict`.
+- **`delete_fts_first` is `True` only for the live-insert path**, which can
+  overwrite an existing trace id and must drop that id's stale FTS row first.
+  The import path derives the flag from whether its bulk clear of
+  `command_traces_fts` actually ran, rather than hard-coding `False`, so the
+  flag cannot go stale if that clear is removed. Treat that as defense in depth
+  only — the bulk clear is independently required, because it drops FTS rows
+  for traces *absent* from the replacement set, which no per-row delete can
+  reach. Deleting the clear still fails the import test;
+  `test_command_trace_sqlite_per_row_fts_delete_cannot_reach_absent_traces`
+  pins the reason directly. Both halves are pinned:
+  `test_command_trace_sqlite_record_replaces_rather_than_duplicates_fts_row`
+  fails if the per-row delete is dropped, and
+  `test_command_trace_sqlite_import_clears_superseded_fts_rows` fails if the
+  bulk clear is — verified by mutating each in turn.
+
+Sources: `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`;
+`.trellis/audit/ledger.md` (A-031).
+
+### Gotcha: two ways a trace-store test can silently prove nothing
+
+> **Warning:** the dedicated `command_traces` columns are effectively
+> write-only from a reader's perspective.
+
+Every read path — `_load_sqlite_tail`, `_list_sqlite`, `_get_sqlite`, and
+`_search_sqlite` — reconstructs a `CommandTrace` from **`payload_json` alone**.
+The other 20 columns exist only to back WHERE clauses and the FTS mirror. So a
+test that writes a trace, reloads it, and compares `to_dict()` passes even if
+every dedicated column were dropped. **Assert the raw row** with a direct
+`SELECT * FROM command_traces WHERE id = ?` when the property under test is
+"the columns were written".
+
+> **Warning:** a passing `search()` does not prove an FTS write happened.
+
+`_search_sqlite` catches `sqlite3.OperationalError` and falls back to a LIKE
+scan over `command_traces`, so search still returns the row when the FTS mirror
+is empty or broken. `test_command_trace_sqlite_search_reports_backend_and_schema`
+deliberately accepts either backend. **Query `command_traces_fts` directly** for
+FTS assertions, and guard the test on `store._sqlite_fts_enabled` so a build
+without FTS5 skips rather than reporting a false pass.
+
+Sources: `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`.
+
 ## Security Boundary
 
 Loopback binds may run unauthenticated for local workshops. Non-loopback
