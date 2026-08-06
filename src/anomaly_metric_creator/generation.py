@@ -541,7 +541,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             # ``--interval-seconds`` (or a cascade can land inside a
             # shaped span). Colliding specs resolve last-writer-wins per
             # buffer in ``(row_idx, metric, spec_order)`` order — the
-            # documented contract in CLAUDE.md's RNG-ordering section.
+            # documented contract in CLAUDE.md's determinism section.
             values[row_idx, col] = override_value
             for buf in per_instance_values.values():
                 buf[row_idx, col] = override_value

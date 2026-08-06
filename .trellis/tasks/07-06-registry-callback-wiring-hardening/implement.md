@@ -9,8 +9,11 @@
    repoint proof, original-module-patch-invisible proof,
    `finally`-restore via the original module's configure entrypoints.
    Run it twice consecutively + under `-n 4`.
-3. Add the module-docstring constraint paragraphs; extend CLAUDE.md's
-   callback-wiring paragraph (constraint + test pointer).
+3. Add the module-docstring constraint paragraphs; extend the
+   callback-wiring paragraph in
+   `.trellis/spec/amc/backend/architecture.md` § Module Boundaries
+   (constraint + test pointer), and CLAUDE.md's "Extraction / re-import
+   invariant" section if the invariant itself changes.
 4. Draft PR → checklist (test-hygiene: the restore discipline is the
    reviewable point) → ready → merge.
 

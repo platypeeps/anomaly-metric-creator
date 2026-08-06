@@ -863,7 +863,7 @@ def test_topology_coupling_flags_constant_downstream(amc, tmp_path):
     )
     # The zero-variance diagnostic must name the offending side
     # explicitly (here: the constant *target* column) rather than the
-    # ambiguous "source or target" both-sides form — CLAUDE.md promises
+    # ambiguous "source or target" both-sides form — api-cli-server.md promises
     # the violation names the side.
     zv = [
         v for v in violations

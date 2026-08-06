@@ -185,8 +185,8 @@ def _print_violations(violations: list[str]) -> None:
     print(
         "\nBranch names must not embed ticket literals (ver-<N> / "
         "VER-<N>). Rename the branch to a descriptive, non-ticket "
-        "label before pushing. Policy lives in CLAUDE.md under "
-        "'Branch-name lint'.",
+        "label before pushing. Policy lives in this script's module "
+        "docstring.",
         file=sys.stderr,
     )
 

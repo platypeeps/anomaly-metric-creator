@@ -160,6 +160,31 @@ Sources: `README.md`; `CLAUDE.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_redact_sensitive_headers.py`;
 `tests/test_server.py`.
 
+The two header-redaction shims in `redaction.py` run before the
+`otel-activity.log` JSON dump and take **deliberately different postures** for
+their two trust origins; the asymmetry is correct threat modeling, not drift.
+The **response side** (`_redact_sensitive_headers`, untrusted upstream) is
+*mask-unless-known-safe*: every response-header value is masked except the short
+`_SAFE_RESPONSE_HEADER_NAMES` allowlist (`content-type`, `content-length`,
+`content-encoding`, `content-language`, `cache-control`, `date`, `server`,
+`vary`, `age`, `retry-after`, `cf-ray`, `x-request-id`). A never-before-seen
+header defaults to masked, so a credential an upstream echoes under a novel name
+(`X-Amz-Security-Token`, `X-Vault-Token`, `X-Subject-Token`,
+`Authentication-Info`) cannot reach disk; the `x-*` namespace is the riskiest, so
+only `x-request-id` is allowlisted from it. The **request side**
+(`_masked_headers`, headers this process builds) stays *allowlist-of-sensitive*,
+masking only `_SENSITIVE_HEADER_NAMES` (`Authorization`, `Cookie`, `Set-Cookie`,
+`Proxy-Authorization`, `X-Api-Key`), because we control the outbound set and
+operational headers like `Content-Type` should stay legible. Both paths share
+`_mask_sensitive_value`: `Authorization` / `Proxy-Authorization` are in
+`_SCHEMED_SENSITIVE_HEADERS`, so the scheme prefix (`Bearer` / `Basic`) is kept
+and only the credential becomes `***`; every other masked header has its full
+value replaced. Do not "simplify" the response side to the request side's
+posture. Sources: `src/anomaly_metric_creator/redaction.py`;
+`src/anomaly_metric_creator/otel_stream.py`;
+`tests/test_redact_sensitive_headers.py`; `tests/test_cli.py`;
+`tests/test_otel_gauges.py`.
+
 `otel-activity.log` is transport diagnostics, not a broad application log. The
 main signal stream starts it fresh, the gauge pass appends during the same run,
 gauges-only streaming starts it fresh, and verbose request bodies are gated by

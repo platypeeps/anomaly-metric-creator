@@ -142,7 +142,12 @@ it lives outside `--output-dir` and appends within a run. Sources: `CLAUDE.md`;
 `schema.json` is opt-in via `--emit schema`, uses `schema_version`, run
 metadata, declared files, component metric metadata, optional dimension blocks,
 and topology data, and is the single source consumed by the `validate`
-subcommand. Sources: `README.md`; `CLAUDE.md`;
+subcommand. `_load_schema_document` rejects unknown `schema_version` values
+outright, so a v1 document fails fast under a v2 reader and vice versa. The
+writer only ever emits `topology_mode: "realistic"` — the `independent` contrast
+alias no longer parses — but **the reader still honors `"independent"`** so
+documents produced under the historic mode keep validating, and the validator's
+topology-coupling check short-circuits under it. Sources: `README.md`;
 `src/anomaly_metric_creator/legacy.py`;
 `src/anomaly_metric_creator/schema_impl.py`;
 `src/anomaly_metric_creator/validate_impl.py`; `tests/test_schema_file.py`;
@@ -152,7 +157,11 @@ subcommand. Sources: `README.md`; `CLAUDE.md`;
 presence, row counts, timestamps, cell types/ranges, dimensions, derived
 metrics, anomaly ordering, and topology coupling, and return nonzero on hard
 violations unless `--warn` is passed. `validate_output` returns structured
-`Violation` objects whose string form preserves the historic prose output.
+`Violation` objects whose string form preserves the historic prose output. A
+zero-variance source or target column in the topology-coupling check is itself a
+coupling regression (Pearson is undefined), and the violation message must name
+**which side** was constant rather than the ambiguous "source or target"
+both-sides form.
 Unknown-file validation tolerates dot-prefixed sidecars such as `.DS_Store` but
 continues to hard-fail undeclared non-dot artifact files, including stale
 `*.tmp` debris. Sources: `README.md`; `CLAUDE.md`;
@@ -169,6 +178,45 @@ continues to hard-fail undeclared non-dot artifact files, including stale
 `schema.json` or `gauges.csv`. Sources: `README.md`; `CLAUDE.md`;
 `src/anomaly_metric_creator/legacy.py`; `src/anomaly_metric_creator/combine.py`;
 `tests/test_combine.py`; `docs/application-flow.md`.
+
+Both long-form file writers — `gauges.csv` and the long-form combine output —
+delegate their merge to the single shared `csv_layout.write_long_form_merge`, so
+the two cannot drift. `combine_logs_unified` and `write_gauges_csv` each
+dispatch on header inspection (`_scan_component_csv_headers`): dimensionless
+input keeps the classic wide / 4-column shape byte-identically, while any
+per-component CSV carrying the `id, host, pod, az, region, tenant` prefix
+switches to the 10-column long form. The two layouts order differently on
+purpose — the wide layout uses the caller-supplied `components` order verbatim
+for the column sequence, while the long layout sorts components alphabetically
+for the equal-timestamp tie-break because the row's own `component` cell carries
+identity. Long-form tie-break order is `(component, instance_id, metric)`, and
+empty/dropped cells are skipped (row presence encodes "this measurement was
+emitted"), unlike the wide layout's empty string in the corresponding column.
+Sources: `src/anomaly_metric_creator/csv_layout.py`;
+`src/anomaly_metric_creator/combine_impl.py`;
+`src/anomaly_metric_creator/gauges_impl.py`; `tests/test_gauges_file.py`;
+`tests/test_combine.py`.
+
+Two performance contracts attach to those writers. First, generated combines
+pass `assume_monotonic_wide_components=set(combine_components)` so the writer
+skips a second full pass proving monotonicity for files `main()` just emitted;
+this is a trusted allowlist for freshly generated non-DST wide CSVs only —
+external `combine DIR` invocations still run
+`_wide_component_rows_are_monotonic` before taking the streaming `heapq.merge`
+path. Second, the long-form merge holds one open handle per
+`(component, instance)` source for the merge's lifetime (`heapq.merge` primes
+every iterator), so at max fan-out — 14 components × 20 instances = 280 sources
+— it can exceed the default macOS soft limit of 256.
+`_ensure_long_form_fd_capacity(len(sources))` therefore reads `RLIMIT_NOFILE`,
+raises the soft limit to fit (capped by the hard limit), and otherwise exits
+with a message naming the needed count and the user-facing levers
+(`--instances-per-component`, `--components`, `ulimit -n`). It no-ops on
+Windows, where `open()` surfaces the real error at write time; the wide-form
+paths never trip it because they stream one handle per component. Sources:
+`src/anomaly_metric_creator/csv_layout.py`;
+`src/anomaly_metric_creator/combine_impl.py`;
+`src/anomaly_metric_creator/gauges_impl.py`; `tools/benchmark_combine.py`;
+`tests/test_gauges_file.py`; `tests/test_combine.py`.
 
 ## Serve Mode
 

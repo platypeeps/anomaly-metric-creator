@@ -390,7 +390,7 @@ def test_topology_llm_analytics_edge_carries_phase5_gains(amc):
     """Phase 5 promoted the apigateway -> llm_analytics
     placeholder into a real saturating edge. The exact phase-5 gain
     values (``latency_gain=0.55``, ``error_gain=0.015``) are
-    documented in CLAUDE.md / README.md, and their planned-range
+    documented in docs/topology.md / README.md, and their planned-range
     membership is enforced by
     ``test_topology_saturation_params_in_planned_ranges`` below and by
     the dedicated range assertions in ``tests/test_topology_llm.py``;
