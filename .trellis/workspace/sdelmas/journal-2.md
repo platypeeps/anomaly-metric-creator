@@ -727,3 +727,55 @@ Two things left open and stated rather than implied: pre-commit run --all-files 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 65: Extract server_ops_explain and server_ops_payloads (epic step 6a)
+
+**Date**: 2026-08-06
+**Task**: Extract server_ops_explain and server_ops_payloads (epic step 6a)
+**Package**: amc
+**Branch**: `sdelmas/08-05-server-ops-explain-payload-extract`
+
+### Summary
+
+Epic 07-06 step 6a: moved the ten pure kubectl explain / OpenAPI schema formatters and the JSON Patch / manifest-reader clusters out of server_ops.py into two new one-way leaves, shrinking server_ops.py 4,687 to 4,414 lines with no behavior change. A read-only AST closure audit showed the originally planned step 6 render-dispatch split is not implementable as designed, so the blocked part was recorded as step 6b instead of silently substituting scope.
+
+### Main Changes
+
+- Added server_ops_explain.py (178 lines) — the epic's first leaf with no intra-package import at all — holding the ten explain/OpenAPI formatters moved verbatim from server_ops.py:1944-2101.
+- Added server_ops_payloads.py (172 lines) with the RFC 6902 JSON Patch ops (RFC 6901 pointer paths) and the manifest document reader, importing only CommandResult from server_command_render.
+- Cut the three ranges bottom-up and replaced each with a commented 'X as X' re-import stub, keeping server_ops.__all__ byte-identical at 227 entries.
+- Recorded the falsifying closure audit for the planned step 6 in the epic tracker: all ten render-dispatch symbols reach resource_snapshot, whose closure touches the runtime dataclasses step 7 requires to stay, so the split is filed as step 6b blocked on a provider-seam decision.
+- Added both leaves to the clean-module mypy gate (32 to 34) with the lockstep test update, and repaired three pre-existing review-preflight failures (archived-task citations, missing epic child entry, _example manifest scaffolds).
+- Review round: rebutted three 'unused import' findings as deliberate re-export stubs required by the extraction invariant, and fixed the real RFC 6901/6902 conflation at five sites.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `df36daf` | refactor(server): extract server_ops_explain and server_ops_payloads |
+| `4dc6633` | docs(spec): record step 6a leaves and the step 6b resource_snapshot seam |
+| `cc58fbc` | chore(trellis): satisfy the review preflight for the step-6a extraction |
+| `7c21817` | docs: name RFC 6901 and RFC 6902 correctly for the payload leaf |
+| `202c4f4` | chore(task): record finalization branch for the step-6a extraction task |
+| `9cdf3c0` | chore(task): tick step-6a acceptance criteria with measured evidence |
+
+### Testing
+
+- [OK] Frozen-clock render oracle byte-identical over a 72-record explain/patch/apply corpus in both normal and --mcp-eval-mode states
+- [OK] server_ops.__all__ byte-identical (227 entries) via AST source-segment diff
+- [OK] .venv/bin/pytest tests/test_server.py tests/test_server_ops_fuzz.py tests/test_server_mcp.py tests/test_server_eval_mode.py -n 0 — 178 passed, 2 skipped
+- [OK] Full .venv/bin/pytest — 1797 passed, 2 skipped
+- [OK] .venv/bin/pre-commit run --all-files — 13/13
+- [OK] python tools/check_mypy_gate.py — Success: no issues found in 34 source files
+- [OK] node scripts/sd-ai-command-pack-review-preflight.mjs — 0 failures
+- [OK] CI on head 7c21817 — CI Result success, all lanes green or skipped
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

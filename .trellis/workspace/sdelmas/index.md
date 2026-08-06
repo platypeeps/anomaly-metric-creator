@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 64
-- **Last Active**: 2026-08-05
+- **Total Sessions**: 65
+- **Last Active**: 2026-08-06
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~729 | Active |
+| `journal-2.md` | ~774 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 65 | 2026-08-06 | Extract server_ops_explain and server_ops_payloads (epic step 6a) | `df36daf`, `4dc6633`, `cc58fbc`, `7c21817`, `202c4f4`, `9cdf3c0` | `sdelmas/08-05-server-ops-explain-payload-extract` |
 | 64 | 2026-08-05 | CLAUDE.md context-cost refactor: 3,106 lines to 259 | `be4d5bc`, `ae603aa`, `d8d9c19`, `6549a2b`, `8e65ed9`, `8e01b37`, `d92c67d`, `90a1a21` | `main` |
 | 63 | 2026-08-05 | Extract server_k8s_api.py from server_ops.py (epic 07-06 step 5) | `8374369`, `ae25817`, `cc9d5a9` | `sdelmas/server-k8s-api-extract` |
 | 62 | 2026-08-05 | audit-sim-mutation-correctness: simulator clock + command-mutation correctness (A-012..A-017) | `4cb9adc`, `96b68f6`, `ad554a5`, `d5af17b` | `sdelmas/sim-mutation-correctness` |
