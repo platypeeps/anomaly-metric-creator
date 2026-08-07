@@ -1651,19 +1651,10 @@ def test_command_trace_sqlite_row_missing_every_optional_key_still_loads(tmp_pat
     store = server.CommandTraceStore(sqlite_path=db_path)
     store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
 
-    optional_keys = [
-        "argv",
-        "active_scenarios",
-        "parsed_flags",
-        "stdout_preview",
-        "stderr_preview",
-        "stdout",
-        "stderr",
-        "latency_ms",
-        "fingerprint",
-        "guessed_intent",
-        "request_id",
-    ]
+    # Derived, not restated: a second hard-coded copy of the `NotRequired`
+    # half would keep passing after a key moved to the required half, which
+    # is exactly the drift the split exists to catch.
+    optional_keys = sorted(_trace_payload_key_split()[1])
     with sqlite3.connect(db_path) as conn:
         row = conn.execute("SELECT payload_json FROM command_traces").fetchone()
         payload = json.loads(row[0])
