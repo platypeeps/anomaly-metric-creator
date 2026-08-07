@@ -43,8 +43,17 @@ Scope
 -----
 `src/anomaly_metric_creator/` only. The cap is a behavior-module rule; `tools/`
 and `scripts/` are single-purpose lints and harnesses, and `tests/` is governed
-by its own conventions. Line counts are physical lines, matching `wc -l` and
-the counts quoted throughout the specs -- not statements or logical lines.
+by its own conventions.
+
+Counting
+--------
+Physical lines, not statements or logical lines: every newline-terminated line,
+plus a trailing line that has no final newline. That agrees with `wc -l` for
+any file ending in a newline -- which every module here does, and which the
+`end-of-file-fixer` hook keeps true -- and it deliberately differs from it for
+one that does not, where `wc -l` reports one line fewer than an editor does.
+The counts quoted throughout the specs came from editors, and a module should
+not slip a line under its ceiling by dropping its final newline.
 
 Reasons in `RATCHET` are required and are printed by `--list`. Keep them
 pointing at the owning epic, so an enrolled module is traceable to the work
@@ -53,7 +62,7 @@ that will remove it.
 Invocation
 ----------
     python tools/check_module_size.py            # check the repository
-    python tools/check_module_size.py --list     # per-module table
+    python tools/check_module_size.py --list     # enrolled table + nearest the cap
     python tools/check_module_size.py --repo DIR # check another checkout
 
 Exit codes: 0 clean, 1 violations, 2 structural error.
@@ -109,7 +118,7 @@ class StructuralError(Exception):
 
 
 def _count_lines(path: Path) -> int:
-    """Physical line count, matching `wc -l`.
+    """Physical line count; see the docstring's Counting section.
 
     Read as bytes and split on newlines: the count must not depend on the
     file decoding, and a module with a stray non-UTF-8 byte should be
@@ -122,8 +131,8 @@ def _count_lines(path: Path) -> int:
     if not data:
         return 0
     lines = data.count(b"\n")
-    # A final line with no trailing newline still counts, as `wc -l` does not
-    # but every line count quoted in the specs came from an editor that does.
+    # A final line with no trailing newline still counts; `wc -l` would not
+    # count it. See the docstring's Counting section for why.
     return lines if data.endswith(b"\n") else lines + 1
 
 
@@ -190,10 +199,11 @@ def _report(counts: dict[str, int]) -> None:
         print(f"  {name:32s} {counts[name]:5d} / {ceiling:5d}  {reason}")
     if not enrolled:
         print("  none")
-    print("\nheadroom of the largest modules under the cap:")
+    nearest = 5
+    print(f"\nthe {nearest} unenrolled modules nearest the cap:")
     plain = sorted(
         (n for n in counts if n not in RATCHET), key=lambda n: -counts[n]
-    )[:5]
+    )[:nearest]
     for name in plain:
         print(f"  {name:32s} {counts[name]:5d}  ({LINE_CAP - counts[name]} to spare)")
     if not plain:
@@ -205,10 +215,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", default=".", help="checkout to inspect")
     parser.add_argument(
-        "--list", action="store_true", help="print the per-module table and exit 0"
+        "--list",
+        action="store_true",
+        help="print the enrolled table and the modules nearest the cap, then exit 0",
     )
-    # pre-commit passes the matched filenames; the rule is whole-package, so
-    # they are accepted and ignored rather than rejected.
+    # The rule is whole-package, so the hook sets `pass_filenames: false`. A
+    # caller that passes filenames anyway -- a hand-run `pre-commit` variant, a
+    # shell loop -- gets them accepted and ignored rather than rejected.
     parser.add_argument("files", nargs="*", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 

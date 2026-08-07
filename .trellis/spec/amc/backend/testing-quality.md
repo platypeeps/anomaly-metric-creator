@@ -42,7 +42,9 @@ below 800 lines. `scenario_catalog.py` is the explicit *permanent* exception:
 it may exceed that limit only as one declarative ordered registry, with no
 validation or runtime orchestration. `tools/check_module_size.py` enforces the
 cap and owns the enrolled list of over-cap modules; every other entry there is
-decomposition debt on an exact ceiling that may only shrink. Preserve facade/legacy object identity, patched
+decomposition debt on an exact ceiling that may only shrink.
+
+Preserve facade/legacy object identity, patched
 `legacy.SCENARIOS` visibility, and the single historical import-time validator
 call. Sources: `src/anomaly_metric_creator/scenario_builders.py`;
 `src/anomaly_metric_creator/scenario_catalog.py`;

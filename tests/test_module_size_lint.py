@@ -129,7 +129,7 @@ def test_empty_package_exits_two(tmp_path: Path) -> None:
 
 
 def test_matched_filenames_are_accepted_and_ignored(repo: Path) -> None:
-    """pre-commit passes filenames; the rule is whole-package, so they no-op."""
+    """The rule is whole-package, so a caller's filenames are accepted and no-op."""
     _module(repo, "big.py", 801)
     source = SCRIPT.read_text(encoding="utf-8")
     start = source.index("RATCHET: dict[str, tuple[int, str]] = {")
