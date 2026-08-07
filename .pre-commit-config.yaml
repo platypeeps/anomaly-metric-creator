@@ -182,6 +182,16 @@ repos:
         language: python
         files: ^\.trellis/(workspace|tasks)/.*\.(md|json|jsonl|ya?ml|toml)$
         pass_filenames: true
+      # Keep quoted acceptance-criteria commands runnable as written. A
+      # multi-file `grep -c` prints one `file:count` line per file and can never
+      # return the single `0` a criterion claims, and `\s`/`\d`/`\w` are
+      # GNU/PCRE-only escapes that stock BSD grep matches as literal letters.
+      - id: task-criteria-commands
+        name: guard Trellis acceptance-criteria commands
+        entry: python tools/check_task_criteria_commands.py
+        language: python
+        files: ^\.trellis/tasks/.*\.md$
+        pass_filenames: true
       # Keep command-trace JSON import/export boundaries strict. PR #140's
       # trace review comments came from direct casts and silent filtering on
       # untrusted trace payloads; these modules should use the shared helper
