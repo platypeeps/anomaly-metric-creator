@@ -121,3 +121,5 @@ Decisive checks (spine-stayed rests on the STRUCTURAL check, not one test):
   builders too.
 - Epic steps 6 (`server_ops_render.py` + `server_ops_render_workloads.py`)
   and 7 (close-out: end size, final map, archive epic).
+
+- [ ] TEMPORARY negative-test criterion: `grep -c "\sTODO" README.md CLAUDE.md` returns 0.
