@@ -71,11 +71,12 @@ explicitly not a split.
   sequencing (data-first — `server_ops_profiles.py` is a pure-data leaf
   and the natural step 1), and a compatibility inventory: the
   `server_commands.py` / `server_kubernetes.py` / `server_helm.py`
-  facades, `server.py`'s `NAME = _server_ops.NAME` alias block — **152
-  names** as of 2026-08-07, at
+  facades, `server.py`'s `NAME = _server_ops.NAME` alias block — **227
+  names** as of 2026-08-07 (31 public, 196 private), at
   [server.py:309](src/anomaly_metric_creator/server.py:309)-535, up from the
   40+ recorded at review time — and `server_mcp.py`'s imports must all keep
-  resolving.
+  resolving. That the block is 86% private names is itself a design signal:
+  most of what crosses this seam is not public API.
 - Candidate boundaries (validate in design): `server_ops_profiles.py`
   (OPS_SCENARIO_PROFILES + validate_ops_profiles), `server_ops_parse.py`
   (parse_command/_split_flags/flag tables), `server_ops_render.py`
@@ -93,11 +94,11 @@ explicitly not a split.
   (**2,190 lines** as of 2026-08-07 — it has *grown* by ~400 since the
   review while `server_ops.py` shrank) mixes bounded-server infrastructure,
   HTTP dispatch, and `serve_main` CLI, and its manual alias block must be
-  extended for every new public ops name. That block has scaled with the
-  epic — 40+ names at review time, 152 now — so the case for an explicit
-  re-export module or `__getattr__` delegation is stronger than when this
-  was first written, not weaker. Step 1 has passed; settle it before the
-  next extraction.
+  extended for every new ops name. That block has scaled with the epic —
+  40+ names at review time, 227 now — so the case for an explicit re-export
+  module or `__getattr__` delegation is stronger than when this was first
+  written, not weaker. Step 1 has passed; settle it before the next
+  extraction.
 
 ## Acceptance Criteria
 

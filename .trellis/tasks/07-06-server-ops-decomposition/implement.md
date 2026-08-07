@@ -188,6 +188,6 @@ cut.
   time) infrastructure/dispatch/CLI split.
 - `__getattr__` delegation for `server.py`'s alias block. The original
   condition was "only if the manual block ever becomes a maintenance pain
-  point" — it now holds: the block is **152 names** at `server.py:309-535`,
-  up from 40+ at review time, and every extraction step adds to it. Treat
-  this as live, not conditional.
+  point" — it now holds: the block is **227 names** at `server.py:309-535`
+  (31 public, 196 private), up from 40+ at review time, and every extraction
+  step adds to it. Treat this as live, not conditional.
