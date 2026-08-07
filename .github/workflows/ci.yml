@@ -333,6 +333,20 @@ jobs:
       - name: Lint runtime/tools (ruff F841)
         run: uv run --no-sync ruff check --select F841 src tools .codex/hooks .github/copilot/hooks .gemini/hooks
 
+      # This list is the QUICK lane's entire test surface: test_light/test_heavy
+      # partition the whole suite, but they run only when full_ci_requested is
+      # true, so an ordinary `synchronize` push executes nothing except what is
+      # named here. Two distinct consequences, both load-bearing:
+      #
+      #   1. A lint whose only CI coverage is a live-tree test is unenforced in
+      #      this lane unless its test file appears below. That is a real gap
+      #      and tools/check_guard_ci_coverage.py fails the build on it.
+      #   2. A lint that does have an unconditional CI step still needs its
+      #      test file here, or a quick-lane PR editing the lint runs the lint
+      #      but never its tests -- a logic regression merges green.
+      #
+      # (2) is why every tools/check_*.py test file is listed, not just the
+      # ones (1) requires. Keep it that way when adding a lint.
       - name: Run quick review-churn tests
         run: |
           uv run --no-sync pytest -q \
@@ -344,7 +358,16 @@ jobs:
             tests/test_pr_body_scope_lint.py \
             tests/test_ruff_lockstep_lint.py \
             tests/test_trellis_placeholder_lint.py \
-            tests/test_trace_payload_antipatterns_lint.py
+            tests/test_trace_payload_antipatterns_lint.py \
+            tests/test_agent_hook_exception_lint.py \
+            tests/test_amc_module_load_lint.py \
+            tests/test_approval_duplicate_lint.py \
+            tests/test_branch_name_lint.py \
+            tests/test_guard_ci_coverage_lint.py \
+            tests/test_mypy_gate_lint.py \
+            tests/test_role_name_leaks_lint.py \
+            tests/test_task_criteria_lint.py \
+            tests/test_test_resource_cost_lint.py
           uv run --no-sync pytest -q tests/test_server.py -k "apply or rollout"
 
   test_heavy:
