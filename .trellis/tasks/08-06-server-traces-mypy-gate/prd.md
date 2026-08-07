@@ -73,15 +73,31 @@ module's typing debt.
 
 ## Acceptance Criteria
 
-- [ ] `mypy --strict src/anomaly_metric_creator/server_traces.py` reports 0 errors.
-- [ ] `python3 tools/check_mypy_gate.py --list` includes
+The last two criteria are the two exclusive branches of the shape decision.
+The **rename** branch was taken (`CommandTraceStore.list` → `list_traces`), so
+the fourth is the one that had to be satisfied and the fifth is recorded as
+not-taken rather than deleted, so the decision stays legible.
+
+- [x] `mypy --strict src/anomaly_metric_creator/server_traces.py` reports 0 errors.
+      → `Success: no issues found in 1 source file`.
+- [x] `python3 tools/check_mypy_gate.py --list` includes
       `src/anomaly_metric_creator/server_traces.py`, and
       `python3 tools/check_mypy_gate.py` exits 0.
-- [ ] Full suite green; no behavior change to the trace store.
-- [ ] If the store method was renamed, every call site is updated and the
+      → listed; `Success: no issues found in 35 source files`, exit 0.
+- [x] Full suite green; no behavior change to the trace store.
+      → `1917 passed, 2 skipped`. The one deliberate delta is the
+      `_row_to_payload` `TypeError` on a non-object `payload_json` row, which
+      is unreachable from any row this store wrote.
+- [x] If the store method was renamed, every call site is updated and the
       `legacy.py` re-import surface is unchanged for existing importers.
-- [ ] If the method name was kept, the mechanical lint exists, has tests, and
+      → renamed; `grep -rn "\.list(" src/ tests/ --include=*.py` returns zero
+      hits, and `legacy.py` never referenced `CommandTraceStore`, so that
+      surface is unchanged by construction.
+- [x] If the method name was kept, the mechanical lint exists, has tests, and
       fails on a bare `list[...]` annotation added inside `CommandTraceStore`.
+      → **branch not taken.** Keeping the name would have required a lint to
+      police every future annotation in the class body; the rename removes the
+      hazard at its source, so no such lint was written.
 
 ## Out of scope
 
