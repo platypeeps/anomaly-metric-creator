@@ -828,3 +828,49 @@ Extracted the duplicated 21-column command_traces INSERT and its FTS mirror from
 ### Next Steps
 
 - None - task complete
+
+
+## Session 67: Unblock server_traces.py for the mypy clean gate
+
+**Date**: 2026-08-07
+**Task**: Unblock server_traces.py for the mypy clean gate
+**Package**: amc
+**Branch**: `sdelmas/08-07-server-traces-mypy-gate`
+
+### Summary
+
+Renamed CommandTraceStore.list to list_traces, removing the class-body binding that shadowed the builtin for every annotation below it, and typed the trace payload with TracePayload / TraceListItem TypedDicts. server_traces.py joins the mypy clean gate (35 modules).
+
+### Main Changes
+
+- Renamed CommandTraceStore.list to list_traces. The old name bound list in the class body; mypy resolves annotations in class scope, so 10 of the module's 11 --strict errors were reported hundreds of lines from their cause. No compatibility alias: an alias re-creates the binding.
+- Added module-level TracePayload and TraceListItem TypedDicts, with the required / NotRequired split derived from CommandTrace.from_dict: the 13 keys it subscripts are required, the 11 it defaults are NotRequired. Closed the 11th error, the no-any-return at _row_to_payload.
+- One deliberate behavior change: _row_to_payload raises TypeError when a payload_json row decodes to a non-object, instead of returning it and failing downstream. Unreachable from any row this store wrote.
+- server_traces.py entered tools/check_mypy_gate.py (CLEAN_MODULES 34 to 35) and its module-size ratchet ceiling rose 1013 to 1086 for the TypedDicts, a non-separable addition.
+- Documented the payload contract, the two trust tiers at the trace boundary, and the PEP 563 trap (TracePayload.__optional_keys__ is empty at runtime) in operations-security-logging.md; added the never-bind-a-builtin-in-a-class-body rule to testing-quality.md.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a84111a` | refactor(traces): rename CommandTraceStore.list and type the trace payload |
+| `bad43ac` | docs(traces): record the payload-shape contract and the class-body shadow rule |
+| `eb6fbc9` | test(traces): derive the payload key split from behavior, not from a list |
+| `5a6de6d` | test(server): derive the optional-key list from the TracePayload split |
+
+### Testing
+
+- [OK] mypy --strict src/anomaly_metric_creator/server_traces.py: Success: no issues found in 1 source file
+- [OK] tools/check_mypy_gate.py: Success: no issues found in 35 source files (exit 0)
+- [OK] tools/check_module_size.py: exit 0
+- [OK] Full suite: 1917 passed, 2 skipped
+- [OK] pre-commit run --all-files: all hooks Passed; ruff check tests/: All checks passed!
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
