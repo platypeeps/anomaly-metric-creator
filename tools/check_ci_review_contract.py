@@ -488,6 +488,28 @@ def _check_ci(
             "python tools/check_agent_hook_exceptions.py",
         ),
         (
+            # Task-text-only PRs skip every test job, so the criteria guard's
+            # own test never runs for them; this step is its only CI lane.
+            "task-criteria CI guard",
+            "python tools/check_task_criteria_commands.py",
+        ),
+        (
+            # Pinned separately from the invocation above: the guard is only
+            # useful over the whole tracked task tree. A criterion goes stale
+            # when the command it names changes, not when its own file is
+            # edited, so narrowing this to the diff would satisfy the guard
+            # needle while silently dropping the coverage it exists for.
+            "task-criteria live-tree roots",
+            "git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'",
+        ),
+        (
+            # Load-bearing, not defensive: with zero path operands the guard
+            # exits 2 with its usage line, so dropping this gate would turn an
+            # empty task tree into a CI failure.
+            "task-criteria empty-tree gate",
+            'if [ "${#task_criteria_files[@]}" -gt 0 ]; then',
+        ),
+        (
             "canonical mypy gate invocation",
             "python tools/check_mypy_gate.py",
         ),
