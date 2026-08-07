@@ -26,6 +26,12 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
 
 ## Step Status
 
+**Current as of 2026-08-07:** `server_ops.py` is **4,414 lines**, 5.5× the
+800-line cap, down from 7,662 at the 2026-07-06 review — 42% paid down over
+eight merged child extractions. Per-step line counts below are as-of records
+at each step's merge, not current measurements; re-measure before sizing a
+cut.
+
 - [x] Step 1 — `server_ops_profiles.py` (child `08-04-server-ops-profiles-extract`,
   PR #321, merged). `server_ops.py` 7,095 lines after.
 - [x] Step 2 — `server_ops_parse.py` (child `08-04-server-ops-parse-extract`).
@@ -178,6 +184,10 @@ CLAUDE.md/spec map update → draft PR → checklist → ready → merge.
 ## Follow-Ups
 
 - Per-kind descriptor collapse (behavior-affecting; own design).
-- `server.py` (1,791 lines) infrastructure/dispatch/CLI split.
-- `__getattr__` delegation for `server.py`'s alias block (only if the
-  manual block ever becomes a maintenance pain point).
+- `server.py` (**2,190 lines** as of 2026-08-07, up from 1,791 at design
+  time) infrastructure/dispatch/CLI split.
+- `__getattr__` delegation for `server.py`'s alias block. The original
+  condition was "only if the manual block ever becomes a maintenance pain
+  point" — it now holds: the block is **152 names** at `server.py:309-535`,
+  up from 40+ at review time, and every extraction step adds to it. Treat
+  this as live, not conditional.
