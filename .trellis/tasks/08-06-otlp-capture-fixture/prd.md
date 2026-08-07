@@ -72,7 +72,12 @@ task becomes selectable when that PR merges.
       (POSIX class, not `\s` — BSD `grep` does not treat `\s` as whitespace.)
 - [ ] `grep -c 'HTTPServer' tests/test_cli.py` returns 0 — no start/stop
       scaffold survives in the file.
-- [ ] `capture_otlp_server` is defined exactly once, in `tests/conftest.py`.
+- [ ] `grep -rn 'def capture_otlp_server' tests/` returns **exactly one
+      line**, and that line is in `tests/conftest.py`. Both halves are load
+      bearing: confinement to `tests/conftest.py` alone would still pass with
+      two definitions inside that file. Pre-change this returns no lines, so
+      the criterion is what creates the fixture; a second line anywhere —
+      including a second one in `conftest.py` — means a copy survived.
 - [ ] The collapsed-site → variant mapping table is in the PR body, covering
       all 22 sites.
 - [ ] `.venv/bin/pytest tests/test_cli.py -n 0` passes, and its pass/fail set
