@@ -1572,6 +1572,53 @@ def test_command_trace_store_has_no_list_attribute():
     assert callable(store.list_traces)
 
 
+def test_command_trace_sqlite_row_missing_every_optional_key_still_loads(tmp_path):
+    """A row written by an older build omits keys and must still read back.
+
+    This is what the `NotRequired` half of `TracePayload` encodes: the store
+    persists whole `to_dict` blobs, so a row predating a field simply lacks it
+    and `from_dict` defaults it. Marking those keys required would type-assert
+    a shape this reader is explicitly built to tolerate the absence of, and
+    nothing would fail at runtime to catch the mistake — hence this test.
+    """
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+    optional_keys = [
+        "argv",
+        "active_scenarios",
+        "parsed_flags",
+        "stdout_preview",
+        "stderr_preview",
+        "stdout",
+        "stderr",
+        "latency_ms",
+        "fingerprint",
+        "guessed_intent",
+        "request_id",
+    ]
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT payload_json FROM command_traces").fetchone()
+        payload = json.loads(row[0])
+        for key in optional_keys:
+            assert key in payload, f"{key} is not actually emitted by to_dict"
+            del payload[key]
+        conn.execute("UPDATE command_traces SET payload_json = ?", (json.dumps(payload),))
+        conn.commit()
+
+    (item,) = store.list_traces()
+    assert item["id"] == 1
+    assert all(key not in item for key in optional_keys)
+
+    trace = server.CommandTrace.from_dict(store.get(1))
+    assert trace.argv == ()
+    assert trace.active_scenarios == ()
+    assert trace.parsed_flags == {}
+    assert trace.latency_ms == 0.0
+    assert trace.request_id == ""
+
+
 def test_command_trace_sqlite_row_that_is_not_a_json_object_raises_typeerror(tmp_path):
     """A malformed ``payload_json`` fails at the read boundary, not downstream.
 
