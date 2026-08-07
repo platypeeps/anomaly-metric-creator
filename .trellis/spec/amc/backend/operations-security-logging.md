@@ -59,6 +59,16 @@ field and the `TypedDict` gains a key on the same side as the `from_dict` read
 you write for it. Making all keys required would type-assert a shape the reader
 is explicitly built to tolerate the absence of.
 
+The split is enforced by behavior, not by a restated list: `tests/test_server.py`
+deletes each key from a real `to_dict()` payload and asserts `from_dict` either
+survives it (optional) or raises `KeyError` (required). **Do not read the split
+from `TracePayload.__optional_keys__`** — the module uses `from __future__
+import annotations`, so the class body stores `"NotRequired[...]"` as a string,
+the `TypedDict` machinery never sees the qualifier, and every key reports as
+required at runtime. mypy is unaffected because it reads the source; runtime
+introspection must resolve first, via
+`typing.get_type_hints(..., include_extras=True)`.
+
 Two trust tiers, and they are not the same boundary:
 
 - **Imported bundles and any user-authored payload are untrusted** — decode and

@@ -764,6 +764,15 @@ class CommandTraceStore:
             conn.execute("DELETE FROM command_traces_fts WHERE trace_id < ?", (cutoff,))
 
     def _row_to_payload(self, row: sqlite3.Row) -> TracePayload:
+        """Decode one ``payload_json`` cell into the payload shape.
+
+        This guard covers the read paths that route through here — listing,
+        ``get``, export, and search. ``unsupported_summary`` and
+        ``_load_sqlite_tail`` decode ``payload_json`` themselves and hand the
+        result straight to :meth:`CommandTrace.from_dict`, which subscripts it
+        and so rejects a non-object row on its own terms. Widening one guard
+        over all of them belongs to trace-export hardening, not here.
+        """
         payload = json.loads(row["payload_json"])
         if not isinstance(payload, dict):
             # The error names no row id on purpose: every query feeding this

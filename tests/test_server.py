@@ -10,13 +10,14 @@ import sqlite3
 import subprocess
 import threading
 import time
+import typing
 import urllib.error
 import urllib.parse
 import urllib.request
 
 import pytest
 
-from anomaly_metric_creator import server
+from anomaly_metric_creator import server, server_traces
 
 REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
@@ -1556,6 +1557,71 @@ def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tm
     assert result["trace_count"] == 2
     assert store.version > version_before_import
     assert [item["id"] for item in store.list_traces()] == [4, 3]
+
+
+def _trace_payload_key_split():
+    """Return (required, optional) keys of ``TracePayload``, resolved properly.
+
+    ``TracePayload.__optional_keys__`` is **empty** at runtime and every key
+    reports as required. `server_traces.py` uses `from __future__ import
+    annotations`, so the class body stores `"NotRequired[list[str]]"` as a
+    string and the `TypedDict` machinery never sees the qualifier. mypy is
+    unaffected — it reads the source — but any runtime introspection of the
+    split has to resolve the annotations first, which is what
+    ``get_type_hints(..., include_extras=True)`` does.
+    """
+    hints = typing.get_type_hints(server_traces.TracePayload, include_extras=True)
+    optional = {
+        key
+        for key, hint in hints.items()
+        if typing.get_origin(hint) is typing.NotRequired
+    }
+    return set(hints) - optional, optional
+
+
+def test_trace_payload_typeddict_covers_exactly_the_to_dict_keys():
+    """The `TypedDict` and `to_dict` cannot drift apart in either direction.
+
+    mypy already catches both — an extra key in the returned literal is
+    `typeddict-unknown-key`, a missing required one is `typeddict-item`, and
+    `server_traces.py` is in the CI-gated clean-module list. This asserts the
+    same thing at the value level, so the pairing is visible to a reader who
+    is not running the type checker.
+    """
+    payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    required, optional = _trace_payload_key_split()
+
+    assert set(payload) == required | optional
+    assert len(required) == 13
+    assert len(optional) == 11
+    assert set(typing.get_type_hints(server_traces.TraceListItem)) == (
+        required | optional | {"version"}
+    )
+
+
+@pytest.mark.parametrize("key", sorted(_trace_payload_key_split()[1]))
+def test_trace_payload_optional_key_is_one_from_dict_actually_defaults(key):
+    """Each `NotRequired` key must be one `from_dict` survives the absence of.
+
+    The split is derived from how `from_dict` reads each key, and nothing
+    mechanical held that derivation in place: a new field annotated on the
+    wrong side would type-check either way. Deriving it from behavior instead
+    of restating the list is what makes this a check rather than a second copy.
+    """
+    payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    del payload[key]
+
+    server.CommandTrace.from_dict(payload)
+
+
+@pytest.mark.parametrize("key", sorted(_trace_payload_key_split()[0]))
+def test_trace_payload_required_key_is_one_from_dict_demands(key):
+    """And each required key must be one whose absence is already an error."""
+    payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    del payload[key]
+
+    with pytest.raises(KeyError):
+        server.CommandTrace.from_dict(payload)
 
 
 def test_command_trace_store_has_no_list_attribute():
