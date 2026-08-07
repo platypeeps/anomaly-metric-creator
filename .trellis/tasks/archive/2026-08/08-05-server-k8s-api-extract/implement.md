@@ -34,7 +34,7 @@
    - `grep -c "resource_snapshot" server_k8s_api.py` MUST be `0` — proves no
      snapshot-bound dispatcher moved (the audit's whole risk). If nonzero, a
      spine function was moved by mistake; revert it to `server_ops`.
-   - `grep -nE "^\s*from \.server_ops import|^\s*import .*server_ops" server_k8s_api.py`
+   - `grep -nE "^[[:space:]]*from \.server_ops import|^[[:space:]]*import .*server_ops" server_k8s_api.py`
      MUST return nothing except the `TYPE_CHECKING`-guarded `SimulationState`
      line — proves the one-way rule.
    - `python -c "import anomaly_metric_creator.server"` succeeds — proves the

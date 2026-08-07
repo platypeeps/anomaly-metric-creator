@@ -117,6 +117,25 @@ task. Sources: `.trellis/tasks/07-09-multi-instance-dst-splice-boundary/prd.md`;
 `.trellis/tasks/archive/2026-06/06-26-server-compat-debug-polish/`;
 `.trellis/workspace/sdelmas/journal-1.md`.
 
+An acceptance criterion that quotes a command must be runnable exactly as
+written, state its expected output, and make a claim no wider than that command
+checks. The recurring defect is a criterion whose prose asserts uniqueness --
+"one derivation remains", "one capture harness remains" -- behind a command that
+only constrains *location*: `grep -rn 'def helper' tests/` matching solely
+`tests/conftest.py` still passes with the helper defined twice inside that file.
+State a **count as well as a location**, and record what the command returns
+*before* the change so the criterion's inversion is evidence-backed rather than
+assumed. Two mechanical members of this family -- a multi-file `grep -c`, whose
+per-file `file:count` lines can never be the single `0` a criterion claims, and
+a GNU-only `\s`/`\d`/`\w` escape that stock BSD `grep` silently matches as a
+literal -- are enforced by `tools/check_task_criteria_commands.py`; the
+wider-claim defect is not mechanically detectable and remains this rule.
+Sources: `tools/check_task_criteria_commands.py`;
+`tests/test_task_criteria_lint.py`;
+`.trellis/tasks/08-06-conftest-helper-consolidation/prd.md`;
+`.trellis/tasks/08-06-otlp-capture-fixture/prd.md`;
+`.trellis/tasks/07-17-audit-test-harness-dedupe/prd.md`.
+
 ## Repository Map Artifact
 
 `docs/repomix-map.md` is the generated Repomix repository map for quick human
