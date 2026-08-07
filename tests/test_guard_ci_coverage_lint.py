@@ -442,6 +442,59 @@ def test_an_unlaned_lint_is_reachable_through_a_calling_script(repo: Path) -> No
     assert result.returncode == 0, result.stderr
 
 
+def test_a_commented_mention_does_not_make_an_unlaned_lint_reachable(
+    repo: Path,
+) -> None:
+    """`pr_comment.sh` documents the gates it runs above the code that runs them.
+
+    Counting the header comment as evidence means deleting the real call leaves
+    the lint running nowhere while this rule still reports it covered.
+    """
+    _write(
+        repo,
+        hooks=_hook("task-criteria", "check_task_criteria.py", TASKS),
+        workflow=_workflow(guard_steps={"changes": ["check_task_criteria.py"]}),
+        tests={},
+        tools={
+            "check_approval_duplicate.py": "# comment gate\n",
+            "pr_comment.sh": (
+                "#   1. duplicate approvals - tools/check_approval_duplicate.py\n"
+                "true\n"
+            ),
+        },
+    )
+    result = _run(repo)
+    assert result.returncode == 1, result.stdout
+    assert "tools/check_approval_duplicate.py: this lint runs nowhere" in result.stderr
+
+
+def test_a_pin_string_in_another_lint_does_not_make_a_lint_reachable(
+    repo: Path,
+) -> None:
+    """A lint naming a lint is a pin or a cross-reference, never a call.
+
+    `check_ci_review_contract.py` stores CI command text as data; taking that
+    at face value manufactured ten false reachability edges in this repository.
+    """
+    _write(
+        repo,
+        hooks=_hook("task-criteria", "check_task_criteria.py", TASKS),
+        workflow=_workflow(guard_steps={"changes": ["check_task_criteria.py"]}),
+        tests={},
+        tools={
+            "check_orphan.py": "# nothing runs me\n",
+            "check_contract.py": (
+                "# guard-ci-coverage: allow pinned by the review contract\n"
+                'PINS = ["python tools/check_orphan.py"]\n'
+            ),
+        },
+    )
+    result = _run(repo)
+    assert result.returncode == 1, result.stdout
+    assert "tools/check_orphan.py: this lint runs nowhere" in result.stderr
+    assert "tools/check_contract.py: this lint runs nowhere" not in result.stderr
+
+
 def test_an_unlaned_lint_can_be_exempted_by_a_marker_in_its_own_source(
     repo: Path,
 ) -> None:
@@ -451,7 +504,13 @@ def test_an_unlaned_lint_can_be_exempted_by_a_marker_in_its_own_source(
         workflow=_workflow(guard_steps={"changes": ["check_task_criteria.py"]}),
         tests={},
         tools={
-            "check_orphan.py": "# guard-ci-coverage: allow run by hand during release\n"
+            # Not the last line: the marker belongs in a header comment, and
+            # `_ALLOW_RE` is `$`-anchored, so a whole-file search would miss it.
+            "check_orphan.py": (
+                "#!/usr/bin/env python3\n"
+                "# guard-ci-coverage: allow run by hand during release\n"
+                '"""An orphan lint."""\n'
+            )
         },
     )
     result = _run(repo)

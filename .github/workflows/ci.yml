@@ -347,6 +347,13 @@ jobs:
       #
       # (2) is why every tools/check_*.py test file is listed, not just the
       # ones (1) requires. Keep it that way when adding a lint.
+      #
+      # Blind spot, so verify edits to this list by hand: a pull request that
+      # touches this file sets workflow_changed=true, which forces
+      # full_ci_requested=true, which skips this entire job. A change to the
+      # quick lane can therefore never be exercised by the pull request that
+      # makes it -- the next src-only PR is the first real run. Run the list
+      # locally before merging.
       - name: Run quick review-churn tests
         run: |
           uv run --no-sync pytest -q \
