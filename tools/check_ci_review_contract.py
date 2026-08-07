@@ -510,6 +510,13 @@ def _check_ci(
             'if [ "${#task_criteria_files[@]}" -gt 0 ]; then',
         ),
         (
+            # The meta-guard that keeps every other entry in this list honest.
+            # It must live in the unconditional `changes` job: gating it on a
+            # lane would hide exactly the lane gap it exists to detect.
+            "guard CI-coverage meta-guard",
+            "python tools/check_guard_ci_coverage.py",
+        ),
+        (
             "canonical mypy gate invocation",
             "python tools/check_mypy_gate.py",
         ),

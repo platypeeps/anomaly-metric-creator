@@ -87,6 +87,13 @@ jobs:
             uv run --python 3.14 --no-project python tools/check_task_criteria_commands.py "${task_criteria_files[@]}"
           fi
 
+          # Meta-guard: every tools/check_*.py lint must run in the CI lanes its
+          # watched files can select. It reads this workflow, the pre-commit
+          # config, and tests/, so it takes no path operands and belongs in this
+          # unconditional job — the lane gap it detects is exactly the one that
+          # would hide it if it were gated.
+          uv run --python 3.14 --no-project python tools/check_guard_ci_coverage.py
+
       - name: Collect changed files
         shell: bash
         env:
