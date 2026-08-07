@@ -153,8 +153,12 @@ TOOLS_DIR = Path("tools")
 # Directories searched for a tracked script that invokes an unlaned lint.
 INVOKER_DIRS = (Path("tools"), Path("scripts"))
 
-# Line prefixes that mark a whole line as commentary in the shell, Python, and
-# JavaScript sources under those directories. See `collect_invokers`.
+# Line prefixes that mark a whole line as commentary across the source kinds
+# found under those directories: `#` for shell and Python, `//` for JavaScript,
+# and `*` for the continuation lines of a JavaScript block comment. Whole-line
+# only -- a trailing comment on a line of real code is not stripped, which errs
+# toward keeping an invoker edge rather than inventing one. See
+# `collect_invokers`.
 _COMMENT_PREFIXES = ("#", "//", "*")
 
 _ALLOW_RE = re.compile(r"#\s*guard-ci-coverage:\s*allow\s+(?P<reason>\S.*?)\s*$")
