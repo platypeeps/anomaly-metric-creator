@@ -192,6 +192,17 @@ repos:
         language: python
         files: ^\.trellis/tasks/.*\.md$
         pass_filenames: true
+      # Meta-guard over the lints above: CI picks a lane from the changed
+      # paths, and never runs pre-commit, so a lint whose watched files select
+      # a lane that runs neither its CI step nor its test job is enforced in
+      # appearance only. Reads the whole repository, so no filenames.
+      - id: guard-ci-coverage
+        name: guard CI lane coverage for repository lints
+        entry: python tools/check_guard_ci_coverage.py
+        language: python
+        additional_dependencies: [PyYAML]
+        files: ^(\.pre-commit-config\.yaml|\.github/workflows/ci\.yml|scripts/classify-ci-changes\.sh|tools/check_[a-z_0-9]+\.py|tests/test_[a-z_0-9]+\.py)$
+        pass_filenames: false
       # Keep command-trace JSON import/export boundaries strict. PR #140's
       # trace review comments came from direct casts and silent filtering on
       # untrusted trace payloads; these modules should use the shared helper

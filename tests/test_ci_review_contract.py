@@ -55,6 +55,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                   if [ "${{#task_criteria_files[@]}}" -gt 0 ]; then
                   uv run --python 3.14 --no-project python tools/check_task_criteria_commands.py "${{task_criteria_files[@]}}"
                   fi
+                  uv run --python 3.14 --no-project python tools/check_guard_ci_coverage.py
               - id: classify
                 env:
                   EVENT_NAME: ${{{{ github.event_name }}}}
@@ -1518,6 +1519,10 @@ def test_full_check_runs_review_preflight(tmp_path: Path) -> None:
         (
             'if [ "${#task_criteria_files[@]}" -gt 0 ]; then',
             "task-criteria empty-tree gate",
+        ),
+        (
+            "python tools/check_guard_ci_coverage.py",
+            "guard CI-coverage meta-guard",
         ),
     ],
 )
