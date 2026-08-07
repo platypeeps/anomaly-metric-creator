@@ -126,7 +126,8 @@ and instance registries. The moved scenario readers use the same pattern for
 patched `legacy.SCENARIOS`; the sole import-time scenario-validation call stays
 at its historical `legacy.py` site, and `scenario_catalog.py` is intentionally
 one ordered data-only registry even though it exceeds the normal 800-line
-behavior-module limit. The moved generation and topology helpers use the same
+behavior-module limit, and is enrolled as the one permanent exception in
+`tools/check_module_size.py`. The moved generation and topology helpers use the same
 callback pattern for `legacy.DERIVATIONS`, `legacy._format_fixed3`,
 `legacy.TOPOLOGY`, `legacy._TOPOLOGY_LOAD_METRICS`, and
 `legacy._TOPOLOGY_SATURATION_TARGETS`, with direct module callers falling back

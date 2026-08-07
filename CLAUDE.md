@@ -85,9 +85,12 @@ under a fixed pattern. Follow it exactly:
 - **Splice hazard:** a line-range cut can overlap a *prior* extraction's
   re-import stub. After any extraction, grep the moved range for `^from \.`
   re-imports and confirm every leaf re-import still resolves.
-- Behavior modules stay under 800 lines. `scenario_catalog.py` is the one
-  deliberate exception — a 2k-line ordered declarative registry that must not
-  acquire validation or runtime orchestration.
+- Behavior modules stay under 800 lines, enforced by
+  `tools/check_module_size.py`. Modules already over the cap are enrolled in
+  its `RATCHET` with an exact ceiling and may only shrink; the tool, not this
+  list, is the inventory. `scenario_catalog.py` is the one *permanent*
+  exception — a 2k-line ordered declarative registry that must not acquire
+  validation or runtime orchestration. The rest are decomposition debt.
 - `tests/conftest.py::_load_amc` and the fresh-copy loaders in
   `test_correctness.py` / `test_determinism.py` load `legacy` **with package
   context** (a real submodule import or a dotted spec name) so these re-import
@@ -234,6 +237,7 @@ in its own module docstring. Read the script, not a copy of it.
 | `tools/check_test_resource_cost.py` | whole-file reads of generated CSVs under `tests/` |
 | `tools/check_amc_module_load.py` | direct `spec_from_file_location` loads of `legacy.py` in tests |
 | `tools/check_mypy_gate.py` | the canonical clean-module mypy gate command and list |
+| `tools/check_module_size.py` | the 800-line behavior-module cap, ratcheted: an enrolled over-cap module may only shrink, a finished extraction must drop its entry; `--list` prints the enrolled table |
 | `tools/check_ci_review_contract.py` | CI cadence, action pins, partition commands, aggregate guards |
 | `tools/check_copilot_instruction_contract.py` | checklist-heading lockstep across the spec, template, and Copilot instructions |
 | `tools/check_task_criteria_commands.py` | quoted acceptance-criteria commands in `.trellis/tasks/**/*.md` that cannot produce the output they claim |

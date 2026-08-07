@@ -213,3 +213,13 @@ repos:
         language: python
         files: ^src/anomaly_metric_creator/(server_traces|trace_bundle)\.py$
         pass_filenames: true
+      # Ratchet the 800-line behavior-module cap. The rule was prose only, and
+      # the prose drifted: it named one deliberate exception while seven
+      # modules were over. The tool owns the enrolled list; enrolled modules
+      # may only shrink. Whole-package rule, so filenames are ignored.
+      - id: module-size
+        name: ratchet the behavior-module line cap
+        entry: python tools/check_module_size.py
+        language: python
+        files: ^src/anomaly_metric_creator/.*\.py$
+        pass_filenames: false
