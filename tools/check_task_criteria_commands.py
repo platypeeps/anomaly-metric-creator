@@ -55,20 +55,28 @@ _VALUE_LONG_FLAGS = frozenset(
 
 _GNU_ONLY_ESCAPES = ("\\s", "\\S", "\\d", "\\D", "\\w", "\\W")
 
+# Operators that end a statement, as opposed to `|`, which passes output on.
+_STATEMENT_OPERATORS = frozenset({";", "&&", "||", "&"})
+
 _FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
 _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _GLOB_CHARS = frozenset("*?[")
 
 
 class _GrepInvocation:
-    """One parsed grep-family command from a pipeline segment."""
+    """One parsed grep-family command from a pipeline segment.
+
+    Patterns arrive in four shapes -- positional, ``-e VALUE``, ``-eVALUE``, and
+    ``--regexp[=]VALUE`` -- and every one of them is collected, so the escape
+    check does not depend on which spelling the criterion happened to use.
+    """
 
     def __init__(self, tokens: list[str]) -> None:
         self.name = tokens[0]
         self.count_mode = False
         self.recursive = False
         self.perl_mode = False
-        self.pattern: str | None = None
+        self.patterns: list[str] = []
         self.operands: list[str] = []
         self._parse(tokens[1:])
 
@@ -82,17 +90,22 @@ class _GrepInvocation:
                 self.operands.extend(rest[index:])
                 break
             if token.startswith("--"):
-                name = token.split("=", 1)[0]
-                if "=" not in token and name in _VALUE_LONG_FLAGS:
+                name, separator, inline_value = token.partition("=")
+                takes_value = name in _VALUE_LONG_FLAGS
+                value = inline_value if separator else None
+                if takes_value and value is None and index < len(rest):
+                    value = rest[index]
                     index += 1
-                if name in {"--count"}:
+                if name == "--count":
                     self.count_mode = True
                 elif name in {"--recursive", "--dereference-recursive"}:
                     self.recursive = True
-                elif name in {"--perl-regexp"}:
+                elif name == "--perl-regexp":
                     self.perl_mode = True
                 elif name in {"--regexp", "--file"}:
                     pattern_from_flag = True
+                    if name == "--regexp" and value is not None:
+                        self.patterns.append(value)
                 continue
             if token.startswith("-") and token != "-":
                 consumed_value = False
@@ -104,18 +117,23 @@ class _GrepInvocation:
                     elif char == "P":
                         self.perl_mode = True
                     if char in _VALUE_SHORT_FLAGS:
-                        if char in {"e", "f"}:
-                            pattern_from_flag = True
                         # The value is the cluster remainder, else the next token.
                         if position == len(token) - 1:
+                            value = rest[index] if index < len(rest) else None
                             index += 1
+                        else:
+                            value = token[position + 1 :]
+                        if char in {"e", "f"}:
+                            pattern_from_flag = True
+                            if char == "e" and value is not None:
+                                self.patterns.append(value)
                         consumed_value = True
                         break
                 if consumed_value:
                     continue
                 continue
-            if self.pattern is None and not pattern_from_flag:
-                self.pattern = token
+            if not self.patterns and not pattern_from_flag:
+                self.patterns.append(token)
             else:
                 self.operands.append(token)
 
@@ -142,28 +160,43 @@ class _GrepInvocation:
         return any(operand.endswith("/") or (_GLOB_CHARS & set(operand)) for operand in operands)
 
     def gnu_only_escapes(self) -> list[str]:
-        if self.perl_mode or self.pattern is None:
+        if self.perl_mode:
             return []
-        return [escape for escape in _GNU_ONLY_ESCAPES if escape in self.pattern]
+        return [
+            escape
+            for escape in _GNU_ONLY_ESCAPES
+            if any(escape in pattern for pattern in self.patterns)
+        ]
 
 
 def _pipelines(command: str) -> list[list[list[str]]]:
-    """Split into statements, then each statement into lexed pipeline segments.
+    """Split into statements, then each statement into pipeline segments.
 
-    ``;``, ``&&``, and ``||`` end a statement, so the grep before one of them is
-    still the claimed output of its own command; only ``|`` passes output on.
-    An unlexable segment yields no tokens rather than raising: task Markdown
-    holds plenty of backticked prose that is not a command at all.
+    Tokenizing happens **before** splitting, so a ``|`` inside a quoted regex
+    alternation stays part of its pattern instead of being read as a shell
+    pipe. ``;``, ``&&``, ``&``, and ``||`` end a statement, so the grep before
+    one of them is still the claimed output of its own command; only ``|``
+    passes output on. An unlexable command yields nothing rather than raising:
+    task Markdown holds plenty of backticked prose that is not a command.
     """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="|;&")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return []
+
     pipelines: list[list[list[str]]] = []
-    for statement in re.split(r";|&&|\|\|", command):
-        segments: list[list[str]] = []
-        for raw in statement.split("|"):
-            try:
-                segments.append(shlex.split(raw))
-            except ValueError:
-                segments.append([])
-        pipelines.append(segments)
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token in _STATEMENT_OPERATORS:
+            pipelines.append(segments)
+            segments = [[]]
+        elif token == "|":
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    pipelines.append(segments)
     return pipelines
 
 

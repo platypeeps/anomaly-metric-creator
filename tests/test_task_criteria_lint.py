@@ -66,6 +66,34 @@ def test_gnu_only_escapes_are_rejected(tmp_path: Path, escape: str) -> None:
     assert f"GNU/PCRE escape '{escape}'" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A `|` inside a quoted pattern is regex alternation, not a shell pipe.
+        'grep -nE "^\\s*from \\.mod import|^\\s*import .*mod" one.py',
+        "grep -rn 'alpha|def\\sbeta' tests/",
+        # Every pattern-bearing flag shape reaches the escape check.
+        "grep -rn -e 'def\\sname' tests/",
+        "grep -rn -e'def\\sname' tests/",
+        "grep -rn --regexp 'def\\sname' tests/",
+        "grep -rn --regexp='def\\sname' tests/",
+    ],
+)
+def test_escapes_are_found_in_every_pattern_shape(tmp_path: Path, command: str) -> None:
+    result = _run(_doc(tmp_path, f"- [ ] `{command}` matches.\n"))
+    assert result.returncode == 1, result.stdout
+    assert "GNU/PCRE escape '\\s'" in result.stderr
+
+
+def test_alternation_does_not_hide_a_multi_file_count(tmp_path: Path) -> None:
+    # Splitting on `|` before lexing made this command unparseable, and an
+    # unparseable command is silently clean -- the false negative Copilot found.
+    body = "- [ ] `grep -cE 'alpha|beta' tests/` returns 0.\n"
+    result = _run(_doc(tmp_path, body))
+    assert result.returncode == 1
+    assert "counts across more than one file" in result.stderr
+
+
 def test_perl_mode_permits_gnu_escapes(tmp_path: Path) -> None:
     result = _run(_doc(tmp_path, "- [ ] `grep -rnP 'def\\s+name' tests/` matches.\n"))
     assert result.returncode == 0, result.stderr
