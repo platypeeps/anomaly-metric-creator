@@ -24,10 +24,11 @@ Three ways to fail, and each has one honest remedy:
 Enrolling it is the wrong move for anything but pre-existing debt.
 
 *Over its ratchet ceiling* -- an enrolled module grew. This is the case worth
-being strict about: a module already 5x the cap should be shrinking. Extract
-the code you were about to add, or, if growth is genuinely the right call,
-raise that module's ceiling in the same diff so the increase is a reviewed line
-in the changeset rather than an invisible drift.
+being strict about: a module already over the cap should be trending down, not
+up, whether it sits just past 800 or several times it. Extract the code you
+were about to add, or, if growth is genuinely the right call, raise that
+module's ceiling in the same diff so the increase is a reviewed line in the
+changeset rather than an invisible drift.
 
 Both remedies are sanctioned; which one is honest depends on whether the
 addition is *separable*. Extract when it is -- a new handler, a helper cluster,
