@@ -2,7 +2,7 @@
   "id": "server-ops-decomposition",
   "name": "server-ops-decomposition",
   "title": "Decompose the oversized server_ops.py",
-  "description": "Epic: decompose server_ops.py into focused leaf modules using the legacy.py role-swap pattern (verbatim moves, re-import seams, one-way imports). Sequenced across child tasks; step 1 was 08-04-server-ops-profiles-extract. Eight child extractions have merged and the file is still well over the 800-line cap, so the epic stays open. prd.md carries the measured size and the date it was measured -- read it there rather than from this description, which cannot track the epic's own children as they land.",
+  "description": "Epic: decompose server_ops.py into focused leaf modules using the legacy.py role-swap pattern (verbatim moves, re-import seams, one-way imports). Sequenced across child tasks; step 1 was 08-04-server-ops-profiles-extract. The file remains over the 800-line cap, so the epic stays open. prd.md and implement.md carry the measured size, the child-extraction status, and the dates each was measured -- read them there rather than from this description, which cannot track the epic's progress as its children land.",
   "status": "planning",
   "dev_type": null,
   "scope": null,
