@@ -154,7 +154,7 @@ def test_fuzz_commands_never_500_and_always_trace(fuzz_state):
         status, _body = _get(base_url, "/v1/state")
         assert status == 200  # server survived the corpus
 
-    for as_dict in fuzz_state.traces.list(limit=accepted or 1):
+    for as_dict in fuzz_state.traces.list_traces(limit=accepted or 1):
         assert as_dict["support_status"], as_dict
         assert isinstance(as_dict["command_family"], str)
 

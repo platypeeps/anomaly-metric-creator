@@ -193,7 +193,7 @@ def test_watch_timeout_closes_stream_and_records_supported_trace(amc, tmp_path):
     assert events  # a bounded-but-closed stream still replayed the ADDED set
     watch_traces = [
         trace
-        for trace in state.traces.list(limit=50)
+        for trace in state.traces.list_traces(limit=50)
         if trace["matched_rule_id"] == "k8s.core.watch.pods"
     ]
     assert watch_traces, "watch did not record a kubernetes-api trace"
@@ -223,7 +223,7 @@ def test_watch_sse_slot_exhaustion_returns_status_503(amc, tmp_path):
     assert body["reason"] == "ServiceUnavailable"
     refusal = [
         trace
-        for trace in state.traces.list(limit=50)
+        for trace in state.traces.list_traces(limit=50)
         if trace["matched_rule_id"] == "k8s.core.watch.pods"
     ]
     assert refusal and refusal[0]["support_status"] == "partial"
@@ -248,7 +248,7 @@ def test_unmodeled_resource_watch_is_unsupported(amc, tmp_path):
     assert body["kind"] == "Status"
     unsupported = [
         trace
-        for trace in state.traces.list(limit=50)
+        for trace in state.traces.list_traces(limit=50)
         if trace["command_family"] == "kubernetes-api"
         and trace["support_status"] == "unsupported"
     ]

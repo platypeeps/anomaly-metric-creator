@@ -3,7 +3,7 @@
   "name": "server-traces-mypy-gate",
   "title": "Unblock server_traces.py for the mypy clean gate",
   "description": "Get server_traces.py to zero mypy --strict errors and into CLEAN_MODULES. 10 of its 11 errors come from CommandTraceStore.list shadowing the builtin inside the class body; also covers the deferred payload TypedDict from PR #345.",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "amc",

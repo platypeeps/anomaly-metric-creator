@@ -1536,7 +1536,7 @@ def test_command_trace_memory_import_bumps_version_for_same_sized_replacement():
 
     assert result["trace_count"] == 2
     assert store.version > version_before_import
-    assert [item["id"] for item in store.list()] == [4, 3]
+    assert [item["id"] for item in store.list_traces()] == [4, 3]
 
 
 def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tmp_path):
@@ -1555,7 +1555,42 @@ def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tm
 
     assert result["trace_count"] == 2
     assert store.version > version_before_import
-    assert [item["id"] for item in store.list()] == [4, 3]
+    assert [item["id"] for item in store.list_traces()] == [4, 3]
+
+
+def test_command_trace_store_has_no_list_attribute():
+    """The store's listing method is ``list_traces``; ``list`` is gone.
+
+    Not cosmetic: a ``list`` binding in the class body shadows the builtin for
+    every annotation below it, which is what kept this module out of the mypy
+    clean gate. A compatibility alias would reintroduce the shadow, so the
+    absence of the name is the contract.
+    """
+    store = server.CommandTraceStore()
+
+    assert not hasattr(store, "list")
+    assert callable(store.list_traces)
+
+
+def test_command_trace_sqlite_row_that_is_not_a_json_object_raises_typeerror(tmp_path):
+    """A malformed ``payload_json`` fails at the read boundary, not downstream.
+
+    ``_row_to_payload`` casts to ``TracePayload`` without per-field validation
+    — the row is machine-written by this same store — but a value that is not
+    a JSON object at all would otherwise flow on as a list or a string and
+    fail with an ``AttributeError`` somewhere further away. There is no store
+    API that writes one, so the bad value goes straight into the SQLite file.
+    """
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE command_traces SET payload_json = ?", ('["not", "an", "object"]',))
+        conn.commit()
+
+    with pytest.raises(TypeError, match="expected a JSON object"):
+        store.list_traces()
 
 
 def test_command_trace_sqlite_record_serializes_insert_with_sqlite_lock(tmp_path, monkeypatch):
@@ -2007,7 +2042,7 @@ def test_command_trace_sqlite_concurrent_record_and_read_is_consistent(tmp_path)
             for _ in range(50):
                 store.count()
                 store.unsupported_fingerprint_count()
-                store.list(limit=5)
+                store.list_traces(limit=5)
         except Exception as exc:  # pragma: no cover - failure path
             errors.append(exc)
 
@@ -2121,7 +2156,7 @@ def test_command_trace_sqlite_restart_searches_beyond_ring_size(amc, tmp_path):
     assert restored.traces.count() == len(commands)
     assert restored.traces.search(query="auth can-i")["total"] == 1
     assert restored.traces.search(query="old-ring-marker")["total"] == 1
-    recent = restored.traces.list(limit=10)
+    recent = restored.traces.list_traces(limit=10)
     assert [item["raw_input"] for item in recent] == list(reversed(commands))
 
 
@@ -2150,7 +2185,7 @@ def test_command_trace_sqlite_retention_limits_persisted_history(amc, tmp_path):
     assert state.traces.count() == 3
     assert state.traces.get(1) is None
     assert state.traces.search(query="old-retention-marker")["total"] == 0
-    assert [item["raw_input"] for item in state.traces.list(limit=10)] == list(reversed(commands[-3:]))
+    assert [item["raw_input"] for item in state.traces.list_traces(limit=10)] == list(reversed(commands[-3:]))
 
     restored = _build_state(
         amc,
@@ -2162,7 +2197,7 @@ def test_command_trace_sqlite_retention_limits_persisted_history(amc, tmp_path):
         trace_limit=2,
     )
     assert restored.traces.count() == 3
-    assert [item["raw_input"] for item in restored.traces.list(limit=10)] == list(reversed(commands[-3:]))
+    assert [item["raw_input"] for item in restored.traces.list_traces(limit=10)] == list(reversed(commands[-3:]))
 
 
 def test_command_trace_sqlite_get_respects_retention_below_ring_limit(tmp_path):
@@ -2176,7 +2211,7 @@ def test_command_trace_sqlite_get_respects_retention_below_ring_limit(tmp_path):
     store.record(_trace(2, "2026-06-25T12:02:00Z", "kubectl get services"))
 
     assert store.count() == 1
-    assert store.list() == [{"version": store.version, **_trace(
+    assert store.list_traces() == [{"version": store.version, **_trace(
         2,
         "2026-06-25T12:02:00Z",
         "kubectl get services",
@@ -2222,7 +2257,7 @@ def test_command_trace_export_import_round_trips_sqlite_history(amc, tmp_path):
     assert imported["imported"] == 2
     assert target.traces.count() == 2
     assert target.traces.search(query="auth can-i")["total"] == 1
-    assert target.traces.list(limit=10)[0]["raw_input"] == "kubectl auth can-i get pods -n saas-prod"
+    assert target.traces.list_traces(limit=10)[0]["raw_input"] == "kubectl auth can-i get pods -n saas-prod"
 
 
 def test_debug_http_api_records_commands(amc, tmp_path):
@@ -2604,7 +2639,7 @@ def test_security_redacts_sensitive_query_and_command_trace_values(amc, tmp_path
     assert "command-secret" not in payload
     assert result["trace"]["raw_input"] == "kubectl get pods --token '***' -n saas-prod"
     api_trace = next(
-        item for item in state.traces.list(limit=10)
+        item for item in state.traces.list_traces(limit=10)
         if item["command_family"] == "kubernetes-api"
     )
     assert api_trace["parsed_flags"]["query"]["id_token"] == ["***"]
