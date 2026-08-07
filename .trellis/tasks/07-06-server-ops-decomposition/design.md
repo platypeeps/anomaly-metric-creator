@@ -2,7 +2,11 @@
 
 ## Overview
 
-`server_ops.py` measured today: **7,699 lines**. The extraction machinery
+`server_ops.py` measured **7,699 lines** when this design was written on
+2026-07-17; it is **4,414 lines** as of 2026-08-07 after eight child
+extractions. The design below is unaffected — the machinery, the one-way
+import rule, and the step sequence all still hold — but re-measure before
+sizing a cut. The extraction machinery
 is a straight reuse of the legacy.py epic's proven pattern with one
 role-swap: **`server_ops.py` plays the part `legacy.py` played** — code
 moves *out* into leaf modules, `server_ops.py` re-imports every moved name
@@ -79,8 +83,9 @@ splits at implementation time:
   diffs for a sample command set are the evidence).
 - The four-parallel-surfaces-per-kind collapse (single per-kind
   descriptor) stays a named follow-up epic, not this one.
-- `server.py` itself (1,791 lines) is not decomposed here; its seam
-  questions are follow-up material once `server_ops` is done.
+- `server.py` itself (1,791 lines at design time; **2,190** as of
+  2026-08-07) is not decomposed here; its seam questions are follow-up
+  material once `server_ops` is done.
 
 ## Affected Files
 
