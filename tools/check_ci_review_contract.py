@@ -494,6 +494,15 @@ def _check_ci(
             "python tools/check_task_criteria_commands.py",
         ),
         (
+            # Pinned separately from the invocation above: the guard is only
+            # useful over the whole tracked task tree. A criterion goes stale
+            # when the command it names changes, not when its own file is
+            # edited, so narrowing this to the diff would satisfy the guard
+            # needle while silently dropping the coverage it exists for.
+            "task-criteria live-tree roots",
+            "git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'",
+        ),
+        (
             "canonical mypy gate invocation",
             "python tools/check_mypy_gate.py",
         ),
