@@ -170,6 +170,32 @@ def test_lightweight_gated_job_alone_does_not_cover_the_app_lane(repo: Path) -> 
     assert "app-required pull request" in result.stderr
 
 
+def test_a_mixed_pattern_reaches_light_through_its_lightweight_subset(
+    repo: Path,
+) -> None:
+    """One app-required path must not mask the lightweight paths beside it.
+
+    The pattern watches both `src/**.py` (app-required) and
+    `.trellis/tasks/**.md` (lightweight). Classifying the matched set as one
+    unit yields `app_required`, hiding the gap; a PR touching only the task
+    file really does select the lightweight lane, where nothing runs this
+    guard.
+    """
+    _write(
+        repo,
+        hooks=_hook(
+            "mixed",
+            "check_mixed.py",
+            r"^(src/.*\.py|\.trellis/tasks/.*\.md)$",
+        ),
+        workflow=_workflow(guard_steps={}),
+        tests={"test_mixed_lint.py": _test_file("check_mixed.py", live=True)},
+    )
+    result = _run(repo)
+    assert result.returncode == 1, result.stdout
+    assert "select the lightweight lane" in result.stderr
+
+
 def test_source_guard_is_covered_by_a_live_tree_test_alone(repo: Path) -> None:
     """Source files always force the app lane, where test jobs run."""
     _write(

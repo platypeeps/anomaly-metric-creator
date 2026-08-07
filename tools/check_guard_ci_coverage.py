@@ -118,10 +118,9 @@ ALWAYS = "always"
 LIGHT = "light"
 APP = "app"
 
-# `classify-ci-changes.sh` caps how many paths are worth passing: the lane only
-# depends on which *kinds* of path are present, so a prefix is sufficient and
-# keeps the argv well under the platform limit.
-_MAX_CLASSIFY_PATHS = 300
+# LIGHT reachability is decided one path at a time, so no invocation ever
+# approaches the platform argv limit and no path budget is needed. See
+# `_reaches_light` for why the whole matched set must not be classified at once.
 
 
 @dataclass
@@ -327,7 +326,7 @@ def _classify(root: Path, paths: list[str]) -> dict[str, str]:
     if not (root / CLASSIFIER).is_file():
         raise StructuralError(f"{CLASSIFIER}: not found")
     result = subprocess.run(
-        ["bash", str(CLASSIFIER), "--", *paths[:_MAX_CLASSIFY_PATHS]],
+        ["bash", str(CLASSIFIER), "--", *paths],
         cwd=root,
         capture_output=True,
         text=True,
@@ -342,11 +341,36 @@ def _classify(root: Path, paths: list[str]) -> dict[str, str]:
     )
 
 
+def _reaches_light(root: Path, paths: list[str], memo: dict[str, bool]) -> bool:
+    """Can a PR touching only files this hook watches select the LIGHT lane?
+
+    Reachability is per-path, never per-union. A PR is free to touch any
+    *subset* of a hook's watched files, and `lightweight_only` is an AND over
+    the paths in that PR — so classifying the whole matched set at once
+    under-approximates. For a mixed pattern (`docs/**.md` beside `tools/*.py`)
+    the one app-required path would mask every lightweight path the same
+    pattern watches, and the guard would silently miss exactly the lane gap it
+    exists to find.
+
+    One lightweight path is enough to prove reachability, so stop at the
+    first — the answer does not depend on the scan order. The memo is shared
+    across guards because their patterns overlap heavily.
+    """
+    for path in paths:
+        if path not in memo:
+            outputs = _classify(root, [path])
+            memo[path] = outputs.get("lightweight_only") == "true"
+        if memo[path]:
+            return True
+    return False
+
+
 def analyse(root: Path) -> list[Guard]:
     guards = collect_guards(root)
     gates = collect_job_gates(root)
     live = collect_live_tests(root)
     tracked = _tracked_files(root)
+    light_memo: dict[str, bool] = {}
 
     for guard in guards:
         try:
@@ -359,9 +383,7 @@ def analyse(root: Path) -> list[Guard]:
         guard.matched = [path for path in tracked if matcher.search(path)]
         guard.gates = gates.get(guard.tool, set())
         guard.live_tests = live.get(Path(guard.tool).name, [])
-        if guard.matched:
-            outputs = _classify(root, guard.matched)
-            guard.reaches_light = outputs.get("lightweight_only") == "true"
+        guard.reaches_light = _reaches_light(root, guard.matched, light_memo)
     return guards
 
 
