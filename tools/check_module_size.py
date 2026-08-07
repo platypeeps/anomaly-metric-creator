@@ -41,9 +41,16 @@ every byte of growth in an over-cap module appears in a diff someone reviews.
 
 Scope
 -----
-`src/anomaly_metric_creator/` only. The cap is a behavior-module rule; `tools/`
-and `scripts/` are single-purpose lints and harnesses, and `tests/` is governed
-by its own conventions.
+`src/anomaly_metric_creator/` only, and recursively: a subpackage is still a
+behavior module and must not be able to escape the cap by being nested. Modules
+are keyed by their package-relative path, so `server/state.py` and a top-level
+`state.py` are distinct entries rather than one silently shadowing the other.
+The package is flat today, which makes both properties invisible now and
+load-bearing the moment it stops being flat.
+
+`tools/` and `scripts/` are out of scope -- the cap is a behavior-module rule,
+those are single-purpose lints, vendored pack helpers, and harnesses -- and
+`tests/` is governed by its own conventions.
 
 Counting
 --------
@@ -78,8 +85,10 @@ PACKAGE = Path("src/anomaly_metric_creator")
 
 LINE_CAP = 800
 
-# module basename -> (ceiling, reason). The ceiling is the module's line count
-# on enrollment; see the docstring for why it carries no headroom.
+# package-relative path -> (ceiling, reason). Every entry is top-level today,
+# so every key is a bare filename; a nested module would be `server/state.py`.
+# The ceiling is the module's line count on enrollment; see the docstring for
+# why it carries no headroom.
 RATCHET: dict[str, tuple[int, str]] = {
     "scenario_catalog.py": (
         2030,
@@ -137,14 +146,22 @@ def _count_lines(path: Path) -> int:
 
 
 def collect(root: Path) -> dict[str, int]:
-    """Map every package module basename to its line count."""
+    """Map every package module to its line count, keyed by package-relative path.
+
+    Recursive, and keyed by path rather than basename, so that a subpackage
+    can neither escape the cap nor collide with a top-level module of the same
+    name. The package is flat today, which makes both properties invisible now
+    and load-bearing the moment it stops being flat.
+    """
     package = root / PACKAGE
     if not package.is_dir():
         raise StructuralError(f"{PACKAGE}: not a directory under {root}")
-    modules = sorted(package.glob("*.py"))
+    modules = sorted(package.rglob("*.py"))
     if not modules:
         raise StructuralError(f"{PACKAGE}: contains no Python modules")
-    return {path.name: _count_lines(path) for path in modules}
+    return {
+        path.relative_to(package).as_posix(): _count_lines(path) for path in modules
+    }
 
 
 def analyse(counts: dict[str, int]) -> list[str]:
