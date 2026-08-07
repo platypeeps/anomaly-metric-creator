@@ -87,10 +87,16 @@ under a fixed pattern. Follow it exactly:
   re-imports and confirm every leaf re-import still resolves.
 - Behavior modules stay under 800 lines, enforced by
   `tools/check_module_size.py`. Modules already over the cap are enrolled in
-  its `RATCHET` with an exact ceiling and may only shrink; the tool, not this
-  list, is the inventory. `scenario_catalog.py` is the one *permanent*
-  exception — a 2k-line ordered declarative registry that must not acquire
-  validation or runtime orchestration. The rest are decomposition debt.
+  its `RATCHET` with an exact ceiling; the tool, not this list, is the
+  inventory. `scenario_catalog.py` is the one *permanent* exception — a 2k-line
+  ordered declarative registry that must not acquire validation or runtime
+  orchestration. The rest are decomposition debt.
+- Growing an enrolled module has two sanctioned remedies, and the choice turns
+  on whether the addition is **separable**. Extract it when it is. Raise that
+  module's ceiling in the same diff when it is not — a `typing` import, a
+  widened annotation, one branch inside an existing function. The ratchet
+  forbids *unreviewed* growth, not growth; a bump is one line someone reads.
+  Do not decompose a 1k-line module to pay for an import.
 - `tests/conftest.py::_load_amc` and the fresh-copy loaders in
   `test_correctness.py` / `test_determinism.py` load `legacy` **with package
   context** (a real submodule import or a dotted spec name) so these re-import
@@ -237,7 +243,7 @@ in its own module docstring. Read the script, not a copy of it.
 | `tools/check_test_resource_cost.py` | whole-file reads of generated CSVs under `tests/` |
 | `tools/check_amc_module_load.py` | direct `spec_from_file_location` loads of `legacy.py` in tests |
 | `tools/check_mypy_gate.py` | the canonical clean-module mypy gate command and list |
-| `tools/check_module_size.py` | the 800-line behavior-module cap, ratcheted: an enrolled over-cap module may only shrink, a finished extraction must drop its entry; `--list` prints the enrolled table |
+| `tools/check_module_size.py` | the 800-line behavior-module cap, ratcheted: an enrolled over-cap module grows only by a reviewed ceiling bump in the same diff, a finished extraction must drop its entry; `--list` prints the enrolled table |
 | `tools/check_ci_review_contract.py` | CI cadence, action pins, partition commands, aggregate guards |
 | `tools/check_copilot_instruction_contract.py` | checklist-heading lockstep across the spec, template, and Copilot instructions |
 | `tools/check_task_criteria_commands.py` | quoted acceptance-criteria commands in `.trellis/tasks/**/*.md` that cannot produce the output they claim |

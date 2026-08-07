@@ -42,7 +42,9 @@ below 800 lines. `scenario_catalog.py` is the explicit *permanent* exception:
 it may exceed that limit only as one declarative ordered registry, with no
 validation or runtime orchestration. `tools/check_module_size.py` enforces the
 cap and owns the enrolled list of over-cap modules; every other entry there is
-decomposition debt on an exact ceiling that may only shrink.
+decomposition debt on an exact ceiling. An enrolled module grows only by a
+ceiling bump made in the same diff, so the increase is reviewed; extraction is
+the remedy when the addition is separable, a bump when it is not.
 
 Preserve facade/legacy object identity, patched
 `legacy.SCENARIOS` visibility, and the single historical import-time validator
