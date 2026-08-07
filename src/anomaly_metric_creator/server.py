@@ -661,7 +661,7 @@ def make_handler(
                     self._send_json(200, resource_snapshot(state))
                 elif path == "/v1/debug/commands":
                     limit = _query_int(query, "limit", 100)
-                    self._send_json(200, {"items": state.traces.list(limit=limit)})
+                    self._send_json(200, {"items": state.traces.list_traces(limit=limit)})
                 elif path == "/v1/debug/commands/export":
                     self._send_json(200, state.traces.export_payload())
                 elif path.startswith("/v1/debug/commands/"):

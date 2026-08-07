@@ -10,13 +10,14 @@ import sqlite3
 import subprocess
 import threading
 import time
+import typing
 import urllib.error
 import urllib.parse
 import urllib.request
 
 import pytest
 
-from anomaly_metric_creator import server
+from anomaly_metric_creator import server, server_traces
 
 REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
@@ -1536,7 +1537,7 @@ def test_command_trace_memory_import_bumps_version_for_same_sized_replacement():
 
     assert result["trace_count"] == 2
     assert store.version > version_before_import
-    assert [item["id"] for item in store.list()] == [4, 3]
+    assert [item["id"] for item in store.list_traces()] == [4, 3]
 
 
 def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tmp_path):
@@ -1555,7 +1556,145 @@ def test_command_trace_sqlite_import_bumps_version_for_same_sized_replacement(tm
 
     assert result["trace_count"] == 2
     assert store.version > version_before_import
-    assert [item["id"] for item in store.list()] == [4, 3]
+    assert [item["id"] for item in store.list_traces()] == [4, 3]
+
+
+def _trace_payload_key_split():
+    """Return (required, optional) keys of ``TracePayload``, resolved properly.
+
+    ``TracePayload.__optional_keys__`` is **empty** at runtime and every key
+    reports as required. `server_traces.py` uses `from __future__ import
+    annotations`, so the class body stores `"NotRequired[list[str]]"` as a
+    string and the `TypedDict` machinery never sees the qualifier. mypy is
+    unaffected — it reads the source — but any runtime introspection of the
+    split has to resolve the annotations first, which is what
+    ``get_type_hints(..., include_extras=True)`` does.
+    """
+    hints = typing.get_type_hints(server_traces.TracePayload, include_extras=True)
+    optional = {
+        key
+        for key, hint in hints.items()
+        if typing.get_origin(hint) is typing.NotRequired
+    }
+    return set(hints) - optional, optional
+
+
+def test_trace_payload_typeddict_covers_exactly_the_to_dict_keys():
+    """The `TypedDict` and `to_dict` cannot drift apart in either direction.
+
+    mypy already catches both — an extra key in the returned literal is
+    `typeddict-unknown-key`, a missing required one is `typeddict-item`, and
+    `server_traces.py` is in the CI-gated clean-module list. This asserts the
+    same thing at the value level, so the pairing is visible to a reader who
+    is not running the type checker.
+    """
+    payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    required, optional = _trace_payload_key_split()
+
+    assert set(payload) == required | optional
+    assert len(required) == 13
+    assert len(optional) == 11
+    assert set(typing.get_type_hints(server_traces.TraceListItem)) == (
+        required | optional | {"version"}
+    )
+
+
+@pytest.mark.parametrize("key", sorted(_trace_payload_key_split()[1]))
+def test_trace_payload_optional_key_is_one_from_dict_actually_defaults(key):
+    """Each `NotRequired` key must be one `from_dict` survives the absence of.
+
+    The split is derived from how `from_dict` reads each key, and nothing
+    mechanical held that derivation in place: a new field annotated on the
+    wrong side would type-check either way. Deriving it from behavior instead
+    of restating the list is what makes this a check rather than a second copy.
+    """
+    payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    del payload[key]
+
+    server.CommandTrace.from_dict(payload)
+
+
+@pytest.mark.parametrize("key", sorted(_trace_payload_key_split()[0]))
+def test_trace_payload_required_key_is_one_from_dict_demands(key):
+    """And each required key must be one whose absence is already an error."""
+    payload = _trace(1, "2026-06-25T12:01:00Z").to_dict()
+    del payload[key]
+
+    with pytest.raises(KeyError):
+        server.CommandTrace.from_dict(payload)
+
+
+def test_command_trace_store_has_no_list_attribute():
+    """The store's listing method is ``list_traces``; ``list`` is gone.
+
+    Not cosmetic: a ``list`` binding in the class body shadows the builtin for
+    every annotation below it, which is what kept this module out of the mypy
+    clean gate. A compatibility alias would reintroduce the shadow, so the
+    absence of the name is the contract.
+    """
+    store = server.CommandTraceStore()
+
+    assert not hasattr(store, "list")
+    assert callable(store.list_traces)
+
+
+def test_command_trace_sqlite_row_missing_every_optional_key_still_loads(tmp_path):
+    """A row written by an older build omits keys and must still read back.
+
+    This is what the `NotRequired` half of `TracePayload` encodes: the store
+    persists whole `to_dict` blobs, so a row predating a field simply lacks it
+    and `from_dict` defaults it. Marking those keys required would type-assert
+    a shape this reader is explicitly built to tolerate the absence of, and
+    nothing would fail at runtime to catch the mistake — hence this test.
+    """
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+    # Derived, not restated: a second hard-coded copy of the `NotRequired`
+    # half would keep passing after a key moved to the required half, which
+    # is exactly the drift the split exists to catch.
+    optional_keys = sorted(_trace_payload_key_split()[1])
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT payload_json FROM command_traces").fetchone()
+        payload = json.loads(row[0])
+        for key in optional_keys:
+            assert key in payload, f"{key} is not actually emitted by to_dict"
+            del payload[key]
+        conn.execute("UPDATE command_traces SET payload_json = ?", (json.dumps(payload),))
+        conn.commit()
+
+    (item,) = store.list_traces()
+    assert item["id"] == 1
+    assert all(key not in item for key in optional_keys)
+
+    trace = server.CommandTrace.from_dict(store.get(1))
+    assert trace.argv == ()
+    assert trace.active_scenarios == ()
+    assert trace.parsed_flags == {}
+    assert trace.latency_ms == 0.0
+    assert trace.request_id == ""
+
+
+def test_command_trace_sqlite_row_that_is_not_a_json_object_raises_typeerror(tmp_path):
+    """A malformed ``payload_json`` fails at the read boundary, not downstream.
+
+    ``_row_to_payload`` casts to ``TracePayload`` without per-field validation
+    — the row is machine-written by this same store — but a value that is not
+    a JSON object at all would otherwise flow on as a list or a string and
+    fail with an ``AttributeError`` somewhere further away. There is no store
+    API that writes one, so the bad value goes straight into the SQLite file.
+    """
+    db_path = tmp_path / "commands.sqlite"
+    store = server.CommandTraceStore(sqlite_path=db_path)
+    store.record(_trace(1, "2026-06-25T12:01:00Z", "kubectl get pods"))
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE command_traces SET payload_json = ?", ('["not", "an", "object"]',))
+        conn.commit()
+
+    with pytest.raises(TypeError, match="expected a JSON object"):
+        store.list_traces()
 
 
 def test_command_trace_sqlite_record_serializes_insert_with_sqlite_lock(tmp_path, monkeypatch):
@@ -2007,7 +2146,7 @@ def test_command_trace_sqlite_concurrent_record_and_read_is_consistent(tmp_path)
             for _ in range(50):
                 store.count()
                 store.unsupported_fingerprint_count()
-                store.list(limit=5)
+                store.list_traces(limit=5)
         except Exception as exc:  # pragma: no cover - failure path
             errors.append(exc)
 
@@ -2121,7 +2260,7 @@ def test_command_trace_sqlite_restart_searches_beyond_ring_size(amc, tmp_path):
     assert restored.traces.count() == len(commands)
     assert restored.traces.search(query="auth can-i")["total"] == 1
     assert restored.traces.search(query="old-ring-marker")["total"] == 1
-    recent = restored.traces.list(limit=10)
+    recent = restored.traces.list_traces(limit=10)
     assert [item["raw_input"] for item in recent] == list(reversed(commands))
 
 
@@ -2150,7 +2289,7 @@ def test_command_trace_sqlite_retention_limits_persisted_history(amc, tmp_path):
     assert state.traces.count() == 3
     assert state.traces.get(1) is None
     assert state.traces.search(query="old-retention-marker")["total"] == 0
-    assert [item["raw_input"] for item in state.traces.list(limit=10)] == list(reversed(commands[-3:]))
+    assert [item["raw_input"] for item in state.traces.list_traces(limit=10)] == list(reversed(commands[-3:]))
 
     restored = _build_state(
         amc,
@@ -2162,7 +2301,7 @@ def test_command_trace_sqlite_retention_limits_persisted_history(amc, tmp_path):
         trace_limit=2,
     )
     assert restored.traces.count() == 3
-    assert [item["raw_input"] for item in restored.traces.list(limit=10)] == list(reversed(commands[-3:]))
+    assert [item["raw_input"] for item in restored.traces.list_traces(limit=10)] == list(reversed(commands[-3:]))
 
 
 def test_command_trace_sqlite_get_respects_retention_below_ring_limit(tmp_path):
@@ -2176,7 +2315,7 @@ def test_command_trace_sqlite_get_respects_retention_below_ring_limit(tmp_path):
     store.record(_trace(2, "2026-06-25T12:02:00Z", "kubectl get services"))
 
     assert store.count() == 1
-    assert store.list() == [{"version": store.version, **_trace(
+    assert store.list_traces() == [{"version": store.version, **_trace(
         2,
         "2026-06-25T12:02:00Z",
         "kubectl get services",
@@ -2222,7 +2361,7 @@ def test_command_trace_export_import_round_trips_sqlite_history(amc, tmp_path):
     assert imported["imported"] == 2
     assert target.traces.count() == 2
     assert target.traces.search(query="auth can-i")["total"] == 1
-    assert target.traces.list(limit=10)[0]["raw_input"] == "kubectl auth can-i get pods -n saas-prod"
+    assert target.traces.list_traces(limit=10)[0]["raw_input"] == "kubectl auth can-i get pods -n saas-prod"
 
 
 def test_debug_http_api_records_commands(amc, tmp_path):
@@ -2604,7 +2743,7 @@ def test_security_redacts_sensitive_query_and_command_trace_values(amc, tmp_path
     assert "command-secret" not in payload
     assert result["trace"]["raw_input"] == "kubectl get pods --token '***' -n saas-prod"
     api_trace = next(
-        item for item in state.traces.list(limit=10)
+        item for item in state.traces.list_traces(limit=10)
         if item["command_family"] == "kubernetes-api"
     )
     assert api_trace["parsed_flags"]["query"]["id_token"] == ["***"]

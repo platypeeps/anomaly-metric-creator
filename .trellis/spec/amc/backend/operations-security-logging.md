@@ -42,6 +42,48 @@ booleans for integer fields. Sources:
 `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_server.py`;
 `tests/test_trace_bundle.py`.
 
+### The payload shape: `TracePayload` / `TraceListItem`
+
+`CommandTrace.to_dict()` returns a `TracePayload` — a module-level `TypedDict`
+in `server_traces.py` — and the listing paths return `TraceListItem`, which
+inherits it and adds `version: int`. Both are module-level on purpose: nested
+in `CommandTraceStore` they would sit under a class-body name shadow.
+
+The required / `NotRequired` split is derived, not chosen. A key
+`CommandTrace.from_dict` *subscripts* (directly or via `_trace_int_field`) is
+required — 13 today — because a row missing it already raises `KeyError`. A key
+`from_dict` *defaults* (via `payload.get` or `_trace_tuple_field`) is
+`NotRequired` — 11 today — because the store persists whole `to_dict` blobs and
+a row written by an older build legitimately omits it. Add a `CommandTrace`
+field and the `TypedDict` gains a key on the same side as the `from_dict` read
+you write for it. Making all keys required would type-assert a shape the reader
+is explicitly built to tolerate the absence of.
+
+The split is enforced by behavior, not by a restated list: `tests/test_server.py`
+deletes each key from a real `to_dict()` payload and asserts `from_dict` either
+survives it (optional) or raises `KeyError` (required). **Do not read the split
+from `TracePayload.__optional_keys__`** — the module uses `from __future__
+import annotations`, so the class body stores `"NotRequired[...]"` as a string,
+the `TypedDict` machinery never sees the qualifier, and every key reports as
+required at runtime. mypy is unaffected because it reads the source; runtime
+introspection must resolve first, via
+`typing.get_type_hints(..., include_extras=True)`.
+
+Two trust tiers, and they are not the same boundary:
+
+- **Imported bundles and any user-authored payload are untrusted** — decode and
+  validate the full payload before it replaces persisted history, per the rule
+  above.
+- **A row this store itself wrote is machine-written and only ever *older***.
+  `_row_to_payload` therefore checks only that the decoded value is a JSON
+  object — raising `TypeError` if not, without naming a row id, since every
+  query feeding it selects `payload_json` alone — and then casts. Per-field
+  validation on every row of a listing would be a real cost for no reachable
+  failure. Do not "harden" this into full validation without moving the cost
+  question with it.
+
+Sources: `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`.
+
 ### One row writer: `_insert_trace_row`
 
 Both SQLite write paths — `CommandTraceStore._insert_sqlite` (live insert) and

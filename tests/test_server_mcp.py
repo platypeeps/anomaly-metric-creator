@@ -683,7 +683,7 @@ def test_tools_call_records_mcp_command_trace(amc, tmp_path):
     before = state.traces.count()
     _call_tool(state, "get_current_time")
     assert state.traces.count() == before + 1
-    trace = state.traces.list(limit=1)[0]
+    trace = state.traces.list_traces(limit=1)[0]
     assert trace["command_family"] == "mcp"
     assert trace["verb"] == "get_current_time"
     assert trace["support_status"] == "supported"
@@ -713,7 +713,7 @@ def test_mcp_trace_arguments_are_redacted(amc, tmp_path):
     })
     # Whether the tool accepts or rejects the extra argument, the recorded
     # trace must never carry the raw sensitive value.
-    trace = state.traces.list(limit=1)[0]
+    trace = state.traces.list_traces(limit=1)[0]
     assert trace["command_family"] == "mcp"
     assert trace["parsed_flags"].get("token") == "***"
     assert "supersecretvalue" not in json.dumps(trace)

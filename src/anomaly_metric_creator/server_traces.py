@@ -10,12 +10,67 @@ from collections import Counter, deque
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NotRequired, TypedDict, cast
 
 
 DEFAULT_TRACE_LIMIT = 500
 COMMAND_TRACE_DB_SCHEMA_VERSION = 2
 COMMAND_TRACE_EXPORT_VERSION = 1
+
+
+class TracePayload(TypedDict):
+    """One serialized :class:`CommandTrace`, as ``to_dict`` emits it.
+
+    Member types are the JSON shapes, not the dataclass field types: ``argv``
+    and ``active_scenarios`` are tuples on the dataclass and lists here,
+    because ``to_dict`` calls ``list()`` on them and a persisted row round-trips
+    through JSON.
+
+    The required / ``NotRequired`` split is not a style choice — it mirrors how
+    :meth:`CommandTrace.from_dict` reads each key. A key it subscripts is
+    required, because a row missing it already raises ``KeyError`` today. A key
+    it defaults is ``NotRequired``, because the store persists whole payloads
+    and a row written by an older build legitimately omits it.
+    """
+
+    # Required (13): ``from_dict`` reaches these through ``payload[key]``,
+    # directly or via ``_trace_int_field``.
+    id: int
+    received_at_wall_time: str
+    simulated_time: str
+    raw_input: str
+    client: str
+    command_family: str
+    verb: str
+    resource_kind: str
+    resource_name: str
+    namespace: str
+    support_status: str
+    matched_rule_id: str
+    exit_code: int
+    # NotRequired (11): ``from_dict`` defaults these, via ``payload.get`` or
+    # ``_trace_tuple_field``.
+    argv: NotRequired[list[str]]
+    active_scenarios: NotRequired[list[str]]
+    parsed_flags: NotRequired[dict[str, Any]]
+    stdout_preview: NotRequired[str]
+    stderr_preview: NotRequired[str]
+    stdout: NotRequired[str]
+    stderr: NotRequired[str]
+    latency_ms: NotRequired[float]
+    fingerprint: NotRequired[str]
+    guessed_intent: NotRequired[str]
+    request_id: NotRequired[str]
+
+
+class TraceListItem(TracePayload):
+    """A listing row: a payload plus the store version it was read at.
+
+    Inheriting means ``{"version": v, **payload}`` checks as a
+    ``TraceListItem`` by structure, with no cast at the construction sites.
+    """
+
+    version: int
 
 
 def _trace_tuple_field(payload: dict[str, Any], key: str) -> tuple[Any, ...]:
@@ -99,7 +154,7 @@ class CommandTrace:
             request_id=payload.get("request_id", ""),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> TracePayload:
         return {
             "id": self.id,
             "received_at_wall_time": self.received_at_wall_time,
@@ -146,11 +201,6 @@ class CommandTraceStore:
       (``_jsonl_handle``, opened once and flushed per write) so JSONL
       persistence stays off the ring lock. External rotation/deletion of
       the JSONL file requires a server restart to re-open the handle.
-
-    Annotation hazard: :meth:`list` shadows the builtin throughout this class
-    body, so a bare ``list[...]`` annotation on any method here resolves to
-    the method and fails to type-check. Use ``Sequence``/``tuple``, or quote
-    the annotation. ``dict`` and ``tuple`` are unshadowed and safe.
     """
 
     def __init__(
@@ -266,7 +316,7 @@ class CommandTraceStore:
                 conn.rollback()
                 raise
 
-    def list(self, limit: int | None = None) -> list[dict[str, Any]]:
+    def list_traces(self, limit: int | None = None) -> list[TraceListItem]:
         # Clamp a negative limit to 0 so both backends agree (audit A-017):
         # the memory path's ``items[-limit:]`` would otherwise slice off the
         # front for a negative value, and SQLite's ``LIMIT -1`` means "no
@@ -286,7 +336,7 @@ class CommandTraceStore:
             for trace in reversed(items)
         ]
 
-    def get(self, trace_id: int) -> dict[str, Any] | None:
+    def get(self, trace_id: int) -> TracePayload | None:
         if self._sqlite_path is not None:
             return self._get_sqlite(trace_id)
         with self._lock:
@@ -479,11 +529,11 @@ class CommandTraceStore:
         with self._lock:
             return self._next_id
 
-    def _export_memory_traces(self) -> list[dict[str, Any]]:
+    def _export_memory_traces(self) -> list[TracePayload]:
         with self._lock:
             return [trace.to_dict() for trace in self._items]
 
-    def _export_sqlite_traces(self) -> list[dict[str, Any]]:
+    def _export_sqlite_traces(self) -> list[TracePayload]:
         with self._locked_conn() as conn:
             rows = conn.execute(
                 "SELECT payload_json FROM command_traces ORDER BY id ASC"
@@ -610,7 +660,7 @@ class CommandTraceStore:
         self,
         conn: sqlite3.Connection,
         trace: CommandTrace,
-        payload: dict[str, Any],
+        payload: TracePayload,
         *,
         delete_fts_first: bool,
     ) -> None:
@@ -713,15 +763,38 @@ class CommandTraceStore:
         if self._sqlite_fts_enabled:
             conn.execute("DELETE FROM command_traces_fts WHERE trace_id < ?", (cutoff,))
 
-    def _row_to_payload(self, row: sqlite3.Row) -> dict[str, Any]:
-        return json.loads(row["payload_json"])
+    def _row_to_payload(self, row: sqlite3.Row) -> TracePayload:
+        """Decode one ``payload_json`` cell into the payload shape.
+
+        This guard covers the read paths that route through here — listing,
+        ``get``, export, and search. ``unsupported_summary`` and
+        ``_load_sqlite_tail`` decode ``payload_json`` themselves and hand the
+        result straight to :meth:`CommandTrace.from_dict`, which subscripts it
+        and so rejects a non-object row on its own terms. Widening one guard
+        over all of them belongs to trace-export hardening, not here.
+        """
+        payload = json.loads(row["payload_json"])
+        if not isinstance(payload, dict):
+            # The error names no row id on purpose: every query feeding this
+            # helper selects ``payload_json`` alone, so ``row["id"]`` would
+            # itself raise here.
+            raise TypeError(
+                f"command_traces.payload_json decoded to "
+                f"{type(payload).__name__}, expected a JSON object"
+            )
+        # Cast rather than validate per field: unlike ``--instance-config``
+        # and ``schema.json``, this row is machine-written by this same store
+        # and only ever *older* than the current shape. The ``NotRequired``
+        # keys on ``TracePayload`` are exactly the ones an older row may omit,
+        # and ``from_dict`` already defaults them.
+        return cast(TracePayload, payload)
 
     def _list_sqlite(
         self,
         *,
         limit: int | None = None,
         status_not: str = "",
-    ) -> list[dict[str, Any]]:
+    ) -> list[TraceListItem]:
         params: list[Any] = []
         where = ""
         if status_not:
@@ -737,7 +810,7 @@ class CommandTraceStore:
             version = self._version
         return [{"version": version, **self._row_to_payload(row)} for row in rows]
 
-    def _get_sqlite(self, trace_id: int) -> dict[str, Any] | None:
+    def _get_sqlite(self, trace_id: int) -> TracePayload | None:
         with self._locked_conn() as conn:
             row = conn.execute(
                 "SELECT payload_json FROM command_traces WHERE id = ?",

@@ -17,8 +17,8 @@ gap fails here:
   ``anomalies.csv`` reloads the on-disk rows into state.
 - A-016: a zero-byte (headerless) per-component CSV yields no rows and a
   stderr warning instead of a ``StopIteration``.
-- A-017: ``CommandTraceStore.list`` clamps a negative/zero limit identically on
-  the memory and SQLite backends.
+- A-017: ``CommandTraceStore.list_traces`` clamps a negative/zero limit
+  identically on the memory and SQLite backends.
 """
 
 import datetime as _dt
@@ -311,8 +311,8 @@ def test_list_negative_or_zero_limit_agrees_across_backends(tmp_path, limit):
     _record_traces(memory, 3)
     _record_traces(sqlite, 3)
 
-    assert memory.list(limit=limit) == []
-    assert sqlite.list(limit=limit) == []
+    assert memory.list_traces(limit=limit) == []
+    assert sqlite.list_traces(limit=limit) == []
 
 
 def test_list_positive_limit_returns_same_count_across_backends(tmp_path):
@@ -321,5 +321,5 @@ def test_list_positive_limit_returns_same_count_across_backends(tmp_path):
     _record_traces(memory, 3)
     _record_traces(sqlite, 3)
 
-    assert len(memory.list(limit=2)) == 2
-    assert len(sqlite.list(limit=2)) == 2
+    assert len(memory.list_traces(limit=2)) == 2
+    assert len(sqlite.list_traces(limit=2)) == 2

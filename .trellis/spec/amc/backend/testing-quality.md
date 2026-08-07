@@ -401,7 +401,19 @@ which CI and the local review preflight both invoke; `--follow-imports=silent`
 checks imports for inference but reports only errors originating in the listed
 files, so importing still-dirty `legacy.py` does not leak into the gate. Grow
 that list as decomposition extracts clean modules; never drop one to silence a
-regression. Coverage: each pytest job runs `--cov=src/anomaly_metric_creator`
+regression. `tests/test_mypy_gate_lint.py` asserts the list's length exactly, so
+adding a module means updating that count in the same diff — the test is the
+lockstep, not a doc rule.
+
+**Never bind a builtin's name in a class body.** A method named `list`, `dict`,
+`type`, or `id` is harmless at runtime — method bodies resolve names by LEGB and
+class-body bindings are not in method scope — but mypy resolves *annotations* in
+class scope, where the name is the method object. Every bare `list[...]`
+annotation in that class then fails with `valid-type`, reported at the
+annotation site and not at the method that caused it. This kept
+`server_traces.py` out of the gate with 10 errors up to 700 lines from their
+cause (`08-06-server-traces-mypy-gate`). Rename the method; an alias
+re-creates the binding. Coverage: each pytest job runs `--cov=src/anomaly_metric_creator`
 with no inline report, renames its hidden `.coverage` to a visible lane-specific
 artifact, and uploads it; the coverage job combines both, generates
 `coverage.xml`, and only then gates with `coverage report --fail-under=85` — a

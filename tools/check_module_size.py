@@ -126,8 +126,9 @@ RATCHET: dict[str, tuple[int, str]] = {
         "debt: debug UI, not yet decomposed",
     ),
     "server_traces.py": (
-        1013,
-        "debt: trace/overlay state, not yet decomposed",
+        1086,
+        "debt: trace/overlay state, not yet decomposed; +73 for the payload "
+        "TypedDicts (08-06-server-traces-mypy-gate), a non-separable addition",
     ),
     "cli_args.py": (
         960,
