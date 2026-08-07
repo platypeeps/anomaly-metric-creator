@@ -488,6 +488,12 @@ def _check_ci(
             "python tools/check_agent_hook_exceptions.py",
         ),
         (
+            # Task-text-only PRs skip every test job, so the criteria guard's
+            # own test never runs for them; this step is its only CI lane.
+            "task-criteria CI guard",
+            "python tools/check_task_criteria_commands.py",
+        ),
+        (
             "canonical mypy gate invocation",
             "python tools/check_mypy_gate.py",
         ),

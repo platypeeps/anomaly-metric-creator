@@ -75,6 +75,18 @@ jobs:
             uv run --python 3.14 --no-project python tools/check_agent_hook_exceptions.py "${hook_files[@]}"
           fi
 
+          # Task-text-only PRs select the lightweight lane, which skips every
+          # test job — so `tests/test_task_criteria_lint.py` never runs for the
+          # exact PR shape the criteria guard exists to protect, and pre-commit
+          # does not run in CI at all. This step is the guard's only CI lane.
+          task_criteria_files=()
+          while IFS= read -r path; do
+            task_criteria_files+=("$path")
+          done < <(git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md')
+          if [ "${#task_criteria_files[@]}" -gt 0 ]; then
+            uv run --python 3.14 --no-project python tools/check_task_criteria_commands.py "${task_criteria_files[@]}"
+          fi
+
       - name: Collect changed files
         shell: bash
         env:
