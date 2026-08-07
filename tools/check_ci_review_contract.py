@@ -503,6 +503,13 @@ def _check_ci(
             "git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'",
         ),
         (
+            # Load-bearing, not defensive: with zero path operands the guard
+            # exits 2 with its usage line, so dropping this gate would turn an
+            # empty task tree into a CI failure.
+            "task-criteria empty-tree gate",
+            'if [ "${#task_criteria_files[@]}" -gt 0 ]; then',
+        ),
+        (
             "canonical mypy gate invocation",
             "python tools/check_mypy_gate.py",
         ),

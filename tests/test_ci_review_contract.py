@@ -52,7 +52,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                   uv run --python 3.14 --no-project python tools/check_role_name_leaks.py
                   uv run --python 3.14 --no-project python tools/check_agent_hook_exceptions.py
                   git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'
+                  if [ "${{#task_criteria_files[@]}}" -gt 0 ]; then
                   uv run --python 3.14 --no-project python tools/check_task_criteria_commands.py "${{task_criteria_files[@]}}"
+                  fi
               - id: classify
                 env:
                   EVENT_NAME: ${{{{ github.event_name }}}}
@@ -1512,6 +1514,10 @@ def test_full_check_runs_review_preflight(tmp_path: Path) -> None:
         (
             "git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'",
             "task-criteria live-tree roots",
+        ),
+        (
+            'if [ "${#task_criteria_files[@]}" -gt 0 ]; then',
+            "task-criteria empty-tree gate",
         ),
     ],
 )
