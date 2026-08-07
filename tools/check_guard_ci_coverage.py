@@ -86,6 +86,12 @@ must be reachable *somehow*: named by a CI job, invoked by another tracked
 script, or carrying an explicit allow marker. A lint that runs nowhere at all
 is a violation even though it has no lane.
 
+Reachability here is deliberately weaker than the lane rules: "runs somewhere"
+is not "runs in CI". `check_mypy_gate.py`'s calling script,
+`scripts/check-review-preflight.mjs`, is a local review gate that no CI job
+invokes, and that counts. Tightening this to require a CI job specifically is
+a defensible change, but it is a change in contract, not a bug fix.
+
 Nothing is skipped silently. `--list` prints both sections in full.
 
 Test freshness
@@ -146,6 +152,10 @@ TOOLS_DIR = Path("tools")
 
 # Directories searched for a tracked script that invokes an unlaned lint.
 INVOKER_DIRS = (Path("tools"), Path("scripts"))
+
+# Line prefixes that mark a whole line as commentary in the shell, Python, and
+# JavaScript sources under those directories. See `collect_invokers`.
+_COMMENT_PREFIXES = ("#", "//", "*")
 
 _ALLOW_RE = re.compile(r"#\s*guard-ci-coverage:\s*allow\s+(?P<reason>\S.*?)\s*$")
 _TOOL_RE = re.compile(r"tools/check_[a-z_0-9]+\.py")
@@ -471,19 +481,37 @@ def collect_invokers(root: Path, tracked: list[str]) -> dict[str, list[str]]:
     An unlaned lint can be reachable by being called from another script --
     `check_approval_duplicate.py` runs only from `tools/pr_comment.sh`. Test
     files do not count: a test proves the lint works, not that anything runs it.
+
+    A *mention* is not a call, and this repository is full of mentions. Two
+    exclusions keep them out, because crediting one is a false negative in the
+    single rule that catches a lint running nowhere at all:
+
+    * A wholly-commented line. `pr_comment.sh` documents the gates it runs in
+      a header block above the code that runs them, so the same path appears
+      twice and only the second occurrence is real.
+    * Any `tools/check_*.py` file as the *source*. A lint naming another lint
+      is a pin or a cross-reference, never an invocation --
+      `check_ci_review_contract.py` stores CI command text as data, and that
+      one file alone manufactured ten false edges.
     """
     invokers: dict[str, list[str]] = {}
     candidates = [
         path
         for path in tracked
         if any(path.startswith(f"{d.as_posix()}/") for d in INVOKER_DIRS)
+        and not _TOOL_RE.fullmatch(path)
     ]
     for path in candidates:
         try:
             text = (root / path).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        for tool in set(_TOOL_RE.findall(text)):
+        found: set[str] = set()
+        for line in text.splitlines():
+            if line.strip().startswith(_COMMENT_PREFIXES):
+                continue
+            found.update(_TOOL_RE.findall(line))
+        for tool in sorted(found):
             if tool == path:
                 continue
             invokers.setdefault(tool, []).append(path)
@@ -547,12 +575,21 @@ def _reaches_light(root: Path, paths: list[str], memo: dict[str, bool]) -> bool:
 
 
 def _allow_marker_in_source(root: Path, tool: str) -> str | None:
+    """Read an unlaned lint's own exemption marker.
+
+    Scanned line by line: `_ALLOW_RE` is anchored with `$`, so searching the
+    whole file at once would only ever match a marker on the final line and
+    silently ignore the header comment where anyone would actually write it.
+    """
     try:
         text = (root / tool).read_text(encoding="utf-8")
     except OSError:
         return None
-    match = _ALLOW_RE.search(text)
-    return match.group("reason") if match else None
+    for line in text.splitlines():
+        match = _ALLOW_RE.search(line)
+        if match:
+            return match.group("reason")
+    return None
 
 
 def analyse(root: Path) -> tuple[list[Guard], list[Unlaned], list[tuple[str, list[str]]]]:
