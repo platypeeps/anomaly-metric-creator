@@ -115,6 +115,40 @@ def test_final_line_without_newline_still_counts(repo: Path) -> None:
     assert "801 lines" in result.stderr
 
 
+def test_subpackage_module_over_the_cap_exits_one(repo: Path) -> None:
+    """A nested module must not escape the cap by being nested."""
+    nested = repo / PACKAGE / "server"
+    nested.mkdir(parents=True)
+    (nested / "state.py").write_text("x = 1\n" * 801, encoding="utf-8")
+    result = _patched(repo, "{}")
+    assert result.returncode == 1
+    assert "server/state.py: 801 lines" in result.stderr
+
+
+def test_subpackage_module_does_not_shadow_a_top_level_namesake(repo: Path) -> None:
+    """Keys are package-relative paths, so equal basenames stay distinct.
+
+    Keyed by basename, the nested file would overwrite the top-level one and
+    exactly one of these two violations would be reported.
+    """
+    _module(repo, "state.py", 900)
+    nested = repo / PACKAGE / "server"
+    nested.mkdir(parents=True)
+    (nested / "state.py").write_text("x = 1\n" * 950, encoding="utf-8")
+    result = _patched(repo, "{}")
+    assert result.returncode == 1
+    assert "anomaly_metric_creator/state.py: 900 lines" in result.stderr
+    assert "server/state.py: 950 lines" in result.stderr
+
+
+def test_subpackage_module_can_be_enrolled(repo: Path) -> None:
+    nested = repo / PACKAGE / "server"
+    nested.mkdir(parents=True)
+    (nested / "state.py").write_text("x = 1\n" * 1200, encoding="utf-8")
+    result = _patched(repo, "{'server/state.py': (1200, 'debt: test')}")
+    assert result.returncode == 0, result.stderr
+
+
 def test_missing_package_exits_two(tmp_path: Path) -> None:
     result = _run(tmp_path)
     assert result.returncode == 2
