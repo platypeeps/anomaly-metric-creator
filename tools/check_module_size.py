@@ -24,10 +24,24 @@ Three ways to fail, and each has one honest remedy:
 Enrolling it is the wrong move for anything but pre-existing debt.
 
 *Over its ratchet ceiling* -- an enrolled module grew. This is the case worth
-being strict about: a module already 5x the cap must only shrink. Extract the
-code you were about to add, or, if growth is genuinely the right call, raise
-that module's ceiling in the same diff so the increase is a reviewed line in
-the changeset rather than an invisible drift.
+being strict about: a module already over the cap should be trending down, not
+up, whether it sits just past 800 or several times it. Extract the code you
+were about to add, or, if growth is genuinely the right call, raise that
+module's ceiling in the same diff so the increase is a reviewed line in the
+changeset rather than an invisible drift.
+
+Both remedies are sanctioned; which one is honest depends on whether the
+addition is *separable*. Extract when it is -- a new handler, a helper cluster,
+anything that reads as a unit somewhere else. Raise the ceiling when it is not:
+a `typing` import, a widened annotation, one branch inside an existing
+function. Demanding a 1,000-line decomposition as the price of an import line
+would make the lint something to route around, and a lint people route around
+enforces nothing. The queued typing work (`server-traces-mypy-gate`,
+`audit-typed-boundaries`) is exactly this shape and should expect to bump
+ceilings rather than extract.
+
+What the ratchet actually forbids is the *unreviewed* case: growth that nobody
+had to look at. A bump is one line in the diff and someone sees it.
 
 *Under the cap while still enrolled* -- an extraction finished the job. Delete
 the entry. Left in place it would silently re-authorize 800+ lines later, which
@@ -184,10 +198,11 @@ def analyse(counts: dict[str, int]) -> list[str]:
         if lines > ceiling:
             violations.append(
                 f"{PACKAGE / name}: {lines} lines exceeds its ratchet ceiling of "
-                f"{ceiling}. This module is already over the {LINE_CAP}-line cap "
-                "and may only shrink. Extract the addition, or raise the ceiling "
-                f"in {Path(__file__).name} in this same diff so the growth is "
-                "reviewed."
+                f"{ceiling}. This module is already over the {LINE_CAP}-line cap. "
+                "Extract the addition if it is separable; otherwise -- an import, "
+                "an annotation, one branch -- raise this module's ceiling in "
+                f"{Path(__file__).name} in the same diff, so the growth is "
+                "reviewed rather than forbidden."
             )
         elif lines <= LINE_CAP:
             violations.append(

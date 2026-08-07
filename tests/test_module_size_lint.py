@@ -94,6 +94,22 @@ def test_enrolled_module_that_grew_exits_one(repo: Path) -> None:
     assert "1201 lines exceeds its ratchet ceiling of 1200" in result.stderr
 
 
+def test_growth_message_offers_both_remedies(repo: Path) -> None:
+    """Extraction and a reviewed ceiling bump are both sanctioned.
+
+    The message drifted once to "may only shrink", which reads as extract-only
+    and would demand decomposing a 1k-line module to pay for an import line.
+    The queued typing work is exactly that shape, so both remedies must stay
+    visible at the point of failure, not only in the docs.
+    """
+    _module(repo, "big.py", 1201)
+    result = _patched(repo, "{'big.py': (1200, 'debt: test')}")
+    assert result.returncode == 1
+    assert "Extract the addition if it is separable" in result.stderr
+    assert "raise this module's ceiling" in result.stderr
+    assert "may only shrink" not in result.stderr
+
+
 def test_enrolled_module_that_shrank_below_the_cap_exits_one(repo: Path) -> None:
     """A finished extraction must delete its entry, not leave it re-authorizing."""
     _module(repo, "big.py", 400)
