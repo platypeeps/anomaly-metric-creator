@@ -639,6 +639,51 @@ def test_live_repository_guard_coverage_is_clean() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def _listed_lints(stdout: str) -> set[str]:
+    """The first token of every row in `--list`'s two inventory sections.
+
+    Exact tokens, not substring containment: with containment a lint whose
+    name is a prefix of another (`check_trace.py` beside
+    `check_trace_payload_antipatterns.py`) reads as present while absent, and
+    this is the one test asserting the inventory is complete.
+
+    The trailing quick-lane section is deliberately excluded. It also prints
+    lint basenames, so counting it would let a lint that appears *only* there
+    satisfy the assertion -- while being missing from the inventory is exactly
+    the condition under test.
+    """
+    inventory = {"laned", "unlaned"}
+    section: str | None = None
+    names: set[str] = set()
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        if not line.startswith("  "):
+            section = line.split()[0].rstrip(":")
+            continue
+        if section in inventory:
+            names.add(line.split()[0])
+    return names
+
+
+def test_listed_lints_matches_whole_tokens_not_substrings() -> None:
+    """The completeness check must not be satisfied by a prefix collision."""
+    stdout = (
+        "laned (file-selecting hook -- full per-lane obligation):\n"
+        "  check_trace_payload_antipatterns.py  hook=trace by=files needs=QUICK\n"
+        "\nunlaned (no file-selecting hook -- must merely run somewhere):\n"
+        "  check_mypy_gate.py  no pre-commit hook; ci jobs: test_light\n"
+        "\nlints whose own tests never run in the QUICK lane:\n"
+        "  check_orphan.py  test_orphan_lint.py\n"
+    )
+    listed = _listed_lints(stdout)
+    assert listed == {"check_trace_payload_antipatterns.py", "check_mypy_gate.py"}
+    # The prefix would pass a containment test; it must not pass this one.
+    assert "check_trace.py" not in listed
+    # Present only in the quick-lane section, so absent from the inventory.
+    assert "check_orphan.py" not in listed
+
+
 def test_live_listing_accounts_for_every_lint_on_disk() -> None:
     """The inventory is enumerated from disk, so nothing can be silently skipped."""
     result = subprocess.run(
@@ -650,6 +695,6 @@ def test_live_listing_accounts_for_every_lint_on_disk() -> None:
     )
     assert result.returncode == 0, result.stderr
     on_disk = {path.name for path in (REPO_ROOT / "tools").glob("check_*.py")}
-    listed = {name for name in on_disk if name.removesuffix(".py") in result.stdout}
-    missing = on_disk - listed
-    assert not missing, f"lints absent from --list output: {sorted(missing)}"
+    listed = _listed_lints(result.stdout)
+    assert not on_disk - listed, f"lints absent from --list: {sorted(on_disk - listed)}"
+    assert not listed - on_disk, f"--list names absent from disk: {sorted(listed - on_disk)}"
