@@ -371,6 +371,7 @@ jobs:
             tests/test_approval_duplicate_lint.py \
             tests/test_branch_name_lint.py \
             tests/test_guard_ci_coverage_lint.py \
+            tests/test_module_size_lint.py \
             tests/test_mypy_gate_lint.py \
             tests/test_role_name_leaks_lint.py \
             tests/test_task_criteria_lint.py \
