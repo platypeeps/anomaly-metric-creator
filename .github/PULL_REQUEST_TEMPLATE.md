@@ -3,7 +3,15 @@
 <!-- 1-3 bullets describing what changed and why. Name every behavior change in the diff. -->
 <!-- For broad automation, CI/review, generated/tooling, user-facing docs, or
 runtime/server changes, add the applicable explicit scope section described in
-docs/DEVELOPMENT_CYCLE.md. -->
+docs/DEVELOPMENT_CYCLE.md. The guard matches these exact strings and nothing
+else, so a similar-looking heading of your own will not satisfy it:
+  Automation scope:
+  CI/review scope:
+  Tooling/generated scope:
+  Docs/user-facing scope:
+  Runtime/server scope:
+Note that finish-work's journal commit adds .trellis/workspace/** and so
+triggers the tooling/generated category even on an otherwise docs-only PR. -->
 
 ## Test plan
 
