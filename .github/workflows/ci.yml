@@ -289,6 +289,7 @@ jobs:
 
           uv run --python 3.14 --no-project python tools/check_ci_review_contract.py
           uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
+          uv run --python 3.14 --no-project python tools/check_scope_heading_mirrors.py
           uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
 
   quick_check:
@@ -374,6 +375,7 @@ jobs:
             tests/test_module_size_lint.py \
             tests/test_mypy_gate_lint.py \
             tests/test_role_name_leaks_lint.py \
+            tests/test_scope_heading_mirrors_lint.py \
             tests/test_task_criteria_lint.py \
             tests/test_test_resource_cost_lint.py
           uv run --no-sync pytest -q tests/test_server.py -k "apply or rollout"
