@@ -136,6 +136,37 @@ Sources: `tools/check_task_criteria_commands.py`;
 `.trellis/tasks/08-06-otlp-capture-fixture/prd.md`;
 `.trellis/tasks/07-17-audit-test-harness-dedupe/prd.md`.
 
+A pair of criteria written as exclusive `If X … / If not X …` branches always
+leaves one box unchecked, and the pre-archive gate counts unchecked boxes — it
+blocks on `pre_archive_acceptance_incomplete` without knowing the branch was
+unreachable. Writing the design choice as two criteria is still right: it keeps
+the decision legible instead of silently deleting the road not taken. Check
+**both** boxes and mark the unreachable one explicitly, naming the branch that
+was taken and why, rather than deleting it or leaving the gate to be argued
+with:
+
+Both criteria of the pair carry a tick, and the pair is introduced so a reader
+knows why one of them cannot have been exercised:
+
+```markdown
+The last two criteria are the two exclusive branches of the shape decision.
+The **rename** branch was taken, so the first is the one that had to be
+satisfied and the second is recorded as not-taken rather than deleted.
+
+- [x] If the method was renamed, no caller uses the old name:
+      `grep -rn '\.list(' src/ tests/` returns 0 matches.
+- [x] If the method name was kept, the mechanical lint exists, has tests, and
+      fails on a bare `list[...]` annotation added inside `CommandTraceStore`.
+      → **branch not taken.** The rename branch was taken instead
+      (`CommandTraceStore.list` → `list_traces`), so no lint is required.
+```
+
+Sources: `.trellis/tasks/archive/2026-08/08-06-server-traces-mypy-gate/prd.md`;
+`tests/test_task_criteria_lint.py`;
+`.trellis/tasks/08-06-conftest-helper-consolidation/prd.md`;
+`.trellis/tasks/08-06-otlp-capture-fixture/prd.md`;
+`.trellis/tasks/07-17-audit-test-harness-dedupe/prd.md`.
+
 ## Repository Map Artifact
 
 `docs/repomix-map.md` is the generated Repomix repository map for quick human
