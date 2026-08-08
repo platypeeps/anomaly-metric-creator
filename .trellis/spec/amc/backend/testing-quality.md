@@ -380,6 +380,22 @@ is the accepted cost of the "every merge commit gets a completed verdict"
 guarantee, not a bug. Sources: `.github/workflows/ci.yml`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
 
+On the *pull-request* side that same cancellation is not free, so **order the
+lifecycle events to leave exactly one run in flight at the end**: apply
+`full-ci` and take the PR out of draft *before* pushing the finish-work
+bookkeeping commits, not after. Each of `ready_for_review`, `labeled`, and a
+push starts a run whose concurrency group cancels the in-flight one, and the
+cancelled run's rows stay attached to the head in `statusCheckRollup` beside
+their replacements. GitHub's own branch protection resolves this correctly — it
+evaluates the latest result per context name — but a merge-eligibility probe
+that classifies each rollup row independently counts every `CANCELLED` row as
+blocking and refuses a PR that GitHub reports `CLEAN` / `MERGEABLE`. On PR #360
+that cost a full watch budget plus a `gh run rerun` of the superseded run purely
+to stop its rows being cancelled; no check had failed. The rows are the
+observable symptom of a *correct* cancellation, so nothing in this repository's
+workflows needs changing — only the event order does. Sources:
+`.github/workflows/ci.yml`; `docs/DEVELOPMENT_CYCLE.md`.
+
 All events run on the standard `ubuntu-latest` runner. The org's
 `ubuntu-latest-m` larger runner stopped being served on 2026-07-04 — main-push
 jobs sat queued for hours with `runner_id=0`, so the post-merge backstop never
@@ -950,6 +966,14 @@ they do not cost a review cycle:
   regardless of emit selection; only the final write is gated, so the OOM the
   cap prevents still happens. Only the `combine`/`validate` subcommands (which
   `return` before generation) are safe skips (#35).
+- **"The ratchet ceiling is off by one — the file really has N+1 physical
+  lines (it ends with a trailing blank line)."** False, and it recurs on every
+  ceiling bump because a bump is the one diff that puts a raw line count in
+  front of a reviewer. `tools/check_module_size.py` counts what `wc -l` counts,
+  its own docstring states the rule, and a file ending in a single `\n`
+  terminator has no trailing blank line to count. Settle it with `wc -l` on the
+  file at current `HEAD` rather than by reasoning about newline semantics
+  (#360).
 
 For any version-sensitive claim about a tool's semantics (Actions, uv,
 Dependabot, pytest), confirm against current docs before accepting — Copilot's

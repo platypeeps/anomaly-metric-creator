@@ -136,6 +136,28 @@ Sources: `tools/check_task_criteria_commands.py`;
 `.trellis/tasks/08-06-otlp-capture-fixture/prd.md`;
 `.trellis/tasks/07-17-audit-test-harness-dedupe/prd.md`.
 
+A pair of criteria written as exclusive `If X … / If not X …` branches always
+leaves one box unchecked, and the pre-archive gate counts unchecked boxes — it
+blocks on `pre_archive_acceptance_incomplete` without knowing the branch was
+unreachable. Writing the design choice as two criteria is still right: it keeps
+the decision legible instead of silently deleting the road not taken. Check
+**both** boxes and mark the unreachable one explicitly, naming the branch that
+was taken and why, rather than deleting it or leaving the gate to be argued
+with:
+
+```markdown
+- [x] If the method name was kept, the mechanical lint exists, has tests, and
+      fails on a bare `list[...]` annotation added inside `CommandTraceStore`.
+      → **branch not taken.** The rename branch was taken instead
+      (`CommandTraceStore.list` → `list_traces`), so no lint is required.
+```
+
+Sources: `.trellis/tasks/archive/2026-08/08-06-server-traces-mypy-gate/prd.md`;
+`tests/test_task_criteria_lint.py`;
+`.trellis/tasks/08-06-conftest-helper-consolidation/prd.md`;
+`.trellis/tasks/08-06-otlp-capture-fixture/prd.md`;
+`.trellis/tasks/07-17-audit-test-harness-dedupe/prd.md`.
+
 ## Repository Map Artifact
 
 `docs/repomix-map.md` is the generated Repomix repository map for quick human
