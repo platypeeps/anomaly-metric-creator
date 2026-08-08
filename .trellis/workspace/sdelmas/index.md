@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 67
+- **Total Sessions**: 68
 - **Last Active**: 2026-08-07
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~872 | Active |
+| `journal-2.md` | ~915 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 68 | 2026-08-07 | Capture three review learnings from shipping PR #360 | `f1f8f82`, `2b8f031` | `sdelmas/08-07-capture-ship-review-learnings` |
 | 67 | 2026-08-07 | Unblock server_traces.py for the mypy clean gate | `a84111a`, `bad43ac`, `eb6fbc9`, `5a6de6d` | `sdelmas/08-07-server-traces-mypy-gate` |
 | 66 | 2026-08-06 | A-031: dedupe the SQLite trace INSERT across both CommandTraceStore write paths | `17c5e2f`, `00bccc5`, `2d90b9e`, `5a7596d`, `db93eb0`, `3646758`, `5fc3fcb`, `06223c4` | `sdelmas/08-06-trace-row-insert-dedupe` |
 | 65 | 2026-08-06 | Extract server_ops_explain and server_ops_payloads (epic step 6a) | `df36daf`, `4dc6633`, `cc58fbc`, `7c21817`, `202c4f4`, `9cdf3c0` | `sdelmas/08-05-server-ops-explain-payload-extract` |

@@ -874,3 +874,45 @@ Renamed CommandTraceStore.list to list_traces, removing the class-body binding t
 ### Next Steps
 
 - None - task complete
+
+
+## Session 68: Capture three review learnings from shipping PR #360
+
+**Date**: 2026-08-07
+**Task**: Capture three review learnings from shipping PR #360
+**Package**: amc
+**Branch**: `sdelmas/08-07-capture-ship-review-learnings`
+
+### Summary
+
+Docs-only maintenance branch. Wrote down three patterns from the PR #360 ship cycle that had cost a review round or a watch budget and were recorded nowhere: a recurring Copilot false positive about the module-size ratchet's line counting, the pull-request-side CI concurrency ordering hazard that leaves CANCELLED rollup rows a per-row eligibility probe counts as blocking, and the pre-archive gate deadlock caused by exclusive If X / If not X acceptance criteria. All three are prose-only by nature, so no tools/check_*.py lint was warranted.
+
+### Main Changes
+
+- testing-quality.md: sixth entry in the Known Copilot false positives catalogue, covering the ratchet line-count claim that recurs on every ceiling bump
+- testing-quality.md: new paragraph on PR-side concurrency, documenting that ready_for_review / labeled / push each cancel the in-flight run and that the remedy is event order, not a workflow change
+- documentation-review.md: rule and worked example for exclusive If X / If not X acceptance criteria, which always leave one box unchecked and block the pre-archive gate
+- Applied both Copilot findings: the wc -l equivalence claim was imprecise against _count_lines, and the criteria example showed only one of the two branches
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f1f8f82` | docs(spec): capture three review learnings from shipping PR #360 |
+| `2b8f031` | docs(spec): tighten the two claims Copilot flagged on the learnings capture |
+
+### Testing
+
+- [OK] pre-commit on both changed files: role-name leaks, CI/review cadence contract, Copilot instruction contract all Passed; every other hook reported no files to check
+- [OK] tools/check_task_criteria_commands.py .trellis/tasks exit 0
+- [OK] git diff --check exit 0
+- [OK] PR #361 CI Result COMPLETED/SUCCESS; docs-only diff routed to the lightweight readiness lane as designed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
