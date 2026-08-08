@@ -145,7 +145,16 @@ the decision legible instead of silently deleting the road not taken. Check
 was taken and why, rather than deleting it or leaving the gate to be argued
 with:
 
+Both criteria of the pair carry a tick, and the pair is introduced so a reader
+knows why one of them cannot have been exercised:
+
 ```markdown
+The last two criteria are the two exclusive branches of the shape decision.
+The **rename** branch was taken, so the first is the one that had to be
+satisfied and the second is recorded as not-taken rather than deleted.
+
+- [x] If the method was renamed, no caller uses the old name:
+      `grep -rn '\.list(' src/ tests/` returns 0 matches.
 - [x] If the method name was kept, the mechanical lint exists, has tests, and
       fails on a bare `list[...]` annotation added inside `CommandTraceStore`.
       → **branch not taken.** The rename branch was taken instead

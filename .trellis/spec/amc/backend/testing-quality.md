@@ -969,11 +969,14 @@ they do not cost a review cycle:
 - **"The ratchet ceiling is off by one — the file really has N+1 physical
   lines (it ends with a trailing blank line)."** False, and it recurs on every
   ceiling bump because a bump is the one diff that puts a raw line count in
-  front of a reviewer. `tools/check_module_size.py` counts what `wc -l` counts,
-  its own docstring states the rule, and a file ending in a single `\n`
-  terminator has no trailing blank line to count. Settle it with `wc -l` on the
-  file at current `HEAD` rather than by reasoning about newline semantics
-  (#360).
+  front of a reviewer. A file ending in a single `\n` terminator has no
+  trailing blank line to count, so `wc -l` on the file at current `HEAD`
+  settles it — not reasoning about newline semantics. `wc -l` is the right
+  arbiter here because `tools/check_module_size.py` agrees with it on every
+  newline-terminated file; the two diverge only for a file whose last line has
+  *no* terminator, which the lint counts and `wc -l` does not. That divergence
+  is deliberate and documented in the lint's own Counting section, and it moves
+  the count in the opposite direction from the one the flag claims (#360).
 
 For any version-sensitive claim about a tool's semantics (Actions, uv,
 Dependabot, pytest), confirm against current docs before accepting — Copilot's
