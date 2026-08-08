@@ -161,6 +161,16 @@ repos:
         language: python
         files: ^(\.github/(instructions/anomaly-metric-creator\.instructions\.md|PULL_REQUEST_TEMPLATE\.md|agents/trellis-.*\.agent\.md|skills/trellis-.+|copilot/hooks.*|hooks/trellis\.json|prompts/.*)|\.agents/skills/sd-.+|\.gemini/commands/sd/.+|\.opencode/commands/sd-.+|docs/SD_AI_COMMAND_PACK\.md|scripts/(sd-ai-command-pack-(full-check|housekeeping|review-scope|review-local))\.sh|scripts/(check-review-preflight\.mjs|sd-ai-command-pack-(install-audit|pr-body-scope|review-learnings|update-spec-kb)\.py)|tools/check_copilot_instruction_contract\.py|tests/test_pr_body_scope_lint\.py|\.sd-ai-command-pack/pr-body-scope\.json|\.trellis/spec/amc/backend/(testing-quality|documentation-review)\.md)$
         pass_filenames: false
+      # Keep every prose description of the PR-body scope guard naming the same
+      # category headings the guard recognizes. The heading set is derived from
+      # the guard itself, so a category added in the config or the script's
+      # defaults fails until all five mirrors say so.
+      - id: scope-heading-mirrors
+        name: guard PR-body scope heading mirrors
+        entry: python tools/check_scope_heading_mirrors.py
+        language: python
+        files: ^(\.github/(PULL_REQUEST_TEMPLATE\.md|copilot-instructions\.md|instructions/anomaly-metric-creator\.instructions\.md)|docs/DEVELOPMENT_CYCLE\.md|\.trellis/spec/amc/backend/documentation-review\.md|scripts/sd-ai-command-pack-pr-body-scope\.py|tools/check_scope_heading_mirrors\.py|\.sd-ai-command-pack/pr-body-scope\.json)$
+        pass_filenames: false
       # Forbid `except BaseException` / bare `except` in generated Python hook
       # adapters and require a short reason on intentionally empty
       # `except Exception: pass` handlers. This keeps the PR #140 hook-adapter

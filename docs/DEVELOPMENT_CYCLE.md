@@ -62,12 +62,26 @@ When a PR body exists, pass it to local preflight with
 `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY` or
 `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`, or write it to a file and run
 `python scripts/sd-ai-command-pack-pr-body-scope.py --body-file <path>`.
-The scope guard reads `.sd-ai-command-pack/pr-body-scope.json` and
-fails broad behavior-changing diffs unless the body contains the matching
-`Automation scope:`, `CI/review scope:`,
-`Tooling/generated scope:`, `Docs/user-facing scope:`, or
-`Runtime/server scope:` section. Without a body, it reports detected categories
-and exits successfully so the same command remains useful before a PR exists.
+The scope guard reads `.sd-ai-command-pack/pr-body-scope.json`, merges it with
+the rule defaults in `scripts/sd-ai-command-pack-pr-body-scope.py`, and fails
+broad behavior-changing diffs unless the body contains the matching scope
+section. The five canonical headings are `Automation scope:`,
+`CI/review scope:`, `Tooling/generated scope:`, `Docs/user-facing scope:`, and
+`Runtime/server scope:`.
+
+Matching is more permissive than those five literals, so a body that reads
+naturally still passes. `_body_has_heading` anchors each heading to the start of
+a line, but tolerates Markdown heading, list, and blockquote prefixes, matches
+case-insensitively, and treats the trailing colon as optional — so
+`### Docs/user-facing scope:` and `> Docs scope:` both satisfy the docs rule.
+Each rule also carries documented aliases (`Docs scope:`,
+`Generated/tooling scope:`, `Workflow scope:`, and others); the merged config
+plus script defaults are the authority for the full set, not this list.
+
+What the guard will not accept is an invented heading: `Explicit doc scope`
+matches no rule and leaves the section unsatisfied even though it reads like
+compliance. Without a body, the command reports detected categories and exits
+successfully so it remains useful before a PR exists.
 
 Before marking a PR ready, requesting a final remote review, or applying the
 `full-ci` label, run the local gate with Prism enabled when practical:

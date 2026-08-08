@@ -248,6 +248,7 @@ in its own module docstring. Read the script, not a copy of it.
 | `tools/check_copilot_instruction_contract.py` | checklist-heading lockstep across the spec, template, and Copilot instructions |
 | `tools/check_task_criteria_commands.py` | quoted acceptance-criteria commands in `.trellis/tasks/**/*.md` that cannot produce the output they claim |
 | `tools/check_guard_ci_coverage.py` | every `tools/check_*.py` on disk running in each of the three CI lanes (LIGHT / QUICK / FULL) its watched files can select, and each lint's own test file running in the QUICK lane; `--list` prints the per-lint coverage table |
+| `tools/check_scope_heading_mirrors.py` | every prose description of the PR-body scope guard naming the category headings the guard actually recognizes, derived from `scripts/sd-ai-command-pack-pr-body-scope.py` merged with `.sd-ai-command-pack/pr-body-scope.json` rather than from a stored list; `--list` prints the mirror table |
 | `tools/check_trellis_placeholders.py`, `tools/check_python_syntax.py`, `tools/check_agent_hook_exceptions.py`, `tools/check_trace_payload_antipatterns.py` | placeholder, syntax, hook-exception, and trace-payload shapes |
 
 `tools/benchmark_combine.py` is the one intentional exception to the
