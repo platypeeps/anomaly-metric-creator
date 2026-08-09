@@ -203,6 +203,34 @@ def test_real_repo_contract_is_clean() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_own_location_full_check_shape_passes(tmp_path: Path) -> None:
+    """Bare-name needles must match the own-location full-check shape.
+
+    sd-ai-command-pack >= 0.65 resolves pack siblings from the script's
+    own location (``local name="sd-ai-command-pack-..."``) instead of
+    ``scripts/``-prefixed literals; the guard must accept both shapes.
+    """
+    _write_minimal_contract(tmp_path)
+    _write(
+        tmp_path / "scripts/sd-ai-command-pack-full-check.sh",
+        """
+        run_review_preflight
+        local name="sd-ai-command-pack-review-preflight.mjs"
+        scripts/check-review-preflight.mjs
+        run_sd_ai_command_pack_install_audit
+        local name="sd-ai-command-pack-install-audit.py"
+        run_sd_ai_command_pack_scope_check
+        local name="sd-ai-command-pack-review-scope.sh"
+        run_sd_ai_command_pack_pr_body_scope_check
+        local name="sd-ai-command-pack-pr-body-scope.py"
+        """,
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_minimal_contract_fixture_passes(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
 

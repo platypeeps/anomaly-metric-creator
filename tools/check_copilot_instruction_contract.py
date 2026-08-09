@@ -393,16 +393,22 @@ def _check_copied_paths(root: Path, copilot_text: str, violations: list[str]) ->
 
 def _check_full_check_wiring(root: Path, text: str, violations: list[str]) -> None:
     path = root / REQUIRED_FILES["full_check"]
+    # Pack-script needles are bare names: newer vendored full-check copies
+    # (sd-ai-command-pack >= 0.65) resolve pack siblings from their own
+    # location, while the currently vendored copy still uses
+    # scripts/-prefixed paths. A bare name matches both shapes.
+    # scripts/check-review-preflight.mjs stays prefixed - it is genuinely
+    # repo-local.
     for label, needle in [
         ("review preflight runner", "run_review_preflight"),
-        ("shared review preflight script", "scripts/sd-ai-command-pack-review-preflight.mjs"),
+        ("shared review preflight script", "sd-ai-command-pack-review-preflight.mjs"),
         ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
         ("SD AI command-pack install audit runner", "run_sd_ai_command_pack_install_audit"),
-        ("SD AI command-pack install audit script", "scripts/sd-ai-command-pack-install-audit.py"),
+        ("SD AI command-pack install audit script", "sd-ai-command-pack-install-audit.py"),
         ("SD AI command-pack scope runner", "run_sd_ai_command_pack_scope_check"),
-        ("SD AI command-pack scope script", "scripts/sd-ai-command-pack-review-scope.sh"),
+        ("SD AI command-pack scope script", "sd-ai-command-pack-review-scope.sh"),
         ("PR body scope runner", "run_sd_ai_command_pack_pr_body_scope_check"),
-        ("PR body scope script", "scripts/sd-ai-command-pack-pr-body-scope.py"),
+        ("PR body scope script", "sd-ai-command-pack-pr-body-scope.py"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
