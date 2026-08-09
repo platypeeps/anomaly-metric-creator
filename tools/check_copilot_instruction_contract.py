@@ -393,11 +393,12 @@ def _check_copied_paths(root: Path, copilot_text: str, violations: list[str]) ->
 
 def _check_full_check_wiring(root: Path, text: str, violations: list[str]) -> None:
     path = root / REQUIRED_FILES["full_check"]
-    # Pack-script needles are bare names: the vendored full-check resolves
-    # pack siblings from its own location (sd-ai-command-pack >= 0.65),
-    # while older copies used scripts/-prefixed paths. A bare name matches
-    # both shapes. scripts/check-review-preflight.mjs stays prefixed - it
-    # is genuinely repo-local.
+    # Pack-script needles are bare names: newer vendored full-check copies
+    # (sd-ai-command-pack >= 0.65) resolve pack siblings from their own
+    # location, while the currently vendored copy still uses
+    # scripts/-prefixed paths. A bare name matches both shapes.
+    # scripts/check-review-preflight.mjs stays prefixed - it is genuinely
+    # repo-local.
     for label, needle in [
         ("review preflight runner", "run_review_preflight"),
         ("shared review preflight script", "sd-ai-command-pack-review-preflight.mjs"),
