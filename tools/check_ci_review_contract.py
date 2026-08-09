@@ -1063,12 +1063,16 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
 def _check_full_check(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("review preflight runner", "run_review_preflight"),
-        ("shared review preflight script", "scripts/sd-ai-command-pack-review-preflight.mjs"),
+        # Pack-script needles are bare names: the vendored full-check resolves
+        # pack siblings from its own location (sd-ai-command-pack >= 0.65),
+        # while older copies used scripts/-prefixed paths. A bare name matches
+        # both shapes.
+        ("shared review preflight script", "sd-ai-command-pack-review-preflight.mjs"),
         ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
         ("SD AI command-pack install audit runner", "run_sd_ai_command_pack_install_audit"),
-        ("SD AI command-pack install audit script", "scripts/sd-ai-command-pack-install-audit.py"),
+        ("SD AI command-pack install audit script", "sd-ai-command-pack-install-audit.py"),
         ("SD AI command-pack scope runner", "run_sd_ai_command_pack_scope_check"),
-        ("SD AI command-pack scope script", "scripts/sd-ai-command-pack-review-scope.sh"),
+        ("SD AI command-pack scope script", "sd-ai-command-pack-review-scope.sh"),
         ("CI classification report", "run_ci_classification_report"),
         ("package script runner", "SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_SCRIPTS"),
         ("Prism fail threshold", "SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON"),
@@ -1076,7 +1080,7 @@ def _check_full_check(path: Path, text: str, violations: list[str]) -> None:
         ("Prism rules override", "SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES"),
         ("Gito opt-in", "SD_AI_COMMAND_PACK_FULL_CHECK_GITO"),
         ("PR body scope runner", "run_sd_ai_command_pack_pr_body_scope_check"),
-        ("PR body scope script", "scripts/sd-ai-command-pack-pr-body-scope.py"),
+        ("PR body scope script", "sd-ai-command-pack-pr-body-scope.py"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
