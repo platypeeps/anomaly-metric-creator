@@ -94,7 +94,7 @@ same controls and attempt while resuming an unchanged head. The controller's
 private state and durable receipt make a resume idempotent; do not delete state
 or increment the attempt merely because a receipt is delayed.
 
-Two coordinator-only evidence flags are not public invocation controls. After
+Three coordinator-only evidence flags are not public invocation controls. After
 replying with a verified rebuttal to a receipt-declared conversation finding or
 changes-requested review that has no resolvable thread, rerun the unchanged
 attempt with one separate `--remote-disposition '<stable-id>=rebutted'` argv
@@ -102,6 +102,21 @@ pair. Never use this for an unfixed finding or as a substitute for resolving an
 inline thread. After the user approves `review.round-extension`, add
 `--round-extension-authorized` to the approved over-limit attempt; never infer
 that authorization from ordinary review arguments.
+
+A local provider finding you have verified false takes the matching
+`--local-disposition '<stable-id>=rebutted'` pair. The bar is the same as the
+remote one and it is high: rebut only after checking the cited path and line in
+the checkout and finding the claim untrue there — a finding that is merely
+low-severity, inconvenient, or hard to fix is outstanding, not rebutted. The
+finding stays in the receipt as `rebutted` so the judgement remains auditable,
+and the pair applies to one attempt at one head; a later head needs its own
+deliberate rebuttal. An id matching no finding at that head is an error, not a
+silent no-op.
+
+Two provider misreads are common enough to name, and both are rebuttals rather
+than fixes: fenced code blocks quoted inside a Markdown document read as if they
+were the diff's own source, and a cited defect that is simply not present at the
+cited line. Verify against the checkout either way.
 
 ## Interpret the typed result
 

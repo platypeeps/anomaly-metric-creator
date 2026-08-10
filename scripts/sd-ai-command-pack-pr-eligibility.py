@@ -531,6 +531,13 @@ def parse_pr(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, A
         "mergeStateStatus": require_pr_string(
             value.get("mergeStateStatus"), "mergeStateStatus"
         ),
+        # Advisory only: used to enrich a non-CLEAN block diagnosis (finding #2).
+        # Never gates eligibility, so a missing/unknown value is tolerated.
+        "mergeable": (
+            value["mergeable"]
+            if isinstance(value.get("mergeable"), str)
+            else None
+        ),
     }
     checks, blocking, successful = parse_checks(value.get("statusCheckRollup"))
     return pr, checks, blocking, successful
@@ -551,7 +558,7 @@ def query_pr(
             "--repo",
             slug,
             "--json",
-            "number,state,isDraft,url,headRefName,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup",
+            "number,state,isDraft,url,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,statusCheckRollup",
         ],
         repo,
         GH_TIMEOUT_SECONDS,
@@ -651,6 +658,118 @@ def collect_threads(
     }
 
 
+def classify_non_clean_merge_state(
+    pr: Mapping[str, Any],
+    blocking_checks: int,
+    successful_checks: int,
+    *,
+    repo: Path,
+    slug: str,
+    number: int,
+    runner: Runner,
+    evidence: dict[str, Any],
+) -> tuple[list[str], str]:
+    """Diagnose a non-CLEAN mergeStateStatus into an actionable reason (finding #2).
+
+    ADDITIVE-ONLY: this never changes the verdict. Every caller still returns
+    ``status="blocked"`` and never reaches ``gh pr merge``; this only replaces
+    the generic ``merge_state_not_clean`` with a specific, actionable reason code
+    and message so a settle-watch stops polling a state that needs a bounded
+    operator action instead of timing out. A missing/unknown signal degrades to
+    the generic block — it never invents eligibility.
+    """
+    mss = pr["mergeStateStatus"]
+    mergeable = pr.get("mergeable")
+    generic = (
+        ["merge_state_not_clean"],
+        f"PR #{number} merge state is {mss}, not CLEAN; skipped auto-merge",
+    )
+
+    # Merge conflicts are their own actionable class.
+    if mergeable == "CONFLICTING" or mss == "DIRTY":
+        return (
+            ["merge_blocked_conflicts"],
+            f"PR #{number} has merge conflicts (mergeStateStatus {mss}); "
+            "rebase or resolve conflicts, then re-run",
+        )
+    # Out-of-date branch under strict protection.
+    if mss == "BEHIND":
+        return (
+            ["merge_blocked_out_of_date"],
+            f"PR #{number} is behind its base (mergeStateStatus BEHIND); "
+            "update the branch, then re-run",
+        )
+    # A BLOCKED PR with no pending/failing checks and at least one green check is
+    # usually held on unresolved review threads under
+    # required_conversation_resolution — a bounded operator action, not a
+    # transient state.
+    if mss == "BLOCKED" and blocking_checks == 0 and successful_checks > 0:
+        try:
+            threads = collect_threads(repo, slug, number, runner)
+        except EligibilityInputError:
+            # Unknown → no extra anomaly beyond the generic block.
+            return generic
+        evidence["reviewThreads"] = threads
+        if threads["unresolvedCount"] > 0:
+            return (
+                ["merge_blocked_conversation"],
+                f"PR #{number} is mergeable with checks green but blocked; "
+                f"resolve {threads['unresolvedCount']} unresolved review "
+                "thread(s), then re-run",
+            )
+        return (
+            ["merge_blocked_review"],
+            f"PR #{number} is mergeable with checks green but blocked "
+            "(mergeStateStatus BLOCKED); a required approval or branch-protection "
+            "rule is unsatisfied",
+        )
+    return generic
+
+
+def github_slug_from_remote_url(url: str) -> str | None:
+    """Parse an owner/repo slug out of a GitHub remote URL.
+
+    Mirrors ``github_repo_from_remote_url`` in
+    ``sd-ai-command-pack-housekeeping.sh``; the two must accept the same URL
+    forms, or a repository whose merge gate resolves the slug fine still gets
+    ``github_repository_unavailable`` from this probe.
+    """
+    prefixes = (
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+        "http://github.com/",
+    )
+    slug = None
+    for prefix in prefixes:
+        if url.startswith(prefix):
+            slug = url[len(prefix) :]
+            break
+    if slug is None:
+        return None
+    # Same order as the shell twin's ${slug%.git} then ${slug%/}; reversing it
+    # would make the two accept different URLs.
+    slug = slug.removesuffix(".git").removesuffix("/")
+    if not GITHUB_SLUG_RE.fullmatch(slug):
+        return None
+    return slug
+
+
+def derive_github_slug(repo: Path, remote: object, runner: Runner) -> str | None:
+    """Resolve the slug from ``git remote get-url <remote>``, or None."""
+    if not isinstance(remote, str) or not remote:
+        return None
+    result = runner(
+        ["git", "remote", "get-url", remote], repo, COMMAND_TIMEOUT_SECONDS
+    )
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    if not url or CONTROL_RE.search(url):
+        return None
+    return github_slug_from_remote_url(url)
+
+
 def evaluate_dependency_request(
     request: Mapping[str, Any],
     *,
@@ -691,6 +810,8 @@ def evaluate_dependency_request(
             now(),
         )
     slug = request.get("githubRepository")
+    if not isinstance(slug, str):
+        slug = derive_github_slug(repo, request.get("remote"), runner)
     if not isinstance(slug, str):
         return invalid_result(
             request,
@@ -815,11 +936,17 @@ def evaluate_dependency_request(
             f"PR #{requested_number} base is {pr['baseRefName']}, expected {request['defaultBranch']}; skipped auto-merge",
         )
     if pr["mergeStateStatus"] != "CLEAN":
-        return finish(
-            "blocked",
-            ["merge_state_not_clean"],
-            f"PR #{requested_number} merge state is {pr['mergeStateStatus']}, not CLEAN; skipped auto-merge",
+        reason_codes, message = classify_non_clean_merge_state(
+            pr,
+            blocking_checks,
+            successful_checks,
+            repo=repo,
+            slug=slug,
+            number=requested_number,
+            runner=runner,
+            evidence=evidence,
         )
+        return finish("blocked", reason_codes, message)
     if successful_checks == 0:
         return finish(
             "blocked",
@@ -1067,6 +1194,9 @@ def evaluate_request(
 
     slug = request["githubRepository"]
     if slug is None:
+        slug = derive_github_slug(repo, request["remote"], runner)
+        evidence["repository"]["githubSlug"] = slug
+    if slug is None:
         return finish(
             "indeterminate",
             ["github_repository_unavailable"],
@@ -1153,11 +1283,17 @@ def evaluate_request(
             f"remote branch {request['remote']}/{branch} is at {remote_head}, but local {branch} is at {start_head}; skipped auto-merge",
         )
     if pr["mergeStateStatus"] != "CLEAN":
-        return finish(
-            "blocked",
-            ["merge_state_not_clean"],
-            f"PR #{pr_number} merge state is {pr['mergeStateStatus']}, not CLEAN; skipped auto-merge",
+        reason_codes, message = classify_non_clean_merge_state(
+            pr,
+            blocking_checks,
+            successful_checks,
+            repo=repo,
+            slug=slug,
+            number=pr_number,
+            runner=runner,
+            evidence=evidence,
         )
+        return finish("blocked", reason_codes, message)
     if successful_checks == 0:
         return finish(
             "blocked",

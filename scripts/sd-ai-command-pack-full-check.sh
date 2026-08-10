@@ -455,9 +455,13 @@ run_gito_review() {
 }
 
 run_sd_ai_command_pack_scope_check() {
-  local script="scripts/sd-ai-command-pack-review-scope.sh"
+  # Pack helpers are siblings of this script (SCRIPT_DIR), never repository-root
+  # paths, so the gate works from a vendored scripts/ directory and from a
+  # plugin bin/ alike. Diagnostics name the helper, not its resolved location.
+  local name="sd-ai-command-pack-review-scope.sh"
+  local script="$SCRIPT_DIR/$name"
   if [ ! -f "$script" ]; then
-    warn "$script not found; skipping tooling/generated review-scope check."
+    warn "$name not found; skipping tooling/generated review-scope check."
     return 0
   fi
 
@@ -466,7 +470,8 @@ run_sd_ai_command_pack_scope_check() {
 
 run_sd_ai_command_pack_install_audit() {
   local mode="${SD_AI_COMMAND_PACK_INSTALL_AUDIT:-1}"
-  local script="scripts/sd-ai-command-pack-install-audit.py"
+  local name="sd-ai-command-pack-install-audit.py"
+  local script="$SCRIPT_DIR/$name"
 
   if is_disabled "$mode"; then
     warn "Skipping install audit because SD_AI_COMMAND_PACK_INSTALL_AUDIT=$mode."
@@ -475,10 +480,10 @@ run_sd_ai_command_pack_install_audit() {
 
   if [ ! -f "$script" ]; then
     if [ "$mode" = "required" ]; then
-      printf 'Install audit is required but %s is missing.\n' "$script" >&2
+      printf 'Install audit is required but %s is missing.\n' "$name" >&2
       exit 127
     fi
-    warn "$script not found; skipping install audit."
+    warn "$name not found; skipping install audit."
     return 0
   fi
 
@@ -496,7 +501,8 @@ run_sd_ai_command_pack_install_audit() {
 
 run_sd_ai_command_pack_kb_freshness_check() {
   local mode="${SD_AI_COMMAND_PACK_FULL_CHECK_KB:-auto}"
-  local script="scripts/sd-ai-command-pack-update-spec-kb.py"
+  local name="sd-ai-command-pack-update-spec-kb.py"
+  local script="$SCRIPT_DIR/$name"
   local ignore_status=0
 
   if is_disabled "$mode"; then
@@ -506,10 +512,10 @@ run_sd_ai_command_pack_kb_freshness_check() {
 
   if [ ! -f "$script" ]; then
     if [ "$mode" = "required" ]; then
-      printf 'Obsidian KB freshness check is required but %s is missing.\n' "$script" >&2
+      printf 'Obsidian KB freshness check is required but %s is missing.\n' "$name" >&2
       exit 127
     fi
-    warn "$script not found; skipping Obsidian KB freshness check."
+    warn "$name not found; skipping Obsidian KB freshness check."
     return 0
   fi
 
@@ -597,9 +603,10 @@ run_pack_source_drift_gates() {
   fi
 
   section "Pack source drift gates: command surfaces, template twins, release ledger, and env-var docs"
-  local surface_check="scripts/sd-ai-command-pack-surface-check.py"
+  local surface_check_name="sd-ai-command-pack-surface-check.py"
+  local surface_check="$SCRIPT_DIR/$surface_check_name"
   if [ ! -f "$surface_check" ]; then
-    printf 'Shipped-surface closure validator is required but %s is missing.\n' "$surface_check" >&2
+    printf 'Shipped-surface closure validator is required but %s is missing.\n' "$surface_check_name" >&2
     return 1
   fi
   if ! run "SD shipped-surface closure" python3 "$surface_check"; then
@@ -713,11 +720,14 @@ payload_singletons = {
     "manifest.json",
     "docs/SD_AI_COMMAND_PACK.md",
     "templates/docs/SD_AI_COMMAND_PACK.md",
+    ".claude-plugin/marketplace.json",
+    ".github/scripts/generate-plugin.py",
 }
+payload_prefixes = ("templates/", "plugins/")
 payload_changed = sorted(
     path
     for path in changed_paths
-    if path.startswith("templates/") or path in payload_singletons
+    if path.startswith(payload_prefixes) or path in payload_singletons
 )
 current_version = str(manifest.get("version", "")).strip()
 base_version = None
@@ -873,7 +883,8 @@ PACK_SOURCE_DRIFT_GATES
 
 run_sd_ai_command_pack_pr_body_scope_check() {
   local mode="${SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHECK:-auto}"
-  local script="scripts/sd-ai-command-pack-pr-body-scope.py"
+  local name="sd-ai-command-pack-pr-body-scope.py"
+  local script="$SCRIPT_DIR/$name"
 
   if is_disabled "$mode"; then
     warn "Skipping PR-body scope check because SD_AI_COMMAND_PACK_PR_BODY_SCOPE_CHECK=$mode."
@@ -882,10 +893,10 @@ run_sd_ai_command_pack_pr_body_scope_check() {
 
   if [ ! -f "$script" ]; then
     if [ "$mode" = "required" ]; then
-      printf 'PR-body scope check is required but %s is missing.\n' "$script" >&2
+      printf 'PR-body scope check is required but %s is missing.\n' "$name" >&2
       exit 127
     fi
-    warn "$script not found; skipping PR-body scope check."
+    warn "$name not found; skipping PR-body scope check."
     return 0
   fi
 
@@ -974,7 +985,10 @@ run_ci_classification_report() {
 run_review_preflight() {
   local mode="${SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT:-1}"
   local command="${SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT_COMMAND:-}"
-  local script="${SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT_SCRIPT:-scripts/sd-ai-command-pack-review-preflight.mjs}"
+  # The pack helper is a sibling of this script; the legacy path stays
+  # repository-relative because it names a repo-owned preflight, not payload.
+  local name="sd-ai-command-pack-review-preflight.mjs"
+  local script="${SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT_SCRIPT:-$SCRIPT_DIR/$name}"
   local legacy_script="scripts/check-review-preflight.mjs"
 
   if is_disabled "$mode"; then

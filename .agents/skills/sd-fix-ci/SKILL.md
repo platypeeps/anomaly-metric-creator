@@ -69,9 +69,17 @@ variables; tuning is arguments-only.
    head; on a mismatch the red run may not reflect the local tree, and
    the report must say which commit was triaged.
 2. Enumerate the failures. For each failing run, `gh run view <run-id>`
-   lists the jobs and `gh run view <run-id> --log-failed` fetches the
-   failing jobs' logs. Read past the exit status to the first real error;
-   the last line of a log is rarely the cause.
+   lists the failing jobs — identities only, which is cheap. Fetch each
+   job's log on its own with `gh run view -j <job-id> --log-failed`, not
+   the whole-run `gh run view <run-id> --log-failed`: one whole-run fetch
+   pulls every failing job's log into a single context, which defeats the
+   per-job dispatch below. Read past the exit status to the first real
+   error; the last line of a log is rarely the cause. Per-job fetching is
+   a deliberate cost — `gh`'s own help warns it can fall back to API
+   fetches that are "slower and more resource-intensive" and fails
+   outright if more than 25 job logs are missing, and every `gh` call
+   routes through the toolchain wrapper, so N failing jobs mean N cache
+   setups.
 3. Classify every failing job before acting on any of them, so the report
    reflects the whole run. Each job gets exactly one class:
    - `real-code` — a deterministic failure caused by the tree under test:
@@ -120,6 +128,55 @@ variables; tuning is arguments-only.
    task, infra outages worth a status link, stale baselines needing a
    branch update.
 
+## Dispatch protocol
+
+The classification pass (workflow step 3) is the parallel unit: each failing
+job is triaged in isolation with no cross-job writes. Acting on the results
+(step 4) is not parallel and stays with the parent — it pushes commits, opens
+PRs, and spends the shared rerun budget.
+
+- Dispatch one read-only sub-agent per failing job. On sub-agent dispatch
+  platforms, run the per-job triage in parallel, in waves of at most six
+  concurrent workers; a wider red matrix is triaged in successive waves. On
+  inline platforms, classify the jobs sequentially in one context. Either way
+  the per-job classifications and the report are identical — the outcome does
+  not depend on how the work fanned out. The wave bound is deliberate: each
+  worker fetches its own log through the toolchain wrapper, so unbounded
+  fan-out means one `gh` cache setup per red leg.
+- Every dispatch prompt starts with the Active task prefix when a Trellis task
+  is active: `Active task: <task path from task.py current>` before the
+  role-specific instructions.
+- Every dispatch prompt restates the command's already-resolved
+  `checkout-trust: <state> (<reason-code>)` before the role-specific
+  instructions. Workers do not reclassify trust; a worker result cannot change
+  the state or unlock a gate the command already closed.
+- The parent resolves run-level facts once and passes them in each worker's
+  change context: whether the branch is behind the default branch (the
+  `stale-baseline` signal) and whether the local HEAD matches the PR head.
+  Workers must not re-derive these — one run-level fact re-derived by many
+  workers can disagree inside a single report. Per-job evidence stays with the
+  worker: a job's own earlier passing run on the same commit is that job's
+  history.
+
+Worker input, all supplied by the parent:
+
+- job identity: run id, job id, and job name
+- the resolved trust state carried by the restatement rule above
+- the run-level change context above
+
+Worker output:
+
+- exactly one class from `real-code | flake | infra | stale-baseline`
+- evidence as quoted log lines, not summaries
+- a suggested fix or rerun disposition, as a proposal only
+
+Workers are read-only: no writes, no `gh run rerun`, no pushes. The parent owns
+job enumeration, result assembly, the `real-code`/`flake` tiebreak (prefer
+`real-code` and reproduce locally first), every action in step 4, the shared
+`max-reruns` budget, and the final report. Keeping reruns and fixes with the
+parent is what makes the bounded rerun budget enforceable: a worker able to
+call `gh run rerun` would make `max-reruns` meaningless.
+
 ## Safety rules
 
 - Never force-push.
@@ -130,6 +187,9 @@ variables; tuning is arguments-only.
   thresholds.
 - Reruns are bounded: 1 per failing run by default, raised only by
   `max-reruns=N`. Never loop reruns to outwait a real failure.
+- Dispatch workers are read-only: only the parent reruns, pushes, or
+  applies fixes. A worker never calls `gh run rerun`, so the shared
+  `max-reruns` budget stays enforceable.
 - Default-branch fixes go through a fix branch and PR; never push a
   non-chore fix directly to main.
 - Every pushed fix passes the full local gate first.

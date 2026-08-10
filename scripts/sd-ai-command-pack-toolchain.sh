@@ -30,6 +30,36 @@ if ! SCRIPT_DIR="$(cd -- "$SCRIPT_DIR" 2>/dev/null && pwd -P)"; then
   fail "cannot resolve toolchain directory" 5
 fi
 
+# Pack helpers are resolved against the toolchain's own directory so the payload
+# works in any layout: a vendored scripts/ directory, a plugin bin/, or a
+# machine-wide install. Own location wins outright and the working directory is
+# never probed, so a repository cannot shadow a pack helper with a same-named
+# file of its own. In a vendored install SCRIPT_DIR is the repository's scripts/
+# directory, so a bare helper name and the same name under a scripts/ prefix
+# both resolve to the file the caller already meant.
+RESOLVED_PACK_SCRIPT=""
+
+resolve_pack_script_operand() {
+  local operand="$1"
+  local name
+
+  RESOLVED_PACK_SCRIPT="$operand"
+  case "$operand" in
+    scripts/*) name="${operand#scripts/}" ;;
+    */*) return 0 ;;
+    *) name="$operand" ;;
+  esac
+  case "$name" in
+    */*) return 0 ;;
+    sd-ai-command-pack-*|sd_ai_command_pack_*) ;;
+    *) return 0 ;;
+  esac
+
+  [ -f "$SCRIPT_DIR/$name" ] || \
+    fail "pack helper is missing next to the toolchain: $SCRIPT_DIR/$name (requested as $operand); reinstall the command pack" 127
+  RESOLVED_PACK_SCRIPT="$SCRIPT_DIR/$name"
+}
+
 repo_root() {
   if [ -n "${SD_AI_COMMAND_PACK_REPO_ROOT:-}" ]; then
     printf '%s\n' "$SD_AI_COMMAND_PACK_REPO_ROOT"
@@ -303,11 +333,12 @@ tool_path_or_empty() {
 doctor_json() {
   local project_check="$1"
   shift
+  # cache_paths is built from the lib's cache-env output (CACHE_ENV_KEYS is the
+  # single authority), passed as one positional argument so adding a cache
+  # variable needs no edit here.
   PYTHONDONTWRITEBYTECODE=1 "$PYTHON_COMMAND" - \
     "$PYTHON_COMMAND" "$PYTHON_SOURCE" "$PYTHON_VERSION" "$project_check" \
-    "$REPO_ROOT" "${XDG_CACHE_HOME:-}" "${PYTHONPYCACHEPREFIX:-}" \
-    "${UV_CACHE_DIR:-}" "${UV_TOOL_DIR:-}" "${PIP_CACHE_DIR:-}" \
-    "${RUFF_CACHE_DIR:-}" "${NPM_CONFIG_CACHE:-}" \
+    "$REPO_ROOT" "$CACHE_ENV_OUTPUT" \
     "$(tool_path_or_empty gh)" "$(tool_path_or_empty node)" \
     "$(tool_path_or_empty uv)" "$(tool_path_or_empty prism)" \
     "$(tool_path_or_empty gito)" "$(tool_path_or_empty shellcheck)" \
@@ -322,13 +353,7 @@ import sys
     python_version,
     project_check,
     repo_root,
-    xdg_cache,
-    pycache,
-    uv_cache,
-    uv_tools,
-    pip_cache,
-    ruff_cache,
-    npm_cache,
+    cache_env,
     gh,
     node,
     uv,
@@ -337,6 +362,12 @@ import sys
     shellcheck,
     *candidates,
 ) = sys.argv[1:]
+cache_paths = {}
+for line in cache_env.splitlines():
+    if not line or "=" not in line:
+        continue
+    key, _, value = line.partition("=")
+    cache_paths[key] = value
 print(json.dumps({
     "repo_root": repo_root,
     "python": {
@@ -357,15 +388,7 @@ print(json.dumps({
         "gito": gito,
         "shellcheck": shellcheck,
     },
-    "cache_paths": {
-        "XDG_CACHE_HOME": xdg_cache,
-        "PYTHONPYCACHEPREFIX": pycache,
-        "UV_CACHE_DIR": uv_cache,
-        "UV_TOOL_DIR": uv_tools,
-        "PIP_CACHE_DIR": pip_cache,
-        "RUFF_CACHE_DIR": ruff_cache,
-        "NPM_CONFIG_CACHE": npm_cache,
-    },
+    "cache_paths": cache_paths,
 }, sort_keys=True))
 PY
 }
@@ -399,40 +422,56 @@ doctor_human() {
     printf '  - %s: %s\n' "$tool" "${path:-not found}"
   done
   printf 'Cache paths:\n'
-  printf '  - XDG_CACHE_HOME=%s\n' "${XDG_CACHE_HOME:-}"
-  printf '  - PYTHONPYCACHEPREFIX=%s\n' "${PYTHONPYCACHEPREFIX:-}"
-  printf '  - UV_CACHE_DIR=%s\n' "${UV_CACHE_DIR:-}"
-  printf '  - UV_TOOL_DIR=%s\n' "${UV_TOOL_DIR:-}"
-  printf '  - PIP_CACHE_DIR=%s\n' "${PIP_CACHE_DIR:-}"
-  printf '  - RUFF_CACHE_DIR=%s\n' "${RUFF_CACHE_DIR:-}"
-  printf '  - NPM_CONFIG_CACHE=%s\n' "${NPM_CONFIG_CACHE:-}"
+  local cache_key cache_value
+  while IFS='=' read -r cache_key cache_value; do
+    [ -n "$cache_key" ] || continue
+    printf '  - %s=%s\n' "$cache_key" "$cache_value"
+  done <<EOF
+$CACHE_ENV_OUTPUT
+EOF
 }
 
 configure_cache_environment() {
   local helper="$SCRIPT_DIR/sd_ai_command_pack_lib.py"
   local key value count=0
+  local blocked_json recovery
   if [ ! -r "$helper" ]; then
     fail "cache setup failed: shared helper is missing: $helper" 5
   fi
+  # Success path keeps the plain key=value contract: adding --json unconditionally
+  # would switch the success output to JSON too and break the parse loop below.
+  # The failing call's own stderr is suppressed so the operator sees exactly one
+  # bounded line; the structured recoveryAction (captured on the retry below)
+  # carries the diagnostic, replacing the old hardcoded prose without changing
+  # what the operator is told.
   if ! CACHE_ENV_OUTPUT="$(PYTHONDONTWRITEBYTECODE=1 "$PYTHON_COMMAND" \
     "$helper" cache-env --repo "$REPO_ROOT" 2>/dev/null)"; then
-    fail "cache setup failed; set SD_AI_COMMAND_PACK_CACHE_ROOT to a private writable directory outside the repository" 5
+    # Re-invoke only on the already-failing branch (build_tool_environment is
+    # idempotent) to capture the structured, validated environment-blocked
+    # evidence, and fail with its recoveryAction rather than hardcoded prose.
+    blocked_json="$(PYTHONDONTWRITEBYTECODE=1 "$PYTHON_COMMAND" \
+      "$helper" cache-env --repo "$REPO_ROOT" --json 2>/dev/null)"
+    recovery="$(printf '%s' "$blocked_json" | PYTHONDONTWRITEBYTECODE=1 \
+      "$PYTHON_COMMAND" -c 'import json,sys; d=json.load(sys.stdin); print(((d.get("environmentBlocked") or {}).get("recoveryAction") or {}).get("instruction",""))' 2>/dev/null)"
+    fail "cache setup failed: ${recovery:-Set SD_AI_COMMAND_PACK_CACHE_ROOT to a private writable directory outside the repository, then retry toolchain cache setup.}" 5
   fi
+  # Validate the shape generically — an environment-variable name with a
+  # non-empty value — against the lib's cache-env output, which is the single
+  # authority (CACHE_ENV_KEYS) for which cache variables exist. Adding a cache
+  # variable therefore needs no shell-side edit.
   while IFS='=' read -r key value; do
     key="${key%$'\r'}"
     value="${value%$'\r'}"
     case "$key" in
-      XDG_CACHE_HOME|PYTHONPYCACHEPREFIX|UV_CACHE_DIR|UV_TOOL_DIR|PIP_CACHE_DIR|RUFF_CACHE_DIR|NPM_CONFIG_CACHE)
-        [ -n "$value" ] || fail "cache setup returned an empty $key" 5
-        export "$key=$value"
-        count=$((count + 1))
-        ;;
-      *) fail "cache setup returned an unexpected variable: $key" 5 ;;
+      "" | *[!A-Z0-9_]* | [!A-Z_]*) fail "cache setup returned an unexpected variable: $key" 5 ;;
     esac
+    [ -n "$value" ] || fail "cache setup returned an empty $key" 5
+    export "$key=$value"
+    count=$((count + 1))
   done <<EOF
 $CACHE_ENV_OUTPUT
 EOF
-  [ "$count" -eq 7 ] || fail "cache setup returned $count variables; expected 7" 5
+  [ "$count" -gt 0 ] || fail "cache setup returned no variables" 5
 }
 
 [ "$#" -ge 1 ] || usage
@@ -460,15 +499,20 @@ case "$COMMAND" in
     [ "$1" = "--" ] || usage
     shift
     [ "$#" -gt 0 ] || usage
+    resolve_pack_script_operand "$1"
+    RUN_COMMAND="$RESOLVED_PACK_SCRIPT"
+    shift
     select_python
     verify_python
     configure_cache_environment
-    exec "$@"
+    exec "$RUN_COMMAND" "$@"
     ;;
   run-python)
     parse_python_options "$@"
     [ "$RUN_PYTHON_SEPARATOR" -eq 1 ] || usage
     [ "${#RUN_PYTHON_ARGS[@]}" -gt 0 ] || usage
+    resolve_pack_script_operand "${RUN_PYTHON_ARGS[0]}"
+    RUN_PYTHON_ARGS[0]="$RESOLVED_PACK_SCRIPT"
     select_python
     verify_python
     configure_cache_environment

@@ -1,6 +1,7 @@
 ---
 name: sd-review-learnings
 description: Use when the user wants to detect repeated PR review feedback patterns, update repo-specific review learnings, or add local guidance/preflight ideas from recent Copilot or human review cycles.
+model: sonnet
 ---
 
 # SD Review Learnings

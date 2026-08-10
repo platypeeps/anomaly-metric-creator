@@ -84,6 +84,19 @@ def _remove_dot_slash(path: str) -> str:
     return path[2:] if path.startswith("./") else path
 
 
+# The fnmatch metacharacters. A normalized pattern free of all of them matches
+# exactly one string under fnmatchcase, so it can be tested by O(1) set
+# membership instead of the per-pattern glob matcher. A pattern carrying any of
+# them — including the "/**" recursive suffix, which contains "*", and any
+# character class using "[" / "]" — stays a glob so _matches_normalized_pattern
+# keeps its exact semantics.
+_GLOB_METACHARACTERS = frozenset("*?[]")
+
+
+def _has_glob_metacharacter(pattern: str) -> bool:
+    return any(char in _GLOB_METACHARACTERS for char in pattern)
+
+
 @dataclass(frozen=True)
 class ScopeRule:
     label: str
@@ -91,17 +104,56 @@ class ScopeRule:
     patterns: tuple[str, ...]
     include_installed_targets: bool = False
     normalized_patterns: tuple[str, ...] = field(init=False, compare=False, repr=False)
+    literal_patterns: frozenset[str] = field(init=False, compare=False, repr=False)
+    glob_patterns: tuple[str, ...] = field(init=False, compare=False, repr=False)
+    _hash: int = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         # Precompute the normalized match globs once per rule so the
         # path x rule x pattern classify loop never re-normalizes a static
         # pattern. Rebuilt automatically whenever patterns change (merge,
         # installed-target injection), since every construction runs this.
+        normalized = tuple(_normalize_path(pattern) for pattern in self.patterns)
+        object.__setattr__(self, "normalized_patterns", normalized)
+        # Partition normalized patterns into metacharacter-free literals and the
+        # remaining globs so the classifier tests set membership before iterating
+        # the glob matcher — its cost then tracks the diff, not the installed
+        # payload size. Both derived fields carry init=False, compare=False,
+        # repr=False (exactly like normalized_patterns) so ScopeRule equality and
+        # hashing — it is a frozen dataclass used as a dict key in _classify —
+        # stay driven solely by the compare=True fields (label, headings,
+        # patterns, include_installed_targets), never these derived views.
         object.__setattr__(
             self,
-            "normalized_patterns",
-            tuple(_normalize_path(pattern) for pattern in self.patterns),
+            "literal_patterns",
+            frozenset(p for p in normalized if not _has_glob_metacharacter(p)),
         )
+        object.__setattr__(
+            self,
+            "glob_patterns",
+            tuple(p for p in normalized if _has_glob_metacharacter(p)),
+        )
+        # Cache the value hash once. ScopeRule is a frozen dict key in _classify,
+        # which hashes it once per matched path; the default dataclass __hash__
+        # rehashes the whole ``patterns`` tuple every call, so classify wall-clock
+        # grows with the installed payload size (O(paths x patterns)) — the exact
+        # AC3 defect. The frozen instance can never change, so the value hash is
+        # invariant: compute it once here and return it from __hash__ below,
+        # collapsing per-lookup hashing to O(1). Equality stays value-based on the
+        # compare=True fields, so equal rules still hash equal.
+        object.__setattr__(
+            self,
+            "_hash",
+            hash(
+                (self.label, self.headings, self.patterns, self.include_installed_targets)
+            ),
+        )
+
+    def __hash__(self) -> int:
+        # Explicit definition: dataclass(frozen=True, eq=True) would otherwise
+        # generate an O(patterns) hash. A class-body __hash__ is respected
+        # (has_explicit_hash), so this cached O(1) value wins.
+        return self._hash
 
 
 DEFAULT_RULES = (
@@ -356,6 +408,23 @@ def _matches_normalized_pattern(normalized_path: str, normalized_pattern: str) -
     return fnmatch.fnmatchcase(normalized_path, normalized_pattern)
 
 
+def _rule_matches_path(rule: ScopeRule, normalized_path: str) -> bool:
+    """True when a normalized path matches any of a rule's normalized patterns.
+
+    Tests the metacharacter-free literal set first (exact membership, O(1)) and
+    only then walks the glob tuple. Equivalent to matching every entry of
+    ``rule.normalized_patterns`` with :func:`_matches_normalized_pattern`,
+    because a metacharacter-free pattern matches exactly its own string under
+    ``fnmatchcase`` — so set membership is that same match without the scan.
+    """
+    if normalized_path in rule.literal_patterns:
+        return True
+    return any(
+        _matches_normalized_pattern(normalized_path, pattern)
+        for pattern in rule.glob_patterns
+    )
+
+
 def _load_installed_target_patterns(root: Path) -> tuple[tuple[str, ...], str | None]:
     targets_path = root / INSTALLED_TARGETS_FILE
     if not targets_path.is_file():
@@ -508,10 +577,7 @@ def _classify(paths: list[str], rules: tuple[ScopeRule, ...]) -> dict[ScopeRule,
     matches: dict[ScopeRule, list[str]] = {}
     for path in paths:
         for rule in rules:
-            if any(
-                _matches_normalized_pattern(path, pattern)
-                for pattern in rule.normalized_patterns
-            ):
+            if _rule_matches_path(rule, path):
                 matches.setdefault(rule, []).append(path)
     return matches
 
@@ -551,11 +617,7 @@ def _tooling_only_unmatched_paths(
     unmatched = [
         path
         for path in paths
-        if not any(
-            _matches_normalized_pattern(path, pattern)
-            for rule in tooling_rules
-            for pattern in rule.normalized_patterns
-        )
+        if not any(_rule_matches_path(rule, path) for rule in tooling_rules)
     ]
     return unmatched, None
 

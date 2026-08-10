@@ -150,6 +150,12 @@ Quick links:
   preflight for broad behavior-changing diffs.
 - `scripts/sd-ai-command-pack-update-spec-kb.py`: Obsidian KB copy-folder
   refresh helper for the update-spec workflow.
+- `scripts/sd-ai-command-pack-pack-update.sh`: the single machine update
+  action — updates the Claude Code plugin, resolves the plugin root that
+  update produced, installs the machine-scope surfaces for the non-Claude
+  platforms from it, and reports the plugin and machine-receipt versions with
+  a `current`/`skew` verdict. Both halves are idempotent, so an update
+  interrupted between them shows as skew and a rerun converges.
 - `.sd-ai-command-pack/installed-targets.txt`: generated list of pack targets
   installed in this repo, used by the review-scope preflight. Normal shared
   installs should commit this file with the other pack-owned files; `--local-only`
@@ -319,6 +325,14 @@ validation, contract/documentation drift, generated surfaces, reviewer/test
 harness quality, and uncategorized evidence. Cluster summaries retain counts,
 PRs, path families, observed dates, and bounded examples, and explicitly report
 truncation. Preventive actions appear only for detected recurring categories.
+
+The managed block is rendered wholesale from whatever GitHub scope the run
+requested, so a narrowly scoped run renders a block holding only that scope's
+clusters. Stage 2b's `--dry-run` never writes, but the same `--github-pr`
+invocation combined with `--update` would replace a repository-wide snapshot
+with one PR's signals. An update that would delete clusters already recorded in
+the snapshot is refused and names them; `--allow-narrowing` accepts the
+deletion deliberately.
 
 The routed-review workflow may invoke the same scanner once per attempt with
 `--planning-attempt ID --json`, an explicit `--github-repo`, and either a
@@ -740,11 +754,21 @@ files is a checkable claim. The source checkout's current manifest version
 can intentionally be newer than the provenance version in a target repo when
 the newer release did not change installed payload bytes; a passing audit
 reports the installed payload provenance version and confirms the vouched
-hashes still match.
+hashes still match. The install audit and `provenance.json` vouch pack-owned
+receipt targets only — the files the installer wrote and recorded in
+`installed-targets.txt`. When a consumer relaxes its ignore policy so a
+Trellis-owned platform adapter becomes newly tracked, that adapter is not added
+to the pack manifest, `installed-targets.txt`, or `provenance.json` to widen the
+vouch; it stays outside the pack-vouched set and is covered instead by the fleet
+review classifier's integration-only eligibility — which forces the normal
+remote-review loop for any changed path missing from the receipt — and by the
+consumer's own integration and readiness checks.
 The copied/generated scope preflight reads
 `.sd-ai-command-pack/installed-targets.txt`, reports changed pack/Trellis
 runtime files, known repository-map files when present, and Trellis workspace
-journal/index files as integration-only review surface. When the GitHub CLI can
+journal/index files as integration-only review surface. Reporting a path here
+marks it for review attention; it never extends the pack audit's vouch to a
+Trellis-owned adapter. When the GitHub CLI can
 resolve a current PR, it checks that the PR body includes a
 `Tooling/generated scope:` section before review cycles spend attention on
 copied or generated surfaces. Markdown headings without the colon, such as
@@ -1170,8 +1194,10 @@ steps. Repo-wide inventory remains context rather than a cleanup blocker.
 Pass `--json` to reserve stdout for one schema-version-1 housekeeping result;
 progress and diagnostics move to stderr. The result embeds the existing PR
 eligibility JSON unchanged, stable coded actions/anomalies, and the complete
-delegated `sd-status --json` report. Its final `outcome.status` is
-`clean|blocked|indeterminate|failed`. When an environment or authority boundary
+delegated `sd-status --json` report. Its final `outcome.verdict` is
+`clean|blocked|indeterminate|failed` (the `outcome.status` alias emits the same
+value for one deprecation release and is dropped in 0.66.0). When an environment
+or authority boundary
 refuses a Git-metadata or KB-refresh write, the result also carries an additive
 `environmentBlocks` array of `environment_blocked` fragments — each naming the
 exact boundary, last verified checkpoint, mutation state, and a bounded,
@@ -1698,6 +1724,15 @@ of bypassing the cache contract.
   tree with the merge base of this ref and `HEAD`, so upstream-only changes do
   not inflate the advisory. If no merge base exists, the preflight warns and
   conservatively falls back to the configured or discovered base ref.
+- `SD_AI_COMMAND_PACK_DEFAULT_BRANCH`: explicit repository default-branch NAME
+  (for example `main`) for the review preflight's root-task `base_branch`
+  rule. This is a statement of the default branch, not a diff base: the
+  branch-diff base-ref variables above are deliberately ignored by this rule
+  because their values (a stacked-PR base, in CI an exact SHA) have different
+  semantics. When unset, the rule discovers the default from the
+  `origin/HEAD` symbolic ref and skips itself when neither source resolves.
+  CI exports it from the event payload because a pinned-SHA checkout never
+  establishes `origin/HEAD`.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT=0`: skip
   repo-local review preflight.
 - `SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT=required`: fail if no configured
@@ -2212,6 +2247,99 @@ bash -n scripts/sd-ai-command-pack-review-local.sh
 bash -n scripts/sd-ai-command-pack-review-scope.sh
 python3 scripts/sd-ai-command-pack-update-spec-kb.py --dry-run
 ```
+
+## Claude Code plugin and private marketplace
+
+The Claude-side surface of the pack — every `sd-*` skill, the `/sd:*` command
+surface, and the shared pack toolchain as `bin/` executables — also ships as a
+Claude Code plugin generated from the same templates. The plugin is installed
+once per machine instead of vendored per repository; the `.claude/rules/`
+files stay repository configuration and are not part of it.
+
+Add the marketplace once, then install the plugin:
+
+```bash
+claude plugin marketplace add platypeeps/sd-ai-command-pack
+claude plugin install sd@sd-ai-command-pack
+```
+
+The same commands work as `/plugin marketplace add ...` and
+`/plugin install ...` inside a Claude Code session.
+
+The plugin `version` is stamped from `manifest.json`, so an installed plugin
+names the exact pack release it came from:
+
+```bash
+claude plugin list --json
+```
+
+### Private-repository access
+
+`platypeeps/sd-ai-command-pack` is private, so plugin installs and updates use
+your normal Git credentials. Configure them once:
+
+```bash
+gh auth setup-git
+```
+
+SSH remotes with a loaded `ssh-agent` key work equally well. Background
+plugin auto-update runs its `git pull` without Git credential helpers, so a
+private marketplace can fail to refresh in the background and, by default, the
+marketplace entry is dropped. Keep it across such a failure:
+
+```bash
+export CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE=1
+```
+
+In CI, export a token and run `gh auth setup-git` before installing, or
+pre-seed a warm plugin cache and point the CLI at it:
+
+```bash
+export CLAUDE_CODE_PLUGIN_CACHE_DIR="$RUNNER_TEMP/claude-plugins"
+```
+
+### Machine-scope install for the non-Claude tools
+
+Gemini CLI and OpenCode read user-level directories, so the surfaces they use
+install once per machine as well. The plugin carries that payload and the
+installer that writes it, so no pack checkout is needed:
+
+| What | Where it lands |
+| --- | --- |
+| shared `sd-*` skills | `~/.agents/skills/` |
+| pack scripts the skills invoke | `~/.agents/bin/` |
+| this guide | `~/.agents/docs/` |
+| Gemini `/sd:*` commands | `~/.gemini/commands/sd/` |
+| OpenCode `sd-*` commands | `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/` |
+
+One command updates both halves — the plugin and the machine surfaces:
+
+```bash
+scripts/sd-ai-command-pack-pack-update.sh
+```
+
+It updates the plugin first, resolves the plugin root that update produced,
+installs the machine payload from that root, and prints the plugin and
+machine-receipt versions. Run the machine half on its own from a pack checkout
+with `python3 install.py --machine`, which stages the payload from the checkout
+and installs the same bytes the plugin ships.
+
+Inspect or undo an install with the bootstrap the plugin ships in its `bin/`:
+
+```bash
+sd-machine-install status --json
+sd-machine-install remove
+```
+
+The installer writes a receipt recording the pack version, the payload digest,
+and every file it wrote, and it touches nothing else. A file it does not own —
+one you wrote yourself, or one you edited after an install — refuses the whole
+run before anything is written, naming each conflicting path. `--force`
+proceeds and copies each displaced file to a `.bak` sibling recorded in the
+receipt; `remove` then deletes what the receipt installed and restores those
+originals, and nothing else. `sd-status` reports the machine receipt against
+the installed plugin version, so an update that only half completed shows as
+`skew` and rerunning the update command converges.
 
 ## Troubleshooting
 

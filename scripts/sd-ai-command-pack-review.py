@@ -30,8 +30,11 @@ SCHEMA_VERSION = 1
 CONFIG_PATH = Path(".sd-ai-command-pack/review.json")
 DEFAULT_DESCRIPTOR_PATH = Path("config/routed-review-setup-v1.json")
 RECEIPT_MARKER = "<!-- sd-github-review-receipt:v1 -->\n"
-CHECK_SCRIPT = Path("scripts/sd-ai-command-pack-check.py")
-LOCAL_SCRIPT = Path("scripts/sd-ai-command-pack-review-local.py")
+# Stage helpers are siblings of this file, never repository-root paths, so the
+# controller runs the same way from a vendored scripts/ directory, a plugin
+# bin/, or a machine-wide install.
+CHECK_SCRIPT = Path(__file__).resolve().with_name("sd-ai-command-pack-check.py")
+LOCAL_SCRIPT = Path(__file__).resolve().with_name("sd-ai-command-pack-review-local.py")
 MAX_CONFIG_BYTES = 256 * 1024
 MAX_DESCRIPTOR_BYTES = 64 * 1024
 MAX_STATE_BYTES = 2 * 1024 * 1024
@@ -50,6 +53,7 @@ LOCAL_VALUES = frozenset({"auto", "all", "none"})
 REMOTE_VALUES = frozenset({"auto", "cheap", "deep", "copilot", "none"})
 FIX_VALUES = frozenset({"auto", "ask", "none"})
 REMOTE_DISPOSITION_VALUES = frozenset({"rebutted"})
+LOCAL_DISPOSITION_VALUES = frozenset({"rebutted"})
 CAPABILITY_STATES = frozenset(
     {"ready", "absent", "invalid", "incompatible", "unavailable", "skipped"}
 )
@@ -162,6 +166,31 @@ def _receipt_latency(receipt: Mapping[str, Any]) -> int | None:
         minimum=0,
         maximum=MAX_REMOTE_LATENCY_MS,
     )
+
+
+def _parse_local_dispositions(values: Sequence[str]) -> dict[str, str]:
+    """Validate ``<stable-id>=rebutted`` pairs for the local review stage.
+
+    Deliberately the same grammar and the same single accepted value as the
+    remote channel below: a caller who has verified a finding is false should
+    not have to learn two vocabularies depending on which provider raised it.
+    """
+
+    dispositions: dict[str, str] = {}
+    for value in values:
+        identifier, separator, disposition = value.rpartition("=")
+        if (
+            not separator
+            or not identifier
+            or len(identifier) > 240
+            or any(ord(character) < 32 for character in identifier)
+            or disposition not in LOCAL_DISPOSITION_VALUES
+        ):
+            raise ReviewError("local dispositions must use <stable-id>=rebutted")
+        if identifier in dispositions:
+            raise ReviewError("local disposition ids must be unique")
+        dispositions[identifier] = disposition
+    return dispositions
 
 
 def _parse_remote_dispositions(values: Sequence[str]) -> dict[str, str]:
@@ -662,9 +691,9 @@ def _advance(path: Path, state: dict[str, Any], phase: str, **updates: object) -
 
 
 def _run_check(repo: Path) -> dict[str, Any]:
-    script = repo / CHECK_SCRIPT
+    script = CHECK_SCRIPT
     if not script.is_file() or script.is_symlink():
-        raise ReviewError(f"missing regular sd-check helper: {CHECK_SCRIPT}")
+        raise ReviewError(f"missing regular sd-check helper: {CHECK_SCRIPT.name}")
     _, report = _json_process(
         [sys.executable, str(script), "--repo", str(repo), "--json"],
         repo=repo,
@@ -686,9 +715,9 @@ def _run_local(
     args: argparse.Namespace,
     local_policy: str,
 ) -> dict[str, Any]:
-    script = repo / LOCAL_SCRIPT
+    script = LOCAL_SCRIPT
     if not script.is_file() or script.is_symlink():
-        raise ReviewError(f"missing regular local review helper: {LOCAL_SCRIPT}")
+        raise ReviewError(f"missing regular local review helper: {LOCAL_SCRIPT.name}")
     # The local stage owns its artifact root: an in-repo, git-ignored
     # directory (default .build/sd-review). The coordinator's private root
     # must stay outside the repository, so it is never forwarded here.
@@ -717,6 +746,10 @@ def _run_local(
     ]
     for family in args.finding_family:
         command.extend(("--finding-family", family))
+    for identifier, disposition in _parse_local_dispositions(
+        args.local_disposition
+    ).items():
+        command.extend(("--local-disposition", f"{identifier}={disposition}"))
     if args.family_evidence:
         command.extend(("--family-evidence", args.family_evidence))
     if args.bookkeeping_evidence:
@@ -730,6 +763,37 @@ def _run_local(
     if not _is_exact_integer(report.get("schemaVersion"), 1):
         raise ReviewError("local review returned an unsupported schema")
     return report
+
+
+def _local_outstanding(local: Mapping[str, Any]) -> int | None:
+    """Count the local receipt findings the caller has left outstanding.
+
+    Provider evidence is immutable, so a receipt whose findings are all
+    rebutted keeps ``outcome == "findings"``; the caller-owned disposition
+    block is the only place a rebuttal lands. An unreadable receipt returns
+    ``None`` so callers gate as if findings were still outstanding.
+    """
+
+    receipt = local.get("receipt")
+    if not isinstance(receipt, Mapping):
+        return None
+    findings = receipt.get("findings")
+    # A stage that reports findings while listing none has produced evidence
+    # nobody can inspect or rebut. Its own remote gate blocks that shape, so a
+    # zero count over an empty list must not open routing here either.
+    if not isinstance(findings, list) or not findings:
+        return None
+    disposition = receipt.get("disposition")
+    if not isinstance(disposition, Mapping):
+        return None
+    outstanding = disposition.get("outstanding")
+    if (
+        not isinstance(outstanding, int)
+        or isinstance(outstanding, bool)
+        or outstanding < 0
+    ):
+        return None
+    return outstanding
 
 
 def _capability(
@@ -1665,6 +1729,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--finding-family", action="append", default=[])
     parser.add_argument("--family-evidence")
     parser.add_argument("--bookkeeping-evidence")
+    parser.add_argument("--local-disposition", action="append", default=[])
     parser.add_argument("--remote-disposition", action="append", default=[])
     parser.add_argument("--attempt", type=int, default=1)
     parser.add_argument("--round-extension-authorized", action="store_true")
@@ -1805,7 +1870,11 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             limitations=("deterministic-check-not-passed",),
         )
 
-    if state.get("local") is None:
+    # A rerun that supplies dispositions must reach the local stage even when a
+    # report is already cached: the stage revalidates its durable receipt,
+    # applies the rebuttals and persists them without re-running any provider.
+    if state.get("local") is None or args.local_disposition:
+        refreshed = state.get("local") is not None
         local = _run_local(
             repo,
             scope=scope,
@@ -1815,17 +1884,32 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             args=args,
             local_policy=local_policy,
         )
-        _advance(state_path, state, "local", local=local)
+        # Refreshing a cached report must not rewind the phase: the remote
+        # channel reads it for dispatch idempotency and reconciliation.
+        _advance(
+            state_path,
+            state,
+            str(state.get("phase", "resolve")) if refreshed else "local",
+            local=local,
+        )
     local = state["local"]
     if not isinstance(local, dict):
         raise ReviewError("local review state is invalid")
-    local_status = local.get("status")
+    # Prefer the canonical ``outcome`` verdict key; fall back to the deprecated
+    # ``status`` alias for the dual-emit window (A-077).
+    local_status = local.get("outcome", local.get("status"))
     if local_status == "findings":
-        return 1, _report(
-            state=state,
-            status="findings",
-            diagnostic="local review findings require disposition before remote routing",
-        )
+        if _local_outstanding(local) != 0:
+            return 1, _report(
+                state=state,
+                status="findings",
+                diagnostic="local review findings require disposition before remote routing",
+            )
+        # Every provider finding carries a caller disposition. The receipt keeps
+        # its ``findings`` outcome because provider evidence is never rewritten,
+        # so routing reads the disposition count and the stage continues exactly
+        # as a clean one does.
+        local_status = "clean"
     if local_status == "blocked":
         local_diagnostic = local.get("diagnostic")
         if not isinstance(local_diagnostic, str) or not local_diagnostic.strip():

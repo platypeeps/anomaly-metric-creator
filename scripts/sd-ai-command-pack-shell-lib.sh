@@ -187,28 +187,30 @@ prepare_tool_cache_env() {
     warn "cache setup failed; set SD_AI_COMMAND_PACK_CACHE_ROOT to a private writable directory outside the repository"
     return 1
   fi
+  # The lib's cache-env command is the single authority for which cache
+  # variables exist (CACHE_ENV_KEYS). Validate the shape generically — an
+  # environment-variable name with a non-empty value — rather than against a
+  # hardcoded key list, so adding a cache variable needs no shell-side edit.
   while IFS='=' read -r key value; do
     key="${key%$'\r'}"
     value="${value%$'\r'}"
     case "$key" in
-      XDG_CACHE_HOME|PYTHONPYCACHEPREFIX|UV_CACHE_DIR|UV_TOOL_DIR|PIP_CACHE_DIR|RUFF_CACHE_DIR|NPM_CONFIG_CACHE)
-        if [ -z "$value" ]; then
-          warn "cache setup returned an empty $key"
-          return 1
-        fi
-        export "$key=$value"
-        count=$((count + 1))
-        ;;
-      *)
+      "" | *[!A-Z0-9_]* | [!A-Z_]*)
         warn "cache setup returned an unexpected variable: $key"
         return 1
         ;;
     esac
+    if [ -z "$value" ]; then
+      warn "cache setup returned an empty $key"
+      return 1
+    fi
+    export "$key=$value"
+    count=$((count + 1))
   done <<EOF
 $output
 EOF
-  if [ "$count" -ne 7 ]; then
-    warn "cache setup returned $count variables; expected 7"
+  if [ "$count" -eq 0 ]; then
+    warn "cache setup returned no variables"
     return 1
   fi
   export SD_AI_COMMAND_PACK_CACHE_ENV_READY=1

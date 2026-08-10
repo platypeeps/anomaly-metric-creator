@@ -21,12 +21,12 @@ import json
 import os
 import shlex
 import sys
-import tempfile
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from sd_ai_command_pack_lib import (
     CommandError,
+    atomic_write_text,
     build_environment_blocked_evidence,
 )
 from sd_ai_command_pack_lib import git_stdout as run_git_stdout
@@ -390,47 +390,6 @@ def is_repo_map(path: Path) -> bool:
 
 def is_project_manifest(path: Path) -> bool:
     return path.name in PROJECT_MANIFESTS
-
-
-def default_text_file_mode(destination: Path) -> int:
-    if destination.exists():
-        return destination.stat().st_mode & 0o777
-    current_umask = os.umask(0)
-    try:
-        return 0o666 & ~current_umask
-    finally:
-        os.umask(current_umask)
-
-
-def atomic_write_text(
-    destination: Path,
-    content: str,
-    *,
-    errors: str = "strict",
-) -> None:
-    if destination.is_symlink():
-        raise OSError("target is a symlink")
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            temporary.write(content.encode("utf-8", errors=errors))
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        os.chmod(temporary_path, default_text_file_mode(destination))
-        os.replace(temporary_path, destination)
-        temporary_path = None
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def is_relevant(path: Path) -> bool:

@@ -189,6 +189,7 @@ scripts/sd-ai-command-pack-full-check.sh
 scripts/sd-ai-command-pack-housekeeping-result.py
 scripts/sd-ai-command-pack-housekeeping.sh
 scripts/sd-ai-command-pack-install-audit.py
+scripts/sd-ai-command-pack-pack-update.sh
 scripts/sd-ai-command-pack-pr-body-scope.py
 scripts/sd-ai-command-pack-pr-eligibility.py
 scripts/sd-ai-command-pack-record-session.py

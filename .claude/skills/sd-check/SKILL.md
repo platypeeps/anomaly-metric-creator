@@ -1,6 +1,7 @@
 ---
 name: sd-check
 description: Use when the user asks to run deterministic repository verification, obtain a typed check result, or verify readiness without AI review or repository mutation.
+model: sonnet
 ---
 
 # SD Check

@@ -128,11 +128,6 @@ sd-ai-command-pack-uv-tools/
 .opencode/**/sessions/
 .opencode/node_modules/
 .opencode/**/*.log
-# OpenCode regenerates .opencode/package.json (pinned to the locally
-# installed opencode version) and its lockfile on every launch, so they are
-# per-developer runtime artifacts, not a committed dependency (audit A-043).
-.opencode/package.json
-.opencode/package-lock.json
 .pi/**/*.local.*
 .pi/**/.cache/
 .pi/**/cache/

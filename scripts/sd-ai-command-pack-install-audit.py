@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 sys.dont_write_bytecode = True
 
 # This import must follow the bytecode guard for direct entrypoint invocation.
-from sd_ai_command_pack_lib import CacheSetupError, build_tool_environment  # noqa: E402
+from sd_ai_command_pack_lib import CacheSetupError, run_git_cached  # noqa: E402
 
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
 PROVENANCE_FILE = Path(".sd-ai-command-pack/provenance.json")
@@ -115,6 +115,7 @@ SOURCE_ONLY_ALLOWED_PACK_FILES = {
     "scripts/sd-ai-command-pack-fleet-controller.py",
     "scripts/sd-ai-command-pack-fleet-finding-classify.py",
     "scripts/sd-ai-command-pack-fleet-preflight.py",
+    "scripts/sd-ai-command-pack-fleet-publish.py",
     "scripts/sd-ai-command-pack-fleet-review-classify.py",
     "scripts/sd-ai-command-pack-fleet-timing.py",
     "scripts/sd-ai-command-pack-fleet-wave-plan.py",
@@ -585,14 +586,13 @@ def gitignored_paths(root: Path, relative_paths: Iterable[str]) -> set[str]:
         return set()
     input_payload = b"".join(os.fsencode(path) + b"\0" for path in candidates)
     try:
-        environment, _, _ = build_tool_environment(repo=root)
-        result = subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
+        result = run_git_cached(
+            ["-C", str(root), "check-ignore", "--stdin", "-z"],
+            repo=root,
+            cwd=None,
+            binary=True,
             input=input_payload,
-            env=environment,
-            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            check=False,
             timeout=GIT_TIMEOUT_SECONDS,
         )
     except (CacheSetupError, OSError, subprocess.TimeoutExpired):

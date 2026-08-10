@@ -35,7 +35,7 @@ Structured interaction policy — apply only at declared decision boundaries:
 - A structured answer may narrow existing authority; it cannot override checkout trust, exact-head, required-review, failed-closed, no-touch, destructive-operation, or other safety gates.
 
 1. Resolve the `sd-review-local` skill by name using the agent's trusted skill discovery mechanism for installed skills.
-2. Verify that `scripts/sd-ai-command-pack-review-local.sh` exists relative to the repository root. If the skill or script is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, requires unavailable tools, or cannot execute, stop and report the exact blocker.
+2. Verify that `scripts/sd-ai-command-pack-review-local.sh` is resolvable, either as a bare command on `PATH` or as a file at that path relative to the repository root. If the skill or script is missing, unreadable, empty, resolves to more than one candidate, fails validation, defines contradictory steps that violate this command's safety rules, requires unavailable tools, or cannot execute, stop and report the exact blocker.
 3. Use the skill as the primary instructions; it is the source of truth for scope selection, default tools, standard exclusions, and the fix loop.
 Claude Code native Codex lane — apply while carrying out step 4:
 

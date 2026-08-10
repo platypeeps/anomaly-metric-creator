@@ -1,6 +1,7 @@
 ---
 name: sd-retro
 description: Use when the user wants to capture a structured retrospective after a debugging stream, incident, or gate near-miss, record it as a journal entry via the session recorder, and propose consent-gated prevention tasks.
+model: sonnet
 ---
 
 # SD Retro

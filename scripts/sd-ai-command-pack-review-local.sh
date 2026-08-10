@@ -186,7 +186,7 @@ review_scope_label() {
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/sd-ai-command-pack-review-local.sh [--diff|--changed|--full-codebase|--all|--scope <diff|all>] [--list-tools] [tool ...]
+Usage: sd-ai-command-pack-review-local.sh [--diff|--changed|--full-codebase|--all|--scope <diff|all>] [--list-tools] [tool ...]
 
 Runs local review providers for the current diff or the full checked-out codebase.
 

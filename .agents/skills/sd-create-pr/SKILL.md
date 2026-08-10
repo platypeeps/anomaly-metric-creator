@@ -1,6 +1,7 @@
 ---
 name: sd-create-pr
 description: Use when the user wants to update specs through the SD wrapper, commit and push the current branch, then create or reuse a GitHub pull request. Invocation is explicit approval for those in-scope commits, PR-branch pushes, and PR creation or reuse without another prompt.
+model: sonnet
 ---
 
 # SD Create Pull Request
@@ -209,8 +210,9 @@ spec/research files before publication:
 ```bash
 git diff --check "$BASE_REF"...HEAD
 git diff --check
-if [ ! -f scripts/sd-ai-command-pack-review-preflight.mjs ]; then
-  printf '%s\n' "error: scripts/sd-ai-command-pack-review-preflight.mjs is missing; reinstall sd-ai-command-pack before publishing." >&2
+if ! command -v sd-ai-command-pack-review-preflight.mjs >/dev/null 2>&1 \
+  && [ ! -f scripts/sd-ai-command-pack-review-preflight.mjs ]; then
+  printf '%s\n' "error: sd-ai-command-pack-review-preflight.mjs is not resolvable on PATH or under scripts/; reinstall sd-ai-command-pack before publishing." >&2
   exit 1
 fi
 node scripts/sd-ai-command-pack-review-preflight.mjs
