@@ -222,11 +222,6 @@ COPIED_PATHS = [
         "scripts/sd-ai-command-pack-review-learnings.py",
     ),
     CopiedPath(
-        "SD AI command-pack review local script",
-        "scripts/sd-ai-command-pack-review-local.sh",
-        "scripts/sd-ai-command-pack-review-local.sh",
-    ),
-    CopiedPath(
         "SD AI command-pack full-check script",
         "scripts/sd-ai-command-pack-full-check.sh",
         "scripts/sd-ai-command-pack-full-check.sh",
