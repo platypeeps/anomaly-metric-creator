@@ -92,7 +92,10 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - name: Harden uv cache permissions for pack subprocess guards
                 run: install -d -m 0700 -- "$UV_CACHE_DIR"
               - run: git diff --check "origin/$BASE_REF...HEAD"
-              - run: git ls-files 'scripts/*.sh'
+              - run: |
+                  while IFS= read -r script; do
+                    bash -n "$script"
+                  done < <(git ls-files 'scripts/*.sh')
               - name: Syntax and Trellis artifact guards
                 run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
               - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
@@ -1379,6 +1382,39 @@ def test_ci_shell_syntax_must_enumerate_scripts(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "CI shell syntax coverage" in result.stderr
+
+
+def test_ci_shell_syntax_must_parse_each_script(tmp_path: Path) -> None:
+    """Enumerating the scripts is not enough; the parse step must survive."""
+    _write_minimal_contract(tmp_path)
+    ci = tmp_path / ".github/workflows/ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace('bash -n "$script"', "true", 1),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "CI shell syntax parse step" in result.stderr
+
+
+def test_precommit_shell_syntax_must_parse_each_script(tmp_path: Path) -> None:
+    _write_minimal_contract(tmp_path)
+    precommit = tmp_path / ".pre-commit-config.yaml"
+    precommit.write_text(
+        precommit.read_text(encoding="utf-8").replace(
+            'bash -n "$script"',
+            "true",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "pre-commit shell syntax parse entry" in result.stderr
 
 
 def test_missing_auto_merge_enabled_trigger_fails(tmp_path: Path) -> None:

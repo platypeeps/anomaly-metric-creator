@@ -52,6 +52,10 @@ REQUIRED_FILES = {
 # ci.yml, and in .pre-commit-config.yaml at once, so every pack refresh had to
 # update three files in lockstep -- and `bash -n a.sh b.sh` only ever parsed the
 # first argument, so the trailing six were never checked at all.
+# Two anchors per caller, not one: the enumeration alone would still pass if the
+# `bash -n` that consumes it were deleted, which is the exact "enumerate but
+# never parse" failure the old literal roster at least ruled out.
+_SHELL_SYNTAX_PARSE = 'bash -n "$script"'
 _CI_SHELL_SYNTAX_GLOB = "git ls-files 'scripts/*.sh'"
 _PRECOMMIT_SHELL_SYNTAX_FILES = r"files: ^scripts/.*\.sh$"
 _CI_PYTHON_SYNTAX_GLOB = (
@@ -589,6 +593,10 @@ def _check_ci(
             _CI_SHELL_SYNTAX_GLOB,
         ),
         (
+            "CI shell syntax parse step",
+            _SHELL_SYNTAX_PARSE,
+        ),
+        (
             "CI scripts Python syntax coverage",
             _CI_PYTHON_SYNTAX_GLOB,
         ),
@@ -1041,6 +1049,10 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         (
             "pre-commit shell syntax coverage",
             _PRECOMMIT_SHELL_SYNTAX_FILES,
+        ),
+        (
+            "pre-commit shell syntax parse entry",
+            _SHELL_SYNTAX_PARSE,
         ),
         (
             "pre-commit scripts Python syntax coverage",
