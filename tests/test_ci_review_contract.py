@@ -92,7 +92,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - name: Harden uv cache permissions for pack subprocess guards
                 run: install -d -m 0700 -- "$UV_CACHE_DIR"
               - run: git diff --check "origin/$BASE_REF...HEAD"
-              - run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
+              - run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
               - name: Syntax and Trellis artifact guards
                 run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
               - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
@@ -331,7 +331,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 entry: python tools/check_python_syntax.py
                 files: ^(scripts|src|tests|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
               - id: review-tooling-shell-syntax
-                entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
+                entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
               - id: ci-review-contract
                 entry: python tools/check_ci_review_contract.py
                 files: ^scripts/sd-ai-command-pack-pr-body-scope\.py|\.sd-ai-command-pack/pr-body-scope\.json|tests/test_pr_body_scope_lint\.py$
@@ -360,7 +360,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         scripts/check-review-preflight.mjs
         scripts/sd-ai-command-pack-pr-body-scope.py
         scripts/sd-ai-command-pack-review-scope.sh
-        scripts/sd-ai-command-pack-review-local.sh
         scripts/sd-ai-command-pack-install-audit.py
         scripts/sd-ai-command-pack-full-check.sh
         scripts/sd-ai-command-pack-housekeeping.sh
