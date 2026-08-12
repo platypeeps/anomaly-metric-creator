@@ -47,14 +47,17 @@ REQUIRED_FILES = {
     ),
 }
 
-# Shell syntax coverage enumerates from the index rather than from a literal
-# roster. The old list pinned the installed command-pack's script names here, in
-# ci.yml, and in .pre-commit-config.yaml at once, so every pack refresh had to
-# update three files in lockstep -- and `bash -n a.sh b.sh` only ever parsed the
-# first argument, so the trailing six were never checked at all.
-# Two anchors per caller, not one: the enumeration alone would still pass if the
-# `bash -n` that consumes it were deleted, which is the exact "enumerate but
-# never parse" failure the old literal roster at least ruled out.
+# Shell syntax coverage is derived, not pinned. The old list named the installed
+# command-pack's scripts here, in ci.yml, and in .pre-commit-config.yaml at once,
+# so every pack refresh had to update three files in lockstep -- and
+# `bash -n a.sh b.sh` only ever parsed the first argument, so the trailing six
+# were never checked at all.
+#
+# The two callers select differently and each gets its own anchor: ci.yml
+# enumerates from the git index, while pre-commit matches a path pattern and is
+# handed the filenames. Both then share the parse anchor, because the selection
+# alone would still pass if the `bash -n` consuming it were deleted -- the exact
+# "select but never parse" failure the literal roster at least ruled out.
 _SHELL_SYNTAX_PARSE = 'bash -n "$script"'
 _CI_SHELL_SYNTAX_GLOB = "git ls-files 'scripts/*.sh'"
 _PRECOMMIT_SHELL_SYNTAX_FILES = r"files: ^scripts/.*\.sh$"
