@@ -69,10 +69,15 @@ is_python_path() {
 
 is_review_tooling_path() {
   case "$1" in
-    scripts/classify-ci-changes.sh|scripts/classify_ci_changes.sh|scripts/check-review-preflight.mjs|scripts/sd-ai-command-pack-install-audit.py|scripts/sd-ai-command-pack-pr-body-scope.py|scripts/sd-ai-command-pack-review-scope.sh|scripts/sd-ai-command-pack-review-preflight.mjs|scripts/sd-ai-command-pack-full-check.sh|scripts/sd-ai-command-pack-housekeeping.sh|scripts/sd-ai-command-pack-shell-lib.sh|scripts/sd-ai-command-pack-toolchain.sh)
+    scripts/classify-ci-changes.sh|scripts/classify_ci_changes.sh|scripts/check-review-preflight.mjs)
       return 0
       ;;
-    .sd-ai-command-pack/*|tests/test_pr_body_scope_lint.py)
+    # Installed command-pack surfaces are matched by shape, not by roster. The
+    # pack owns which scripts it ships, so pinning their names here turned every
+    # pack refresh into a classifier change. The underscore-named library
+    # modules (scripts/sd_ai_command_pack_*.py) stay outside this glob so they
+    # keep their app gate.
+    .sd-ai-command-pack/*|scripts/sd-ai-command-pack-*|tests/test_pr_body_scope_lint.py)
       return 0
       ;;
     .agents/*|.codex/*|.claude/*|.gemini/*|.opencode/*|.prism/*)
@@ -95,7 +100,7 @@ is_review_tooling_path() {
 
 is_repo_tooling_path() {
   case "$1" in
-    scripts/sd-ai-command-pack-record-session.py|scripts/sd-ai-command-pack-review-learnings.py|scripts/sd-ai-command-pack-status.py|scripts/sd-ai-command-pack-update-spec-kb.py|scripts/sd-ai-command-pack-work-loop.py|scripts/sd_ai_command_pack_fleet_lib.py|scripts/update_repomix)
+    scripts/sd_ai_command_pack_fleet_lib.py|scripts/update_repomix)
       return 0
       ;;
     *)

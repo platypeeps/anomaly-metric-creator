@@ -245,8 +245,13 @@ jobs:
             git diff --check
           fi
 
-      - name: Shell syntax for review tooling
-        run: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
+      - name: Shell syntax for scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(git ls-files 'scripts/*.sh' scripts/update_repomix)
 
       - name: Smoke CI classifier
         run: |
