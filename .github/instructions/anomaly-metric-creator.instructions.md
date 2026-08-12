@@ -96,7 +96,6 @@ or prompt entry points under `.github/prompts/`. SD command-pack copies include
 `scripts/sd-ai-command-pack-install-audit.py`,
 `scripts/sd-ai-command-pack-pr-body-scope.py`,
 `scripts/sd-ai-command-pack-review-learnings.py`,
-`scripts/sd-ai-command-pack-review-local.sh`,
 `scripts/sd-ai-command-pack-review-scope.sh`, and
 `scripts/sd-ai-command-pack-update-spec-kb.py`.
 
