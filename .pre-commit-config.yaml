@@ -134,13 +134,14 @@ repos:
       # The CI classifier and Trellis review scripts decide whether remote
       # Actions can take the lightweight path. Keep shell syntax failures local
       # so a docs/tooling-only PR does not spend a runner just to discover a
-      # malformed script.
-      - id: review-tooling-shell-syntax
-        name: validate review tooling shell syntax
-        entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
+      # malformed script. Matched by shape so an installed command-pack refresh
+      # never has to edit this hook.
+      - id: shell-syntax
+        name: validate shell script syntax
+        entry: bash -c 'for script in "$@"; do bash -n "$script"; done' --
         language: system
-        files: ^scripts/(classify-ci-changes|classify_ci_changes|sd-ai-command-pack-(full-check|housekeeping|review-scope|review-local|shell-lib|toolchain))\.sh$
-        pass_filenames: false
+        files: ^scripts/.*\.sh$
+        pass_filenames: true
       # Guard the named anchors that keep local full-check, CI lane selection,
       # CodeQL/Socket cadence, and review docs in sync. This is intentionally
       # text-based and stdlib-only so it can run in pre-commit without

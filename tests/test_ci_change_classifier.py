@@ -15,12 +15,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "classify-ci-changes.sh"
+# Repo-owned tooling that is cheap to change and has no app-level blast radius.
+# Installed command-pack scripts are deliberately absent: they are classified by
+# shape as review tooling, the same way the rest of the fleet classifies them.
 REPO_TOOLING_PATHS = (
-    "scripts/sd-ai-command-pack-record-session.py",
-    "scripts/sd-ai-command-pack-review-learnings.py",
-    "scripts/sd-ai-command-pack-status.py",
-    "scripts/sd-ai-command-pack-update-spec-kb.py",
-    "scripts/sd-ai-command-pack-work-loop.py",
     "scripts/sd_ai_command_pack_fleet_lib.py",
     "scripts/update_repomix",
 )
@@ -111,6 +109,12 @@ def test_review_tooling_scripts_stay_in_lightweight_lane(tmp_path: Path) -> None
         "scripts/sd-ai-command-pack-housekeeping.sh",
         "scripts/sd-ai-command-pack-shell-lib.sh",
         "scripts/sd-ai-command-pack-toolchain.sh",
+        "scripts/sd-ai-command-pack-record-session.py",
+        "scripts/sd-ai-command-pack-review-learnings.py",
+        "scripts/sd-ai-command-pack-review-full-check.sh",
+        "scripts/sd-ai-command-pack-status.py",
+        "scripts/sd-ai-command-pack-update-spec-kb.py",
+        "scripts/sd-ai-command-pack-work-loop.py",
         ".sd-ai-command-pack/pr-body-scope.json",
         "tests/test_pr_body_scope_lint.py",
     )
@@ -145,7 +149,6 @@ def test_untested_repo_tooling_stays_in_lightweight_lane(
     (
         "scripts/sd_ai_command_pack_lib.py",
         "scripts/sync-agent-skills.py",
-        "scripts/sd-ai-command-pack-review-full-check.sh",
         "tools/check_role_name_leaks.py",
         "tools/benchmark_combine.py",
     ),

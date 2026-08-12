@@ -47,14 +47,13 @@ REQUIRED_FILES = {
     ),
 }
 
-_REVIEW_TOOLING_SHELL_SYNTAX = (
-    "bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh "
-    "scripts/sd-ai-command-pack-full-check.sh "
-    "scripts/sd-ai-command-pack-housekeeping.sh "
-    "scripts/sd-ai-command-pack-review-scope.sh "
-    "scripts/sd-ai-command-pack-shell-lib.sh "
-    "scripts/sd-ai-command-pack-toolchain.sh"
-)
+# Shell syntax coverage enumerates from the index rather than from a literal
+# roster. The old list pinned the installed command-pack's script names here, in
+# ci.yml, and in .pre-commit-config.yaml at once, so every pack refresh had to
+# update three files in lockstep -- and `bash -n a.sh b.sh` only ever parsed the
+# first argument, so the trailing six were never checked at all.
+_CI_SHELL_SYNTAX_GLOB = "git ls-files 'scripts/*.sh'"
+_PRECOMMIT_SHELL_SYNTAX_FILES = r"files: ^scripts/.*\.sh$"
 _CI_PYTHON_SYNTAX_GLOB = (
     "git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' "
     "'.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'"
@@ -586,8 +585,8 @@ def _check_ci(
             "name: Set up uv for lightweight guards",
         ),
         (
-            "CI review-tooling shell syntax coverage",
-            _REVIEW_TOOLING_SHELL_SYNTAX,
+            "CI shell syntax coverage",
+            _CI_SHELL_SYNTAX_GLOB,
         ),
         (
             "CI scripts Python syntax coverage",
@@ -1014,18 +1013,11 @@ def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
         ("python output", 'emit_output "python_changed"'),
         ("review tooling output", 'emit_output "review_tooling_changed"'),
         ("untracked local files", "git ls-files --others --exclude-standard"),
-        ("review tooling full-check script", "scripts/sd-ai-command-pack-full-check.sh"),
-        ("review tooling housekeeping script", "scripts/sd-ai-command-pack-housekeeping.sh"),
-        ("shared review preflight script", "scripts/sd-ai-command-pack-review-preflight.mjs"),
         ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
-        ("SD AI command-pack scope script", "scripts/sd-ai-command-pack-review-scope.sh"),
-        ("SD AI command-pack install audit", "scripts/sd-ai-command-pack-install-audit.py"),
-        ("PR body scope guard", "scripts/sd-ai-command-pack-pr-body-scope.py"),
         ("PR body scope tests", "tests/test_pr_body_scope_lint.py"),
         ("command-pack payload classification", ".sd-ai-command-pack/*"),
+        ("command-pack script classification", "scripts/sd-ai-command-pack-*"),
         ("Trellis audit classification", ".trellis/audit/*"),
-        ("command-pack shell library classification", "scripts/sd-ai-command-pack-shell-lib.sh"),
-        ("command-pack toolchain classification", "scripts/sd-ai-command-pack-toolchain.sh"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
@@ -1047,8 +1039,8 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         ("role-name commit-message hook", "id: role-name-commit-message"),
         ("commit-message hook stage", "stages: [commit-msg]"),
         (
-            "pre-commit review-tooling shell syntax coverage",
-            _REVIEW_TOOLING_SHELL_SYNTAX,
+            "pre-commit shell syntax coverage",
+            _PRECOMMIT_SHELL_SYNTAX_FILES,
         ),
         (
             "pre-commit scripts Python syntax coverage",
