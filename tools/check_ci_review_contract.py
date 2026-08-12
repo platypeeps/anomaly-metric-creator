@@ -64,6 +64,13 @@ _SHELL_SYNTAX_PARSE = 'bash -n "$script"'
 # pre-existing hole rather than one this change opened.
 _CI_SHELL_SYNTAX_GLOB = "git ls-files 'scripts/*.sh' scripts/update_repomix"
 _PRECOMMIT_SHELL_SYNTAX_FILES = r"files: ^scripts/(.*\.sh|update_repomix)$"
+# `set -e` is pinned for pre-commit because it is load-bearing there: the entry
+# is a plain `bash -c`, so without it the loop exits with the status of the last
+# `bash -n` and a broken early script is masked. The ci.yml step needs no such
+# anchor -- Actions runs a `shell: bash` step as `bash --noprofile --norc -eo
+# pipefail`, and a failing command in a `while` body is not a tested context, so
+# it aborts with or without the explicit `set -euo pipefail` written there.
+_PRECOMMIT_SHELL_SYNTAX_FAILFAST = "bash -c 'set -e;"
 _CI_PYTHON_SYNTAX_GLOB = (
     "git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' "
     "'.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'"
@@ -1059,6 +1066,10 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         (
             "pre-commit shell syntax parse entry",
             _SHELL_SYNTAX_PARSE,
+        ),
+        (
+            "pre-commit shell syntax fail-fast",
+            _PRECOMMIT_SHELL_SYNTAX_FAILFAST,
         ),
         (
             "pre-commit scripts Python syntax coverage",

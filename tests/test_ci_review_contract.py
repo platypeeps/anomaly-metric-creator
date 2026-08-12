@@ -1417,6 +1417,25 @@ def test_precommit_shell_syntax_must_parse_each_script(tmp_path: Path) -> None:
     assert "pre-commit shell syntax parse entry" in result.stderr
 
 
+def test_precommit_shell_syntax_must_fail_fast(tmp_path: Path) -> None:
+    """Dropping `set -e` silently returns the hook to masking early failures."""
+    _write_minimal_contract(tmp_path)
+    precommit = tmp_path / ".pre-commit-config.yaml"
+    precommit.write_text(
+        precommit.read_text(encoding="utf-8").replace(
+            "bash -c 'set -e;",
+            "bash -c '",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "pre-commit shell syntax fail-fast" in result.stderr
+
+
 def test_missing_auto_merge_enabled_trigger_fails(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
     ci = tmp_path / ".github/workflows/ci.yml"
