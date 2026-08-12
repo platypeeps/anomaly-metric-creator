@@ -1,17 +1,25 @@
 {
+  "$schema": "rules.schema.json",
+  "description": "Configuration for the Prism code review tool, defining issue categories, severities, and required checks. The project-local schema file is distributed next to this file as rules.schema.json. The Prism config format keeps focus and severityOverrides separate; keep their category names in sync.",
   "focus": [
+    "bug",
     "correctness",
-    "security",
-    "testing",
+    "docs",
     "maintainability",
-    "docs"
+    "performance",
+    "security",
+    "style",
+    "testing"
   ],
   "severityOverrides": {
-    "security": "high",
+    "bug": "high",
     "correctness": "high",
-    "testing": "medium",
     "docs": "medium",
-    "style": "low"
+    "maintainability": "medium",
+    "performance": "medium",
+    "security": "high",
+    "style": "low",
+    "testing": "medium"
   },
   "required": [
     {
