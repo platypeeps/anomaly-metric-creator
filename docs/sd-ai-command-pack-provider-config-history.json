@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "templates/.gito/config.toml": {
+      "current": "8caa6fb1fb64f4f445a1db40186f0a638d168b68aaee35d29627d13da98ee586",
+      "digests": [
+        "acf381f89f94aac3186fe8d5c7fecbf6d4d474f73c04290f21b07ef2ad233beb",
+        "713ebd4a23622a5346e3d9237befa973707e3e4c93f6ff4e2712c328ba556215",
+        "8caa6fb1fb64f4f445a1db40186f0a638d168b68aaee35d29627d13da98ee586"
+      ],
+      "target": ".gito/config.toml"
+    },
+    "templates/.prism/rules.json": {
+      "current": "cea5089e24ac49f8e0e65ace7d32aa9d43852a5870d919a1352b8a458fde14c0",
+      "digests": [
+        "6a06e3668fd89e0427ae0fe8879b27a8815144ba05381375a3fb1ed210fea4b7",
+        "777cde6aa43e7ed1d04ab8ac2b080680933ceee2316e812089808035efcf5f6c",
+        "fa5c95f4d6f7baef6c1d5cfc16d0601b3863da32088fc861f13c767ff8760da3",
+        "eda4d8ebe8072bf1e3cb87343d26189582160525fb6b7d35958841a9aa2eb8d3",
+        "cea5089e24ac49f8e0e65ace7d32aa9d43852a5870d919a1352b8a458fde14c0"
+      ],
+      "target": ".prism/rules.json"
+    }
+  }
+}

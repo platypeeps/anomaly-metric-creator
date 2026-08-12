@@ -19,7 +19,6 @@
 .agents/skills/sd-create-pr/SKILL.md
 .agents/skills/sd-finish-work/SKILL.md
 .agents/skills/sd-fix-ci/SKILL.md
-.agents/skills/sd-full-check/SKILL.md
 .agents/skills/sd-help/SKILL.md
 .agents/skills/sd-help/references/command-catalog.md
 .agents/skills/sd-help/references/completion-lifecycle.md
@@ -30,7 +29,6 @@
 .agents/skills/sd-housekeeping/SKILL.md
 .agents/skills/sd-retro/SKILL.md
 .agents/skills/sd-review-learnings/SKILL.md
-.agents/skills/sd-review-local/SKILL.md
 .agents/skills/sd-review-pr/SKILL.md
 .agents/skills/sd-review/SKILL.md
 .agents/skills/sd-ship/SKILL.md
@@ -55,12 +53,10 @@
 .claude/commands/sd/create-pr.md
 .claude/commands/sd/finish-work.md
 .claude/commands/sd/fix-ci.md
-.claude/commands/sd/full-check.md
 .claude/commands/sd/help.md
 .claude/commands/sd/housekeeping.md
 .claude/commands/sd/retro.md
 .claude/commands/sd/review-learnings.md
-.claude/commands/sd/review-local.md
 .claude/commands/sd/review-pr.md
 .claude/commands/sd/review.md
 .claude/commands/sd/ship.md
@@ -78,7 +74,6 @@
 .claude/skills/sd-create-pr/SKILL.md
 .claude/skills/sd-finish-work/SKILL.md
 .claude/skills/sd-fix-ci/SKILL.md
-.claude/skills/sd-full-check/SKILL.md
 .claude/skills/sd-help/SKILL.md
 .claude/skills/sd-help/references/command-catalog.md
 .claude/skills/sd-help/references/completion-lifecycle.md
@@ -89,7 +84,6 @@
 .claude/skills/sd-housekeeping/SKILL.md
 .claude/skills/sd-retro/SKILL.md
 .claude/skills/sd-review-learnings/SKILL.md
-.claude/skills/sd-review-local/SKILL.md
 .claude/skills/sd-review-pr/SKILL.md
 .claude/skills/sd-review/SKILL.md
 .claude/skills/sd-ship/SKILL.md
@@ -114,12 +108,10 @@
 .gemini/commands/sd/create-pr.toml
 .gemini/commands/sd/finish-work.toml
 .gemini/commands/sd/fix-ci.toml
-.gemini/commands/sd/full-check.toml
 .gemini/commands/sd/help.toml
 .gemini/commands/sd/housekeeping.toml
 .gemini/commands/sd/retro.toml
 .gemini/commands/sd/review-learnings.toml
-.gemini/commands/sd/review-local.toml
 .gemini/commands/sd/review-pr.toml
 .gemini/commands/sd/review.toml
 .gemini/commands/sd/ship.toml
@@ -137,12 +129,10 @@
 .github/prompts/sd-create-pr.prompt.md
 .github/prompts/sd-finish-work.prompt.md
 .github/prompts/sd-fix-ci.prompt.md
-.github/prompts/sd-full-check.prompt.md
 .github/prompts/sd-help.prompt.md
 .github/prompts/sd-housekeeping.prompt.md
 .github/prompts/sd-retro.prompt.md
 .github/prompts/sd-review-learnings.prompt.md
-.github/prompts/sd-review-local.prompt.md
 .github/prompts/sd-review-pr.prompt.md
 .github/prompts/sd-review.prompt.md
 .github/prompts/sd-ship.prompt.md
@@ -161,12 +151,10 @@
 .opencode/commands/sd-create-pr.md
 .opencode/commands/sd-finish-work.md
 .opencode/commands/sd-fix-ci.md
-.opencode/commands/sd-full-check.md
 .opencode/commands/sd-help.md
 .opencode/commands/sd-housekeeping.md
 .opencode/commands/sd-retro.md
 .opencode/commands/sd-review-learnings.md
-.opencode/commands/sd-review-local.md
 .opencode/commands/sd-review-pr.md
 .opencode/commands/sd-review.md
 .opencode/commands/sd-ship.md
@@ -182,6 +170,7 @@
 .sd-ai-command-pack/manifest.json
 .sd-ai-command-pack/provenance.json
 docs/SD_AI_COMMAND_PACK.md
+docs/sd-ai-command-pack-provider-config-history.json
 scripts/sd-ai-command-pack-audit-inventory.py
 scripts/sd-ai-command-pack-audit-route.py
 scripts/sd-ai-command-pack-check.py
@@ -189,6 +178,7 @@ scripts/sd-ai-command-pack-full-check.sh
 scripts/sd-ai-command-pack-housekeeping-result.py
 scripts/sd-ai-command-pack-housekeeping.sh
 scripts/sd-ai-command-pack-install-audit.py
+scripts/sd-ai-command-pack-pack-update.sh
 scripts/sd-ai-command-pack-pr-body-scope.py
 scripts/sd-ai-command-pack-pr-eligibility.py
 scripts/sd-ai-command-pack-record-session.py
@@ -196,7 +186,6 @@ scripts/sd-ai-command-pack-recovery-artifacts.py
 scripts/sd-ai-command-pack-review-full-check.sh
 scripts/sd-ai-command-pack-review-learnings.py
 scripts/sd-ai-command-pack-review-local.py
-scripts/sd-ai-command-pack-review-local.sh
 scripts/sd-ai-command-pack-review-preflight.mjs
 scripts/sd-ai-command-pack-review-scope.sh
 scripts/sd-ai-command-pack-review.py

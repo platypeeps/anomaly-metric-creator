@@ -1,6 +1,7 @@
 ---
 name: sd-housekeeping
 description: Use at the end of a development stream to run finish-work before merging a ready PR, clean up after merge, prune stale refs, and report the expected clean repo state plus anomalies. Invocation is explicit approval for its in-scope task, archive, and journal commits and PR-branch push without another prompt.
+model: sonnet
 ---
 
 # SD Housekeeping
@@ -117,8 +118,9 @@ The JSON result is the primary deterministic handoff:
 - `status` embeds the complete delegated `sd-status` result, including
   repo-wide open PRs/issues, Trellis inventory, review rounds, F/T selectors,
   and next steps; and
-- `outcome.status` is `clean`, `blocked`, `indeterminate`, or `failed`, with
-  stable `outcome.reasonCodes`.
+- `outcome.verdict` is `clean`, `blocked`, `indeterminate`, or `failed`, with
+  stable `outcome.reasonCodes`. (`outcome.status` is a deprecated alias emitting
+  the identical value for one release; read `outcome.verdict`.)
 
 Unknown schema majors, malformed/missing structured evidence, `indeterminate`,
 or `failed` results stop interpretation and require the reported recovery. Do
@@ -127,7 +129,7 @@ alone does not block current-stream cleanup.
 
 ## Expected clean state
 
-A clean result has `outcome.status: clean`, no anomalies, a clean synchronized
+A clean result has `outcome.verdict: clean`, no anomalies, a clean synchronized
 default branch, only the intended local branches, the expected remote source
 branch state, a merged relevant PR when one applied, and authoritative status
 inventory. Any difference belongs in `Anomalies`; keep its exact code/message

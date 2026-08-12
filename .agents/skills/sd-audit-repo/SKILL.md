@@ -36,9 +36,9 @@ large development stream, on a recurring schedule, or when taking over an
 unfamiliar repository. Run it with `follow-up` to re-verify previously
 recorded findings instead of sweeping the whole repository.
 
-It complements `sd-review-local` (provider loop), `sd-review-pr` (PR
-loop), and `sd-full-check` (gate). It replaces none of them and is not a
-per-change review loop.
+It complements `sd-review` (review loop), `sd-review-pr` (PR loop), and
+`sd-check` (gate). It replaces none of them and is not a per-change review
+loop.
 
 The audit is charter-driven. Charters live at
 `.agents/skills/sd-audit-repo/charters/<name>.md`; that canonical path is
@@ -272,9 +272,9 @@ clause, and `why:`/`fix:` capped at two lines — never paragraph blobs.
 - Unknown, conflicting, or failed classification falls back to exhaustive
   coverage and remains visible in Coverage & limits.
 - Do not stage, commit, push, or open pull requests.
-- Positioning: this command complements `sd-review-local` (provider
-  loop), `sd-review-pr` (PR loop), and `sd-full-check` (gate). It is the
-  periodic formal audit, not a replacement for any of them.
+- Positioning: this command complements `sd-review` (review loop),
+  `sd-review-pr` (PR loop), and `sd-check` (gate). It is the periodic
+  formal audit, not a replacement for any of them.
 
 ## Final report
 

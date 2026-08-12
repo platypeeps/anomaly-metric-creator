@@ -1,6 +1,7 @@
 ---
 name: sd-help
 description: Use when the user wants to discover, compare, or understand Software Delivery commands and receive a copy-ready recommendation without running the selected workflow.
+model: haiku
 ---
 
 # SD Help

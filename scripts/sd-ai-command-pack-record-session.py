@@ -45,6 +45,7 @@ from pathlib import Path
 from sd_ai_command_pack_lib import (
     DEFAULT_TRELLIS_TIMEOUT,
     CommandError,
+    atomic_write_text,
     build_environment_blocked_evidence,
     run_command,
 )
@@ -56,47 +57,10 @@ ADD_SESSION = Path(".trellis/scripts/add_session.py")
 WORKSPACE = ".trellis/workspace"
 PLACEHOLDERS = ("(Add details)", "(Add test results)", "(see git log)")
 SESSION_HEADING_RE = re.compile(r"^## Session \d+: (.+)$", re.MULTILINE)
-
-
-def default_text_file_mode(destination: Path) -> int:
-    if destination.exists():
-        return destination.stat().st_mode & 0o777
-    current_umask = os.umask(0)
-    try:
-        return 0o666 & ~current_umask
-    finally:
-        os.umask(current_umask)
-
-
-def atomic_write_text(
-    destination: Path,
-    content: str,
-    *,
-    errors: str = "strict",
-) -> None:
-    if destination.is_symlink():
-        raise OSError("target is a symlink")
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            temporary.write(content.encode("utf-8", errors=errors))
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        os.chmod(temporary_path, default_text_file_mode(destination))
-        os.replace(temporary_path, destination)
-        temporary_path = None
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
+# Commit-table cells: | `b371f91` | subject |
+JOURNAL_COMMIT_CELL_RE = re.compile(r"\|\s*`([0-9a-f]{7,40})`\s*\|")
+MAX_DERIVED_COMMIT_SCAN = 200
+MAX_DERIVED_COMMITS = 25
 
 
 def run_git(*args: str) -> subprocess.CompletedProcess:
@@ -113,6 +77,71 @@ def commit_subject(commit_hash: str) -> str | None:
     # A valid commit can carry an empty subject (--allow-empty-message);
     # only a failed lookup means the hash is unknown.
     return subject[0] if subject else "(empty subject)"
+
+
+def recorded_commit_hashes() -> set[str]:
+    """Every commit hash already cited by a journal commit table."""
+    recorded: set[str] = set()
+    for journal in Path(WORKSPACE).glob("*/journal*.md"):
+        try:
+            text = journal.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        recorded.update(JOURNAL_COMMIT_CELL_RE.findall(text))
+    return recorded
+
+
+def derive_work_commits() -> list[str]:
+    """Unrecorded work commits reachable from HEAD, oldest first.
+
+    ``add_session.py`` writes "(No commits - planning session)" whenever no
+    hash is supplied, and the pack's own final-bundle validator then rejects
+    that session with ``journal_commit_missing`` — two pack surfaces
+    disagreeing by default, so the documented invocation produces an artifact
+    the documented validator always refuses.
+
+    Deriving the obvious answer removes the trap without guessing. A commit
+    counts only when no journal already cites it and it changes something
+    outside the workspace, so journal and index commits never nominate
+    themselves. ``--commit -`` still asserts "genuinely none".
+
+    Returns an empty list whenever the answer is not obvious — nothing to
+    record, git unavailable, no recorded boundary inside the scan window, or
+    more candidates than one session plausibly covers — leaving the previous
+    behavior intact rather than inventing a commit list.
+    """
+    result = run_git(
+        "log", f"--max-count={MAX_DERIVED_COMMIT_SCAN}", "--format=%H", "HEAD"
+    )
+    if result.returncode != 0:
+        return []
+    recorded = recorded_commit_hashes()
+    if not recorded:
+        return []
+    candidates: list[str] = []
+    for full_hash in result.stdout.split():
+        if any(full_hash.startswith(short) for short in recorded):
+            break
+        candidates.append(full_hash)
+    else:
+        # Never reached a recorded commit inside the scan window, so the
+        # boundary is unknown and these may reach back into ancient history.
+        return []
+    work: list[str] = []
+    for full_hash in candidates:
+        files = run_git(
+            "show", "--name-only", "--format=", "--end-of-options", full_hash, "--"
+        )
+        if files.returncode != 0:
+            return []
+        paths = [line for line in files.stdout.splitlines() if line.strip()]
+        if paths and all(path.startswith(f"{WORKSPACE}/") for path in paths):
+            continue
+        work.append(full_hash)
+    if len(work) > MAX_DERIVED_COMMITS:
+        return []
+    work.reverse()
+    return work
 
 
 def current_git_branch() -> str | None:
@@ -174,7 +203,12 @@ def existing_session_journals(journals: list[Path], title: str) -> list[Path]:
 
 
 def replace_section(block: str, heading: str, lines: list[str]) -> str | None:
-    """Replace the body under `heading` in the session block; None if absent."""
+    """Replace the body under `heading` in the session block; None if absent.
+
+    Trellis <=0.6.7 always scaffolds every section heading; >=0.6.14 omits a
+    section entirely when it has no content, so absence is an expected layout
+    difference handled by ``replace_or_insert_section``, not an error here.
+    """
     head = f"{heading}\n"
     start = block.find(head)
     if start == -1:
@@ -184,6 +218,28 @@ def replace_section(block: str, heading: str, lines: list[str]) -> str | None:
     if end == -1:
         end = len(block)
     return block[:body_at] + "\n" + "\n".join(lines) + "\n" + block[end:]
+
+
+def replace_or_insert_section(
+    block: str, heading: str, lines: list[str], before: str | None = None
+) -> str:
+    """Replace the section body, or insert the whole section when absent.
+
+    When inserting, place the section immediately before the `before`
+    heading if that heading exists (to preserve the canonical Trellis
+    section order); otherwise append at the end of the block.
+    """
+    patched = replace_section(block, heading, lines)
+    if patched is not None:
+        return patched
+    section = f"\n\n{heading}\n\n" + "\n".join(lines)
+    if before is not None:
+        anchor = block.find(f"{before}\n")
+        if anchor != -1:
+            insert_at = block.rfind("\n\n", 0, anchor)
+            if insert_at != -1:
+                return block[:insert_at] + section + block[insert_at:]
+    return block.rstrip("\n") + section + "\n"
 
 
 def patch_last_session(
@@ -228,16 +284,24 @@ def patch_last_session(
 
         block = row_re.sub(_row_replacement, block, count=1)
 
-    patched = replace_section(block, "### Testing", tests)
-    if patched is None:
-        return f"missing Testing section in the new entry in {journal}"
-    block = patched
+    # Trellis >=0.6.14 omits sections that were scaffolded empty by <=0.6.7,
+    # so insert the section when the heading is absent instead of failing.
+    # Canonical order (both versions): Testing before Status, Next Steps
+    # after Status — anchor the Testing insert accordingly.
+    block = replace_or_insert_section(
+        block, "### Testing", tests, before="### Status"
+    )
 
     if next_steps:
-        patched = replace_section(block, "### Next Steps", next_steps)
-        if patched is None:
-            return f"missing Next Steps section in the new entry in {journal}"
-        block = patched
+        block = replace_or_insert_section(block, "### Next Steps", next_steps)
+    elif "### Next Steps\n" not in block:
+        # Preserve the documented default: Trellis <=0.6.7 scaffolded this
+        # section with its own placeholder (left untouched above), but
+        # >=0.6.14 omits it entirely, so recreate the 0.6.7 default text to
+        # keep journal entries version-consistent.
+        block = replace_or_insert_section(
+            block, "### Next Steps", ["- None - task complete"]
+        )
 
     remaining = [p for p in PLACEHOLDERS if p in block]
     if remaining:
@@ -298,7 +362,14 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--title", required=True)
     parser.add_argument("--summary", required=True)
-    parser.add_argument("--commit", default="", help="Comma-separated commit hashes")
+    parser.add_argument(
+        "--commit",
+        default="",
+        help=(
+            "Comma-separated commit hashes. Omit to derive the unrecorded work "
+            "commits on HEAD; pass '-' to record a session with no commits."
+        ),
+    )
     parser.add_argument(
         "--change",
         action="append",
@@ -351,10 +422,21 @@ def main(argv: list[str]) -> int:
         return 2
 
     commit_arg = args.commit.strip()
-    if commit_arg == "-":
+    asserted_no_commits = commit_arg == "-"
+    if asserted_no_commits:
         # add_session.py's explicit no-commits sentinel.
         commit_arg = ""
     hashes = [h.strip() for h in commit_arg.split(",") if h.strip()]
+    if not hashes and not asserted_no_commits:
+        hashes = derive_work_commits()
+        if hashes and not args.json:
+            print(
+                f"[sd-record-session] --commit not given; recording "
+                f"{len(hashes)} unrecorded work commit(s): "
+                f"{', '.join(h[:7] for h in hashes)}. "
+                "Pass --commit - to record a session with no commits.",
+                file=sys.stderr,
+            )
     seen_hashes: set[str] = set()
     for commit_hash in hashes:
         if commit_hash.startswith("-"):

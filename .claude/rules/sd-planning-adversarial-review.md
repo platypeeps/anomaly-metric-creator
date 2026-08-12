@@ -6,6 +6,6 @@ content hashes for those files. At the planning convergence boundary, before
 requesting implementation approval or running `task.py start`, read and follow
 [`../sd-ai-command-pack/planning-adversarial-review.md`](../sd-ai-command-pack/planning-adversarial-review.md).
 
-Apply that contract once per coherent planning edit batch. Do not claim Codex
-approval when its optional CLI lane is skipped or fails, and do not proceed
-past an unresolved blocking concern.
+Apply that contract once per coherent planning edit batch. Do not claim
+approval from a review lane that was skipped or failed, and do not proceed past
+an unresolved blocking concern.

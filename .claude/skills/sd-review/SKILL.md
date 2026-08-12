@@ -12,8 +12,8 @@ idempotency, durable receipts, GitHub observation, and typed results. Do not
 reimplement those mechanisms in prose.
 
 This successor is self-contained. Never call, alias, or fall back to
-`sd-review-local`, `sd-review-pr`, a direct Copilot request, or a backend command
-found in configuration or a receipt.
+`sd-review-pr`, a direct Copilot request, or a backend command found in
+configuration or a receipt.
 
 ## Standing GitHub authority
 
@@ -94,7 +94,16 @@ same controls and attempt while resuming an unchanged head. The controller's
 private state and durable receipt make a resume idempotent; do not delete state
 or increment the attempt merely because a receipt is delayed.
 
-Two coordinator-only evidence flags are not public invocation controls. After
+A resume replays completed work, not verdicts. A deterministic-check failure, a
+rejected `--local-disposition` set, and a local provider failure each turn on an
+input the attempt key does not cover, so the controller reports them without
+storing them and the next invocation of the same attempt recomputes that stage.
+Remedy the input the stage actually read — the pull-request body a scope check
+parses, the disposition ids, the unreachable provider — then rerun the unchanged
+attempt. A fresh `--attempt-id` is not the remedy: it discards the attempt's
+local and remote review evidence along with the stale verdict.
+
+Three coordinator-only evidence flags are not public invocation controls. After
 replying with a verified rebuttal to a receipt-declared conversation finding or
 changes-requested review that has no resolvable thread, rerun the unchanged
 attempt with one separate `--remote-disposition '<stable-id>=rebutted'` argv
@@ -102,6 +111,21 @@ pair. Never use this for an unfixed finding or as a substitute for resolving an
 inline thread. After the user approves `review.round-extension`, add
 `--round-extension-authorized` to the approved over-limit attempt; never infer
 that authorization from ordinary review arguments.
+
+A local provider finding you have verified false takes the matching
+`--local-disposition '<stable-id>=rebutted'` pair. The bar is the same as the
+remote one and it is high: rebut only after checking the cited path and line in
+the checkout and finding the claim untrue there — a finding that is merely
+low-severity, inconvenient, or hard to fix is outstanding, not rebutted. The
+finding stays in the receipt as `rebutted` so the judgement remains auditable,
+and the pair applies to one attempt at one head; a later head needs its own
+deliberate rebuttal. An id matching no finding at that head is an error, not a
+silent no-op.
+
+Two provider misreads are common enough to name, and both are rebuttals rather
+than fixes: fenced code blocks quoted inside a Markdown document read as if they
+were the diff's own source, and a cited defect that is simply not present at the
+cited line. Verify against the checkout either way.
 
 ## Interpret the typed result
 

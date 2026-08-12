@@ -1,6 +1,7 @@
 ---
 name: sd-update-deps
 description: Use when open dependency-bot PRs need batch triage — classify every dependabot or renovate PR, merge the safe class sequentially under the housekeeping gate criteria, and park the rest with one-line recommendations.
+model: sonnet
 ---
 
 # SD Update Deps

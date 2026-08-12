@@ -13,8 +13,8 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from os import PathLike
-from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from pathlib import Path, PureWindowsPath
+from typing import Any, Iterable, Literal, Mapping, Sequence, overload
 
 DEFAULT_COMMAND_TIMEOUT = 60
 DEFAULT_GIT_TIMEOUT = 60
@@ -34,7 +34,86 @@ REVIEW_FINDING_FAMILY_IDS = (
     REVIEW_FAMILY_REVIEWER_TEST_HARNESS,
     REVIEW_FAMILY_OTHER,
 )
+
+# ---------------------------------------------------------------------------
+# Shared verdict vocabulary (A-077)
+# ---------------------------------------------------------------------------
+# One naming rule across emitted payload envelopes: the top-level ``outcome``
+# key holds a verdict; the top-level ``status`` key is reserved for an embedded
+# sd-status document. ``VERDICT_CORE`` is the set of verdict values that mean
+# the same thing in every domain that emits them (``failed`` appears in more
+# than two domains; ``clean``/``blocked``/``skipped`` each appear in two with a
+# compatible meaning). Per-domain verdict sets are derived from the core through
+# ``declare_verdict_domain``: every value a domain emits that is absent from the
+# core must be listed in that call's explicit ``opt_out`` (``findings``,
+# ``at-target`` and friends), so a shared value cannot silently diverge while a
+# legitimate domain-specific value is still permitted. Declaring a non-core
+# verdict without opting it out raises at import time, and
+# ``tests/test_verdict_vocabulary.py`` re-asserts the guarantee.
+VERDICT_CORE = frozenset({"clean", "blocked", "skipped", "failed"})
+
+# Populated at import time by ``declare_verdict_domain`` calls in each producer.
+VERDICT_DOMAINS: dict[str, frozenset[str]] = {}
+
+
+class VerdictVocabularyError(ValueError):
+    """Raised when a domain declares a verdict outside the shared core."""
+
+
+def declare_verdict_domain(
+    name: str, members: Iterable[str], *, opt_out: Iterable[str] = ()
+) -> frozenset[str]:
+    """Register a per-domain verdict set derived from ``VERDICT_CORE``.
+
+    Every member absent from ``VERDICT_CORE`` must appear in ``opt_out``;
+    otherwise the declaration raises ``VerdictVocabularyError`` so a drifted
+    vocabulary fails loudly at the producer rather than silently diverging
+    across payloads. ``opt_out`` may not name a core verdict (that would hide a
+    core member behind a redundant opt-out). Returns the frozen member set and
+    records it under ``name`` in ``VERDICT_DOMAINS``.
+    """
+
+    member_set = frozenset(members)
+    opt_out_set = frozenset(opt_out)
+    redundant = opt_out_set & VERDICT_CORE
+    if redundant:
+        raise VerdictVocabularyError(
+            f"verdict domain {name!r} opts out core verdicts: "
+            + ", ".join(sorted(redundant))
+        )
+    undeclared = member_set - VERDICT_CORE - opt_out_set
+    if undeclared:
+        raise VerdictVocabularyError(
+            f"verdict domain {name!r} declares non-core verdicts without opt-out: "
+            + ", ".join(sorted(undeclared))
+        )
+    VERDICT_DOMAINS[name] = member_set
+    return member_set
+
+
+# Payload envelope keys renamed under A-077 and kept alive additively for one
+# dual-emit window (R5). Each entry names the producer, the deprecated key's
+# path inside its document, the canonical replacement, and the release that may
+# drop it. The AC1 shape walker excludes these deprecated paths when checking
+# that no two ``status`` keys in one document carry different value types, and
+# the compat fixtures assert every alias is still emitted for the whole window.
+DEPRECATED_PAYLOAD_KEYS: tuple[dict[str, Any], ...] = (
+    {
+        "producer": "housekeeping-result",
+        "path": ("outcome", "status"),
+        "replacement": ("outcome", "verdict"),
+        "removed_version": "0.66.0",
+    },
+    {
+        "producer": "review-local-stage",
+        "path": ("status",),
+        "replacement": ("outcome",),
+        "removed_version": "0.66.0",
+    },
+)
+
 CACHE_ROOT_ENV = "SD_AI_COMMAND_PACK_CACHE_ROOT"
+STATE_HOME_ENV = "SD_AI_COMMAND_PACK_STATE_HOME"
 CACHE_ENV_KEYS = (
     "XDG_CACHE_HOME",
     "PYTHONPYCACHEPREFIX",
@@ -166,6 +245,90 @@ def _ensure_private_directory(path: Path, *, label: str) -> Path:
     return path
 
 
+def resolve_state_root(
+    *,
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+    os_name: str | None = None,
+    state_home: Path | None = None,
+) -> Path:
+    """Return the user-local private state root shared by every shipped script.
+
+    The ladder is: explicit ``state_home``, ``SD_AI_COMMAND_PACK_STATE_HOME``,
+    ``XDG_STATE_HOME``, the Windows local-app-data location, then the home
+    fallback. Callers wrap :class:`CommandError` in their own error type.
+    """
+
+    if state_home is not None:
+        candidate = state_home.expanduser()
+        if not candidate.is_absolute():
+            raise CommandError("state home must be an absolute path")
+        return candidate
+    env = os.environ if environ is None else environ
+    override = env.get(STATE_HOME_ENV, "").strip()
+    if override:
+        path = Path(override).expanduser()
+        if not path.is_absolute():
+            raise CommandError(f"{STATE_HOME_ENV} must be an absolute path")
+        return path
+    xdg = env.get("XDG_STATE_HOME", "").strip()
+    if xdg:
+        path = Path(xdg).expanduser()
+        if path.is_absolute():
+            return path / "sd-ai-command-pack"
+    platform_name = os.name if os_name is None else os_name
+    if platform_name == "nt":
+        local_app_data = env.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            windows_path = PureWindowsPath(local_app_data)
+            if windows_path.is_absolute():
+                # Path uses Windows semantics on Windows. Normalizing separators
+                # also keeps os_name-injected portability tests deterministic.
+                path = Path(str(windows_path).replace("\\", "/"))
+                return path / "sd-ai-command-pack" / "state"
+    resolved_home = (home or Path.home()).expanduser()
+    if not resolved_home.is_absolute():
+        raise CommandError("home directory must resolve to an absolute path")
+    return resolved_home / ".local" / "state" / "sd-ai-command-pack"
+
+
+def ensure_private_directory(path: Path, *, label: str, reference: str | None = None) -> Path:
+    """Create ``path`` as a private 0700 directory, refusing symlinks.
+
+    Distinct from :func:`_ensure_private_directory`, which additionally enforces
+    uid ownership and a strict permission mask appropriate to cache namespaces.
+    A failing ``mkdir`` is always re-raised as :class:`CommandError` chaining the
+    originating ``OSError`` as ``__cause__``, so callers can rebuild their own
+    structured evidence without losing it.
+
+    ``reference`` is the caller-chosen path rendering appended to the symlink and
+    unusable diagnostics; callers that redact host paths pass ``path.name``, and
+    callers that name no path at all omit it. The library never picks a
+    rendering of its own, so no consumer's redaction posture changes here.
+    """
+
+    suffix = f": {reference}" if reference else ""
+    if path.is_symlink():
+        raise CommandError(f"{label} must not be a symlink{suffix}")
+    try:
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        # ``str(error)`` embeds the absolute target (``[Errno 13] Permission
+        # denied: '/…'``), which would defeat a caller's redaction posture. Only
+        # ``strerror`` reaches the message; the full ``OSError`` stays on
+        # ``__cause__`` for callers that build structured evidence from it.
+        detail = error.strerror or type(error).__name__
+        raise CommandError(f"cannot create {label}: {detail}") from error
+    if path.is_symlink() or not path.is_dir():
+        raise CommandError(f"{label} is unusable{suffix}")
+    try:
+        path.chmod(0o700)
+    except OSError:
+        # Permission tightening is best-effort on filesystems without chmod support.
+        pass
+    return path
+
+
 def _cache_namespace_name(repo: Path) -> str:
     uid = str(os.getuid()) if hasattr(os, "getuid") else "user"
     digest = hashlib.sha256(os.fsencode(str(repo))).hexdigest()[:16]
@@ -290,6 +453,7 @@ def build_tool_environment(
             )
         environment[variable] = str(cache_path)
         cache_paths[variable] = cache_path
+    environment.setdefault("GIT_TERMINAL_PROMPT", "0")
     return environment, cache_paths, namespace
 
 
@@ -387,6 +551,187 @@ def run_git(
     )
 
 
+def _run_git_process(
+    args: Sequence[str],
+    *,
+    environment: Mapping[str, str],
+    cwd: Path | None,
+    timeout: int | None,
+    binary: bool,
+    input: bytes | None,
+    stderr: int | None,
+    encoding: str | None,
+    errors: str | None,
+) -> subprocess.CompletedProcess:
+    """Run git with a caller-supplied environment, converting nothing.
+
+    Centralizes the git subprocess invocation (argv, environment, stream and
+    decoding options) while letting ``OSError``/``TimeoutExpired`` propagate so
+    each caller keeps its own error policy. Never raises on a non-zero return
+    code. In binary mode ``encoding``/``errors`` are forced to ``None``.
+    """
+
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        env=dict(environment),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=stderr,
+        input=input,
+        text=not binary,
+        encoding=None if binary else encoding,
+        errors=None if binary else errors,
+        timeout=timeout,
+    )
+
+
+@overload
+def run_git_minimal(
+    args: Sequence[str],
+    *,
+    cwd: Path | None = ...,
+    timeout: int | None = ...,
+    binary: Literal[False] = ...,
+    input: bytes | None = ...,
+    stderr: int | None = ...,
+    encoding: str | None = ...,
+    errors: str | None = ...,
+) -> subprocess.CompletedProcess[str]: ...
+
+
+@overload
+def run_git_minimal(
+    args: Sequence[str],
+    *,
+    cwd: Path | None = ...,
+    timeout: int | None = ...,
+    binary: Literal[True],
+    input: bytes | None = ...,
+    stderr: int | None = ...,
+    encoding: str | None = ...,
+    errors: str | None = ...,
+) -> subprocess.CompletedProcess[bytes]: ...
+
+
+@overload
+def run_git_minimal(
+    args: Sequence[str],
+    *,
+    cwd: Path | None = ...,
+    timeout: int | None = ...,
+    binary: bool,
+    input: bytes | None = ...,
+    stderr: int | None = ...,
+    encoding: str | None = ...,
+    errors: str | None = ...,
+) -> subprocess.CompletedProcess[Any]: ...
+
+
+def run_git_minimal(
+    args: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int | None = None,
+    binary: bool = False,
+    input: bytes | None = None,
+    stderr: int | None = subprocess.PIPE,
+    encoding: str | None = None,
+    errors: str | None = None,
+) -> subprocess.CompletedProcess:
+    """Run git with a minimal, prompt-disabled, cache-free environment.
+
+    Unlike :func:`run_git`/:func:`run_command`, this does not build the external
+    tool cache, so it never raises :class:`CacheSetupError`. It only sets
+    ``GIT_TERMINAL_PROMPT=0`` on top of the inherited environment. The process
+    always captures stdout (``PIPE``) and, by default, stderr (``PIPE``); text
+    mode uses platform-locale decoding with strict errors and no timeout. These
+    are capture defaults, not the inherit-streams behavior of a bare
+    ``subprocess.run`` call. Propagates ``OSError``/``TimeoutExpired``; never
+    raises on non-zero exit.
+    """
+
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return _run_git_process(
+        args,
+        environment=environment,
+        cwd=cwd,
+        timeout=timeout,
+        binary=binary,
+        input=input,
+        stderr=stderr,
+        encoding=encoding,
+        errors=errors,
+    )
+
+
+@overload
+def run_git_cached(
+    args: Sequence[str],
+    *,
+    repo: Path | None,
+    cwd: Path | None = ...,
+    timeout: int | None = ...,
+    binary: Literal[False] = ...,
+    input: bytes | None = ...,
+    stderr: int | None = ...,
+    encoding: str | None = ...,
+    errors: str | None = ...,
+) -> subprocess.CompletedProcess[str]: ...
+
+
+@overload
+def run_git_cached(
+    args: Sequence[str],
+    *,
+    repo: Path | None,
+    cwd: Path | None = ...,
+    timeout: int | None = ...,
+    binary: Literal[True],
+    input: bytes | None = ...,
+    stderr: int | None = ...,
+    encoding: str | None = ...,
+    errors: str | None = ...,
+) -> subprocess.CompletedProcess[bytes]: ...
+
+
+def run_git_cached(
+    args: Sequence[str],
+    *,
+    repo: Path | None,
+    cwd: Path | None = None,
+    timeout: int | None = None,
+    binary: bool = False,
+    input: bytes | None = None,
+    stderr: int | None = subprocess.PIPE,
+    encoding: str | None = None,
+    errors: str | None = None,
+) -> subprocess.CompletedProcess:
+    """Run git with the shared cache-backed environment.
+
+    ``repo`` selects the repository whose cache namespace
+    :func:`build_tool_environment` prepares (and may raise
+    :class:`CacheSetupError`); ``cwd`` is the child process working directory
+    and is independent — callers using ``git -C`` pass ``cwd=None``. Defaults
+    match :func:`run_git_minimal`. Propagates ``CacheSetupError``/``OSError``/
+    ``TimeoutExpired``; never raises on non-zero exit.
+    """
+
+    environment, _, _ = build_tool_environment(repo=repo)
+    environment.setdefault("GIT_TERMINAL_PROMPT", "0")
+    return _run_git_process(
+        args,
+        environment=environment,
+        cwd=cwd,
+        timeout=timeout,
+        binary=binary,
+        input=input,
+        stderr=stderr,
+        encoding=encoding,
+        errors=errors,
+    )
+
+
 def run_gh(
     args: list[str],
     *,
@@ -442,6 +787,86 @@ def repo_root(*, fallback_to_cwd: bool = False) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Hardened atomic text write
+#
+# One owner for "replace a text file atomically" across the session recorder,
+# knowledge-base refresh, and review-learnings receipt writers. The temporary
+# file is created in the destination's own directory, fsynced, chmod'd to match
+# the destination's effective mode, then renamed into place; the parent
+# directory is fsynced so the rename survives a crash. Every added guard fails
+# by raising rather than by silently writing to the wrong place:
+#   * refuse a symlink destination
+#   * refuse a cross-filesystem replace (os.replace is only atomic within one)
+#   * optional `revalidate` callback re-checked at each TOCTOU-sensitive step
+# ---------------------------------------------------------------------------
+
+
+def default_text_file_mode(destination: Path) -> int:
+    if destination.exists():
+        return destination.stat().st_mode & 0o777
+    current_umask = os.umask(0)
+    try:
+        return 0o666 & ~current_umask
+    finally:
+        os.umask(current_umask)
+
+
+def atomic_write_text(
+    destination: Path,
+    content: str,
+    *,
+    errors: str = "strict",
+    revalidate: Any | None = None,
+    mode: int | None = None,
+) -> None:
+    if destination.is_symlink():
+        raise OSError("target is a symlink")
+    if revalidate is not None:
+        revalidate()
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(content.encode("utf-8", errors=errors))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        if temporary_path.stat().st_dev != destination.parent.stat().st_dev:
+            raise OSError("atomic update would cross filesystems")
+        if revalidate is not None:
+            revalidate()
+        os.chmod(
+            temporary_path,
+            mode if mode is not None else default_text_file_mode(destination),
+        )
+        if revalidate is not None:
+            revalidate()
+        os.replace(temporary_path, destination)
+        temporary_path = None
+        try:
+            directory_fd = os.open(destination.parent, os.O_RDONLY)
+        except OSError:
+            directory_fd = None
+        if directory_fd is not None:
+            try:
+                os.fsync(directory_fd)
+            except OSError:
+                pass
+            finally:
+                os.close(directory_fd)
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Environment-blocked recovery evidence
 #
 # One additive, self-versioned structured fragment shared by lifecycle mutation
@@ -494,9 +919,105 @@ _ENVIRONMENT_URL_CREDENTIAL_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^/@\
 # remote URLs are permitted diagnostic context (design permits "remote URLs with
 # credentials" removal only), so the negative lookbehind deliberately spares them.
 _ENVIRONMENT_FS_PATH_RE = re.compile(r"(?<![A-Za-z0-9:/])/[^\s'\"]+")
-_ENVIRONMENT_SECRET_RE = re.compile(
-    r"(?i)(?:bearer\s+|(?:access[_-]?|api[_-]?)?token[=:]\s*|gh[pousr]_)[A-Za-z0-9._\-]{8,}"
+# --- Shared secret shapes ---------------------------------------------------
+# One definition of "what a secret looks like", consumed by two policies that
+# must NOT be collapsed into one another (see design.md, R2):
+#   * `_redact_environment_text` below SUBSTITUTES  -- fail-open: it must never
+#     drop the diagnostic that recovery depends on, so it returns a bounded,
+#     redacted string and never raises.
+#   * `sd-ai-command-pack-fleet-timing.py` REJECTS   -- fail-closed: it raises
+#     rather than accept secret-shaped operator input into a timing record.
+#
+# Each shape therefore carries two forms:
+#   * a DETECTOR form, which may stay maximally loose -- a bare prefix is
+#     sufficient evidence to refuse input; a false positive only costs an
+#     operator a rejected timing record.
+#   * a SUBSTITUTER form, which must be conservative in extent but complete in
+#     body coverage. A prefix-only substituter is the core hazard: it would
+#     redact only the bare token prefix and leave the token body in the text --
+#     worse than the old redactor. Every substituter row therefore anchors a
+#     body charset and a minimum length (or, for PEM, a bounded multi-line
+#     span). See tests for the concrete token-prefix leak cases.
+_SECRET_TOKEN_BODY = r"[A-Za-z0-9._-]{8,}"
+# (name, detector, substituter). A name prefixed "kv-" keeps its capturing
+# group 1 (the "key:" / "key=" lead-in) and redacts only the value; all other
+# rows redact the whole match. Order is significant for the substituter pass:
+# the PEM span MUST run before the key-value rule, or a PRIVATE KEY header
+# sitting after a "key:" on the same line is partly eaten by the shorter rule.
+_SECRET_SHAPES: tuple[tuple[str, str, str], ...] = (
+    (
+        "pem-private-key",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+        # Prefer the terminated span to the END footer (minimal, so it stops at
+        # the first footer). When no footer sits within the bound -- a truncated
+        # or unterminated key -- fall back to a bounded span from the header so
+        # the body is still redacted instead of leaking. The {0,4096} bound caps
+        # how much trailing diagnostic an unterminated header can consume.
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
+        r"(?:[\s\S]{0,4096}?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]{0,4096})",
+    ),
+    (
+        "github-classic",
+        r"gh[pousr]_",
+        r"gh[pousr]_" + _SECRET_TOKEN_BODY,
+    ),
+    (
+        "github-fine-grained",
+        # gh[pousr]_ excludes the "i", so it cannot match github_pat_ at all.
+        r"github_pat_",
+        r"github_pat_" + _SECRET_TOKEN_BODY,
+    ),
+    (
+        "slack",
+        r"xox[baprs]-",
+        r"xox[baprs]-" + _SECRET_TOKEN_BODY,
+    ),
+    (
+        "openai",
+        # The leading (?<![A-Za-z0-9]) keeps "sk-" from matching mid-word, so an
+        # ordinary hyphenated word ("task-management" -> "sk-management") is not
+        # redacted by the lib nor spuriously rejected by fleet-timing.
+        r"(?<![A-Za-z0-9])sk-[A-Za-z0-9]",
+        r"(?<![A-Za-z0-9])sk-" + _SECRET_TOKEN_BODY,
+    ),
+    (
+        "bearer",
+        r"bearer\s+[A-Za-z0-9._-]",
+        r"bearer\s+" + _SECRET_TOKEN_BODY,
+    ),
+    (
+        # Bounded key-value form. The detector's trailing \S+ is greedy across
+        # punctuation; the substituter's value charset stops at whitespace,
+        # comma, and semicolon so surrounding diagnostic context survives (R3).
+        "kv-secret",
+        r"(?:token|password|secret|api[_-]?key)\s*[:=]\s*\S+",
+        r"((?:token|password|secret|api[_-]?key)\s*[:=]\s*)[^\s,;]+",
+    ),
 )
+# Loose detector alternation for the fail-closed reject side.
+_ENVIRONMENT_SECRET_DETECTOR_RE = re.compile(
+    "(?i)(?:" + "|".join(detector for _, detector, _ in _SECRET_SHAPES) + ")"
+)
+# Ordered (pattern, replacement) pairs for the fail-open substitute side.
+_ENVIRONMENT_SECRET_SUBSTITUTIONS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (
+        re.compile("(?i)" + substituter),
+        r"\1[redacted]" if name.startswith("kv-") else "[redacted]",
+    )
+    for name, _, substituter in _SECRET_SHAPES
+)
+
+
+def compiled_secret_detector() -> re.Pattern[str]:
+    """Loose secret DETECTOR alternation for the fail-closed reject policy.
+
+    Seeing a covered prefix is sufficient evidence to refuse input, so this
+    column may over-match; a false positive only costs a rejected record.
+    Callers that must not drop text (diagnostic redaction) use the substituter
+    set instead -- a detector reused under ``.sub()`` would leave secret bodies
+    behind. See ``_redact_environment_text``.
+    """
+    return _ENVIRONMENT_SECRET_DETECTOR_RE
 
 
 class EnvironmentEvidenceError(CommandError):
@@ -516,7 +1037,8 @@ def _redact_environment_text(value: object, *, limit: int) -> str:
     URLs without credentials are preserved as diagnostic context."""
     text = "" if value is None else str(value)
     text = _ENVIRONMENT_URL_CREDENTIAL_RE.sub(r"\1[redacted]@", text)
-    text = _ENVIRONMENT_SECRET_RE.sub("[redacted]", text)
+    for pattern, replacement in _ENVIRONMENT_SECRET_SUBSTITUTIONS:
+        text = pattern.sub(replacement, text)
     text = _ENVIRONMENT_FS_PATH_RE.sub("[path]", text)
     text = _ENVIRONMENT_CONTROL_RE.sub(" ", text)
     text = " ".join(text.split())
@@ -685,8 +1207,11 @@ def _cache_env_main(argv: Sequence[str]) -> int:
         environment, _, _ = build_tool_environment(repo=args[2])
     except CacheSetupError as error:
         if as_json:
-            evidence = cache_setup_blocked_evidence(
-                error, operation="toolchain cache setup"
+            # validate_environment_blocked_evidence gets its first non-test
+            # caller here: a malformed fragment fails at the producer rather
+            # than reaching toolchain.sh (and an agent) as a plausible blocker.
+            evidence = validate_environment_blocked_evidence(
+                cache_setup_blocked_evidence(error, operation="toolchain cache setup")
             )
             print(json.dumps({"outcome": "blocked", "environmentBlocked": evidence}))
         else:

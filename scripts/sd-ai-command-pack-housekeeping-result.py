@@ -34,11 +34,19 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from sd_ai_command_pack_lib import build_environment_blocked_evidence  # noqa: E402
+from sd_ai_command_pack_lib import (  # noqa: E402
+    build_environment_blocked_evidence,
+    declare_verdict_domain,
+)
 
 SCHEMA_VERSION = 1
 STATUS_SCHEMA_VERSION = 2
 TOOL_VERSION = "1.0.0"
+# Housekeeping's verdict vocabulary as an explicit extension of the shared core
+# (A-077). ``indeterminate`` is this domain's only non-core verdict.
+HOUSEKEEPING_VERDICTS = declare_verdict_domain(
+    "housekeeping", {"clean", "blocked", "indeterminate", "failed"}, opt_out={"indeterminate"}
+)
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_MESSAGE_LENGTH = 1000
 CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
@@ -255,7 +263,16 @@ def classify_outcome(
     else:
         outcome = "clean"
         reasons = []
-    return {"status": outcome, "reasonCodes": deduplicate(reasons)}
+    return {
+        "verdict": outcome,
+        # Deprecated alias of ``verdict`` (A-077). ``result["status"]`` is the
+        # embedded sd-status document; keeping an enum named ``status`` inside
+        # ``outcome`` made one document carry two meanings of ``status``. Kept
+        # additively for the dual-emit window and dropped in the release named
+        # by ``DEPRECATED_PAYLOAD_KEYS`` (removed_version 0.66.0).
+        "status": outcome,
+        "reasonCodes": deduplicate(reasons),
+    }
 
 
 def build_environment_blocks(

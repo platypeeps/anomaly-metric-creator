@@ -18,7 +18,6 @@ import os
 import re
 import stat
 import sys
-import tempfile
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import Any, Callable
@@ -31,6 +30,7 @@ from sd_ai_command_pack_lib import (
     REVIEW_FAMILY_REVIEWER_TEST_HARNESS,
     REVIEW_FAMILY_TASK_METADATA,
     CommandError,
+    atomic_write_text,
 )
 from sd_ai_command_pack_lib import (
     run_gh as run_gh_command,
@@ -65,6 +65,12 @@ MAX_CLUSTER_PATH_FAMILIES = 6
 MAX_CLUSTER_EXAMPLES = 3
 MAX_GITHUB_INVENTORY_PAGES = 10
 MAX_GITHUB_REVIEW_COMMENTS = 500
+# GitHub caps a single GraphQL query at 500,000 requested nodes (the product of
+# every `first:` down each path). Each aliased pullRequest below requests at
+# most reviewThreads(first:100) * comments(first:50) + 100 = 5,100 nodes, so a
+# batch of 20 stays near 102,000 nodes — well under the ceiling — while
+# collapsing the review-thread fan-out from N gh subprocesses to ceil(N/20).
+GITHUB_REVIEW_THREAD_BATCH_SIZE = 20
 MIN_PREVENTIVE_ACTION_COUNT = 2
 REPORT_SCHEMA_VERSION = 1
 PLANNING_SIGNAL_SCHEMA_VERSION = 1
@@ -273,73 +279,8 @@ _ALL_ZERO_GREP_RE = re.compile(r"grep\b[^#\n]*-qv\b[^#\n]*\^0\*\$")
 _LONG_OPTION_CASE_RE = re.compile(r"^\s*(--[a-z][a-z0-9-]*)\)")
 
 
-def default_text_file_mode(destination: Path) -> int:
-    if destination.exists():
-        return destination.stat().st_mode & 0o777
-    current_umask = os.umask(0)
-    try:
-        return 0o666 & ~current_umask
-    finally:
-        os.umask(current_umask)
-
-
 def content_digest(content: bytes) -> str:
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
-
-
-def atomic_write_text(
-    destination: Path,
-    content: str,
-    *,
-    errors: str = "strict",
-    revalidate: Any | None = None,
-    mode: int | None = None,
-) -> None:
-    if destination.is_symlink():
-        raise OSError("target is a symlink")
-    if revalidate is not None:
-        revalidate()
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            temporary.write(content.encode("utf-8", errors=errors))
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        if temporary_path.stat().st_dev != destination.parent.stat().st_dev:
-            raise OSError("atomic update would cross filesystems")
-        if revalidate is not None:
-            revalidate()
-        os.chmod(
-            temporary_path,
-            mode if mode is not None else default_text_file_mode(destination),
-        )
-        if revalidate is not None:
-            revalidate()
-        os.replace(temporary_path, destination)
-        temporary_path = None
-        try:
-            directory_fd = os.open(destination.parent, os.O_RDONLY)
-        except OSError:
-            directory_fd = None
-        if directory_fd is not None:
-            try:
-                os.fsync(directory_fd)
-            except OSError:
-                pass
-            finally:
-                os.close(directory_fd)
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2007,44 +1948,93 @@ query($owner:String!, $name:String!, $endCursor:String) {
     return prs, cutoff, False
 
 
-def _copilot_comments_for_prs(
+# Inner reviewThreads selection shared by the single-PR and aliased-batch
+# queries so their shapes never drift. Whitespace is irrelevant to GraphQL.
+_REVIEW_THREADS_SELECTION = (
+    "reviewThreads(first:100) { "
+    "pageInfo { hasNextPage } "
+    "nodes { isResolved isOutdated path "
+    "comments(first:50) { pageInfo { hasNextPage } "
+    "nodes { author { login } body createdAt } } } }"
+)
+
+
+def _single_pr_review_threads(
     repo_root: Path,
     *,
     owner: str,
     name: str,
-    prs: list[dict[str, Any]],
-) -> tuple[list[PullRequestComment], bool]:
-    query = """
-query($owner:String!, $name:String!, $number:Int!) {
-  repository(owner:$owner, name:$name) {
-    pullRequest(number:$number) {
-      reviewThreads(first:100) {
-        pageInfo { hasNextPage }
-        nodes {
-          isResolved
-          isOutdated
-          path
-          comments(first:50) {
-            pageInfo { hasNextPage }
-            nodes {
-              author { login }
-              body
-              createdAt
-            }
-          }
-        }
-      }
-    }
-  }
-}
-""".strip()
-    comments: list[PullRequestComment] = []
-    truncated = False
-    for pr in prs:
-        pr_obj = _as_dict(pr)
-        number = pr_obj.get("number")
-        if not isinstance(number, int):
-            continue
+    number: int,
+) -> Any:
+    """Fetch one PR's reviewThreads connection with the pre-batch query.
+
+    Raises on a genuine gh failure exactly as the pre-batch code did, so a real
+    per-PR error still surfaces; returns ``None`` only on an unexpected shape.
+    """
+
+    query = (
+        "query($owner:String!, $name:String!, $number:Int!) {"
+        "  repository(owner:$owner, name:$name) {"
+        "    pullRequest(number:$number) {"
+        "      " + _REVIEW_THREADS_SELECTION +
+        "    }"
+        "  }"
+        "}"
+    )
+    payload = _run_gh_json(
+        [
+            "api",
+            "graphql",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={number}",
+            "-f",
+            f"query={query}",
+        ],
+        repo_root,
+    )
+    connection = _dig(payload, "data", "repository", "pullRequest", "reviewThreads")
+    return connection if isinstance(connection, dict) else None
+
+
+def _batch_review_threads(
+    repo_root: Path,
+    *,
+    owner: str,
+    name: str,
+    numbers: list[int],
+) -> dict[int, Any]:
+    """Fetch several PRs' reviewThreads in one aliased GraphQL query.
+
+    Returns ``{pr_number: reviewThreads-connection-or-None}``. A whole-batch
+    failure (gh exits non-zero on a top-level ``errors`` array) or a per-alias
+    partial failure (an alias resolves to ``null``) yields ``None`` for the
+    affected PRs so the caller can retry each one individually — the aliased
+    query widens the failure domain, and this keeps one PR from dropping the
+    rest.
+    """
+
+    alias_by_number: dict[int, str] = {}
+    selections: list[str] = []
+    for index, number in enumerate(numbers):
+        alias = f"pr{index}"
+        alias_by_number[number] = alias
+        # `number` is an int validated by the caller, so embedding it as a
+        # GraphQL literal is injection-safe and avoids per-alias variables.
+        selections.append(
+            f"{alias}: pullRequest(number:{number}) {{ {_REVIEW_THREADS_SELECTION} }}"
+        )
+    query = (
+        "query($owner:String!, $name:String!) {"
+        "  repository(owner:$owner, name:$name) {"
+        "    " + " ".join(selections) +
+        "  }"
+        "}"
+    )
+    try:
         payload = _run_gh_json(
             [
                 "api",
@@ -2053,20 +2043,76 @@ query($owner:String!, $name:String!, $number:Int!) {
                 f"owner={owner}",
                 "-F",
                 f"name={name}",
-                "-F",
-                f"number={number}",
                 "-f",
                 f"query={query}",
             ],
             repo_root,
         )
-        thread_connection = _dig(
-            payload,
-            "data",
-            "repository",
-            "pullRequest",
-            "reviewThreads",
-        )
+    except RuntimeError:
+        return {number: None for number in numbers}
+    repository = _dig(payload, "data", "repository")
+    result: dict[int, Any] = {}
+    for number, alias in alias_by_number.items():
+        node = repository.get(alias) if isinstance(repository, dict) else None
+        connection = node.get("reviewThreads") if isinstance(node, dict) else None
+        result[number] = connection if isinstance(connection, dict) else None
+    return result
+
+
+def _review_thread_connections(
+    repo_root: Path,
+    *,
+    owner: str,
+    name: str,
+    numbers: list[int],
+) -> dict[int, Any]:
+    """Resolve each PR number to its reviewThreads connection.
+
+    Batches unique numbers into ``ceil(N / GITHUB_REVIEW_THREAD_BATCH_SIZE)``
+    aliased queries and individually retries any PR the batch could not
+    resolve, preserving the pre-batch single-PR failure semantics.
+    """
+
+    unique_numbers = list(dict.fromkeys(numbers))
+    connections: dict[int, Any] = {}
+    for start in range(0, len(unique_numbers), GITHUB_REVIEW_THREAD_BATCH_SIZE):
+        batch = unique_numbers[start : start + GITHUB_REVIEW_THREAD_BATCH_SIZE]
+        batched = _batch_review_threads(repo_root, owner=owner, name=name, numbers=batch)
+        for number in batch:
+            connection = batched.get(number)
+            if connection is None:
+                connection = _single_pr_review_threads(
+                    repo_root, owner=owner, name=name, number=number
+                )
+            connections[number] = connection
+    return connections
+
+
+def _copilot_comments_for_prs(
+    repo_root: Path,
+    *,
+    owner: str,
+    name: str,
+    prs: list[dict[str, Any]],
+) -> tuple[list[PullRequestComment], bool]:
+    comments: list[PullRequestComment] = []
+    truncated = False
+    numbered: list[tuple[dict[str, Any], int]] = []
+    for pr in prs:
+        pr_obj = _as_dict(pr)
+        number = pr_obj.get("number")
+        if isinstance(number, int):
+            numbered.append((pr_obj, number))
+    connections = _review_thread_connections(
+        repo_root,
+        owner=owner,
+        name=name,
+        numbers=[number for _, number in numbered],
+    )
+    # Iterate in input PR order so batched output ordering matches the caller's,
+    # not GraphQL alias order.
+    for pr_obj, number in numbered:
+        thread_connection = connections.get(number)
         if not isinstance(thread_connection, dict):
             continue
         page_info = thread_connection.get("pageInfo")
@@ -2261,6 +2307,33 @@ def render_target_update(existing: str, block: str, *, target: Path) -> str:
     else:
         updated = "# Review Learnings\n\n" + block
     return updated
+
+
+_CLUSTER_CATEGORY_RE = re.compile(r"\(`([a-z0-9-]+)`\): \d+ historical comment")
+
+
+def managed_block_categories(text: str) -> set[str]:
+    """Historical-cluster category slugs inside the managed block, if any."""
+    start = text.find(MANAGED_START)
+    if start < 0:
+        return set()
+    end = text.find(MANAGED_END, start + len(MANAGED_START))
+    if end < 0:
+        return set()
+    return set(_CLUSTER_CATEGORY_RE.findall(text[start:end]))
+
+
+def dropped_cluster_categories(existing: str, updated: str) -> list[str]:
+    """Categories the rewrite would delete from the tracked snapshot.
+
+    The managed block is rendered wholesale from whatever GitHub scope the run
+    requested, so a narrowly scoped run — notably the ``--github-pr N``
+    post-cycle pass — renders a block containing only that scope's clusters.
+    Writing it replaces a repository-wide snapshot with a single PR's signals
+    and silently destroys every other cluster. Callers use this to refuse the
+    write rather than discover the loss in a later diff.
+    """
+    return sorted(managed_block_categories(existing) - managed_block_categories(updated))
 
 
 def apply_target_update(
@@ -2518,6 +2591,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exceptionally update an explicitly confirmed external target.",
     )
     parser.add_argument(
+        "--allow-narrowing",
+        action="store_true",
+        help=(
+            "Permit a write that deletes historical clusters already recorded "
+            "in the snapshot. Without it, such a write is refused; a narrowly "
+            "scoped run (notably --github-pr) otherwise replaces the "
+            "repository-wide snapshot with one scope's signals."
+        ),
+    )
+    parser.add_argument(
         "--confirmed-external-target",
         metavar="ABSOLUTE_PATH",
         help=(
@@ -2628,6 +2711,14 @@ def main(argv: list[str] | None = None) -> int:
             mode=mode,
             phase="setup",
             reason=planning_error,
+        )
+        return 2
+    if args.allow_narrowing and not (args.update or args.update_external):
+        _print_early_failure(
+            args=args,
+            mode=mode,
+            phase="setup",
+            reason="--allow-narrowing requires --update or --update-external",
         )
         return 2
     if args.dry_run and (args.update or args.update_external):
@@ -2859,6 +2950,24 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     comments = list(review_window.comments)
+    # Validate the planning changed-path evidence up front so the guard is scoped
+    # to exactly this expected failure. Catching ValueError around the whole
+    # build_review_learning_signal call would also swallow unrelated internal
+    # ValueErrors and mislabel them as planning-path failures. Unsafe evidence
+    # (traversal, control characters, oversized, or over-count) is expected
+    # invalid command evidence, not a crash; its message is a fixed enum that
+    # never echoes the raw path, so it is safe to surface under the phase tag.
+    # The normalized result is idempotent, so build re-normalizes it unchanged.
+    try:
+        changed_paths = _normalize_planning_changed_paths(changed_paths)
+    except ValueError as exc:
+        _print_early_failure(
+            args=args,
+            mode=mode,
+            phase="planning",
+            reason=str(exc),
+        )
+        return 2
     review_learning = build_review_learning_signal(
         comments,
         review_window,
@@ -2917,6 +3026,35 @@ def main(argv: list[str] | None = None) -> int:
     proposed_changes = int(updated_digest != plan.before_digest)
 
     if args.update or args.update_external:
+        dropped = dropped_cluster_categories(plan.existing_text or "", updated)
+        if dropped and not args.allow_narrowing:
+            reason = (
+                "refusing to write: this run's scope renders a managed block that "
+                f"drops {len(dropped)} historical cluster(s) already recorded in the "
+                f"snapshot ({', '.join(dropped)}). A narrowly scoped run — notably "
+                "--github-pr — renders only that scope's clusters, so writing it "
+                "replaces the repository-wide snapshot. Re-run without narrowing the "
+                "GitHub scope, or pass --allow-narrowing to accept the deletion."
+            )
+            report = _report_payload(
+                mode=mode,
+                plan=plan,
+                findings=findings,
+                comments=comments,
+                review_window=review_window,
+                proposed_changes=proposed_changes,
+                applied_changes=0,
+                write_status="blocked",
+                wrote=False,
+                before_digest=plan.before_digest,
+                after_digest=plan.before_digest,
+                review_learning=review_learning,
+                reason=reason,
+            )
+            if not args.json:
+                print(f"[sd-review-learnings:update] {reason}", file=sys.stderr)
+            _print_report(report, json_output=args.json)
+            return 2
         try:
             wrote = apply_target_update(
                 plan,

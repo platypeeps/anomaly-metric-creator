@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import os
 import re
 import stat
@@ -14,9 +15,45 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-FLEET_SCHEMA_VERSION = 4
+FLEET_SCHEMA_VERSION = 5
 FLEET_PROFILE_SCHEMA_VERSION = 1
-CANDIDATE_LEDGER_SCHEMA_VERSION = 2
+# Schema 5 adds the per-consumer install mode. ``fat`` keeps the vendored
+# payload and its installed-vs-target drift report; ``thin`` resolves agent
+# surfaces from the machine install and is reported by pin instead. Both
+# fields default, so a schema-5 registry that names neither behaves exactly
+# like the schema-4 registry it replaces.
+FLEET_CONSUMER_MODES = ("fat", "thin")
+DEFAULT_FLEET_CONSUMER_MODE = "fat"
+DEFAULT_FLEET_PIN_PATH = ".sd-ai-command-pack/provenance.json"
+# Schema 3 adds `validatorDigest`. See CANDIDATE_VALIDATOR_SOURCES below for
+# what it covers and why.
+#
+# Schema 4 adds the `blocked` consumer status and its required `reasons`
+# array. A consumer-owned precondition -- references the pack does not own, a
+# dirty worktree -- must neither fail the pack's release nor be recorded as a
+# pass, because both answers are lies in opposite directions. `blocked` is the
+# third answer, and `reasons` is what keeps it from becoming a silent skip.
+CANDIDATE_LEDGER_SCHEMA_VERSION = 4
+
+# The candidate validator source the payload digest cannot see.
+#
+# Measured 2026-08-11: `scripts/sd-ai-command-pack-fleet-candidate-check.py`
+# has no `manifest.json` row and no `templates/` twin -- zero rows match it --
+# so `payload_digest` is blind to it. Editing the validator therefore moved
+# neither the payload digest nor the fleet digest, the ledger stayed current,
+# and `prepare-release.py` returned before ever running the new code. That
+# single omission was the whole reachability defect.
+#
+# This file is deliberately absent from the tuple. It looks like a second
+# blind spot and is not one: it has a manifest row whose `source` is its
+# authoritative `templates/` twin and whose `target` is the root mirror, so
+# `payload_digest` -- which reads `source` -- already moves when the real file
+# is edited. Naming it here would instead hash the `make sync` mirror, a file
+# regenerated from that source: a second, weaker answer to a question
+# `payloadDigest` already answers correctly.
+CANDIDATE_VALIDATOR_SOURCES: tuple[str, ...] = (
+    "scripts/sd-ai-command-pack-fleet-candidate-check.py",
+)
 MAX_CANDIDATE_TIMEOUT_SECONDS = 3600
 MAX_FLEET_CONCURRENCY = 4
 SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
@@ -41,6 +78,10 @@ class FleetConsumer:
     candidate_timeout_seconds: int
     candidate_prepare: tuple[tuple[str, ...], ...]
     candidate_checks: tuple[tuple[str, ...], ...]
+    # Declared last with defaults so existing positional constructors keep
+    # working; schema 5 makes both optional in the registry as well.
+    mode: str = DEFAULT_FLEET_CONSUMER_MODE
+    pin_path: str = DEFAULT_FLEET_PIN_PATH
 
 
 @dataclass(frozen=True)
@@ -377,6 +418,33 @@ def _parse_platforms(item: Mapping[str, Any], label: str) -> tuple[str, ...]:
     return tuple(sorted(parsed))
 
 
+def _parse_consumer_mode(item: Mapping[str, Any], label: str) -> str:
+    mode = item.get("mode", DEFAULT_FLEET_CONSUMER_MODE)
+    if mode not in FLEET_CONSUMER_MODES:
+        raise FleetConfigError(
+            f"{label} mode must be one of {', '.join(FLEET_CONSUMER_MODES)}"
+        )
+    return mode
+
+
+def _parse_consumer_pin_path(item: Mapping[str, Any], label: str) -> str:
+    value = item.get("pinPath", DEFAULT_FLEET_PIN_PATH)
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        raise FleetConfigError(f"{label} pinPath must be a non-empty string")
+    # Strip before validating and return the stripped value, as
+    # ``_required_string`` does. Returning the raw string would let
+    # " .sd-ai-command-pack/provenance.json " pass validation and then read a
+    # filename that does not exist, reporting a healthy consumer as `absent`.
+    value = value.strip()
+    candidate = PurePosixPath(value)
+    if candidate.is_absolute() or ntpath.isabs(value) or ".." in candidate.parts:
+        raise FleetConfigError(
+            f"{label} pinPath must be a relative path inside the consumer "
+            "checkout"
+        )
+    return value
+
+
 def _parse_candidate_commands(
     item: Mapping[str, Any],
     label: str,
@@ -593,6 +661,8 @@ def _parse_fleet_consumers_without_policy(
                 name=name,
                 github=github,
                 path_hint=path_hint,
+                mode=_parse_consumer_mode(item, consumer_label),
+                pin_path=_parse_consumer_pin_path(item, consumer_label),
                 platforms=_parse_platforms(item, consumer_label),
                 rollout_priority=priority,
                 candidate_timeout_seconds=timeout,
@@ -721,6 +791,55 @@ def filesystem_payload_digest(manifest_path: Path) -> str:
     return payload_digest(manifest, load_source)
 
 
+def candidate_validator_digest(source_loader: Callable[[str], bytes]) -> str:
+    """Digest the validator sources the payload digest cannot see.
+
+    Composed like `payload_digest` above -- sorted, path-qualified, one
+    sha256 per source -- with one deliberate departure: the executable bit
+    does not participate. `payload_digest` is right to include it for files
+    that are executed directly; every source named here is run as
+    `sys.executable <path>`, so its permission bit changes no behavior and
+    hashing it would let `chmod +x` invalidate a ledger whose validator is
+    byte-identical.
+
+    Takes a loader rather than a root so a caller validating a ledger
+    recorded at some commit can supply that commit's blobs. Pairing a
+    historical ledger with the working tree's validator would report a
+    routine post-release edit as tampered evidence.
+    """
+    digest = hashlib.sha256()
+    digest.update(b"sd-ai-command-pack-candidate-validator-v1\0")
+    for source in sorted(CANDIDATE_VALIDATOR_SOURCES):
+        digest.update(source.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(source_loader(source)).digest())
+    return f"sha256:{digest.hexdigest()}"
+
+
+def filesystem_candidate_validator_digest(root: Path) -> str:
+    """The working-tree loader. Fails closed; never substitutes a default.
+
+    `root` is resolved here rather than trusted from the caller: the
+    containment check below compares against a resolved source path, so an
+    unresolved root turns every symlinked prefix -- `/var` on macOS, most
+    obviously -- into a spurious escape.
+    """
+    root = root.resolve()
+
+    def load_source(relative_path: str) -> bytes:
+        path = root / relative_path
+        try:
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(root)
+            return resolved.read_bytes()
+        except (OSError, ValueError) as error:
+            raise FleetConfigError(
+                f"cannot read candidate validator source {relative_path}: {error}"
+            ) from None
+
+    return candidate_validator_digest(load_source)
+
+
 def fleet_manifest_digest(content: bytes) -> str:
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
 
@@ -731,6 +850,7 @@ def validate_candidate_ledger(
     expected_version: str,
     expected_payload_digest: str,
     expected_fleet_digest: str,
+    expected_validator_digest: str,
     consumers: list[FleetConsumer],
 ) -> list[str]:
     errors: list[str] = []
@@ -743,6 +863,7 @@ def validate_candidate_ledger(
         ("packVersion", expected_version),
         ("payloadDigest", expected_payload_digest),
         ("fleetManifestDigest", expected_fleet_digest),
+        ("validatorDigest", expected_validator_digest),
     ):
         if ledger.get(field) != expected:
             errors.append(
@@ -784,10 +905,28 @@ def validate_candidate_ledger(
             continue
         if result.get("github") != consumer.github:
             errors.append(f"candidate ledger {consumer.name} github does not match fleet")
-        if result.get("status") != "passed":
+        status = result.get("status")
+        if status == "blocked":
+            # A blocked consumer is recorded, never certified. The reasons are
+            # the whole point: a ledger row that says `blocked` and not why is
+            # a skipped consumer wearing a status, which is the same defect as
+            # a gate reporting success for a validation it never ran.
+            reasons = result.get("reasons")
+            if not isinstance(reasons, list) or not reasons:
+                errors.append(
+                    f"candidate ledger {consumer.name} is blocked with no reasons"
+                )
+            elif not all(
+                isinstance(reason, str) and reason for reason in reasons
+            ):
+                errors.append(
+                    f"candidate ledger {consumer.name} has an empty or "
+                    "non-string blocked reason"
+                )
+        elif status != "passed":
             errors.append(
-                f"candidate ledger {consumer.name} status is {result.get('status')!r}; "
-                "expected 'passed'"
+                f"candidate ledger {consumer.name} status is {status!r}; "
+                "expected 'passed' or 'blocked'"
             )
         base_commit = result.get("baseCommit")
         if not isinstance(base_commit, str) or not SHA_RE.fullmatch(base_commit):

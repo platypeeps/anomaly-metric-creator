@@ -18,11 +18,12 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 sys.dont_write_bytecode = True
 
 # This import must follow the bytecode guard for direct entrypoint invocation.
-from sd_ai_command_pack_lib import CacheSetupError, build_tool_environment  # noqa: E402
+from sd_ai_command_pack_lib import CacheSetupError, run_git_cached  # noqa: E402
 
 INSTALLED_TARGETS_FILE = Path(".sd-ai-command-pack/installed-targets.txt")
 PROVENANCE_FILE = Path(".sd-ai-command-pack/provenance.json")
 PACK_MANIFEST_FILE = Path(".sd-ai-command-pack/manifest.json")
+THIN_MODE = "thin"
 GIT_TIMEOUT_SECONDS = 60
 STABLE_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
@@ -71,6 +72,7 @@ PACK_FILE_PATTERNS = [
     ".prism/rules.schema.json",
     ".sd-ai-command-pack/*",
     "docs/SD_AI_COMMAND_PACK.md",
+    "docs/sd-ai-command-pack-provider-config-history.json",
     "scripts/sd-ai-command-pack-*",
     "scripts/sd_ai_command_pack_lib.py",
     "scripts/sd_ai_command_pack_fleet_lib.py",
@@ -115,9 +117,11 @@ SOURCE_ONLY_ALLOWED_PACK_FILES = {
     "scripts/sd-ai-command-pack-fleet-controller.py",
     "scripts/sd-ai-command-pack-fleet-finding-classify.py",
     "scripts/sd-ai-command-pack-fleet-preflight.py",
+    "scripts/sd-ai-command-pack-fleet-publish.py",
     "scripts/sd-ai-command-pack-fleet-review-classify.py",
     "scripts/sd-ai-command-pack-fleet-timing.py",
     "scripts/sd-ai-command-pack-fleet-wave-plan.py",
+    "scripts/sd-ai-command-pack-thin-resweep.py",
     "scripts/sd_ai_command_pack_fleet_lib.py",
 }
 
@@ -134,7 +138,7 @@ PROVENANCE_NEVER_VOUCHED_TARGETS = {
 
 LEGACY_PACK_PATHS = {
     ".agents/skills/sd-refresh-specs": "use .agents/skills/sd-update-spec",
-    ".agents/skills/trellis-full-check": "use .agents/skills/sd-full-check",
+    ".agents/skills/trellis-full-check": "use .agents/skills/sd-check",
     ".agents/skills/trellis-housekeeping": "use .agents/skills/sd-housekeeping",
     ".agents/skills/trellis-review-pr": "use .agents/skills/sd-review-pr",
     ".claude/commands/sd/refresh-specs.md": "use .claude/commands/sd/update-spec.md",
@@ -155,10 +159,8 @@ LEGACY_PACK_PATHS = {
             "continue",
             "finish-work",
             "create-pr",
-            "full-check",
             "housekeeping",
             "review-learnings",
-            "review-local",
             "review-local-all",
             "review-pr",
             "update-spec",
@@ -179,7 +181,6 @@ LEGACY_PACK_PATHS = {
             "record-session.py",
             "review.py",
             "review-learnings.py",
-            "review-local.sh",
             "review-preflight.mjs",
             "review-scope.sh",
             "shell-lib.sh",
@@ -192,7 +193,7 @@ LEGACY_PACK_PATHS = {
 LEGACY_PACK_REFERENCES = {
     "scripts/trellis-full-check.sh": "scripts/sd-ai-command-pack-full-check.sh",
     "scripts/trellis-housekeeping.sh": "scripts/sd-ai-command-pack-housekeeping.sh",
-    "trellis-full-check": "sd-full-check",
+    "trellis-full-check": "sd-check",
     "trellis-housekeeping": "sd-housekeeping",
     "trellis-review-pr": "sd-review-pr",
     "sd-refresh-specs": "sd-update-spec",
@@ -212,7 +213,6 @@ LEGACY_PACK_REFERENCES = {
             "record-session.py",
             "review.py",
             "review-learnings.py",
-            "review-local.sh",
             "review-preflight.mjs",
             "review-scope.sh",
             "update-spec-kb.py",
@@ -440,6 +440,35 @@ def expected_targets_from_manifest(
     return expected, selected_platforms, []
 
 
+def installed_mode(root: Path) -> str | None:
+    """Read the install mode pinned in provenance, if any.
+
+    A thin install carries ``mode: "thin"``. Everything else -- absent,
+    unreadable, or an unrecognized value -- is reported as None so the caller
+    keeps the ordinary fat contract rather than relaxing a check on a guess.
+    """
+    provenance_path = root / PROVENANCE_FILE
+    try:
+        if provenance_path.is_symlink() or not provenance_path.is_file():
+            return None
+        payload = json.loads(
+            provenance_path.read_text(encoding="utf-8", errors="strict")
+        )
+    except (OSError, UnicodeError, ValueError):
+        # An unreadable provenance is audit_provenance's failure to report
+        # precisely; reading the mode must never be what raises.
+        return None
+    if not isinstance(payload, dict):
+        return None
+    mode = payload.get("mode")
+    # Narrowed to the one recognized value rather than any string. Today's
+    # single caller compares against "thin" and could not tell the difference,
+    # but the docstring above promises None for an unrecognized value, and a
+    # reader that trusts that promise -- `if installed_mode(root):` -- would
+    # otherwise treat `mode: "thin-corrupt"` as a thin install.
+    return THIN_MODE if mode == THIN_MODE else None
+
+
 def audit_expected_targets(
     root: Path,
     targets: set[str],
@@ -585,14 +614,13 @@ def gitignored_paths(root: Path, relative_paths: Iterable[str]) -> set[str]:
         return set()
     input_payload = b"".join(os.fsencode(path) + b"\0" for path in candidates)
     try:
-        environment, _, _ = build_tool_environment(repo=root)
-        result = subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
+        result = run_git_cached(
+            ["-C", str(root), "check-ignore", "--stdin", "-z"],
+            repo=root,
+            cwd=None,
+            binary=True,
             input=input_payload,
-            env=environment,
-            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            check=False,
             timeout=GIT_TIMEOUT_SECONDS,
         )
     except (CacheSetupError, OSError, subprocess.TimeoutExpired):
@@ -881,6 +909,105 @@ def audit_migration_advisories(root: Path, targets: set[str]) -> list[str]:
     return sorted(set(warnings))
 
 
+PROVIDER_CONFIG_HISTORY = Path("docs/sd-ai-command-pack-provider-config-history.json")
+
+
+def _provider_config_history(root: Path) -> tuple[dict, str | None]:
+    """Read the shipped digest record, or the reason it cannot be read."""
+    path = root / PROVIDER_CONFIG_HISTORY
+    try:
+        if path.is_symlink():
+            return {}, f"{PROVIDER_CONFIG_HISTORY.as_posix()} is a symlink"
+        if not path.exists():
+            return {}, f"{PROVIDER_CONFIG_HISTORY.as_posix()} is not present"
+        if not path.is_file():
+            return {}, f"{PROVIDER_CONFIG_HISTORY.as_posix()} is not a regular file"
+        payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, ValueError) as error:
+        return {}, f"{PROVIDER_CONFIG_HISTORY.as_posix()} is unreadable: {error}"
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != 1:
+        return {}, f"{PROVIDER_CONFIG_HISTORY.as_posix()} has an unsupported shape"
+    sources = payload.get("sources")
+    if not isinstance(sources, dict):
+        return {}, f"{PROVIDER_CONFIG_HISTORY.as_posix()} has no sources"
+    return sources, None
+
+
+def audit_provider_config_drift(root: Path, manifest: object) -> list[str]:
+    """Report which `if-not-exists` configs are behind or locally owned.
+
+    The installer refreshes a config whose bytes it recognizes as one of its
+    own past defaults and leaves every other one alone. That is the right
+    behavior and a silent one: a consumer holding a config nobody will ever
+    update again looks identical to a consumer holding a current one. This is
+    what makes the difference visible in the consumer's own CI.
+
+    Advisory throughout. A locally owned config is a decision, not a defect,
+    and an unreadable record is this check's problem rather than the
+    repository's.
+    """
+    if not isinstance(manifest, dict):
+        # No pack manifest to read the install policy from. `audit_provenance`
+        # already reports why; this check simply has nothing to say.
+        return []
+    records, failures = manifest_file_records(manifest)
+    if failures:
+        return []
+    targets = [
+        record["target"]
+        for record in records
+        if record["install"] == "if-not-exists"
+        and path_exists(root, Path(record["target"]))
+    ]
+    if not targets:
+        return []
+
+    sources, unavailable = _provider_config_history(root)
+    if unavailable is not None:
+        return [
+            "cannot check provider config currency for "
+            f"{len(targets)} target(s): {unavailable}"
+        ]
+
+    by_target = {
+        entry.get("target"): entry
+        for entry in sources.values()
+        if isinstance(entry, dict)
+    }
+    warnings: list[str] = []
+    for target in sorted(targets):
+        entry = by_target.get(target)
+        if not isinstance(entry, dict):
+            continue
+        current = entry.get("current")
+        digests = entry.get("digests")
+        if not isinstance(current, str) or not isinstance(digests, list):
+            warnings.append(
+                f"cannot check provider config currency for {target}: "
+                "its history entry is malformed"
+            )
+            continue
+        try:
+            digest = hashlib.sha256((root / target).read_bytes()).hexdigest()
+        except OSError as error:
+            warnings.append(f"cannot read {target}: {error}")
+            continue
+        if digest == current:
+            continue
+        if digest in digests:
+            warnings.append(
+                f"{target} is a superseded shipped default; run install.py "
+                "from an sd-ai-command-pack source checkout to update it"
+            )
+        else:
+            warnings.append(
+                f"{target} matches no template this pack has shipped, so it "
+                "is treated as locally owned and will never be updated "
+                "automatically; merge shipped changes by hand"
+            )
+    return warnings
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Audit the installed sd-ai-command-pack footprint."
@@ -984,7 +1111,21 @@ def main() -> int:
     expected_count: int | None = None
     expected_platforms: set[str] = set()
     expected_warnings: list[str] = []
-    if targets and not manifest_failures:
+    thin_install = installed_mode(root) == THIN_MODE
+    if thin_install:
+        # The manifest-derived completeness check asks "does this checkout hold
+        # everything the pack ships for these platforms?" -- the wrong question
+        # for a payload that was deliberately reduced. The receipt stays the
+        # allowlist, every listed target is still required to be present, and
+        # the source checkout's `install.py --check` is what verifies the
+        # receipt itself against the expected residual.
+        expected_warnings = [
+            "installed payload is pinned thin; skipping the manifest-derived "
+            "expected-target completeness check. Receipt-to-disk checks still "
+            "apply; run install.py --check from an sd-ai-command-pack source "
+            "checkout to verify the receipt against the expected residual"
+        ]
+    elif targets and not manifest_failures:
         (
             expected_failures,
             expected_warnings,
@@ -1003,6 +1144,7 @@ def main() -> int:
         *structural_warnings,
         *expected_warnings,
         *audit_migration_advisories(root, targets),
+        *audit_provider_config_drift(root, pack_manifest),
     ]
 
     # Advisory warnings print even when the audit fails: the operator
