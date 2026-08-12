@@ -74,8 +74,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     sd-fix-ci/
       SKILL.md
-    sd-full-check/
-      SKILL.md
     sd-help/
       references/
         command-catalog.md
@@ -92,8 +90,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review/
       SKILL.md
     sd-review-learnings/
-      SKILL.md
-    sd-review-local/
       SKILL.md
     sd-review-pr/
       SKILL.md
@@ -138,6 +134,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         python-fastapi-web-server-security.md
         python-flask-web-server-security.md
       LICENSE.txt
+      PROVENANCE.md
       SKILL.md
     trellis-before-dev/
       SKILL.md
@@ -217,12 +214,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       create-pr.md
       finish-work.md
       fix-ci.md
-      full-check.md
       help.md
       housekeeping.md
       retro.md
       review-learnings.md
-      review-local.md
       review-pr.md
       review.md
       ship.md
@@ -263,8 +258,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     sd-fix-ci/
       SKILL.md
-    sd-full-check/
-      SKILL.md
     sd-help/
       references/
         command-catalog.md
@@ -281,8 +274,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-review/
       SKILL.md
     sd-review-learnings/
-      SKILL.md
-    sd-review-local/
       SKILL.md
     sd-review-pr/
       SKILL.md
@@ -327,6 +318,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         python-fastapi-web-server-security.md
         python-flask-web-server-security.md
       LICENSE.txt
+      PROVENANCE.md
       SKILL.md
     trellis-before-dev/
       SKILL.md
@@ -418,6 +410,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         python-fastapi-web-server-security.md
         python-flask-web-server-security.md
       LICENSE.txt
+      PROVENANCE.md
       SKILL.md
   config.toml
   hooks.json
@@ -434,12 +427,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       create-pr.toml
       finish-work.toml
       fix-ci.toml
-      full-check.toml
       help.toml
       housekeeping.toml
       retro.toml
       review-learnings.toml
-      review-local.toml
       review-pr.toml
       review.toml
       ship.toml
@@ -477,6 +468,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         python-fastapi-web-server-security.md
         python-flask-web-server-security.md
       LICENSE.txt
+      PROVENANCE.md
       SKILL.md
   settings.json
 .github/
@@ -502,12 +494,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-create-pr.prompt.md
     sd-finish-work.prompt.md
     sd-fix-ci.prompt.md
-    sd-full-check.prompt.md
     sd-help.prompt.md
     sd-housekeeping.prompt.md
     sd-retro.prompt.md
     sd-review-learnings.prompt.md
-    sd-review-local.prompt.md
     sd-review-pr.prompt.md
     sd-review.prompt.md
     sd-ship.prompt.md
@@ -539,6 +529,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         python-fastapi-web-server-security.md
         python-flask-web-server-security.md
       LICENSE.txt
+      PROVENANCE.md
       SKILL.md
     trellis-before-dev/
       SKILL.md
@@ -626,12 +617,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     sd-create-pr.md
     sd-finish-work.md
     sd-fix-ci.md
-    sd-full-check.md
     sd-help.md
     sd-housekeeping.md
     sd-retro.md
     sd-review-learnings.md
-    sd-review-local.md
     sd-review-pr.md
     sd-review.md
     sd-ship.md
@@ -670,6 +659,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         python-fastapi-web-server-security.md
         python-flask-web-server-security.md
       LICENSE.txt
+      PROVENANCE.md
       SKILL.md
     trellis-before-dev/
       SKILL.md
@@ -730,7 +720,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
     trellis-update-spec/
       SKILL.md
-  package.json
 .prism/
   rules.json
   rules.schema.json
@@ -792,6 +781,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         operations-security-logging.md
         quality-guidelines.md
         scenarios-and-data.md
+        sd-review-kb-false-block.md
         testing-quality.md
     guides/
       code-reuse-thinking-guide.md
@@ -903,48 +893,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-17-audit-dependency-hygiene/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    07-17-audit-doc-accuracy-sweep/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    07-17-audit-eval-harness-trace-retrieval/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    07-17-audit-mcp-query-performance/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    07-17-audit-serve-error-visibility/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    07-17-audit-sim-mutation-correctness/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-17-audit-test-harness-dedupe/
       check.jsonl
       design.md
@@ -966,19 +914,12 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    08-03-sd-review-kb-coordinator-false-positive/
+    08-06-conftest-helper-consolidation/
       check.jsonl
       implement.jsonl
       prd.md
       task.json
-    08-04-server-k8s-objects-tables-extract/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
-    08-04-server-k8s-tables-mypy-gate/
+    08-06-otlp-capture-fixture/
       check.jsonl
       implement.jsonl
       prd.md
@@ -1396,7 +1337,77 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.md
           prd.md
           task.json
+        07-17-audit-dependency-hygiene/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-doc-accuracy-sweep/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-eval-harness-trace-retrieval/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-mcp-query-performance/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-serve-error-visibility/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-sim-mutation-correctness/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         08-03-refresh-sd-ai-command-pack-0-64-3/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        08-03-sd-review-kb-coordinator-false-positive/
+          research/
+            root-cause.md
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-04-server-helm-impl-extract/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-04-server-k8s-objects-tables-extract/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-04-server-k8s-tables-mypy-gate/
           check.jsonl
           implement.jsonl
           prd.md
@@ -1411,6 +1422,50 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         08-04-server-ops-profiles-extract/
           check.jsonl
           design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-04-server-ops-support-render-primitives/
+          research/
+            precursor-closure-audit.md
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-05-claude-md-context-refactor/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          review-ledger.md
+          task.json
+        08-05-server-k8s-api-extract/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-05-server-ops-explain-payload-extract/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-06-server-traces-mypy-gate/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        08-06-trace-row-insert-dedupe/
+          check.jsonl
           implement.jsonl
           implement.md
           prd.md
@@ -1431,6 +1486,7 @@ docs/
   REVIEW_PATTERNS.md
   review-learnings.md
   SD_AI_COMMAND_PACK.md
+  sd-ai-command-pack-provider-config-history.json
   topology.md
 scripts/
   check-review-preflight.mjs
@@ -1445,6 +1501,7 @@ scripts/
   sd-ai-command-pack-housekeeping-result.py
   sd-ai-command-pack-housekeeping.sh
   sd-ai-command-pack-install-audit.py
+  sd-ai-command-pack-pack-update.sh
   sd-ai-command-pack-pr-body-scope.py
   sd-ai-command-pack-pr-eligibility.py
   sd-ai-command-pack-record-session.py
@@ -1452,7 +1509,6 @@ scripts/
   sd-ai-command-pack-review-full-check.sh
   sd-ai-command-pack-review-learnings.py
   sd-ai-command-pack-review-local.py
-  sd-ai-command-pack-review-local.sh
   sd-ai-command-pack-review-preflight.mjs
   sd-ai-command-pack-review-scope.sh
   sd-ai-command-pack-review.py
@@ -1498,15 +1554,21 @@ src/
     scenarios.py
     schema_impl.py
     schema.py
+    server_command_render.py
     server_commands.py
     server_debug_ui.py
+    server_helm_impl.py
     server_helm.py
+    server_k8s_api_trace.py
+    server_k8s_api.py
     server_k8s_objects.py
     server_k8s_tables.py
     server_kubernetes.py
     server_mcp.py
     server_mutations.py
+    server_ops_explain.py
     server_ops_parse.py
+    server_ops_payloads.py
     server_ops_profiles.py
     server_ops_support.py
     server_ops.py
@@ -1548,11 +1610,13 @@ tests/
   test_emit_selection_hygiene.py
   test_gauges_file.py
   test_gpu_inference.py
+  test_guard_ci_coverage_lint.py
   test_heavy_marker.py
   test_instance_config.py
   test_instance_filter.py
   test_instances_per_component.py
   test_instances.py
+  test_module_size_lint.py
   test_multiday_cascades.py
   test_mypy_gate_lint.py
   test_otel_gauges.py
@@ -1572,6 +1636,7 @@ tests/
   test_scenario_deviation.py
   test_scenarios.py
   test_schema_file.py
+  test_scope_heading_mirrors_lint.py
   test_sd_ai_command_pack_full_check_script.py
   test_sd_ai_command_pack_housekeeping_script.py
   test_serve_main_wiring.py
@@ -1583,7 +1648,9 @@ tests/
   test_server_watch.py
   test_server.py
   test_shapes.py
+  test_sim_mutation_correctness.py
   test_sync_agent_skills.py
+  test_task_criteria_lint.py
   test_test_resource_cost_lint.py
   test_topology_fanout.py
   test_topology_finite.py
@@ -1600,16 +1667,21 @@ tests/
   test_workflow_pip_lint.py
 tools/
   benchmark_combine.py
+  benchmark_mcp_window.py
   check_agent_hook_exceptions.py
   check_amc_module_load.py
   check_approval_duplicate.py
   check_branch_name.py
   check_ci_review_contract.py
   check_copilot_instruction_contract.py
+  check_guard_ci_coverage.py
+  check_module_size.py
   check_mypy_gate.py
   check_python_syntax.py
   check_role_name_leaks.py
   check_ruff_lockstep.py
+  check_scope_heading_mirrors.py
+  check_task_criteria_commands.py
   check_test_resource_cost.py
   check_trace_payload_antipatterns.py
   check_trellis_placeholders.py

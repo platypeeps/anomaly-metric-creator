@@ -1,6 +1,7 @@
 ---
 name: sd-check
 description: Use when the user asks to run deterministic repository verification, obtain a typed check result, or verify readiness without AI review or repository mutation.
+model: sonnet
 ---
 
 # SD Check
@@ -72,8 +73,6 @@ fields.
   authentication configuration or retry a cache-setup failure with bare tools.
 - A state-guard failure is evidence of a non-read-only configured check. Report
   the changed state class and stop; do not revert or delete output implicitly.
-- Do not call `sd-full-check` or read its environment/package-hook contract.
-  That independent legacy surface remains only until its retirement task.
 
 ## Final Response
 

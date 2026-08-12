@@ -137,7 +137,7 @@ repos:
       # malformed script.
       - id: review-tooling-shell-syntax
         name: validate review tooling shell syntax
-        entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-review-local.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
+        entry: bash -n scripts/classify-ci-changes.sh scripts/classify_ci_changes.sh scripts/sd-ai-command-pack-full-check.sh scripts/sd-ai-command-pack-housekeeping.sh scripts/sd-ai-command-pack-review-scope.sh scripts/sd-ai-command-pack-shell-lib.sh scripts/sd-ai-command-pack-toolchain.sh
         language: system
         files: ^scripts/(classify-ci-changes|classify_ci_changes|sd-ai-command-pack-(full-check|housekeeping|review-scope|review-local|shell-lib|toolchain))\.sh$
         pass_filenames: false

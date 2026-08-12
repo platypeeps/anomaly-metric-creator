@@ -52,7 +52,6 @@ _REVIEW_TOOLING_SHELL_SYNTAX = (
     "scripts/sd-ai-command-pack-full-check.sh "
     "scripts/sd-ai-command-pack-housekeeping.sh "
     "scripts/sd-ai-command-pack-review-scope.sh "
-    "scripts/sd-ai-command-pack-review-local.sh "
     "scripts/sd-ai-command-pack-shell-lib.sh "
     "scripts/sd-ai-command-pack-toolchain.sh"
 )
@@ -1020,7 +1019,6 @@ def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
         ("shared review preflight script", "scripts/sd-ai-command-pack-review-preflight.mjs"),
         ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
         ("SD AI command-pack scope script", "scripts/sd-ai-command-pack-review-scope.sh"),
-        ("SD AI command-pack review-local script", "scripts/sd-ai-command-pack-review-local.sh"),
         ("SD AI command-pack install audit", "scripts/sd-ai-command-pack-install-audit.py"),
         ("PR body scope guard", "scripts/sd-ai-command-pack-pr-body-scope.py"),
         ("PR body scope tests", "tests/test_pr_body_scope_lint.py"),

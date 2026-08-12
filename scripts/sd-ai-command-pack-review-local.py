@@ -19,13 +19,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Mapping, Sequence, overload
+from typing import Any, Literal, Mapping, MutableMapping, Sequence, overload
 from urllib.parse import urlsplit
 
 from sd_ai_command_pack_lib import (
     REVIEW_FINDING_FAMILY_IDS,
     CacheSetupError,
     build_tool_environment,
+    declare_verdict_domain,
+    run_git_minimal,
 )
 
 SCHEMA_VERSION = 1
@@ -55,8 +57,13 @@ SHELL_EXECUTABLES = frozenset({"bash", "dash", "fish", "ksh", "sh", "zsh"})
 CODE_STRING_EXECUTABLES = frozenset(
     {"node", "nodejs", "perl", "python", "python3", "ruby"}
 )
-OUTCOMES = frozenset(
-    {"clean", "findings", "unavailable", "failed", "cancelled", "skipped"}
+# The local review verdict vocabulary as an explicit extension of the shared
+# core (A-077): ``clean``/``failed``/``skipped`` are core; ``findings``,
+# ``unavailable`` and ``cancelled`` are this domain's declared opt-outs.
+OUTCOMES = declare_verdict_domain(
+    "review-local",
+    {"clean", "findings", "unavailable", "failed", "cancelled", "skipped"},
+    opt_out={"findings", "unavailable", "cancelled"},
 )
 TERMINAL_FAILURES = frozenset({"unavailable", "failed", "cancelled"})
 FINDING_SEVERITY_RANK = {"unspecified": 0, "low": 1, "medium": 2, "high": 3}
@@ -64,6 +71,10 @@ FINDING_FAMILY_IDS = REVIEW_FINDING_FAMILY_IDS
 FINDING_DISPOSITIONS = frozenset(
     {"outstanding", "fix", "fixed", "rebutted", "resolved"}
 )
+# The caller-supplied disposition vocabulary, deliberately the same single
+# value the remote channel accepts. Rebutting records a verified judgement
+# that a reported finding is not real; it never deletes the finding.
+LOCAL_DISPOSITION_VALUES = frozenset({"rebutted"})
 FAMILY_AUDIT_DIMENSIONS = {
     "task-metadata": (
         "identity-fields",
@@ -540,15 +551,11 @@ def _git(repo: Path, *args: str, binary: Literal[True]) -> bytes: ...
 
 def _git(repo: Path, *args: str, binary: bool = False) -> str | bytes:
     try:
-        result = subprocess.run(
-            ["git", *args],
+        result = run_git_minimal(
+            list(args),
             cwd=repo,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=not binary,
-            check=False,
             timeout=GIT_TIMEOUT_SECONDS,
+            binary=binary,
         )
     except subprocess.TimeoutExpired as error:
         stderr_value = error.stderr
@@ -1325,10 +1332,14 @@ def _artifact_root(repo: Path, value: str | None) -> Path:
             raise ReviewInputError(
                 f"review artifact root cannot traverse a symlink: {current}"
             )
-    result = subprocess.run(
-        ["git", "check-ignore", "-q", "--", str(resolved.relative_to(repo))],
+    result = run_git_minimal(
+        ["check-ignore", "-q", "--", str(resolved.relative_to(repo))],
         cwd=repo,
-        check=False,
+        timeout=None,
+        binary=True,
+        # Preserve the pre-migration bare-subprocess semantics: the original
+        # call inherited stderr so git's diagnostics surfaced in the terminal.
+        stderr=None,
     )
     if result.returncode != 0:
         raise ReviewInputError("review artifact root must be ignored by Git")
@@ -1848,13 +1859,101 @@ def _aggregate_outcome(attempts: Sequence[Mapping[str, Any]]) -> str:
     return "failed"
 
 
+def _parse_local_dispositions(values: Sequence[str]) -> dict[str, str]:
+    dispositions: dict[str, str] = {}
+    for value in values:
+        identifier, separator, disposition = value.rpartition("=")
+        if (
+            not separator
+            or not identifier
+            or len(identifier) > 240
+            or any(ord(character) < 32 for character in identifier)
+            or disposition not in LOCAL_DISPOSITION_VALUES
+        ):
+            raise ReviewInputError("local dispositions must use <stable-id>=rebutted")
+        if identifier in dispositions:
+            raise ReviewInputError("local disposition ids must be unique")
+        dispositions[identifier] = disposition
+    return dispositions
+
+
+def _apply_local_dispositions(
+    findings: Sequence[MutableMapping[str, Any]],
+    dispositions: Mapping[str, str],
+) -> dict[str, str]:
+    """Record caller rebuttals against findings already present in the receipt.
+
+    An id that matches no finding is an error rather than a no-op: it is almost
+    always a stale id copied from an earlier head, and silently accepting it
+    would open the gate for a finding nobody actually reviewed.
+    """
+
+    if not dispositions:
+        return {}
+    known = {str(item.get("id")): item for item in findings}
+    unknown = sorted(set(dispositions) - set(known))
+    if unknown:
+        raise ReviewInputError(
+            "local disposition ids match no finding at this head: "
+            + ", ".join(unknown[:8])
+        )
+    applied: dict[str, str] = {}
+    for identifier, disposition in dispositions.items():
+        known[identifier]["disposition"] = disposition
+        applied[identifier] = disposition
+    return applied
+
+
+def _redispose_receipt(
+    receipt: MutableMapping[str, Any],
+    dispositions: Mapping[str, str],
+    local_policy: str,
+) -> None:
+    """Apply rebuttals to a stored receipt and recompute what they affect.
+
+    Provider evidence is left exactly as recorded; only the caller-owned
+    disposition fields and the gate derived from them change.
+    """
+
+    findings = receipt.get("findings")
+    if not isinstance(findings, list):
+        raise ReviewInputError("stored local review receipt has no findings list")
+    applied = _apply_local_dispositions(findings, dispositions)
+    outstanding = sum(
+        1
+        for item in findings
+        if isinstance(item, Mapping) and item.get("disposition") == "outstanding"
+    )
+    disposition = receipt.get("disposition")
+    if not isinstance(disposition, dict):
+        raise ReviewInputError("stored local review receipt has no disposition block")
+    disposition["outstanding"] = outstanding
+    recorded = dict(disposition.get("localDispositions") or {})
+    recorded.update(applied)
+    disposition["localDispositions"] = recorded
+    plan = receipt.get("plan")
+    family_gate = plan.get("familyGate", {}) if isinstance(plan, Mapping) else {}
+    receipt["remoteGate"] = _remote_gate(
+        str(receipt.get("outcome")),
+        outstanding,
+        local_policy,
+        family_gate,
+        findings_present=bool(findings),
+    )
+
+
 def _remote_gate(
     outcome: str,
     outstanding: int,
     local_policy: str,
     family_gate: Mapping[str, Any],
+    *,
+    findings_present: bool = True,
 ) -> dict[str, Any]:
-    if outstanding or outcome == "findings":
+    # A provider that reports ``findings`` but lists none has given evidence
+    # nobody can inspect or rebut, so it still blocks. Otherwise the count of
+    # findings left outstanding is what decides: rebutted ones do not gate.
+    if outstanding or (outcome == "findings" and not findings_present):
         return {"state": "blocked", "reason": "actionable-local-findings"}
     family_state = family_gate.get("state")
     if family_state in {"sibling-audit-required", "round-extension-required"}:
@@ -1911,7 +2010,9 @@ def execute(
     local_policy: str,
     fix_policy: str,
     allow_reuse: bool,
+    dispositions: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
+    supplied = dict(dispositions or {})
     identity = _receipt_identity(target, plan)
     receipt_path = artifact_root / "receipts" / f"{identity}.json"
     if allow_reuse and receipt_path.exists():
@@ -1925,6 +2026,12 @@ def execute(
             raise ReviewInputError(
                 "stored local review receipt failed exact-match validation"
             )
+        if supplied:
+            # A rebuttal is the caller's judgement about evidence already in the
+            # receipt, not new evidence, so it applies to a reused receipt
+            # without re-running any provider.
+            _redispose_receipt(reusable, supplied, local_policy)
+            _atomic_json(receipt_path, reusable)
         return reusable, True
     run_dir = artifact_root / "runs" / attempt_id
     selected_ids = [
@@ -1989,6 +2096,7 @@ def execute(
         attempts = []
     attempts.sort(key=lambda item: str(item["provider"]["id"]))
     findings = _normalize_findings(attempts)
+    applied = _apply_local_dispositions(findings, supplied)
     outstanding = sum(1 for item in findings if item["disposition"] == "outstanding")
     outcome = _aggregate_outcome(attempts)
     limitations = [
@@ -2009,9 +2117,14 @@ def execute(
             "outstanding": outstanding,
             "fixPolicy": fix_policy,
             "maximumFixCommitsBeforeRemote": 1,
+            "localDispositions": applied,
         },
         "remoteGate": _remote_gate(
-            outcome, outstanding, local_policy, plan["familyGate"]
+            outcome,
+            outstanding,
+            local_policy,
+            plan["familyGate"],
+            findings_present=bool(findings),
         ),
         "confidence": {"granted": outcome == "clean", "limitations": limitations},
         "createdAt": time.time(),
@@ -2058,10 +2171,15 @@ def _remote_summary(receipt: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _report(receipt: Mapping[str, Any], *, reused: bool) -> dict[str, Any]:
+    outcome = receipt["outcome"]
     return {
         "schemaVersion": 1,
         "command": "sd-review-local-stage",
-        "status": receipt["outcome"],
+        # ``outcome`` is the verdict envelope key (A-077); ``status`` is the
+        # deprecated alias emitting the identical value for the dual-emit
+        # window (removed_version 0.66.0, see DEPRECATED_PAYLOAD_KEYS).
+        "outcome": outcome,
+        "status": outcome,
         "run": "reused" if reused else "executed",
         "receipt": receipt,
         "remoteSummary": _remote_summary(receipt),
@@ -2072,7 +2190,8 @@ def _invalid_report(message: str) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "command": "sd-review-local-stage",
-        "status": "invalid",
+        "outcome": "invalid",
+        "status": "invalid",  # deprecated alias of ``outcome`` (A-077)
         "diagnostic": _bounded(message),
     }
 
@@ -2081,13 +2200,14 @@ def _cancelled_report() -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "command": "sd-review-local-stage",
-        "status": "cancelled",
+        "outcome": "cancelled",
+        "status": "cancelled",  # deprecated alias of ``outcome`` (A-077)
         "diagnostic": "local review stage cancelled by signal",
     }
 
 
 def _print_human(report: Mapping[str, Any]) -> None:
-    print(f"Local review stage: {report['status']}")
+    print(f"Local review stage: {report['outcome']}")
     if report.get("diagnostic"):
         print(f"Diagnostic: {report['diagnostic']}")
         return
@@ -2114,6 +2234,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default="first",
     )
     parser.add_argument("--finding-family", action="append", default=[])
+    parser.add_argument("--local-disposition", action="append", default=[])
     parser.add_argument("--family-evidence")
     parser.add_argument("--bookkeeping-evidence")
     parser.add_argument("--attempt-id", required=True)
@@ -2207,6 +2328,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 local_policy=args.local_policy,
                 fix_policy=args.fix,
                 allow_reuse=not args.no_reuse,
+                dispositions=_parse_local_dispositions(args.local_disposition),
             )
             report = _report(receipt, reused=reused)
             code = (

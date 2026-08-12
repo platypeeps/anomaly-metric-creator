@@ -69,7 +69,7 @@ is_python_path() {
 
 is_review_tooling_path() {
   case "$1" in
-    scripts/classify-ci-changes.sh|scripts/classify_ci_changes.sh|scripts/check-review-preflight.mjs|scripts/sd-ai-command-pack-install-audit.py|scripts/sd-ai-command-pack-pr-body-scope.py|scripts/sd-ai-command-pack-review-scope.sh|scripts/sd-ai-command-pack-review-preflight.mjs|scripts/sd-ai-command-pack-review-local.sh|scripts/sd-ai-command-pack-full-check.sh|scripts/sd-ai-command-pack-housekeeping.sh|scripts/sd-ai-command-pack-shell-lib.sh|scripts/sd-ai-command-pack-toolchain.sh)
+    scripts/classify-ci-changes.sh|scripts/classify_ci_changes.sh|scripts/check-review-preflight.mjs|scripts/sd-ai-command-pack-install-audit.py|scripts/sd-ai-command-pack-pr-body-scope.py|scripts/sd-ai-command-pack-review-scope.sh|scripts/sd-ai-command-pack-review-preflight.mjs|scripts/sd-ai-command-pack-full-check.sh|scripts/sd-ai-command-pack-housekeeping.sh|scripts/sd-ai-command-pack-shell-lib.sh|scripts/sd-ai-command-pack-toolchain.sh)
       return 0
       ;;
     .sd-ai-command-pack/*|tests/test_pr_body_scope_lint.py)

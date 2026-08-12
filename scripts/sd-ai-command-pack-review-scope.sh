@@ -208,27 +208,41 @@ resolve_pr_body_scope_state() {
   fi
 
   local pr_json
-  if ! pr_json="$(gh pr view --json body,title,url 2>/dev/null)"; then
+  if ! pr_json="$(gh pr view --json body,title,url,state 2>/dev/null)"; then
     printf 'unknown:no_pr\n'
     return 0
   fi
 
   # Isolate the PR body so the scope heading is matched against the body only,
-  # never the title or url. Without a JSON parser, skip rather than grep the raw
-  # JSON blob, which would risk a false pass on a heading-like title or url.
-  local pr_body
+  # never the title or url. Also read `state`: `gh pr view` with no argument
+  # resolves the branch's PR and will return a CLOSED or MERGED one when no open
+  # PR exists, so its (possibly stale) body must not bleed into the check
+  # (finding #6: a closed same-branch PR failed the branch's next candidate).
+  # Without a JSON parser, skip rather than grep the raw JSON blob, which would
+  # risk a false pass on a heading-like title or url.
+  local pr_body pr_state
   if have python3; then
-    if ! pr_body="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("body") or "")' <<<"$pr_json" 2>/dev/null)"; then
+    if ! pr_state="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("state") or "")' <<<"$pr_json" 2>/dev/null)" ||
+      ! pr_body="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("body") or "")' <<<"$pr_json" 2>/dev/null)"; then
       printf 'unknown:parse_error\n'
       return 0
     fi
   elif have jq; then
-    if ! pr_body="$(jq -r '.body // ""' <<<"$pr_json" 2>/dev/null)"; then
+    if ! pr_state="$(jq -r '.state // ""' <<<"$pr_json" 2>/dev/null)" ||
+      ! pr_body="$(jq -r '.body // ""' <<<"$pr_json" 2>/dev/null)"; then
       printf 'unknown:parse_error\n'
       return 0
     fi
   else
     printf 'unknown:no_parser\n'
+    return 0
+  fi
+
+  # Only an OPEN PR's body is authoritative. A CLOSED/MERGED same-branch PR is
+  # treated as no usable PR so the caller falls through to the env-provided
+  # intended body (set pre-publication) instead of a stale closed body.
+  if [ "$pr_state" != "OPEN" ]; then
+    printf 'unknown:pr_closed\n'
     return 0
   fi
 
@@ -290,6 +304,15 @@ check_pr_body_scope() {
         fail "gh could not resolve the current PR for tooling/generated scope checks"
       fi
       warn "No current PR found; when you open it, the PR body must include $SCOPE_SECTION_HINT."
+      return 0
+      ;;
+    unknown:pr_closed)
+      # The only same-branch PR is closed/merged; its body is not authoritative.
+      # Behaves like no open PR: the intended body is env-provided pre-publication.
+      if is_required "$GH_MODE"; then
+        fail "gh found only a closed/merged PR for this branch; open the PR (its body must include a tooling/generated scope section) or provide SD_AI_COMMAND_PACK_SCOPE_PR_BODY"
+      fi
+      warn "Only a closed/merged PR was found for this branch; when you open the new PR, its body must include $SCOPE_SECTION_HINT."
       return 0
       ;;
     unknown:no_parser)

@@ -20,11 +20,11 @@ branch, pull request, task, and goal context when producing a final invocation.
 
 ## Verification and improvement
 
-- Choose a review: `Use sd-help to compare sd-full-check, sd-review-local, and sd-review-pr for my current branch.`
-- Fix CI: `Use sd-help to explain when sd-fix-ci is preferable to sd-full-check.`
+- Choose a review: `Use sd-help to compare sd-check and sd-review for my current branch.`
+- Fix CI: `Use sd-help to explain when sd-fix-ci is preferable to sd-check.`
 - Improve coverage: `Use sd-help to explain sd-test-gaps and what files it may change.`
 - Target one coverage gap: `sd-test-gaps scripts/example.py`
-- Formal audit: `Use sd-help to compare sd-audit-repo with sd-review-local.`
+- Formal audit: `Use sd-help to compare sd-audit-repo with sd-review.`
 - Audit selected dimensions: `sd-audit-repo security testing`
 
 ## Pull requests and shipping

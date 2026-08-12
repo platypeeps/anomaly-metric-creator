@@ -10,8 +10,18 @@ fail() {
   exit "${2:-1}"
 }
 
-toolchain_script="scripts/sd-ai-command-pack-toolchain.sh"
-full_check_script="scripts/sd-ai-command-pack-full-check.sh"
+# Helpers are siblings of this script, not repository-root paths, so the
+# selector works in a vendored scripts/ directory and in a plugin bin/ alike.
+case "${BASH_SOURCE[0]}" in
+  */*) SCRIPT_DIR="${BASH_SOURCE[0]%/*}" ;;
+  *) SCRIPT_DIR="." ;;
+esac
+if ! SCRIPT_DIR="$(cd -- "$SCRIPT_DIR" 2>/dev/null && pwd -P)"; then
+  fail "cannot resolve the directory of $0" 5
+fi
+
+toolchain_script="$SCRIPT_DIR/sd-ai-command-pack-toolchain.sh"
+full_check_script="$SCRIPT_DIR/sd-ai-command-pack-full-check.sh"
 configured_command=""
 
 if [ -f "package.json" ]; then

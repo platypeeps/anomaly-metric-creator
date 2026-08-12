@@ -23,7 +23,7 @@ before tightening a configured floor, or as recurring hygiene after a large
 development stream leaves thin spots behind. Pass `file=<path>` when one
 specific file is the known offender.
 
-It complements `sd-full-check` (the gate that proves configured floors
+It complements `sd-check` (the gate that proves configured floors
 hold): this command is the remediation loop that raises weak files toward
 those floors, and `sd-audit-repo`'s testing dimension is a common source
 of its gap list. It is not a debugging command — the baseline suite must

@@ -1,6 +1,7 @@
 ---
 name: sd-start
 description: Use when the user wants the Software Delivery start command to initialize Trellis session context and classify the next action.
+model: sonnet
 ---
 
 # SD Start

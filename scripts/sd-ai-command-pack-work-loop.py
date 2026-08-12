@@ -24,9 +24,17 @@ sys.dont_write_bytecode = True
 # This import must follow the bytecode guard for direct entrypoint invocation.
 from sd_ai_command_pack_lib import (  # noqa: E402
     CACHE_ROOT_ENV,
+    STATE_HOME_ENV,
     CacheSetupError,
+    CommandError,
     build_environment_blocked_evidence,
-    build_tool_environment,
+    run_git_cached,
+)
+from sd_ai_command_pack_lib import (  # noqa: E402
+    ensure_private_directory as _lib_ensure_private_directory,
+)
+from sd_ai_command_pack_lib import (  # noqa: E402
+    resolve_state_root as _lib_resolve_state_root,
 )
 
 SCHEMA_VERSION = 1
@@ -35,7 +43,6 @@ MAX_HISTORY = 20
 MAX_NOTES = 50
 DEFAULT_STALE_LOCK_SECONDS = 15 * 60
 TERMINAL_LOCK_NAME = "terminal-reconcile.lock.json"
-STATE_HOME_ENV = "SD_AI_COMMAND_PACK_STATE_HOME"
 FOCUS_FIELDS = frozenset({"priority", "package", "task", "status", "scope"})
 FOCUS_PREFIX_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(.*)$", re.DOTALL)
 WORD_RE = re.compile(r"[A-Za-z0-9_.-]+")
@@ -48,6 +55,11 @@ SECRET_KEY_RE = re.compile(
     r"(?:token|secret|password|credential|api[_-]?key)", re.IGNORECASE
 )
 STATUSES = frozenset({"active", "paused", "stopped", "completed"})
+# Statuses that release the ownership lock as part of reaching them, so a later
+# mutation must not demand one back. `stop` runs `release_lock` unconditionally
+# after the mutation, so every status it can set ends lockless -- not just
+# `paused`. `active` is deliberately absent: a live run still owns its lock.
+LOCK_RELEASING_STATUSES = frozenset({"paused", "stopped", "completed"})
 # Historical ledgers may still record ``designs``. New runs expose one public
 # controller mode and express design selection through ``selector`` instead.
 LEDGER_MODES = frozenset({"backlog", "designs"})
@@ -235,8 +247,19 @@ def compact_text(value: object, *, limit: int = 300) -> str:
 
 
 def run_git(repo: Path, *args: str) -> str | None:
+    # run_git_cached builds the shared cache-backed environment (the former
+    # inline build_tool_environment call) and disables the git credential
+    # prompt; the returned CompletedProcess is inspected below.
     try:
-        environment, _, _ = build_tool_environment(repo=repo)
+        result = run_git_cached(
+            ["-C", str(repo), *args],
+            repo=repo,
+            cwd=None,
+            timeout=20,
+            stderr=subprocess.DEVNULL,
+            encoding="utf-8",
+            errors="strict",
+        )
     except CacheSetupError as error:
         detail = str(error).strip()
         detail = detail.removeprefix("cache setup failed for external tools: ")
@@ -247,18 +270,6 @@ def run_git(repo: Path, *args: str) -> str | None:
                 "outside the repository"
             )
         raise WorkLoopError(f"cache setup failed: {detail}") from error
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            env=environment,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="strict",
-            timeout=20,
-        )
     except (OSError, UnicodeError, subprocess.TimeoutExpired):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
@@ -327,38 +338,23 @@ def repository_identity(repo: Path, *, remote: str | None = None) -> dict[str, s
     }
 
 
-def resolve_state_root(
+def _state_root(
     *,
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
     os_name: str | None = None,
 ) -> Path:
-    env = os.environ if environ is None else environ
-    override = env.get(STATE_HOME_ENV, "").strip()
-    if override:
-        path = Path(override).expanduser()
-        if not path.is_absolute():
-            raise WorkLoopError(f"{STATE_HOME_ENV} must be an absolute path")
-        return path
-    xdg = env.get("XDG_STATE_HOME", "").strip()
-    if xdg:
-        path = Path(xdg).expanduser()
-        if path.is_absolute():
-            return path / "sd-ai-command-pack"
-    platform_name = os.name if os_name is None else os_name
-    if platform_name == "nt":
-        local_app_data = env.get("LOCALAPPDATA", "").strip()
-        if local_app_data:
-            windows_path = PureWindowsPath(local_app_data)
-            if windows_path.is_absolute():
-                # Path uses Windows semantics on Windows. Normalizing separators
-                # also keeps os_name-injected portability tests deterministic.
-                path = Path(str(windows_path).replace("\\", "/"))
-                return path / "sd-ai-command-pack" / "state"
-    resolved_home = (home or Path.home()).expanduser()
-    if not resolved_home.is_absolute():
-        raise WorkLoopError("home directory must resolve to an absolute path")
-    return resolved_home / ".local" / "state" / "sd-ai-command-pack"
+    """Resolve the shared state root, restating failures as ``WorkLoopError``."""
+
+    try:
+        return _lib_resolve_state_root(environ=environ, home=home, os_name=os_name)
+    except CommandError as error:
+        raise WorkLoopError(str(error)) from error
+
+
+# Bound by assignment, not a second ``def``: the shared library owns the single
+# definition, and every existing call site keeps using this module-level name.
+resolve_state_root = _state_root
 
 
 def state_paths(identity: Mapping[str, str], state_root: Path) -> tuple[Path, Path]:
@@ -366,22 +362,27 @@ def state_paths(identity: Mapping[str, str], state_root: Path) -> tuple[Path, Pa
     return directory / "state.json", directory / "lock.json"
 
 
-def ensure_private_directory(path: Path) -> None:
-    if path.is_symlink():
-        raise WorkLoopError(f"state directory must not be a symlink: {path}")
+def _ensure_state_dir(path: Path) -> None:
+    """Create the private state directory, keeping this module's error types.
+
+    A failing ``mkdir`` must stay a ``StatePersistenceError`` — it subclasses
+    ``OSError`` deliberately and carries the structured ``environment_blocked``
+    evidence that the skills read — so the originating error is recovered from
+    the library exception's ``__cause__`` and re-wrapped unchanged.
+    """
+
     try:
-        path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    except OSError as error:
-        raise _user_state_blocked(
-            "prepare the work-loop state directory", "state-directory", error
-        ) from error
-    if path.is_symlink() or not path.is_dir():
-        raise WorkLoopError(f"state directory is unusable: {path}")
-    try:
-        path.chmod(0o700)
-    except OSError:
-        # Permission tightening is best-effort on filesystems without chmod support.
-        pass
+        _lib_ensure_private_directory(path, label="state directory", reference=str(path))
+    except CommandError as error:
+        cause = error.__cause__
+        if isinstance(cause, OSError):
+            raise _user_state_blocked(
+                "prepare the work-loop state directory", "state-directory", cause
+            ) from cause
+        raise WorkLoopError(str(error)) from error
+
+
+ensure_private_directory = _ensure_state_dir
 
 
 def _reject_secret_keys(value: object, *, path: str = "state") -> None:
@@ -1680,13 +1681,25 @@ def mutate_state(
     callback: Callable[[dict[str, Any]], None],
     *,
     state_root: Path | None = None,
+    released_lock_statuses: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
+    """Apply ``callback`` to the run's state under its ownership lock.
+
+    ``released_lock_statuses`` names the persisted statuses whose lock the run
+    is *expected* to have handed back, so an absent lock is the documented
+    outcome rather than a fault. ``pause`` releases the lock by design, and a
+    later ``stop`` on that same paused run must still be able to retire it. Any
+    other missing lock stays an error: this narrows the ownership check for one
+    known-released state, it does not make the lock optional.
+    """
     state, state_path, lock_path, _identity = load_state_for_repo(
         repo, state_root=state_root
     )
     if state["runId"] != run_id:
         raise WorkLoopError(f"state belongs to run {state['runId']}, not {run_id}")
-    require_lock(lock_path, run_id)
+    lock_was_released = state["status"] in released_lock_statuses and not lock_path.exists()
+    if not lock_was_released:
+        require_lock(lock_path, run_id)
     callback(state)
     now = utc_now()
     state["updatedAt"] = now
@@ -2972,6 +2985,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     repo=args.repo,
                 ),
                 state_root=state_root,
+                # `references/run-recovery.md` sends a stopped or red run here,
+                # and a stopped run has already released its lock.
+                released_lock_statuses=LOCK_RELEASING_STATUSES,
             )
         elif args.command == "reconcile-terminal":
             delivery = _terminal_pr_from_args(args, "delivery", required=True)
@@ -3148,7 +3164,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "resumePhase": None,
                 }
 
-            state = mutate_state(args.repo, args.run_id, stop, state_root=state_root)
+            # A paused run has already handed its lock back, so retiring it must
+            # not require re-taking one.
+            state = mutate_state(
+                args.repo,
+                args.run_id,
+                stop,
+                state_root=state_root,
+                released_lock_statuses=LOCK_RELEASING_STATUSES,
+            )
             _loaded, _path, lock_path, _identity = load_state_for_repo(
                 args.repo, state_root=state_root
             )

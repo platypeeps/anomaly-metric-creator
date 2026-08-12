@@ -1,6 +1,7 @@
 ---
 name: sd-status
 description: Use when the user wants a read-only repository status report or a rollout-priority summary for the configured fleet from any installed checkout.
+model: haiku
 ---
 
 # SD Status
@@ -57,6 +58,10 @@ reinterpret them as shell text.
    report fresher.
 4. For local mode, report repository identity, branch and working-tree counts,
    Git stash count, cached upstream divergence, default/local/remote branches,
+   the Git worktree inventory (every worktree with its path, checked-out
+   branch or detached HEAD, cleanliness, and the reporting row marked; local
+   branches held in another worktree carry a ` [worktree]` marking, and an
+   unavailable inventory is reported explicitly),
    installed pack and Trellis versions, relevant PR, open PRs/issues, current
    and queued Trellis work, completed tasks stranded outside the Trellis
    archive, the user-local autonomous work-loop state, pack recovery-artifact
@@ -86,11 +91,20 @@ reinterpret them as shell text.
    category is empty. IDs are deterministic for the reported snapshot but are
    not durable task identities.
 6. For fleet mode, preserve registry rollout order and show one bounded row per
-   consumer with checkout availability, branch/tree/upstream state, stash count, installed
-   versus target pack version, PR counts, and task counts. Put missing, dirty,
-   divergent, behind, or stale consumers into F-prefixed follow-ups and
-   evidence-backed next steps. Complete per-consumer follow-up and task details
-   remain in nested JSON or a local status request for that checkout.
+   consumer with checkout availability, branch/tree/upstream state, stash count,
+   PR counts, and task counts. The version half of the row follows the
+   consumer's registry `mode`: a `fat` consumer reports installed versus target
+   pack version as before, while a `thin` consumer reports its pin instead —
+   `present` with a version, or `absent`/`unreadable` — because it has no
+   vendored tree to compare. Put missing, dirty, divergent, behind, or stale
+   consumers into F-prefixed follow-ups and evidence-backed next steps. When the
+   registry contains at least one thin consumer, also report the one
+   machine-scope inventory collected for the run and its skew rows: pin versus
+   machine install, machine install versus target, and plugin versus machine
+   receipt. An all-fat registry reports no machine rows. Skew rows are derived
+   before human truncation, so they are never dropped to fit the bounded list.
+   Complete per-consumer follow-up and task details remain in nested JSON or a
+   local status request for that checkout.
 7. Return the collector's exit status unchanged. A dirty or stale ordinary
    status report is advisory and exits zero; invalid repositories, malformed
    fleet configuration, or an unavailable configured pack source exit nonzero.

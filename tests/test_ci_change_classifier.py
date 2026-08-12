@@ -106,7 +106,6 @@ def test_review_tooling_scripts_stay_in_lightweight_lane(tmp_path: Path) -> None
         "scripts/sd-ai-command-pack-pr-body-scope.py",
         "scripts/sd-ai-command-pack-review-scope.sh",
         "scripts/sd-ai-command-pack-review-preflight.mjs",
-        "scripts/sd-ai-command-pack-review-local.sh",
         "scripts/sd-ai-command-pack-install-audit.py",
         "scripts/sd-ai-command-pack-full-check.sh",
         "scripts/sd-ai-command-pack-housekeeping.sh",

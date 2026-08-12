@@ -1,6 +1,7 @@
 ---
 name: sd-continue
 description: Use when the user wants the Software Delivery continue command to resume the current Trellis task or workflow state.
+model: sonnet
 ---
 
 # SD Continue

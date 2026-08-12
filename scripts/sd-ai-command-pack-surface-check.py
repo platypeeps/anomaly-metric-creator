@@ -18,6 +18,12 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import Any, Iterable, Mapping, Sequence
 
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from sd_ai_command_pack_lib import run_git_minimal  # noqa: E402
+
 SCHEMA_VERSION = 1
 SUPPORTED_MANIFEST_SCHEMA = 1
 MAX_AUTHORITATIVE_BYTES = 1024 * 1024
@@ -124,13 +130,11 @@ def _load_json(root: Path, relative: str, *, label: str) -> tuple[str, Any]:
 
 def _run_git(root: Path, args: Sequence[str], *, optional: bool = False) -> bytes | None:
     try:
-        result = subprocess.run(
-            ["git", *args],
+        result = run_git_minimal(
+            list(args),
             cwd=root,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             timeout=60,
+            binary=True,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         if optional:
@@ -215,7 +219,16 @@ class _UnsafeSiblingPath(OSError):
     non-regular node (socket / FIFO / directory), a missing path, or a platform
     without ``O_NOFOLLOW``. Distinct from an arbitrary open/read ``OSError`` so a
     caller can route path-policy failures through its own boundary while a real
-    I/O fault still reaches the caller's original handler."""
+    I/O fault still reaches the caller's original handler.
+
+    ``reason`` carries the specific policy verdict so a caller can distinguish a
+    genuinely absent module (``missing``) from one that is present but refused
+    (``no_o_nofollow`` / ``symlink`` / ``non_regular``). The refusal behavior is
+    unchanged either way; only the surfaced diagnostic differs."""
+
+    def __init__(self, message: str, *, reason: str = "unsafe") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class _SiblingLoadError(ImportError):
@@ -246,13 +259,29 @@ def _read_trusted_sibling_source(path: Path) -> bytes:
     unchanged.
     """
     if not hasattr(os, "O_NOFOLLOW"):
-        raise _UnsafeSiblingPath("O_NOFOLLOW unavailable; refusing sibling load")
+        raise _UnsafeSiblingPath(
+            "O_NOFOLLOW unavailable; refusing sibling load", reason="no_o_nofollow"
+        )
     try:
         advisory = os.lstat(path)
     except OSError as error:
-        raise _UnsafeSiblingPath(str(error)) from error
-    if stat.S_ISLNK(advisory.st_mode) or not stat.S_ISREG(advisory.st_mode):
-        raise _UnsafeSiblingPath(f"{path} is not a regular file")
+        if error.errno == errno.ENOENT:
+            reason = "missing"
+        elif error.errno == errno.ELOOP:
+            reason = "symlink"
+        elif error.errno == errno.ENOTDIR:
+            # A non-directory parent component ⇒ no regular file is resolvable at
+            # the computed path ⇒ "not found", not "present but refused".
+            reason = "missing"
+        else:
+            reason = "unsafe"
+        raise _UnsafeSiblingPath(str(error), reason=reason) from error
+    if stat.S_ISLNK(advisory.st_mode):
+        raise _UnsafeSiblingPath(f"{path} is a symlink", reason="symlink")
+    if not stat.S_ISREG(advisory.st_mode):
+        raise _UnsafeSiblingPath(
+            f"{path} is not a regular file", reason="non_regular"
+        )
     flags = (
         os.O_RDONLY
         | os.O_NOFOLLOW
@@ -263,12 +292,25 @@ def _read_trusted_sibling_source(path: Path) -> bytes:
         descriptor = os.open(path, flags)
     except OSError as error:
         if error.errno in _PATH_POLICY_ERRNOS:
-            raise _UnsafeSiblingPath(str(error)) from error
+            if error.errno == errno.ENOENT:
+                reason = "missing"
+            elif error.errno == errno.ELOOP:
+                reason = "symlink"
+            elif error.errno == errno.ENOTDIR:
+                # Parity with the advisory branch: a non-directory parent means the
+                # module is not resolvable ⇒ "missing", not "non_regular".
+                reason = "missing"
+            else:
+                # Defensive: unreachable for the current errno set, safe if it grows.
+                reason = "non_regular"
+            raise _UnsafeSiblingPath(str(error), reason=reason) from error
         raise
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode):
-            raise _UnsafeSiblingPath(f"{path} is not a regular file")
+            raise _UnsafeSiblingPath(
+                f"{path} is not a regular file", reason="non_regular"
+            )
         chunks = []
         while True:
             block = os.read(descriptor, 65536)
@@ -308,8 +350,13 @@ def _load_source_module(root: Path, relative: str, name: str) -> ModuleType:
     try:
         source = _read_trusted_sibling_source(path)
     except _UnsafeSiblingPath as error:
+        if error.reason == "missing":
+            raise SurfaceInputError(
+                f"missing source validator module: {relative}"
+            ) from error
         raise SurfaceInputError(
-            f"missing source validator module: {relative}"
+            f"source validator module present but refused "
+            f"({error.reason}): {relative}"
         ) from error
     try:
         return _exec_sibling_module(source, path, name, register=True)
@@ -346,7 +393,7 @@ def _manifest_entries(root: Path, registry: ModuleType) -> tuple[str, list[dict[
     known_platforms = set(registry.PLATFORM_REGISTRY)
     known_platforms.add("shared")
     known_kinds = {
-        "command", "config", "doc", "managed-block", "prompt", "script", "skill", "workflow"
+        "agent", "command", "config", "doc", "managed-block", "prompt", "script", "skill", "workflow"
     }
     entries: list[dict[str, str]] = []
     seen_targets: dict[str, str] = {}

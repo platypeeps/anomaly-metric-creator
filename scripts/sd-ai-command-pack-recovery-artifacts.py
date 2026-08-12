@@ -37,17 +37,34 @@ import sys
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 try:
-    from sd_ai_command_pack_lib import CommandError, git_stdout, run_git
+    from sd_ai_command_pack_lib import (  # noqa: F401  (STATE_HOME_ENV re-export)
+        STATE_HOME_ENV,
+        CommandError,
+        git_stdout,
+        run_git,
+    )
+    from sd_ai_command_pack_lib import (
+        ensure_private_directory as _lib_ensure_private_directory,
+    )
+    from sd_ai_command_pack_lib import resolve_state_root as _lib_resolve_state_root
 except ImportError:  # pragma: no cover - exercised only via broken installs
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from sd_ai_command_pack_lib import CommandError, git_stdout, run_git
+    from sd_ai_command_pack_lib import (  # noqa: F401  (STATE_HOME_ENV re-export)
+        STATE_HOME_ENV,
+        CommandError,
+        git_stdout,
+        run_git,
+    )
+    from sd_ai_command_pack_lib import (
+        ensure_private_directory as _lib_ensure_private_directory,
+    )
+    from sd_ai_command_pack_lib import resolve_state_root as _lib_resolve_state_root
 
 SCHEMA_VERSION = 1
-STATE_HOME_ENV = "SD_AI_COMMAND_PACK_STATE_HOME"
 DEFAULT_STALE_LOCK_SECONDS = 15 * 60
 
 MAX_RECEIPT_BYTES = 16 * 1024
@@ -121,49 +138,41 @@ def parse_utc(value: object) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_state_root(
+def _state_root(
     *,
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
     os_name: str | None = None,
 ) -> Path:
-    env = os.environ if environ is None else environ
-    override = env.get(STATE_HOME_ENV, "").strip()
-    if override:
-        path = Path(override).expanduser()
-        if not path.is_absolute():
-            raise RecoveryError(f"{STATE_HOME_ENV} must be an absolute path")
-        return path
-    xdg = env.get("XDG_STATE_HOME", "").strip()
-    if xdg:
-        path = Path(xdg).expanduser()
-        if path.is_absolute():
-            return path / "sd-ai-command-pack"
-    platform_name = os.name if os_name is None else os_name
-    if platform_name == "nt":
-        local_app_data = env.get("LOCALAPPDATA", "").strip()
-        if local_app_data:
-            windows_path = PureWindowsPath(local_app_data)
-            if windows_path.is_absolute():
-                path = Path(str(windows_path).replace("\\", "/"))
-                return path / "sd-ai-command-pack" / "state"
-    resolved_home = (home or Path.home()).expanduser()
-    if not resolved_home.is_absolute():
-        raise RecoveryError("home directory must resolve to an absolute path")
-    return resolved_home / ".local" / "state" / "sd-ai-command-pack"
+    """Resolve the shared state root, restating failures as ``RecoveryError``."""
 
-
-def ensure_private_directory(path: Path) -> None:
-    if path.is_symlink():
-        raise RecoveryError(f"state directory must not be a symlink: {path.name}")
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if path.is_symlink() or not path.is_dir():
-        raise RecoveryError(f"state directory is unusable: {path.name}")
     try:
-        path.chmod(0o700)
-    except OSError:
-        # Permission tightening is best-effort on filesystems without chmod.
-        pass
+        return _lib_resolve_state_root(environ=environ, home=home, os_name=os_name)
+    except CommandError as error:
+        raise RecoveryError(str(error)) from error
+
+
+# Bound by assignment, not a second ``def``: the shared library owns the single
+# definition, and every existing call site keeps using this module-level name.
+resolve_state_root = _state_root
+
+
+def _ensure_state_dir(path: Path) -> None:
+    """Create the private state directory as ``RecoveryError``-typed failures.
+
+    The previous local implementation let a raw ``OSError`` from ``mkdir``
+    escape; delegating closes that gap without changing any other behavior.
+    ``reference=path.name`` keeps this module's convention of never putting a
+    host absolute path in a user-facing diagnostic.
+    """
+
+    try:
+        _lib_ensure_private_directory(path, label="state directory", reference=path.name)
+    except CommandError as error:
+        raise RecoveryError(str(error)) from error
+
+
+ensure_private_directory = _ensure_state_dir
 
 
 def _reject_secret_keys(value: object, *, path: str = "receipt") -> None:
@@ -453,8 +462,12 @@ def build_receipt(
 
 
 def validate_receipt(receipt: Mapping[str, Any]) -> None:
-    if receipt.get("schemaVersion") != SCHEMA_VERSION:
-        raise RecoveryError("unsupported receipt schema version")
+    actual_version = receipt.get("schemaVersion")
+    if actual_version != SCHEMA_VERSION:
+        raise RecoveryError(
+            "unsupported receipt schema version "
+            f"(expected {SCHEMA_VERSION!r}, got {actual_version!r})"
+        )
     artifact_id = receipt.get("artifactId")
     if not isinstance(artifact_id, str) or not ARTIFACT_ID_RE.match(artifact_id):
         raise RecoveryError("receipt has no valid artifact id")

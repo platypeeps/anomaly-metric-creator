@@ -14,7 +14,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, cast
 
 from sd_ai_command_pack_lib import (
     CacheSetupError,
@@ -139,7 +139,48 @@ def _hash_regular_file(path: Path, digest: "hashlib._Hash") -> None:
             digest.update(chunk)
 
 
-def _hash_path(path: Path) -> str:
+class _WorktreeHashCache:
+    """Per-run memo of regular-file content digests, keyed by a cheap signature.
+
+    One check run snapshots the tree many times: once before the checks, once
+    after every executed row, and once at the end. Re-reading and re-hashing
+    every file's content on each of those snapshots is the payload-linear cost
+    this removes. A file whose ``(st_mode, st_size, st_mtime_ns)`` signature is
+    unchanged since it was last hashed *this run* reuses its content digest
+    instead of being read again; a file whose signature moved is re-hashed for
+    real. So instead of ``2 + rows`` full content passes the run performs the
+    cold pass that fills the cache plus the deliberately cache-free final pass —
+    exactly two, independent of the row count.
+
+    Only regular-file content is cached, and the cache is per-run and never
+    persisted. Symlinks are always read fresh (``readlink`` is cheap, and this
+    keeps every retarget caught at *every* snapshot). The cheap signature
+    deliberately cannot see a same-size, mtime-preserving rewrite that happens
+    mid-run, so a per-row snapshot can miss it and lose per-row attribution; the
+    run's final snapshot runs against a fresh cache and re-hashes from scratch,
+    so it remains the authority that still fails the run. This is the run-level
+    granularity trade recorded in the task design.
+    """
+
+    def __init__(self) -> None:
+        self._digests: dict[str, tuple[tuple[int, int, int], bytes]] = {}
+
+    def regular_file_digest(self, path: Path, metadata: os.stat_result) -> bytes:
+        signature = (metadata.st_mode, metadata.st_size, metadata.st_mtime_ns)
+        key = os.fspath(path)
+        cached = self._digests.get(key)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        digest = hashlib.sha256()
+        _hash_regular_file(path, digest)
+        raw = digest.digest()
+        self._digests[key] = (signature, raw)
+        return raw
+
+
+def _hash_path(path: Path, cache: "_WorktreeHashCache | None" = None) -> str:
+    if cache is None:
+        cache = _WorktreeHashCache()
     digest = hashlib.sha256()
     try:
         metadata = path.lstat()
@@ -159,7 +200,7 @@ def _hash_path(path: Path) -> str:
     if stat.S_ISREG(metadata.st_mode):
         digest.update(b"file\0")
         try:
-            _hash_regular_file(path, digest)
+            digest.update(cache.regular_file_digest(path, metadata))
         except OSError as error:
             raise CheckInputError(f"cannot read guarded file {path}: {error}") from error
         return digest.hexdigest()
@@ -190,7 +231,7 @@ def _hash_path(path: Path) -> str:
                 digest.update(os.fsencode(os.readlink(descendant)))
             elif stat.S_ISREG(child_metadata.st_mode):
                 digest.update(b"file\0")
-                _hash_regular_file(descendant, digest)
+                digest.update(cache.regular_file_digest(descendant, child_metadata))
             elif stat.S_ISDIR(child_metadata.st_mode):
                 digest.update(b"directory\0")
             else:
@@ -250,7 +291,11 @@ def _git_optional_bytes(repo: Path, args: list[str], *, context: str) -> bytes:
     return result.stdout if isinstance(result.stdout, bytes) else b""
 
 
-def _tracked_worktree_digest(repo: Path) -> str:
+def _tracked_worktree_digest(
+    repo: Path, cache: "_WorktreeHashCache | None" = None
+) -> str:
+    if cache is None:
+        cache = _WorktreeHashCache()
     raw_paths = _git_bytes(
         repo,
         ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -286,7 +331,7 @@ def _tracked_worktree_digest(repo: Path) -> str:
         elif stat.S_ISREG(metadata.st_mode):
             digest.update(b"file\0")
             try:
-                _hash_regular_file(path, digest)
+                digest.update(cache.regular_file_digest(path, metadata))
             except OSError as error:
                 raise CheckInputError(f"cannot read repository file: {error}") from error
         else:
@@ -294,7 +339,7 @@ def _tracked_worktree_digest(repo: Path) -> str:
     return digest.hexdigest()
 
 
-def _index_digest(repo: Path) -> str:
+def _index_digest(repo: Path, cache: "_WorktreeHashCache | None" = None) -> str:
     raw_path = _git_bytes(
         repo,
         ["rev-parse", "--git-path", "index"],
@@ -305,15 +350,27 @@ def _index_digest(repo: Path) -> str:
     index_path = Path(os.fsdecode(raw_path))
     if not index_path.is_absolute():
         index_path = repo / index_path
-    return _hash_path(index_path)
+    # Share the run cache so ``.git/index`` — a single but potentially large file
+    # — is not re-read on every per-row snapshot. Its cheap signature moves the
+    # moment git rewrites the index, and the cache-free final snapshot re-hashes
+    # it regardless, so this keeps the snapshot cost flat in the row count.
+    return _hash_path(index_path, cache)
 
 
-def state_snapshot(repo: Path) -> dict[str, str]:
+def state_snapshot(
+    repo: Path, cache: "_WorktreeHashCache | None" = None
+) -> dict[str, str]:
+    # A per-run cache is shared across the many pre-check and per-row snapshots so
+    # unchanged files are hashed once, not once per row. The final authoritative
+    # snapshot deliberately passes no cache (a fresh, empty one) so it re-hashes
+    # from scratch — see _WorktreeHashCache and build_report's `final`.
+    if cache is None:
+        cache = _WorktreeHashCache()
     guarded = hashlib.sha256()
     for relative in GUARDED_PATHS:
         guarded.update(relative.as_posix().encode("utf-8"))
         guarded.update(b"\0")
-        guarded.update(_hash_path(repo / relative).encode("ascii"))
+        guarded.update(_hash_path(repo / relative, cache).encode("ascii"))
         guarded.update(b"\0")
     return {
         "head": _sha256_bytes(
@@ -333,8 +390,8 @@ def state_snapshot(repo: Path) -> dict[str, str]:
                 context="read git refs",
             )
         ),
-        "index": _index_digest(repo),
-        "worktree": _tracked_worktree_digest(repo),
+        "index": _index_digest(repo, cache),
+        "worktree": _tracked_worktree_digest(repo, cache),
         "guarded": guarded.hexdigest(),
     }
 
@@ -655,6 +712,25 @@ def _result_row(
     }
 
 
+def _is_external_symlink(kb_root: Path, repo: Path) -> bool:
+    """True iff ``kb_root`` is a symlink whose resolved target is outside ``repo``.
+
+    An external-symlinked ``.obsidian-kb`` points at a live, gitignored,
+    never-shipped vault whose freshness mutates independently of HEAD, so its
+    ``--check`` result is non-deterministic and must be advisory rather than a
+    blocking gate. An in-repo symlink (target resolves under the repo) or a real
+    tracked directory stays deterministic against HEAD and keeps blocking. A
+    broken link resolves (``strict=False``) to its declared target path, so an
+    external broken link is treated as external and an in-repo broken link keeps
+    blocking so the breakage surfaces.
+    """
+    if not kb_root.is_symlink():
+        return False
+    target = kb_root.resolve(strict=False)
+    repo_root = repo.resolve()
+    return repo_root != target and repo_root not in target.parents
+
+
 def _executable_available(command: str, cwd: Path, environment: Mapping[str, str]) -> bool:
     if "/" in command or "\\" in command:
         candidate = Path(command)
@@ -802,7 +878,11 @@ def build_report(repo: Path, config_path: Path) -> dict[str, object]:
     try:
         configuration = load_configuration(repo, config_path)
         environment, _, _ = build_tool_environment(repo=repo)
-        before = state_snapshot(repo)
+        # One cache for the whole run: the cold `before` pass fills it and every
+        # per-row snapshot reuses it, so unchanged files are hashed once rather
+        # than once per row. The final snapshot below drops it deliberately.
+        run_cache = _WorktreeHashCache()
+        before = state_snapshot(repo, run_cache)
     except (CheckInputError, CacheSetupError) as error:
         rows.append(
             _result_row(
@@ -838,7 +918,7 @@ def build_report(repo: Path, config_path: Path) -> dict[str, object]:
     def run_and_guard(row: dict[str, object]) -> bool:
         rows.append(row)
         try:
-            current = state_snapshot(repo)
+            current = state_snapshot(repo, run_cache)
         except CheckInputError as error:
             rows.append(
                 _result_row(
@@ -943,13 +1023,35 @@ def build_report(repo: Path, config_path: Path) -> dict[str, object]:
                 diagnostic="Obsidian KB exists but its read-only freshness helper is missing",
                 remediation="reinstall the command pack, then run sd-update-spec",
             )
-        return command_row(
+        row = command_row(
             "knowledge.obsidian-kb",
             (sys.executable, str(helper), "--check"),
             remediation=(
                 "run sd-update-spec or python3 scripts/sd-ai-command-pack-update-spec-kb.py"
             ),
         )
+        # Advisory downgrade: an external-symlinked .obsidian-kb points at a live
+        # external vault (gitignored, never shipped) whose freshness is
+        # non-deterministic, so a transient failure must not gate a merge. An
+        # in-repo symlink or a tracked directory keeps blocking (see
+        # _is_external_symlink). "skipped" is absent from AGGREGATE_PRECEDENCE,
+        # so the downgraded row never contributes to the blocking verdict.
+        if _is_external_symlink(kb_root, repo) and row.get("status") == "failed":
+            return _result_row(
+                "knowledge.obsidian-kb",
+                "builtin",
+                "skipped",
+                diagnostic=(
+                    "advisory: external-symlinked .obsidian-kb drift is "
+                    "non-deterministic and never shipped; "
+                    + str(row.get("diagnostic", ""))
+                ),
+                remediation=cast(str | None, row.get("remediation")),
+                exit_code=cast(int | None, row.get("exitCode")),
+                command=cast(dict[str, object] | None, row.get("command")),
+                duration_ms=cast(int, row.get("durationMs") or 0),
+            )
+        return row
 
     def review_scope_row() -> dict[str, object]:
         helper = repo / "scripts/sd-ai-command-pack-review-scope.sh"
@@ -1047,6 +1149,10 @@ def build_report(repo: Path, config_path: Path) -> dict[str, object]:
 
     guard = report["stateGuard"]
     if isinstance(guard, dict) and guard.get("status") == "running":
+        # Authoritative final snapshot: no shared cache, so every file is
+        # re-hashed from scratch. This is what still catches a same-size,
+        # mtime-preserving mid-run rewrite that the cached per-row snapshots
+        # cannot see, at the cost of per-row attribution for that one case.
         final = state_snapshot(repo)
         changes = _state_changes(before, final)
         if changes:

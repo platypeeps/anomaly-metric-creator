@@ -6,7 +6,11 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { TextDecoder } from 'node:util';
 
-const defaultRootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Pack helpers are resolved next to this file so the preflight works from a
+// vendored scripts/ directory, a plugin bin/, or a machine-wide install; only
+// repository content is resolved against rootDir.
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const defaultRootDir = resolve(scriptDir, '..');
 let rootDir = defaultRootDir;
 let config = defaultConfig();
 let failures = [];
@@ -454,6 +458,38 @@ function printReviewPreflightResult(result) {
   console.log(`\nReview preflight: ${result.failures.length} failure(s), ${result.warnings.length} warning(s).`);
 }
 
+// Most recent git failure observed by bookkeepingChangedEntries, so the
+// *_unavailable finding composers -- including the silent-probe callers
+// that pass a discarding add callback -- can name the actual git error
+// instead of a bare "could not inspect". Cleared at every
+// bookkeepingChangedEntries entry: a status-0 malformed-output null must
+// not inherit an older invocation's failure. Also reset per validator run
+// in runBookkeepingValidator, alongside the other module state. Declared
+// before the CLI dispatch below: module evaluation reaches that dispatch
+// (and therefore runBookkeepingValidator's module-state reset) before any
+// later top-level statement runs.
+let lastBookkeepingGitFailure = null;
+
+const GIT_FAILURE_STDERR_LIMIT = 200;
+
+function boundedGitFailureStderr(stderr) {
+  const line = String(stderr || '').trim().split('\n', 1)[0].trim();
+  if (!line) return 'no stderr output';
+  return line.length > GIT_FAILURE_STDERR_LIMIT
+    ? `${line.slice(0, GIT_FAILURE_STDERR_LIMIT)}...`
+    : line;
+}
+
+function gitFailureSuffix(commandArgs, status, stderr) {
+  return ` (git ${commandArgs.join(' ')} exited ${status}: ${boundedGitFailureStderr(stderr)})`;
+}
+
+function describeGitFailure(prefix) {
+  if (!lastBookkeepingGitFailure) return prefix;
+  const failure = lastBookkeepingGitFailure;
+  return `${prefix}${gitFailureSuffix(failure.commandArgs, failure.status, failure.stderr)}`;
+}
+
 if (isMainModule()) {
   const unsupportedNode = unsupportedNodeVersionMessage(process.version);
   if (unsupportedNode) {
@@ -505,9 +541,9 @@ function isMainModule() {
 function bookkeepingUsage() {
   return [
     'usage:',
-    '  node scripts/sd-ai-command-pack-review-preflight.mjs',
-    '  node scripts/sd-ai-command-pack-review-preflight.mjs pre-archive --task-dir <active-task-dir> [--task-dir ...] [--repo <repo-root>] [--json]',
-    '  node scripts/sd-ai-command-pack-review-preflight.mjs final-bundle --mode <completion|planning> --base <commit> --head <commit> [--repo <repo-root>] [--json]',
+    '  sd-ai-command-pack-review-preflight.mjs',
+    '  sd-ai-command-pack-review-preflight.mjs pre-archive --task-dir <active-task-dir> [--task-dir ...] [--repo <repo-root>] [--json]',
+    '  sd-ai-command-pack-review-preflight.mjs final-bundle --mode <completion|planning> --base <commit> --head <commit> [--repo <repo-root>] [--json]',
   ].join('\n');
 }
 
@@ -580,6 +616,7 @@ export function runBookkeepingValidator(options = {}) {
   rootDir = resolve(options.rootDir || defaultRootDir);
   config = defaultConfig();
   readTextCache.clear();
+  lastBookkeepingGitFailure = null;
   const findings = [];
   const advisories = [];
   let advisoriesDropped = 0;
@@ -809,14 +846,17 @@ function validateBookkeepingTaskDirectory(taskDir, options) {
 
 function validateBookkeepingTaskContexts(taskDir, record, archived, add) {
   // Context files are validated even when task.json is broken or missing —
-  // their defects stand on their own. Without a readable planning-status
-  // record the pristine-scaffold exemption cannot be proven, so it is off.
-  // A planning task's untouched generated scaffold matches the shape
-  // `task.py create` writes — a lone `_example`-only row. The match is on that
-  // shape, not on Trellis's seed text, which Trellis owns and revises across
-  // versions. The review-preflight task-context gate exempts it on the same
-  // terms, so creating a task never fails either lane.
-  const scaffoldExempt = !archived && isPlainObject(record) && record.status === 'planning';
+  // their defects stand on their own. A manifest whose ONLY row is the untouched
+  // generated `_example`-only scaffold `task.py create` writes is treated as
+  // unfilled/advisory, not a blocking seed row — regardless of task status or
+  // archival. A lone scaffold is indistinguishable from an empty/unfilled
+  // manifest and is never genuine leftover scaffold; that only happens when an
+  // `_example` row is MIXED with real rows, which still fails below. Gating the
+  // exemption on `status === 'planning'` was too narrow and produced a LATE,
+  // merge-time `task_context_seed` failure on completion (finding #5); the match
+  // is on the lone-scaffold shape, not on Trellis's seed text.
+  void record;
+  void archived;
   for (const artifact of ['implement.jsonl', 'check.jsonl']) {
     const file = `${taskDir}/${artifact}`;
     if (!pathEntryExists(file)) continue;
@@ -825,7 +865,7 @@ function validateBookkeepingTaskContexts(taskDir, record, archived, add) {
       add('task_context_invalid', file, loaded.message);
       continue;
     }
-    const exemptScaffold = scaffoldExempt && isPristineTrellisTaskContextScaffold(loaded.text);
+    const exemptScaffold = isPristineTrellisTaskContextScaffold(loaded.text);
     for (const issue of findTrellisTaskContextIssues(file, loaded.text)) {
       if (issue.kind === 'seed' && exemptScaffold) continue;
       const message = issue.kind === 'seed'
@@ -1208,17 +1248,18 @@ function attemptArchiveAnchorRecovery(headOid) {
     if (findings.length >= MAX_BOOKKEEPING_FINDINGS) return;
     findings.push({ reasonCode, path, message, disposition });
   };
-  const history = runGit([
+  const historyArgs = [
     'rev-list',
     '--first-parent',
     `--max-count=${MAX_BOOKKEEPING_ANCHOR_SEARCH_COMMITS + 1}`,
     headOid,
-  ]);
+  ];
+  const history = runGit(historyArgs);
   if (history.status !== 0) {
     add(
       'completion_successor_history_unavailable',
       '',
-      'Git could not enumerate bounded first-parent history for completion recovery',
+      `Git could not enumerate bounded first-parent history for completion recovery${gitFailureSuffix(historyArgs, history.status, history.stderr)}`,
       'indeterminate',
     );
     return { status: 'indeterminate', shapedTailCount: 0, findings, evidence: {} };
@@ -1237,7 +1278,7 @@ function attemptArchiveAnchorRecovery(headOid) {
       add(
         'completion_successor_history_unavailable',
         '',
-        'Git could not inspect a candidate journal delta during completion recovery',
+        describeGitFailure('Git could not inspect a candidate journal delta during completion recovery'),
         'indeterminate',
       );
       return { status: 'indeterminate', shapedTailCount, findings, evidence: {} };
@@ -1247,7 +1288,7 @@ function attemptArchiveAnchorRecovery(headOid) {
       add(
         'completion_successor_history_unavailable',
         '',
-        'Git could not inspect a candidate archive delta during completion recovery',
+        describeGitFailure('Git could not inspect a candidate archive delta during completion recovery'),
         'indeterminate',
       );
       return { status: 'indeterminate', shapedTailCount, findings, evidence: {} };
@@ -1276,7 +1317,7 @@ function attemptArchiveAnchorRecovery(headOid) {
     }
     const anchor = evaluateHistoricalCompletionBundle(baseOid, bookkeepingHeadOid);
     if (anchor.status !== 'valid') {
-      if (nearestAnchorFailure === null) nearestAnchorFailure = anchor;
+      nearestAnchorFailure = anchor;
       break;
     }
     eligible.push({ anchor, successor });
@@ -1402,12 +1443,13 @@ function discoverActiveTrellisTaskDirectory() {
 // task whose whole lifecycle fits in the search window, which is the
 // ordinary case for a young task, not an edge case.
 function findActiveTaskHistoricalBase(taskDir, headOid) {
-  const history = runGit([
+  const historyArgs = [
     'rev-list',
     '--first-parent',
     `--max-count=${MAX_BOOKKEEPING_ANCHOR_SEARCH_COMMITS + 1}`,
     headOid,
-  ]);
+  ];
+  const history = runGit(historyArgs);
   if (history.status !== 0) {
     return {
       status: 'indeterminate',
@@ -1415,7 +1457,7 @@ function findActiveTaskHistoricalBase(taskDir, headOid) {
         {
           reasonCode: 'completion_successor_history_unavailable',
           path: '',
-          message: 'Git could not enumerate bounded first-parent history for active-task completion recovery',
+          message: `Git could not enumerate bounded first-parent history for active-task completion recovery${gitFailureSuffix(historyArgs, history.status, history.stderr)}`,
           disposition: 'indeterminate',
         },
       ],
@@ -1434,7 +1476,7 @@ function findActiveTaskHistoricalBase(taskDir, headOid) {
           {
             reasonCode: 'completion_successor_history_unavailable',
             path: '',
-            message: 'Git could not inspect a candidate task-directory delta during active-task completion recovery',
+            message: describeGitFailure('Git could not inspect a candidate task-directory delta during active-task completion recovery'),
             disposition: 'indeterminate',
           },
         ],
@@ -1502,12 +1544,13 @@ function evaluateActiveTaskSuccessorRange(taskDir, historicalBase, headOid) {
     if (findings.length >= MAX_BOOKKEEPING_FINDINGS) return;
     findings.push({ reasonCode, path, message, disposition });
   };
-  const range = runGit(['rev-list', '--first-parent', '--reverse', `${historicalBase}..${headOid}`]);
+  const rangeArgs = ['rev-list', '--first-parent', '--reverse', `${historicalBase}..${headOid}`];
+  const range = runGit(rangeArgs);
   if (range.status !== 0) {
     add(
       'completion_successor_history_unavailable',
       '',
-      'Git could not inspect the active-task completion-successor commit range',
+      `Git could not inspect the active-task completion-successor commit range${gitFailureSuffix(rangeArgs, range.status, range.stderr)}`,
       'indeterminate',
     );
     return { status: 'indeterminate', findings };
@@ -1542,7 +1585,7 @@ function evaluateActiveTaskSuccessorRange(taskDir, historicalBase, headOid) {
       add(
         'completion_successor_history_unavailable',
         '',
-        `Git could not inspect the per-commit delta for active-task completion successor commit ${oid.slice(0, 12)}`,
+        describeGitFailure(`Git could not inspect the per-commit delta for active-task completion successor commit ${oid.slice(0, 12)}`),
         'indeterminate',
       );
       return { status: 'indeterminate', findings };
@@ -1576,7 +1619,7 @@ function evaluateActiveTaskSuccessorRange(taskDir, historicalBase, headOid) {
     add(
       'completion_successor_history_unavailable',
       '',
-      'Git could not inspect changed paths in the active-task completion-successor range',
+      describeGitFailure('Git could not inspect changed paths in the active-task completion-successor range'),
       'indeterminate',
     );
     return { status: 'indeterminate', findings };
@@ -1835,12 +1878,13 @@ function evaluateCompletionSuccessorRange(anchorOid, headOid) {
     if (findings.length >= MAX_BOOKKEEPING_FINDINGS) return;
     findings.push({ reasonCode, path, message, disposition });
   };
-  const range = runGit(['rev-list', '--first-parent', '--reverse', `${anchorOid}..${headOid}`]);
+  const rangeArgs = ['rev-list', '--first-parent', '--reverse', `${anchorOid}..${headOid}`];
+  const range = runGit(rangeArgs);
   if (range.status !== 0) {
     add(
       'completion_successor_history_unavailable',
       '',
-      'Git could not inspect the completion-successor commit range',
+      `Git could not inspect the completion-successor commit range${gitFailureSuffix(rangeArgs, range.status, range.stderr)}`,
       'indeterminate',
     );
     return { status: 'indeterminate', evidence: {}, findings };
@@ -1868,12 +1912,13 @@ function evaluateCompletionSuccessorRange(anchorOid, headOid) {
       );
       continue;
     }
-    const subjectResult = runGit(['log', '-1', '--format=%s', oid]);
+    const subjectArgs = ['log', '-1', '--format=%s', oid];
+    const subjectResult = runGit(subjectArgs);
     if (subjectResult.status !== 0) {
       add(
         'completion_successor_history_unavailable',
         '',
-        `Git could not inspect the subject for successor commit ${oid.slice(0, 12)}`,
+        `Git could not inspect the subject for successor commit ${oid.slice(0, 12)}${gitFailureSuffix(subjectArgs, subjectResult.status, subjectResult.stderr)}`,
         'indeterminate',
       );
       return { status: 'indeterminate', evidence: {}, findings };
@@ -1890,7 +1935,7 @@ function evaluateCompletionSuccessorRange(anchorOid, headOid) {
     add(
       'completion_successor_history_unavailable',
       '',
-      'Git could not inspect changed paths in the completion-successor range',
+      describeGitFailure('Git could not inspect changed paths in the completion-successor range'),
       'indeterminate',
     );
     return { status: 'indeterminate', evidence: {}, findings };
@@ -1947,9 +1992,12 @@ function resolveBookkeepingCommit(ref, label, add) {
 }
 
 function bookkeepingChangedEntries(baseOid, headOid, add) {
-  const result = runGit(['diff', '--raw', '-z', '--find-renames', baseOid, headOid, '--']);
+  lastBookkeepingGitFailure = null;
+  const diffArgs = ['diff', '--raw', '-z', '--find-renames', baseOid, headOid, '--'];
+  const result = runGit(diffArgs);
   if (result.status !== 0) {
-    add('bundle_diff_unavailable', '', 'Git could not enumerate the finalization delta', 'indeterminate');
+    lastBookkeepingGitFailure = { commandArgs: diffArgs, status: result.status, stderr: result.stderr };
+    add('bundle_diff_unavailable', '', describeGitFailure('Git could not enumerate the finalization delta'), 'indeterminate');
     return null;
   }
   const tokens = result.stdout.split('\0');
@@ -1988,11 +2036,12 @@ function bookkeepingChangedEntries(baseOid, headOid, add) {
 }
 
 function validateBookkeepingDiffWhitespace(baseOid, headOid, add) {
-  const result = runGit(['diff', '--check', baseOid, headOid, '--', '.trellis/tasks', '.trellis/workspace']);
+  const checkArgs = ['diff', '--check', baseOid, headOid, '--', '.trellis/tasks', '.trellis/workspace'];
+  const result = runGit(checkArgs);
   if (result.status === 0) return;
   const detail = (result.stdout || result.stderr).trim();
   if (!detail) {
-    add('bundle_whitespace_unavailable', '', 'Git whitespace validation could not complete', 'indeterminate');
+    add('bundle_whitespace_unavailable', '', `Git whitespace validation could not complete${gitFailureSuffix(checkArgs, result.status, result.stderr)}`, 'indeterminate');
     return;
   }
   for (const line of detail.split(/\r?\n/).slice(0, MAX_BOOKKEEPING_FINDINGS)) {
@@ -2553,12 +2602,13 @@ function validateJournalOnlyPlanningRecovery(entries, journalSummary, evidence, 
       continue;
     }
 
-    const parentResult = runGit(['rev-list', '--parents', '-n', '1', commit.oid]);
+    const parentArgs = ['rev-list', '--parents', '-n', '1', commit.oid];
+    const parentResult = runGit(parentArgs);
     if (parentResult.status !== 0) {
       add(
         'planning_recovery_commit_unavailable',
         session.file,
-        `Git could not inspect parents for commit ${commit.hash}`,
+        `Git could not inspect parents for commit ${commit.hash}${gitFailureSuffix(parentArgs, parentResult.status, parentResult.stderr)}`,
         'indeterminate',
       );
       continue;
@@ -2781,7 +2831,7 @@ function stableJson(value) {
 export function unsupportedNodeVersionMessage(version) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version || '');
   if (!match) {
-    return `scripts/sd-ai-command-pack-review-preflight.mjs requires Node >= ${MIN_NODE_VERSION.label}; could not parse ${version || 'unknown version'}.`;
+    return `sd-ai-command-pack-review-preflight.mjs requires Node >= ${MIN_NODE_VERSION.label}; could not parse ${version || 'unknown version'}.`;
   }
 
   const major = Number(match[1]);
@@ -2790,7 +2840,7 @@ export function unsupportedNodeVersionMessage(version) {
     return '';
   }
 
-  return `scripts/sd-ai-command-pack-review-preflight.mjs requires Node >= ${MIN_NODE_VERSION.label}; current ${version}.`;
+  return `sd-ai-command-pack-review-preflight.mjs requires Node >= ${MIN_NODE_VERSION.label}; current ${version}.`;
 }
 
 function runCheck(label, check) {
@@ -3106,6 +3156,39 @@ function checkChangedTrellisTaskTopologySemantics() {
     }
   }
 
+  let inspectedRootBases = 0;
+  const rootDefaultBranch = changedTaskFiles.size > 0 ? trellisRootDefaultBranchName() : '';
+  if (rootDefaultBranch) {
+    for (const file of [...changedTaskFiles].sort()) {
+      const loaded = loadTrellisTaskMetadataFile(file, { deletedIsMissing: true });
+      if (loaded.status !== 'loaded') {
+        // The structural metadata check owns deleted move sources and unsafe or
+        // unreadable changed task records.
+        continue;
+      }
+
+      let record;
+      try {
+        record = JSON.parse(loaded.text);
+      } catch {
+        continue;
+      }
+      if (
+        !isPlainObject(record) ||
+        (record.parent !== null && record.parent !== undefined) ||
+        typeof record.base_branch !== 'string' ||
+        record.base_branch.trim().length === 0
+      ) {
+        continue;
+      }
+
+      inspectedRootBases += 1;
+      for (const issue of validateTrellisRootTaskBaseBranch(record, rootDefaultBranch)) {
+        fail(`${file} field ${issue}.`);
+      }
+    }
+  }
+
   let inspectedParentPrds = 0;
   for (const taskDir of [...changedTaskDirectories].sort()) {
     const taskFile = `${taskDir}/task.json`;
@@ -3185,12 +3268,13 @@ function checkChangedTrellisTaskTopologySemantics() {
   if (failures.length !== failureStart) {
     return;
   }
-  if (inspectedPlanningBases === 0 && inspectedParentPrds === 0) {
+  if (inspectedPlanningBases === 0 && inspectedRootBases === 0 && inspectedParentPrds === 0) {
     pass('no changed Trellis task topology requires semantic validation.');
     return;
   }
   pass(
-    `checked ${inspectedPlanningBases} deferred planning child base(s) and ` +
+    `checked ${inspectedPlanningBases} deferred planning child base(s), ` +
+      `${inspectedRootBases} root task base branch(es), and ` +
       `${inspectedParentPrds} active parent PRD child map(s) for topology semantics.`,
   );
 }
@@ -3241,6 +3325,32 @@ export function validateTrellisPlanningBaseInheritance(record, parentRecord) {
   return [
     `base_branch ${JSON.stringify(record.base_branch.trim())} must equal parent base_branch or active branch (` +
       `${uniqueAllowedTargets.map((target) => JSON.stringify(target)).join(', ')})`,
+  ];
+}
+
+export function validateTrellisRootTaskBaseBranch(record, defaultBranchName) {
+  if (
+    !isPlainObject(record) ||
+    (record.parent !== null && record.parent !== undefined) ||
+    typeof record.base_branch !== 'string' ||
+    record.base_branch.trim().length === 0 ||
+    typeof defaultBranchName !== 'string' ||
+    defaultBranchName.trim().length === 0
+  ) {
+    return [];
+  }
+  const exemption = isPlainObject(record.meta) ? record.meta.base_branch_exemption : undefined;
+  if (typeof exemption === 'string' && exemption.trim().length > 0) {
+    return [];
+  }
+  const target = record.base_branch.trim();
+  if (target === defaultBranchName.trim()) {
+    return [];
+  }
+  return [
+    `root task base_branch ${JSON.stringify(target)} must equal the repository default branch ` +
+      `${JSON.stringify(defaultBranchName.trim())} or carry a meta.base_branch_exemption reason ` +
+      '(python3 ./.trellis/scripts/task.py set-meta <task-dir> base_branch_exemption "<reason>")',
   ];
 }
 
@@ -3703,13 +3813,13 @@ function checkTrellisTaskContextManifests() {
 
     inspectedFiles += 1;
     const text = readText(file);
-    const planningScaffold = isPlanningTaskContextScaffold(file, text);
-    if (planningScaffold) {
+    const loneScaffold = isPristineTrellisTaskContextScaffold(text);
+    if (loneScaffold) {
       exemptScaffolds += 1;
     }
     for (const issue of findTrellisTaskContextIssues(file, text)) {
       if (issue.kind === 'seed') {
-        if (planningScaffold) {
+        if (loneScaffold) {
           continue;
         }
         fail(
@@ -3741,7 +3851,7 @@ function checkTrellisTaskContextManifests() {
 
   if (failures.length === failureStart) {
     const exemptSuffix = exemptScaffolds
-      ? ` ${exemptScaffolds} untouched planning scaffold(s) are exempt until the task leaves planning.`
+      ? ` ${exemptScaffolds} untouched lone _example scaffold(s) are exempt (advisory/unfilled).`
       : '';
     pass(
       `checked ${inspectedFiles} changed Trellis task context file(s) for valid JSONL, generated _example scaffold rows, and spec/research-only references.${exemptSuffix}`,
@@ -3837,33 +3947,6 @@ export function isPristineTrellisTaskContextScaffold(text) {
     Object.keys(record).length === 1 &&
     Object.prototype.hasOwnProperty.call(record, '_example')
   );
-}
-
-function isPlanningTaskContextScaffold(file, text) {
-  if (!isPristineTrellisTaskContextScaffold(text)) {
-    return false;
-  }
-
-  const artifact = parseTrellisTaskArtifactPath(file);
-  if (!artifact || artifact.archived) {
-    return false;
-  }
-
-  const loaded = loadTrellisTaskMetadataFile(`${artifact.taskDir}/task.json`, {
-    deletedIsMissing: true,
-  });
-  if (loaded.status !== 'loaded') {
-    return false;
-  }
-
-  let record;
-  try {
-    record = JSON.parse(loaded.text);
-  } catch {
-    return false;
-  }
-
-  return isPlainObject(record) && record.status === 'planning';
 }
 
 export function findTrellisTaskContextSeedRows(file, text) {
@@ -4215,7 +4298,7 @@ function checkScopeAdvisory() {
   if (ambient && /^(0|false|FALSE|no|NO|skip|none|off|OFF|disabled|DISABLED)$/.test(ambient)) {
     return;
   }
-  const script = resolve(rootDir, 'scripts', 'sd-ai-command-pack-review-scope.sh');
+  const script = resolve(scriptDir, 'sd-ai-command-pack-review-scope.sh');
   if (!existsSync(script)) {
     return;
   }
@@ -4300,6 +4383,7 @@ function isTrellisCopiedPath(path) {
     /^\.trae\/commands\/trellis-[^/]+\.md$/.test(path) ||
     path.startsWith('.zcode/commands/trellis/') ||
     path === '.claude/settings.json' ||
+    path.startsWith('.claude/hooks/') ||
     path.startsWith('.codebuddy/hooks/') ||
     path === '.codebuddy/settings.json' ||
     path.startsWith('.factory/hooks/') ||
@@ -4642,6 +4726,23 @@ function configuredReviewBaseRef(name) {
     return ref;
   }
   warn(`${name}=${ref} does not resolve to a commit; falling back to discovered default branch.`);
+  return '';
+}
+
+function trellisRootDefaultBranchName() {
+  // The repository default branch for the root-task base_branch rule. This is
+  // deliberately NOT defaultReviewBaseRef(): that resolver answers "what do I
+  // diff against" and may legitimately return a stacked-PR feature base (env
+  // override), the current branch's upstream, or an arbitrary sorted remote
+  // ref — none of which is a statement about the repository default.
+  const configured = (process.env.SD_AI_COMMAND_PACK_DEFAULT_BRANCH || '').trim();
+  if (configured) {
+    return configured;
+  }
+  const originHead = gitStdout(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  if (gitRefExists(originHead)) {
+    return originHead.replace(/^[^/]+\//, '');
+  }
   return '';
 }
 

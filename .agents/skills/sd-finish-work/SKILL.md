@@ -1,6 +1,7 @@
 ---
 name: sd-finish-work
 description: Use when the user wants the Software Delivery finish-work command to wrap up a Trellis coding session. Invocation is explicit approval for its in-scope task, archive, and journal commits and PR-branch push without another prompt.
+model: sonnet
 ---
 
 # SD Finish Work

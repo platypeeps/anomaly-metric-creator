@@ -107,18 +107,6 @@ or a housekeeping merge already authorized by the owning workflow, including a c
   Put the recommended candidates first and present only a
   host-supported group at a time.
 
-### `review-local.findings`
-
-- Owners: `sd-review-local`
-- Category: `finding-task-batch`
-- Header: `Review fixes`
-- Question: Which verified local-review findings should I fix now?
-- Multi-select: `yes`
-- Noninteractive: `report-only`
-- Options: derive from independent verified local-review findings.
-  Put the recommended candidates first and present only a
-  host-supported group at a time.
-
 ### `review.higher-risk-fixes`
 
 - Owners: `sd-ship`, `sd-review`, `sd-review-pr`
@@ -133,7 +121,7 @@ or a housekeeping merge already authorized by the owning workflow, including a c
 
 ### `review.scope-expansion`
 
-- Owners: `sd-ship`, `sd-review`, `sd-review-pr`, `sd-review-local`
+- Owners: `sd-ship`, `sd-review`, `sd-review-pr`
 - Category: `higher-risk-mutation`
 - Header: `Review scope`
 - Question: Should this review fix expand beyond the current scope?
@@ -190,3 +178,16 @@ or a housekeeping merge already authorized by the owning workflow, including a c
 - Options:
   - `Leave untouched` (recommended): Preserve it as unrelated work outside finalization.
   - `Task owned`: Include it only after confirming the task owns the file.
+
+### `fleet-refresh.operator-policy`
+
+- Owners: `sd-fleet-refresh`
+- Category: `blocked-run-disposition`
+- Header: `Fleet policy`
+- Question: How should this blocked fleet campaign proceed?
+- Multi-select: `no`
+- Noninteractive: `park`
+- Options:
+  - `Park the campaign` (recommended): Stops here and records the blocker against this campaign. Nothing is dispatched; the release and every consumer keep their current state. Resume needs a fresh run.
+  - `Retry the blocked consumer`: Re-runs the same already-authorized action against the same consumer, release, and head. Correct when the blocker was transient — a timeout or an unreadable API response. Repeats the failure if the cause is persistent.
+  - `Continue without the blocked consumer`: Proceeds with the remaining consumers and leaves the blocked one out of this campaign. The fleet ends partially rolled out and the excluded consumer needs its own later campaign.

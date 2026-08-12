@@ -17,7 +17,25 @@ exclude_files = [
   ".git/**",
   ".pytest_cache/**",
   ".obsidian-kb/**",
-  ".trellis/**",
+  # .trellis mixes copied Trellis tooling with repo-owned delivery documents.
+  # Exclude only the copied surfaces -- the same boundary the review preflight's
+  # isTrellisCopiedPath uses -- plus bulk bookkeeping, so a task-only or
+  # spec-only change still leaves a non-empty local review scope instead of
+  # failing the provider with an empty diff.
+  #
+  # .trellis/workspace/** is deliberately NOT excluded. The journal and its
+  # index are the only paths every finalization touches: a completion bundle is
+  # an archive move plus a journal session, and a planning bundle is journal-only.
+  # Excluding them left a finalization PR with nothing in scope, which the
+  # coordinator reports as `local provider failure blocks remote routing` rather
+  # than as an empty diff. Keeping them reviewable makes that class of PR
+  # non-empty by construction, and the diff is one appended session rather than
+  # the whole file.
+  ".trellis/.template-hashes.json",
+  ".trellis/.version",
+  ".trellis/scripts/**",
+  ".trellis/agents/**",
+  ".trellis/tasks/archive/**",
   ".ruff_cache/**",
   ".venv/**",
   ".sd-ai-command-pack/**",
