@@ -138,7 +138,10 @@ repos:
       # never has to edit this hook.
       - id: shell-syntax
         name: validate shell script syntax
-        entry: bash -c 'for script in "$@"; do bash -n "$script"; done' --
+        # `set -e` is load-bearing: without it the loop exits with the status
+        # of the last `bash -n`, so a broken early script is masked by a later
+        # good one (verified: exit 0 with a syntax error present).
+        entry: bash -c 'set -e; for script in "$@"; do bash -n "$script"; done' --
         language: system
         files: ^scripts/.*\.sh$
         pass_filenames: true

@@ -334,7 +334,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 entry: python tools/check_python_syntax.py
                 files: ^(scripts|src|tests|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
               - id: shell-syntax
-                entry: bash -c 'for script in "$@"; do bash -n "$script"; done' --
+                entry: bash -c 'set -e; for script in "$@"; do bash -n "$script"; done' --
                 files: ^scripts/.*\.sh$
               - id: ci-review-contract
                 entry: python tools/check_ci_review_contract.py

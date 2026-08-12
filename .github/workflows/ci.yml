@@ -248,6 +248,7 @@ jobs:
       - name: Shell syntax for scripts
         shell: bash
         run: |
+          set -euo pipefail
           while IFS= read -r script; do
             bash -n "$script"
           done < <(git ls-files 'scripts/*.sh')
