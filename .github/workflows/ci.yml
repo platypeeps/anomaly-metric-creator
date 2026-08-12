@@ -251,7 +251,7 @@ jobs:
           set -euo pipefail
           while IFS= read -r script; do
             bash -n "$script"
-          done < <(git ls-files 'scripts/*.sh')
+          done < <(git ls-files 'scripts/*.sh' scripts/update_repomix)
 
       - name: Smoke CI classifier
         run: |

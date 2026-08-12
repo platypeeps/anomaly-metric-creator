@@ -59,8 +59,11 @@ REQUIRED_FILES = {
 # alone would still pass if the `bash -n` consuming it were deleted -- the exact
 # "select but never parse" failure the literal roster at least ruled out.
 _SHELL_SYNTAX_PARSE = 'bash -n "$script"'
-_CI_SHELL_SYNTAX_GLOB = "git ls-files 'scripts/*.sh'"
-_PRECOMMIT_SHELL_SYNTAX_FILES = r"files: ^scripts/.*\.sh$"
+# scripts/update_repomix is bash with no .sh suffix, so both selectors name it
+# explicitly. It was absent from the old literal roster too -- this closes a
+# pre-existing hole rather than one this change opened.
+_CI_SHELL_SYNTAX_GLOB = "git ls-files 'scripts/*.sh' scripts/update_repomix"
+_PRECOMMIT_SHELL_SYNTAX_FILES = r"files: ^scripts/(.*\.sh|update_repomix)$"
 _CI_PYTHON_SYNTAX_GLOB = (
     "git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' "
     "'.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'"

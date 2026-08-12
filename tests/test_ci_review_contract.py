@@ -95,7 +95,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: |
                   while IFS= read -r script; do
                     bash -n "$script"
-                  done < <(git ls-files 'scripts/*.sh')
+                  done < <(git ls-files 'scripts/*.sh' scripts/update_repomix)
               - name: Syntax and Trellis artifact guards
                 run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
               - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
@@ -335,7 +335,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 files: ^(scripts|src|tests|tools|\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
               - id: shell-syntax
                 entry: bash -c 'set -e; for script in "$@"; do bash -n "$script"; done' --
-                files: ^scripts/.*\.sh$
+                files: ^scripts/(.*\.sh|update_repomix)$
               - id: ci-review-contract
                 entry: python tools/check_ci_review_contract.py
                 files: ^scripts/sd-ai-command-pack-pr-body-scope\.py|\.sd-ai-command-pack/pr-body-scope\.json|tests/test_pr_body_scope_lint\.py$

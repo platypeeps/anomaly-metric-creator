@@ -143,7 +143,7 @@ repos:
         # good one (verified: exit 0 with a syntax error present).
         entry: bash -c 'set -e; for script in "$@"; do bash -n "$script"; done' --
         language: system
-        files: ^scripts/.*\.sh$
+        files: ^scripts/(.*\.sh|update_repomix)$
         pass_filenames: true
       # Guard the named anchors that keep local full-check, CI lane selection,
       # CodeQL/Socket cadence, and review docs in sync. This is intentionally
