@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.71.1",
+  "version": "0.71.2",
   "files": {
     ".agents/skills/sd-audit-repo/SKILL.md": "sha256:ee0b433653ada642d52db47b67775c034325f0190ab6690b5fb448e2740b936f",
     ".agents/skills/sd-audit-repo/charters/accessibility-i18n.md": "sha256:15e5ffe2866b628b020e6d30978fffbef04da714ca465c2479d4b869df9c6ba6",
@@ -24,7 +24,7 @@
     ".agents/skills/sd-finish-work/SKILL.md": "sha256:07a438be020bbe8ad7ae88cf5f32b27d2da430ad15d40da5b09c1ddf240611c3",
     ".agents/skills/sd-fix-ci/SKILL.md": "sha256:bc45628c088250934e5e30151824bd3cfd0dfb38bc3376fe3a1612dfa1a8088e",
     ".agents/skills/sd-help/SKILL.md": "sha256:12641c323206126727c8b8387d12f507ed102862d96e4c5591e5be530df8e5c7",
-    ".agents/skills/sd-help/references/command-catalog.md": "sha256:2c51b3d761e853876a886789650a4d3da9eef8f0d0c1a328e198fb9c6c0d5f99",
+    ".agents/skills/sd-help/references/command-catalog.md": "sha256:b38087f49cb581e99b15eab54d6ee92e965e4037f25be691f3f8147587189ed2",
     ".agents/skills/sd-help/references/completion-lifecycle.md": "sha256:9fd978ff0a0c3f7eb7153f6ea6e2181da44339ca5742eb617fb04fb33f4afe76",
     ".agents/skills/sd-help/references/environment-blocked-recovery.md": "sha256:2408bdce670c291047d3edb92b83ff229faf3e5c64426e4ea0e2398a4c56351c",
     ".agents/skills/sd-help/references/examples.md": "sha256:12b5797fa8ea6104206294dba0818449e5976e49412a8647e39b2e11d9a9e8ad",
@@ -79,7 +79,7 @@
     ".claude/skills/sd-finish-work/SKILL.md": "sha256:07a438be020bbe8ad7ae88cf5f32b27d2da430ad15d40da5b09c1ddf240611c3",
     ".claude/skills/sd-fix-ci/SKILL.md": "sha256:bc45628c088250934e5e30151824bd3cfd0dfb38bc3376fe3a1612dfa1a8088e",
     ".claude/skills/sd-help/SKILL.md": "sha256:12641c323206126727c8b8387d12f507ed102862d96e4c5591e5be530df8e5c7",
-    ".claude/skills/sd-help/references/command-catalog.md": "sha256:2c51b3d761e853876a886789650a4d3da9eef8f0d0c1a328e198fb9c6c0d5f99",
+    ".claude/skills/sd-help/references/command-catalog.md": "sha256:b38087f49cb581e99b15eab54d6ee92e965e4037f25be691f3f8147587189ed2",
     ".claude/skills/sd-help/references/completion-lifecycle.md": "sha256:9fd978ff0a0c3f7eb7153f6ea6e2181da44339ca5742eb617fb04fb33f4afe76",
     ".claude/skills/sd-help/references/environment-blocked-recovery.md": "sha256:2408bdce670c291047d3edb92b83ff229faf3e5c64426e4ea0e2398a4c56351c",
     ".claude/skills/sd-help/references/examples.md": "sha256:12b5797fa8ea6104206294dba0818449e5976e49412a8647e39b2e11d9a9e8ad",

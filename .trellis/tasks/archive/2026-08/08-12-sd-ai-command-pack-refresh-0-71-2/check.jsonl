@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/quality-guidelines.md", "reason": "Defines the quality bar the local gate enforces before review is requested."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Defines how documentation and generated content are reviewed, which governs the copied/generated versus consumer-authored split in the pull request body."}

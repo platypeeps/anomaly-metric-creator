@@ -916,3 +916,41 @@ Docs-only maintenance branch. Wrote down three patterns from the PR #360 ship cy
 ### Next Steps
 
 - None - task complete
+
+
+## Session 69: SD AI command pack refresh to 0.71.2
+
+**Date**: 2026-08-12
+**Task**: SD AI command pack refresh to 0.71.2
+**Package**: amc
+**Branch**: `chore/sd-ai-command-pack-0.71.2`
+
+### Summary
+
+Refresh the vendored SD AI command pack from 0.71.1 to 0.71.2 for the claude, gemini, github, and opencode platforms, including the managed .obsidian-kb ignore block.
+
+### Main Changes
+
+- Installed pack 0.71.2 across claude, gemini, github, and opencode; audit passed 199 targets with matching provenance.
+- Updated the managed .obsidian-kb generated-block marker in .gitignore to the 0.71.2 form.
+- Regenerated docs/repomix-map.md as the manifest-ordered candidate preparation step.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5dd64984d7201cc69e2a4e304dedc5fa6297b4a2` | chore(sd-ai-command-pack): refresh vendored pack to 0.71.2 |
+
+### Testing
+
+- [OK] python3 scripts/sd-ai-command-pack-check.py --json (passed: 6 checks passed, 0 failed, state guard clean)
+- [OK] python3 tools/check_ci_review_contract.py and python3 tools/check_copilot_instruction_contract.py (both passed)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
