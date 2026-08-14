@@ -1480,6 +1480,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        08-14-sd-ai-command-pack-0-71-5/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
   workspace/
     sdelmas/
       index.md

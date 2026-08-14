@@ -2107,6 +2107,16 @@ write and exits `2` without applying a partial refresh when any target
 conflicts. Local-only Trellis bootstrap is outside this boundary because it
 invokes Trellis itself before the pack is installed.
 
+Taking a new release is not a conflict. A pack file whose bytes match the
+digest `.sd-ai-command-pack/provenance.json` recorded for it is what the
+previous release installed, unedited, so the refresh reports it as `updated`
+and rewrites it without `--force` and without a backup. A conflict means the
+content matches neither the new payload nor the recorded one — the installer
+cannot tell what it would discard, so it refuses until `--force` says to.
+Provenance that is missing, symlinked, or malformed is no evidence at all and
+every changed target conflicts, which is also what a run interrupted before its
+provenance rewrite leaves behind.
+
 Concurrent installs are not serialized. If two completed installer runs target
 the same checkout, the last writer wins, but atomic file replacement ensures the
 final receipt and provenance remain parseable and internally consistent. Prefer
