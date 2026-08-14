@@ -1022,7 +1022,7 @@ Installed sd-ai-command-pack v0.71.5 over 0.71.4 as the final lane of fleet camp
 ### Testing
 
 - [OK] install.py --check --audit: installed version 0.71.5, planned changes 0, audit passed
-- [OK] python3 tools/check_ci_review_contract.py and tools/check_copilot_instruction_contract.py: exit 0
+- [OK] python3 tools/check_ci_review_contract.py && python3 tools/check_copilot_instruction_contract.py: exit 0
 - [OK] sd-check: 6 passed, 0 failed, 1 skipped (external-symlinked .obsidian-kb advisory)
 
 ### Status

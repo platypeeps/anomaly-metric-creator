@@ -65,7 +65,7 @@ No anomaly-metric-creator product code is edited.
 ## Preparation and check commands
 
 - Prepare: `bash scripts/update_repomix`
-- Candidate check: `python3 tools/check_ci_review_contract.py and python3 tools/check_copilot_instruction_contract.py`
+- Candidate check: `python3 tools/check_ci_review_contract.py && python3 tools/check_copilot_instruction_contract.py`
 - Local gate: the installed typed `sd-check` coordinator
 
 ## Requirements
