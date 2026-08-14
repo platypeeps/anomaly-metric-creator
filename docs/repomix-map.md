@@ -924,11 +924,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    08-14-sd-ai-command-pack-0-71-5/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1481,6 +1476,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         08-13-sd-ai-command-pack-0-71-4/
+          check.jsonl
+          implement.jsonl
+          prd.md
+          task.json
+        08-14-sd-ai-command-pack-0-71-5/
           check.jsonl
           implement.jsonl
           prd.md
