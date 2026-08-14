@@ -993,3 +993,42 @@ Refresh the vendored sd-ai-command-pack from 0.71.2 to the 0.71.4 corrective rel
 ### Next Steps
 
 - None - task complete
+
+
+## Session 71: sd-ai-command-pack 0.71.5 refresh
+
+**Date**: 2026-08-14
+**Task**: sd-ai-command-pack 0.71.5 refresh
+**Package**: amc
+**Branch**: `chore/sd-ai-command-pack-0.71.5`
+
+### Summary
+
+Installed sd-ai-command-pack v0.71.5 over 0.71.4 as the final lane of fleet campaign refresh-0.71.5-20260814T113545Z. The changed always-files installed as updates with no conflict and no --force, against the corrected installer.
+
+### Main Changes
+
+- Installed the immutable v0.71.5 payload (source commit e115c70f, digest sha256:365af6fe); audit reports preserved=2, unchanged=197.
+- Regenerated the deterministic repomix map through scripts/update_repomix.
+- Left .prism/rules.json and .github/PULL_REQUEST_TEMPLATE.md preserved as locally owned.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b0fb4435ce01261307e12874b47414853c79c42c` | chore: refresh sd-ai-command-pack to 0.71.5 |
+
+### Testing
+
+- [OK] install.py --check --audit: installed version 0.71.5, planned changes 0, audit passed
+- [OK] python3 tools/check_ci_review_contract.py and tools/check_copilot_instruction_contract.py: exit 0
+- [OK] sd-check: 6 passed, 0 failed, 1 skipped (external-symlinked .obsidian-kb advisory)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
