@@ -288,6 +288,30 @@ it. Use a separate request to execute the recommendation.
    fail with `pre_archive_acceptance_malformed`. Prose `Post-archive handoff`
    bullets and unchecked boxes outside the canonical section are never mistaken
    for incomplete criteria.
+
+   The same validator's read-only `seeded-task` command is the fleet-rollout
+   counterpart, run at `checkout-validation` against a consumer task the moment
+   it is created — before the pack is installed there, so it runs from the
+   source checkout with `--repo <consumer>`. It rejects an empty `description`;
+   a `base_branch` that is not the consumer's default branch; a generated `TBD`
+   placeholder left in `prd.md`; an `_example` scaffold row in
+   `implement.jsonl` / `check.jsonl`, including the lone-scaffold shape merge
+   time deliberately exempts; a manifest that exists but carries no usable row
+   (`task_context_unfilled`); and a context row citing a path under the seeded
+   task's own directory, which `task.py archive` would dangle inside the same
+   completion bundle that publishes it. A task with no manifests at all passes:
+   `task.py create` seeds them only on a sub-agent platform, so their absence
+   is correct rather than unfilled.
+
+   The default branch it compares against comes from
+   `SD_AI_COMMAND_PACK_DEFAULT_BRANCH` when that variable is set, and otherwise
+   from the inspected repository's own `refs/remotes/origin/HEAD`. The variable
+   outranks the repository, which matters under `--repo`: an operator's local
+   value would otherwise decide the very rule the stage enforces about someone
+   else's checkout. Leave it unset for fleet work. Every receipt records which
+   source answered in `evidence.defaultBranchSource`, and a run that can resolve
+   neither reports `task_base_branch_indeterminate` rather than guessing —
+   `indeterminate` is not `valid`, so the lane still stops.
 13. After the PR merges, run the housekeeping command to get back to the default
    branch, prune/delete the merged development stream, and see the condensed
    clean-state/anomaly report. An `sd-ship until=merge` chain already ran it
@@ -813,7 +837,10 @@ check inspects `implement.jsonl` and `check.jsonl`; a changed non-planning
 generated scaffold — a single row parsing to an object whose sole key is
 `_example`, the shape `task.py create` writes — is exempt, so creating a task
 never fails the gate; the scaffold must be replaced or emptied before the task
-leaves planning. The bookkeeping validator's `task_context_seed` check exempts
+leaves planning. Emptying satisfies those two lanes only. The `seeded-task`
+stage below requires a real row, so a consumer task whose manifest was emptied
+rather than filled fails it as `task_context_unfilled`; on that lane, replace
+the scaffold. The bookkeeping validator's `task_context_seed` check exempts
 it on identical terms, so neither lane fails a freshly created task. The match
 is on that shape, not on Trellis's exact seed text, which Trellis owns and
 changes across versions. A scaffold row that survives alongside authored rows,

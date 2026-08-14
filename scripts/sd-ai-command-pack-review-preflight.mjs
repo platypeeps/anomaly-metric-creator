@@ -50,6 +50,16 @@ const ACCEPTANCE_LIST_ITEM_RE = /^[ \t]*[-*][ \t]+(.*)$/;
 const ACCEPTANCE_CHECKBOX_RE = /^\[([ xX])\](.*)$/;
 const POST_ARCHIVE_CHECKBOX_RE = /^[ \t]*[-*][ \t]+\[[ xX]\]/;
 const CODE_FENCE_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
+// One repair string for both reporters. "Cite a spec instead" is not actionable
+// on its own -- a consumer's specs are often all product-domain -- and dropping
+// the `file` key is not an option either, because the ready gate still requires
+// one real {file, reason} row, so a rationale-only manifest is unready rather
+// than fixed.
+const TRELLIS_TASK_CONTEXT_SELF_REFERENCE_REPAIR =
+  'cites a path under its own task directory; task.py archive moves that directory, ' +
+  'so the pointer dangles in the merged tree of the same bundle that publishes it. ' +
+  'Repoint at a .trellis/spec/** path and move the substance into "reason", cite a ' +
+  "sibling task's research/**, or move the facts into the pack's own task.";
 const TRELLIS_TASK_STATUSES = new Set(['planning', 'in_progress', 'review', 'completed']);
 const ACTIVE_TRELLIS_TASK_STATUSES = new Set(['planning', 'in_progress', 'review']);
 const TRELLIS_TASK_PRIORITIES = new Set(['P0', 'P1', 'P2', 'P3']);
@@ -238,6 +248,7 @@ export function runReviewPreflight(options = {}) {
   runCheck('changed Trellis task topology semantics', checkChangedTrellisTaskTopologySemantics);
   runCheck('completed Trellis task location', checkCompletedTrellisTaskLocation);
   runCheck('Trellis task context manifests', checkTrellisTaskContextManifests);
+  runCheck('Trellis planning placeholders', checkTrellisPlanningPlaceholders);
   runCheck('Trellis journal records', checkTrellisJournalRecords);
   runCheck('first-review risk sweep', checkReviewRiskSweep);
   runCheck('diff size warning', checkDiffSize);
@@ -497,7 +508,7 @@ if (isMainModule()) {
     process.exit(2);
   }
 
-  if (process.argv[2] === 'pre-archive' || process.argv[2] === 'final-bundle') {
+  if (['pre-archive', 'final-bundle', 'seeded-task'].includes(process.argv[2])) {
     const cli = parseBookkeepingCli(process.argv.slice(2));
     if (cli.error) {
       console.error(`error: ${cli.error}`);
@@ -544,6 +555,7 @@ function bookkeepingUsage() {
     '  sd-ai-command-pack-review-preflight.mjs',
     '  sd-ai-command-pack-review-preflight.mjs pre-archive --task-dir <active-task-dir> [--task-dir ...] [--repo <repo-root>] [--json]',
     '  sd-ai-command-pack-review-preflight.mjs final-bundle --mode <completion|planning> --base <commit> --head <commit> [--repo <repo-root>] [--json]',
+    '  sd-ai-command-pack-review-preflight.mjs seeded-task --task-dir <active-task-dir> [--repo <repo-root>] [--json]',
   ].join('\n');
 }
 
@@ -597,6 +609,16 @@ function parseBookkeepingCli(args) {
     }
     if (options.mode || options.base || options.head) {
       return { error: 'pre-archive does not accept --mode, --base, or --head' };
+    }
+  } else if (command === 'seeded-task') {
+    // Exactly one: the stage validates the one task it just created, and a
+    // multi-task invocation would report a pass/fail an operator cannot map back
+    // to a single consumer lane.
+    if (options.taskDirs.length !== 1) {
+      return { error: 'seeded-task requires exactly one --task-dir' };
+    }
+    if (options.mode || options.base || options.head) {
+      return { error: 'seeded-task does not accept --mode, --base, or --head' };
     }
   } else if (command === 'final-bundle') {
     if (!['completion', 'planning'].includes(options.mode)) {
@@ -662,10 +684,29 @@ export function runBookkeepingValidator(options = {}) {
           completionReady: true,
         });
       }
+    } else if (options.command === 'seeded-task') {
+      evidence.taskDirectories = [...new Set(options.taskDirs || [])].sort();
+      for (const taskDir of evidence.taskDirectories) {
+        // completionReady: false -- a task at checkout-validation legitimately
+        // has no feature branch and is not yet in_progress/review.
+        // seedReady: true -- and here the lone `_example` scaffold IS the defect;
+        // see validateBookkeepingTaskContexts for why merge time exempts it.
+        const record = validateBookkeepingTaskDirectory(taskDir, {
+          add,
+          archived: false,
+          completionReady: false,
+          seedReady: true,
+        });
+        validateSeededTaskBaseBranch(taskDir, record, evidence, add);
+      }
     } else if (options.command === 'final-bundle') {
       validateBookkeepingFinalBundle(options, evidence, add, {}, addAdvisory);
     } else {
-      add('validator_command_invalid', '', 'command must be pre-archive or final-bundle');
+      add(
+        'validator_command_invalid',
+        '',
+        'command must be pre-archive, seeded-task, or final-bundle',
+      );
     }
   } catch (error) {
     add(
@@ -687,7 +728,9 @@ export function runBookkeepingValidator(options = {}) {
       : 'valid';
   const validCode = options.command === 'pre-archive'
     ? 'pre_archive_valid'
-    : `${options.mode || 'unknown'}_bundle_valid`;
+    : options.command === 'seeded-task'
+      ? 'seeded_task_valid'
+      : `${options.mode || 'unknown'}_bundle_valid`;
   return {
     schemaVersion: BOOKKEEPING_SCHEMA_VERSION,
     kind: 'trellis-bookkeeping-validation',
@@ -723,12 +766,29 @@ function boundedBookkeepingText(value, limit) {
   return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 3))}...`;
 }
 
+// Exported so the unknown-command branch is reachable from a test: the printer
+// itself writes to the console and argv cannot produce an unrecognized command
+// with a valid status. An earlier revision composed this by excluding
+// final-bundle, which printed `null bundle undefined..undefined` for the then
+// -new seeded-task; the next command added would have inherited a task count it
+// never computed. Enumerating every command and throwing on the rest turns that
+// silent wrong answer into a failure in whatever test first exercises it.
+export function bookkeepingResultSubject(result) {
+  if (result.command === 'final-bundle') {
+    return `${result.mode} bundle ${result.evidence.baseOid?.slice(0, 12)}..${result.evidence.headOid?.slice(0, 12)}`;
+  }
+  if (result.command === 'pre-archive' || result.command === 'seeded-task') {
+    return `${result.evidence.taskDirectories.length} task(s)`;
+  }
+  throw new Error(
+    `bookkeeping result subject is undefined for command ${JSON.stringify(result.command)}; `
+      + 'add it to bookkeepingResultSubject when adding the command',
+  );
+}
+
 function printBookkeepingResult(result) {
   if (result.status === 'valid') {
-    const subject = result.command === 'pre-archive'
-      ? `${result.evidence.taskDirectories.length} task(s)`
-      : `${result.mode} bundle ${result.evidence.baseOid?.slice(0, 12)}..${result.evidence.headOid?.slice(0, 12)}`;
-    console.log(`PASS ${result.command} bookkeeping validation: ${subject}.`);
+    console.log(`PASS ${result.command} bookkeeping validation: ${bookkeepingResultSubject(result)}.`);
   } else {
     for (const finding of result.findings) {
       const location = finding.path ? ` ${finding.path}:` : '';
@@ -747,8 +807,63 @@ function printBookkeepingResult(result) {
   console.log(`\nBookkeeping validator: ${result.status} (${result.findings.length} finding(s)${advisorySuffix}).`);
 }
 
+// The bookkeeping validator does not wire up the root-task base_branch rule --
+// its only other call site is the merge-time preflight -- so seeded-task calls
+// it directly rather than waiting for focused-candidate to reject the lane.
+function validateSeededTaskBaseBranch(taskDir, record, evidence, add) {
+  if (!isPlainObject(record)) {
+    return;
+  }
+
+  const configured = (process.env.SD_AI_COMMAND_PACK_DEFAULT_BRANCH || '').trim();
+  const defaultBranch = trellisRootDefaultBranchName();
+  // Record the source, not just the value. Under --repo the environment
+  // variable outranks the consumer's own origin/HEAD, so a wrong answer here
+  // decides the one rule this gate exists to enforce; the receipt has to show
+  // where the name came from.
+  evidence.defaultBranch = defaultBranch || null;
+  evidence.defaultBranchSource = configured
+    ? 'SD_AI_COMMAND_PACK_DEFAULT_BRANCH'
+    : defaultBranch
+      ? 'origin/HEAD'
+      : null;
+
+  const taskFile = `${taskDir}/task.json`;
+  if (!defaultBranch) {
+    // Cannot tell, rather than wrong: neither the environment nor origin/HEAD
+    // named a default branch, so the comparison is unavailable.
+    add(
+      'task_base_branch_indeterminate',
+      taskFile,
+      'repository default branch could not be resolved from SD_AI_COMMAND_PACK_DEFAULT_BRANCH '
+        + 'or refs/remotes/origin/HEAD, so base_branch cannot be validated',
+      'indeterminate',
+    );
+    return;
+  }
+
+  // The shared rule stays the single source of truth for *whether* this is a
+  // defect; only the wording is stage-specific. Its own message offers
+  // set-meta base_branch_exemption as the repair -- the escape hatch. Embedding
+  // it here would put an exemption for the exact defect this stage exists to
+  // catch ahead of the real fix, so the seeded-task finding states the mismatch
+  // itself and recommends only set-base-branch.
+  if (validateTrellisRootTaskBaseBranch(record, defaultBranch).length > 0) {
+    add(
+      'task_base_branch_invalid',
+      taskFile,
+      `field base_branch ${JSON.stringify(record.base_branch.trim())} must equal the repository `
+        + `default branch ${JSON.stringify(defaultBranch.trim())}; repair with `
+        + `python3 ./.trellis/scripts/task.py set-base-branch ${taskDir} ${defaultBranch.trim()} `
+        + '-- run it immediately after task.py create, and do not use '
+        + 'task.py create --base-branch, which the older vendored task_store.py '
+        + 'rejects as an unrecognized argument',
+    );
+  }
+}
+
 function validateBookkeepingTaskDirectory(taskDir, options) {
-  const { add, archived, completionReady = false, addAdvisory = null, deltaPaths = null } = options;
+  const { add, archived, completionReady = false, seedReady = false, addAdvisory = null, deltaPaths = null } = options;
   // Delta scoping: a defect anchored to a file inside the bundle delta blocks;
   // one anchored to an untouched file demotes to an advisory. Without a delta
   // set (pre-archive) or an advisory sink (historical replay), everything
@@ -832,6 +947,16 @@ function validateBookkeepingTaskDirectory(taskDir, options) {
       addScoped('task_prd_empty', prdFile, 'task PRD must contain substantive content');
     }
     validateBookkeepingTextWhitespace(prdFile, prdLoaded.text, addScoped);
+    for (const placeholder of findTrellisPlanningPlaceholders(prdFile, prdLoaded.text)) {
+      // addScoped, not add: on a historical replay the same defect in an
+      // untouched PRD demotes to an advisory instead of blocking a bundle whose
+      // delta never went near it.
+      addScoped(
+        'task_prd_placeholder',
+        prdFile,
+        `line ${placeholder.line} still contains the generated placeholder ${JSON.stringify(placeholder.text)}`,
+      );
+    }
     if (completionReady && prdLoaded.text.trim().length > 0) {
       validateBookkeepingAcceptanceReadiness(prdFile, prdLoaded.text, add);
     }
@@ -839,12 +964,12 @@ function validateBookkeepingTaskDirectory(taskDir, options) {
   if (taskLoaded.status === 'loaded') {
     validateBookkeepingTextWhitespace(taskFile, taskLoaded.text, addScoped);
   }
-  validateBookkeepingTaskContexts(taskDir, record, archived, addScoped);
+  validateBookkeepingTaskContexts(taskDir, record, archived, addScoped, seedReady);
   validateBookkeepingTopology(taskFile, taskDir, record, addScoped);
   return recordAvailable ? record : null;
 }
 
-function validateBookkeepingTaskContexts(taskDir, record, archived, add) {
+function validateBookkeepingTaskContexts(taskDir, record, archived, add, seedReady = false) {
   // Context files are validated even when task.json is broken or missing —
   // their defects stand on their own. A manifest whose ONLY row is the untouched
   // generated `_example`-only scaffold `task.py create` writes is treated as
@@ -865,17 +990,52 @@ function validateBookkeepingTaskContexts(taskDir, record, archived, add) {
       add('task_context_invalid', file, loaded.message);
       continue;
     }
-    const exemptScaffold = isPristineTrellisTaskContextScaffold(loaded.text);
+    // seedReady flips the exemption off. At checkout-validation the ambiguity
+    // that justifies it does not exist: the stage's whole purpose is to assert
+    // the manifests were filled, so an unfilled manifest IS the defect.
+    const exemptScaffold = !seedReady && isPristineTrellisTaskContextScaffold(loaded.text);
+    let emittedForFile = 0;
     for (const issue of findTrellisTaskContextIssues(file, loaded.text)) {
       if (issue.kind === 'seed' && exemptScaffold) continue;
+      emittedForFile += 1;
       const message = issue.kind === 'seed'
         ? `line ${issue.line} contains a generated _example scaffold row`
         : issue.kind === 'malformed'
           ? `line ${issue.line} is not valid JSONL`
-          : `line ${issue.line} contains a reference outside the allowed spec/research roots`;
+          : issue.kind === 'self_reference'
+            // Same repair string the merge-time check prints, so a seeding
+            // operator reading only the receipt still gets the alternatives.
+            ? `line ${issue.line} ${TRELLIS_TASK_CONTEXT_SELF_REFERENCE_REPAIR}`
+            : `line ${issue.line} contains a reference outside the allowed spec/research roots`;
       add(`task_context_${issue.kind}`, file, message);
     }
-    validateBookkeepingTextWhitespace(file, loaded.text, add);
+    // Only at seeding time, and only when nothing else already named a defect
+    // in this file. At merge time an unfilled manifest is indistinguishable
+    // from one that was never curated -- the same ambiguity that justifies the
+    // scaffold exemption above -- and failing it produced a late,
+    // completion-time failure. At checkout-validation the stage's whole purpose
+    // is to assert the manifests were filled, so unfilled IS the defect.
+    //
+    // The emittedForFile guard keeps the receipt precise: a lone scaffold, a
+    // malformed line, and a self-citation each already say exactly what to fix,
+    // and stacking a vaguer "no rows" finding on top would make it worse.
+    //
+    // The whitespace sweep runs BEFORE that decision and counts toward the same
+    // guard. A manifest emptied to blank lines padded with spaces or tabs has
+    // zero usable rows AND trailing whitespace, so ordering it after would
+    // double-report exactly the shape most likely to occur.
+    validateBookkeepingTextWhitespace(file, loaded.text, (reasonCode, path, message) => {
+      emittedForFile += 1;
+      add(reasonCode, path, message);
+    });
+    if (seedReady && emittedForFile === 0 && countTrellisTaskContextRows(loaded.text) === 0) {
+      add(
+        'task_context_unfilled',
+        file,
+        'contains no context rows; add at least one '
+          + '{"file": "<spec-or-research-path>", "reason": "<why>"} row',
+      );
+    }
   }
 }
 
@@ -3454,7 +3614,16 @@ export function validateTrellisBookkeepingMetadata(record, taskDir, archived) {
   const issues = validateTrellisTaskMetadata(record, taskDir, archived);
   for (const field of ['title', 'description']) {
     if (typeof record[field] !== 'string' || record[field].trim().length === 0) {
-      issues.push(`${field} must be a non-empty string`);
+      // Name the repair, not just the constraint: at seeding time this is the
+      // most common finding and the operator is holding the command that
+      // produced it. Deliberately not `set-meta` -- that subcommand is absent
+      // from the older vendored task.py, i.e. exactly the consumers that hit
+      // this. `task.py create` carries both of these in every revision, with
+      // the title positional and the description behind a flag.
+      const repair = field === 'description'
+        ? 're-create the task passing a real --description'
+        : 're-create the task with a real title argument';
+      issues.push(`${field} must be a non-empty string; ${repair}`);
     }
   }
   if (!isTrellisTimestamp(record.createdAt)) {
@@ -3835,6 +4004,10 @@ function checkTrellisTaskContextManifests() {
         );
         continue;
       }
+      if (issue.kind === 'self_reference') {
+        fail(`${issue.file}:${issue.line} ${TRELLIS_TASK_CONTEXT_SELF_REFERENCE_REPAIR}`);
+        continue;
+      }
       fail(
         `${issue.file}:${issue.line} contains a task context reference outside the allowed spec/research roots; ` +
           'use .trellis/spec/** or .trellis/tasks/**/research/** only, never code or test paths.',
@@ -3856,6 +4029,47 @@ function checkTrellisTaskContextManifests() {
     pass(
       `checked ${inspectedFiles} changed Trellis task context file(s) for valid JSONL, generated _example scaffold rows, and spec/research-only references.${exemptSuffix}`,
     );
+  }
+}
+
+function checkTrellisPlanningPlaceholders() {
+  const failureStart = failures.length;
+  const diff = currentChangedPaths();
+
+  if (diff === null) {
+    warn('could not inspect the current diff for Trellis planning placeholders.');
+    return;
+  }
+
+  let inspectedFiles = 0;
+  for (const path of diff.paths) {
+    const normalized = normalizePathSeparators(path).replace(/^\.\//, '');
+    if (!normalized.startsWith('.trellis/tasks/') || !normalized.endsWith('/prd.md')) {
+      continue;
+    }
+    if (!isRegularFile(normalized)) {
+      continue;
+    }
+
+    inspectedFiles += 1;
+    for (const placeholder of findTrellisPlanningPlaceholders(normalized, readText(normalized))) {
+      fail(
+        `${placeholder.file}:${placeholder.line} still contains the generated placeholder ` +
+          `${JSON.stringify(placeholder.text)}; replace it with a real requirement, ` +
+          'acceptance criterion, or goal before the task advances.',
+      );
+    }
+  }
+
+  if (inspectedFiles === 0) {
+    if (failures.length === failureStart) {
+      pass('no changed Trellis PRD requires placeholder validation.');
+    }
+    return;
+  }
+
+  if (failures.length === failureStart) {
+    pass(`checked ${inspectedFiles} changed Trellis PRD(s) for generated TBD placeholders.`);
   }
 }
 
@@ -3949,6 +4163,34 @@ export function isPristineTrellisTaskContextScaffold(text) {
   );
 }
 
+// "This manifest carries no usable row" is a property of the file, not of any
+// row, so findTrellisTaskContextIssues cannot express it: that function reaches
+// a row only when the line is non-blank, and reports what is wrong with rows it
+// finds. A file with none is invisible to it. Both walk the same split with the
+// same blank-line skip so they cannot disagree about what counts as a row.
+//
+// A row counts here when it carries a `file` key, even when that reference is
+// rejected: a manifest citing a forbidden path is filled-but-wrong, and the
+// reference or self_reference finding already names that defect precisely.
+export function countTrellisTaskContextRows(text) {
+  let usable = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (isPlainObject(record) && Object.prototype.hasOwnProperty.call(record, 'file')) {
+      usable += 1;
+    }
+  }
+  return usable;
+}
+
 export function findTrellisTaskContextSeedRows(file, text) {
   return findTrellisTaskContextIssues(file, text)
     .filter((issue) => issue.kind === 'seed')
@@ -3978,8 +4220,58 @@ export function isTrellisTaskContextReference(value) {
   );
 }
 
+// A task's own `research/**` is inside the allowed roots, so the root test above
+// accepts it for the whole life of the task -- and `task.py archive` then moves
+// the directory out from under the pointer, in the same completion bundle that
+// publishes it. Comparing the cited task directory against the citing file's own
+// is the only part of that failure that is decidable here: a SIBLING task's
+// research is equally doomed when that sibling archives later, but nothing in
+// the current tree distinguishes it from a citation that will stay valid.
+export function trellisTaskContextOwnerDirectory(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return '';
+  }
+
+  // Normalize exactly as isTrellisTaskContextReference does, or a `./`-prefixed
+  // or backslash-separated self-citation walks past the comparison.
+  const normalized = normalizePathSeparators(value).replace(/^\.\//, '');
+  const match = /^(\.trellis\/tasks\/(?:archive\/\d{4}-\d{2}\/)?[^/]+)\//.exec(normalized);
+  return match ? match[1] : '';
+}
+
+// `task.py create` seeds prd.md from `_default_prd_content`, which writes three
+// placeholders: the Goal body `TBD.` when no description was supplied, a `- TBD`
+// requirement bullet, and a `- [ ] TBD` acceptance criterion
+// (.trellis/scripts/common/task_store.py:196-213). Nothing anywhere rejects
+// them: the ready gate in .trellis/workflow.md is scoped to the two manifests,
+// and the merge-time preflight had no rule of its own.
+//
+// Match the whole line, not a bare substring -- a PRD is allowed to DISCUSS the
+// string TBD in prose, and the PRD for the task that added this rule does.
+export function findTrellisPlanningPlaceholders(file, text) {
+  if (typeof text !== 'string') {
+    return [];
+  }
+
+  const placeholders = [];
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    const trimmed = line.trim();
+    if (
+      trimmed === 'TBD.'
+      || trimmed === 'TBD'
+      || /^[-*]\s+TBD\.?$/.test(trimmed)
+      || /^[-*]\s+\[[ xX]\]\s+TBD\.?$/.test(trimmed)
+    ) {
+      placeholders.push({ file, line: index + 1, text: trimmed });
+    }
+  }
+
+  return placeholders;
+}
+
 export function findTrellisTaskContextIssues(file, text) {
   const issues = [];
+  const owner = trellisTaskContextOwnerDirectory(file);
 
   for (const [index, line] of text.split(/\r?\n/).entries()) {
     if (!line.trim()) {
@@ -3998,12 +4290,12 @@ export function findTrellisTaskContextIssues(file, text) {
       issues.push({ file, line: index + 1, kind: 'seed' });
       continue;
     }
-    if (
-      isPlainObject(record) &&
-      Object.prototype.hasOwnProperty.call(record, 'file') &&
-      !isTrellisTaskContextReference(record.file)
-    ) {
-      issues.push({ file, line: index + 1, kind: 'reference' });
+    if (isPlainObject(record) && Object.prototype.hasOwnProperty.call(record, 'file')) {
+      if (!isTrellisTaskContextReference(record.file)) {
+        issues.push({ file, line: index + 1, kind: 'reference' });
+      } else if (owner && trellisTaskContextOwnerDirectory(record.file) === owner) {
+        issues.push({ file, line: index + 1, kind: 'self_reference' });
+      }
     }
   }
 
