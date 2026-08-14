@@ -954,3 +954,42 @@ Refresh the vendored SD AI command pack from 0.71.1 to 0.71.2 for the claude, ge
 ### Next Steps
 
 - None - task complete
+
+
+## Session 70: sd-ai-command-pack 0.71.4 refresh
+
+**Date**: 2026-08-13
+**Task**: sd-ai-command-pack 0.71.4 refresh
+**Package**: amc
+**Branch**: `chore/sd-ai-command-pack-0.71.4`
+
+### Summary
+
+Refresh the vendored sd-ai-command-pack from 0.71.2 to the 0.71.4 corrective release as part of fleet campaign refresh-0.71.4-20260813T212139Z.
+
+### Main Changes
+
+- Installed pack 0.71.4 over 0.71.2, carrying four drifted installer targets forward with --force
+- Regenerated docs/repomix-map.md with scripts/update_repomix
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3fc7020325bc3069d467e9a15018174da5cb90d6` | chore(sd-ai-command-pack): refresh vendored pack 0.71.2 -> 0.71.4 |
+
+### Testing
+
+- [OK] install audit: 199 targets checked, provenance 0.71.4, vouched file hashes match
+- [OK] python3 tools/check_ci_review_contract.py: passed
+- [OK] python3 tools/check_copilot_instruction_contract.py: passed
+- [OK] sd-check: 6 passed, 1 skipped (obsidian-kb advisory), 0 failed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
