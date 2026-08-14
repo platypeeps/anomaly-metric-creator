@@ -1032,3 +1032,41 @@ Installed sd-ai-command-pack v0.71.5 over 0.71.4 as the final lane of fleet camp
 ### Next Steps
 
 - None - task complete
+
+
+## Session 72: chore: refresh sd-ai-command-pack to 0.71.6
+
+**Date**: 2026-08-14
+**Task**: chore: refresh sd-ai-command-pack to 0.71.6
+**Package**: amc
+**Branch**: `chore/sd-ai-command-pack-0-71-6`
+
+### Summary
+
+Fleet campaign refresh-0.71.6-20260814T170234Z, final cohort (anomaly-metric-creator): install 0.71.6 over 0.71.5, regenerate the structural map, and archive the dedicated task inside the published head.
+
+### Main Changes
+
+- Installed sd-ai-command-pack 0.71.6 over 0.71.5 through the vouched-upgrade path
+- Regenerated docs/repomix-map.md against the post-archive tree
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1fcac8fc5e55f1f0f6f7f6ecaa30bbb187a267f4` | chore: refresh sd-ai-command-pack to 0.71.6 |
+
+### Testing
+
+- [OK] install audit: 199 targets, provenance 0.71.6, vouched hashes match
+- [OK] sd-check --json: passed (6 passed, 1 skipped, 0 failed)
+- [OK] check_ci_review_contract.py and check_copilot_instruction_contract.py: exit 0
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
