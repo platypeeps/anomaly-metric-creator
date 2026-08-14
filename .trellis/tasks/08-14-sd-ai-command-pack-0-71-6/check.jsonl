@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Standards the post-install verification for this refresh is checked against."}
+{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Rules the refreshed pack documentation targets are reviewed against before the PR is published."}

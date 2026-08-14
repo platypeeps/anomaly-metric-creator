@@ -28,6 +28,7 @@ const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const MAX_TRELLIS_TASK_LINKS = 100;
 const MAX_TRELLIS_TASK_REFERENCE_LENGTH = 255;
 const MAX_TRELLIS_PRIORITY_RATIONALE_LENGTH = 1000;
+const GENERATED_MAP_MISSING_REPORT_LIMIT = 20;
 const MAX_BOOKKEEPING_FINDINGS = 100;
 const MAX_BOOKKEEPING_ADVISORIES = 25;
 const MAX_BOOKKEEPING_CHANGED_PATHS = 500;
@@ -244,6 +245,7 @@ export function runReviewPreflight(options = {}) {
   runCheck('copied template diff disclosure', checkCopiedTemplateDiffDisclosure);
   runCheck('documentation path hygiene', checkDocumentationPathHygiene);
   runCheck('documentation path references', checkDocumentationPathReferences);
+  runCheck('generated structural map paths', checkGeneratedStructuralMapPaths);
   runCheck('changed Trellis task metadata integrity', checkChangedTrellisTaskMetadata);
   runCheck('changed Trellis task topology semantics', checkChangedTrellisTaskTopologySemantics);
   runCheck('completed Trellis task location', checkCompletedTrellisTaskLocation);
@@ -274,6 +276,7 @@ function defaultConfig() {
       '.trellis/tasks',
     ],
     documentationExtensions: ['.md', '.mdx', '.prompt.md', '.toml', '.jsonl'],
+    generatedStructuralMaps: ['docs/repomix-map.md'],
     integrationPaths: [
       'AGENTS.md',
       'README.md',
@@ -378,6 +381,7 @@ function loadConfig(root, explicitPath) {
   for (const key of [
     'documentationRoots',
     'documentationExtensions',
+    'generatedStructuralMaps',
     'integrationPaths',
     'referencePrefixes',
     'topLevelReferenceFiles',
@@ -3142,6 +3146,141 @@ function checkDocumentationPathReferences() {
   }
 
   pass('documentation path references resolve to existing repo files or documented external/local-only paths.');
+}
+
+// Repomix renders its listing as an indented tree inside a fenced block. Each
+// level is exactly two spaces and a trailing slash marks a directory, so the
+// full path of any entry is the stack of enclosing directory names.
+export function parseGeneratedStructuralMapEntries(text) {
+  const lines = String(text ?? '').split('\n');
+  let start = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^#\s+Directory Structure\s*$/.test(lines[index])) {
+      start = index + 1;
+      break;
+    }
+  }
+
+  if (start === -1) {
+    return { entries: [], parsed: true, reason: 'no directory-structure section' };
+  }
+
+  const entries = [];
+  const stack = [];
+
+  for (let index = start; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (/^#\s/.test(line)) {
+      break;
+    }
+
+    if (line.trim() === '' || /^\s*`{3,}\s*$/.test(line)) {
+      continue;
+    }
+
+    const indent = line.length - line.trimStart().length;
+    if (indent % 2 !== 0) {
+      return {
+        entries: [],
+        parsed: false,
+        reason: `line ${index + 1} is indented by ${indent} space(s), not a multiple of two`,
+      };
+    }
+
+    const depth = indent / 2;
+    if (depth > stack.length) {
+      return {
+        entries: [],
+        parsed: false,
+        reason: `line ${index + 1} skips an indentation level`,
+      };
+    }
+
+    const name = line.trim();
+    const isDirectory = name.endsWith('/');
+    const bare = isDirectory ? name.slice(0, -1) : name;
+    stack.length = depth;
+    const path = [...stack, bare].join('/');
+    entries.push({ path, line: index + 1, isDirectory });
+
+    if (isDirectory) {
+      stack.push(bare);
+    }
+  }
+
+  return { entries, parsed: true, reason: '' };
+}
+
+// A generated map is committed before finish-work archives the active task, so
+// it can name `.trellis/tasks/<slug>/` at a path the published head no longer
+// has. Only `.trellis/` entries are checked: that tree is fully tracked, so a
+// fresh checkout of the same commit sees the same paths, while broader trees
+// can legitimately list files a clean clone does not carry.
+function checkGeneratedStructuralMapPaths() {
+  const maps = config.generatedStructuralMaps.filter((file) => exists(file));
+
+  if (maps.length === 0) {
+    pass('no generated structural map to check for stale paths.');
+    return;
+  }
+
+  const missing = [];
+  let checked = 0;
+
+  for (const file of maps) {
+    const result = parseGeneratedStructuralMapEntries(readText(file));
+
+    if (!result.parsed) {
+      warn(`${file} directory structure could not be parsed: ${result.reason}.`);
+      continue;
+    }
+
+    for (const entry of result.entries) {
+      if (!entry.path.startsWith('.trellis/')) {
+        continue;
+      }
+
+      // A `..` component in a listed name would make the existence probe stat
+      // outside the repository. A generator never emits one, so treat it as a
+      // malformed map rather than as drift, and never resolve it.
+      const contained = normalizePathSeparators(relative(rootDir, resolve(rootDir, entry.path)));
+      if (contained !== entry.path) {
+        warn(
+          `${file}:${entry.line} lists ${entry.path}, which does not stay inside the ` +
+            'repository; the map is malformed and was not checked for stale paths.',
+        );
+        continue;
+      }
+
+      checked += 1;
+      if (!pathEntryExists(entry.path)) {
+        missing.push({ file, line: entry.line, path: entry.path });
+      }
+    }
+  }
+
+  const reported = missing.slice(0, GENERATED_MAP_MISSING_REPORT_LIMIT);
+  for (const entry of reported) {
+    fail(
+      `${entry.file}:${entry.line} lists ${entry.path}, which does not exist; ` +
+        'regenerate the map after the task archive move.',
+    );
+  }
+
+  if (missing.length > reported.length) {
+    fail(
+      `${missing.length - reported.length} further stale path(s) in the generated ` +
+        'structural map were not listed.',
+    );
+  }
+
+  if (missing.length > 0) {
+    return;
+  }
+
+  pass(`checked ${checked} generated structural map .trellis/ path(s); all resolve.`);
 }
 
 function checkDocumentationPathHygiene() {

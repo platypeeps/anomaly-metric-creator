@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/amc/backend/architecture.md", "reason": "Describes the repository architecture the vendored pack tooling plugs into, bounding what this refresh may rewrite."}
+{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "Defines the operational and security rules an installer-managed refresh has to stay inside."}
