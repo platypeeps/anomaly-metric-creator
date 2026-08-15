@@ -40,8 +40,10 @@ from .server_traces import (
     CommandTraceStore as CommandTraceStore,  # noqa: F401
 )
 
-DEFAULT_RELEASE = "simulated-saas"
-DEFAULT_CHART = "simulated-saas-0.3.0"
+# DEFAULT_RELEASE / DEFAULT_CHART are not defined here: they are owned by
+# server_ops and reach this module through the compatibility block below.
+# They used to be duplicated as literals at this position, which was invisible
+# only because the alias block reassigned both a few hundred lines later.
 DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 # Bounded Kubernetes watch stream tuning. Both are module globals so tests can
 # monkeypatch them (`server._WATCH_POLL_SECONDS = 0.05`) for fast,
@@ -306,233 +308,101 @@ from . import server_ops as _server_ops
 
 # Compatibility facade: keep the historic anomaly_metric_creator.server import
 # surface while the ops implementation lives in server_ops.py.
-DEFAULT_RELEASE = _server_ops.DEFAULT_RELEASE
-DEFAULT_CHART = _server_ops.DEFAULT_CHART
-DEFAULT_NAMESPACE = _server_ops.DEFAULT_NAMESPACE
-OpsComponentImpact = _server_ops.OpsComponentImpact
-OpsScenarioProfile = _server_ops.OpsScenarioProfile
-_impact = _server_ops._impact
-_profile = _server_ops._profile
-OPS_SCENARIO_PROFILES = _server_ops.OPS_SCENARIO_PROFILES
-validate_ops_profiles = _server_ops.validate_ops_profiles
-SimulationClock = _server_ops.SimulationClock
-ParsedCommand = _server_ops.ParsedCommand
-CommandResult = _server_ops.CommandResult
-KubernetesApiResponse = _server_ops.KubernetesApiResponse
-ContinuousGenerationStatus = _server_ops.ContinuousGenerationStatus
-SimulationState = _server_ops.SimulationState
-build_state = _server_ops.build_state
-load_anomaly_rows = _server_ops.load_anomaly_rows
-_snapshot_row_namespace = _server_ops._snapshot_row_namespace
-_snapshot_row_key = _server_ops._snapshot_row_key
-_snapshot_kind_namespaced = _server_ops._snapshot_kind_namespaced
-run_command = _server_ops.run_command
-parse_command = _server_ops.parse_command
-_split_flags = _server_ops._split_flags
-_parse_kubectl = _server_ops._parse_kubectl
-_parse_helm = _server_ops._parse_helm
-_split_resource_token = _server_ops._split_resource_token
-_normalize_kind = _server_ops._normalize_kind
-render_command = _server_ops.render_command
-_with_flag_support = _server_ops._with_flag_support
-_render_kubectl = _server_ops._render_kubectl
-_render_helm = _server_ops._render_helm
-_unsupported = _server_ops._unsupported
-resource_snapshot = _server_ops.resource_snapshot
-_apply_default_namespaces = _server_ops._apply_default_namespaces
-_apply_mutation_rows = _server_ops._apply_mutation_rows
-_render_get = _server_ops._render_get
-_render_get_all = _server_ops._render_get_all
-_filter_snapshot_rows = _server_ops._filter_snapshot_rows
-_snapshot_row_matches_namespace = _server_ops._snapshot_row_matches_namespace
-_snapshot_row_labels = _server_ops._snapshot_row_labels
-_snapshot_row_matches_field_selector = _server_ops._snapshot_row_matches_field_selector
-_normalized_resource_prefix = _server_ops._normalized_resource_prefix
-_render_describe = _server_ops._render_describe
-_logs_uses_selector = _server_ops._logs_uses_selector
-_render_logs_command = _server_ops._render_logs_command
-_logs_target_pods = _server_ops._logs_target_pods
-_logs_container_name = _server_ops._logs_container_name
-_logs_has_container_flag = _server_ops._logs_has_container_flag
-_logs_since_time = _server_ops._logs_since_time
-_logs_tail_limit = _server_ops._logs_tail_limit
-_render_logs = _server_ops._render_logs
-_render_pod_logs = _server_ops._render_pod_logs
-_render_top = _server_ops._render_top
-_render_kubectl_version = _server_ops._render_kubectl_version
-_render_kubectl_api_versions = _server_ops._render_kubectl_api_versions
-_render_kubectl_api_resources = _server_ops._render_kubectl_api_resources
-_render_kubectl_cluster_info = _server_ops._render_kubectl_cluster_info
-_render_rollout_status = _server_ops._render_rollout_status
-_render_rollout_history = _server_ops._render_rollout_history
-_render_rollout_restart = _server_ops._render_rollout_restart
-_render_scale = _server_ops._render_scale
-_render_delete = _server_ops._render_delete
-_render_apply = _server_ops._render_apply
-_resource_from_manifest_name = _server_ops._resource_from_manifest_name
-_mutation_snapshot_kind = _server_ops._mutation_snapshot_kind
-_record_continuous_generation_failure = _server_ops._record_continuous_generation_failure
-_record_server_error = _server_ops._record_server_error
-_capture_traceback_tail = _server_ops._capture_traceback_tail
-_emit_error_record = _server_ops._emit_error_record
-_generic_resource_row = _server_ops._generic_resource_row
-_generic_resource_metadata = _server_ops._generic_resource_metadata
-_string_dict = _server_ops._string_dict
-_configmap_keys_from_flags = _server_ops._configmap_keys_from_flags
-_parsed_replicas = _server_ops._parsed_replicas
-_render_wait = _server_ops._render_wait
-_render_exec = _server_ops._render_exec
-_render_port_forward = _server_ops._render_port_forward
-_render_helm_list = _server_ops._render_helm_list
-_render_helm_status = _server_ops._render_helm_status
-_render_helm_history = _server_ops._render_helm_history
-_render_helm_env = _server_ops._render_helm_env
-_render_helm_get = _server_ops._render_helm_get
-_render_helm_test = _server_ops._render_helm_test
-_render_helm_install = _server_ops._render_helm_install
-_render_helm_upgrade = _server_ops._render_helm_upgrade
-_helm_value_overrides = _server_ops._helm_value_overrides
-_render_helm_rollback = _server_ops._render_helm_rollback
-_not_found = _server_ops._not_found
-_component_health = _server_ops._component_health
-_component_impacts = _server_ops._component_impacts
-_apply_component_impact = _server_ops._apply_component_impact
-_status_priority = _server_ops._status_priority
-_component_scenarios = _server_ops._component_scenarios
-_component_events = _server_ops._component_events
-_component_rollout_notes = _server_ops._component_rollout_notes
-_event_rows = _server_ops._event_rows
-_node_rows = _server_ops._node_rows
-_helm_release = _server_ops._helm_release
-_helm_notes = _server_ops._helm_notes
-_helm_current_description = _server_ops._helm_current_description
-_replica_count = _server_ops._replica_count
-_pod_name = _server_ops._pod_name
-_component_from_name = _server_ops._component_from_name
-_stable_cluster_ip = _server_ops._stable_cluster_ip
-_find_named = _server_ops._find_named
-_table = _server_ops._table
-command_fingerprint = _server_ops.command_fingerprint
-guess_intent = _server_ops.guess_intent
-_preview = _server_ops._preview
-_redact_command_for_trace = _server_ops._redact_command_for_trace
-_redact_argv = _server_ops._redact_argv
-_redact_parsed_flags = _server_ops._redact_parsed_flags
-_is_sensitive_flag_name = _server_ops._is_sensitive_flag_name
-_format_dt = _server_ops._format_dt
-_parse_user_timestamp = _server_ops._parse_user_timestamp
-_parse_optional_timestamp = _server_ops._parse_optional_timestamp
-RequestBodyTooLarge = _server_ops.RequestBodyTooLarge
-_read_json_body = _server_ops._read_json_body
-_read_optional_json_body = _server_ops._read_optional_json_body
-_content_length = _server_ops._content_length
-kubernetes_api_response = _server_ops.kubernetes_api_response
-kubernetes_api_post_response = _server_ops.kubernetes_api_post_response
-kubernetes_api_mutating_response = _server_ops.kubernetes_api_mutating_response
-_k8s_mutation_target = _server_ops._k8s_mutation_target
-_k8s_subresource_mutation_allowed = _server_ops._k8s_subresource_mutation_allowed
-_k8s_mutated_object = _server_ops._k8s_mutated_object
-_payload_replicas = _server_ops._payload_replicas
-_k8s_scale = _server_ops._k8s_scale
-render_kubeconfig = _server_ops.render_kubeconfig
-record_kubernetes_api_call = _server_ops.record_kubernetes_api_call
-_redact_query = _server_ops._redact_query
-_is_sensitive_query_key = _server_ops._is_sensitive_query_key
-_k8s_json_response = _server_ops._k8s_json_response
-_k8s_text_response = _server_ops._k8s_text_response
-_k8s_status_response = _server_ops._k8s_status_response
-_k8s_read_only_response = _server_ops._k8s_read_only_response
-_k8s_read_only_status_args = _server_ops._k8s_read_only_status_args
-_k8s_api_group_list = _server_ops._k8s_api_group_list
-_k8s_api_group = _server_ops._k8s_api_group
-_k8s_group_resource_response = _server_ops._k8s_group_resource_response
-_k8s_core_resource_response = _server_ops._k8s_core_resource_response
-_k8s_api_resource_list = _server_ops._k8s_api_resource_list
-_k8s_resource_response = _server_ops._k8s_resource_response
-_filter_k8s_objects_by_namespace = _server_ops._filter_k8s_objects_by_namespace
-_k8s_list_resource_version = _server_ops._k8s_list_resource_version
-k8s_watch_plan = _server_ops.k8s_watch_plan
-k8s_watch_objects = _server_ops.k8s_watch_objects
-k8s_watch_object_key = _server_ops.k8s_watch_object_key
-k8s_watch_trace_response = _server_ops.k8s_watch_trace_response
-_k8s_resource_meta = _server_ops._k8s_resource_meta
-_accepts_table = _server_ops._accepts_table
-_k8s_table = _server_ops._k8s_table
-_k8s_column = _server_ops._k8s_column
-_k8s_table_schema = _server_ops._k8s_table_schema
-_k8s_pod_cells = _server_ops._k8s_pod_cells
-_k8s_pod_display_status = _server_ops._k8s_pod_display_status
-_k8s_deployment_cells = _server_ops._k8s_deployment_cells
-_k8s_service_cells = _server_ops._k8s_service_cells
-_k8s_endpoints_cells = _server_ops._k8s_endpoints_cells
-_k8s_endpointslice_cells = _server_ops._k8s_endpointslice_cells
-_k8s_event_cells = _server_ops._k8s_event_cells
-_k8s_hpa_cells = _server_ops._k8s_hpa_cells
-_k8s_node_cells = _server_ops._k8s_node_cells
-_k8s_replicaset_cells = _server_ops._k8s_replicaset_cells
-_k8s_daemonset_cells = _server_ops._k8s_daemonset_cells
-_k8s_pvc_cells = _server_ops._k8s_pvc_cells
-_k8s_statefulset_cells = _server_ops._k8s_statefulset_cells
-_k8s_ingress_cells = _server_ops._k8s_ingress_cells
-_k8s_secret_cells = _server_ops._k8s_secret_cells
-_k8s_configmap_cells = _server_ops._k8s_configmap_cells
-_k8s_serviceaccount_cells = _server_ops._k8s_serviceaccount_cells
-_k8s_job_cells = _server_ops._k8s_job_cells
-_k8s_cronjob_cells = _server_ops._k8s_cronjob_cells
-_k8s_namespace_cells = _server_ops._k8s_namespace_cells
-_k8s_default_cells = _server_ops._k8s_default_cells
-_k8s_objects_for_resource = _server_ops._k8s_objects_for_resource
-_k8s_namespace = _server_ops._k8s_namespace
-_k8s_pod = _server_ops._k8s_pod
-_k8s_configmap = _server_ops._k8s_configmap
-_k8s_secret = _server_ops._k8s_secret
-_k8s_serviceaccount = _server_ops._k8s_serviceaccount
-_k8s_deployment = _server_ops._k8s_deployment
-_k8s_replicaset = _server_ops._k8s_replicaset
-_k8s_daemonset = _server_ops._k8s_daemonset
-_k8s_statefulset = _server_ops._k8s_statefulset
-_k8s_service = _server_ops._k8s_service
-_k8s_endpoints = _server_ops._k8s_endpoints
-_k8s_event = _server_ops._k8s_event
-_k8s_hpa = _server_ops._k8s_hpa
-_k8s_job = _server_ops._k8s_job
-_k8s_cronjob = _server_ops._k8s_cronjob
-_k8s_pvc = _server_ops._k8s_pvc
-_k8s_ingress = _server_ops._k8s_ingress
-_k8s_endpointslice = _server_ops._k8s_endpointslice
-_k8s_node = _server_ops._k8s_node
-_k8s_pod_metrics = _server_ops._k8s_pod_metrics
-_k8s_node_metrics = _server_ops._k8s_node_metrics
-_helm_secret_objects = _server_ops._helm_secret_objects
-_helm_release_revisions = _server_ops._helm_release_revisions
-_helm_secret_object = _server_ops._helm_secret_object
-_helm_encoded_release_data = _server_ops._helm_encoded_release_data
-_helm_release_payload = _server_ops._helm_release_payload
-_k8s_metadata = _server_ops._k8s_metadata
-_k8s_metadata_for_row = _server_ops._k8s_metadata_for_row
-_row_selector = _server_ops._row_selector
-_row_template_labels = _server_ops._row_template_labels
-_selector_string = _server_ops._selector_string
-_k8s_owner_reference = _server_ops._k8s_owner_reference
-_k8s_workload_labels = _server_ops._k8s_workload_labels
-_k8s_container_state = _server_ops._k8s_container_state
-_filter_k8s_objects = _server_ops._filter_k8s_objects
-_matches_label_selector = _server_ops._matches_label_selector
-_matches_field_selector = _server_ops._matches_field_selector
-_selector_set_requirement = _server_ops._selector_set_requirement
-_split_selector = _server_ops._split_selector
-_nested_field = _server_ops._nested_field
-_k8s_timestamp = _server_ops._k8s_timestamp
-_stable_pod_ip = _server_ops._stable_pod_ip
-_api_trace_body = _server_ops._api_trace_body
-_redact_large_secret_data = _server_ops._redact_large_secret_data
-_api_namespace = _server_ops._api_namespace
-_api_resource_kind = _server_ops._api_resource_kind
-_api_resource_name = _server_ops._api_resource_name
-_api_fingerprint = _server_ops._api_fingerprint
-_api_guess_intent = _server_ops._api_guess_intent
-_is_kubernetes_api_path = _server_ops._is_kubernetes_api_path
-_rate_limit_bucket = _server_ops._rate_limit_bucket
+#
+# Most of that surface is published by the __getattr__ delegation below, so an
+# extraction that adds a name to server_ops needs no edit here. This block used
+# to be 227 hand-written `NAME = _server_ops.NAME` lines that every extraction
+# step had to append to.
+#
+# The names imported explicitly below are the exception, and the reason is
+# PEP 562: a module __getattr__ is consulted for attribute access *on the
+# module object*, never for global-name resolution inside the module itself.
+# Anything this file reads as a bare global must therefore be a real global --
+# a miss would surface as a NameError on a request path, not an ImportError at
+# startup. The rest of the explicit set is read elsewhere in the repository as
+# `server.<name>`; importing those keeps object identity and monkeypatch
+# behavior identical to the assignments they replace rather than merely
+# equivalent. tests/test_server_alias_surface.py derives the required set
+# mechanically, so it fails if a later edit adds an internal use of a
+# delegated name.
+from .server_ops import (
+    DEFAULT_RELEASE as DEFAULT_RELEASE,
+    DEFAULT_NAMESPACE as DEFAULT_NAMESPACE,
+    OpsScenarioProfile as OpsScenarioProfile,
+    OPS_SCENARIO_PROFILES as OPS_SCENARIO_PROFILES,
+    SimulationClock as SimulationClock,
+    ParsedCommand as ParsedCommand,
+    CommandResult as CommandResult,
+    KubernetesApiResponse as KubernetesApiResponse,
+    SimulationState as SimulationState,
+    build_state as build_state,
+    load_anomaly_rows as load_anomaly_rows,
+    run_command as run_command,
+    parse_command as parse_command,
+    render_command as render_command,
+    resource_snapshot as resource_snapshot,
+    _record_continuous_generation_failure as _record_continuous_generation_failure,
+    _record_server_error as _record_server_error,
+    _capture_traceback_tail as _capture_traceback_tail,
+    _emit_error_record as _emit_error_record,
+    _render_helm_history as _render_helm_history,
+    _format_dt as _format_dt,
+    RequestBodyTooLarge as RequestBodyTooLarge,
+    _read_json_body as _read_json_body,
+    _read_optional_json_body as _read_optional_json_body,
+    kubernetes_api_response as kubernetes_api_response,
+    kubernetes_api_post_response as kubernetes_api_post_response,
+    kubernetes_api_mutating_response as kubernetes_api_mutating_response,
+    render_kubeconfig as render_kubeconfig,
+    record_kubernetes_api_call as record_kubernetes_api_call,
+    _redact_query as _redact_query,
+    _k8s_status_response as _k8s_status_response,
+    k8s_watch_plan as k8s_watch_plan,
+    k8s_watch_objects as k8s_watch_objects,
+    k8s_watch_object_key as k8s_watch_object_key,
+    k8s_watch_trace_response as k8s_watch_trace_response,
+    _k8s_objects_for_resource as _k8s_objects_for_resource,
+    _helm_secret_objects as _helm_secret_objects,
+    _helm_release_payload as _helm_release_payload,
+    _is_kubernetes_api_path as _is_kubernetes_api_path,
+    _rate_limit_bucket as _rate_limit_bucket,
+)
+
+
+def _is_delegation_excluded(name: str) -> bool:
+    """Names `__getattr__` refuses to forward, so `__dir__` must not list them."""
+    return name.startswith("__") and name.endswith("__")
+
+
+def __getattr__(name: str) -> Any:
+    """Publish the historic `server.<ops name>` surface from `server_ops`.
+
+    Dunders are refused before the forward. `server_ops` defines `__all__` and
+    this module deliberately does not; forwarding it would quietly change what
+    `from anomaly_metric_creator.server import *` imports.
+    """
+    if _is_delegation_excluded(name):
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    try:
+        return getattr(_server_ops, name)
+    except AttributeError:
+        raise AttributeError(
+            f"module {__name__!r} has no attribute {name!r}"
+        ) from None
+
+
+def __dir__() -> list[str]:
+    """Keep the delegated names visible to dir(), inspect, and completion.
+
+    The delegated half is filtered through the same predicate `__getattr__`
+    uses, so `dir()` never advertises a name that reading would refuse --
+    `server_ops.__all__` being the one that actually occurs.
+    """
+    delegated = {
+        name for name in dir(_server_ops) if not _is_delegation_excluded(name)
+    }
+    return sorted(set(globals()) | delegated)
+
 
 def make_handler(
     state: SimulationState,

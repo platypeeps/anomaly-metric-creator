@@ -67,3 +67,21 @@ in `.trellis/spec/` and have platform files load or point to Trellis. Sources:
 - Did I add or update a Trellis spec citation for any new convention? Sources:
   `.trellis/spec/amc/backend/documentation-review.md`;
   `.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/prd.md`.
+- Am I removing or replacing a re-export / alias / re-import block? Then check
+  what it was *masking* before deleting it. A late `NAME = _other.NAME`
+  reassignment silently overwrites an earlier duplicate definition of the same
+  name in the same module, so the duplicate is invisible while the block
+  stands and wins the moment it goes. Diff the module's attribute surface
+  before and after — object identity, not just resolvability — rather than
+  trusting a green suite, which passes either way while the values still
+  agree. Found this way: two duplicate constant literals in
+  `server.py` that the `server_ops` alias block had been correcting. Sources:
+  `src/anomaly_metric_creator/server.py`; `tests/test_server_alias_surface.py`;
+  `.trellis/spec/amc/backend/architecture.md`.
+- Am I adding a guard that makes a module `__getattr__` refuse a *class* of
+  names? Then `__dir__` owes the same predicate. A guard decides what can be
+  read and `__dir__` decides what is advertised; write the condition twice and
+  they drift, and `dir()` starts listing names that reading raises on. Extract
+  one named predicate and call it from both. Found this way: `dir(server)`
+  listing `server_ops.__all__` while `server.__all__` raised. Sources:
+  `src/anomaly_metric_creator/server.py`; `tests/test_server_alias_surface.py`.

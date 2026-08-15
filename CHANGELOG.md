@@ -7,6 +7,12 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `anomaly_metric_creator.server` now republishes its `server_ops` compatibility
+  surface through a module `__getattr__` instead of 227 hand-written alias
+  assignments. **No published name changed** — every previously importable
+  attribute still resolves, to the same object — and `server` still has no
+  `__all__`, so `import *` behaves exactly as before. Internal refactor with no
+  CLI, HTTP, or output change; listed only because it touches an import surface.
 - Trace-export hardening (audit A-018, A-019, A-070). **Behavior change:**
   `amc serve --cors-allow-origin '*'` is now refused unless `--auth-token` is
   also set — an unauthenticated wildcard origin lets any website the operator
