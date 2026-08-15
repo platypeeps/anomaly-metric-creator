@@ -1827,6 +1827,16 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
             "--host binds outside loopback; pass --auth-token or "
             "--allow-remote-without-auth"
         )
+    if serve_args.cors_allow_origin.strip() == "*" and not serve_args.auth_token:
+        # There is no safe unauthenticated wildcard posture, loopback included:
+        # any website the operator visits can read a 127.0.0.1 bind's debug and
+        # rubric surfaces cross-origin. --allow-remote-without-auth does not
+        # unlock this — it covers the bind host, not the browser origin.
+        parser.error(
+            "--cors-allow-origin '*' exposes every origin to an "
+            "unauthenticated server; pass --auth-token or name an explicit "
+            "origin instead of '*'"
+        )
 
     args = legacy_module.parse_args(generate_argv)
     if not serve_args.no_generate:
@@ -2169,6 +2179,14 @@ def start_test_server(
     """Start an ephemeral server for tests and return (server, base_url)."""
 
     resolved = security or ServerSecurityConfig()
+    # Parity with serve_main's flag gate: the wildcard origin is refused without
+    # a bearer token here too, so a test or embedding caller cannot reach a
+    # posture the CLI refuses to start.
+    if resolved.cors_allow_origin.strip() == "*" and not resolved.auth_token:
+        raise ValueError(
+            "cors_allow_origin '*' requires auth_token; name an explicit "
+            "origin instead of '*'"
+        )
     # Keep the state's background-arm sink in step with the handler's request
     # sink so tests that drive a failing regen/OTEL pass through this entry
     # point see the same _record_server_error routing serve_main wires up.

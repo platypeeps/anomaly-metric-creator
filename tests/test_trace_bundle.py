@@ -1,4 +1,5 @@
 import csv
+import dataclasses
 import json
 
 import pytest
@@ -381,3 +382,159 @@ def test_load_trace_bundle_rejects_boolean_trace_count(tmp_path):
 
     with pytest.raises(ValueError, match="trace bundle trace_count must be an integer"):
         trace_bundle.load_trace_bundle(path)
+
+
+# --- A-018: CSV formula-injection neutralization -------------------------------
+
+
+def _bundle_file(tmp_path, traces, name="formula-traces.json"):
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION,
+        "trace_count": len(traces),
+        "traces": [trace.to_dict() for trace in traces],
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _export_single_trace(tmp_path, trace):
+    bundle = trace_bundle.load_trace_bundle(_bundle_file(tmp_path, [trace]))
+    output = tmp_path / "traces.csv"
+    trace_bundle.write_trace_bundle_csv(bundle, output)
+    return list(csv.DictReader(output.open(encoding="utf-8")))[0]
+
+
+# The trigger set is the OWASP CSV-injection list the writer guards against.
+_TRIGGERS = ["=", "+", "-", "@", "\t", "\r"]
+
+# Columns a recorded command can influence. Deliberately includes the
+# non-obvious ones (fingerprint, matched_rule_id, resource identifiers,
+# previews, guessed_intent), not just the free-text raw_input.
+_USER_INFLUENCED_FIELDS = [
+    "raw_input",
+    "client",
+    "command_family",
+    "verb",
+    "resource_kind",
+    "resource_name",
+    "namespace",
+    "support_status",
+    "matched_rule_id",
+    "fingerprint",
+    "guessed_intent",
+    "stdout_preview",
+    "stderr_preview",
+]
+
+
+@pytest.mark.parametrize("trigger", _TRIGGERS)
+@pytest.mark.parametrize("field", _USER_INFLUENCED_FIELDS)
+def test_write_trace_bundle_csv_neutralizes_trigger_in_every_column(
+    tmp_path, trigger, field
+):
+    payload = f"{trigger}cmd|' /C calc'!A0"
+    trace = dataclasses.replace(
+        _trace(1, "kubectl get pods -n saas-prod"), **{field: payload}
+    )
+
+    row = _export_single_trace(tmp_path, trace)
+
+    # Assert the first byte is the guard and the payload survived intact. Exact
+    # equality would fail for "\r", which csv.reader normalizes to "\n" on
+    # read-back inside a quoted field — a reader artifact, not a writer bug.
+    assert row[field].startswith("'")
+    assert row[field].endswith("cmd|' /C calc'!A0")
+
+
+def test_write_trace_bundle_csv_neutralizes_active_scenarios_cell(tmp_path):
+    trace = dataclasses.replace(
+        _trace(1, "kubectl get pods -n saas-prod"),
+        active_scenarios=("=cmd|calc", "cache_leak_restart"),
+    )
+
+    row = _export_single_trace(tmp_path, trace)
+
+    assert row["active_scenarios"] == "'=cmd|calc,cache_leak_restart"
+
+
+def test_write_trace_bundle_csv_neutralizes_every_string_cell(tmp_path):
+    """Enumeration-proof: no user-influenced column may be left unguarded.
+
+    A named-subset allowlist rots the moment a column is added, so this asserts
+    the writer boundary itself, not a hand-maintained list of columns.
+    """
+    trace = _trace(1, "=malicious")
+    string_fields = {
+        f.name: "=payload"
+        for f in dataclasses.fields(trace)
+        if isinstance(getattr(trace, f.name), str)
+    }
+    row = _export_single_trace(tmp_path, dataclasses.replace(trace, **string_fields))
+
+    unguarded = {
+        column: value
+        for column, value in row.items()
+        if value == "=payload"
+    }
+    assert unguarded == {}
+
+
+def test_write_trace_bundle_csv_leaves_benign_cells_unchanged(tmp_path):
+    trace = _trace(1, "kubectl get pods -n saas-prod")
+
+    row = _export_single_trace(tmp_path, trace)
+
+    assert row["id"] == "1"
+    assert row["exit_code"] == "0"
+    assert row["latency_ms"] == "12.5"
+    assert row["raw_input"] == "kubectl get pods -n saas-prod"
+    assert row["received_at_wall_time"] == "2026-06-25T12:01:00Z"
+
+
+def test_neutralize_csv_cell_is_idempotent():
+    once = trace_bundle._neutralize_csv_cell("=cmd|calc")
+    twice = trace_bundle._neutralize_csv_cell(once)
+
+    assert once == "'=cmd|calc"
+    assert twice == once
+
+
+def test_neutralize_csv_cell_passes_through_non_strings():
+    assert trace_bundle._neutralize_csv_cell(0) == 0
+    assert trace_bundle._neutralize_csv_cell(-3) == -3
+    assert trace_bundle._neutralize_csv_cell(12.5) == 12.5
+
+
+def test_trace_bundle_import_path_reads_json_not_csv(tmp_path):
+    """Neutralization is an export-boundary concern; stored traces stay verbatim."""
+    trace = dataclasses.replace(
+        _trace(1, "kubectl get pods -n saas-prod"), raw_input="=cmd|calc"
+    )
+    bundle = trace_bundle.load_trace_bundle(_bundle_file(tmp_path, [trace]))
+
+    assert bundle.traces[0].raw_input == "=cmd|calc"
+
+
+# --- A-070: trace-bundle version policy ---------------------------------------
+
+
+def test_load_trace_bundle_version_error_states_the_version_policy(tmp_path):
+    payload = {
+        "kind": "CommandTraceExport",
+        "apiVersion": f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}",
+        "schema_version": COMMAND_TRACE_EXPORT_VERSION + 1,
+        "trace_count": 1,
+        "traces": [_trace(1, "kubectl get pods -n saas-prod").to_dict()],
+    }
+    path = tmp_path / "future-schema-version.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        trace_bundle.load_trace_bundle(path)
+
+    message = str(excinfo.value)
+    assert "read by the tool version that wrote them" in message
+    assert "re-export" in message

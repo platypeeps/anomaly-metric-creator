@@ -1070,3 +1070,48 @@ Fleet campaign refresh-0.71.6-20260814T170234Z, final cohort (anomaly-metric-cre
 ### Next Steps
 
 - None - task complete
+
+
+## Session 73: Trace-export hardening: CSV formula neutralization, wildcard-CORS gate, bundle version policy (A-018/A-019/A-070)
+
+**Date**: 2026-08-15
+**Task**: Trace-export hardening: CSV formula neutralization, wildcard-CORS gate, bundle version policy (A-018/A-019/A-070)
+**Package**: amc
+**Branch**: `fix/trace-export-hardening`
+
+### Summary
+
+Closed three export-surface audit items on one PR (#376). Neutralized spreadsheet formula triggers across every cell of the trace-bundle CSV export at the writer boundary rather than a named column subset; refused --cors-allow-origin '*' without --auth-token in serve_main (after the --config merge, so config cannot smuggle it) and in start_test_server for parity; and settled the trace-bundle schema-version policy as matching-version-only, documented in the error, a code comment, and the README. Copilot reviewed 18/18 files with zero comments.
+
+### Main Changes
+
+- trace_bundle.py: _neutralize_csv_cell applied to every emitted cell via a dict comprehension at the writer boundary; idempotent, non-strings pass through
+- server.py: wildcard-CORS auth gates in serve_main (parser.error) and start_test_server (ValueError); ratchet ceiling 2190 -> 2208 for the two non-separable branches
+- trace_bundle.py: version-mismatch error states the matching-version policy and remedy; comment assigns any future adapter decision to the version-bumping PR
+- Docs: SECURITY.md cross-origin + CSV sections, README flag row and bundle policy, CHANGELOG behavior changes; specs updated in api-cli-server.md, operations-security-logging.md, testing-quality.md
+- Ledger A-018/A-019/A-070 flipped to fixed; follow-up task 08-15-debug-ui-csv-formula-neutralization filed for the debug UI's unguarded client-side CSV
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b214f4c` | fix(trace-export): neutralize CSV formulas, gate wildcard CORS, document bundle version policy |
+| `2d7a67c` | chore(spec): move the serve-reject test-timeout rule to its owning spec |
+| `d33a3de` | chore(task): record the finalization branch and tick met acceptance criteria |
+
+### Testing
+
+- [OK] .venv/bin/pytest — 2033 passed, 2 skipped
+- [OK] Negative verification: with src stashed, the new tests produce 85 failures, so they are not vacuous
+- [OK] Manual injection export: every trigger-bearing cell apostrophe-prefixed, benign numeric cells untouched
+- [OK] pre-commit run --all-files, ruff check tests/, git diff --check, tools/check_mypy_gate.py (35 files)
+- [OK] CI Result SUCCESS on PR #376; Copilot reviewed 18/18 files, zero comments
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,5 +1,6 @@
 """Composition coverage for the production ``serve_main`` path."""
 
+import json
 import threading
 from types import SimpleNamespace
 
@@ -346,3 +347,96 @@ def test_serve_unknown_scenario_slug_exits_naming_catalog(amc, tmp_path, capsys)
     assert excinfo.value.code != 0
     err = capsys.readouterr().err
     assert "not_a_real_scenario" in err
+
+
+# --- A-019: wildcard CORS requires a bearer token ------------------------------
+
+
+@pytest.mark.parametrize(
+    "cors_argv",
+    [
+        ["--cors-allow-origin", "*", "--auth-token", "test-token"],
+        ["--cors-allow-origin", "https://ops.example"],
+        [],
+    ],
+    ids=["wildcard-with-token", "explicit-origin-no-token", "no-cors"],
+)
+def test_serve_main_allows_safe_cors_postures(amc, monkeypatch, tmp_path, cors_argv):
+    """These reach build_state, so the validation block ran and did not error."""
+
+    def capture_build_state(*args, **kwargs):
+        raise _StopWiring
+
+    monkeypatch.setattr(server, "build_state", capture_build_state)
+
+    with pytest.raises(_StopWiring):
+        server.serve_main(
+            [
+                "--no-generate",
+                "--port",
+                "0",
+                "--output-dir",
+                str(tmp_path),
+                *cors_argv,
+            ],
+            legacy_module=amc,
+        )
+
+
+def test_serve_main_refuses_wildcard_cors_without_auth(amc, monkeypatch, tmp_path):
+    def unreachable_build_state(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("validation must reject before state construction")
+
+    monkeypatch.setattr(server, "build_state", unreachable_build_state)
+
+    with pytest.raises(SystemExit):
+        server.serve_main(
+            [
+                "--no-generate",
+                "--port",
+                "0",
+                "--output-dir",
+                str(tmp_path),
+                "--cors-allow-origin",
+                "*",
+            ],
+            legacy_module=amc,
+        )
+
+
+def test_serve_config_file_wildcard_cors_without_auth_is_refused(
+    amc, monkeypatch, tmp_path
+):
+    """The gate sits after the --config merge, so config cannot smuggle '*' in."""
+    config = tmp_path / "serve.json"
+    config.write_text(
+        json.dumps({"server": {"cors_allow_origin": "*"}, "generate": {}}),
+        encoding="utf-8",
+    )
+
+    def unreachable_build_state(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("validation must reject before state construction")
+
+    monkeypatch.setattr(server, "build_state", unreachable_build_state)
+
+    with pytest.raises(SystemExit):
+        server.serve_main(
+            [
+                "--no-generate",
+                "--port",
+                "0",
+                "--output-dir",
+                str(tmp_path),
+                "--config",
+                str(config),
+            ],
+            legacy_module=amc,
+        )
+
+
+def test_start_test_server_refuses_wildcard_cors_without_auth():
+    with pytest.raises(ValueError, match="requires auth_token"):
+        server.start_test_server(
+            SimpleNamespace(),
+            security=server.ServerSecurityConfig(cors_allow_origin="*"),
+        )

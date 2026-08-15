@@ -112,6 +112,14 @@ Tests that use POSIX-only modules or attributes must guard collection on
 platforms where those APIs are missing. Sources: `tests/`;
 `.github/workflows/ci.yml`.
 
+A subprocess test asserting that `serve` **rejects** a flag combination must
+pass a `timeout`. The assertion is that the process exits nonzero, so if the
+gate ever regresses the invocation does not fail the test — it starts a real
+blocking server and hangs the suite until the CI job's own limit kills it,
+turning a specific gate regression into an unattributable timeout. A regression
+must fail loudly, not hang. Sources: `tests/test_cli.py`
+(`_SERVE_REJECT_TIMEOUT_SECONDS`).
+
 ## Pytest, Ruff, and Pre-Commit
 
 The default pytest invocation uses xdist loadfile distribution with four

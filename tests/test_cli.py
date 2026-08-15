@@ -20,14 +20,21 @@ import pytest
 from conftest import COMPONENTS, SCRIPT_PATH
 
 
-def _invoke(*args, cwd=None, env=None):
+def _invoke(*args, cwd=None, env=None, timeout=None):
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), *args],
         capture_output=True,
         text=True,
         cwd=cwd,
         env=env,
+        timeout=timeout,
     )
+
+
+# A `serve` invocation that is *supposed* to be rejected will start a real
+# blocking server if its gate ever regresses, so every such test caps the
+# subprocess: a regression must fail the suite, not hang it.
+_SERVE_REJECT_TIMEOUT_SECONDS = 60
 
 
 def _assert_flag_listed(out: str, flag: str) -> None:
@@ -173,10 +180,43 @@ def test_trace_bundle_help_lists_offline_trace_tools():
 
 
 def test_serve_rejects_remote_bind_without_auth_or_explicit_override():
-    result = _invoke("serve", "--host", "0.0.0.0", "--no-generate")
+    result = _invoke(
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--no-generate",
+        timeout=_SERVE_REJECT_TIMEOUT_SECONDS,
+    )
     assert result.returncode != 0
     assert "--auth-token" in result.stderr
     assert "--allow-remote-without-auth" in result.stderr
+
+
+def test_serve_rejects_wildcard_cors_without_auth():
+    result = _invoke(
+        "serve",
+        "--cors-allow-origin",
+        "*",
+        "--no-generate",
+        timeout=_SERVE_REJECT_TIMEOUT_SECONDS,
+    )
+    assert result.returncode != 0
+    assert "--cors-allow-origin" in result.stderr
+    assert "--auth-token" in result.stderr
+
+
+def test_serve_rejects_wildcard_cors_without_auth_even_on_loopback_override():
+    """--allow-remote-without-auth covers the bind host, not the browser origin."""
+    result = _invoke(
+        "serve",
+        "--cors-allow-origin",
+        "*",
+        "--allow-remote-without-auth",
+        "--no-generate",
+        timeout=_SERVE_REJECT_TIMEOUT_SECONDS,
+    )
+    assert result.returncode != 0
+    assert "--cors-allow-origin" in result.stderr
 
 
 def test_missing_numpy_dependency_has_actionable_error(tmp_path):

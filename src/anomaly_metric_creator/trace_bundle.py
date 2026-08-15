@@ -22,6 +22,26 @@ TRACE_BUNDLE_KIND = "CommandTraceExport"
 TRACE_BUNDLE_API_VERSION = f"amc.simulator/v{COMMAND_TRACE_EXPORT_VERSION}"
 _MAX_SEARCH_LIMIT = 500
 
+# Leading characters a spreadsheet treats as the start of a formula. A recorded
+# command like `=cmd|' /C calc'!A0` would otherwise execute when the operator
+# opens the exported CSV. The set is the OWASP CSV-injection trigger list.
+_CSV_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _neutralize_csv_cell(value: Any) -> Any:
+    """Prefix a formula-triggering cell with an apostrophe (idempotent).
+
+    Applied to *every* cell ``write_trace_bundle_csv`` writes rather than a
+    named subset: an allowlist of "the free-text columns" rots the moment a new
+    user-influenced column is added, and a trigger character injects from any
+    cell. Constrained numeric cells (exit codes, epoch-ms timestamps) never
+    start with a trigger and pass through untouched; a legitimately
+    ``-``-prefixed value picking up an apostrophe is harmless in a debug export.
+    """
+    if not isinstance(value, str) or not value.startswith(_CSV_FORMULA_TRIGGERS):
+        return value
+    return "'" + value
+
 
 def _bundle_int_field(payload: dict[str, Any], key: str) -> int:
     value = payload.get(key)
@@ -61,10 +81,18 @@ def load_trace_bundle(path: str | Path) -> TraceBundle:
             f"{api_version!r}; expected {TRACE_BUNDLE_API_VERSION!r}"
         )
     schema_version = _bundle_int_field(payload, "schema_version")
+    # Version policy: a bundle is read by the tool version that wrote it. There
+    # is deliberately no N-1 compatibility adapter — the schema has never been
+    # bumped, so an adapter would be machinery without a customer. The PR that
+    # first bumps COMMAND_TRACE_EXPORT_VERSION owns the decision of whether to
+    # add one, and must update this comment, the message below, and the README
+    # trace-bundle section together.
     if schema_version != COMMAND_TRACE_EXPORT_VERSION:
         raise ValueError(
             "unsupported trace bundle schema_version "
-            f"{schema_version!r}; expected {COMMAND_TRACE_EXPORT_VERSION}"
+            f"{schema_version!r}; expected {COMMAND_TRACE_EXPORT_VERSION}. "
+            "Trace bundles are read by the tool version that wrote them; "
+            "re-export the bundle from the live server with the current tool."
         )
     traces_payload = payload.get("traces")
     if not isinstance(traces_payload, list):
@@ -209,28 +237,33 @@ def write_trace_bundle_csv(bundle: TraceBundle, output_path: str | Path) -> int:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for trace in bundle.traces:
+            # Neutralize at the writer boundary, after every truncation/preview
+            # step, so the first byte that reaches the file is the guarded one.
             writer.writerow({
-                "id": trace.id,
-                "received_at_wall_time": trace.received_at_wall_time,
-                "simulated_time": trace.simulated_time,
-                "raw_input": trace.raw_input,
-                "argv": json.dumps(list(trace.argv), sort_keys=True),
-                "client": trace.client,
-                "command_family": trace.command_family,
-                "verb": trace.verb,
-                "resource_kind": trace.resource_kind,
-                "resource_name": trace.resource_name,
-                "namespace": trace.namespace,
-                "parsed_flags": json.dumps(trace.parsed_flags, sort_keys=True),
-                "support_status": trace.support_status,
-                "matched_rule_id": trace.matched_rule_id,
-                "fingerprint": trace.fingerprint,
-                "guessed_intent": trace.guessed_intent,
-                "active_scenarios": ",".join(trace.active_scenarios),
-                "exit_code": trace.exit_code,
-                "latency_ms": trace.latency_ms,
-                "stdout_preview": trace.stdout_preview,
-                "stderr_preview": trace.stderr_preview,
+                key: _neutralize_csv_cell(value)
+                for key, value in {
+                    "id": trace.id,
+                    "received_at_wall_time": trace.received_at_wall_time,
+                    "simulated_time": trace.simulated_time,
+                    "raw_input": trace.raw_input,
+                    "argv": json.dumps(list(trace.argv), sort_keys=True),
+                    "client": trace.client,
+                    "command_family": trace.command_family,
+                    "verb": trace.verb,
+                    "resource_kind": trace.resource_kind,
+                    "resource_name": trace.resource_name,
+                    "namespace": trace.namespace,
+                    "parsed_flags": json.dumps(trace.parsed_flags, sort_keys=True),
+                    "support_status": trace.support_status,
+                    "matched_rule_id": trace.matched_rule_id,
+                    "fingerprint": trace.fingerprint,
+                    "guessed_intent": trace.guessed_intent,
+                    "active_scenarios": ",".join(trace.active_scenarios),
+                    "exit_code": trace.exit_code,
+                    "latency_ms": trace.latency_ms,
+                    "stdout_preview": trace.stdout_preview,
+                    "stderr_preview": trace.stderr_preview,
+                }.items()
             })
     return len(bundle.traces)
 
