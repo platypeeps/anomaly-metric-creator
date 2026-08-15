@@ -900,13 +900,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.md
       prd.md
       task.json
-    07-17-audit-trace-export-hardening/
-      check.jsonl
-      design.md
-      implement.jsonl
-      implement.md
-      prd.md
-      task.json
     07-17-audit-typed-boundaries/
       check.jsonl
       design.md
@@ -920,6 +913,11 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     08-06-otlp-capture-fixture/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    08-15-debug-ui-csv-formula-neutralization/
       check.jsonl
       implement.jsonl
       prd.md
@@ -1373,6 +1371,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           prd.md
           task.json
         07-17-audit-sim-mutation-correctness/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
+        07-17-audit-trace-export-hardening/
           check.jsonl
           design.md
           implement.jsonl
