@@ -71,12 +71,14 @@ explicitly not a split.
   sequencing (data-first — `server_ops_profiles.py` is a pure-data leaf
   and the natural step 1), and a compatibility inventory: the
   `server_commands.py` / `server_kubernetes.py` / `server_helm.py`
-  facades, `server.py`'s `NAME = _server_ops.NAME` alias block — **227
-  names** as of 2026-08-07 (31 public, 196 private), at
-  [server.py:309](src/anomaly_metric_creator/server.py:309)-535, up from the
-  40+ recorded at review time — and `server_mcp.py`'s imports must all keep
-  resolving. That the block is 86% private names is itself a design signal:
-  most of what crosses this seam is not public API.
+  facades, `server.py`'s alias block, and `server_mcp.py`'s imports must all
+  keep resolving. **Superseded 2026-08-15:** the alias block was 227 hand-
+  written `NAME = _server_ops.NAME` lines (31 public, 196 private) at
+  `server.py:309-535`, up from the 40+ recorded at review time; child
+  `08-15-server-alias-getattr-delegation` replaced it with a module
+  `__getattr__` plus 40 explicit imports, so a new ops name no longer needs an
+  entry. That the block was 86% private names was the design signal that made
+  delegation right: almost nothing crossing this seam is public API.
 - Candidate boundaries (validate in design): `server_ops_profiles.py`
   (OPS_SCENARIO_PROFILES + validate_ops_profiles), `server_ops_parse.py`
   (parse_command/_split_flags/flag tables), `server_ops_render.py`
@@ -90,15 +92,16 @@ explicitly not a split.
   four parallel per-kind rendering surfaces into a single per-kind
   descriptor — a behavior-affecting refactor to design separately once
   the split has made the duplication visible.
-- Adjacent seam to settle in design (in or out of scope): `server.py`
-  (**2,190 lines** as of 2026-08-07 — it has *grown* by ~400 since the
-  review while `server_ops.py` shrank) mixes bounded-server infrastructure,
-  HTTP dispatch, and `serve_main` CLI, and its manual alias block must be
-  extended for every new ops name. That block has scaled with the epic —
-  40+ names at review time, 227 now — so the case for an explicit re-export
-  module or `__getattr__` delegation is stronger than when this was first
-  written, not weaker. Step 1 has passed; settle it before the next
-  extraction.
+- Adjacent seam — **settled 2026-08-15**, child
+  `08-15-server-alias-getattr-delegation`. The manual alias block no longer
+  has to be extended for every new ops name: `server.py` publishes the historic
+  surface through a module `__getattr__` forwarding to `server_ops`, with 40
+  explicit imports for the names that cannot be delegated. `server.py` is
+  **2,064 lines** as of 2026-08-15 (2,208 before the delegation; 1,791 at
+  design time — it had *grown* by ~400 while `server_ops.py` shrank). It still
+  mixes bounded-server infrastructure, HTTP dispatch, and `serve_main` CLI, so
+  the infrastructure/dispatch/CLI split remains an open follow-up; only the
+  alias-lockstep half of this seam is closed.
 
 ## Acceptance Criteria
 

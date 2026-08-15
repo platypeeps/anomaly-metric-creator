@@ -61,6 +61,15 @@ Full per-module contents, the server leaf DAG, and the import directions are in
 [architecture.md](.trellis/spec/amc/backend/architecture.md) § Module
 Boundaries.
 
+`server.py` republishes the historic `anomaly_metric_creator.server` attribute
+surface through a module `__getattr__` forwarding to `server_ops`, so **adding
+a name to `server_ops` needs no alias line in `server.py`**. Two exceptions,
+both pinned by `tests/test_server_alias_surface.py`: a `server_ops` name that
+`server.py` reads as a *bare global* must still be imported explicitly (PEP 562
+does not cover global-name resolution inside the module, so a delegated one
+fails with a `NameError` on one request path), and `__dunder__` names are not
+forwarded (`server_ops` has `__all__`; `server.py` must not inherit it).
+
 ## Extraction / re-import invariant
 
 The `07-02-legacy-monolith-decomposition` epic moves code out of `legacy.py`

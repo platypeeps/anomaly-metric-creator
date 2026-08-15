@@ -115,6 +115,14 @@ cut.
   discovery, OpenAPI v2/v3, watch, `get all`, kubeconfig) plus the server /
   fuzz / eval / watch suites. Follow-up recorded: move `_openapi_paths` +
   snapshot-kind constants to let the OpenAPI document builders move too.
+  **Corrected 2026-08-15 by a closure audit — the premise does not hold.**
+  `_openapi_paths` (`:3380-3447`, 68 lines) is indeed blocked only by
+  `_snapshot_kind_namespaced` and is movable, but the document builders
+  `_k8s_openapi_v2_document` / `_k8s_openapi_v3_document` are blocked by
+  `_openapi_schema_definitions`, which calls `resource_snapshot(state)` and
+  `_explain_schema_for_kind`. Moving `_openapi_paths` therefore frees ~75 lines
+  and unblocks nothing further; the OpenAPI document builders need the same
+  step-6b provider seam as the render cluster. Do not re-derive this.
 - [x] Step 6a — `server_ops_explain.py` + `server_ops_payloads.py` (child
   `08-05-server-ops-explain-payload-extract`). **Inserted ahead of the planned
   step 6**, which a read-only AST closure audit showed is not implementable as
@@ -156,6 +164,20 @@ cut.
   `resource_snapshot` monkeypatching bites. Decide the seam before planning
   this step.
 
+- [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
+  `server.py`'s hand-maintained alias block is gone: 227
+  `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding
+  to `server_ops` plus 40 explicit imports (the 30 names `server.py` reads as
+  bare globals, union the 24 read elsewhere as `server.<name>`; overlap 14).
+  A later extraction no longer appends to any list here. Two rules keep the
+  seam honest and are enforced by `tests/test_server_alias_surface.py`, not by
+  prose: PEP 562 does not cover global-name resolution inside the module, so a
+  bare-global read must stay explicit; and `__dunder__` names are refused so
+  `server` does not inherit `server_ops.__all__`. Removing the block also
+  surfaced two dead duplicate literals (`DEFAULT_RELEASE` / `DEFAULT_CHART` at
+  `server.py:43-44`) that the alias assignments had been silently overwriting.
+  `server.py` **2,208 → 2,064** lines; ratchet ceiling lowered in the same diff.
+
 - [ ] Step 7 — close-out, pending 6b.
 
 ## Validation Plan
@@ -184,10 +206,11 @@ cut.
 ## Follow-Ups
 
 - Per-kind descriptor collapse (behavior-affecting; own design).
-- `server.py` (**2,190 lines** as of 2026-08-07, up from 1,791 at design
-  time) infrastructure/dispatch/CLI split.
-- `__getattr__` delegation for `server.py`'s alias block. The original
-  condition was "only if the manual block ever becomes a maintenance pain
-  point" — it now holds: the block is **227 names** at `server.py:309-535`
-  (31 public, 196 private), up from 40+ at review time, and every extraction
-  step adds to it. Treat this as live, not conditional.
+- `server.py` (**2,064 lines** as of 2026-08-15, down from 2,208 after the
+  alias-delegation child; 1,791 at design time) infrastructure/dispatch/CLI
+  split.
+- ~~`__getattr__` delegation for `server.py`'s alias block~~ — **done**
+  (child `08-15-server-alias-getattr-delegation`). The block was 227 names at
+  `server.py:309-535`; it is now a module `__getattr__` plus 40 explicit
+  imports, and extraction steps no longer append to it. See the settled-seam
+  entry in Step Status.

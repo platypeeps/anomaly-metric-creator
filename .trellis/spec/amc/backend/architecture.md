@@ -167,7 +167,24 @@ name mapping may still come from the live registry. Sources:
 `src/anomaly_metric_creator/validate_topology_instances.py`;
 `tests/test_package_facades.py`; `tests/test_validate_output.py`.
 
-Keep `server.py` as the stdlib HTTP facade for `amc serve`. Lower-level server
+Keep `server.py` as the stdlib HTTP facade for `amc serve`. It republishes the
+historic `anomaly_metric_creator.server` attribute surface through a module
+`__getattr__` that forwards to `server_ops`, so **an extraction that publishes
+a new ops name needs no edit in `server.py`** — the 227-line
+`NAME = _server_ops.NAME` block that every step used to append to is gone. Two
+rules hold that seam together, and both are enforced by
+`tests/test_server_alias_surface.py` rather than by prose:
+
+- Any `server_ops` name `server.py` reads as a **bare global** must still be
+  imported explicitly (40 names today). PEP 562's module `__getattr__` answers
+  attribute access on the module object and is never consulted for global-name
+  resolution inside the module, so a delegated name read as a global fails with
+  a `NameError` on one request path instead of at import.
+- `__getattr__` refuses `__dunder__` names. `server_ops` defines `__all__` and
+  `server.py` deliberately does not; forwarding it would silently change what
+  `from anomaly_metric_creator.server import *` publishes.
+
+Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
 command rendering, the `_k8s_objects_for_resource` / `_k8s_table` dispatchers,
 `resource_snapshot()`, and Helm Secret encoding;

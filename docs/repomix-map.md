@@ -922,6 +922,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
+    08-15-server-alias-getattr-delegation/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1665,6 +1672,7 @@ tests/
   test_sd_ai_command_pack_full_check_script.py
   test_sd_ai_command_pack_housekeeping_script.py
   test_serve_main_wiring.py
+  test_server_alias_surface.py
   test_server_eval_mode.py
   test_server_hardening.py
   test_server_mcp.py
