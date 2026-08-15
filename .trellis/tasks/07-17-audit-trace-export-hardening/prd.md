@@ -21,8 +21,8 @@ cross-origin reads; archived trace bundles have no version-compat story.
 
 ## Acceptance criteria
 
-- [ ] A trace containing `=cmd|...` exports with an apostrophe prefix; neutralization covers every user-influenced CSV column (not just the obvious free-text ones), with tests across them.
-- [ ] CORS star + no-auth combination is refused or loudly warned.
-- [ ] Bundle version policy recorded in README + code.
-- [ ] Closing PR flips each covered ledger item to `status: fixed` in
+- [x] A trace containing `=cmd|...` exports with an apostrophe prefix; neutralization covers every user-influenced CSV column (not just the obvious free-text ones), with tests across them.
+- [x] CORS star + no-auth combination is refused or loudly warned.
+- [x] Bundle version policy recorded in README + code.
+- [x] Closing PR flips each covered ledger item to `status: fixed` in
       `.trellis/audit/ledger.md` (same-PR, per ledger rules).
