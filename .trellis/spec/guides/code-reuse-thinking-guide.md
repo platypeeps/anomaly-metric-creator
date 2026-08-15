@@ -78,3 +78,10 @@ in `.trellis/spec/` and have platform files load or point to Trellis. Sources:
   `server.py` that the `server_ops` alias block had been correcting. Sources:
   `src/anomaly_metric_creator/server.py`; `tests/test_server_alias_surface.py`;
   `.trellis/spec/amc/backend/architecture.md`.
+- Am I adding a guard that makes a module `__getattr__` refuse a *class* of
+  names? Then `__dir__` owes the same predicate. A guard decides what can be
+  read and `__dir__` decides what is advertised; write the condition twice and
+  they drift, and `dir()` starts listing names that reading raises on. Extract
+  one named predicate and call it from both. Found this way: `dir(server)`
+  listing `server_ops.__all__` while `server.__all__` raised. Sources:
+  `src/anomaly_metric_creator/server.py`; `tests/test_server_alias_surface.py`.

@@ -182,7 +182,12 @@ rules hold that seam together, and both are enforced by
   a `NameError` on one request path instead of at import.
 - `__getattr__` refuses `__dunder__` names. `server_ops` defines `__all__` and
   `server.py` deliberately does not; forwarding it would silently change what
-  `from anomaly_metric_creator.server import *` publishes.
+  `from anomaly_metric_creator.server import *` publishes. `__dir__` filters
+  the delegated half through the *same* `_is_delegation_excluded` predicate:
+  whatever a `__getattr__` guard refuses, the module's `__dir__` must not
+  list, or `dir()` advertises attributes that reading raises on. Sharing one
+  predicate rather than repeating the condition is what keeps the guard and
+  the listing from drifting apart.
 
 Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
