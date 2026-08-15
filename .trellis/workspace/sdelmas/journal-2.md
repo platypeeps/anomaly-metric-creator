@@ -1115,3 +1115,49 @@ Closed three export-surface audit items on one PR (#376). Neutralized spreadshee
 ### Next Steps
 
 - None - task complete
+
+
+## Session 74: Delegate the server.py ops alias block through module __getattr__
+
+**Date**: 2026-08-15
+**Task**: Delegate the server.py ops alias block through module __getattr__
+**Package**: amc
+**Branch**: `refactor/server-alias-getattr-delegation`
+
+### Summary
+
+Replaced server.py's 227-line hand-written NAME = _server_ops.NAME compatibility block with a module __getattr__ that forwards to server_ops, keeping explicit imports only for the 40 names server.py reads as bare globals or that other in-repo code reads as server.<name>. A future server_ops extraction no longer needs an alias line in server.py. The pre/post attribute-surface diff found two duplicate constant literals the alias block had been silently correcting; the PR review round found dir() advertising a name the dunder guard refuses.
+
+### Main Changes
+
+- server.py: 227 alias assignments out; one module __getattr__ plus __dir__ and an explicit 40-name import block in. Published attribute surface unchanged name for name and object for object; server.py 2,208 -> 2,078 lines with the check_module_size.py ratchet ceiling lowered to the exact new size in the same diff.
+- The 40 explicit binds are load-bearing, not leftovers: PEP 562's module __getattr__ answers attribute access on the module object and is never consulted for global-name resolution inside the module, so delegating a name server.py reads as a bare global fails with a NameError on one request path rather than at import. tests/test_server_alias_surface.py re-derives the required set from the AST so a later edit that adds an internal use of a delegated name fails the suite.
+- __getattr__ refuses __dunder__ names. server_ops defines __all__ and server.py deliberately does not, so an unguarded forward would have silently changed what 'from anomaly_metric_creator.server import *' publishes. __dir__ filters the delegated half through the same _is_delegation_excluded predicate, so dir() never advertises a name reading would refuse -- the review-round defect.
+- Deleted two duplicate DEFAULT_RELEASE / DEFAULT_CHART literals at server.py:43-44 that the alias block had been reassigning a few hundred lines later. Values agreed today so the suite was green either way; the pre/post attribute-identity diff is what found it.
+- Recorded the general lesson in .trellis/spec/amc/backend/architecture.md and the code-reuse guide: when removing a re-export block, diff the module's attribute surface by object identity rather than trusting a green suite; and when a __getattr__ guard refuses a class of names, __dir__ owes the same predicate.
+- Corrected a recorded follow-up on the parent 07-06-server-ops-decomposition epic: moving _openapi_paths does not unblock the OpenAPI document builders, because _openapi_schema_definitions calls resource_snapshot(state) and _explain_schema_for_kind, so they need the same step-6b provider seam.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56b76a0` | refactor(server): delegate the ops alias block through module __getattr__ |
+| `eb9802c` | fix(server): keep dir() consistent with the __getattr__ dunder guard |
+| `092aaaf` | docs(spec): pair a __getattr__ guard with the same __dir__ predicate |
+
+### Testing
+
+- [OK] .venv/bin/pytest -- 2039 passed, 2 skipped in 282.37s (skips are the opt-in real-client smoke tests); no existing test assertion edited
+- [OK] Pre/post attribute-surface diff over all 227 historic names, captured from the pre-change blob before any edit: missing [], identity mismatches []
+- [OK] Negative verification in three independent directions, all reverted: delegating _is_kubernetes_api_path fails test_explicit_binds_cover_every_internal_use; dropping the dunder guard fails test_dunder_names_are_not_delegated; restoring the unfiltered __dir__ union fails test_dir_lists_nothing_the_dunder_guard_refuses
+- [OK] .venv/bin/pre-commit run --all-files clean; ruff check clean; python3 tools/check_module_size.py exit 0 at the exact 2078 ceiling
+- [OK] PR #377 CI: CI Result SUCCESS, CodeQL Analyze (python) completed, merge state CLEAN; Copilot final pass reviewed 17 of 17 files and generated no new comments
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
