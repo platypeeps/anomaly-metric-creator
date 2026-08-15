@@ -191,26 +191,27 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: clamp in CommandTraceStore.list.
 
 ## A-018 — CSV formula injection in trace-bundle export-csv
-- status: open
-- severity: P2 · effort: S · confidence: Plausible
+- status: fixed
+- severity: P2 · effort: S · confidence: Verified
 - dimension: security
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-15 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/trace_bundle.py:208-234 — free-text cells unneutralized; shlex.join passes `=1+1` through (server_ops.py:4804)
-- why: attacker-recorded traces execute formulas in the operator's spreadsheet.
-- fix: apostrophe-prefix leading `= + - @ \t \r` in free-text cells.
+  - src/anomaly_metric_creator/trace_bundle.py `_neutralize_csv_cell` apostrophe-prefixes any cell opening with `=`, `+`, `-`, `@`, tab, or CR, applied to every cell `write_trace_bundle_csv` writes via a dict comprehension at the writer boundary rather than to a named subset of columns. tests/test_trace_bundle.py::test_write_trace_bundle_csv_neutralizes_trigger_in_every_column (6 triggers × 13 user-influenced columns), ::test_write_trace_bundle_csv_neutralizes_every_string_cell (enumeration-proof: every string field of a CommandTrace), ::test_write_trace_bundle_csv_leaves_benign_cells_unchanged, ::test_neutralize_csv_cell_is_idempotent.
+- why: fixed; an attacker-recorded `=cmd|' /C calc'!A0` now opens as inert text in the operator's spreadsheet. Stored traces stay verbatim — the guard is an export-boundary concern.
+- fix: apostrophe-prefix leading `= + - @ \t \r` at the CSV writer boundary, universally rather than per-column.
+- follow-up: the debug UI builds its unsupported-backlog CSV client-side (server_debug_ui.py `csvCell`) and carries no equivalent guard — tracked as 08-15-debug-ui-csv-formula-neutralization.
 
 ## A-019 — --cors-allow-origin '*' reflects to any origin on a no-auth bind
-- status: open
-- severity: P3 · effort: S · confidence: Plausible
+- status: fixed
+- severity: P3 · effort: S · confidence: Verified
 - dimension: security
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-15 @ pending-pr
 - evidence:
-  - src/anomaly_metric_creator/server.py:933-943 — unconditional `*` reflection
-- why: any visited website can read rubric/debug surfaces cross-origin.
-- fix: refuse/warn on `*` without auth, or exclude rubric//v1/debug surfaces.
+  - src/anomaly_metric_creator/server.py `serve_main` calls `parser.error` when `cors_allow_origin` is `*` and no `--auth-token` is set; the gate sits after the `--config` merge in `_parse_serve_args`, so a config file cannot smuggle the wildcard past it. `start_test_server` raises ValueError on the same combination for parity. tests/test_cli.py::test_serve_rejects_wildcard_cors_without_auth, ::test_serve_rejects_wildcard_cors_without_auth_even_on_loopback_override; tests/test_serve_main_wiring.py::test_serve_main_refuses_wildcard_cors_without_auth, ::test_serve_config_file_wildcard_cors_without_auth_is_refused, ::test_serve_main_allows_safe_cors_postures, ::test_start_test_server_refuses_wildcard_cors_without_auth.
+- why: fixed; refused rather than warned, because the exposure includes loopback binds — any website the operator visits can read a 127.0.0.1 bind cross-origin — so there is no safe unauthenticated wildcard posture to warn about.
+- fix: refuse `*` without auth; escapes are an explicit origin or a token. `--allow-remote-without-auth` deliberately does not unlock it (bind host, not browser origin).
 
 ## A-020 — serve_main composition (incl. --mcp-eval-mode → eval_mode wire) never executed by any test
 - status: fixed
@@ -763,15 +764,15 @@ Committed cross-session memory of repo-audit findings; managed by sd-audit-repo 
 - fix: add the row to the OTEL table.
 
 ## A-070 — trace-bundle rejects non-current schema_version with no compat reader
-- status: open
-- severity: P3 · effort: S · confidence: Plausible
+- status: fixed
+- severity: P3 · effort: S · confidence: Verified
 - dimension: consumer-impact
 - first-seen: 2026-07-17 @ b0df00b
-- last-seen: 2026-07-17 @ b0df00b
+- last-seen: 2026-08-15 @ pending-pr
 - evidence:
-  - trace_bundle.py:57-67 — hard != rejection
-- why: the first version bump orphans every archived bundle.
-- fix: decide + document N-1 adapter or matching-version policy.
+  - src/anomaly_metric_creator/trace_bundle.py `load_trace_bundle` — the version-mismatch ValueError now states the policy and the remedy, and a comment beside the check assigns the adapter decision to the PR that first bumps COMMAND_TRACE_EXPORT_VERSION. README trace-bundle section records the policy. tests/test_trace_bundle.py::test_load_trace_bundle_version_error_states_the_version_policy.
+- why: fixed by decision, not by machinery: the schema has never bumped, so an N-1 adapter would be unused code. Bundles are read by the tool version that wrote them; the operator re-exports.
+- fix: matching-version policy documented in the error message, a code comment, and the README.
 
 ## A-071 — Default serve posture discards unhandled-500 detail irrecoverably; request-plane silent
 - status: fixed

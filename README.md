@@ -437,7 +437,7 @@ Server flags:
 | `--max-request-body-bytes` | `1048576` | Maximum accepted HTTP request body size. Oversized app requests return `413`; oversized Kubernetes API requests return a Kubernetes `Status`. |
 | `--allow-remote-without-auth` | _off_ | Explicit lab-only override that permits non-loopback `--host` values without `--auth-token`. |
 | `--mcp-eval-mode` | _off_ | Hide every ground-truth-bearing surface so an agent evaluated through `/mcp` cannot read the scoring rubric. See [Evaluating agents against AMC](#evaluating-agents-against-amc). |
-| `--cors-allow-origin` | _off_ | Optional exact `Access-Control-Allow-Origin` value for browser clients, or `*` for any origin. Preflight requests are answered without bearer auth. |
+| `--cors-allow-origin` | _off_ | Optional exact `Access-Control-Allow-Origin` value for browser clients, or `*` for any origin. `*` **requires `--auth-token`** — an unauthenticated wildcard lets any website the operator visits read the server cross-origin, loopback binds included. Preflight requests are answered without bearer auth. |
 | `--rate-limit-per-minute` | `0` | Optional per-client command and Kubernetes API request limit; `0` disables rate limiting. Limited app requests return JSON `429`; limited Kubernetes API requests return a Kubernetes `Status` with `reason: TooManyRequests`. Idle per-client buckets are swept each window so the limiter's own memory stays bounded on a public bind. |
 | `--max-concurrent-requests` | `64` | Cap on concurrent worker threads. An over-cap connection gets a fast `503` and is closed before a worker is spawned, so connection volume cannot exhaust threads. `0` disables the bound. |
 | `--max-sse-connections` | `16` | Cap on concurrent SSE streams (`/v1/debug/events`, `/v1/logs/stream`), each of which holds a worker for its wall-clock loop. Over-ceiling streams get a JSON `503`. `0` disables the bound. |
@@ -753,6 +753,18 @@ one of:
 - `amc trace-bundle search BUNDLE.json --status unsupported`
 - `amc trace-bundle unsupported BUNDLE.json`
 - `amc trace-bundle export-csv BUNDLE.json --output traces.csv`
+
+**Bundle version policy.** A bundle is read by the tool version that wrote it.
+There is no backward-compatibility adapter: if `schema_version` does not match
+the running tool, the read fails and the remedy is to re-export the bundle from
+the live server with the current tool. Archive the bundle alongside the tool
+version that produced it if you need to read it later.
+
+**CSV export and spreadsheets.** `export-csv` neutralizes cells that begin with
+a spreadsheet formula trigger (`=`, `+`, `-`, `@`, tab, or CR) by prefixing an
+apostrophe, so a recorded command such as `=cmd|' /C calc'!A0` opens as inert
+text rather than executing. Recorded traces themselves are stored verbatim; the
+guard applies at the CSV boundary only.
 
 #### Advanced flags
 

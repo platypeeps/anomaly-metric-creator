@@ -215,6 +215,21 @@ answered without bearer auth, and normal responses include access-control
 headers only for the configured origin or `*`. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 
+A `*` origin requires `--auth-token`; `serve_main` calls `parser.error` on the
+combination and `start_test_server` raises `ValueError` for parity (A-019). The
+gate sits *after* the `--config` merge in `_parse_serve_args`, so a config file
+cannot smuggle the wildcard past it — put any future serve-flag combination gate
+in the same place for the same reason. `--allow-remote-without-auth` does not
+unlock it: that flag governs the bind host, while the wildcard exposure is a
+browser-origin property that applies to loopback binds too. Sources:
+`src/anomaly_metric_creator/server.py`; `SECURITY.md`; `tests/test_cli.py`;
+`tests/test_serve_main_wiring.py`.
+
+A `serve` invocation that a gate is supposed to reject starts a real blocking
+server if that gate regresses, so subprocess tests asserting a serve rejection
+must pass a `timeout` — a regression has to fail the suite, not hang it.
+Sources: `tests/test_cli.py`.
+
 ## Redaction and Structured Logs
 
 Structured request logging is opt-in through `--structured-log` or

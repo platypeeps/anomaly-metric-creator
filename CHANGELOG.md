@@ -7,6 +7,17 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Trace-export hardening (audit A-018, A-019, A-070). **Behavior change:**
+  `amc serve --cors-allow-origin '*'` is now refused unless `--auth-token` is
+  also set — an unauthenticated wildcard origin lets any website the operator
+  visits read the server cross-origin, loopback binds included. Pass an
+  explicit origin or a token; `--allow-remote-without-auth` does not unlock it.
+  **Behavior change:** `amc trace-bundle export-csv` now apostrophe-prefixes
+  any cell beginning with a spreadsheet formula trigger (`=`, `+`, `-`, `@`,
+  tab, or CR) across every column, so attacker-recorded commands open as inert
+  text; stored traces are unchanged. The trace-bundle version policy is now
+  documented: bundles are read by the tool version that wrote them, and a
+  `schema_version` mismatch tells the operator to re-export.
 - `amc serve` simulator clock and command-mutation correctness fixes (audit
   A-012..A-017). **Behavior change:** a command-mode `kubectl delete`, `scale`,
   or `patch` naming a resource absent from the (overlay-aware) snapshot now

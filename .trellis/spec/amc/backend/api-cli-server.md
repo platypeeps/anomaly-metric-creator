@@ -466,6 +466,24 @@ are not accepted as integers. Sources:
 `src/anomaly_metric_creator/server_traces.py`; `tests/test_trace_bundle.py`;
 `tests/test_server.py`.
 
+`write_trace_bundle_csv` neutralizes spreadsheet formula triggers (a leading
+`=`, `+`, `-`, `@`, tab, or CR) by apostrophe-prefixing the cell, applied to
+**every** cell it writes rather than to a named subset of columns: recorded
+traces are attacker-influenced, injection fires from any cell, and a per-column
+allowlist rots the moment a column is added (A-018). Keep the guard at the
+writer boundary, after any truncation or preview step, so the first byte written
+is the guarded one; stored traces stay verbatim. Sources:
+`src/anomaly_metric_creator/trace_bundle.py`; `SECURITY.md`;
+`tests/test_trace_bundle.py`.
+
+Trace bundles are read by the tool version that wrote them — there is
+deliberately no N-1 compatibility adapter, because the schema has never been
+bumped (A-070). The PR that first bumps `COMMAND_TRACE_EXPORT_VERSION` owns the
+decision of whether to add one, and updates the comment beside the check, the
+mismatch error message, and the README trace-bundle section together. Sources:
+`src/anomaly_metric_creator/trace_bundle.py`; `README.md`;
+`tests/test_trace_bundle.py`.
+
 Trace import/export code should use the shared trace scalar and tuple validators
 rather than direct `int(...)` or `tuple(...)` calls on payload data. Invalid
 trace entries must raise validation errors with the entry index instead of being

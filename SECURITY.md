@@ -130,6 +130,26 @@ the agent's command history in eval mode is on-disk persistence
 send `Content-Security-Policy` or `Strict-Transport-Security` — see Known
 limits.
 
+### Cross-origin reads
+
+`--cors-allow-origin '*'` is refused unless `--auth-token` is also set. A
+wildcard origin on an unauthenticated server means any website the operator
+visits can read its responses cross-origin — and this is **not** limited to
+remote binds: a page loaded in the operator's browser can reach a `127.0.0.1`
+bind just as easily, which is exactly the workshop default. The escapes are an
+explicit origin value or adding a token; `--allow-remote-without-auth` does not
+unlock it, because that flag governs the bind host, not the browser origin.
+
+### CSV exports and spreadsheet formulas
+
+Recorded command traces are attacker-influenced text: whoever can reach the
+simulator chooses what gets recorded. `amc trace-bundle export-csv` therefore
+apostrophe-prefixes any cell starting with `=`, `+`, `-`, `@`, tab, or CR, so a
+recorded `=cmd|' /C calc'!A0` is inert when the operator opens the export. The
+guard is applied to every column at the writer boundary rather than to a list of
+"the free-text ones", so adding a column cannot silently reopen the hole. Note
+that the debug UI's own client-side CSV download does not yet carry this guard.
+
 ## Known limits
 
 **Existing protections** (do not mistake these for gaps):

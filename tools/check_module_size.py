@@ -114,8 +114,10 @@ RATCHET: dict[str, tuple[int, str]] = {
         "debt: 07-06-server-ops-decomposition, extracting leaves until under cap",
     ),
     "server.py": (
-        2190,
-        "debt: HTTP serve facade, not yet decomposed",
+        2208,
+        "debt: HTTP serve facade, not yet decomposed; +18 for the A-019 "
+        "wildcard-CORS gates in serve_main and start_test_server, two "
+        "non-separable validation branches inside existing functions",
     ),
     "server_mcp.py": (
         1453,
