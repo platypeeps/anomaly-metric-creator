@@ -49,8 +49,14 @@ normal `AttributeError` stand. Machinery that probes modules for optional
 dunders (`copy`, `pickle`, `pytest`'s collection, `inspect`) then sees the
 same answer it saw before this change.
 
-`__dir__()` returns `sorted(set(globals()) | set(dir(_server_ops)))`, so the
-delegated names stay visible to `dir()`, `inspect`, and REPL completion.
+`__dir__()` returns `globals()` unioned with the delegated half of
+`dir(_server_ops)`, so the delegated names stay visible to `dir()`, `inspect`,
+and REPL completion. The delegated half is filtered through the *same*
+predicate the guard uses (`_is_delegation_excluded`), because a raw union
+carries `server_ops.__all__` into `dir(server)` while `server.__all__` raises —
+`dir()` would advertise an attribute that reading refuses. Sharing one
+predicate between the guard and the listing is what keeps the two from
+drifting.
 
 ### Why the 40 cannot be delegated
 
@@ -150,8 +156,11 @@ New file `tests/test_server_alias_surface.py`:
    `False` even though `server_ops.__all__` exists. This is the star-import
    contract change the dunder guard exists to prevent, so it gets its own
    test rather than riding along in the unknown-attribute case.
-4. `test_dir_includes_delegated_names` — a delegated name and an explicit one
-   both appear in `dir(server)`.
+4. `test_dir_includes_delegated_and_explicit_names` — a delegated name and an
+   explicit one both appear in `dir(server)`.
+4b. `test_dir_lists_nothing_the_dunder_guard_refuses` — the converse, and the
+   one the raw union failed: `__all__` is absent from `dir(server)`, and every
+   listed name is `hasattr`-readable. Added in the PR #377 review round.
 5. `test_explicit_binds_cover_every_internal_use` — the enumeration-proof
    guard: AST-scan `server.py` for bare-global loads of names that
    `server_ops` defines, and assert each is explicitly bound. This is the
@@ -224,13 +233,14 @@ no persisted format, no HTTP-surface change.
 `server.py` is enrolled in `tools/check_module_size.py`'s ratchet at exactly
 2,208. All 227 assignment lines go; an explicit import block for 40 names
 plus `__getattr__`, `__dir__`, and the comment explaining the split come back.
-**Measured after the change: 2,064** (−144). Measure, do not estimate, when
+**Measured after the change: 2,078** (−130, including the review-round
+`__dir__` filter). Measure, do not estimate, when
 writing the ceiling.
 
 The lint will **not** catch a stale-high ceiling. Reading
 `tools/check_module_size.py`: an enrolled module violates only when it exceeds
 its ceiling, or when it drops to or under the 800-line cap (the stale-entry
-rule). `server.py` at 2,064 under a 2,208 ceiling is silently clean. So
+rule). `server.py` at 2,078 under a 2,208 ceiling is silently clean. So
 "lower the ceiling" is a review-gate obligation verified by reading the diff,
 not something a green lint run attests to — and leaving it high would
 silently re-authorize the 144 lines this task removed.

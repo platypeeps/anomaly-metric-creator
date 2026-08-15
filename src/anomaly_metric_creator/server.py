@@ -369,6 +369,11 @@ from .server_ops import (
 )
 
 
+def _is_delegation_excluded(name: str) -> bool:
+    """Names `__getattr__` refuses to forward, so `__dir__` must not list them."""
+    return name.startswith("__") and name.endswith("__")
+
+
 def __getattr__(name: str) -> Any:
     """Publish the historic `server.<ops name>` surface from `server_ops`.
 
@@ -376,7 +381,7 @@ def __getattr__(name: str) -> Any:
     this module deliberately does not; forwarding it would quietly change what
     `from anomaly_metric_creator.server import *` imports.
     """
-    if name.startswith("__") and name.endswith("__"):
+    if _is_delegation_excluded(name):
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     try:
         return getattr(_server_ops, name)
@@ -387,8 +392,17 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """Keep the delegated names visible to dir(), inspect, and completion."""
-    return sorted(set(globals()) | set(dir(_server_ops)))
+    """Keep the delegated names visible to dir(), inspect, and completion.
+
+    The delegated half is filtered through the same predicate `__getattr__`
+    uses, so `dir()` never advertises a name that reading would refuse --
+    `server_ops.__all__` being the one that actually occurs.
+    """
+    delegated = {
+        name for name in dir(_server_ops) if not _is_delegation_excluded(name)
+    }
+    return sorted(set(globals()) | delegated)
+
 
 def make_handler(
     state: SimulationState,

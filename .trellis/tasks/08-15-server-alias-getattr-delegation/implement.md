@@ -19,7 +19,7 @@ Decisive checks, with failure defined up front:
 3. `python tools/check_module_size.py` — expect exit 0. Note what this does
    **not** prove: the lint flags an enrolled module only when it exceeds its
    ceiling or falls to/under the 800-line cap, so a `server.py` that shrank to
-   2,064 under a stale 2,208 ceiling passes silently. The ceiling being
+   2,078 under a stale 2,208 ceiling passes silently. The ceiling being
    lowered is verified by `git diff tools/check_module_size.py` showing the new
    exact `wc -l` of `server.py`, not by this command's exit code.
 4. `python -c "import anomaly_metric_creator.server as s; print(hasattr(s, '__all__'))"`

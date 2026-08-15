@@ -114,8 +114,8 @@ RATCHET: dict[str, tuple[int, str]] = {
         "debt: 07-06-server-ops-decomposition, extracting leaves until under cap",
     ),
     "server.py": (
-        2064,
-        "debt: HTTP serve facade, not yet decomposed; -144 from "
+        2078,
+        "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
         "imports",

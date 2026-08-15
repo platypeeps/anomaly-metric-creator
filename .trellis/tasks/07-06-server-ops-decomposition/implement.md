@@ -176,7 +176,7 @@ cut.
   `server` does not inherit `server_ops.__all__`. Removing the block also
   surfaced two dead duplicate literals (`DEFAULT_RELEASE` / `DEFAULT_CHART` at
   `server.py:43-44`) that the alias assignments had been silently overwriting.
-  `server.py` **2,208 → 2,064** lines; ratchet ceiling lowered in the same diff.
+  `server.py` **2,208 → 2,078** lines; ratchet ceiling lowered in the same diff.
 
 - [ ] Step 7 — close-out, pending 6b.
 
@@ -206,7 +206,7 @@ cut.
 ## Follow-Ups
 
 - Per-kind descriptor collapse (behavior-affecting; own design).
-- `server.py` (**2,064 lines** as of 2026-08-15, down from 2,208 after the
+- `server.py` (**2,078 lines** as of 2026-08-15, down from 2,208 after the
   alias-delegation child; 1,791 at design time) infrastructure/dispatch/CLI
   split.
 - ~~`__getattr__` delegation for `server.py`'s alias block~~ — **done**

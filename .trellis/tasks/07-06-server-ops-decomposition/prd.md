@@ -97,7 +97,7 @@ explicitly not a split.
   has to be extended for every new ops name: `server.py` publishes the historic
   surface through a module `__getattr__` forwarding to `server_ops`, with 40
   explicit imports for the names that cannot be delegated. `server.py` is
-  **2,064 lines** as of 2026-08-15 (2,208 before the delegation; 1,791 at
+  **2,078 lines** as of 2026-08-15 (2,208 before the delegation; 1,791 at
   design time — it had *grown* by ~400 while `server_ops.py` shrank). It still
   mixes bounded-server infrastructure, HTTP dispatch, and `serve_main` CLI, so
   the infrastructure/dispatch/CLI split remains an open follow-up; only the

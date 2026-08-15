@@ -35,11 +35,24 @@ def _ops_public_and_private_names() -> list[str]:
     return [name for name in dir(server_ops) if not name.startswith("__")]
 
 
+# Named anchors for the non-vacuity check below. A count threshold would be the
+# wrong instrument: `server_ops` is mid-decomposition, so its attribute count is
+# expected to fall while the delegation contract stays exactly as strong.
+_SENTINEL_DELEGATED_NAMES = (
+    "render_command",
+    "resource_snapshot",
+    "build_state",
+    "_render_helm_status",
+)
+
+
 def test_every_server_ops_name_resolves_through_server():
     names = _ops_public_and_private_names()
     # Sanity-check the derivation itself: a `dir()` that came back nearly empty
     # would make every assertion below vacuously true.
-    assert len(names) > 200, f"suspiciously small server_ops surface: {len(names)}"
+    missing = [name for name in _SENTINEL_DELEGATED_NAMES if name not in names]
+    assert not missing, f"server_ops no longer exposes {missing}"
+    assert len(names) > 20, f"suspiciously small server_ops surface: {len(names)}"
     for name in names:
         assert getattr(server, name) is getattr(server_ops, name), name
 
@@ -72,6 +85,19 @@ def test_dir_includes_delegated_and_explicit_names():
     assert "build_state" in listed
     assert "_render_helm_status" in listed
     assert listed == sorted(listed)
+
+
+def test_dir_lists_nothing_the_dunder_guard_refuses():
+    """`dir()` must not advertise an attribute that reading raises on.
+
+    `server_ops.__all__` is the concrete case: it is in `dir(server_ops)`, and
+    an unfiltered union would carry it into `dir(server)` even though
+    `server.__all__` raises `AttributeError`.
+    """
+    listed = dir(server)
+    assert "__all__" not in listed
+    for name in listed:
+        assert hasattr(server, name), f"dir(server) lists unreadable {name!r}"
 
 
 def test_explicit_binds_cover_every_internal_use():
