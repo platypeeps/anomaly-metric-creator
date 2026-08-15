@@ -225,11 +225,6 @@ browser-origin property that applies to loopback binds too. Sources:
 `src/anomaly_metric_creator/server.py`; `SECURITY.md`; `tests/test_cli.py`;
 `tests/test_serve_main_wiring.py`.
 
-A `serve` invocation that a gate is supposed to reject starts a real blocking
-server if that gate regresses, so subprocess tests asserting a serve rejection
-must pass a `timeout` — a regression has to fail the suite, not hang it.
-Sources: `tests/test_cli.py`.
-
 ## Redaction and Structured Logs
 
 Structured request logging is opt-in through `--structured-log` or
