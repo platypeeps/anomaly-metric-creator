@@ -10,7 +10,7 @@ Source of the mechanism: `.trellis/tasks/archive/2026-08/08-03-sd-review-kb-coor
 `sd-review scope=pr` (and the `sd-housekeeping` merge gate) return **blocked**
 on the deterministic `sd-check` row `knowledge.obsidian-kb`, reporting a stale
 copy count, while a standalone
-`python3 scripts/sd-ai-command-pack-update-spec-kb.py --check` on the same head
+`python3 ~/.agents/bin/sd-ai-command-pack-update-spec-kb.py --check` on the same head
 passes clean (exit 0). The block reproduces only under the coordinator, never
 under a fresh standalone `--check`. Observed on PR #316 and PR #324.
 

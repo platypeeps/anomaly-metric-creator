@@ -73,11 +73,11 @@ is_review_tooling_path() {
       return 0
       ;;
     # Installed command-pack surfaces are matched by shape, not by roster. The
-    # pack owns which scripts it ships, so pinning their names here turned every
-    # pack refresh into a classifier change. The underscore-named library
-    # modules (scripts/sd_ai_command_pack_*.py) stay outside this glob so they
-    # keep their app gate.
-    .sd-ai-command-pack/*|scripts/sd-ai-command-pack-*|tests/test_pr_body_scope_lint.py)
+    # pack owns which files it ships, so pinning their names here turned every
+    # pack refresh into a classifier change. Since the thin conversion the only
+    # such surface left in this tree is the metadata directory; the pack's
+    # scripts live on the machine and never appear in a diff here.
+    .sd-ai-command-pack/*)
       return 0
       ;;
     .agents/*|.codex/*|.claude/*|.gemini/*|.opencode/*|.prism/*)
@@ -89,7 +89,7 @@ is_review_tooling_path() {
     .github/copilot-instructions.md|.github/copilot/hooks.json|.github/copilot/hooks/*)
       return 0
       ;;
-    docs/DEVELOPMENT_CYCLE.md|docs/REVIEW_PATTERNS.md|docs/SD_AI_COMMAND_PACK.md)
+    docs/DEVELOPMENT_CYCLE.md|docs/REVIEW_PATTERNS.md)
       return 0
       ;;
     *)
@@ -100,7 +100,7 @@ is_review_tooling_path() {
 
 is_repo_tooling_path() {
   case "$1" in
-    scripts/sd_ai_command_pack_fleet_lib.py|scripts/update_repomix)
+    scripts/update_repomix)
       return 0
       ;;
     *)

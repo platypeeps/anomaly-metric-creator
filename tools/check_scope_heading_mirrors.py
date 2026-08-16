@@ -2,11 +2,17 @@
 """Guard that every prose description of the PR-body scope guard names the
 same category headings the guard actually recognizes.
 
-`scripts/sd-ai-command-pack-pr-body-scope.py` decides whether a PR body
+The pack's `sd-ai-command-pack-pr-body-scope.py` decides whether a PR body
 carries the explicit scope section its diff requires. It is the only authority
 on which headings exist: `DEFAULT_RULES` in that script, merged with the
 repository's `.sd-ai-command-pack/pr-body-scope.json`. Nothing else in this
 repository gets to hold an opinion about that list.
+
+Since the thin conversion that script is not in this tree; it lives wherever
+the machine keeps the pack install, so this guard asks the layout resolver
+where instead of holding a path it no longer owns. A checkout with no install
+-- a CI runner, a fresh clone -- has no authority to derive from, so the guard
+reports itself skipped rather than failing on a file nobody shipped to it.
 
 Five files describe the guard to a human or an agent, and every one of them
 recites the category headings by hand. That hand-copying is the drift: a
@@ -52,11 +58,11 @@ by the forward pass alone. Widening the reverse pass to bare double-quoted
 prose was tried and rejected: it flags ordinary sentences that happen to quote
 a fragment, and a guard that cries wolf gets silenced.
 
-`docs/SD_AI_COMMAND_PACK.md` is deliberately not a mirror. It documents
-specific pack behaviors that involve individual headings -- the copied/generated
-preflight, the `sd-create-pr` body preparation -- and never claims to enumerate
-the category set. Requiring it to name all five would be requiring it to say
-something it has no reason to say.
+The pack's own `SD_AI_COMMAND_PACK.md` is deliberately not a mirror, and since
+the thin conversion it is not in this tree at all. It documents specific pack
+behaviors that involve individual headings -- the copied/generated preflight,
+the `sd-create-pr` body preparation -- and never claims to enumerate the
+category set.
 
 Invocation
 ----------
@@ -74,18 +80,21 @@ synthetic tree; it defaults to this repository.
 Exit codes
 ----------
 
-    0   clean
+    0   clean, or skipped because no pack install provides the authority
     1   a violation: a mirror is missing a canonical heading, or names an
         unrecognized one
-    2   a structural error: the authority script or a mirror file cannot be
-        read, or the authority reports its own configuration error
+    2   a structural error: the authority resolved but cannot be read, a mirror
+        file cannot be read, or the authority reports its own configuration
+        error
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,7 +102,8 @@ from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-AUTHORITY = Path("scripts/sd-ai-command-pack-pr-body-scope.py")
+AUTHORITY_NAME = "sd-ai-command-pack-pr-body-scope.py"
+LAYOUT_RESOLVER = Path(".sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py")
 
 # Files that describe the scope guard's category set to a human or an agent.
 # Each must name every canonical heading. Keep this list and the guard's own
@@ -128,6 +138,7 @@ _BACKTICK_SCOPE = re.compile(r"`([^`\n]*?scope:?)[ \t]*`", re.IGNORECASE)
 class Authority:
     """The scope guard's own view of which headings exist."""
 
+    path: Path
     canonical: tuple[str, ...]
     all_headings: tuple[str, ...]
     has_heading: object
@@ -137,54 +148,89 @@ class StructuralError(Exception):
     """The guard cannot run, as opposed to finding a violation."""
 
 
-def _load_authority(root: Path) -> Authority:
-    path = root / AUTHORITY
-    if not path.is_file():
-        raise StructuralError(f"authority script not found: {AUTHORITY}")
+def _authority_path(root: Path) -> Path | None:
+    """Where the scope guard lives, or None when nothing provides it.
 
-    # The authority lives under scripts/ and imports its sibling library
-    # package, so scripts/ must be importable before it executes. The module
-    # also has to be registered in sys.modules before exec_module: it defines
-    # frozen dataclasses, and dataclasses resolves annotations through
-    # sys.modules[cls.__module__], which raises AttributeError for a module
-    # that is not registered yet.
-    scripts_dir = str(root / "scripts")
-    if scripts_dir not in sys.path:
-        sys.path.insert(0, scripts_dir)
+    A copy sitting under ``scripts/`` wins: that is how the tests build a
+    synthetic tree, and it is what a checkout that still vendors the pack
+    looks like. Otherwise ask the installed layout resolver, which is the
+    sanctioned way to find a machine-installed pack script.
+    """
+    vendored = root / "scripts" / AUTHORITY_NAME
+    if vendored.is_file():
+        return vendored
+
+    resolver = root / LAYOUT_RESOLVER
+    if not resolver.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            [sys.executable, str(resolver), "--resolve", AUTHORITY_NAME],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    try:
+        resolved = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    path = resolved.get("path") if isinstance(resolved, dict) else None
+    if not isinstance(path, str) or not path:
+        return None
+    candidate = Path(path)
+    return candidate if candidate.is_file() else None
+
+
+def _load_authority(root: Path, path: Path) -> Authority:
+    # The authority imports its sibling library module by bare name from its
+    # own directory, so that directory must be importable before it executes.
+    # The module also has to be registered in sys.modules before exec_module:
+    # it defines frozen dataclasses, and dataclasses resolves annotations
+    # through sys.modules[cls.__module__], which raises AttributeError for a
+    # module that is not registered yet.
+    authority_dir = str(path.parent)
+    if authority_dir not in sys.path:
+        sys.path.insert(0, authority_dir)
 
     module_name = "_amc_pr_body_scope_authority"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise StructuralError(f"cannot load authority script: {AUTHORITY}")
+        raise StructuralError(f"cannot load authority script: {path}")
     module: ModuleType = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
     except Exception as exc:  # noqa: BLE001 - any import failure is structural
-        raise StructuralError(f"cannot execute {AUTHORITY}: {exc}") from exc
+        raise StructuralError(f"cannot execute {path}: {exc}") from exc
 
     for name in ("_rules_for_repo", "_body_has_heading"):
         if not hasattr(module, name):
             raise StructuralError(
-                f"{AUTHORITY} has no {name}; the guard's contract with the "
+                f"{path} has no {name}; the guard's contract with the "
                 "authority changed and this lint needs updating"
             )
 
     rules, error = module._rules_for_repo(root, None)
     if error is not None:
-        raise StructuralError(f"{AUTHORITY} reports a configuration error: {error}")
+        raise StructuralError(f"{path} reports a configuration error: {error}")
     if not rules:
-        raise StructuralError(f"{AUTHORITY} resolved no scope rules")
+        raise StructuralError(f"{path} resolved no scope rules")
 
     canonical: list[str] = []
     every: list[str] = []
     for rule in rules:
         if not rule.headings:
-            raise StructuralError(f"{AUTHORITY}: rule {rule.label!r} has no headings")
+            raise StructuralError(f"{path}: rule {rule.label!r} has no headings")
         canonical.append(rule.headings[0])
         every.extend(rule.headings)
 
     return Authority(
+        path=path,
         canonical=tuple(canonical),
         all_headings=tuple(every),
         has_heading=module._body_has_heading,
@@ -210,8 +256,8 @@ def _check_mirror(
         if heading not in text:
             violations.append(
                 f"{relative}: does not name the canonical heading {heading!r}. "
-                f"{AUTHORITY} recognizes it; this file tells readers it does not "
-                "exist."
+                f"{authority.path} recognizes it; this file tells readers it "
+                "does not exist."
             )
 
     allowed = ALLOWED_UNRECOGNIZED.get(relative, ())
@@ -227,14 +273,15 @@ def _check_mirror(
         line = text.count("\n", 0, match.start()) + 1
         violations.append(
             f"{relative}:{line}: {token!r} is written as a scope heading but "
-            f"{AUTHORITY} does not recognize it. Use a heading the authority "
-            "accepts, or add this exact token to ALLOWED_UNRECOGNIZED in "
+            f"{authority.path} does not recognize it. Use a heading the "
+            "authority accepts, or add this exact token to "
+            "ALLOWED_UNRECOGNIZED in "
             f"{Path(__file__).name} if it is a deliberate counter-example."
         )
 
 
 def _print_table(authority: Authority, root: Path) -> None:
-    print(f"authority: {AUTHORITY}")
+    print(f"authority: {authority.path}")
     print(f"canonical headings ({len(authority.canonical)}):")
     for heading in authority.canonical:
         print(f"  {heading}")
@@ -263,8 +310,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
+    authority_path = _authority_path(root)
+    if authority_path is None:
+        print(
+            "check_scope_heading_mirrors: skipped: no resolvable "
+            "sd-ai-command-pack install provides "
+            f"{AUTHORITY_NAME}; the mirrors have no authority to check against."
+        )
+        return 0
+
     try:
-        authority = _load_authority(root)
+        authority = _load_authority(root, authority_path)
         if args.list:
             _print_table(authority, root)
             return 0

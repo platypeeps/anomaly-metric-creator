@@ -293,13 +293,13 @@ from the pre-PR CI-hygiene heading. Sources: `pyproject.toml`;
 
 ## Local and Remote Review Gates
 
-Use `scripts/sd-ai-command-pack-full-check.sh` as the local review gate rather than
+Use `~/.agents/bin/sd-ai-command-pack-full-check.sh` as the local review gate rather than
 manually assembling the recurring lint/test list. The pack-provided script runs
 deterministic whitespace checks, the shared review preflight through
-`scripts/sd-ai-command-pack-review-preflight.mjs`, AMC's repo-local review
+`~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`, AMC's repo-local review
 preflight through `scripts/check-review-preflight.mjs`, copied/generated scope
-checks through `scripts/sd-ai-command-pack-review-scope.sh`, the structural
-install audit through `scripts/sd-ai-command-pack-install-audit.py`,
+checks through `~/.agents/bin/sd-ai-command-pack-review-scope.sh`, the structural
+install audit through `~/.agents/bin/sd-ai-command-pack-install-audit.py`,
 current-diff CI classification, configured package scripts when present, and
 optional Prism/Gito review. AMC's repo-local review preflight runs the CI/review
 cadence contract guard, the Copilot instruction contract guard, the PR-body
@@ -310,23 +310,22 @@ tests run in GitHub CI instead of being repeated by the repo-local preflight. Us
 iterating after the focused deterministic checks pass; re-enable Prism for the
 final local review when practical. If the generated Obsidian KB freshness check
 fails after a pull, refresh the gitignored output with
-`.venv/bin/python3 scripts/sd-ai-command-pack-update-spec-kb.py` before
+`.venv/bin/python3 ~/.agents/bin/sd-ai-command-pack-update-spec-kb.py` before
 rerunning the gate. Use `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON`,
 `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_MAX_FINDINGS`, or
 `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES` to steer Prism without editing the script.
-Sources: `scripts/sd-ai-command-pack-full-check.sh`;
-`scripts/sd-ai-command-pack-review-preflight.mjs`;
+Sources: `~/.agents/bin/sd-ai-command-pack-full-check.sh`;
+`~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`;
 `scripts/check-review-preflight.mjs`;
-`scripts/sd-ai-command-pack-review-scope.sh`;
-`scripts/sd-ai-command-pack-install-audit.py`;
+`~/.agents/bin/sd-ai-command-pack-review-scope.sh`;
+`~/.agents/bin/sd-ai-command-pack-install-audit.py`;
 `tools/check_ci_review_contract.py`;
 `tools/check_copilot_instruction_contract.py`;
-`scripts/sd-ai-command-pack-pr-body-scope.py`;
+`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`;
 `.sd-ai-command-pack/pr-body-scope.json`;
 `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`;
 `tests/test_copilot_instruction_contract.py`;
-`tests/test_pr_body_scope_lint.py`;
 `tests/test_python_syntax_lint.py`;
 `tests/test_workflow_pip_lint.py`; `tests/test_trellis_placeholder_lint.py`;
 `tests/test_trace_payload_antipatterns_lint.py`; `tests/test_server.py`;
@@ -621,7 +620,7 @@ Wrong:
 
 ```bash
 # setup-uv cache permissions are inherited unchanged.
-uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
+uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
 
 # Manual dispatch can leave a docs-only diff app_required=false.
 bash scripts/classify-ci-changes.sh --github-output changed-files.txt
@@ -636,7 +635,7 @@ Correct:
 
 ```bash
 install -d -m 0700 -- "$UV_CACHE_DIR"
-uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
+uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
 
 classifier_args=(--github-output)
 if [ "$EVENT_NAME" = "workflow_dispatch" ]; then

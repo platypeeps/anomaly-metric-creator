@@ -46,79 +46,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       references/
         server-compatibility-map.md
       SKILL.md
-    sd-audit-repo/
-      charters/
-        accessibility-i18n.md
-        architecture.md
-        bloat.md
-        consumer-impact.md
-        correctness.md
-        dependencies.md
-        design.md
-        documentation.md
-        improvements.md
-        observability.md
-        performance.md
-        release-hygiene.md
-        security.md
-        testing.md
-        tooling.md
-      SKILL.md
-    sd-check/
-      SKILL.md
-    sd-continue/
-      SKILL.md
-    sd-create-pr/
-      SKILL.md
-    sd-finish-work/
-      SKILL.md
-    sd-fix-ci/
-      SKILL.md
-    sd-help/
-      references/
-        command-catalog.md
-        completion-lifecycle.md
-        environment-blocked-recovery.md
-        examples.md
-        recovery-artifacts.md
-        structured-questions.md
-      SKILL.md
-    sd-housekeeping/
-      SKILL.md
-    sd-retro/
-      SKILL.md
-    sd-review/
-      SKILL.md
-    sd-review-learnings/
-      SKILL.md
-    sd-review-pr/
-      SKILL.md
-    sd-ship/
-      references/
-        watch-coordinator.md
-      SKILL.md
-    sd-start/
-      SKILL.md
-    sd-status/
-      SKILL.md
-    sd-test-gaps/
-      SKILL.md
-    sd-update-deps/
-      SKILL.md
-    sd-update-spec/
-      references/
-        architecture.md
-        obsidian-kb.md
-        repository-map.md
-      SKILL.md
-    sd-work-backlog/
-      references/
-        autonomous-loop.md
-        ledger-recovery.md
-        ownership-recovery.md
-        run-recovery.md
-        terminal-reconciliation.md
-      SKILL.md
     security-best-practices/
       agents/
         openai.yaml
@@ -207,26 +134,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     trellis-implement.md
     trellis-research.md
   commands/
-    sd/
-      audit-repo.md
-      check.md
-      continue.md
-      create-pr.md
-      finish-work.md
-      fix-ci.md
-      help.md
-      housekeeping.md
-      retro.md
-      review-learnings.md
-      review-pr.md
-      review.md
-      ship.md
-      start.md
-      status.md
-      test-gaps.md
-      update-deps.md
-      update-spec.md
-      work-backlog.md
     trellis/
       continue.md
       finish-work.md
@@ -245,63 +152,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         openai.yaml
       references/
         server-compatibility-map.md
-      SKILL.md
-    sd-audit-repo/
-      SKILL.md
-    sd-check/
-      SKILL.md
-    sd-continue/
-      SKILL.md
-    sd-create-pr/
-      SKILL.md
-    sd-finish-work/
-      SKILL.md
-    sd-fix-ci/
-      SKILL.md
-    sd-help/
-      references/
-        command-catalog.md
-        completion-lifecycle.md
-        environment-blocked-recovery.md
-        examples.md
-        recovery-artifacts.md
-        structured-questions.md
-      SKILL.md
-    sd-housekeeping/
-      SKILL.md
-    sd-retro/
-      SKILL.md
-    sd-review/
-      SKILL.md
-    sd-review-learnings/
-      SKILL.md
-    sd-review-pr/
-      SKILL.md
-    sd-ship/
-      references/
-        watch-coordinator.md
-      SKILL.md
-    sd-start/
-      SKILL.md
-    sd-status/
-      SKILL.md
-    sd-test-gaps/
-      SKILL.md
-    sd-update-deps/
-      SKILL.md
-    sd-update-spec/
-      references/
-        architecture.md
-        obsidian-kb.md
-        repository-map.md
-      SKILL.md
-    sd-work-backlog/
-      references/
-        autonomous-loop.md
-        ledger-recovery.md
-        ownership-recovery.md
-        run-recovery.md
-        terminal-reconciliation.md
       SKILL.md
     security-best-practices/
       agents/
@@ -420,26 +270,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     trellis-implement.md
     trellis-research.md
   commands/
-    sd/
-      audit-repo.toml
-      check.toml
-      continue.toml
-      create-pr.toml
-      finish-work.toml
-      fix-ci.toml
-      help.toml
-      housekeeping.toml
-      retro.toml
-      review-learnings.toml
-      review-pr.toml
-      review.toml
-      ship.toml
-      start.toml
-      status.toml
-      test-gaps.toml
-      update-deps.toml
-      update-spec.toml
-      work-backlog.toml
     trellis/
       continue.toml
       finish-work.toml
@@ -611,25 +441,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       continue.md
       finish-work.md
       start.md
-    sd-audit-repo.md
-    sd-check.md
-    sd-continue.md
-    sd-create-pr.md
-    sd-finish-work.md
-    sd-fix-ci.md
-    sd-help.md
-    sd-housekeeping.md
-    sd-retro.md
-    sd-review-learnings.md
-    sd-review-pr.md
-    sd-review.md
-    sd-ship.md
-    sd-start.md
-    sd-status.md
-    sd-test-gaps.md
-    sd-update-deps.md
-    sd-update-spec.md
-    sd-work-backlog.md
   lib/
     session-utils.js
     trellis-context.js
@@ -724,6 +535,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   rules.json
   rules.schema.json
 .sd-ai-command-pack/
+  bin/
+    sd-ai-command-pack-review-layout.py
   installed-targets.txt
   manifest.json
   pr-body-scope.json
@@ -1517,39 +1330,11 @@ docs/
   DEVELOPMENT_CYCLE.md
   REVIEW_PATTERNS.md
   review-learnings.md
-  SD_AI_COMMAND_PACK.md
-  sd-ai-command-pack-provider-config-history.json
   topology.md
 scripts/
   check-review-preflight.mjs
   classify_ci_changes.sh
   classify-ci-changes.sh
-  sd_ai_command_pack_fleet_lib.py
-  sd_ai_command_pack_lib.py
-  sd-ai-command-pack-audit-inventory.py
-  sd-ai-command-pack-audit-route.py
-  sd-ai-command-pack-check.py
-  sd-ai-command-pack-full-check.sh
-  sd-ai-command-pack-housekeeping-result.py
-  sd-ai-command-pack-housekeeping.sh
-  sd-ai-command-pack-install-audit.py
-  sd-ai-command-pack-pack-update.sh
-  sd-ai-command-pack-pr-body-scope.py
-  sd-ai-command-pack-pr-eligibility.py
-  sd-ai-command-pack-record-session.py
-  sd-ai-command-pack-recovery-artifacts.py
-  sd-ai-command-pack-review-full-check.sh
-  sd-ai-command-pack-review-learnings.py
-  sd-ai-command-pack-review-local.py
-  sd-ai-command-pack-review-preflight.mjs
-  sd-ai-command-pack-review-scope.sh
-  sd-ai-command-pack-review.py
-  sd-ai-command-pack-shell-lib.sh
-  sd-ai-command-pack-status.py
-  sd-ai-command-pack-surface-check.py
-  sd-ai-command-pack-toolchain.sh
-  sd-ai-command-pack-update-spec-kb.py
-  sd-ai-command-pack-work-loop.py
   sync-agent-skills.py
   update_repomix
 src/
@@ -1656,7 +1441,6 @@ tests/
   test_package_entrypoint.py
   test_package_facades.py
   test_phase7_partial_outage.py
-  test_pr_body_scope_lint.py
   test_python_syntax_lint.py
   test_readme_scenario_catalog.py
   test_redact_sensitive_headers.py
@@ -1669,8 +1453,6 @@ tests/
   test_scenarios.py
   test_schema_file.py
   test_scope_heading_mirrors_lint.py
-  test_sd_ai_command_pack_full_check_script.py
-  test_sd_ai_command_pack_housekeeping_script.py
   test_serve_main_wiring.py
   test_server_alias_surface.py
   test_server_eval_mode.py
