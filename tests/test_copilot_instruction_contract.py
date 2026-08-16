@@ -28,6 +28,9 @@ PR_CHECKLIST_HEADINGS = [
     "Changelog / version impact",
 ]
 
+# What the pack actually copies into the tree. Since the thin conversion its
+# skills, docs, and scripts live on the machine under ~/.agents, so a fixture
+# for one of them would be asserting about somebody else's filesystem.
 COPIED_FILES = [
     ".github/agents/trellis-check.agent.md",
     ".github/skills/trellis-check/SKILL.md",
@@ -35,20 +38,10 @@ COPIED_FILES = [
     ".github/copilot/hooks/session-start.py",
     ".github/hooks/trellis.json",
     ".github/prompts/continue.prompt.md",
-    ".agents/skills/sd-review-pr/SKILL.md",
     ".github/prompts/sd-review-pr.prompt.md",
-    ".gemini/commands/sd/review-pr.toml",
-    ".opencode/commands/sd-review-pr.md",
     ".sd-ai-command-pack/installed-targets.txt",
-    "docs/SD_AI_COMMAND_PACK.md",
-    "scripts/sd-ai-command-pack-full-check.sh",
-    "scripts/sd-ai-command-pack-housekeeping.sh",
-    "scripts/sd-ai-command-pack-install-audit.py",
-    "scripts/sd-ai-command-pack-pr-body-scope.py",
-    "scripts/sd-ai-command-pack-review-learnings.py",
-    "scripts/sd-ai-command-pack-review-local.sh",
-    "scripts/sd-ai-command-pack-review-scope.sh",
-    "scripts/sd-ai-command-pack-update-spec-kb.py",
+    ".gito/config.toml",
+    ".prism/rules.schema.json",
 ]
 
 
@@ -83,7 +76,7 @@ def _write_minimal_contract(root: Path) -> None:
 
         Keep `tools/check_ci_review_contract.py`,
         `tools/check_copilot_instruction_contract.py`,
-        `scripts/sd-ai-command-pack-pr-body-scope.py`,
+        `sd-ai-command-pack-pr-body-scope.py`,
         `.sd-ai-command-pack/pr-body-scope.json`, and
         `scripts/classify-ci-changes.sh` in lockstep. The required
         branch-protection context `CI Result` aggregates the jobs, and the
@@ -113,17 +106,9 @@ def _write_minimal_contract(root: Path) -> None:
         `.github/copilot/hooks/**`, `.github/hooks/trellis.json`,
         `.github/prompts/`.
 
-        SD copies: `.agents/skills/sd-*/**`,
-        `.github/prompts/sd-*.prompt.md`, `.gemini/commands/sd/**`,
-        `.opencode/commands/sd-*.md`,
-        `.sd-ai-command-pack/installed-targets.txt`,
-        `docs/SD_AI_COMMAND_PACK.md`, `scripts/sd-ai-command-pack-review-scope.sh`,
-        `scripts/sd-ai-command-pack-install-audit.py`,
-        `scripts/sd-ai-command-pack-review-learnings.py`,
-        `scripts/sd-ai-command-pack-review-local.sh`,
-        `scripts/sd-ai-command-pack-update-spec-kb.py`,
-        `scripts/sd-ai-command-pack-full-check.sh`, and
-        `scripts/sd-ai-command-pack-housekeeping.sh`.
+        SD copies: `.github/prompts/sd-*.prompt.md`,
+        `.sd-ai-command-pack/installed-targets.txt`, `.gito/**`, and
+        `.prism/rules.schema.json`.
 
         ## Pre-PR checklist headings (canonical in Trellis)
         """,
@@ -167,30 +152,15 @@ def _write_minimal_contract(root: Path) -> None:
         """,
     )
     _write(
-        root / "scripts/sd-ai-command-pack-full-check.sh",
-        """
-        run_review_preflight
-        scripts/sd-ai-command-pack-review-preflight.mjs
-        scripts/check-review-preflight.mjs
-        run_sd_ai_command_pack_install_audit
-        scripts/sd-ai-command-pack-install-audit.py
-        run_sd_ai_command_pack_scope_check
-        scripts/sd-ai-command-pack-review-scope.sh
-        run_sd_ai_command_pack_pr_body_scope_check
-        scripts/sd-ai-command-pack-pr-body-scope.py
-        """,
-    )
-    _write(
         root / "scripts/check-review-preflight.mjs",
         """
         python tools/check_ci_review_contract.py
         python tools/check_copilot_instruction_contract.py
-        python scripts/sd-ai-command-pack-pr-body-scope.py
+        .sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py
+        --resolve sd-ai-command-pack-pr-body-scope.py
         pytest tests/test_copilot_instruction_contract.py
-        pytest tests/test_pr_body_scope_lint.py
         """,
     )
-    _write(root / "scripts/sd-ai-command-pack-review-preflight.mjs", "// shared fixture\n")
     for relative in COPIED_FILES:
         path = root / relative
         if not path.exists():
@@ -199,34 +169,6 @@ def _write_minimal_contract(root: Path) -> None:
 
 def test_real_repo_contract_is_clean() -> None:
     result = _run(str(REPO_ROOT))
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_own_location_full_check_shape_passes(tmp_path: Path) -> None:
-    """Bare-name needles must match the own-location full-check shape.
-
-    sd-ai-command-pack >= 0.65 resolves pack siblings from the script's
-    own location (``local name="sd-ai-command-pack-..."``) instead of
-    ``scripts/``-prefixed literals; the guard must accept both shapes.
-    """
-    _write_minimal_contract(tmp_path)
-    _write(
-        tmp_path / "scripts/sd-ai-command-pack-full-check.sh",
-        """
-        run_review_preflight
-        local name="sd-ai-command-pack-review-preflight.mjs"
-        scripts/check-review-preflight.mjs
-        run_sd_ai_command_pack_install_audit
-        local name="sd-ai-command-pack-install-audit.py"
-        run_sd_ai_command_pack_scope_check
-        local name="sd-ai-command-pack-review-scope.sh"
-        run_sd_ai_command_pack_pr_body_scope_check
-        local name="sd-ai-command-pack-pr-body-scope.py"
-        """,
-    )
-
-    result = _run(str(tmp_path))
 
     assert result.returncode == 0, result.stderr
 

@@ -27,8 +27,6 @@ REQUIRED_FILES = {
     "pr_template": Path(".github/PULL_REQUEST_TEMPLATE.md"),
     "testing_spec": Path(".trellis/spec/amc/backend/testing-quality.md"),
     "documentation_spec": Path(".trellis/spec/amc/backend/documentation-review.md"),
-    "full_check": Path("scripts/sd-ai-command-pack-full-check.sh"),
-    "shared_review_preflight": Path("scripts/sd-ai-command-pack-review-preflight.mjs"),
     "review_preflight": Path("scripts/check-review-preflight.mjs"),
 }
 
@@ -86,7 +84,9 @@ COPILOT_REQUIRED_NEEDLES = [
     ("Trellis contradiction exception", "contradicts the canonical Trellis specs"),
     ("CI review contract guard", "tools/check_ci_review_contract.py"),
     ("Copilot instruction contract guard", "tools/check_copilot_instruction_contract.py"),
-    ("PR body scope guard", "scripts/sd-ai-command-pack-pr-body-scope.py"),
+    # A bare name, not a path: since the thin conversion the guard lives on the
+    # machine, and the instructions name it the way an operator invokes it.
+    ("PR body scope guard", "sd-ai-command-pack-pr-body-scope.py"),
     ("PR body scope config", ".sd-ai-command-pack/pr-body-scope.json"),
     ("automation scope section", "Automation scope:"),
     ("CI review scope section", "CI/review scope:"),
@@ -167,28 +167,14 @@ COPIED_PATHS = [
         ".github/prompts",
         directory=True,
     ),
-    CopiedPath(
-        "SD Codex skill wrappers",
-        ".agents/skills/sd-*/**",
-        ".agents/skills/sd-*/**",
-        glob=True,
-    ),
+    # Since the thin conversion the pack copies only these surfaces into the
+    # tree. Its skills, docs, and scripts live on the machine under ~/.agents,
+    # so a path assertion here would be asserting about somebody else's
+    # filesystem rather than about this checkout.
     CopiedPath(
         "SD GitHub prompt copies",
         ".github/prompts/sd-*.prompt.md",
         ".github/prompts/sd-*.prompt.md",
-        glob=True,
-    ),
-    CopiedPath(
-        "SD Gemini command copies",
-        ".gemini/commands/sd/**",
-        ".gemini/commands/sd/**",
-        glob=True,
-    ),
-    CopiedPath(
-        "SD OpenCode command copies",
-        ".opencode/commands/sd-*.md",
-        ".opencode/commands/sd-*.md",
         glob=True,
     ),
     CopiedPath(
@@ -197,44 +183,15 @@ COPIED_PATHS = [
         ".sd-ai-command-pack/installed-targets.txt",
     ),
     CopiedPath(
-        "SD command-pack docs",
-        "docs/SD_AI_COMMAND_PACK.md",
-        "docs/SD_AI_COMMAND_PACK.md",
+        "SD Gito review config",
+        ".gito/**",
+        ".gito/**",
+        glob=True,
     ),
     CopiedPath(
-        "SD AI command-pack scope script",
-        "scripts/sd-ai-command-pack-review-scope.sh",
-        "scripts/sd-ai-command-pack-review-scope.sh",
-    ),
-    CopiedPath(
-        "SD AI command-pack install audit script",
-        "scripts/sd-ai-command-pack-install-audit.py",
-        "scripts/sd-ai-command-pack-install-audit.py",
-    ),
-    CopiedPath(
-        "SD AI command-pack PR body scope script",
-        "scripts/sd-ai-command-pack-pr-body-scope.py",
-        "scripts/sd-ai-command-pack-pr-body-scope.py",
-    ),
-    CopiedPath(
-        "SD AI command-pack review learnings script",
-        "scripts/sd-ai-command-pack-review-learnings.py",
-        "scripts/sd-ai-command-pack-review-learnings.py",
-    ),
-    CopiedPath(
-        "SD AI command-pack full-check script",
-        "scripts/sd-ai-command-pack-full-check.sh",
-        "scripts/sd-ai-command-pack-full-check.sh",
-    ),
-    CopiedPath(
-        "SD AI command-pack housekeeping script",
-        "scripts/sd-ai-command-pack-housekeeping.sh",
-        "scripts/sd-ai-command-pack-housekeeping.sh",
-    ),
-    CopiedPath(
-        "SD AI command-pack update-spec KB script",
-        "scripts/sd-ai-command-pack-update-spec-kb.py",
-        "scripts/sd-ai-command-pack-update-spec-kb.py",
+        "SD Prism rules schema",
+        ".prism/rules.schema.json",
+        ".prism/rules.schema.json",
     ),
 ]
 
@@ -386,36 +343,19 @@ def _check_copied_paths(root: Path, copilot_text: str, violations: list[str]) ->
             violations.append(f"{root}: missing copied file for {copied.label}: {copied.path}")
 
 
-def _check_full_check_wiring(root: Path, text: str, violations: list[str]) -> None:
-    path = root / REQUIRED_FILES["full_check"]
-    # Pack-script needles are bare names: newer vendored full-check copies
-    # (sd-ai-command-pack >= 0.65) resolve pack siblings from their own
-    # location, while the currently vendored copy still uses
-    # scripts/-prefixed paths. A bare name matches both shapes.
-    # scripts/check-review-preflight.mjs stays prefixed - it is genuinely
-    # repo-local.
-    for label, needle in [
-        ("review preflight runner", "run_review_preflight"),
-        ("shared review preflight script", "sd-ai-command-pack-review-preflight.mjs"),
-        ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
-        ("SD AI command-pack install audit runner", "run_sd_ai_command_pack_install_audit"),
-        ("SD AI command-pack install audit script", "sd-ai-command-pack-install-audit.py"),
-        ("SD AI command-pack scope runner", "run_sd_ai_command_pack_scope_check"),
-        ("SD AI command-pack scope script", "sd-ai-command-pack-review-scope.sh"),
-        ("PR body scope runner", "run_sd_ai_command_pack_pr_body_scope_check"),
-        ("PR body scope script", "sd-ai-command-pack-pr-body-scope.py"),
-    ]:
-        _require_contains(text, needle, path=path, label=label, violations=violations)
-
-
 def _check_review_preflight_wiring(root: Path, text: str, violations: list[str]) -> None:
     path = root / REQUIRED_FILES["review_preflight"]
+    # The full-check wiring assertions that used to live beside these were
+    # dropped with the thin conversion: they read the pack's own full-check
+    # script, which is no longer part of this repository.
     for label, needle in [
         ("CI review contract guard", "tools/check_ci_review_contract.py"),
         ("Copilot instruction contract guard", "tools/check_copilot_instruction_contract.py"),
-        ("PR body scope guard", "scripts/sd-ai-command-pack-pr-body-scope.py"),
+        # A bare name: the preflight asks the layout resolver where the guard
+        # is rather than hard-coding a path it no longer owns.
+        ("PR body scope guard", "sd-ai-command-pack-pr-body-scope.py"),
+        ("layout resolver", ".sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py"),
         ("Copilot instruction contract tests", "tests/test_copilot_instruction_contract.py"),
-        ("PR body scope tests", "tests/test_pr_body_scope_lint.py"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
@@ -447,7 +387,6 @@ def check(root: Path) -> tuple[int, list[str]]:
     _check_copilot_text(root, texts["copilot"], violations)
     _check_checklist_headings(root, texts, violations)
     _check_copied_paths(root, texts["copilot"], violations)
-    _check_full_check_wiring(root, texts["full_check"], violations)
     _check_review_preflight_wiring(root, texts["review_preflight"], violations)
     _check_documentation_spec(root, texts["documentation_spec"], violations)
 

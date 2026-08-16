@@ -208,12 +208,12 @@ review checklist before draft status is removed. Sources: `CLAUDE.md`;
 Behavior-changing diffs should use explicit scope sections in the PR body:
 `Automation scope:`, `CI/review scope:`, `Tooling/generated scope:`,
 `Docs/user-facing scope:`, or `Runtime/server scope:` as applicable.
-`scripts/sd-ai-command-pack-pr-body-scope.py` enforces these sections with
+The pack's `sd-ai-command-pack-pr-body-scope.py` enforces these sections with
 repo-specific categories from `.sd-ai-command-pack/pr-body-scope.json` when a
 PR body is supplied through `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY`,
 `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`, or `--body-file`. Sources:
-`scripts/sd-ai-command-pack-pr-body-scope.py`;
-`.sd-ai-command-pack/pr-body-scope.json`; `tests/test_pr_body_scope_lint.py`;
+`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`;
+`.sd-ai-command-pack/pr-body-scope.json`; `tools/check_scope_heading_mirrors.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
 
 The PR template should prompt for focused local checks, the local Trellis
@@ -221,10 +221,10 @@ full-check gate, and whether a remote `full-ci` label is needed. Review
 guidance should prefer local evidence and the stable aggregate `test` context
 before asking for repeated remote Copilot or Actions runs.
 Sources: `.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`;
-`scripts/sd-ai-command-pack-full-check.sh`; `tools/check_ci_review_contract.py`;
+`~/.agents/bin/sd-ai-command-pack-full-check.sh`; `tools/check_ci_review_contract.py`;
 `tools/check_copilot_instruction_contract.py`;
-`scripts/sd-ai-command-pack-pr-body-scope.py`;
-`scripts/sd-ai-command-pack-review-preflight.mjs`;
+`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`;
+`~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`;
 `scripts/check-review-preflight.mjs`;
 `.github/copilot-instructions.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`.

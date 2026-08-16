@@ -8,7 +8,6 @@ The workflow cadence is intentionally spread across a few files:
 * The Socket job, CodeQL workflow, and Dependabot workflow follow the same
   review-economy policy.
 * The scheduled command-pack workflow is PR-only and no-ops on an empty diff.
-* ``scripts/sd-ai-command-pack-full-check.sh`` mirrors the local quick/full gate.
 
 This checker is deliberately text-based and stdlib-only so pre-commit can run it
 without installing project dependencies or parsing YAML. It catches accidental
@@ -38,9 +37,7 @@ REQUIRED_FILES = {
     "pyproject": Path("pyproject.toml"),
     "precommit": Path(".pre-commit-config.yaml"),
     "classifier": Path("scripts/classify-ci-changes.sh"),
-    "full_check": Path("scripts/sd-ai-command-pack-full-check.sh"),
     "development_cycle": Path("docs/DEVELOPMENT_CYCLE.md"),
-    "review_pack": Path("docs/SD_AI_COMMAND_PACK.md"),
     "testing_spec": Path(".trellis/spec/amc/backend/testing-quality.md"),
     "copilot_ci": Path(
         ".github/instructions/anomaly-metric-creator.instructions.md"
@@ -86,7 +83,7 @@ _LIGHTWEIGHT_PYTHON_GUARDS = (
     "tools/check_trellis_placeholders.py",
     "tools/check_ci_review_contract.py",
     "tools/check_copilot_instruction_contract.py",
-    "scripts/sd-ai-command-pack-pr-body-scope.py",
+    "tools/check_scope_heading_mirrors.py",
 )
 _CODEQL_ACTION_PATTERN = re.compile(
     r"^\s*uses:\s*github/codeql-action/(init|analyze)@([0-9a-f]{40})(?:\s|$)",
@@ -454,9 +451,20 @@ def _check_ci(
             "Copilot instruction contract guard",
             "python tools/check_copilot_instruction_contract.py",
         ),
+        # The guard itself is not in this tree since the thin conversion, so
+        # the anchor pins the resolve-or-skip wiring that finds it instead of a
+        # path this repository no longer owns.
         (
-            "PR body scope guard",
-            "python scripts/sd-ai-command-pack-pr-body-scope.py",
+            "PR body scope layout resolver",
+            ".sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py",
+        ),
+        (
+            "PR body scope guard resolution",
+            "--resolve sd-ai-command-pack-pr-body-scope.py",
+        ),
+        (
+            "PR body scope guard skip note",
+            "skipped: no resolvable sd-ai-command-pack install",
         ),
         # `uv sync` must pass --locked so pyproject/uv.lock drift fails the
         # job instead of silently re-resolving in the runner
@@ -469,10 +477,6 @@ def _check_ci(
         (
             "Copilot instruction contract test coverage",
             "tests/test_copilot_instruction_contract.py",
-        ),
-        (
-            "PR body scope test coverage",
-            "tests/test_pr_body_scope_lint.py",
         ),
         (
             "pull-request head-ref branch guard",
@@ -1035,9 +1039,7 @@ def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
         ("review tooling output", 'emit_output "review_tooling_changed"'),
         ("untracked local files", "git ls-files --others --exclude-standard"),
         ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
-        ("PR body scope tests", "tests/test_pr_body_scope_lint.py"),
         ("command-pack payload classification", ".sd-ai-command-pack/*"),
-        ("command-pack script classification", "scripts/sd-ai-command-pack-*"),
         ("Trellis audit classification", ".trellis/audit/*"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
@@ -1053,9 +1055,7 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         ),
         ("Copilot instruction contract hook", "id: copilot-instruction-contract"),
         ("Copilot instruction contract entry", "tools/check_copilot_instruction_contract.py"),
-        ("PR body scope guard trigger", "sd-ai-command-pack-pr-body-scope"),
         ("PR body scope config trigger", ".sd-ai-command-pack/pr-body-scope"),
-        ("PR body scope tests trigger", "tests/test_pr_body_scope_lint"),
         ("Copilot hook pass_filenames", "pass_filenames: false"),
         ("role-name commit-message hook", "id: role-name-commit-message"),
         ("commit-message hook stage", "stages: [commit-msg]"),
@@ -1079,31 +1079,6 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
 
-def _check_full_check(path: Path, text: str, violations: list[str]) -> None:
-    for label, needle in [
-        ("review preflight runner", "run_review_preflight"),
-        # Pack-script needles are bare names: the vendored full-check resolves
-        # pack siblings from its own location (sd-ai-command-pack >= 0.65),
-        # while older copies used scripts/-prefixed paths. A bare name matches
-        # both shapes.
-        ("shared review preflight script", "sd-ai-command-pack-review-preflight.mjs"),
-        ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
-        ("SD AI command-pack install audit runner", "run_sd_ai_command_pack_install_audit"),
-        ("SD AI command-pack install audit script", "sd-ai-command-pack-install-audit.py"),
-        ("SD AI command-pack scope runner", "run_sd_ai_command_pack_scope_check"),
-        ("SD AI command-pack scope script", "sd-ai-command-pack-review-scope.sh"),
-        ("CI classification report", "run_ci_classification_report"),
-        ("package script runner", "SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_SCRIPTS"),
-        ("Prism fail threshold", "SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON"),
-        ("Prism max findings", "SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_MAX_FINDINGS"),
-        ("Prism rules override", "SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES"),
-        ("Gito opt-in", "SD_AI_COMMAND_PACK_FULL_CHECK_GITO"),
-        ("PR body scope runner", "run_sd_ai_command_pack_pr_body_scope_check"),
-        ("PR body scope script", "sd-ai-command-pack-pr-body-scope.py"),
-    ]:
-        _require_contains(text, needle, path=path, label=label, violations=violations)
-
-
 def _check_docs(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("contract guard mention", "check_ci_review_contract.py"),
@@ -1115,21 +1090,6 @@ def _check_docs(path: Path, text: str, violations: list[str]) -> None:
         ("scheduled command-pack sync", "sd-ai-command-pack-sync.yml"),
         ("Windows collection runner", "windows-latest"),
         ("Windows collection command", "pytest --collect-only -q"),
-    ]:
-        _require_contains(text, needle, path=path, label=label, violations=violations)
-
-
-def _check_review_pack_docs(path: Path, text: str, violations: list[str]) -> None:
-    for label, needle in [
-        ("shared review preflight script", "scripts/sd-ai-command-pack-review-preflight.mjs"),
-        ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
-        ("SD AI command-pack scope script", "scripts/sd-ai-command-pack-review-scope.sh"),
-        ("install audit script", "scripts/sd-ai-command-pack-install-audit.py"),
-        ("installed targets", ".sd-ai-command-pack/installed-targets.txt"),
-        ("tooling generated scope body", "Tooling/generated scope:"),
-        ("review preflight env", "SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT"),
-        ("PR body scope guard", "scripts/sd-ai-command-pack-pr-body-scope.py"),
-        ("PR body scope config", ".sd-ai-command-pack/pr-body-scope.json"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
@@ -1195,9 +1155,7 @@ def check(root: Path) -> tuple[int, list[str]]:
     _check_pyproject(root / REQUIRED_FILES["pyproject"], texts["pyproject"], violations)
     _check_precommit(root / REQUIRED_FILES["precommit"], texts["precommit"], violations)
     _check_classifier(root / REQUIRED_FILES["classifier"], texts["classifier"], violations)
-    _check_full_check(root / REQUIRED_FILES["full_check"], texts["full_check"], violations)
     _check_docs(root / REQUIRED_FILES["development_cycle"], texts["development_cycle"], violations)
-    _check_review_pack_docs(root / REQUIRED_FILES["review_pack"], texts["review_pack"], violations)
     _check_docs(root / REQUIRED_FILES["testing_spec"], texts["testing_spec"], violations)
     _check_copilot_ci_guidance(
         root / REQUIRED_FILES["copilot_ci"], texts["copilot_ci"], violations

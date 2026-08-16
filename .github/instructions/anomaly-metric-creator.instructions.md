@@ -43,8 +43,8 @@ this gating is in place.
   py3.14 test lane and heavy/non-heavy pytest split (Python 3.14 is the only
   CI-tested version).
 - Before a final remote Copilot pass, prefer a local
-  `bash scripts/sd-ai-command-pack-full-check.sh` run. During iteration, use
-  `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh`
+  `bash ~/.agents/bin/sd-ai-command-pack-full-check.sh` run. During iteration, use
+  `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash ~/.agents/bin/sd-ai-command-pack-full-check.sh`
   to skip optional AI review while keeping the deterministic local guards.
 
 ## Review-cycle reduction
@@ -66,8 +66,8 @@ For docs, skills, prompts, CI, and Trellis changes, check lockstep across
 `.github/instructions`, `.pre-commit-config.yaml`,
 `scripts/classify-ci-changes.sh`, `tools/check_ci_review_contract.py`,
 `tools/check_copilot_instruction_contract.py`,
-`scripts/sd-ai-command-pack-install-audit.py`,
-`scripts/sd-ai-command-pack-pr-body-scope.py`,
+`~/.agents/bin/sd-ai-command-pack-install-audit.py`,
+`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`,
 `.sd-ai-command-pack/pr-body-scope.json`, and focused tests. When the PR
 description is incomplete, leave one top-level scope comment naming the exact
 changed paths or behaviors that must be added instead of separate inline
@@ -87,17 +87,14 @@ local wiring, and executable integration instead.
 Trellis-copied GitHub adapters include `.github/agents/trellis-*.agent.md`,
 `.github/skills/trellis-*/**`, `.github/copilot/hooks.json`,
 `.github/copilot/hooks/**`, `.github/hooks/trellis.json`, and Trellis command
-or prompt entry points under `.github/prompts/`. SD command-pack copies include
-`.agents/skills/sd-*/**`, `.github/prompts/sd-*.prompt.md`,
-`.gemini/commands/sd/**`, `.opencode/commands/sd-*.md`,
-`.sd-ai-command-pack/installed-targets.txt`, `docs/SD_AI_COMMAND_PACK.md`,
-`scripts/sd-ai-command-pack-full-check.sh`,
-`scripts/sd-ai-command-pack-housekeeping.sh`,
-`scripts/sd-ai-command-pack-install-audit.py`,
-`scripts/sd-ai-command-pack-pr-body-scope.py`,
-`scripts/sd-ai-command-pack-review-learnings.py`,
-`scripts/sd-ai-command-pack-review-scope.sh`, and
-`scripts/sd-ai-command-pack-update-spec-kb.py`.
+or prompt entry points under `.github/prompts/`.
+
+This is a thin SD install: the pack's skills, docs, and scripts live on the
+machine under `~/.agents`, not in this tree, so they cannot appear in a diff
+here. The surfaces the pack still copies into the repository are
+`.github/prompts/sd-*.prompt.md`, `.github/copilot-instructions.md`,
+`.github/PULL_REQUEST_TEMPLATE.md`, `.sd-ai-command-pack/installed-targets.txt`
+and its sibling receipts, `.gito/**`, and `.prism/rules.schema.json`.
 
 Only comment on those copied files when the PR intentionally changes the
 generator/source pack contract, the local adapter wiring is broken, a copied

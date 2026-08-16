@@ -103,16 +103,21 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
               - run: uv run --python 3.14 --no-project python tools/check_trellis_placeholders.py
               - run: uv run --python 3.14 --no-project python tools/check_ci_review_contract.py
               - run: uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
-              - run: uv run --python 3.14 --no-project python scripts/sd-ai-command-pack-pr-body-scope.py
+              - run: uv run --python 3.14 --no-project python tools/check_scope_heading_mirrors.py
+              - run: |
+                  scope_guard="$(python3 .sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py --resolve sd-ai-command-pack-pr-body-scope.py)"
+                  if [ -n "$scope_guard" ]; then
+                    uv run --python 3.14 --no-project python "$scope_guard"
+                  else
+                    echo "skipped: no resolvable sd-ai-command-pack install provides the PR body scope guard"
+                  fi
           quick_check:
             name: quick test
             steps:
               - run: uv sync --extra dev --locked --python 3.14
               - run: pytest tests/test_ci_review_contract.py
               - run: pytest tests/test_copilot_instruction_contract.py
-              - run: pytest tests/test_pr_body_scope_lint.py
               - run: python tools/check_copilot_instruction_contract.py
-              - run: python scripts/sd-ai-command-pack-pr-body-scope.py
           test_heavy:
             name: test heavy (py3.14)
             needs: changes
@@ -338,7 +343,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 files: ^scripts/(.*\.sh|update_repomix)$
               - id: ci-review-contract
                 entry: python tools/check_ci_review_contract.py
-                files: ^scripts/sd-ai-command-pack-pr-body-scope\.py|\.sd-ai-command-pack/pr-body-scope\.json|tests/test_pr_body_scope_lint\.py$
+                files: ^\.sd-ai-command-pack/pr-body-scope\.json$
                 pass_filenames: false
               - id: test-resource-cost
                 entry: python tools/check_test_resource_cost.py
@@ -362,30 +367,8 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         git ls-files --others --exclude-standard
         scripts/check-review-preflight.mjs
         .sd-ai-command-pack/*
-        scripts/sd-ai-command-pack-*
         .trellis/audit/*
         .sd-ai-command-pack/pr-body-scope.json
-        tests/test_pr_body_scope_lint.py
-        """,
-    )
-    _write(
-        root / "scripts/sd-ai-command-pack-full-check.sh",
-        """
-        run_review_preflight
-        scripts/sd-ai-command-pack-review-preflight.mjs
-        scripts/check-review-preflight.mjs
-        run_sd_ai_command_pack_install_audit
-        scripts/sd-ai-command-pack-install-audit.py
-        run_sd_ai_command_pack_scope_check
-        scripts/sd-ai-command-pack-review-scope.sh
-        run_sd_ai_command_pack_pr_body_scope_check
-        scripts/sd-ai-command-pack-pr-body-scope.py
-        run_ci_classification_report
-        SD_AI_COMMAND_PACK_FULL_CHECK_PACKAGE_SCRIPTS
-        SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON
-        SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_MAX_FINDINGS
-        SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES
-        SD_AI_COMMAND_PACK_FULL_CHECK_GITO
         """,
     )
     _write(
@@ -400,20 +383,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         sd-ai-command-pack-sync.yml
         windows-latest
         pytest --collect-only -q
-        """,
-    )
-    _write(
-        root / "docs/SD_AI_COMMAND_PACK.md",
-        """
-        scripts/sd-ai-command-pack-review-preflight.mjs
-        scripts/check-review-preflight.mjs
-        scripts/sd-ai-command-pack-review-scope.sh
-        scripts/sd-ai-command-pack-install-audit.py
-        .sd-ai-command-pack/installed-targets.txt
-        Tooling/generated scope:
-        SD_AI_COMMAND_PACK_FULL_CHECK_REVIEW_PREFLIGHT
-        scripts/sd-ai-command-pack-pr-body-scope.py
-        .sd-ai-command-pack/pr-body-scope.json
         """,
     )
     _write(
@@ -1278,7 +1247,7 @@ def test_lightweight_guards_require_pinned_python(tmp_path: Path) -> None:
         "tools/check_trellis_placeholders.py",
         "tools/check_ci_review_contract.py",
         "tools/check_copilot_instruction_contract.py",
-        "scripts/sd-ai-command-pack-pr-body-scope.py",
+        "tools/check_scope_heading_mirrors.py",
     )
     for index, guard in enumerate(guards):
         root = tmp_path / str(index)
@@ -1524,23 +1493,6 @@ def test_lightweight_whitespace_requires_pr_diff_range(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "lightweight whitespace PR diff" in result.stderr
-
-
-def test_full_check_runs_review_preflight(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    full_check = tmp_path / "scripts/sd-ai-command-pack-full-check.sh"
-    full_check.write_text(
-        full_check.read_text(encoding="utf-8").replace(
-            "run_review_preflight",
-            "run_review_notes",
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "review preflight runner" in result.stderr
 
 
 @pytest.mark.parametrize(

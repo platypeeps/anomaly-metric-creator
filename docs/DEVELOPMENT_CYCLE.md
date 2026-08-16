@@ -25,7 +25,7 @@ Use the Trellis full-check script instead of manually remembering the review
 guard list:
 
 ```bash
-SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash scripts/sd-ai-command-pack-full-check.sh
+SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash ~/.agents/bin/sd-ai-command-pack-full-check.sh
 ```
 
 This is the fast iteration path after the focused deterministic checks for the
@@ -34,14 +34,14 @@ If the generated Obsidian KB freshness check trips after a pull, refresh the
 gitignored output before rerunning the gate:
 
 ```bash
-.venv/bin/python3 scripts/sd-ai-command-pack-update-spec-kb.py
+.venv/bin/python3 ~/.agents/bin/sd-ai-command-pack-update-spec-kb.py
 ```
 
 The pack-provided full-check script runs whitespace checks, the shared
-review preflight in `scripts/sd-ai-command-pack-review-preflight.mjs`, AMC's
+review preflight in `~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`, AMC's
 repo-local review preflight in `scripts/check-review-preflight.mjs`, the
-copied/generated scope preflight in `scripts/sd-ai-command-pack-review-scope.sh`,
-the structural install audit in `scripts/sd-ai-command-pack-install-audit.py`,
+copied/generated scope preflight in `~/.agents/bin/sd-ai-command-pack-review-scope.sh`,
+the structural install audit in `~/.agents/bin/sd-ai-command-pack-install-audit.py`,
 current-diff CI classification, configured package scripts when present, and
 optional Prism/Gito review. AMC's repo-local review preflight runs the
 CI/review cadence guard, the Copilot instruction contract guard, the PR-body
@@ -61,9 +61,9 @@ message file to `tools/check_role_name_leaks.py` before Git records it.
 When a PR body exists, pass it to local preflight with
 `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY` or
 `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`, or write it to a file and run
-`python scripts/sd-ai-command-pack-pr-body-scope.py --body-file <path>`.
+`python ~/.agents/bin/sd-ai-command-pack-pr-body-scope.py --body-file <path>`.
 The scope guard reads `.sd-ai-command-pack/pr-body-scope.json`, merges it with
-the rule defaults in `scripts/sd-ai-command-pack-pr-body-scope.py`, and fails
+the rule defaults in `~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`, and fails
 broad behavior-changing diffs unless the body contains the matching scope
 section. The five canonical headings are `Automation scope:`,
 `CI/review scope:`, `Tooling/generated scope:`, `Docs/user-facing scope:`, and
@@ -87,7 +87,7 @@ Before marking a PR ready, requesting a final remote review, or applying the
 `full-ci` label, run the local gate with Prism enabled when practical:
 
 ```bash
-bash scripts/sd-ai-command-pack-full-check.sh
+bash ~/.agents/bin/sd-ai-command-pack-full-check.sh
 ```
 
 For a full local suite, use the normal four-worker default:
@@ -215,11 +215,11 @@ merge burst cannot cancel a previous merge commit's full-suite backstop run.
 contract, and `tools/check_copilot_instruction_contract.py` guards the
 mechanical Copilot-instruction contract. Both are text-based and stdlib-only,
 so pre-commit, the lightweight CI lane, and
-`scripts/sd-ai-command-pack-full-check.sh` hard-fail on drift between
+`~/.agents/bin/sd-ai-command-pack-full-check.sh` hard-fail on drift between
 workflows, scripts, instructions, and docs without installing the full
 project environment.
 
-`scripts/sd-ai-command-pack-pr-body-scope.py` is a **best-effort advisory,
+`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py` is a **best-effort advisory,
 not a hard CI gate.** It fails only when a PR body is supplied — the local
 preflight path (`--body-file` or the `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY`
 / `SD_AI_COMMAND_PACK_SCOPE_PR_BODY` env vars) — and that body omits the scope

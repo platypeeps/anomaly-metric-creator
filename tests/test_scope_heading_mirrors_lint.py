@@ -4,10 +4,16 @@ The synthetic trees copy the real authority script rather than a stub, so the
 alias and Markdown-prefix cases exercise the same ``_body_has_heading`` the
 guard uses in production. A stub would let this file drift from the matcher it
 claims to test -- the exact failure the lint exists to prevent.
+
+Since the thin conversion that script is not in this repository; it lives
+wherever the machine keeps the pack install. These tests ask the same layout
+resolver the guard asks, and skip when nothing answers -- a CI runner has no
+install, and there is no real authority to copy into a synthetic tree there.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -16,10 +22,42 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "check_scope_heading_mirrors.py"
+LAYOUT_RESOLVER = REPO_ROOT / ".sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py"
 
-AUTHORITY = REPO_ROOT / "scripts" / "sd-ai-command-pack-pr-body-scope.py"
-AUTHORITY_LIB = REPO_ROOT / "scripts" / "sd_ai_command_pack_lib.py"
+
+def _installed(name: str) -> Path | None:
+    """The pack file the machine install provides, or None if there is none."""
+    if not LAYOUT_RESOLVER.is_file():
+        return None
+    result = subprocess.run(
+        [sys.executable, str(LAYOUT_RESOLVER), "--resolve", name],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return None
+    try:
+        resolved = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    path = resolved.get("path") if isinstance(resolved, dict) else None
+    if not isinstance(path, str) or not path:
+        return None
+    candidate = Path(path)
+    return candidate if candidate.is_file() else None
+
+
+AUTHORITY = _installed("sd-ai-command-pack-pr-body-scope.py")
+AUTHORITY_LIB = _installed("sd_ai_command_pack_lib.py")
 SCOPE_CONFIG = REPO_ROOT / ".sd-ai-command-pack" / "pr-body-scope.json"
+
+pytestmark = pytest.mark.skipif(
+    AUTHORITY is None or AUTHORITY_LIB is None,
+    reason="no resolvable sd-ai-command-pack install provides the PR-body scope authority",
+)
 
 MIRRORS = (
     ".github/PULL_REQUEST_TEMPLATE.md",
@@ -188,13 +226,19 @@ def test_non_mirror_paths_are_ignored(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_missing_authority_is_structural(tmp_path: Path) -> None:
+def test_tree_without_an_authority_is_skipped_not_failed(tmp_path: Path) -> None:
+    """A tree that provides no authority reports a skip, not a violation.
+
+    This is what a CI runner looks like since the thin conversion: no vendored
+    copy under ``scripts/`` and no layout resolver to point at a machine
+    install. Failing there would fail on a file nobody shipped to the runner.
+    """
     root = _tree(tmp_path)
     (root / "scripts" / AUTHORITY.name).unlink()
 
     result = _run("--root", str(root))
-    assert result.returncode == 2
-    assert "authority script not found" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "skipped" in result.stdout
 
 
 def test_missing_mirror_is_structural(tmp_path: Path) -> None:
