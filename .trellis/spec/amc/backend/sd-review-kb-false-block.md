@@ -40,11 +40,12 @@ is scoped to the external-symlink case only.
 
 ## Durable fix (upstream)
 
-The `scripts/*.py` are vendored from `platypeeps/sd-ai-command-pack`
-(synced by `.github/workflows/sd-ai-command-pack-sync.yml`), so the code fix is
-an upstream change in `kb_freshness_row` (advisory downgrade guarded by
-`_is_external_symlink`). This repo receives it later via the sync automation PR;
-do not hand-edit the vendored `scripts/` copy here. Track under task
+The coordinator is `platypeeps/sd-ai-command-pack` code, so the fix is an
+upstream change in `kb_freshness_row` (advisory downgrade guarded by
+`_is_external_symlink`). Since the thin conversion this repository no longer
+vendors a `scripts/` copy at all — the coordinator runs from the machine
+install — so the fix arrives with the next operator-initiated refresh of that
+install rather than through a sync automation PR here. Track under task
 `08-03-sd-review-kb-coordinator-false-positive`.
 
 ## Local workaround until the fix syncs (AC3)

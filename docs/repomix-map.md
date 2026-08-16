@@ -37,7 +37,7 @@ The content is organized as follows:
 Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
 
 # Directory Structure
-````
+```
 .agents/
   skills/
     amc-server-compatibility/
@@ -424,7 +424,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     ci.yml
     codeql.yml
     dependabot-auto-merge.yml
-    sd-ai-command-pack-sync.yml
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
@@ -1511,4 +1510,4 @@ CLAUDE.md
 pyproject.toml
 README.md
 SECURITY.md
-````
+```

@@ -678,16 +678,15 @@ repo's workflow token is not allowed to create PR reviews. Sources:
 `.github/workflows/dependabot-auto-merge.yml`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
 
-The weekly command-pack sync must run the canonical installer from the
-`platypeeps/sd-ai-command-pack` `main` branch, refresh
-`docs/repomix-map.md`, and use one fixed PR branch. The no-diff path must create
-neither a branch nor a PR; a real diff must open or update a PR and arm the
-normal squash auto-merge path without a direct `main` push or `--admin`
-bypass. Both write steps must use the scoped
-`SD_AI_COMMAND_PACK_PR_TOKEN` Actions secret; the repo-wide Actions
-create/approve setting and `GITHUB_TOKEN` must stay out of this path. Sources:
-`.github/workflows/sd-ai-command-pack-sync.yml`;
-`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
+No workflow in this repository refreshes the command pack. The thin conversion
+moved the payload to the machine install, leaving nothing here for a scheduled
+installer run to change, so the contract this section used to state — fixed PR
+branch, no-diff suppression, scoped-token writes — has no workflow to bind and
+is not replaced by an equivalent. A CI lane that refreshes the pack is a
+regression, not a gap: refreshes are operator-initiated against the machine
+install. Sources: `.github/workflows/`, which contains no pack-refresh
+workflow; `tools/check_ci_review_contract.py`, whose `REQUIRED_FILES` no longer
+names one.
 
 Windows portability coverage is collection-only and advisory: pull requests
 sync the locked Python 3.14 development environment on `windows-latest`, then

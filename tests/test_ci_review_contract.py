@@ -285,44 +285,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         """,
     )
     _write(
-        root / ".github/workflows/sd-ai-command-pack-sync.yml",
-        """
-        on:
-          schedule:
-            - cron: '17 9 * * 1'
-          workflow_dispatch:
-        permissions:
-          contents: read
-        jobs:
-          sync:
-            steps:
-              - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-              - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-                with:
-                  python-version: "3.14"
-              - run: git clone --depth 1 --branch main https://github.com/platypeeps/sd-ai-command-pack.git "$RUNNER_TEMP/sd-ai-command-pack"
-              - run: python "$RUNNER_TEMP/sd-ai-command-pack/install.py" "$GITHUB_WORKSPACE" --force
-              - run: scripts/update_repomix
-              - env:
-                  SCOPED_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
-                run: |
-                  if [ -z "$SCOPED_TOKEN" ]; then
-                    echo "SD_AI_COMMAND_PACK_PR_TOKEN is not configured"
-                    exit 1
-                  fi
-              - id: create-pr
-                uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
-                with:
-                  token: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
-                  branch: automation/sd-ai-command-pack-sync
-                  delete-branch: true
-              - if: steps.create-pr.outputs.pull-request-number != ''
-                run: gh pr merge --auto --squash "$PR_URL"
-                env:
-                  GH_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}
-        """,
-    )
-    _write(
         root / "pyproject.toml",
         """
         [tool.coverage.run]
@@ -380,7 +342,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         lightweight readiness
         quick test
         full-ci
-        sd-ai-command-pack-sync.yml
         windows-latest
         pytest --collect-only -q
         """,
@@ -394,7 +355,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         lightweight readiness
         quick test
         full-ci
-        sd-ai-command-pack-sync.yml
         windows-latest
         pytest --collect-only -q
         """,
@@ -454,18 +414,14 @@ def test_ci_action_revision_can_advance_when_all_uses_match(
         encoding="utf-8",
     )
     if action == "actions/checkout":
-        for relative in (
-            ".github/workflows/codeql.yml",
-            ".github/workflows/sd-ai-command-pack-sync.yml",
-        ):
-            workflow = tmp_path / relative
-            workflow.write_text(
-                workflow.read_text(encoding="utf-8").replace(
-                    f"{action}@{old_revision}",
-                    f"{action}@{new_revision}",
-                ),
-                encoding="utf-8",
-            )
+        workflow = tmp_path / ".github/workflows/codeql.yml"
+        workflow.write_text(
+            workflow.read_text(encoding="utf-8").replace(
+                f"{action}@{old_revision}",
+                f"{action}@{new_revision}",
+            ),
+            encoding="utf-8",
+        )
 
     result = _run(str(tmp_path))
 
@@ -540,9 +496,9 @@ def test_ci_action_revisions_must_use_full_commit_shas(
 
 def test_checkout_revisions_must_match_across_workflows(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
-    pack_sync = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
-    pack_sync.write_text(
-        pack_sync.read_text(encoding="utf-8").replace(
+    peer = tmp_path / ".github/workflows/codeql.yml"
+    peer.write_text(
+        peer.read_text(encoding="utf-8").replace(
             "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         ),
@@ -956,104 +912,6 @@ def test_windows_collection_requires_locked_environment(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "Windows locked development sync" in result.stderr
-
-
-def test_pack_sync_forbids_direct_main_push(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
-    workflow.write_text(
-        workflow.read_text(encoding="utf-8") + "\n- run: git push origin main\n",
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "direct default-branch push" in result.stderr
-
-
-def test_pack_sync_requires_pr_creation_action(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
-    workflow.write_text(
-        workflow.read_text(encoding="utf-8").replace(
-            "peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1",
-            "removed/action@5f6978faf089d4d20b00c7766989d076bb2fc7f1",
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "pinned create-pull-request action" in result.stderr
-
-
-def test_pack_sync_forbids_repo_wide_workflow_token(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
-    workflow.write_text(
-        workflow.read_text(encoding="utf-8").replace(
-            "secrets.SD_AI_COMMAND_PACK_PR_TOKEN", "secrets.GITHUB_TOKEN"
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "scoped PR token" in result.stderr
-    assert "repo-wide workflow token for PR writes" in result.stderr
-
-
-def test_pack_sync_requires_fail_closed_secret_preflight(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
-    workflow.write_text(
-        workflow.read_text(encoding="utf-8").replace(
-            'if [ -z "$SCOPED_TOKEN" ]; then',
-            'if [ -n "$SCOPED_TOKEN" ]; then',
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "fail-closed scoped token preflight" in result.stderr
-
-
-def test_pack_sync_default_token_must_remain_read_only(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    workflow = tmp_path / ".github/workflows/sd-ai-command-pack-sync.yml"
-    workflow.write_text(
-        workflow.read_text(encoding="utf-8").replace(
-            "contents: read", "contents: write\n  pull-requests: write"
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "read-only default workflow token" in result.stderr
-    assert "default token contents write" in result.stderr
-
-
-def test_ci_docs_must_cover_scheduled_sync(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    docs = tmp_path / "docs/DEVELOPMENT_CYCLE.md"
-    docs.write_text(
-        docs.read_text(encoding="utf-8").replace(
-            "sd-ai-command-pack-sync.yml", "removed-sync.yml"
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "scheduled command-pack sync" in result.stderr
 
 
 def test_stale_copilot_ci_context_guidance_fails(tmp_path: Path) -> None:
