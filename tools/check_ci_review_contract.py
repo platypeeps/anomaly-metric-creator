@@ -7,7 +7,6 @@ The workflow cadence is intentionally spread across a few files:
 * ``.github/workflows/ci.yml`` chooses the lightweight, quick, or full lane.
 * The Socket job, CodeQL workflow, and Dependabot workflow follow the same
   review-economy policy.
-* The scheduled command-pack workflow is PR-only and no-ops on an empty diff.
 
 This checker is deliberately text-based and stdlib-only so pre-commit can run it
 without installing project dependencies or parsing YAML. It catches accidental
@@ -33,7 +32,6 @@ REQUIRED_FILES = {
     "codeql": Path(".github/workflows/codeql.yml"),
     "dependabot": Path(".github/workflows/dependabot-auto-merge.yml"),
     "dependabot_config": Path(".github/dependabot.yml"),
-    "pack_sync": Path(".github/workflows/sd-ai-command-pack-sync.yml"),
     "pyproject": Path("pyproject.toml"),
     "precommit": Path(".pre-commit-config.yaml"),
     "classifier": Path("scripts/classify-ci-changes.sh"),
@@ -450,21 +448,6 @@ def _check_ci(
         (
             "Copilot instruction contract guard",
             "python tools/check_copilot_instruction_contract.py",
-        ),
-        # The guard itself is not in this tree since the thin conversion, so
-        # the anchor pins the resolve-or-skip wiring that finds it instead of a
-        # path this repository no longer owns.
-        (
-            "PR body scope layout resolver",
-            ".sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py",
-        ),
-        (
-            "PR body scope guard resolution",
-            "--resolve sd-ai-command-pack-pr-body-scope.py",
-        ),
-        (
-            "PR body scope guard skip note",
-            "skipped: no resolvable sd-ai-command-pack install",
         ),
         # `uv sync` must pass --locked so pyproject/uv.lock drift fails the
         # job instead of silently re-resolving in the runner
@@ -961,74 +944,6 @@ def _check_dependabot_config(
         violations.append(f"{path}: missing CodeQL action family pattern")
 
 
-def _check_pack_sync(path: Path, text: str, violations: list[str]) -> None:
-    for label, needle in [
-        ("weekly schedule", "cron: '17 9 * * 1'"),
-        ("manual dispatch", "workflow_dispatch:"),
-        ("read-only default workflow token", "contents: read"),
-        (
-            "pinned Python setup",
-            "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
-        ),
-        ("installer Python version", 'python-version: "3.14"'),
-        (
-            "canonical pack source",
-            "https://github.com/platypeeps/sd-ai-command-pack.git",
-        ),
-        ("shallow main clone", "git clone --depth 1 --branch main"),
-        (
-            "canonical forced refresh",
-            'python "$RUNNER_TEMP/sd-ai-command-pack/install.py" '
-            '"$GITHUB_WORKSPACE" --force',
-        ),
-        ("generated repository map refresh", "scripts/update_repomix"),
-        (
-            "pinned create-pull-request action",
-            "peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1",
-        ),
-        ("stable automation branch", "branch: automation/sd-ai-command-pack-sync"),
-        ("stale branch cleanup", "delete-branch: true"),
-        (
-            "scoped PR token",
-            "token: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}",
-        ),
-        (
-            "fail-closed scoped token preflight",
-            'if [ -z "$SCOPED_TOKEN" ]; then',
-        ),
-        (
-            "scoped token failure diagnostic",
-            "SD_AI_COMMAND_PACK_PR_TOKEN is not configured",
-        ),
-        (
-            "scoped auto-merge token",
-            "GH_TOKEN: ${{ secrets.SD_AI_COMMAND_PACK_PR_TOKEN }}",
-        ),
-        ("normal auto-merge gate", "gh pr merge --auto --squash"),
-        (
-            "PR-only auto-merge condition",
-            "steps.create-pr.outputs.pull-request-number != ''",
-        ),
-    ]:
-        _require_contains(text, needle, path=path, label=label, violations=violations)
-
-    for label, needle in [
-        ("direct default-branch push", "git push origin main"),
-        ("branch-protection bypass", "gh pr merge --admin"),
-        ("direct default-branch checkout", "git checkout main && git merge"),
-        ("repo-wide workflow token for PR writes", "secrets.GITHUB_TOKEN"),
-        ("default token contents write", "contents: write"),
-        ("default token pull-request write", "pull-requests: write"),
-    ]:
-        _require_not_contains(
-            text,
-            needle,
-            path=path,
-            label=label,
-            violations=violations,
-        )
-
-
 def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("lightweight output", 'emit_output "lightweight_only"'),
@@ -1087,7 +1002,6 @@ def _check_docs(path: Path, text: str, violations: list[str]) -> None:
         ("lightweight lane", "lightweight readiness"),
         ("quick lane", "quick test"),
         ("full-ci label", "full-ci"),
-        ("scheduled command-pack sync", "sd-ai-command-pack-sync.yml"),
         ("Windows collection runner", "windows-latest"),
         ("Windows collection command", "pytest --collect-only -q"),
     ]:
@@ -1134,7 +1048,7 @@ def check(root: Path) -> tuple[int, list[str]]:
         root,
         texts,
         "actions/checkout",
-        ("ci", "codeql", "pack_sync"),
+        ("ci", "codeql"),
         violations=violations,
     )
     _check_ci(
@@ -1151,7 +1065,6 @@ def check(root: Path) -> tuple[int, list[str]]:
         texts["dependabot_config"],
         violations,
     )
-    _check_pack_sync(root / REQUIRED_FILES["pack_sync"], texts["pack_sync"], violations)
     _check_pyproject(root / REQUIRED_FILES["pyproject"], texts["pyproject"], violations)
     _check_precommit(root / REQUIRED_FILES["precommit"], texts["precommit"], violations)
     _check_classifier(root / REQUIRED_FILES["classifier"], texts["classifier"], violations)

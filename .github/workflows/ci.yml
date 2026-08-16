@@ -296,20 +296,6 @@ jobs:
           uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
           uv run --python 3.14 --no-project python tools/check_scope_heading_mirrors.py
 
-          # The PR-body scope guard is not in this tree since the thin
-          # conversion: it lives wherever the machine keeps the pack install,
-          # so the resolver -- not a path -- says where. A runner has no
-          # install, so this lane reports itself skipped there rather than
-          # failing on a file nobody shipped to it.
-          scope_guard="$(python3 .sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py \
-            --resolve sd-ai-command-pack-pr-body-scope.py 2>/dev/null \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("path",""))' 2>/dev/null || true)"
-          if [ -n "$scope_guard" ] && [ -f "$scope_guard" ]; then
-            uv run --python 3.14 --no-project python "$scope_guard"
-          else
-            echo "skipped: no resolvable sd-ai-command-pack install provides the PR body scope guard"
-          fi
-
   quick_check:
     name: quick test
     needs: changes
