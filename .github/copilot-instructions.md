@@ -59,6 +59,7 @@ Use the local-first review cycle:
     `.github/agents/trellis-*`; platform hook/agent payloads under
     `.codebuddy/`, `.factory/`, `.qoder/`, `.trae/`, `.zcode/agents/`, and
     legacy `.zcode/cli/agents/`
+  <!-- narrow-globs: skip - legacy Trellis script payloads may not exist in every repo. -->
   - legacy `scripts/trellis-*.sh` and
     `scripts/update_repomix*`
   - The `.gito/`, `.prism/`, and `.sd-ai-command-pack/` directories,
