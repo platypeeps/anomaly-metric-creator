@@ -10,6 +10,17 @@ are intentionally limited to
 documentation, repository maps, Trellis spec/context files, and project
 manifests; caches, secrets, source trees, build output, and Trellis workspace
 state stay out.
+
+Ownership of the managed ignore block: the pack owns the bytes between
+`# sd-ai-command-pack obsidian-kb start` and `# sd-ai-command-pack obsidian-kb
+end`; everything outside those markers stays repo-owned. A repository whose
+provenance tooling reports a mismatch confined to that span reconciles it by
+rehashing the ignore file, never by reverting it -- a revert only reproduces
+the next refresh. This helper therefore rewrites the block only when it is
+functionally deficient (absent, not ignoring the KB directory, or shadowed by
+an unmanaged entry), so a comment-text change in a new pack release never
+dirties a tracked file across the fleet. `--rewrite-ignore-block` forces the
+byte-exact rebuild for a caller that intends to commit the result.
 """
 
 from __future__ import annotations
@@ -466,8 +477,13 @@ def _remove_unmanaged_kb_entries(current: str) -> tuple[str, bool]:
     return "".join(kept), removed
 
 
-def merge_kb_ignore_block(current: str) -> tuple[str, bool]:
-    block = kb_ignore_block()
+def managed_block_span(current: str) -> tuple[int, int] | None:
+    """Locate the managed block, or raise on markers that cannot be paired.
+
+    Returns the half-open character range covering the block and the newline
+    that ends it, or None when no block is present.
+    """
+
     start_index = current.find(KB_IGNORE_BLOCK_START)
     end_index = current.find(KB_IGNORE_BLOCK_END)
     has_start = start_index != -1
@@ -477,10 +493,44 @@ def merge_kb_ignore_block(current: str) -> tuple[str, bool]:
             "error: ignore file has incomplete sd-ai-command-pack "
             "obsidian-kb markers"
         )
-    if has_start:
-        replace_end = end_index + len(KB_IGNORE_BLOCK_END)
-        if replace_end < len(current) and current[replace_end] == "\n":
-            replace_end += 1
+    if not has_start:
+        return None
+    replace_end = end_index + len(KB_IGNORE_BLOCK_END)
+    if replace_end < len(current) and current[replace_end] == "\n":
+        replace_end += 1
+    return start_index, replace_end
+
+
+def managed_block_is_sufficient(current: str) -> bool:
+    """Report whether the existing block already does its job.
+
+    Sufficient means the block is present, an active entry inside it ignores
+    the KB directory, and no unmanaged entry outside it shadows or duplicates
+    that rule. Comment text inside the block is deliberately not compared: a
+    reworded banner in a new pack release is cosmetic, and rewriting it would
+    dirty a tracked `.gitignore` in every consumer at once, which is exactly
+    what blocks a pending merge (issue #432).
+    """
+
+    span = managed_block_span(current)
+    if span is None:
+        return False
+    start_index, replace_end = span
+    block_body = current[start_index:replace_end]
+    if not any(_entry_ignores_kb(line) for line in block_body.splitlines()):
+        return False
+    _, before_had_entry = _remove_unmanaged_kb_entries(current[:start_index])
+    _, after_had_entry = _remove_unmanaged_kb_entries(current[replace_end:])
+    return not (before_had_entry or after_had_entry)
+
+
+def merge_kb_ignore_block(current: str, *, rewrite: bool = False) -> tuple[str, bool]:
+    block = kb_ignore_block()
+    if not rewrite and managed_block_is_sufficient(current):
+        return current, True
+    span = managed_block_span(current)
+    if span is not None:
+        start_index, replace_end = span
         prefix, _ = _remove_unmanaged_kb_entries(current[:start_index])
         suffix, _ = _remove_unmanaged_kb_entries(current[replace_end:])
         return prefix + block + suffix, True
@@ -557,11 +607,11 @@ def ignore_conflict_state(path: Path, *, local: bool) -> str:
     return f"{status}: {path.name} is a symlink"
 
 
-def ensure_ignore_file(path: Path, *, local: bool) -> str:
+def ensure_ignore_file(path: Path, *, local: bool, rewrite: bool = False) -> str:
     if path.is_symlink():
         return ignore_conflict_state(path, local=local)
     original = read_text_if_present(path) or ""
-    merged, had_existing_entry = merge_kb_ignore_block(original)
+    merged, had_existing_entry = merge_kb_ignore_block(original, rewrite=rewrite)
     if merged == original:
         return ignore_present_state(local=local)
 
@@ -580,40 +630,42 @@ def git_info_exclude_path(root: Path) -> Path | None:
     return path
 
 
-def ensure_local_exclude(root: Path) -> str:
+def ensure_local_exclude(root: Path, *, rewrite: bool = False) -> str:
     exclude = git_info_exclude_path(root)
     if exclude is None:
-        return ensure_repo_gitignore(root)
-    return ensure_ignore_file(exclude, local=True)
+        return ensure_repo_gitignore(root, rewrite=rewrite)
+    return ensure_ignore_file(exclude, local=True, rewrite=rewrite)
 
 
-def ensure_repo_gitignore(root: Path) -> str:
-    return ensure_ignore_file(root / ".gitignore", local=False)
+def ensure_repo_gitignore(root: Path, *, rewrite: bool = False) -> str:
+    return ensure_ignore_file(root / ".gitignore", local=False, rewrite=rewrite)
 
 
-def ensure_gitignore(root: Path) -> str:
+def ensure_gitignore(root: Path, *, rewrite: bool = False) -> str:
     if (root / LOCAL_ONLY_MARKER_FILE).is_file():
-        return ensure_local_exclude(root)
-    return ensure_repo_gitignore(root)
+        return ensure_local_exclude(root, rewrite=rewrite)
+    return ensure_repo_gitignore(root, rewrite=rewrite)
 
 
-def planned_ignore_file_state(path: Path, *, local: bool) -> str:
+def planned_ignore_file_state(path: Path, *, local: bool, rewrite: bool = False) -> str:
     if path.is_symlink():
         return ignore_conflict_state(path, local=local)
     original = read_text_if_present(path) or ""
-    merged, had_existing_entry = merge_kb_ignore_block(original)
+    merged, had_existing_entry = merge_kb_ignore_block(original, rewrite=rewrite)
     if merged == original:
         return ignore_present_state(local=local)
     return ignore_change_state(local=local, had_existing_entry=had_existing_entry)
 
 
-def planned_gitignore_state(root: Path) -> str:
+def planned_gitignore_state(root: Path, *, rewrite: bool = False) -> str:
     if (root / LOCAL_ONLY_MARKER_FILE).is_file():
         exclude = git_info_exclude_path(root)
         if exclude is None:
-            return planned_ignore_file_state(root / ".gitignore", local=False)
-        return planned_ignore_file_state(exclude, local=True)
-    return planned_ignore_file_state(root / ".gitignore", local=False)
+            return planned_ignore_file_state(
+                root / ".gitignore", local=False, rewrite=rewrite
+            )
+        return planned_ignore_file_state(exclude, local=True, rewrite=rewrite)
+    return planned_ignore_file_state(root / ".gitignore", local=False, rewrite=rewrite)
 
 
 def expected_link_target(root: Path, relative_source: Path, relative_destination: Path) -> str:
@@ -1400,6 +1452,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "filesystem or permission boundary stops the KB target refresh"
         ),
     )
+    parser.add_argument(
+        "--rewrite-ignore-block",
+        action="store_true",
+        help=(
+            "rebuild the managed ignore block byte-exactly even when it is "
+            "already functional, for a caller that intends to commit the result"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1442,7 +1502,7 @@ def report_kb_state(
     print("vault copy example: " f"cp -R {source} {target}")
 
 
-def dry_run(root: Path) -> int:
+def dry_run(root: Path, *, rewrite_ignore_block: bool = False) -> int:
     ensure_kb_root(root, create=False)
     sources = discover_sources(root)
     present, stale, copy_issues = collect_copy_state(root, sources)
@@ -1468,7 +1528,10 @@ def dry_run(root: Path) -> int:
     report_kb_state(
         root=root,
         mode="dry-run",
-        gitignore_state=f"would be {planned_gitignore_state(root)}",
+        gitignore_state=(
+            "would be "
+            f"{planned_gitignore_state(root, rewrite=rewrite_ignore_block)}"
+        ),
         copies=present,
         stale=stale,
         legacy_symlinks=legacy_symlinks,
@@ -1480,12 +1543,12 @@ def dry_run(root: Path) -> int:
     return 0
 
 
-def check_current(root: Path) -> int:
+def check_current(root: Path, *, rewrite_ignore_block: bool = False) -> int:
     ensure_kb_root(root, create=False)
     sources = discover_sources(root)
     present, stale, copy_issues = collect_copy_state(root, sources)
     legacy_symlinks = legacy_generated_symlink_count(root)
-    gitignore_state = planned_gitignore_state(root)
+    gitignore_state = planned_gitignore_state(root, rewrite=rewrite_ignore_block)
     dashboard_state, dashboard_conflict = planned_dashboard_state(
         root / KB_DIR,
         root,
@@ -1559,10 +1622,12 @@ def _emit_kb_target_block(
     print(json.dumps({"outcome": "blocked", "environmentBlocked": evidence}))
 
 
-def refresh(root: Path, *, as_json: bool = False) -> int:
+def refresh(
+    root: Path, *, as_json: bool = False, rewrite_ignore_block: bool = False
+) -> int:
     try:
         ensure_kb_root(root, create=False)
-        gitignore_state = ensure_gitignore(root)
+        gitignore_state = ensure_gitignore(root, rewrite=rewrite_ignore_block)
         sources = discover_sources(root)
         legacy_symlinks = legacy_generated_symlink_count(root)
         copied, removed, conflicts = create_copies(root, sources)
@@ -1621,10 +1686,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.dry_run:
-            return dry_run(root)
+            return dry_run(root, rewrite_ignore_block=args.rewrite_ignore_block)
         if args.check:
-            return check_current(root)
-        return refresh(root, as_json=args.json)
+            return check_current(root, rewrite_ignore_block=args.rewrite_ignore_block)
+        return refresh(
+            root,
+            as_json=args.json,
+            rewrite_ignore_block=args.rewrite_ignore_block,
+        )
     except OSError as error:
         print(f"error: failed to inspect {KB_DIR}: {error}", file=sys.stderr)
         _emit_kb_target_block(

@@ -121,6 +121,29 @@ Quick links:
   the modified latest session instead of appending a duplicate.
 - `scripts/sd-ai-command-pack-review-scope.sh`: copied/generated file scope
   preflight for mixed PRs.
+- `scripts/sd-ai-command-pack-review-layout.py`: resolves the installed pack
+  layout as data, so a repository's own review guard does not have to hardcode
+  one. `--path P` classifies paths as `pack-payload` or `authored`;
+  `--resolve NAME` reports where a pack script actually lives, which differs
+  between a fat install and a thin one. It tells the two apart by the thin pin
+  the conversion records in `.sd-ai-command-pack/manifest.json` and
+  `provenance.json`, not by which receipt files exist: conversion rewrites
+  `installed-targets.txt` down to the residual slice rather than deleting it, so
+  its presence says nothing about the install shape. Its `mode` is output, never
+  input:
+  callers read what it resolved rather than branching on the install shape.
+  When no install is found the mode is `unresolved` and no classification is
+  emitted, because reporting everything as `authored` is indistinguishable from
+  a healthy run on a repository that changed no pack files.
+- `.sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py`: the same file,
+  installed a second time at a path that survives thin conversion. **Call this
+  one from a repository's own guards.** Everything under `scripts/` is
+  machine-scope, so a thin install moves it out of the repository and a guard
+  naming it by path breaks; this copy stays put, which is what lets a guard ask
+  where the pack is without first knowing where the pack is. It answers about
+  the current install rather than about history: after conversion, a path
+  under the repository's old vendored script directory is reported `authored`,
+  because that is no longer a path this repository holds.
 - `scripts/sd-ai-command-pack-review-preflight.mjs`: generic dependency-free
   review preflight for copied/generated disclosure, documentation path hygiene,
   Trellis journal consistency, npm override drift, and large diff warnings.
@@ -2068,6 +2091,14 @@ node_modules/
 # Project-local personal ignores can be added below this managed block.
 # sd-ai-command-pack trellis-gitignore end
 ```
+
+A thin conversion **adopts** this block rather than deleting it: the rules
+describe the consumer's own tree and outlive the payload, so `--thin` replaces
+the markers and the generated notice with a plain
+`# --- adopted from sd-ai-command-pack ... ---` comment pair and stops
+managing the file. `--revert-thin` removes the adopted section before it
+restores the managed block, so the two never stack. The Copilot block below is
+not adopted — it describes the payload, which a thin consumer no longer has.
 
 ```markdown
 <!-- SD-AI-COMMAND-PACK:COPILOT-GUIDANCE:START -->

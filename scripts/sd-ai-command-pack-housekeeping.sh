@@ -23,6 +23,10 @@ ANOMALIES=()
 ANOMALY_CODES=()
 ELIGIBILITY_JSON=""
 REFS_REFRESHED=0
+# Set when this run's own Obsidian KB refresh wrote the ignore file, so a
+# later working_tree_dirty anomaly can name the writer instead of leaving the
+# operator to guess which process dirtied the tree (issue #432).
+KB_IGNORE_WRITE=0
 DEFAULT_BRANCH=""
 START_BRANCH=""
 GITHUB_REPO_SLUG=""
@@ -247,6 +251,63 @@ working_tree_is_clean() {
   [ -z "$status_output" ]
 }
 
+dirty_path_summary() {
+  # Bounded diagnostic, not a diff dump: name at most ten paths so the
+  # operator can see what dirtied the tree without the anomaly becoming a
+  # wall of text. Fails closed to an empty summary when `git status` fails,
+  # matching working_tree_is_clean's posture.
+  local status_output
+  if ! status_output="$(working_tree_status)"; then
+    return 0
+  fi
+  [ -n "$status_output" ] || return 0
+
+  local -a paths=()
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    paths+=("${line:3}")
+  done <<<"$status_output"
+
+  local total="${#paths[@]}"
+  [ "$total" -gt 0 ] || return 0
+  local shown="$total"
+  if [ "$shown" -gt 10 ]; then
+    shown=10
+  fi
+  # Joined by hand: `${paths[*]}` with IFS=", " would separate on the single
+  # first IFS character, producing a comma with no space.
+  local summary=""
+  local index
+  for ((index = 0; index < shown; index++)); do
+    if [ -n "$summary" ]; then
+      summary="$summary, "
+    fi
+    summary="$summary${paths[index]}"
+  done
+  if [ "$total" -gt "$shown" ]; then
+    summary="$summary, and $((total - shown)) more"
+  fi
+  printf '%s' "$summary"
+}
+
+kb_ignore_write_note() {
+  [ "$KB_IGNORE_WRITE" -eq 1 ] || return 0
+  # Deliberately conditional: the refresh wrote .gitignore, but the listed
+  # paths may include dirt from another writer, so committing the managed
+  # block is only sufficient when nothing else is dirty.
+  printf '%s' "; this run's Obsidian KB refresh wrote .gitignore, so committing its managed block clears this state if no other path above is dirty"
+}
+
+working_tree_dirty_detail() {
+  local summary
+  summary="$(dirty_path_summary)"
+  if [ -n "$summary" ]; then
+    printf '%s' "; dirty paths: $summary"
+  fi
+  kb_ignore_write_note
+}
+
 run_mutating_git() {
   if [ "$DRY_RUN" -eq 1 ]; then
     add_action git_mutation_previewed "would run: git $*"
@@ -295,6 +356,16 @@ refresh_obsidian_kb() {
   # only so the read-only target can be classified below.
   if [ -n "$refresh_output" ]; then
     printf '%s\n' "$refresh_output"
+  fi
+  # Only a write to the *tracked* ignore file can dirty the working tree, so
+  # only `added` and `updated` count. The `local-exclude` states write
+  # `.git/info/exclude`, which lives inside the git directory and never
+  # appears in `git status`. `present` wrote nothing, a symlink `conflict`
+  # wrote nothing, and a `--dry-run` report is prefixed with `would be`. Read
+  # the state regardless of exit status: a refresh that ends at exit 3 (stale
+  # entries it could not bring current) may still have written .gitignore.
+  if grep -Eq '^gitignore: (added|updated)$' <<<"$refresh_output"; then
+    KB_IGNORE_WRITE=1
   fi
   if [ "$refresh_status" -eq 0 ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -716,7 +787,7 @@ maybe_merge_ready_dependency_pr() {
     return 0
   fi
   if ! working_tree_is_clean; then
-    add_anomaly working_tree_dirty "working tree has uncommitted changes; skipped dependency PR #$pr_number merge"
+    add_anomaly working_tree_dirty "working tree has uncommitted changes; skipped dependency PR #$pr_number merge$(working_tree_dirty_detail)"
     return 0
   fi
   if ! have gh; then
@@ -833,7 +904,7 @@ cleanup_merged_branch() {
   local remote_head_oid
 
   if ! working_tree_is_clean; then
-    add_anomaly working_tree_dirty "working tree has uncommitted changes; skipped switching and branch deletion"
+    add_anomaly working_tree_dirty "working tree has uncommitted changes; skipped switching and branch deletion$(working_tree_dirty_detail)"
     return 0
   fi
   if [ "$pr_head" != "$branch" ]; then

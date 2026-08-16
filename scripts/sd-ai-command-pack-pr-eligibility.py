@@ -454,12 +454,105 @@ def require_pr_string(value: object, field: str) -> str:
     return value.strip()
 
 
+def parse_check_started_at(raw: Mapping[str, Any], index: int) -> datetime | None:
+    """Read one check run's startedAt, distinguishing absent from malformed.
+
+    Absent or null means "no evidence of ordering" and returns None: the caller
+    treats such a row as never superseded, which can only keep a block. A
+    present-but-unusable value is malformed input and fails closed like a
+    non-string ``status`` does.
+    """
+
+    value = raw.get("startedAt")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise EligibilityInputError(f"pull request check {index} is invalid")
+    try:
+        # GitHub emits a trailing "Z"; datetime.fromisoformat did not accept it
+        # until Python 3.11 and this pack supports 3.10.
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise EligibilityInputError(
+            f"pull request check {index} is invalid"
+        ) from error
+
+
+def superseded_check_indexes(value: Sequence[Any]) -> dict[int, dict[str, Any]]:
+    """Map each superseded check row's index to the row that replaced it.
+
+    A repository whose CI cancels superseded in-progress runs on the same ref
+    leaves both the cancelled run and its replacement attached to the head, and
+    the rollup reports both. Branch protection evaluates the latest result per
+    context name and reports the pull request mergeable; counting the cancelled
+    copy as blocking made this probe contradict it (issue #414).
+
+    A row is superseded only when it is CANCELLED and a later-started row shares
+    its (workflowName, name) identity. Restricting to CANCELLED keeps a real
+    FAILURE from an older run blocking, and requiring a later sibling keeps an
+    operator's cancellation of the only run blocking.
+    """
+
+    buckets: dict[tuple[str, str], list[int]] = {}
+    for index, raw in enumerate(value, start=1):
+        if not isinstance(raw, Mapping) or raw.get("__typename") != "CheckRun":
+            continue
+        name = raw.get("name")
+        # Never bucket on the "unnamed" display placeholder: two unrelated
+        # nameless rows are not the same check.
+        if not isinstance(name, str) or not name:
+            continue
+        workflow = raw.get("workflowName")
+        key = (workflow if isinstance(workflow, str) else "", name)
+        buckets.setdefault(key, []).append(index)
+
+    superseded: dict[int, dict[str, Any]] = {}
+    for indexes in buckets.values():
+        cancelled = [
+            index
+            for index in indexes
+            if value[index - 1].get("conclusion") == "CANCELLED"
+        ]
+        if not cancelled or len(indexes) < 2:
+            continue
+        # Timestamps are read only for identities that carry a cancelled row, so
+        # a rollup without one never touches the field.
+        started = {
+            index: parse_check_started_at(value[index - 1], index)
+            for index in indexes
+        }
+        for index in cancelled:
+            own = started[index]
+            if own is None:
+                continue
+            latest_index: int | None = None
+            latest_started: datetime | None = None
+            for other in indexes:
+                if other == index:
+                    continue
+                other_started = started[other]
+                # Strictly later: equal timestamps are no evidence of ordering.
+                if other_started is None or other_started <= own:
+                    continue
+                if latest_started is None or other_started > latest_started:
+                    latest_index = other
+                    latest_started = other_started
+            if latest_index is None:
+                continue
+            superseded[index] = {
+                "index": latest_index,
+                "startedAt": value[latest_index - 1].get("startedAt"),
+            }
+    return superseded
+
+
 def parse_checks(value: object) -> tuple[list[dict[str, Any]], int, int]:
     if not isinstance(value, list):
         raise EligibilityInputError("pull request statusCheckRollup is invalid")
     observed: list[dict[str, Any]] = []
     blocking = 0
     successful = 0
+    superseded = superseded_check_indexes(value)
     for index, raw in enumerate(value, start=1):
         if not isinstance(raw, Mapping):
             raise EligibilityInputError(f"pull request check {index} is invalid")
@@ -471,23 +564,35 @@ def parse_checks(value: object) -> tuple[list[dict[str, Any]], int, int]:
                 conclusion is not None and not isinstance(conclusion, str)
             ):
                 raise EligibilityInputError(f"pull request check {index} is invalid")
+            replacement = superseded.get(index)
             if status == "COMPLETED" and conclusion == "SUCCESS":
                 successful += 1
+            elif replacement is not None:
+                # Superseded: neither blocking nor successful. A row whose only
+                # content is "this run was replaced" is not evidence either way.
+                pass
             elif status != "COMPLETED" or conclusion not in {
                 "SKIPPED",
                 "NEUTRAL",
             }:
                 blocking += 1
-            observed.append(
-                {
-                    "type": "CheckRun",
-                    "name": safe_text(raw.get("name") or "unnamed", limit=160),
-                    "workflow": safe_text(raw.get("workflowName") or "", limit=160),
-                    "status": status,
-                    "conclusion": conclusion,
-                    "url": safe_text(raw.get("detailsUrl") or "", limit=500),
+            item: dict[str, Any] = {
+                "type": "CheckRun",
+                "name": safe_text(raw.get("name") or "unnamed", limit=160),
+                "workflow": safe_text(raw.get("workflowName") or "", limit=160),
+                "status": status,
+                "conclusion": conclusion,
+                "url": safe_text(raw.get("detailsUrl") or "", limit=500),
+            }
+            if replacement is not None:
+                # `index` cites a position in this same list: one observed item
+                # is appended per input row, in input order, for every row type.
+                item["superseded"] = True
+                item["supersededBy"] = {
+                    "index": replacement["index"],
+                    "startedAt": safe_text(replacement["startedAt"] or "", limit=64),
                 }
-            )
+            observed.append(item)
         elif check_type == "StatusContext":
             state = raw.get("state")
             if not isinstance(state, str):

@@ -3,7 +3,43 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+# The repository being checked, which is not necessarily the one hosting this
+# script. A thin install moves this file to the machine, where `$SCRIPT_DIR/..`
+# is the agents directory rather than any checkout -- so the old derivation
+# ended the run at `fatal: not a git repository` before the first check.
+#
+# The first two rungs are the shared shell library's, so the override name and
+# the caller's-working-tree rule stay one convention rather than two:
+# `sd-ai-command-pack-shell-lib.sh:172` reads SD_AI_COMMAND_PACK_REPO_ROOT (or
+# an already-set REPO_ROOT) and then `git rev-parse --show-toplevel`. The third
+# rung is this script's own: the library fails there, which it can afford
+# because it runs after a root is established, while this is where the root
+# gets established. Under a fat install invoked from inside the repository the
+# second rung resolves to exactly what the third one used to return, so every
+# existing caller keeps its current root.
+REPO_ROOT="${SD_AI_COMMAND_PACK_REPO_ROOT:-}"
+if [ -n "$REPO_ROOT" ]; then
+  # Only this rung can hand back a relative path: `git rev-parse
+  # --show-toplevel` and `cd ... && pwd` both answer absolute. Left relative it
+  # would be re-resolved against the working directory this script later `cd`s
+  # into, so every path built from it -- the targets receipt first -- would
+  # point somewhere else the moment the root stopped being the caller's cwd.
+  if ! REPO_ROOT="$(cd -- "$REPO_ROOT" 2>/dev/null && pwd -P)"; then
+    REPO_ROOT=""
+  else
+    # The shared shell library reads the raw override rather than this
+    # variable (`sd-ai-command-pack-shell-lib.sh:172`), so normalizing only the
+    # local copy would leave the relative form live for the cache root and for
+    # every child process. Put the absolute form back where it came from.
+    export SD_AI_COMMAND_PACK_REPO_ROOT="$REPO_ROOT"
+  fi
+fi
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+fi
 # errexit does not help here: bash's `cd ""` is a silent success, so an
 # empty root (failed resolution above) must be rejected explicitly.
 if [ -z "$REPO_ROOT" ] || ! cd -- "$REPO_ROOT"; then

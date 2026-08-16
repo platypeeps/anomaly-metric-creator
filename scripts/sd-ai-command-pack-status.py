@@ -39,6 +39,11 @@ MAX_ROADMAP_ITEMS = 500
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 COMMIT_RE = re.compile(r"[0-9a-f]{40,64}")
 GITHUB_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# This project publishes releases as annotated tags, not GitHub Releases, so the
+# newest release is the highest v<semver> tag on the remote. Anything that does
+# not match exactly is skipped rather than coerced: a pre-release or a hand-made
+# tag must not participate in the ordering.
+RELEASE_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 ROADMAP_SOURCE_EXTENSIONS = frozenset({".md", ".mdx", ".txt"})
 ROADMAP_SOURCE_STEMS = (
     "roadmap",
@@ -1941,6 +1946,62 @@ def collect_relevant_pr(repo: Path, slug: str, branch: str | None) -> dict[str, 
     return pr
 
 
+def collect_release_target(
+    pack_source: Path,
+    *,
+    network: bool,
+) -> dict[str, Any]:
+    """The newest published pack release tag, or a labeled reason there is none.
+
+    Read-only by construction: `remote get-url` and `ls-remote` are the only
+    commands issued, and neither writes the local repository. Every failure is a
+    labeled status rather than an exception, because one unreachable remote must
+    not cost the operator the whole fleet report.
+    """
+
+    def unresolved(status: str, *, tag: str | None = None) -> dict[str, Any]:
+        return {"status": status, "version": None, "tag": tag}
+
+    if not network:
+        return unresolved("disabled")
+
+    origin = run_command(["git", "remote", "get-url", "origin"], cwd=pack_source)
+    if origin.returncode != 0 or not origin.stdout.strip():
+        return unresolved("not-configured")
+
+    listing = run_command(
+        ["git", "ls-remote", "--tags", "--refs", "origin"],
+        cwd=pack_source,
+    )
+    if listing.returncode != 0:
+        return unresolved("unavailable")
+
+    best: tuple[int, int, int] | None = None
+    best_tag: str | None = None
+    for line in listing.stdout.splitlines():
+        _, separator, ref = line.partition("refs/tags/")
+        if not separator:
+            continue
+        match = RELEASE_TAG_RE.match(ref.strip())
+        if match is None:
+            continue
+        # Order on the integer triple, never on the tag string: "v0.9.2" sorts
+        # above "v0.71.8" lexicographically, which would report a years-old
+        # version as the newest release and read as perfectly well-formed.
+        parsed = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        if best is None or parsed > best:
+            best = parsed
+            best_tag = ref.strip()
+
+    if best_tag is None:
+        return unresolved("unavailable")
+    return {
+        "status": "available",
+        "version": best_tag.removeprefix("v"),
+        "tag": best_tag,
+    }
+
+
 def collect_github(
     repo: Path,
     *,
@@ -3007,6 +3068,7 @@ def fleet_step_records(
     target: str,
     *,
     machine_scope: Mapping[str, Any] | None = None,
+    release_target: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Every fleet step, untruncated, ranked so skew outranks advisory rows.
 
@@ -3040,6 +3102,25 @@ def fleet_step_records(
 
     def add(summary: str, rank: int) -> None:
         records.append({"summary": summary, "rank": rank})
+
+    # The operator's own checkout versus the newest published release. This is a
+    # fleet-level fact, emitted once: it is a property of the operator, not of
+    # any consumer, and the fix is pulling the pack source rather than
+    # refreshing anyone. It ranks with skew rather than advisory because it
+    # invalidates every consumer comparison in the same report -- each of those
+    # was scored against a target that is not what is published.
+    #
+    # "differs from", never "is behind": an unreleased working copy is ahead,
+    # and that is one of the two failure modes this exists to surface.
+    if release_target is not None and release_target.get("status") == "available":
+        release_version = release_target.get("version")
+        if isinstance(release_version, str) and release_version != target:
+            add(
+                f"Pack checkout is at {target} but the newest published release "
+                f"is {release_version}; pull the pack source before refreshing "
+                "the fleet.",
+                FLEET_STEP_RANK_SKEW,
+            )
 
     broken_pins = [
         item["name"]
@@ -3212,6 +3293,10 @@ def collect_fleet(
         home=home,
     )
     target = resolution.target_version
+    # Once per fleet run, deliberately outside the consumer pool below: the pack
+    # has one release regardless of how many consumers the manifest lists, and a
+    # per-consumer lookup would multiply one remote round trip by the fleet size.
+    release_target = collect_release_target(resolution.pack_source, network=network)
 
     def collect_consumer(consumer: Any) -> dict[str, Any]:
         path = resolution.path_overrides.get(
@@ -3293,12 +3378,18 @@ def collect_fleet(
         home=home,
         environ=environ,
     )
-    records = fleet_step_records(reports, target, machine_scope=machine_scope)
+    records = fleet_step_records(
+        reports,
+        target,
+        machine_scope=machine_scope,
+        release_target=release_target,
+    )
     steps = fleet_next_steps(records)
     return {
         "schemaVersion": SCHEMA_VERSION,
         "mode": "fleet",
         "targetPackVersion": target,
+        "releaseTarget": release_target,
         "machineScope": machine_scope,
         "refsFreshness": "refreshed" if refs_refreshed else "cached",
         "configuration": {
@@ -3347,6 +3438,16 @@ def render_fleet(report: Mapping[str, Any]) -> None:
         f"{unavailable} unavailable"
     )
     print(f"Target pack: {report['targetPackVersion']}")
+    # Reported, never counted in `attention` above: an unreachable remote or a
+    # deliberate --no-network run must not make a healthy fleet read as broken.
+    release_target = report.get("releaseTarget") or {}
+    if release_target.get("status") == "available":
+        print(
+            f"Release target: {release_target['version']} "
+            f"({release_target['tag']})"
+        )
+    else:
+        print(f"Release target: {release_target.get('status', 'unavailable')}")
     configuration = report.get("configuration", {})
     print(f"Fleet config: {configuration.get('source', 'unknown')}")
     if any(item.get("installMode") == "thin" for item in repositories):

@@ -166,6 +166,7 @@
 .opencode/commands/sd-work-backlog.md
 .prism/rules.json
 .prism/rules.schema.json
+.sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py
 .sd-ai-command-pack/installed-targets.txt
 .sd-ai-command-pack/manifest.json
 .sd-ai-command-pack/provenance.json
@@ -184,6 +185,7 @@ scripts/sd-ai-command-pack-pr-eligibility.py
 scripts/sd-ai-command-pack-record-session.py
 scripts/sd-ai-command-pack-recovery-artifacts.py
 scripts/sd-ai-command-pack-review-full-check.sh
+scripts/sd-ai-command-pack-review-layout.py
 scripts/sd-ai-command-pack-review-learnings.py
 scripts/sd-ai-command-pack-review-local.py
 scripts/sd-ai-command-pack-review-preflight.mjs

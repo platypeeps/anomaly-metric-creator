@@ -1299,6 +1299,30 @@ def _query_receipt(
     return matches[0] if matches else None
 
 
+def _receipt_in_flight(receipt: object) -> bool:
+    """Report whether a durable receipt describes a dispatch still in progress.
+
+    The routed lane writes its receipt twice: once with `phase: "started"` as
+    the route step begins, and again a few seconds later with the terminal
+    phase and a `completedAt`. A receipt caught between those two writes proves
+    the dispatch happened and says nothing about its outcome, so the poller must
+    keep asking rather than store it as the answer.
+
+    Only `started` counts. `not-started` is what a skipped `route: none`
+    dispatch carries and is terminal for that route, and a `failed` status is
+    terminal too — reconciling that one is the operator's job, not the poller's.
+    """
+
+    if not isinstance(receipt, Mapping):
+        return False
+    dispatch = receipt.get("dispatch")
+    if not isinstance(dispatch, Mapping):
+        return False
+    if dispatch.get("status") == "failed":
+        return False
+    return dispatch.get("phase") == "started"
+
+
 def _paginated_rest_array(
     repo: Path,
     *,
@@ -2130,18 +2154,31 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 )
             _advance(state_path, state, "route-dispatched")
 
-    if state.get("remoteReceipt") is None:
-        receipt = None
-        for index in range(int(remote_config["receiptPolls"])):
-            receipt = _query_receipt(
+    stored_receipt = state.get("remoteReceipt")
+    if stored_receipt is None or _receipt_in_flight(stored_receipt):
+        # Poll until the receipt is terminal, not merely present. Storing an
+        # in-flight receipt wedges the attempt instead of leaving it pending:
+        # the terminal check below turns a cached `started` phase into
+        # `remote-reconciliation-required`, and no other branch re-queries a
+        # receipt that already exists, so the rerun the skill prescribes would
+        # replay that cache forever. Re-entering here with one stored is the
+        # same situation one invocation later and gets the same treatment.
+        receipt = stored_receipt if isinstance(stored_receipt, dict) else None
+        polls = int(remote_config["receiptPolls"])
+        for index in range(polls):
+            queried = _query_receipt(
                 repo,
                 repository=repository,
                 check_name=str(capability["checkName"]),
                 request=request,
             )
-            if receipt is not None:
-                break
-            if index + 1 < int(remote_config["receiptPolls"]):
+            if queried is not None:
+                # A transient empty query must not discard evidence already in
+                # hand, so the stored receipt is replaced only by a real one.
+                receipt = queried
+                if not _receipt_in_flight(queried):
+                    break
+            if index + 1 < polls:
                 time.sleep(int(remote_config["pollSeconds"]))
         if receipt is None:
             return 3, _report(

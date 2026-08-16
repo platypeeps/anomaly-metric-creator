@@ -24,6 +24,34 @@ bash scripts/sd-ai-command-pack-toolchain.sh run-python -- \
   scripts/sd-ai-command-pack-update-spec-kb.py --dry-run
 ```
 
+## Ownership of the managed ignore block
+
+The pack owns the bytes between `# sd-ai-command-pack obsidian-kb start` and
+`# sd-ai-command-pack obsidian-kb end`. Everything outside those markers stays
+repo-owned.
+
+A provenance mismatch confined to that span is reconciled by **rehashing** the
+ignore file, never by reverting it: a revert only reproduces the drift on the
+next refresh. Revert-don't-rehash still applies to an edit outside the markers.
+
+The helper rewrites the block only when it is functionally deficient — absent,
+not ignoring the KB directory, or shadowed by an unmanaged entry — so a
+comment-text change in a new pack release does not dirty a tracked `.gitignore`.
+`--rewrite-ignore-block` forces the byte-exact rebuild for a caller that intends
+to commit the result.
+
+Paste-ready note for a repository whose provenance guidance still hashes
+`.gitignore` as a whole file:
+
+> `.gitignore` has two owners. The span between
+> `# sd-ai-command-pack obsidian-kb start` and
+> `# sd-ai-command-pack obsidian-kb end` is written by
+> `sd-ai-command-pack-update-spec-kb.py`; the remainder is repo-authored. Hash
+> only the repo-authored remainder. When a reported drift lies entirely inside
+> the managed span, rehash the file and record the new digest — do not revert
+> it. Revert-don't-rehash applies exactly when the edit lies outside the
+> markers.
+
 If the helper is missing or exits nonzero, stop and report the exact command,
 exit status, and complete stdout/stderr output. Do not rebuild the KB manually.
 For a valid result, report create/refresh and copy counts, dashboard state,

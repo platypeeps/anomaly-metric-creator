@@ -3,7 +3,36 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+# The repository being classified, which is not necessarily the one hosting
+# this script: a thin install moves this file to the machine, where
+# `$SCRIPT_DIR/..` is the agents directory rather than any checkout. Same
+# three rungs as `sd-ai-command-pack-full-check.sh`, whose comment records
+# which two come from the shared shell library and why the third does not.
+# Under a fat install invoked from inside the repository the second rung
+# returns exactly what the third one used to.
+REPO_ROOT="${SD_AI_COMMAND_PACK_REPO_ROOT:-}"
+if [ -n "$REPO_ROOT" ]; then
+  # Only this rung can hand back a relative path: `git rev-parse
+  # --show-toplevel` and `cd ... && pwd` both answer absolute. Left relative it
+  # would be re-resolved against the working directory this script later `cd`s
+  # into, so every path built from it -- the targets receipt first -- would
+  # point somewhere else the moment the root stopped being the caller's cwd.
+  if ! REPO_ROOT="$(cd -- "$REPO_ROOT" 2>/dev/null && pwd -P)"; then
+    REPO_ROOT=""
+  else
+    # The shared shell library reads the raw override rather than this
+    # variable (`sd-ai-command-pack-shell-lib.sh:172`), so normalizing only the
+    # local copy would leave the relative form live for the cache root and for
+    # every child process. Put the absolute form back where it came from.
+    export SD_AI_COMMAND_PACK_REPO_ROOT="$REPO_ROOT"
+  fi
+fi
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+fi
 TARGETS_FILE="${SD_AI_COMMAND_PACK_TARGETS_FILE:-$REPO_ROOT/.sd-ai-command-pack/installed-targets.txt}"
 MODE="${SD_AI_COMMAND_PACK_SCOPE_CHECK:-auto}"
 GH_MODE="${SD_AI_COMMAND_PACK_SCOPE_CHECK_GH:-auto}"
@@ -351,7 +380,26 @@ add_category() {
   scope_categories+=("$category")
 }
 
+# Delegate the layout question to the one implementation of it. This binding
+# exists so a caller that wants the classification *as data* stops having to
+# run this script once per path and read its exit code -- which is the gap that
+# produced five consumer-side reimplementations of the same matcher.
+layout_json() {
+  local python_bin
+  python_bin="$(command -v python3 || true)"
+  if [ -z "$python_bin" ]; then
+    fail "python3 is required for --json layout classification"
+  fi
+  "$python_bin" "$SCRIPT_DIR/sd-ai-command-pack-review-layout.py" --root "$REPO_ROOT" "$@"
+}
+
 main() {
+  if [ "${1:-}" = "--json" ]; then
+    shift
+    layout_json "$@"
+    return $?
+  fi
+
   if is_disabled "$MODE"; then
     warn "Skipping tooling/generated review-scope check because SD_AI_COMMAND_PACK_SCOPE_CHECK=$MODE."
     return 0
