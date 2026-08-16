@@ -40,7 +40,7 @@ Checkout trust policy — complete before step 1:
    user's invocation arguments through unchanged; the skill accepts positional
    `fleet`, a positional repository path, and the documented flags.
 4. Run the installed status collector through
-   `scripts/sd-ai-command-pack-toolchain.sh`; do not recreate its report from
+   `~/.agents/bin/sd-ai-command-pack-toolchain.sh`; do not recreate its report from
    ad hoc commands.
 5. Keep the workflow read-only. Do not fetch, pull, switch, stage, commit,
    push, merge, delete branches, update tasks, refresh generated files, or run

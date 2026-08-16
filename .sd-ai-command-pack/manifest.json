@@ -5095,5 +5095,6 @@
       "target": ".trae/skills/sd-update-spec/references/obsidian-kb.md",
       "anchor": ".trae"
     }
-  ]
+  ],
+  "mode": "thin"
 }
