@@ -21,8 +21,8 @@
 // forwarders narrow PATH the same way; see `_sd_pack_forward.py`.
 
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { delimiter, dirname } from "node:path";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TARGET = "sd-ai-command-pack-review-preflight.mjs";
@@ -56,15 +56,48 @@ const searchPath = (process.env.PATH ?? "")
   })
   .join(delimiter);
 
-const result = spawnSync(TARGET, process.argv.slice(2), {
+// Resolve explicitly rather than letting `spawnSync` search: the Python and
+// shell forwarders both compare the resolved target against themselves before
+// handing over, and doing the search here is what makes that comparison
+// possible. Without it an alternate PATH route to this same file -- a symlinked
+// directory that `realpathSync` above could not resolve, say -- would spawn a
+// copy of this forwarder rather than the helper.
+function resolveOnPath(name, search) {
+  for (const entry of search.split(delimiter)) {
+    if (!entry) continue;
+    const candidate = join(entry, name);
+    try {
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, constants.X_OK);
+      return realpathSync(candidate);
+    } catch {
+      // Not an executable file here; keep looking.
+    }
+  }
+  return null;
+}
+
+const resolved = resolveOnPath(TARGET, searchPath);
+if (resolved === null) {
+  process.stderr.write(
+    `${TARGET} is not resolvable on PATH.\n` +
+      "Install or refresh sd-ai-command-pack, then rerun.\n",
+  );
+  process.exit(2);
+}
+if (resolved === selfPath) {
+  process.stderr.write(`${TARGET} resolved to this forwarder; refusing to recurse.\n`);
+  process.exit(2);
+}
+
+const result = spawnSync(resolved, process.argv.slice(2), {
   stdio: "inherit",
   env: { ...process.env, PATH: searchPath, [ACTIVE_ENV]: TARGET },
 });
 
 if (result.error) {
   process.stderr.write(
-    `${TARGET} is not resolvable on PATH: ${result.error.message}\n` +
-      "Install or refresh sd-ai-command-pack, then rerun.\n",
+    `${TARGET} at ${resolved} could not be executed: ${result.error.message}\n`,
   );
   process.exit(2);
 }

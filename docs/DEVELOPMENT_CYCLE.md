@@ -259,7 +259,7 @@ What works, and what this repo therefore does: keep the five forwarders as
 tracked regular files, and list them in `installed-targets.txt` so the audit
 recognizes them. Each forwarder resolves its target **by name on PATH** rather
 than by absolute path, so a pack version bump does not strand it on a stale
-install directory, and each replaces its own process (`execvp` / `exec` /
+install directory, and each replaces its own process (`os.execv` / `exec` /
 `spawnSync` + exit-code passthrough) so the real helper's exit code and streams
 reach the caller unchanged.
 
