@@ -263,13 +263,19 @@ install directory, and each replaces its own process (`execvp` / `exec` /
 `spawnSync` + exit-code passthrough) so the real helper's exit code and streams
 reach the caller unchanged.
 
-Two PATH narrowings are shared by all three languages and are deliberate. Each
-forwarder removes **its own directory** from the search path — it shares a
-basename with its target, so a checkout that puts `scripts/` on PATH would
-otherwise resolve the forwarder to itself and loop forever — and each **drops
-empty PATH entries** rather than reading them as POSIX's implicit current
-directory, which would let the caller's working directory supply the helper the
-gate runs. The three Python forwarders share one implementation in
+Three PATH behaviours are shared by all the forwarders and are deliberate. Each
+removes **its own directory** from the search path — it shares a basename with
+its target, so a checkout that puts `scripts/` on PATH would otherwise resolve
+the forwarder to itself and loop forever. Each **drops empty PATH entries**
+rather than reading them as POSIX's implicit current directory, which would let
+the caller's working directory supply the helper the gate runs. And each sets
+`SD_PACK_FORWARD_ACTIVE` to its target name across the exec, refusing a second
+hop for the same target: stripping one directory closes the *self* loop but not
+the *mutual* one, where two checkouts on PATH have each forwarder strip only its
+own directory and exec the other's copy. The marker is keyed by target, so a
+helper that legitimately invokes a different pack helper is unaffected.
+
+The three Python forwarders share one implementation in
 `scripts/_sd_pack_forward.py`; that module is deliberately *not* named
 `sd-ai-command-pack-*` or `sd_ai_command_pack_*`, because those are the pack's
 own `PACK_FILE_PATTERNS` and a matching file must appear in the receipt as

@@ -91,6 +91,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import re
@@ -149,17 +150,27 @@ class StructuralError(Exception):
 
 
 def _defines_rules(path: Path) -> bool:
-    """True when `path` looks like the real scope guard rather than a forwarder.
+    """True when `path` actually defines the scope guard's rule function.
 
-    A source-text probe, not an import: `_load_authority` is the only place
-    that executes the authority, and probing must not run a file this function
-    is about to reject.
+    A parse, not an import: `_load_authority` is the only place that executes
+    the authority, and probing must not run a file this function is about to
+    reject. It is also not a substring search -- a forwarder that merely names
+    `_rules_for_repo` in a comment or a diagnostic string would pass that,
+    while this asks the module whether it defines it at the top level.
+
+    Unparseable or unreadable means "not the authority": the caller falls
+    through to the layout resolver, which reaches the real helper anyway, and
+    `_load_authority` fails loudly if what it loads has no rules.
     """
     try:
-        source = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError):
         return False
-    return "_rules_for_repo" in source
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_rules_for_repo"
+        for node in tree.body
+    )
 
 
 def _authority_path(root: Path) -> Path | None:

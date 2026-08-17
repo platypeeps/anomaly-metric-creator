@@ -25,6 +25,18 @@ set -euo pipefail
 
 TARGET="sd-ai-command-pack-review-scope.sh"
 
+# Stripping this directory closes the self-loop but not the mutual one: with two
+# checkouts on PATH, each forwarder strips only its own directory and execs the
+# other's copy, which execs back. This marker survives the exec, so the second
+# hop for the same target is refused. Keyed by target name, so a helper that
+# legitimately invokes a different pack helper is unaffected.
+if [ "${SD_PACK_FORWARD_ACTIVE:-}" = "$TARGET" ]; then
+  printf '%s was already forwarded once; refusing to recurse. More than one checkout of these forwarders is on PATH.\n' \
+    "$TARGET" >&2
+  exit 2
+fi
+export SD_PACK_FORWARD_ACTIVE="$TARGET"
+
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 SELF_PATH="$SELF_DIR/$(basename -- "${BASH_SOURCE[0]}")"
 

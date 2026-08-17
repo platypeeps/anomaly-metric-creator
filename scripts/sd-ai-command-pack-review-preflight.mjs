@@ -26,6 +26,20 @@ import { delimiter, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TARGET = "sd-ai-command-pack-review-preflight.mjs";
+const ACTIVE_ENV = "SD_PACK_FORWARD_ACTIVE";
+
+// Stripping this directory closes the self-loop but not the mutual one: with two
+// checkouts on PATH, each forwarder strips only its own directory and spawns the
+// other's copy, which spawns back. This marker survives the spawn, so the second
+// hop for the same target is refused. Keyed by target name, so a helper that
+// legitimately invokes a different pack helper is unaffected.
+if (process.env[ACTIVE_ENV] === TARGET) {
+  process.stderr.write(
+    `${TARGET} was already forwarded once; refusing to recurse. ` +
+      "More than one checkout of these forwarders is on PATH.\n",
+  );
+  process.exit(2);
+}
 
 const selfPath = realpathSync(fileURLToPath(import.meta.url));
 const selfDir = dirname(selfPath);
@@ -44,7 +58,7 @@ const searchPath = (process.env.PATH ?? "")
 
 const result = spawnSync(TARGET, process.argv.slice(2), {
   stdio: "inherit",
-  env: { ...process.env, PATH: searchPath },
+  env: { ...process.env, PATH: searchPath, [ACTIVE_ENV]: TARGET },
 });
 
 if (result.error) {

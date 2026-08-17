@@ -20,6 +20,14 @@ directory; a hard-coded path would strand the forwarder on a stale one.
 basename with its target, so a checkout that puts ``scripts/`` on ``PATH``
 would otherwise resolve it to itself and exec-loop forever.
 
+*Refuse a second hop for the same target.* Stripping one directory closes the
+self-loop but not the mutual one: with **two** checkouts on ``PATH``, each
+forwarder strips only its own directory and happily execs the other's copy,
+which execs back. ``_ACTIVE_ENV`` carries the target name across the exec, so
+the second hop is recognised and refused instead of running forever. The guard
+is keyed by target rather than being a bare flag, so a helper that legitimately
+invokes a *different* pack helper is unaffected.
+
 *Drop empty ``PATH`` entries.* POSIX reads an empty entry as the current
 directory. Honouring that would let whatever directory the caller happens to be
 sitting in supply the helper this gate runs, so all three forwarder languages
@@ -41,6 +49,10 @@ from pathlib import Path
 WHY = (
     "install or refresh sd-ai-command-pack, then rerun."
 )
+
+# Set to the target basename across the exec so a second forward of the same
+# target is recognised. Shared verbatim with the shell and Node forwarders.
+_ACTIVE_ENV = "SD_PACK_FORWARD_ACTIVE"
 
 
 def search_path(self_file: Path) -> str:
@@ -72,6 +84,13 @@ def forward(target: str, self_file: str, argv: list[str]) -> int:
     Never returns on success -- ``execv`` replaces this process.
     """
     self_path = Path(self_file)
+    if os.environ.get(_ACTIVE_ENV) == target:
+        print(
+            f"{target} was already forwarded once; refusing to recurse. "
+            "More than one checkout of these forwarders is on PATH.",
+            file=sys.stderr,
+        )
+        return 2
     resolved = shutil.which(target, path=search_path(self_path))
     if resolved is None:
         print(f"{target} is not resolvable on PATH; {WHY}", file=sys.stderr)
@@ -81,6 +100,7 @@ def forward(target: str, self_file: str, argv: list[str]) -> int:
         # reaching here means PATH holds another route to the same file.
         print(f"{target} resolved to this forwarder; refusing to recurse.", file=sys.stderr)
         return 2
+    os.environ[_ACTIVE_ENV] = target
     try:
         os.execv(resolved, [resolved, *argv[1:]])
     except OSError as exc:

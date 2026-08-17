@@ -191,6 +191,57 @@ def test_shared_forward_reports_an_unexecutable_target(
     assert "could not be executed: Exec format error" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("name", FORWARDERS)
+def test_forwarder_refuses_a_second_hop_for_the_same_target(name: str) -> None:
+    """Stripping one directory closes the self-loop but not the mutual one.
+
+    Two checkouts on PATH would have each forwarder strip only its own
+    directory and exec the other's copy, which execs back. The marker survives
+    the exec, so the second hop is refused. Driven through the real process
+    rather than asserted on source text, because the marker's whole job is to
+    cross an `execv`/`spawn` boundary.
+    """
+    runner = {
+        ".py": [sys.executable],
+        ".sh": ["bash"],
+        ".mjs": [shutil.which("node") or ""],
+    }[Path(name).suffix]
+    if not runner[0]:
+        pytest.skip("Node.js is unavailable; the .mjs forwarder cannot be executed")
+
+    environment = dict(os.environ)
+    environment["SD_PACK_FORWARD_ACTIVE"] = name
+    try:
+        result = subprocess.run(
+            [*runner, str(SCRIPTS_DIR / name), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=environment,
+            cwd=REPO_ROOT,
+        )
+    except subprocess.TimeoutExpired:  # pragma: no cover - the failure being pinned
+        pytest.fail(f"{name} did not terminate with the forward marker already set")
+
+    assert result.returncode == 2, result.stderr
+    assert "was already forwarded once" in result.stderr
+
+
+def test_forwarders_agree_on_the_marker_name() -> None:
+    """Three languages, one marker: a typo in any of them reopens the loop.
+
+    The Python forwarders inherit it from the shared module rather than
+    spelling it themselves, so those three are covered by that one file.
+    """
+    owners = [SHARED_MODULE] + [
+        SCRIPTS_DIR / name for name in FORWARDERS if not name.endswith(".py")
+    ]
+    for path in owners:
+        assert "SD_PACK_FORWARD_ACTIVE" in path.read_text(encoding="utf-8"), (
+            f"{path.name} does not set or read the marker"
+        )
+
+
 def test_no_unlisted_pack_like_scripts() -> None:
     """The reverse direction: a *new* forwarder must reach the receipt too.
 
