@@ -17,6 +17,10 @@ assertion below maps to one thing the pack checks.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,10 +63,51 @@ def test_forwarder_targets_its_own_name(name: str) -> None:
 @pytest.mark.parametrize("name", FORWARDERS)
 def test_forwarder_is_listed_in_installed_targets(name: str) -> None:
     """`install-audit` fails on an unlisted pack-like file."""
-    listed = INSTALLED_TARGETS.read_text(encoding="utf-8").splitlines()
+    listed = INSTALLED_TARGETS.read_text(encoding="utf-8").splitlines()  # resource-lint: allow
     assert f"scripts/{name}" in listed, (
         f"scripts/{name} is not in installed-targets.txt; install-audit fails with "
         "'pack-like file is not listed in installed targets'"
+    )
+
+
+@pytest.mark.parametrize("name", FORWARDERS)
+def test_forwarder_does_not_recurse_when_scripts_is_on_path(name: str) -> None:
+    """A forwarder shares its basename with its target, so `scripts/` on PATH
+    would resolve it to itself and loop forever. Each one strips its own
+    directory from the search path before resolving.
+
+    Behavioral rather than a source-text assertion: the failure this guards is
+    an unbounded exec loop, and only running it proves the loop is closed. The
+    timeout is the assertion -- a recursing forwarder never returns.
+    """
+    runner = {
+        ".py": [sys.executable],
+        ".sh": ["bash"],
+        ".mjs": [shutil.which("node") or ""],
+    }[Path(name).suffix]
+    if not runner[0]:
+        pytest.skip("Node.js is unavailable; the .mjs forwarder cannot be executed")
+
+    environment = dict(os.environ)
+    environment["PATH"] = os.pathsep.join(
+        [str(SCRIPTS_DIR), environment.get("PATH", os.defpath)]
+    )
+    try:
+        result = subprocess.run(
+            [*runner, str(SCRIPTS_DIR / name), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=environment,
+            cwd=REPO_ROOT,
+        )
+    except subprocess.TimeoutExpired:  # pragma: no cover - the failure being pinned
+        pytest.fail(f"{name} did not terminate; the self-resolution guard is missing")
+
+    # Terminating via the guard is not success: it means the forwarder never
+    # reached the real helper, so the sd-check row it exists to feed is dead.
+    assert "refusing to recurse" not in result.stderr, (
+        f"{name} resolved to itself instead of the machine-installed helper"
     )
 
 
@@ -73,7 +118,9 @@ def test_no_unlisted_pack_like_scripts() -> None:
     sixth file without updating the receipt fails here instead of at publish
     time.
     """
-    listed = set(INSTALLED_TARGETS.read_text(encoding="utf-8").splitlines())
+    listed = set(
+        INSTALLED_TARGETS.read_text(encoding="utf-8").splitlines()  # resource-lint: allow
+    )
     on_disk = sorted(p.name for p in SCRIPTS_DIR.glob("sd-ai-command-pack-*"))
     unlisted = [name for name in on_disk if f"scripts/{name}" not in listed]
     assert not unlisted, f"pack-like scripts missing from installed-targets.txt: {unlisted}"
