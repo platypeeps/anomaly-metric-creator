@@ -241,6 +241,32 @@ def test_tree_without_an_authority_is_skipped_not_failed(tmp_path: Path) -> None
     assert "skipped" in result.stdout
 
 
+def test_forwarder_under_scripts_is_not_mistaken_for_the_authority(
+    tmp_path: Path,
+) -> None:
+    """A `scripts/` copy wins only when it actually defines the rules.
+
+    Since the thin conversion that path may hold a repo-owned *forwarder* of
+    the same name. Treating it as the authority would fail structurally on a
+    file that was never the authority; the guard must fall through instead.
+    The forwarder here names `_rules_for_repo` in a string, which is exactly
+    what a substring probe would get wrong.
+    """
+    root = _tree(tmp_path)
+    _write(
+        root / "scripts" / AUTHORITY.name,
+        "#!/usr/bin/env python3\n"
+        '"""Forward to the machine-installed helper."""\n'
+        "import os, shutil, sys\n"
+        'MESSAGE = "this forwarder defines no _rules_for_repo of its own"\n'
+        'os.execv(shutil.which("x") or "/bin/false", ["x", *sys.argv[1:]])\n',
+    )
+
+    result = _run("--root", str(root))
+    assert result.returncode == 0, result.stderr
+    assert "skipped" in result.stdout
+
+
 def test_missing_mirror_is_structural(tmp_path: Path) -> None:
     root = _tree(tmp_path)
     (root / "docs/DEVELOPMENT_CYCLE.md").unlink()

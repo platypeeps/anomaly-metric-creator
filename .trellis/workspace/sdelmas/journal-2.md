@@ -1161,3 +1161,52 @@ Replaced server.py's 227-line hand-written NAME = _server_ops.NAME compatibility
 ### Next Steps
 
 - None - task complete
+
+
+## Session 75: Restore the sd-check review-gate helper forwarders
+
+**Date**: 2026-08-17
+**Task**: Restore the sd-check review-gate helper forwarders
+**Package**: amc
+**Branch**: `chore/restore-sd-check-helper-forwarders`
+
+### Summary
+
+sd-review scope=pr failed closed for every PR on main because sd-check reported aggregate: unavailable. The command pack contradicts itself three ways and the thin installer places none of the helpers sd-check requires. Restored them as repo-owned forwarders that re-exec the machine-installed helper of the same name.
+
+### Main Changes
+
+- Added five scripts/sd-ai-command-pack-* forwarders as tracked regular files, listed in .sd-ai-command-pack/installed-targets.txt so install-audit accepts them
+- Shared the three Python forwarders' resolution in scripts/_sd_pack_forward.py, named outside the pack's PACK_FILE_PATTERNS so it needs no receipt entry
+- Closed both recursion paths: each forwarder strips its own directory from PATH, and SD_PACK_FORWARD_ACTIVE crosses the exec to refuse a second hop for the same target when two checkouts are on PATH
+- Made empty-PATH-entry handling uniform across all three languages: dropped, never read as POSIX's implicit current directory
+- Replaced check_scope_heading_mirrors._defines_rules substring probe with an AST parse so a forwarder naming _rules_for_repo in a string is not mistaken for the authority
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6b909d7` | chore: restore the sd-check review-gate helper forwarders |
+| `f7b3613` | fix: stop the pack forwarders resolving themselves |
+| `665d6d6` | fix: share the Python forwarder resolution and document PATH narrowing |
+| `8718652` | fix: report an unexecutable forward target instead of a traceback |
+| `11b30ad` | chore: regenerate the repomix map for the new scripts entries |
+| `fc0e333` | fix: close the mutual forwarder loop and parse the authority probe |
+| `12dd773` | fix: give the Node forwarder the self-resolution guard the others have |
+
+### Testing
+
+- [OK] .venv/bin/pytest -> 2045 passed, 2 skipped
+- [OK] sd-ai-command-pack-check.py --repo . --json -> status: passed, unavailable: 0 (was unavailable on main)
+- [OK] sd-review scope=pr at 12dd773 -> status: ready, check: passed
+- [OK] .venv/bin/pre-commit run --all-files -> exit 0
+- [OK] CI at 12dd773 -> CI Result pass
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

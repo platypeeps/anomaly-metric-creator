@@ -91,6 +91,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import re
@@ -148,6 +149,30 @@ class StructuralError(Exception):
     """The guard cannot run, as opposed to finding a violation."""
 
 
+def _defines_rules(path: Path) -> bool:
+    """True when `path` actually defines the scope guard's rule function.
+
+    A parse, not an import: `_load_authority` is the only place that executes
+    the authority, and probing must not run a file this function is about to
+    reject. It is also not a substring search -- a forwarder that merely names
+    `_rules_for_repo` in a comment or a diagnostic string would pass that,
+    while this asks the module whether it defines it at the top level.
+
+    Unparseable or unreadable means "not the authority": the caller falls
+    through to the layout resolver, which reaches the real helper anyway, and
+    `_load_authority` fails loudly if what it loads has no rules.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError):
+        return False
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_rules_for_repo"
+        for node in tree.body
+    )
+
+
 def _authority_path(root: Path) -> Path | None:
     """Where the scope guard lives, or None when nothing provides it.
 
@@ -155,9 +180,18 @@ def _authority_path(root: Path) -> Path | None:
     synthetic tree, and it is what a checkout that still vendors the pack
     looks like. Otherwise ask the installed layout resolver, which is the
     sanctioned way to find a machine-installed pack script.
+
+    Since the thin-install conversion, ``scripts/`` may instead hold a
+    repo-owned *forwarder* of the same name — a few lines that re-exec the
+    machine-installed helper so the pack's own ``sd-check`` can find a regular
+    file at the path it insists on (see ``docs/DEVELOPMENT_CYCLE.md`` § Local
+    review-gate helper forwarders). A forwarder defines no rules, so treating
+    it as the authority would fail structurally on every run. Recognize it by
+    the absence of ``_rules_for_repo`` and fall through to the resolver, which
+    reaches the real helper the forwarder delegates to.
     """
     vendored = root / "scripts" / AUTHORITY_NAME
-    if vendored.is_file():
+    if vendored.is_file() and _defines_rules(vendored):
         return vendored
 
     resolver = root / LAYOUT_RESOLVER

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 74
-- **Last Active**: 2026-08-15
+- **Total Sessions**: 75
+- **Last Active**: 2026-08-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1159 | Active |
+| `journal-2.md` | ~1208 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 75 | 2026-08-17 | Restore the sd-check review-gate helper forwarders | `6b909d7`, `f7b3613`, `665d6d6`, `8718652`, `11b30ad`, `fc0e333`, `12dd773` | `chore/restore-sd-check-helper-forwarders` |
 | 74 | 2026-08-15 | Delegate the server.py ops alias block through module __getattr__ | `56b76a0`, `eb9802c`, `092aaaf` | `refactor/server-alias-getattr-delegation` |
 | 73 | 2026-08-15 | Trace-export hardening: CSV formula neutralization, wildcard-CORS gate, bundle version policy (A-018/A-019/A-070) | `b214f4c`, `2d7a67c`, `d33a3de` | `fix/trace-export-hardening` |
 | 72 | 2026-08-14 | chore: refresh sd-ai-command-pack to 0.71.6 | `1fcac8fc5e55f1f0f6f7f6ecaa30bbb187a267f4` | `chore/sd-ai-command-pack-0-71-6` |
