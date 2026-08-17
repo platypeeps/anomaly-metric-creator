@@ -165,6 +165,35 @@ Matches every other guard in `tools/`:
 Optional path arguments default to the repo-root map so tests can point the
 check at fixtures, as `check_csv_formula_trigger_lockstep.py` does.
 
+## D6 — Interpreter floor: run the project's, parse under anything
+
+The project pins `requires-python = ">=3.14"` and ruff `target-version =
+"py314"`, and CI invokes the guard as `uv run --python 3.14 --no-project`. That
+fixes the version the guard *runs* under in CI — but not the one it runs under
+locally. The pre-commit hook is `language: python` with no `language_version`,
+so pre-commit builds its environment from whatever interpreter it resolves on
+the contributor's machine, which is not required to be the project's 3.14.
+
+Two consequences the implementation is held to:
+
+- **Stdlib only, no third-party imports.** The guard needs no `additional_dependencies`
+  and no `--with`, so the hook environment cannot drift from the CI one.
+- **No version-gated syntax, even where the project floor permits it.** A
+  3.14-only construct parses fine under `uv run --python 3.14` and fails at
+  import under an older pre-commit interpreter — a failure that reads as "the
+  map is broken" to whoever meets it. This cost a real round: the first draft
+  used PEP 758's unparenthesized `except (OSError, ValueError):`, which is
+  legal at this project's floor, but `ruff format` strips the parentheses under
+  `py314` and the surviving `except OSError, ValueError:` is both 3.14-only and
+  indistinguishable from a Python 2 relic. Split into two clauses instead;
+  verified parsing under 3.9, 3.12, 3.13, and 3.14, and unchanged by `ruff
+  format`.
+
+The guard is therefore *pinned* to 3.14 by CI and *portable* below it by
+construction. Neither alone would be enough: the pin does not reach pre-commit,
+and portability alone would not stop a later edit from reintroducing a gated
+construct.
+
 ## Alternatives rejected
 
 - **Regenerate and diff.** Requires the `repomix` binary. `update_repomix` exits
