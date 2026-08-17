@@ -14,6 +14,29 @@ fi
 cd "$REPO_ROOT"
 mkdir -p "$(dirname "$ARTIFACT")"
 
+# Why `.trellis/tasks/**` is excluded below.
+#
+# Trellis task directories are session bookkeeping, not repository structure,
+# and they moved constantly: `task.py archive` relocates a whole task tree into
+# `.trellis/tasks/archive/<month>/` at the end of every completed task. While
+# they were mapped they were also more than half the artifact -- 796 of 1497
+# entries -- so each archive stranded a handful of map lines and the map's own
+# freshness guard (tools/check_repomix_map_freshness.py) then failed the archive
+# commit until the map was regenerated into it.
+#
+# That remedy turned out to be unavailable. The command pack's completion
+# finalization requires the delta after the last work commit to contain only
+# bookkeeping paths, and it rejects `docs/repomix-map.md` there. Any commit
+# refreshing the map must land at or after the archive move, so it always falls
+# inside that delta: the archive commit could satisfy the freshness guard or the
+# finalization gate, never both. Excluding these paths removes the conflict at
+# its source -- an archive no longer changes the map at all -- rather than
+# weakening either check.
+#
+# Cost, stated plainly: the command pack's own review preflight validates the
+# `.trellis/` paths listed in this map, and with none listed that check now
+# passes over an empty set. The repo-owned guard still covers every other tree.
+
 repomix . \
   --quiet \
   --style markdown \
@@ -21,7 +44,7 @@ repomix . \
   --no-git-sort-by-changes \
   --include-full-directory-structure \
   --output "$ARTIFACT" \
-  --ignore "$ARTIFACT" \
-  --header-text "Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes."
+  --ignore "$ARTIFACT,.trellis/tasks/**" \
+  --header-text "Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Trellis task directories under .trellis/tasks/ are excluded; see the comment in this script. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes."
 
 printf 'Updated %s\n' "$ARTIFACT"

@@ -249,7 +249,7 @@ in its own module docstring. Read the script, not a copy of it.
 | `tools/check_branch_name.py` | branch names republishing an internal ticket literal (`pre-push`; install with `pre-commit install --hook-type pre-push`) |
 | `tools/check_ruff_lockstep.py` | the `ruff==` pin in `pyproject.toml` against the ruff-pre-commit `rev` |
 | `tools/check_csv_formula_trigger_lockstep.py` | the CSV formula-trigger set in `trace_bundle._CSV_FORMULA_TRIGGERS` against the debug UI's marked `csvCell` guard — two independent export paths, neither of which follows the other |
-| `tools/check_repomix_map_freshness.py` | every path listed in the generated `docs/repomix-map.md` still resolving to a tracked file or directory — the `task.py archive` move strands entries by construction. Runs `always_run` because staleness comes from *other* files moving, not from editing the map; the reverse direction (a tracked file absent from the map) is deliberately out of scope |
+| `tools/check_repomix_map_freshness.py` | every path listed in the generated `docs/repomix-map.md` still resolving to a tracked file or directory. Runs `always_run` because staleness comes from *other* files moving, not from editing the map. Two things are deliberately out of scope: the reverse direction (a tracked file absent from the map), and `.trellis/tasks/**`, which `scripts/update_repomix` excludes — see the comment there before restoring it |
 | `tools/check_workflow_pip.py` | bare or unpinned `pip install` in workflows |
 | `tools/check_test_resource_cost.py` | whole-file reads of generated CSVs under `tests/` |
 | `tools/check_amc_module_load.py` | direct `spec_from_file_location` loads of `legacy.py` in tests |

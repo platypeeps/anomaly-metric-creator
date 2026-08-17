@@ -25,11 +25,13 @@ half-implemented. The two directions cost very different amounts. An entry that
 is in the map is by definition not excluded from it, so verifying it needs no
 exclusion set at all — zero false positives by construction. Going the other
 way requires knowing every rule that legitimately keeps a tracked file out, and
-in this repository those rules come from three unrelated mechanisms:
+in this repository those rules come from three unrelated mechanisms (the
+``--ignore`` flag now carrying two distinct exclusions):
 
 | absent file | excluded by |
 | --- | --- |
 | `docs/repomix-map.md` | the explicit `--ignore` flag in `scripts/update_repomix` |
+| everything under `.trellis/tasks/` | the same `--ignore` flag; added after the map's own freshness guard and the command pack's completion finalization proved unable to accept the same archive commit. This is now the **largest** excluded set — roughly half the paths the map used to carry — so a naive repository → map check reports every task file as missing |
 | `.trellis/.template-hashes.json` | root `.gitignore` — yet the file is **tracked anyway**, so a plain `git check-ignore` reports no match; only `--no-index` finds it |
 | `uv.lock` | repomix's **built-in default ignore patterns**, named in no file in this repository |
 

@@ -2,9 +2,14 @@
 
 The lint asserts that every path listed in the generated Repomix structural map
 still exists in the tracked tree. Nothing regenerates that map automatically, so
-it goes stale whenever files move without it: a `task.py archive` run relocating
-`.trellis/tasks/<slug>/` is the structural case, since finish-work archives a
-task after the map was last generated.
+it goes stale whenever files move without it.
+
+The archive-move fixture below keeps its shape after `scripts/update_repomix`
+stopped mapping `.trellis/tasks/**` (see the comment there). The fixtures build
+their own synthetic repositories, so the shape under test is "a whole directory
+moved out from under its map entries" — the general case, which the live map
+still carries for every other tree — not a claim about where the real map
+currently lists task directories.
 
 Pin the behaviors the script promises in its docstring:
 

@@ -197,11 +197,24 @@ The guard is `always_run` in pre-commit and takes no path operands, because
 staleness comes from files moving *elsewhere* while the map stays unchanged — a
 `files:`-selected hook would run only on the commits that cannot be stale. It
 resolves against the git index rather than the filesystem, so untracked local
-debris cannot mask a stale entry that would fail in CI. `task.py archive` is the
-case that recurs by construction; `docs/DEVELOPMENT_CYCLE.md` carries the
-archive-then-regenerate-then-commit sequence.
+debris cannot mask a stale entry that would fail in CI.
 Sources: `tools/check_repomix_map_freshness.py`; `.pre-commit-config.yaml`;
 `docs/DEVELOPMENT_CYCLE.md`; `CLAUDE.md`.
+
+The map excludes `.trellis/tasks/**`, so `task.py archive` never strands an
+entry and the archive commit needs no map refresh. This is not tidiness: while
+those paths were mapped, the archive commit had to carry a regenerated map to
+pass the guard, and the command pack's completion finalization rejects
+`docs/repomix-map.md` in the post-work delta with `bundle_scope_invalid`. Every
+map-refreshing commit falls at or after the archive move and therefore inside
+that delta, so the archive commit could satisfy the guard or the finalization
+gate but never both. Restoring those paths to the map reintroduces a deadlock
+that blocks *every* completion ship, not just an inconvenience — read the
+comment in `scripts/update_repomix` first. One acknowledged cost: the command
+pack's review preflight validates the `.trellis/` paths this map lists, and its
+covered set shrinks to the non-task `.trellis/` trees.
+Sources: `scripts/update_repomix`; `docs/DEVELOPMENT_CYCLE.md`;
+`sd-ai-command-pack-review-preflight.mjs`.
 
 ## PR and Review Surfaces
 

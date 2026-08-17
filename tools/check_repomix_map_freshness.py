@@ -12,11 +12,19 @@ merge:
   old paths;
 * six new ``scripts/`` files were added and never appeared in the map at all.
 
-The first is *structural* rather than accidental: finish-work archives a task
-after the map was last generated, so a completion-mode ship strands those
-entries by construction every time. This check catches that class at commit
-time, where the remedy is one ``scripts/update_repomix`` run, instead of at the
-review gate after the archive commit already landed.
+This check catches the first class at commit time, where the remedy is one
+``scripts/update_repomix`` run, instead of at the review gate after the moving
+commit already landed.
+
+That first occurrence no longer reproduces, and the reason is a constraint on
+this check rather than a fact about it: ``scripts/update_repomix`` now excludes
+``.trellis/tasks/**``, so an archive moves nothing the map lists. It had to.
+While those paths were mapped, the archive commit was required to carry a
+regenerated map to pass *this* check, and the command pack's completion
+finalization rejects ``docs/repomix-map.md`` in the post-work delta — so that
+commit could satisfy one gate or the other, never both. The exclusion resolves
+it at the source instead of weakening either. Read the comment in
+``scripts/update_repomix`` before restoring those paths.
 
 Direction and scope
 -------------------
@@ -30,8 +38,8 @@ no exclusion set at all and cannot produce a false positive. Going the other way
 requires knowing every rule that legitimately keeps a tracked file out of the
 map, and in this repository those rules come from three unrelated places:
 
-* ``docs/repomix-map.md`` itself, via the ``--ignore`` flag in
-  ``scripts/update_repomix``;
+* ``docs/repomix-map.md`` itself and ``.trellis/tasks/**``, via the ``--ignore``
+  flag in ``scripts/update_repomix``;
 * ``.trellis/.template-hashes.json``, matched by a root ``.gitignore`` entry
   even though the file is tracked (so a plain ``git check-ignore`` finds
   nothing; only ``--no-index`` does);

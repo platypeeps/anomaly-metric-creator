@@ -11,11 +11,17 @@ authoritative history is the GitHub release notes and the git commit log; the
   unconditional CI step) failing when a path listed in the generated
   `docs/repomix-map.md` is no longer tracked. Developer tooling only: no CLI,
   HTTP, or output change. The hook is `always_run` because map staleness comes
-  from files moving *elsewhere*, not from editing the map — `task.py archive`
-  is the case that recurs by construction, and `docs/DEVELOPMENT_CYCLE.md` now
-  carries the archive-then-regenerate ordering. The reverse direction, a
-  tracked file that never appears in the map, is deliberately out of scope and
-  filed separately.
+  from files moving *elsewhere*, not from editing the map. The reverse
+  direction, a tracked file that never appears in the map, is deliberately out
+  of scope and filed separately.
+- `scripts/update_repomix` now excludes `.trellis/tasks/**` from
+  `docs/repomix-map.md`, which drops the generated artifact from 1497 to 768
+  entries. Task directories are session bookkeeping rather than repository
+  structure, and mapping them made completion-mode finish-work unshippable: the
+  archive commit had to carry a regenerated map to pass the freshness guard,
+  while the command pack's finalization gate rejects that file in the same
+  delta. `docs/DEVELOPMENT_CYCLE.md` and `scripts/update_repomix` carry the full
+  reasoning.
 - `anomaly_metric_creator.server` now republishes its `server_ops` compatibility
   surface through a module `__getattr__` instead of 227 hand-written alias
   assignments. **No published name changed** — every previously importable
