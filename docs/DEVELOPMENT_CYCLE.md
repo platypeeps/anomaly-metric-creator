@@ -263,12 +263,24 @@ install directory, and each replaces its own process (`execvp` / `exec` /
 `spawnSync` + exit-code passthrough) so the real helper's exit code and streams
 reach the caller unchanged.
 
+Two PATH narrowings are shared by all three languages and are deliberate. Each
+forwarder removes **its own directory** from the search path — it shares a
+basename with its target, so a checkout that puts `scripts/` on PATH would
+otherwise resolve the forwarder to itself and loop forever — and each **drops
+empty PATH entries** rather than reading them as POSIX's implicit current
+directory, which would let the caller's working directory supply the helper the
+gate runs. The three Python forwarders share one implementation in
+`scripts/_sd_pack_forward.py`; that module is deliberately *not* named
+`sd-ai-command-pack-*` or `sd_ai_command_pack_*`, because those are the pack's
+own `PACK_FILE_PATTERNS` and a matching file must appear in the receipt as
+though the installer had placed it.
+
 When the pack fixes this upstream — by installing these files itself, or by
 resolving helpers off PATH — delete the forwarders, drop their
-`installed-targets.txt` entries, and delete
+`installed-targets.txt` entries, and delete `scripts/_sd_pack_forward.py` and
 `tests/test_sd_check_helper_forwarders.py`. Until then, adding or renaming one
 means updating the receipt in the same diff; the test enforces exactly that.
-Sources: `scripts/sd-ai-command-pack-*`;
+Sources: `scripts/sd-ai-command-pack-*`; `scripts/_sd_pack_forward.py`;
 `.sd-ai-command-pack/installed-targets.txt`;
 `tests/test_sd_check_helper_forwarders.py`.
 

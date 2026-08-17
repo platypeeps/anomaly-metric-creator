@@ -39,6 +39,11 @@ FORWARDERS = (
     "sd-ai-command-pack-update-spec-kb.py",
 )
 
+# The Python forwarders differ only in their target basename; the PATH rules
+# live in one shared module. Its name must not look like a pack payload.
+SHARED_MODULE = SCRIPTS_DIR / "_sd_pack_forward.py"
+PYTHON_FORWARDERS = tuple(name for name in FORWARDERS if name.endswith(".py"))
+
 
 @pytest.mark.parametrize("name", FORWARDERS)
 def test_forwarder_is_a_regular_file(name: str) -> None:
@@ -109,6 +114,51 @@ def test_forwarder_does_not_recurse_when_scripts_is_on_path(name: str) -> None:
     assert "refusing to recurse" not in result.stderr, (
         f"{name} resolved to itself instead of the machine-installed helper"
     )
+
+
+@pytest.mark.parametrize("name", PYTHON_FORWARDERS)
+def test_python_forwarder_uses_the_shared_resolution(name: str) -> None:
+    """The PATH rules are security-adjacent; three copies would drift apart."""
+    source = (SCRIPTS_DIR / name).read_text(encoding="utf-8")
+    assert "from _sd_pack_forward import forward" in source, (
+        f"{name} re-implements forwarder resolution instead of sharing it"
+    )
+
+
+def test_shared_module_is_not_pack_like() -> None:
+    """`install-audit` fails on an unlisted file matching its pack patterns.
+
+    The shared module is repo-owned glue rather than a pack payload, so it must
+    not carry a pack-shaped name -- listing it in the receipt would claim the
+    installer placed it.
+    """
+    assert SHARED_MODULE.is_file()
+    stem = SHARED_MODULE.name
+    assert not stem.startswith("sd-ai-command-pack"), stem
+    assert not stem.startswith("sd_ai_command_pack"), stem
+
+
+def test_shared_search_path_drops_own_directory_and_empty_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both narrowings are deliberate; see `_sd_pack_forward`'s docstring.
+
+    An empty entry is POSIX's implicit current directory. Keeping it would let
+    the caller's working directory supply the helper this gate runs, so leading,
+    trailing, and doubled separators are all dropped rather than honoured.
+    """
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        import _sd_pack_forward
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+    monkeypatch.setenv(
+        "PATH", os.pathsep.join(["", "/usr/bin", str(SCRIPTS_DIR), "", "/bin", ""])
+    )
+    forwarder = SCRIPTS_DIR / PYTHON_FORWARDERS[0]
+    kept = _sd_pack_forward.search_path(forwarder).split(os.pathsep)
+    assert kept == ["/usr/bin", "/bin"], kept
 
 
 def test_no_unlisted_pack_like_scripts() -> None:

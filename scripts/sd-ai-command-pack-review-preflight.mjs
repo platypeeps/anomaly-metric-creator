@@ -14,6 +14,11 @@
 // own directory is removed from the search path first: it shares its basename
 // with its target, so a checkout that puts `scripts/` on PATH would otherwise
 // resolve this forwarder to itself and spawn-loop forever.
+//
+// Empty PATH entries are dropped rather than read as POSIX's implicit current
+// directory: honouring them would let whatever directory the caller happens to
+// be sitting in supply the helper this gate runs. The Python and shell
+// forwarders narrow PATH the same way; see `_sd_pack_forward.py`.
 
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";

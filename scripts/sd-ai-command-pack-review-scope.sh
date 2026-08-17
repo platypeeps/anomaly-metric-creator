@@ -15,6 +15,12 @@
 # its target, so a checkout that puts `scripts/` on PATH would otherwise resolve
 # this forwarder to itself and exec-loop forever. `exec` then replaces this
 # shell, so the helper's exit code and streams reach the caller unchanged.
+#
+# Empty PATH entries -- leading, trailing, or doubled colons -- are dropped
+# rather than read as POSIX's implicit current directory. Honouring them would
+# let whatever directory the caller happens to be sitting in supply the helper
+# this gate runs. The Python and Node forwarders narrow PATH the same way; see
+# `_sd_pack_forward.py` for the shared rationale.
 set -euo pipefail
 
 TARGET="sd-ai-command-pack-review-scope.sh"
