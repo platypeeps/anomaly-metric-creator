@@ -161,6 +161,31 @@ def test_marker_without_character_class_exits_two(tmp_path: Path) -> None:
     assert "no /^[...]/ character class" in result.stderr
 
 
+def test_guard_pushed_out_of_the_marker_window_exits_two(tmp_path: Path) -> None:
+    """The window is a bounded search, so a refactor can move the guard out of it.
+
+    The distinction that matters is loud versus silent: separated far enough,
+    the check must refuse rather than quietly find nothing and report the pair
+    as in step. This is the case a comment marker cannot prevent, only report.
+    """
+    guard = "      const safe = /^[=+\\-@\\t\\r]/.test(text) ? `'${text}` : text;"
+    padding = "\n".join(f"      // filler line {n}" for n in range(12))
+    js_body = (
+        'DEBUG_HTML = """\n'
+        "<script>\n"
+        "    function csvCell(value) {\n"
+        "      // csv-formula-triggers: lockstep with trace_bundle.\n"
+        f"{padding}\n"
+        f"{guard}\n"
+        "    }\n"
+        "</script>\n"
+        '"""\n'
+    )
+    result = _run(*_write_pair(tmp_path, _python_module(), js_body))
+    assert result.returncode == 2
+    assert "no /^[...]/ character class" in result.stderr
+
+
 def test_range_in_javascript_class_exits_two(tmp_path: Path) -> None:
     """A range would silently cover characters the Python tuple never lists, so
     it is rejected rather than expanded."""
