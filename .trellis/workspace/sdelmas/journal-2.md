@@ -1210,3 +1210,50 @@ sd-review scope=pr failed closed for every PR on main because sd-check reported 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 76: Neutralize formula triggers in the debug UI client-side CSV download
+
+**Date**: 2026-08-17
+**Task**: 08-15-debug-ui-csv-formula-neutralization
+**Package**: amc
+**Branch**: `fix/debug-ui-csv-formula-neutralization`
+
+### Summary
+
+The debug UI builds its unsupported-backlog CSV client-side, so its csvCell never reaches write_trace_bundle_csv and carried none of the formula-injection guard A-018 added there. Recorded command text is attacker-influenced, and this is the export a workshop operator is most likely to open. Closed the pre-registered A-018 follow-up and pinned the two trigger sets against silent drift.
+
+### Main Changes
+
+- csvCell apostrophe-prefixes any cell opening with the OWASP trigger set, neutralizing before quoting so the apostrophe lands inside the quotes rather than after them
+- New tools/check_csv_formula_trigger_lockstep.py compares the Python tuple (read with ast) against the JS character class (anchored on a csv-formula-triggers: marker comment); a guard moved away from its marker exits 2 rather than passing vacuously
+- Wired the lint into pre-commit and the quick CI lane, keeping check_guard_ci_coverage.py clean
+- Raised the check_module_size.py RATCHET ceiling for server_debug_ui.py from 1189 to 1194: the guard lives inside the embedded UI template string and is not separable
+- Swept the old claim with git grep: SECURITY.md, api-cli-server.md, the audit ledger, and the CLAUDE.md lint table all updated; archived task artifacts left alone as historical records
+- Merged origin/main in first, since without PR #382's forwarders this branch's own review gate failed closed
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e875fb9` | Merge origin/main (PR #382 forwarders) into the branch |
+| `0beb460` | test: pin the out-of-window marker case in the CSV trigger lockstep lint |
+| `f91eda3` | fix: honor the lint's exit-code contract and correct two comments |
+| `aa18dbd` | chore: record the task branch before finalization |
+
+### Testing
+
+- [OK] .venv/bin/pytest -> 2067 passed, 2 skipped
+- [OK] .venv/bin/python tools/check_csv_formula_trigger_lockstep.py -> in lockstep: '\t', '\r', '+', '-', '=', '@'
+- [OK] .venv/bin/python tools/check_guard_ci_coverage.py -> exit 0; new lint at needs=QUICK+FULL has=QUICK+FULL
+- [OK] .venv/bin/pre-commit run --all-files -> exit 0
+- [OK] sd-review scope=pr at f91eda3 -> status: ready, check: passed
+- [OK] CI at f91eda3 -> CI Result pass
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
