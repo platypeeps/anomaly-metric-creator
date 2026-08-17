@@ -122,6 +122,21 @@ and its own test file must run in the QUICK lane so the
 
 ## D4a — Operability: this guard will block `task.py archive`
 
+> **Superseded during this task's own ship — the sequence below no longer
+> applies.** D4a solved the collision it could see (`task.py archive`'s
+> auto-commit) and missed a second one. Step 3, "commit the archive move
+> together with the regenerated map", is exactly what the command pack's
+> completion finalization refuses: it requires the delta after the last work
+> commit to contain only bookkeeping paths and rejects `docs/repomix-map.md`
+> there with `bundle_scope_invalid`. Every map-refreshing commit falls at or
+> after the archive move and so inside that delta, which left the archive commit
+> able to satisfy the freshness guard or the finalization gate but never both —
+> for *every* future completion ship, not just this one. Found when this task's
+> own finalization hit it. Resolved by excluding `.trellis/tasks/**` from the
+> map in `scripts/update_repomix`, so an archive strands nothing and needs no
+> refresh. The analysis below is kept as the record of what was decided and what
+> it missed.
+
 `task.py archive` **commits by itself** (`[OK] Auto-committed: chore(task):
 archive <slug>`), through `run_git(["commit", "-m", ...])` in
 `.trellis/scripts/common/task_store.py` — with no `--no-verify`, so a
