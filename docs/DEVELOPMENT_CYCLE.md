@@ -290,6 +290,36 @@ Sources: `scripts/sd-ai-command-pack-*`; `scripts/_sd_pack_forward.py`;
 `.sd-ai-command-pack/installed-targets.txt`;
 `tests/test_sd_check_helper_forwarders.py`.
 
+## Task Archival And The Generated Repository Map
+
+`docs/repomix-map.md` is a generated structural map of the tracked tree,
+refreshed by `./scripts/update_repomix`. Nothing regenerates it automatically,
+so it goes stale whenever files move and the map does not move with them.
+`tools/check_repomix_map_freshness.py` fails when a path the map lists is no
+longer tracked; read that script's docstring for the full contract.
+
+**`task.py archive` needs no map refresh.** The map excludes
+`.trellis/tasks/**` (`--ignore` in `scripts/update_repomix`), so relocating
+`.trellis/tasks/<slug>/` into `.trellis/tasks/archive/<month>/` changes nothing
+the map lists. Archive as normal; its auto-commit passes the guard.
+
+That exclusion exists because the alternative was unshippable, and the reasoning
+is worth knowing before anyone reverses it. While task directories were mapped,
+completion-mode finish-work stranded map entries by construction — `task.py
+archive` moves the tree *after* the map was last generated — so the archive
+commit had to carry a regenerated map to pass the guard. But the command pack's
+completion finalization requires the delta after the last work commit to contain
+only bookkeeping paths, and rejects `docs/repomix-map.md` there with
+`bundle_scope_invalid`. Any commit refreshing the map lands at or after the
+archive move, so it is always inside that delta: the archive commit could
+satisfy the freshness guard or the finalization gate, never both. Task
+directories were also over half the artifact (796 of 1497 entries) and are
+session bookkeeping rather than repository structure.
+
+Everything else still follows the ordinary rule: when a change moves or deletes
+files in any *other* tree, regenerate the map with `./scripts/update_repomix`
+and commit the result alongside that change.
+
 ## Release Process
 
 AMC uses semantic versions while it remains in the `0.x` series: a minor

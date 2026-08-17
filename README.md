@@ -110,7 +110,9 @@ package index, not the public Python package index.
 The generated Repomix repository map lives at
 [`docs/repomix-map.md`](docs/repomix-map.md). It is a metadata-only map of the
 repo structure for quick human or LLM orientation; it does not embed source file
-bodies.
+bodies. Trellis task directories (`.trellis/tasks/**`) are excluded — they are
+session bookkeeping rather than repository structure, and the comment in
+`scripts/update_repomix` explains why restoring them is not a free change.
 
 Refresh it after code, docs, tests, scripts, or platform-adapter tree changes:
 

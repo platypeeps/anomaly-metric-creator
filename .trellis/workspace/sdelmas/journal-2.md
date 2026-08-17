@@ -1298,3 +1298,52 @@ Dependabot can only move the ruff-pre-commit rev, never the pyproject.toml pin i
 ### Next Steps
 
 - None - dependency maintenance complete
+
+
+## Session 78: Guard docs/repomix-map.md freshness with a repo-owned lint
+
+**Date**: 2026-08-17
+**Task**: Guard docs/repomix-map.md freshness with a repo-owned lint
+**Package**: amc
+**Branch**: `feat/repomix-map-freshness-lint`
+
+### Summary
+
+Added tools/check_repomix_map_freshness.py, a stdlib-only guard failing when a path listed in the generated docs/repomix-map.md is no longer tracked. The map went stale twice in two consecutive ships and blocked the merge gate both times; the guard moves that catch from the external review gate to commit time, where the remedy is one ./scripts/update_repomix run. Only the map-to-repository direction ships: the reverse needs repomix's built-in default ignore set, which lives in the tool and in no file here, so reproducing it would mean depending on the repomix binary or hand-mirroring an upstream list. That direction is filed as its own task with the open decision stated. Shipping the guard then exposed a deadlock it created: the archive commit had to carry a regenerated map to pass the guard, while the command pack's completion finalization rejects docs/repomix-map.md in the post-work delta, so no archive commit could satisfy both -- for every future completion ship, not just this one. Resolved by excluding .trellis/tasks/** from the map.
+
+### Main Changes
+
+- tools/check_repomix_map_freshness.py: parses the generated tree under the '# Directory Structure' heading and resolves every entry against the git index, not the filesystem, so untracked local debris cannot mask staleness that CI would then catch
+- Exit split 0 clean / 1 stale / 2 structural: a map that cannot be read or parsed has not been shown to be stale, so it never reports as such
+- Every diagnostic is repo-relative, including those built from caught exceptions, since OSError renders with an absolute path
+- Pre-commit hook is always_run: staleness is introduced by files moving elsewhere, so a files: selector would run only on commits that cannot be stale
+- scripts/update_repomix now excludes .trellis/tasks/** (1497 -> 768 map entries), resolving the guard-vs-finalization deadlock at its source instead of weakening either check; the reasoning is recorded at the flag, in DEVELOPMENT_CYCLE, and in the documentation-review spec
+- Deferred reverse direction filed as .trellis/tasks/08-17-repomix-map-missing-entries-lint, whose exclusion table now carries .trellis/tasks/** as its largest entry
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d81a62` | chore(task): file the repomix map freshness lint task |
+| `96968f3` | feat: guard docs/repomix-map.md freshness with a repo-owned lint |
+| `1f9f03b` | test: make the git-failure branch test actually reach that branch |
+| `b0ca37c` | fix: exit 2 rather than crash on a non-UTF-8 repomix map |
+| `ed98a52` | docs: record the guard's interpreter-floor decision in design.md |
+| `c4c77cc` | fix: exclude .trellis/tasks/** from the generated repomix map |
+| `ed9a984` | chore(task): archive 08-17-repomix-map-freshness-lint |
+
+### Testing
+
+- [OK] .venv/bin/pytest tests/test_repomix_map_freshness_lint.py -q: 21 passed
+- [OK] Guard verified end-to-end on a real archive: exit 1 naming all 7 stranded entries before the exclusion, exit 0 on the pure archive commit after it
+- [OK] Command pack preflight still validates a non-empty .trellis/ map set: 67 paths
+- [OK] CI green on b0ca37c: CI Result, test heavy/light py3.14, coverage, socket, CodeQL
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

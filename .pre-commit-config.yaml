@@ -208,6 +208,22 @@ repos:
         language: python
         files: ^\.trellis/tasks/.*\.md$
         pass_filenames: true
+      # Keep the generated `docs/repomix-map.md` describing the tracked tree.
+      # `always_run` is load-bearing and is the thing most likely to be "fixed"
+      # into uselessness here: staleness is never introduced by editing the map,
+      # it is introduced by moving or deleting files *elsewhere* while the map
+      # stays unchanged. A `files: ^docs/repomix-map\.md$` selector would run on
+      # exactly the commits that cannot be stale and skip every commit that can,
+      # leaving the hook installed and guarding nothing. `task.py archive` is the
+      # structural case: it relocates a task directory and auto-commits, so this
+      # hook fires inside it. See docs/DEVELOPMENT_CYCLE.md for that sequence and
+      # the tool's module docstring for the full contract.
+      - id: repomix-map-freshness
+        name: guard generated repomix map freshness
+        entry: python tools/check_repomix_map_freshness.py
+        language: python
+        always_run: true
+        pass_filenames: false
       # Meta-guard over the lints above: CI picks a lane from the changed
       # paths, and never runs pre-commit, so a lint whose watched files select
       # a lane that runs neither its CI step nor its test job is enforced in
