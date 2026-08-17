@@ -16,8 +16,10 @@ Pin the behaviors the script promises in its docstring:
 - resolution is against the **git index**, not the filesystem: a path present on
   disk but untracked is still stale;
 - a missing section, malformed indentation, a skipped level, a `..` component,
-  an empty listing, and an unreadable file each exit `2` (structural error,
-  distinct from staleness);
+  an empty listing, an unreadable file, and a directory where `git ls-files`
+  cannot run each exit `2` (structural error, distinct from staleness);
+- diagnostics cite repo-relative paths on both the `1` and `2` paths, so a
+  finding does not carry the runner's home directory into a CI log;
 - the enumerated stale list is capped and the suppressed count is stated;
 - the *actual* repo map is current right now (regression guard on the live
   artifact).
@@ -27,6 +29,7 @@ Structurally parallel to `tests/test_csv_formula_trigger_lockstep_lint.py`.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -38,11 +41,22 @@ SCRIPT = REPO_ROOT / "tools" / "check_repomix_map_freshness.py"
 LIVE_MAP = REPO_ROOT / "docs" / "repomix-map.md"
 
 
-def _run(*args: str) -> subprocess.CompletedProcess:
+def _run(
+    *args: str, cwd: Path | None = None, ceiling: Path | None = None
+) -> subprocess.CompletedProcess:
+    """Run the guard. `ceiling` sets GIT_CEILING_DIRECTORIES so git's upward
+    search for a repository stops there — without it, whether a fixture
+    directory looks like a git repo depends on where pytest's tmp_path happens
+    to live on the machine running the suite."""
+    env = None
+    if ceiling is not None:
+        env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(ceiling)}
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         capture_output=True,
         text=True,
+        cwd=None if cwd is None else str(cwd),
+        env=env,
     )
 
 
@@ -270,11 +284,25 @@ def test_unreadable_map_diagnostic_does_not_echo_the_absolute_path(
     assert str(root) not in result.stderr
 
 
-def test_non_git_directory_exits_two() -> None:
+def test_non_git_directory_exits_two(tmp_path: Path) -> None:
     """`git ls-files` failing is a structural error, not staleness: nothing has
-    been shown about whether the map is current."""
-    result = _run("/docs/repomix-map.md")
+    been shown about whether the map is current.
+
+    The map has to be *readable* here, or the run exits 2 at the read and never
+    reaches the git call — which is how the first version of this test passed
+    while covering nothing."""
+    root = tmp_path / "not-a-repo"
+    (root / "docs").mkdir(parents=True)
+    map_path = root / "docs" / "repomix-map.md"
+    map_path.write_text(_map_text(CLEAN_TREE), encoding="utf-8")
+    assert map_path.is_file()
+
+    result = _run(str(map_path), cwd=root, ceiling=tmp_path)
     assert result.returncode == 2
+    # Naming the branch, not just the exit code: "cannot read" here would mean
+    # the test had regressed to its earlier no-op form.
+    assert "git ls-files exited" in result.stderr
+    assert "cannot read" not in result.stderr
 
 
 def test_option_like_argument_is_treated_as_a_path_and_exits_two() -> None:
