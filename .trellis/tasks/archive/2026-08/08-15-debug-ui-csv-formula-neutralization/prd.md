@@ -38,16 +38,29 @@ rather than widening this PR." The check found one.
 
 ## Acceptance criteria
 
-- [ ] A recorded command beginning with a trigger character downloads as inert
+- [x] A recorded command beginning with a trigger character downloads as inert
       text from the debug UI's Unsupported CSV button.
-- [ ] Test coverage for the JS guard, in whatever form the debug-UI surface
+      `test_debug_ui_csv_cell_neutralizes_formula_triggers` runs the payload
+      `<trigger>cmd|' /C calc'!A0` for every trigger through the *served*
+      `csvCell` under node and asserts each renders apostrophe-first;
+      `downloadCSV` routes every header and body cell through `csvCell`, so
+      the button has no unguarded path. Not driven through a real browser —
+      the function the button's code path calls is what is exercised.
+- [x] Test coverage for the JS guard, in whatever form the debug-UI surface
       supports (the repo has no JS test runner today — resolving that is part of
       the design, and a Python-side assertion over the served script is an
-      acceptable fallback).
-- [ ] The trigger set is not duplicated silently: either a lint or an explicit
+      acceptable fallback). `tests/test_debug_ui_javascript.py` slices `csvCell`
+      out of the served script and evaluates it under node, with
+      `test_debug_ui_csv_cell_guard_is_present_without_node` as the
+      node-independent floor.
+- [x] The trigger set is not duplicated silently: either a lint or an explicit
       cross-reference comment ties it to `trace_bundle._CSV_FORMULA_TRIGGERS`.
-- [ ] `SECURITY.md` drops the "does not yet carry this guard" caveat added by
-      the A-018 PR.
+      Both: reciprocal marker comments at each site, and
+      `tools/check_csv_formula_trigger_lockstep.py` compares the two
+      mechanically in pre-commit and CI.
+- [x] `SECURITY.md` drops the "does not yet carry this guard" caveat added by
+      the A-018 PR. `git grep -n "does not yet carry this guard"` returns no
+      hits outside this task's own planning artifacts.
 
 ## Notes
 
