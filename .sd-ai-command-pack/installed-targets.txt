@@ -1,6 +1,5 @@
 .claude/rules/sd-planning-adversarial-review.md
 .claude/sd-ai-command-pack/planning-adversarial-review.md
-.github/PULL_REQUEST_TEMPLATE.md
 .github/copilot-instructions.md
 .github/prompts/sd-audit-repo.prompt.md
 .github/prompts/sd-check.prompt.md
@@ -21,6 +20,7 @@
 .github/prompts/sd-update-deps.prompt.md
 .github/prompts/sd-update-spec.prompt.md
 .github/prompts/sd-work-backlog.prompt.md
+.github/PULL_REQUEST_TEMPLATE.md
 .gito/config.toml
 .gito/sd-ai-command-pack.env
 .prism/rules.json
@@ -29,3 +29,8 @@
 .sd-ai-command-pack/installed-targets.txt
 .sd-ai-command-pack/manifest.json
 .sd-ai-command-pack/provenance.json
+scripts/sd-ai-command-pack-install-audit.py
+scripts/sd-ai-command-pack-pr-body-scope.py
+scripts/sd-ai-command-pack-review-preflight.mjs
+scripts/sd-ai-command-pack-review-scope.sh
+scripts/sd-ai-command-pack-update-spec-kb.py

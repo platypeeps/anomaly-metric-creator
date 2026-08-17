@@ -148,6 +148,20 @@ class StructuralError(Exception):
     """The guard cannot run, as opposed to finding a violation."""
 
 
+def _defines_rules(path: Path) -> bool:
+    """True when `path` looks like the real scope guard rather than a forwarder.
+
+    A source-text probe, not an import: `_load_authority` is the only place
+    that executes the authority, and probing must not run a file this function
+    is about to reject.
+    """
+    try:
+        source = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "_rules_for_repo" in source
+
+
 def _authority_path(root: Path) -> Path | None:
     """Where the scope guard lives, or None when nothing provides it.
 
@@ -155,9 +169,18 @@ def _authority_path(root: Path) -> Path | None:
     synthetic tree, and it is what a checkout that still vendors the pack
     looks like. Otherwise ask the installed layout resolver, which is the
     sanctioned way to find a machine-installed pack script.
+
+    Since the thin-install conversion, ``scripts/`` may instead hold a
+    repo-owned *forwarder* of the same name — a few lines that re-exec the
+    machine-installed helper so the pack's own ``sd-check`` can find a regular
+    file at the path it insists on (see ``docs/DEVELOPMENT_CYCLE.md`` § Local
+    review-gate helper forwarders). A forwarder defines no rules, so treating
+    it as the authority would fail structurally on every run. Recognize it by
+    the absence of ``_rules_for_repo`` and fall through to the resolver, which
+    reaches the real helper the forwarder delegates to.
     """
     vendored = root / "scripts" / AUTHORITY_NAME
-    if vendored.is_file():
+    if vendored.is_file() and _defines_rules(vendored):
         return vendored
 
     resolver = root / LAYOUT_RESOLVER

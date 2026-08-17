@@ -230,6 +230,48 @@ Turning it into a real gate would mean passing the PR body plus an `--actor`
 bot-skip (on a pack version that ships it) and running the check in the app
 lanes; that is deliberately not wired today.
 
+### Local review-gate helper forwarders
+
+`scripts/sd-ai-command-pack-*` are five repo-owned forwarders, not copied pack
+payload. They exist to resolve a contradiction inside the command pack itself,
+and the shape of that contradiction is why the obvious simpler fixes do not
+work:
+
+- the pack's `sd-check` resolves its shipped helpers **only** at
+  `<repo>/scripts/sd-ai-command-pack-<name>`, and requires a **regular file**
+  there — a symlink is explicitly rejected;
+- the pack's `install-audit` **fails** on any `sd-ai-command-pack-*` file in
+  the repo that is not listed in `.sd-ai-command-pack/installed-targets.txt`;
+- since the thin-install conversion the pack installer places **no** such
+  files, so every `sd-check` builtin row reported `unavailable`.
+
+`unavailable` outranks `passed` in the aggregate, so `sd-check` never reached
+`passed` and `sd-review scope=pr` failed closed for **every** pull request.
+
+Registering an equivalent command in the pack's optional repo-owned check
+configuration file (`check.json`, which this repo does not carry) does not fix
+it either: the builtin rows are emitted regardless of configuration, and the
+`unavailable` row still dominates the aggregate. Gitignoring the forwarders
+downgrades the audit failure to a warning, but then they do not travel with the
+checkout, so the gate breaks again for everyone else.
+
+What works, and what this repo therefore does: keep the five forwarders as
+tracked regular files, and list them in `installed-targets.txt` so the audit
+recognizes them. Each forwarder resolves its target **by name on PATH** rather
+than by absolute path, so a pack version bump does not strand it on a stale
+install directory, and each replaces its own process (`execvp` / `exec` /
+`spawnSync` + exit-code passthrough) so the real helper's exit code and streams
+reach the caller unchanged.
+
+When the pack fixes this upstream — by installing these files itself, or by
+resolving helpers off PATH — delete the forwarders, drop their
+`installed-targets.txt` entries, and delete
+`tests/test_sd_check_helper_forwarders.py`. Until then, adding or renaming one
+means updating the receipt in the same diff; the test enforces exactly that.
+Sources: `scripts/sd-ai-command-pack-*`;
+`.sd-ai-command-pack/installed-targets.txt`;
+`tests/test_sd_check_helper_forwarders.py`.
+
 ## Release Process
 
 AMC uses semantic versions while it remains in the `0.x` series: a minor
