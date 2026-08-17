@@ -1257,3 +1257,44 @@ The debug UI builds its unsupported-backlog CSV client-side, so its csvCell neve
 ### Next Steps
 
 - None - task complete
+
+
+## Session 77: Bump ruff to 0.16.3 on both sides of the lockstep pin
+
+**Date**: 2026-08-17
+**Task**: none (dependency maintenance)
+**Package**: amc
+**Branch**: `chore/ruff-0-16-3-lockstep`
+
+### Summary
+
+Dependabot can only move the ruff-pre-commit rev, never the pyproject.toml pin it must match, so every ruff bump it opens is blocked by check_ruff_lockstep.py by construction. Replaced PR #383 with a branch that moves both pins together. Also cleared PR #386 (setup-uv 9.0.0 to 10.0.1), which was green but refused by the merge gate over stale cancelled check-runs.
+
+### Main Changes
+
+- Bumped ruff to 0.16.3 in pyproject.toml's dev extra and the ruff-pre-commit hook rev, and regenerated uv.lock
+- Measured the churn rather than assuming it away: both configured invocations (F401 over tests/, F841 over src/tools/hook adapters) report "All checks passed!" under 0.16.1 and 0.16.3 alike
+- Opened a new branch instead of pushing to #383's: that branch predates the session 75/76 journal entries on main, so its diff reads as removing them and the append-only journal check fails it
+- Re-ran two concurrency-cancelled workflow runs on #386 rather than working around the merge gate; the gate counts every check-run on a SHA rather than the latest per name, so superseded cancelled entries read as non-green
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `070b1b9` | chore(pre-commit): bump ruff to 0.16.3 on both sides of the lockstep pin |
+
+### Testing
+
+- [OK] .venv/bin/python tools/check_ruff_lockstep.py -> in lockstep at 0.16.3, exit 0
+- [OK] .venv/bin/pytest tests/test_ruff_lockstep_lint.py -> 7 passed
+- [OK] .venv/bin/pre-commit run --all-files -> exit 0 under the 0.16.3 hook environment
+- [OK] sd-ai-command-pack-full-check.sh -> Review preflight: 0 failure(s), 0 warning(s)
+- [OK] sd-review scope=pr at 070b1b9 -> status: ready, check: passed, zero findings
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - dependency maintenance complete
