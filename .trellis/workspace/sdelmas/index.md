@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 76
+- **Total Sessions**: 77
 - **Last Active**: 2026-08-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1259 | Active |
+| `journal-2.md` | ~1300 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 77 | 2026-08-17 | Bump ruff to 0.16.3 on both sides of the lockstep pin | `070b1b9` | `chore/ruff-0-16-3-lockstep` |
 | 76 | 2026-08-17 | Neutralize formula triggers in the debug UI client-side CSV download | `e875fb9`, `0beb460`, `f91eda3`, `aa18dbd` | `fix/debug-ui-csv-formula-neutralization` |
 | 75 | 2026-08-17 | Restore the sd-check review-gate helper forwarders | `6b909d7`, `f7b3613`, `665d6d6`, `8718652`, `11b30ad`, `fc0e333`, `12dd773` | `chore/restore-sd-check-helper-forwarders` |
 | 74 | 2026-08-15 | Delegate the server.py ops alias block through module __getattr__ | `56b76a0`, `eb9802c`, `092aaaf` | `refactor/server-alias-getattr-delegation` |
