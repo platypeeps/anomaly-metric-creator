@@ -96,11 +96,6 @@ outside this task's own planning artifacts (`git grep` skips `.venv/`; a bare
 `grep -rn .` would descend into it). Also `git grep -in "client-side CSV"` to
 catch a paraphrase of the same caveat.
 
-Validate: `git grep -n "does not yet carry this guard"` must return no hits
-outside this task's own planning artifacts (`git grep` skips `.venv/`; a bare
-`grep -rn .` would descend into it). Also `git grep -in "client-side CSV"` to
-catch a paraphrase of the same caveat.
-
 ## Step 7 — full gates
 
 - [ ] `.venv/bin/pytest`

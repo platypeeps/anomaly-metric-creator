@@ -74,9 +74,11 @@ _PYTHON_TRIGGER_NAME = "_CSV_FORMULA_TRIGGERS"
 _JS_MARKER = "csv-formula-triggers:"
 _JS_CLASS_RE = re.compile(r"/\^\[(?P<body>[^\]]+)\]/")
 
-# How many lines after the marker to search for the regex literal. Wide enough
-# for a wrapped comment between the marker and the guard, narrow enough that an
-# unrelated character class further down the file cannot be picked up.
+# How many lines to search for the regex literal, counted from the marker line
+# itself rather than the one after it -- the slice below starts at the marker,
+# so a guard written on the same line is found. Wide enough for a wrapped
+# comment between the marker and the guard, narrow enough that an unrelated
+# character class further down the file cannot be picked up.
 _JS_MARKER_WINDOW = 8
 
 # Escape sequences the JavaScript class body may use for the non-printing
@@ -116,7 +118,14 @@ def _python_triggers(path: Path) -> frozenset[str]:
             continue
         try:
             value = ast.literal_eval(node.value)
-        except ValueError as exc:
+        except (ValueError, TypeError, SyntaxError) as exc:
+            # literal_eval's documented contract allows TypeError and
+            # SyntaxError as well as ValueError. Every shape reachable from
+            # this repo's source raises ValueError on the interpreters here,
+            # so the other two are contract-defensive rather than
+            # test-reachable -- but an escaping one would exit 1 with a
+            # traceback, and exit 1 means "the two sets differ", which is the
+            # opposite of what happened.
             raise _LockstepError(
                 f"{path}: {_PYTHON_TRIGGER_NAME} is not a literal sequence: {exc}"
             ) from exc
