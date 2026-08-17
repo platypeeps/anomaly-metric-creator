@@ -81,4 +81,14 @@ def forward(target: str, self_file: str, argv: list[str]) -> int:
         # reaching here means PATH holds another route to the same file.
         print(f"{target} resolved to this forwarder; refusing to recurse.", file=sys.stderr)
         return 2
-    os.execv(resolved, [resolved, *argv[1:]])
+    try:
+        os.execv(resolved, [resolved, *argv[1:]])
+    except OSError as exc:
+        # `which` already checked the executable bit, so reaching here means the
+        # file changed underneath us or the kernel refused it (a bad interpreter
+        # line, the wrong architecture). Report it the way every other failure
+        # in this file reports -- one line, exit 2 -- rather than letting a
+        # traceback stand in for the diagnostic.
+        print(f"{target} at {resolved} could not be executed: {exc}", file=sys.stderr)
+        return 2
+    raise AssertionError("unreachable: execv replaces this process")  # pragma: no cover

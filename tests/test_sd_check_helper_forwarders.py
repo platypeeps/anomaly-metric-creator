@@ -161,6 +161,36 @@ def test_shared_search_path_drops_own_directory_and_empty_entries(
     assert kept == ["/usr/bin", "/bin"], kept
 
 
+def test_shared_forward_reports_an_unexecutable_target(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """An `execv` that fails must read like every other failure here.
+
+    `which` checks the executable bit, so this is the narrow case where the
+    file changed underneath the check or the kernel refused it. Uncaught, it
+    would surface as a traceback where the caller expects a one-line
+    diagnostic and exit 2.
+    """
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        import _sd_pack_forward
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+    target = tmp_path / "sd-ai-command-pack-stand-in.py"
+    target.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    target.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(
+        _sd_pack_forward.os, "execv", lambda *_: (_ for _ in ()).throw(OSError("Exec format error"))
+    )
+
+    status = _sd_pack_forward.forward(target.name, str(SCRIPTS_DIR / "caller.py"), ["caller.py"])
+
+    assert status == 2
+    assert "could not be executed: Exec format error" in capsys.readouterr().err
+
+
 def test_no_unlisted_pack_like_scripts() -> None:
     """The reverse direction: a *new* forwarder must reach the receipt too.
 
