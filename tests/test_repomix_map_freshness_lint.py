@@ -284,6 +284,22 @@ def test_unreadable_map_diagnostic_does_not_echo_the_absolute_path(
     assert str(root) not in result.stderr
 
 
+def test_non_utf8_map_exits_two_without_a_traceback(tmp_path: Path) -> None:
+    """`UnicodeDecodeError` is a `ValueError`, not an `OSError`, so the read's
+    `except OSError` clause does not catch it. Uncaught it escaped the handler
+    in `main` and exited **1** with a traceback -- which under this script's own
+    contract asserts the map is *stale*, the one thing a decode failure has not
+    shown, while printing an absolute path the redaction rule forbids."""
+    root, map_path = _repo(tmp_path, CLEAN_FILES, CLEAN_TREE)
+    map_path.write_bytes(b"# Directory Structure\n\xff\xfe not utf-8\ndocs/\n")
+
+    result = _run(str(map_path))
+    assert result.returncode == 2
+    assert "not valid UTF-8" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert str(root) not in result.stderr
+
+
 def test_non_git_directory_exits_two(tmp_path: Path) -> None:
     """`git ls-files` failing is a structural error, not staleness: nothing has
     been shown about whether the map is current.

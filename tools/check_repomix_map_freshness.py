@@ -147,9 +147,17 @@ def _display(path: Path, repo_root: Path) -> str:
     absolute path leaks the runner's or the author's home directory for no
     benefit — and the same finding then reads differently on every machine.
     Falls back to the path as given when it is genuinely outside the root."""
+    # Two `except` clauses rather than one tuple. The tuple form is valid here
+    # (PEP 758, Python 3.14, which this project's floor requires), but `ruff
+    # format` strips its parentheses under the configured `py314` target, and
+    # the bare `except OSError, ValueError:` that results reads as a Python 2
+    # relic to everyone who meets it. Two clauses are unambiguous on every
+    # version and survive the formatter unchanged.
     try:
         return str(path.resolve().relative_to(repo_root.resolve()))
-    except OSError, ValueError:
+    except OSError:
+        return str(path)
+    except ValueError:
         return str(path)
 
 
@@ -266,6 +274,16 @@ def check(map_path: Path, repo_root: Path) -> tuple[bool, str]:
         # report the reason without it rather than reintroducing the absolute
         # path `_display` just stripped.
         raise _MapError(f"cannot read {shown}: {exc.strerror}") from exc
+    except UnicodeDecodeError as exc:
+        # Not caught by the OSError clause above: UnicodeDecodeError is a
+        # ValueError. Left uncaught it escaped `main`'s handler entirely and
+        # exited 1 with a traceback -- which under this script's own contract
+        # claims the map is *stale*, the one thing a decode failure has not
+        # shown. Report the offending byte and position, not the payload.
+        raise _MapError(
+            f"cannot read {shown}: not valid UTF-8 ({exc.reason} at byte "
+            f"{exc.start}); the map is corrupt, not stale"
+        ) from exc
 
     entries = parse_entries(text)
     if not entries:
