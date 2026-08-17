@@ -472,9 +472,23 @@ are not accepted as integers. Sources:
 traces are attacker-influenced, injection fires from any cell, and a per-column
 allowlist rots the moment a column is added (A-018). Keep the guard at the
 writer boundary, after any truncation or preview step, so the first byte written
-is the guarded one; stored traces stay verbatim. Sources:
-`src/anomaly_metric_creator/trace_bundle.py`; `SECURITY.md`;
-`tests/test_trace_bundle.py`.
+is the guarded one; stored traces stay verbatim.
+
+There are **two** such boundaries, not one. The debug UI builds its
+unsupported-backlog CSV client-side, so its `csvCell` never reaches the Python
+writer and carries the same guard independently. Two rules hold it:
+neutralization runs **before** quoting, so the apostrophe lands inside the
+quotes — quoting first emits `'"=a,b"`, whose first character is a quote and
+whose formula still evaluates — and the two trigger sets are pinned to each
+other by `tools/check_csv_formula_trigger_lockstep.py`, which anchors on the
+`csv-formula-triggers:` marker comment above the guard. Adding a trigger to
+one site alone is a lint failure, not a silent hole; moving the guard without
+its marker is a structural (exit 2) failure rather than a vacuous pass.
+Sources: `src/anomaly_metric_creator/trace_bundle.py`;
+`src/anomaly_metric_creator/server_debug_ui.py`;
+`tools/check_csv_formula_trigger_lockstep.py`; `SECURITY.md`;
+`tests/test_trace_bundle.py`; `tests/test_debug_ui_javascript.py`;
+`tests/test_csv_formula_trigger_lockstep_lint.py`.
 
 Trace bundles are read by the tool version that wrote them — there is
 deliberately no N-1 compatibility adapter, because the schema has never been

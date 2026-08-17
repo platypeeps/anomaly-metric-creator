@@ -559,7 +559,12 @@ DEBUG_HTML = r"""<!doctype html>
     }
     function csvCell(value) {
       const text = String(value ?? "");
-      return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+      // csv-formula-triggers: lockstep with trace_bundle._CSV_FORMULA_TRIGGERS,
+      // pinned by tools/check_csv_formula_trigger_lockstep.py. Neutralize before
+      // quoting so the apostrophe lands inside the quotes -- a quoted-first cell
+      // starts with `"`, and the spreadsheet never sees the guard.
+      const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+      return /[",\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
     }
     function downloadCSV(filename, rows, columns) {
       const header = columns.map((column) => csvCell(column.label)).join(",");

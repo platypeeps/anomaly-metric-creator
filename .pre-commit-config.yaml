@@ -229,6 +229,17 @@ repos:
         language: python
         files: ^src/anomaly_metric_creator/(server_traces|trace_bundle)\.py$
         pass_filenames: true
+      # Two independent CSV export paths neutralize spreadsheet formula
+      # triggers: the Python writer in trace_bundle and the debug UI's
+      # client-side csvCell. Nothing in the code makes one follow the other, so
+      # a trigger added to one site alone silently reopens the hole on the
+      # other. pass_filenames is false because the check reads the pair.
+      - id: csv-formula-trigger-lockstep
+        name: keep the CSV formula trigger set in lockstep
+        entry: python tools/check_csv_formula_trigger_lockstep.py
+        language: python
+        files: ^src/anomaly_metric_creator/(trace_bundle|server_debug_ui)\.py$
+        pass_filenames: false
       # Ratchet the 800-line behavior-module cap. The rule was prose only, and
       # the prose drifted: it named one deliberate exception while seven
       # modules were over. The tool owns the enrolled list; enrolled modules

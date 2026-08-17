@@ -147,8 +147,12 @@ simulator chooses what gets recorded. `amc trace-bundle export-csv` therefore
 apostrophe-prefixes any cell starting with `=`, `+`, `-`, `@`, tab, or CR, so a
 recorded `=cmd|' /C calc'!A0` is inert when the operator opens the export. The
 guard is applied to every column at the writer boundary rather than to a list of
-"the free-text ones", so adding a column cannot silently reopen the hole. Note
-that the debug UI's own client-side CSV download does not yet carry this guard.
+"the free-text ones", so adding a column cannot silently reopen the hole. The
+debug UI's own client-side CSV download carries the same guard in its `csvCell`
+helper, applied before quoting so the apostrophe lands inside the quotes; the
+two trigger sets are pinned to each other by
+`tools/check_csv_formula_trigger_lockstep.py`, so neither path can gain a
+trigger the other lacks.
 
 ## Known limits
 

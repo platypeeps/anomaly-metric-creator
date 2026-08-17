@@ -125,8 +125,10 @@ RATCHET: dict[str, tuple[int, str]] = {
         "debt: MCP surface, not yet decomposed",
     ),
     "server_debug_ui.py": (
-        1189,
-        "debt: debug UI, not yet decomposed",
+        1194,
+        "debt: debug UI, not yet decomposed; +5 for the csvCell CSV-formula "
+        "guard (08-15-debug-ui-csv-formula-neutralization), a non-separable "
+        "addition inside the embedded UI template",
     ),
     "server_traces.py": (
         1086,
