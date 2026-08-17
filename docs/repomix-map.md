@@ -37,7 +37,7 @@ The content is organized as follows:
 Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
 
 # Directory Structure
-````
+`````
 .agents/
   skills/
     amc-server-compatibility/
@@ -725,6 +725,18 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       prd.md
       task.json
     08-06-otlp-capture-fixture/
+      check.jsonl
+      implement.jsonl
+      prd.md
+      task.json
+    08-17-repomix-map-freshness-lint/
+      check.jsonl
+      design.md
+      implement.jsonl
+      implement.md
+      prd.md
+      task.json
+    08-17-repomix-map-missing-entries-lint/
       check.jsonl
       implement.jsonl
       prd.md
@@ -1453,6 +1465,7 @@ tests/
   test_readme_scenario_catalog.py
   test_redact_sensitive_headers.py
   test_registry.py
+  test_repomix_map_freshness_lint.py
   test_reporting_artifacts.py
   test_role_name_leaks_lint.py
   test_ruff_lockstep_lint.py
@@ -1503,6 +1516,7 @@ tools/
   check_module_size.py
   check_mypy_gate.py
   check_python_syntax.py
+  check_repomix_map_freshness.py
   check_role_name_leaks.py
   check_ruff_lockstep.py
   check_scope_heading_mirrors.py
@@ -1521,4 +1535,4 @@ CLAUDE.md
 pyproject.toml
 README.md
 SECURITY.md
-````
+`````

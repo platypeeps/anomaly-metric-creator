@@ -183,6 +183,26 @@ passes `--no-git-sort-by-changes` so identical repository contents retain
 stable ordering instead of producing change-recency churn.
 Sources: `scripts/update_repomix`; `README.md`; `docs/repomix-map.md`.
 
+`tools/check_repomix_map_freshness.py` enforces **one** of the two staleness
+directions: every path the map lists must still resolve to a tracked file or
+directory. The reverse — a tracked file that never appears in the map — is
+deliberately unguarded, because detecting it requires reproducing repomix's
+built-in default ignore set, which lives in the tool and in no file here. Do not
+close that gap with a hand-maintained mirror of the upstream list: it would be a
+second registry for the same fact, drifting on every repomix upgrade with no
+guard of its own. Refreshing after a tree change is therefore still a discipline,
+not something the guard can enforce for you.
+
+The guard is `always_run` in pre-commit and takes no path operands, because
+staleness comes from files moving *elsewhere* while the map stays unchanged — a
+`files:`-selected hook would run only on the commits that cannot be stale. It
+resolves against the git index rather than the filesystem, so untracked local
+debris cannot mask a stale entry that would fail in CI. `task.py archive` is the
+case that recurs by construction; `docs/DEVELOPMENT_CYCLE.md` carries the
+archive-then-regenerate-then-commit sequence.
+Sources: `tools/check_repomix_map_freshness.py`; `.pre-commit-config.yaml`;
+`docs/DEVELOPMENT_CYCLE.md`; `CLAUDE.md`.
+
 ## PR and Review Surfaces
 
 The PR template checklist mirrors the required review headings, including the

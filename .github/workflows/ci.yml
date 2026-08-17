@@ -87,6 +87,16 @@ jobs:
             uv run --python 3.14 --no-project python tools/check_task_criteria_commands.py "${task_criteria_files[@]}"
           fi
 
+          # The generated repository map goes stale when files move *elsewhere*,
+          # so the guard is `always_run` in pre-commit and selects no files —
+          # which leaves it unlaned, and CI never runs pre-commit. This
+          # unconditional job is therefore its only CI lane, and it must stay
+          # ungated for the same reason the hook is not `files:`-selected: the
+          # commits that move files are frequently not the commits that touch
+          # `docs/repomix-map.md`. Reads the map plus `git ls-files`, so it takes
+          # no path operands.
+          uv run --python 3.14 --no-project python tools/check_repomix_map_freshness.py
+
           # Meta-guard: every tools/check_*.py lint must run in the CI lanes its
           # watched files can select. It reads this workflow, the pre-commit
           # config, and tests/, so it takes no path operands and belongs in this
@@ -378,6 +388,7 @@ jobs:
             tests/test_guard_ci_coverage_lint.py \
             tests/test_module_size_lint.py \
             tests/test_mypy_gate_lint.py \
+            tests/test_repomix_map_freshness_lint.py \
             tests/test_role_name_leaks_lint.py \
             tests/test_scope_heading_mirrors_lint.py \
             tests/test_task_criteria_lint.py \

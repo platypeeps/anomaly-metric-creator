@@ -290,6 +290,30 @@ Sources: `scripts/sd-ai-command-pack-*`; `scripts/_sd_pack_forward.py`;
 `.sd-ai-command-pack/installed-targets.txt`;
 `tests/test_sd_check_helper_forwarders.py`.
 
+## Task Archival And The Generated Repository Map
+
+`docs/repomix-map.md` is a generated structural map of the tracked tree,
+refreshed by `./scripts/update_repomix`. Nothing regenerates it automatically,
+so it goes stale whenever files move and the map does not move with them.
+`tools/check_repomix_map_freshness.py` fails when a path the map lists is no
+longer tracked; read that script's docstring for the full contract.
+
+Completion-mode finish-work makes one of those moves by construction. `task.py
+archive` relocates `.trellis/tasks/<slug>/` into
+`.trellis/tasks/archive/<month>/` *after* the map was last generated, so every
+completion ship strands those entries unless the map is regenerated in the same
+change. Run the steps in this order:
+
+1. `python3 ./.trellis/scripts/task.py archive <slug>`
+2. `./scripts/update_repomix`
+3. commit the archive move together with the regenerated map
+
+`task.py archive` commits by itself, without `--no-verify`, so the pre-commit
+hook does fire inside it and that auto-commit is the one the guard fails. The
+result is mild rather than half-applied: `task.py` prints `[WARN] Auto-commit
+failed:` and returns, leaving the move applied and staged. Regenerate the map
+and commit to finish the job.
+
 ## Release Process
 
 AMC uses semantic versions while it remains in the `0.x` series: a minor

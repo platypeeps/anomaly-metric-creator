@@ -46,10 +46,16 @@ Taken at `69a0752` (post-#381 merge).
   The `.trellis/`-only narrowing is deliberate and documented in that helper:
   broader trees "can legitimately list files a clean clone does not carry."
   A repo-owned lint knows this repo and need not accept that limitation.
-- Current drift, map entries vs `git ls-files`: 1201 map files, 1204 tracked,
+- Current drift, map entries vs `git ls-files`, measured at merge commit
+  `69a0752` before this task's own files existed: 1201 map files, 1204 tracked,
   0 stale, 3 tracked-but-absent — `.trellis/.template-hashes.json`,
   `docs/repomix-map.md`, and `uv.lock`. All three are legitimate exclusions,
   which is the constraint below.
+
+  The counts move as soon as this task's own artifacts are committed (they add
+  tracked files the map does not yet list), so treat the **three exclusions**
+  as the durable finding and the raw totals as a snapshot pinned to that
+  commit. Re-measure rather than citing the totals from here.
 
 ## Requirements
 
@@ -81,18 +87,79 @@ Taken at `69a0752` (post-#381 merge).
 
 ## Acceptance criteria
 
-- [ ] A map listing a path that no longer exists fails the guard, in any tree —
-      pinned by a fixture reproducing the #381 archive-move shape.
-- [ ] A tracked file absent from the map fails the guard — pinned by a fixture
-      reproducing the #382 new-`scripts/`-files shape.
-- [ ] The live repo passes with zero findings, and the three legitimate
-      exclusions are absent from the output rather than suppressed by a
-      hardcoded literal list.
-- [ ] A malformed or unparseable map exits `2`, distinctly from `1`.
-- [ ] `tools/check_guard_ci_coverage.py --list` shows the new lint at
-      `needs=QUICK+FULL has=QUICK+FULL`, and the "lints whose own tests never
-      run in the QUICK lane" section still prints `none`.
-- [ ] The CLAUDE.md Repository lints table gains a row for the guard.
+> **Narrowed during design.** The requirement above for *both* drift directions
+> did not survive the investigation in `design.md`: the repository → map
+> direction needs repomix's built-in default ignore set, which lives in the tool
+> and in no file in this repository. Implementing it would mean either depending
+> on the `repomix` binary — which this PRD rules out — or hand-mirroring an
+> upstream list, a second registry that drifts exactly like the map does. The
+> map → repository direction needs no exclusion set at all and is shipped here;
+> the other is deferred to its own task with the open decision stated. Trading a
+> known gap for a silent one would be the worse outcome.
+
+- [x] A map listing a path that no longer exists fails the guard, in any tree —
+      pinned by a fixture reproducing the #381 archive-move shape, and by a
+      second fixture outside `.trellis/` (the case the external pack check
+      cannot see).
+
+      Evidence: `test_archive_move_shape_exits_one` (a synthetic task directory
+      moved under `archive/`, with the map entry left at its pre-archive
+      location) and `test_stale_entry_outside_trellis_exits_one` (a synthetic
+      shell script under a scripts directory), both asserting exit `1`. Both
+      fixture trees are built inside `tmp_path` and name no real repository
+      path. `test_untracked_file_on_disk_is_still_stale` pins the
+      harder half: a stale entry whose file *does* exist on disk but is not in
+      the index still fails, which is what stops a local pass from becoming a CI
+      failure.
+- [x] The live repo passes with zero findings.
+
+      Evidence: `test_live_repository_map_is_current` runs the guard against the
+      real `docs/repomix-map.md`, and the direct run prints
+      `repomix map is current: all 1497 listed path(s) in repomix-map.md resolve
+      to tracked files or directories` at exit `0`.
+- [x] A malformed or unparseable map exits `2`, distinctly from `1`.
+
+      Evidence: six tests, one per structural failure — missing
+      `# Directory Structure` section, indentation not a multiple of two, a
+      skipped indent level, a `..` component, an empty listing, and an
+      unreadable path — each asserting exit `2` and a distinguishing message.
+      Two argument-shape tests cover the same exit.
+- [x] The guard runs on commits that do **not** touch the map, since that is
+      when staleness is introduced — verified through the hook's actual
+      selection behavior, not by reading its config.
+
+      Evidence: `pre-commit run repomix-map-freshness --files README.md` reports
+      `Passed`, i.e. it executed. The contrast run
+      `pre-commit run csv-formula-trigger-lockstep --files README.md` reports
+      `(no files to check)Skipped`, which is what a `files:`-selected hook does
+      on the same input and what this criterion exists to exclude.
+- [x] The deferred repository → map direction is filed as its own task rather
+      than left as an unchecked criterion here.
+
+      Evidence: `.trellis/tasks/08-17-repomix-map-missing-entries-lint/`, whose
+      PRD states the open decision (where repomix's built-in default ignore set
+      is derived from) and lists three candidate resolutions, none chosen.
+- [x] `tools/check_guard_ci_coverage.py --list` shows the new lint in the
+      **unlaned** group with an invoking CI job named, and the "lints whose own
+      tests never run in the QUICK lane" section still prints `none`.
+
+      > **Corrected during design.** This criterion originally demanded
+      > `needs=QUICK+FULL has=QUICK+FULL`, which is the *laned* classification.
+      > Design D4 chose `always_run` deliberately — a `files:`-selected hook
+      > would run only on the commits that cannot be stale — and an `always_run`
+      > hook selects no files, so the coverage tool classifies it unlaned by
+      > construction. The original wording would have been satisfiable only by
+      > reversing the central design decision.
+
+      Evidence: the `--list` output places `check_repomix_map_freshness.py` under
+      `unlaned` as `hook repomix-map-freshness selects no files (stages:
+      pre-commit); ci jobs: changes`, and the QUICK-lane section prints `none`.
+      The tool itself exits `0`, as does `check_ci_review_contract.py`.
+- [x] The CLAUDE.md Repository lints table gains a row for the guard.
+
+      Evidence: `CLAUDE.md:252`. The row names the `always_run` selection and
+      the deliberately out-of-scope reverse direction, so a reader of the
+      inventory alone does not mistake either for an oversight.
 
 ## Notes
 
