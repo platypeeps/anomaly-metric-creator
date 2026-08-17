@@ -25,6 +25,9 @@ _MAX_SEARCH_LIMIT = 500
 # Leading characters a spreadsheet treats as the start of a formula. A recorded
 # command like `=cmd|' /C calc'!A0` would otherwise execute when the operator
 # opens the exported CSV. The set is the OWASP CSV-injection trigger list.
+# Lockstep with the debug UI's own client-side `csvCell` in server_debug_ui.py,
+# which builds a CSV in the browser and must neutralize the same set; the pair
+# is pinned by tools/check_csv_formula_trigger_lockstep.py.
 _CSV_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
 
 

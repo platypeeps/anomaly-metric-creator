@@ -729,11 +729,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       implement.jsonl
       prd.md
       task.json
-    08-15-debug-ui-csv-formula-neutralization/
-      check.jsonl
-      implement.jsonl
-      prd.md
-      task.json
     archive/
       2026-06/
         00-bootstrap-guidelines/
@@ -1307,6 +1302,13 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
           implement.jsonl
           prd.md
           task.json
+        08-15-debug-ui-csv-formula-neutralization/
+          check.jsonl
+          design.md
+          implement.jsonl
+          implement.md
+          prd.md
+          task.json
         08-15-server-alias-getattr-delegation/
           check.jsonl
           design.md
@@ -1426,6 +1428,7 @@ tests/
   test_combine.py
   test_copilot_instruction_contract.py
   test_correctness.py
+  test_csv_formula_trigger_lockstep_lint.py
   test_debug_ui_javascript.py
   test_determinism.py
   test_drop_rate_manifest.py
@@ -1495,6 +1498,7 @@ tools/
   check_branch_name.py
   check_ci_review_contract.py
   check_copilot_instruction_contract.py
+  check_csv_formula_trigger_lockstep.py
   check_guard_ci_coverage.py
   check_module_size.py
   check_mypy_gate.py
