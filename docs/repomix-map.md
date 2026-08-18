@@ -616,15 +616,9 @@ docs/
   review-learnings.md
   topology.md
 scripts/
-  _sd_pack_forward.py
   check-review-preflight.mjs
   classify_ci_changes.sh
   classify-ci-changes.sh
-  sd-ai-command-pack-install-audit.py
-  sd-ai-command-pack-pr-body-scope.py
-  sd-ai-command-pack-review-preflight.mjs
-  sd-ai-command-pack-review-scope.sh
-  sd-ai-command-pack-update-spec-kb.py
   sync-agent-skills.py
   update_repomix
 src/
@@ -745,7 +739,6 @@ tests/
   test_scenarios.py
   test_schema_file.py
   test_scope_heading_mirrors_lint.py
-  test_sd_check_helper_forwarders.py
   test_serve_main_wiring.py
   test_server_alias_surface.py
   test_server_eval_mode.py

@@ -29,8 +29,3 @@
 .sd-ai-command-pack/installed-targets.txt
 .sd-ai-command-pack/manifest.json
 .sd-ai-command-pack/provenance.json
-scripts/sd-ai-command-pack-install-audit.py
-scripts/sd-ai-command-pack-pr-body-scope.py
-scripts/sd-ai-command-pack-review-preflight.mjs
-scripts/sd-ai-command-pack-review-scope.sh
-scripts/sd-ai-command-pack-update-spec-kb.py
