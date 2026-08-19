@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "sd-ai-command-pack",
-  "version": "0.71.22",
+  "version": "0.71.33",
   "license": "MIT",
   "description": "Install project-local SD AI command workflows, Prism/Gito defaults, usage guide, and platform adapters into Trellis repos.",
   "requiresTrellis": true,
@@ -893,6 +893,90 @@
       "kind": "skill",
       "source": "templates/.agents/skills/sd-help/references/examples.md",
       "target": ".trae/skills/sd-help/references/examples.md",
+      "anchor": ".trae"
+    },
+    {
+      "platform": "shared",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".agents/skills/sd-help/references/pack-helper-resolution.md",
+      "install": "always"
+    },
+    {
+      "platform": "antigravity",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".agent/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".agent"
+    },
+    {
+      "platform": "claude",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".claude/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".claude"
+    },
+    {
+      "platform": "codebuddy",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".codebuddy/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".codebuddy"
+    },
+    {
+      "platform": "devin",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".devin/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".devin"
+    },
+    {
+      "platform": "droid",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".factory/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".factory"
+    },
+    {
+      "platform": "kilo",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".kilocode/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".kilocode"
+    },
+    {
+      "platform": "kiro",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".kiro/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".kiro"
+    },
+    {
+      "platform": "pi",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".pi/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".pi"
+    },
+    {
+      "platform": "qoder",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".qoder/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".qoder"
+    },
+    {
+      "platform": "reasonix",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".reasonix/skills/sd-help/references/pack-helper-resolution.md",
+      "anchor": ".reasonix"
+    },
+    {
+      "platform": "trae",
+      "kind": "skill",
+      "source": "templates/.agents/skills/sd-help/references/pack-helper-resolution.md",
+      "target": ".trae/skills/sd-help/references/pack-helper-resolution.md",
       "anchor": ".trae"
     },
     {
