@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.71.22",
+  "version": "0.71.33",
   "mode": "thin",
   "platforms": [
     "claude",
@@ -42,10 +42,10 @@
     ".github/prompts/sd-retro.prompt.md": "sha256:b21d4c0f9343ae054c86eda78587bfa7b42a34b48c8457d8056ba7f8432fb146",
     ".github/prompts/sd-review-learnings.prompt.md": "sha256:4853295371d51ac83b101e62792500576fd8340fe87c752b1f355e61cc9e0c19",
     ".github/prompts/sd-review-pr.prompt.md": "sha256:47ddf7ae3fb73da80adbe526cdf35549423612d24b4b689c69cc90cfe07bf41c",
-    ".github/prompts/sd-review.prompt.md": "sha256:e514886654f17a9afb09854075ffad91c98df51c69335cd839073ca20f0826f0",
+    ".github/prompts/sd-review.prompt.md": "sha256:21e625cd348dec6ccb816b6d8f78d94ba41bd514f675b75333a0b933993be244",
     ".github/prompts/sd-ship.prompt.md": "sha256:d66db178bbb91538f2ea3c4534f531cc07e1600b0ae7ad456a862c1855895734",
     ".github/prompts/sd-start.prompt.md": "sha256:065951059dca28aa6de9114f6eba7713dff53f7ecabde0dffa0dba16234323c8",
-    ".github/prompts/sd-status.prompt.md": "sha256:c51421cc6589253a5824c1dc65066564859d5db1641746afee6db506c61e2e6e",
+    ".github/prompts/sd-status.prompt.md": "sha256:d591e49b3cd6e9facb9e871e6aef73191b2b68dfb7b5f620329b2e7bf6e48c97",
     ".github/prompts/sd-test-gaps.prompt.md": "sha256:c6f527837b432de64648bfe5063e8cd2f78f3e195ff39a6bece9d761ac2c7d9e",
     ".github/prompts/sd-update-deps.prompt.md": "sha256:591c18ad8e1f22744791cbfc2f22e3fde4df67dffe8e55738a8b5755da5d4366",
     ".github/prompts/sd-update-spec.prompt.md": "sha256:c341ac096ce1d4826a3dc315a178f3bbfa02afe7f08eb4c4d1092d4a5c4cfda4",

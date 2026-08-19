@@ -39,9 +39,10 @@ Checkout trust policy — complete before step 1:
 3. Use that skill as the primary instructions for this workflow. Pass the
    user's invocation arguments through unchanged; the skill accepts positional
    `fleet`, a positional repository path, and the documented flags.
-4. Run the installed status collector through
-   `~/.agents/bin/sd-ai-command-pack-toolchain.sh`; do not recreate its report from
-   ad hoc commands.
+4. Run the installed status collector through the toolchain the documented
+   bootstrap resolves — the `SD_AI_COMMAND_PACK_TOOLCHAIN` override, then the
+   checkout's own `scripts/` copy, then the machine install under
+   `$HOME/.agents/bin`. Do not recreate its report from ad hoc commands.
 5. Keep the workflow read-only. Do not fetch, pull, switch, stage, commit,
    push, merge, delete branches, update tasks, refresh generated files, or run
    a recommended follow-up command.
