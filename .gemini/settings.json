@@ -23,6 +23,18 @@
           }
         ]
       }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|ShellTool",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .gemini/hooks/inject-shell-session-context.py",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   }
 }
