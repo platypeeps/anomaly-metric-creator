@@ -57,7 +57,7 @@
     ".trellis/agents/implement.md": "66e25ad046c94869442834bc3cdfbd5a9a7412d3ff54561d64d2886552c27e87",
     ".trellis/config.yaml": "a966e6d374e9e6ff283cf761ccd99631323ee1754856cef51ad154ca0afb9dfa",
     ".trellis/scripts/__init__.py": "1242be5b972094c2e141aecbe81a4efd478f6534e3d5e28306374e6a18fcf46c",
-    ".trellis/scripts/add_session.py": "773ae9a3fbfeb682840e466317edafcc151c3654cc8a34e5c35c0f695d17d3a6",
+    ".trellis/scripts/add_session.py": "b8db5727dfac5d4b8c4f9c15c0b9b3c1bbbee1b67f08902ad08ed26d40966bd3",
     ".trellis/scripts/common/__init__.py": "f258cd873681dc5a4d71db0dd71d10fd78656de55bec96418d6702503c16e87d",
     ".trellis/scripts/common/active_task.py": "033997c8ddc2f8c92e2fdc5380deaa46eeb0964516262af701506d3f31ae3938",
     ".trellis/scripts/common/cli_adapter.py": "5d6bd9d6f5c631e7e792db7dd343351317f9643bc87b73a9a98abd51cefb4307",
