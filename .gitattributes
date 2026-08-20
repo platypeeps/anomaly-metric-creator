@@ -5,5 +5,5 @@
 # Do NOT add a rule for workspace/*/index.md here — it is fully regenerated
 # every session, so a real conflict there is expected and safe to resolve by
 # picking either side (task state lives in task.json, not index.md). See
-# .trellis/spec/cli/backend/directory-structure.md for details.
+# .trellis/spec/amc/backend/directory-structure.md for details.
 .trellis/workspace/*/journal-*.md merge=union
