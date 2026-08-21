@@ -1389,3 +1389,44 @@ Installed sd-ai-command-pack v0.71.33 into this thin-install consumer, replacing
 ### Next Steps
 
 - None - task complete
+
+
+## Session 80: Refresh sd-ai-command-pack to 0.71.38
+<!-- trellis-session: v=2 fp=1260fcad090913c2 -->
+
+**Date**: 2026-08-20
+**Task**: Refresh sd-ai-command-pack to 0.71.38
+**Package**: amc
+**Branch**: `chore/pack-refresh-0.71.38`
+
+### Summary
+
+Fleet refresh to 0.71.38; repairs the vendored review-layout helper's executable bit and qualifies one cross-repo citation the new locator rule catches.
+
+### Main Changes
+
+- Installed sd-ai-command-pack 0.71.38 (tag v0.71.38 @ 6881aaa3) for claude, gemini, github, opencode.
+- Repaired .sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py from mode 100644 to 100755.
+- Qualified the review.py:1706 citation in sd-review-kb-false-block.md as sd-github-review's, so it no longer reads as a repo-relative path.
+- Regenerated docs/repomix-map.md via scripts/update_repomix.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0081f4686a6a609b0789cee8ae0b5e2846d0ff67` | chore: refresh sd-ai-command-pack to 0.71.38 |
+
+### Testing
+
+- [OK] install-audit: passed, 31 targets, provenance 0.71.38.
+- [OK] python3 tools/check_ci_review_contract.py and check_copilot_instruction_contract.py: both passed.
+- [OK] Local gate: 2 failures, both pre-existing (0.71.33's checker reports the identical pair); severity gate returned continue-with-follow-ups, 0 blockers.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

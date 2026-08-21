@@ -236,6 +236,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     trellis-implement.toml
     trellis-research.toml
   hooks/
+    inject-subagent-context.py
     inject-workflow-state.py
     session-start.py
   skills/
@@ -274,6 +275,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       continue.toml
       finish-work.toml
   hooks/
+    inject-shell-session-context.py
     inject-workflow-state.py
     session-start.py
   skills/
@@ -441,6 +443,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       finish-work.md
       start.md
   lib/
+    context-visibility.js
     session-utils.js
     trellis-context.js
   plugins/
@@ -790,6 +793,7 @@ tools/
   check_trellis_placeholders.py
   check_workflow_pip.py
   pr_comment.sh
+.gitattributes
 .gitignore
 .pre-commit-config.yaml
 AGENTS.md

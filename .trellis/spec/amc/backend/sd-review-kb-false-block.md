@@ -24,8 +24,9 @@ and independently of repo HEAD. The coordinator's KB row runs
 so the check fails non-deterministically whenever the vault is momentarily
 inconsistent (`present != expected` mid-edit). The coordinator memoizes each
 `sd-check` verdict per `(headOid, configurationDigest)` with `worktreeDigest`
-that **excludes gitignored paths** (`review.py:1706`), so a transient failure is
-frozen into the cache key and never clears against a live re-check.
+that **excludes gitignored paths** (sd-github-review's `review.py`, line
+1706), so a transient failure is frozen into the cache key and never clears
+against a live re-check.
 
 ## Posture decision (AC2)
 
