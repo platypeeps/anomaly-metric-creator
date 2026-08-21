@@ -21,6 +21,16 @@ Fleet refresh: install sd-ai-command-pack v0.71.38 (tag v0.71.38 @ 6881aaa3f34fb
 - [ ] The repository's documented deterministic full local gate passes, or its only findings are dispositioned through the fleet finding severity gate with zero blockers.
 - [ ] The refresh is published as one PR whose head carries the work commit plus this task's archive and journal bookkeeping.
 
+> **2026-08-20 — these boxes were left unticked, and stay that way.** This
+> archive merged with every acceptance criterion empty because the fleet
+> publish path never ticked them and nothing asked the operator to. They are
+> not being ticked retroactively: that would assert *this run* verified them,
+> while all that can be re-derived today is that the current state satisfies
+> them — a different claim, and asserting it after the fact is the same defect
+> pointed at its own cleanup. The gap is fixed forward in the pack's
+> `fleet-publish-archives-unchecked-criteria` task, which makes the publish
+> path tick what it can prove and visibly name what it cannot.
+
 ## Post-archive handoff
 
 Owned by the fleet campaign after this task is archived, not by its acceptance
