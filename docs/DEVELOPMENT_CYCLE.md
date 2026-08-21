@@ -233,7 +233,7 @@ lanes; that is deliberately not wired today.
 ### Local review-gate helper forwarders (retired)
 
 This repository used to carry five `scripts/sd-ai-command-pack-*` forwarders
-plus `scripts/_sd_pack_forward.py`, each resolving a pack helper **by name on
+plus `scripts/_sd_pack_forward.py` [absent: retired with the five forwarders it backed], each resolving a pack helper **by name on
 PATH** and re-execing it. They existed because the pack's `sd-check` resolved
 its builtin helper rows only at `<repo>/scripts/sd-ai-command-pack-<name>`; a
 thin install places none of them there, every row reported `unavailable`,
@@ -248,7 +248,7 @@ wins everywhere else. Measured here before removal: all five names resolved to
 removed dead files rather than a live resolution path.
 
 They are gone, along with their `installed-targets.txt` entries and
-`tests/test_sd_check_helper_forwarders.py`. Do not reintroduce them: resolving
+`tests/test_sd_check_helper_forwarders.py` [absent: retired with the forwarders it covered]. Do not reintroduce them: resolving
 a pack helper by name on PATH means the answering install has nothing to do
 with the pack this repository is pinned to, which is the version split the pack
 now forbids in its own skills.
