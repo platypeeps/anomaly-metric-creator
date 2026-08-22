@@ -1430,3 +1430,44 @@ Fleet refresh to 0.71.38; repairs the vendored review-layout helper's executable
 ### Next Steps
 
 - None - task complete
+
+
+## Session 81: Refresh sd-ai-command-pack to 0.71.45
+<!-- trellis-session: v=2 fp=a169fabeb7d43f20 -->
+
+**Date**: 2026-08-21
+**Task**: Refresh sd-ai-command-pack to 0.71.45
+**Package**: amc
+**Branch**: `chore/pack-refresh-0.71.45`
+
+### Summary
+
+Fleet rollout lane: reinstalled the thin sd-ai-command-pack payload at 0.71.45, up from 0.71.38, and verified the manifest-ordered checks and the deterministic gate.
+
+### Main Changes
+
+- Reinstalled the thin sd-ai-command-pack payload at 0.71.45 (up from 0.71.38); the diff is installer-managed .github/prompts adapters plus .sd-ai-command-pack manifest and provenance receipts.
+- bash scripts/update_repomix produced no diff: docs/repomix-map.md was already current for this tree.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dd98b0d1b379429a65274f4a124cbc15d4d0b56d` | chore(pack): refresh sd-ai-command-pack to 0.71.45 |
+
+### Testing
+
+- [OK] bash scripts/update_repomix — exit 0, docs/repomix-map.md unchanged
+- [OK] python3 tools/check_ci_review_contract.py — exit 0
+- [OK] python3 tools/check_copilot_instruction_contract.py — exit 0
+- [OK] SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash ~/.agents/bin/sd-ai-command-pack-full-check.sh — exit 0, zero findings
+- [OK] sd-ai-command-pack install audit from the pack source checkout — 31 targets, provenance 0.71.45
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
