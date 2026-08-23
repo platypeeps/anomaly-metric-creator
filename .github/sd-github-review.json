@@ -1,34 +1,35 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "tool": "sd-github-review",
   "state": "active",
   "repository": "platypeeps/anomaly-metric-creator",
   "workflow": {
     "path": ".github/workflows/ai-review-router.yml",
-    "sha256": "f4d01261cdb568560b1a7c8f4ddd5e3f60fc5896092081a7fb03d1200a3d3c11"
+    "sha256": "6943d577beb86057ee1129aff891aa448f16cfcdd08d4bc135eab5b22882340d"
   },
   "source": {
     "template": "examples/pr-agent-router.yml",
-    "sha256": "f4d01261cdb568560b1a7c8f4ddd5e3f60fc5896092081a7fb03d1200a3d3c11",
-    "commit": "0e58e76b68a42efc7c62e01077bf9392da7f91b6",
-    "tag": "v0.5.0",
+    "sha256": "6943d577beb86057ee1129aff891aa448f16cfcdd08d4bc135eab5b22882340d",
+    "commit": "0d298aa6a7e12fab34e565bd6afce4f127af1589",
+    "tag": "v0.6.0",
     "released": true
   },
   "descriptor": {
     "path": "config/routed-review-setup-v1.json",
     "source": "contract/routed-review-setup-v1.json",
-    "sha256": "ea6f34bbabf49c19237995bc88709d1a83ed9caec74b96ca5274f7d4d43cb4ac"
+    "sha256": "854504864fb1ef3fdf9137ca63245b31be51795e5b5d4419bd92614bc7b57da1"
   },
   "durableWorkflow": {
     "path": ".github/workflows/sd-review.yml",
     "source": "examples/sd-review.yml",
-    "sha256": "0555754e530a33c734765f55032ce620536b5f8f136e30275711ef80e0e355ba"
+    "sha256": "5cbb26e5939cf79d3544cc96ad098b758fb56106537d824b7fbbde280f9fd80b"
   },
   "configuration": {
     "provider": "openrouter",
     "cheapModel": "openrouter/qwen/qwen3-coder-30b-a3b-instruct",
     "deepModel": "openrouter/moonshotai/kimi-k2.6",
-    "routeMode": "copilot"
+    "routeMode": "copilot",
+    "reviewFloor": "copilot"
   },
   "resources": {
     "variables": {
@@ -55,6 +56,10 @@
       "SD_REVIEW_DEEP_BACKEND_V1": {
         "value": "{\"id\":\"pr-agent\",\"label\":\"PR-Agent\",\"kind\":\"external\",\"model\":\"openrouter/moonshotai/kimi-k2.6\",\"costTier\":\"medium\",\"qualityTier\":\"advanced\",\"capabilities\":[\"review\",\"conversation-comments\"],\"reviewAuthors\":[\"github-actions[bot]\"],\"checkNames\":[],\"findingChannels\":[\"conversation-comment\"],\"supportsRerequest\":true,\"limitations\":[\"Inline comments depend on adapter configuration\"]}",
         "owned": true
+      },
+      "REVIEW_INDEPENDENT_FLOOR": {
+        "value": "copilot",
+        "owned": false
       }
     },
     "secret": {

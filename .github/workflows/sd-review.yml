@@ -18,17 +18,13 @@ on:
         required: false
         default: false
         type: boolean
-      independent-review-floor:
-        description: Minimum route allowed by repository review policy
-        required: false
-        # The routed-review caller does not send this input -- the pack
-        # dispatches operation, review-request, and rerequest-authorized only --
-        # so this default is the repository's actual review policy, not a
-        # fallback. `copilot` guarantees an independent review on every routed
-        # pull request; lower it deliberately, never by accident.
-        default: copilot
-        type: choice
-        options: [none, cheap, deep, copilot]
+      # There is deliberately no `independent-review-floor` input here. The
+      # floor is the repository's minimum automatic route, and the caller it
+      # constrains is a workflow_dispatch caller -- so offering it on the
+      # dispatch form handed that caller its own minimum. It reads from
+      # REVIEW_INDEPENDENT_FLOOR below, exactly as route-policy reads from
+      # REVIEW_ROUTE_MODE. Repository variables cannot be set from a dispatch
+      # form; that asymmetry is the entire point of both.
 
 # Least privilege by default; each job widens only to what it needs. The
 # receipt-writing jobs (review, finalize) hold checks:write; the third-party
@@ -51,10 +47,39 @@ jobs:
       model: ${{ steps.review.outputs.model }}
       pull-request-number: ${{ steps.review.outputs.pull-request-number }}
     steps:
+      # Same shape as the REVIEW_ROUTE_MODE guard in the event-driven lane, and
+      # for the same reason: a policy bound the lane cannot read is a policy the
+      # lane does not enforce. Failing here rather than inside the action gets
+      # the operator an error naming the variable to set, instead of one naming
+      # an action input they never supplied.
+      #
+      # The action does already reject an empty value -- `input()` uses `??`, so
+      # an unset variable arrives as "" rather than as absent, and normalizeMode
+      # throws on it. This step is not what makes the lane fail closed; it is
+      # what makes the failure legible, and it holds if that decoder ever
+      # changes.
+      - name: Require an explicit review floor
+        env:
+          REVIEW_INDEPENDENT_FLOOR: ${{ vars.REVIEW_INDEPENDENT_FLOOR }}
+        run: |
+          case "$REVIEW_INDEPENDENT_FLOOR" in
+            none|cheap|deep|copilot)
+              echo "Independent review floor: $REVIEW_INDEPENDENT_FLOOR"
+              ;;
+            "")
+              echo "::error::Repository variable REVIEW_INDEPENDENT_FLOOR is not set. It is the minimum route this repository's automatic review may select, and this lane will not guess one. Set it to copilot to guarantee an independent review on every routed pull request, or to none to disable the floor." >&2
+              exit 1
+              ;;
+            *)
+              echo "::error::Repository variable REVIEW_INDEPENDENT_FLOOR must be one of none, cheap, deep, or copilot; got '$REVIEW_INDEPENDENT_FLOOR'." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Route or query the exact-head review
         id: review
         # Current release; upgrade every first-party reference together.
-        uses: platypeeps/sd-github-review@61a4492056cec240b785bdea5ebad574f389bb54
+        uses: platypeeps/sd-github-review@98eebf6d1526265daf8e36d9e98d9759c6181bb3
         with:
           github-token: ${{ github.token }}
           operation: ${{ inputs.operation }}
@@ -63,14 +88,22 @@ jobs:
           deep-backend: ${{ vars.SD_REVIEW_DEEP_BACKEND_V1 }}
           rerequest-authorized: ${{ inputs.rerequest-authorized }}
           allow-bookkeeping-none: ${{ vars.SD_REVIEW_ALLOW_BOOKKEEPING_NONE || 'false' }}
-          independent-review-floor: ${{ inputs.independent-review-floor }}
-          # Read straight from the repository variable, NOT from a
-          # workflow_dispatch input like the line above. This is the maximum
-          # route a caller may explicitly request, and the caller it constrains
-          # is a workflow_dispatch caller -- routing it through `inputs.` would
-          # let them set their own policy and defeat it entirely. Repository
-          # variables cannot be set from a dispatch form. Do not "make this
-          # consistent" with its neighbours.
+          # Both policy bounds read from repository variables, never from a
+          # workflow_dispatch input. They are opposite bounds on the same
+          # decision -- the floor is the minimum automatic route, the policy is
+          # the maximum a caller may explicitly request -- and in both cases the
+          # caller they constrain is the workflow_dispatch caller. Sourcing
+          # either from `inputs.` hands that caller its own bound and silently
+          # disables it. Repository variables cannot be set from a dispatch
+          # form; that is what makes them bounds at all.
+          #
+          # The floor was wired to `inputs.independent-review-floor` through
+          # 0.5.0 and anyone who could dispatch could select `none`. Do not
+          # reintroduce it for symmetry with the payload inputs above; a test
+          # asserts this lane declares no such input, and another asserts the
+          # key below is still passed -- omitting it entirely reaches the
+          # action's `"none"` default and unfloors the lane just as quietly.
+          independent-review-floor: ${{ vars.REVIEW_INDEPENDENT_FLOOR }}
           route-policy: ${{ vars.REVIEW_ROUTE_MODE }}
           high-risk-route: deep
 
@@ -178,7 +211,7 @@ jobs:
     steps:
       - name: Build the PR-Agent acknowledgment
         id: acknowledge
-        uses: platypeeps/sd-github-review@61a4492056cec240b785bdea5ebad574f389bb54
+        uses: platypeeps/sd-github-review@98eebf6d1526265daf8e36d9e98d9759c6181bb3
         with:
           github-token: ${{ github.token }}
           operation: acknowledge
@@ -186,7 +219,7 @@ jobs:
           adapter-outcome: ${{ needs.pr-agent.result }}
 
       - name: Finalize the external receipt
-        uses: platypeeps/sd-github-review@61a4492056cec240b785bdea5ebad574f389bb54
+        uses: platypeeps/sd-github-review@98eebf6d1526265daf8e36d9e98d9759c6181bb3
         with:
           github-token: ${{ github.token }}
           operation: finalize
