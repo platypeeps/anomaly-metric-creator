@@ -38,7 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write
       pull-requests: write
       checks: write
     outputs:
@@ -79,7 +78,7 @@ jobs:
       - name: Route or query the exact-head review
         id: review
         # Current release; upgrade every first-party reference together.
-        uses: platypeeps/sd-github-review@98eebf6d1526265daf8e36d9e98d9759c6181bb3
+        uses: platypeeps/sd-github-review@6ba1eff049962faded1c289f666ef56b58c61b4d
         with:
           github-token: ${{ github.token }}
           operation: ${{ inputs.operation }}
@@ -111,8 +110,19 @@ jobs:
     needs: review
     if: needs.review.outputs.adapter-request != ''
     runs-on: ubuntu-latest
-    # Reviewer isolation: no checks:write and no issues:write, so the token
-    # handed to the third-party container cannot write durable receipts.
+    # Reviewer isolation: no checks:write, so the token handed to the
+    # third-party container cannot write durable receipts. That single scope is
+    # the whole boundary -- receipts are check runs, and nothing else the
+    # container can reach forges one.
+    #
+    # This job once also withheld issues:write, and the comment named it as part
+    # of the isolation. It was never isolation: on a pull request,
+    # pull-requests:write already covers the /issues/... REST paths -- comments,
+    # labels, reactions, comment edits -- because that prefix reflects GitHub
+    # modelling pull requests as issues in the REST layout, not the permission
+    # scope that governs them. Withholding issues:write therefore denied the
+    # container nothing, while the sibling router lane granted it and the docs
+    # told operators it was required to publish. Probed and removed in 0.6.1.
     permissions:
       contents: read
       pull-requests: write
@@ -205,13 +215,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write
       pull-requests: write
       checks: write
     steps:
       - name: Build the PR-Agent acknowledgment
         id: acknowledge
-        uses: platypeeps/sd-github-review@98eebf6d1526265daf8e36d9e98d9759c6181bb3
+        uses: platypeeps/sd-github-review@6ba1eff049962faded1c289f666ef56b58c61b4d
         with:
           github-token: ${{ github.token }}
           operation: acknowledge
@@ -219,7 +228,7 @@ jobs:
           adapter-outcome: ${{ needs.pr-agent.result }}
 
       - name: Finalize the external receipt
-        uses: platypeeps/sd-github-review@98eebf6d1526265daf8e36d9e98d9759c6181bb3
+        uses: platypeeps/sd-github-review@6ba1eff049962faded1c289f666ef56b58c61b4d
         with:
           github-token: ${{ github.token }}
           operation: finalize
