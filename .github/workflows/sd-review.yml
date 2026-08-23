@@ -1,0 +1,194 @@
+name: SD routed review
+
+on:
+  workflow_dispatch:
+    inputs:
+      review-request:
+        description: Canonical sd-github-review v1 request JSON
+        required: true
+        type: string
+      operation:
+        description: Route a review or query an existing exact-head receipt
+        required: true
+        default: route
+        type: choice
+        options: [route, query]
+      rerequest-authorized:
+        description: Authorize a validated same-head request with attempt greater than one
+        required: false
+        default: false
+        type: boolean
+      independent-review-floor:
+        description: Minimum route allowed by repository review policy
+        required: false
+        # The routed-review caller does not send this input -- the pack
+        # dispatches operation, review-request, and rerequest-authorized only --
+        # so this default is the repository's actual review policy, not a
+        # fallback. `copilot` guarantees an independent review on every routed
+        # pull request; lower it deliberately, never by accident.
+        default: copilot
+        type: choice
+        options: [none, cheap, deep, copilot]
+
+# Least privilege by default; each job widens only to what it needs. The
+# receipt-writing jobs (review, finalize) hold checks:write; the third-party
+# reviewer job (pr-agent) never does, so a compromised reviewer cannot forge
+# durable receipts.
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      checks: write
+    outputs:
+      adapter-request: ${{ steps.review.outputs.adapter-request }}
+      backend-id: ${{ steps.review.outputs.backend-id }}
+      model: ${{ steps.review.outputs.model }}
+      pull-request-number: ${{ steps.review.outputs.pull-request-number }}
+    steps:
+      - name: Route or query the exact-head review
+        id: review
+        # Current release; upgrade every first-party reference together.
+        uses: platypeeps/sd-github-review@61a4492056cec240b785bdea5ebad574f389bb54
+        with:
+          github-token: ${{ github.token }}
+          operation: ${{ inputs.operation }}
+          review-request: ${{ inputs.review-request }}
+          cheap-backend: ${{ vars.SD_REVIEW_CHEAP_BACKEND_V1 }}
+          deep-backend: ${{ vars.SD_REVIEW_DEEP_BACKEND_V1 }}
+          rerequest-authorized: ${{ inputs.rerequest-authorized }}
+          allow-bookkeeping-none: ${{ vars.SD_REVIEW_ALLOW_BOOKKEEPING_NONE || 'false' }}
+          independent-review-floor: ${{ inputs.independent-review-floor }}
+          # Read straight from the repository variable, NOT from a
+          # workflow_dispatch input like the line above. This is the maximum
+          # route a caller may explicitly request, and the caller it constrains
+          # is a workflow_dispatch caller -- routing it through `inputs.` would
+          # let them set their own policy and defeat it entirely. Repository
+          # variables cannot be set from a dispatch form. Do not "make this
+          # consistent" with its neighbours.
+          route-policy: ${{ vars.REVIEW_ROUTE_MODE }}
+          high-risk-route: deep
+
+  pr-agent:
+    needs: review
+    if: needs.review.outputs.adapter-request != ''
+    runs-on: ubuntu-latest
+    # Reviewer isolation: no checks:write and no issues:write, so the token
+    # handed to the third-party container cannot write durable receipts.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Validate PR-Agent configuration
+        id: pr-agent-config
+        env:
+          REVIEW_BACKEND_ID: ${{ needs.review.outputs.backend-id }}
+          REVIEW_MODEL_PROVIDER: ${{ vars.PR_AGENT_MODEL_PROVIDER }}
+          REVIEW_MODEL: ${{ needs.review.outputs.model }}
+        run: |
+          if [ "$REVIEW_BACKEND_ID" != "pr-agent" ]; then
+            echo "The selected external backend must use id pr-agent." >&2
+            exit 1
+          fi
+          if [ -z "$REVIEW_MODEL" ]; then
+            echo "The selected PR-Agent backend must declare a model." >&2
+            exit 1
+          fi
+          case "$REVIEW_MODEL_PROVIDER" in
+            openai)
+              REVIEW_MODEL_PREFIX=""
+              ;;
+            gemini|openrouter|anthropic|cohere|replicate|groq|sambanova|xai|deepseek|deepinfra|mistral|codestral)
+              REVIEW_MODEL_PREFIX="${REVIEW_MODEL_PROVIDER}/"
+              ;;
+            *)
+              echo "PR_AGENT_MODEL_PROVIDER must select a supported single-key provider." >&2
+              exit 1
+              ;;
+          esac
+          if [ -n "$REVIEW_MODEL_PREFIX" ]; then
+            case "$REVIEW_MODEL" in
+              "$REVIEW_MODEL_PREFIX"*) ;;
+              *)
+                echo "The selected PR-Agent model must use the ${REVIEW_MODEL_PREFIX}<model-id> format." >&2
+                exit 1
+              ;;
+            esac
+          fi
+
+      - name: Run PR-Agent review
+        id: pr-agent
+        if: steps.pr-agent-config.outcome == 'success'
+        env:
+          GITHUB__USER_TOKEN: ${{ github.token }}
+          OPENAI__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'openai' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          GOOGLE_AI_STUDIO__GEMINI_API_KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'gemini' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          OPENROUTER__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'openrouter' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          ANTHROPIC__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'anthropic' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          COHERE__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'cohere' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          REPLICATE__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'replicate' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          GROQ__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'groq' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          SAMBANOVA__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'sambanova' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          XAI__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'xai' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          DEEPSEEK__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'deepseek' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          DEEPINFRA__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'deepinfra' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          MISTRAL__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'mistral' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          CODESTRAL__KEY: ${{ vars.PR_AGENT_MODEL_PROVIDER == 'codestral' && secrets.PR_AGENT_MODEL_API_KEY || '' }}
+          CONFIG__MODEL: ${{ needs.review.outputs.model }}
+          CONFIG__FALLBACK_MODELS: '[]'
+          CONFIG__RESTRICTED_MODE: "true"
+          REVIEW_PULL_REQUEST_NUMBER: ${{ needs.review.outputs.pull-request-number }}
+        run: |
+          docker run --rm \
+            --env GITHUB__USER_TOKEN \
+            --env OPENAI__KEY \
+            --env GOOGLE_AI_STUDIO__GEMINI_API_KEY \
+            --env OPENROUTER__KEY \
+            --env ANTHROPIC__KEY \
+            --env COHERE__KEY \
+            --env REPLICATE__KEY \
+            --env GROQ__KEY \
+            --env SAMBANOVA__KEY \
+            --env XAI__KEY \
+            --env DEEPSEEK__KEY \
+            --env DEEPINFRA__KEY \
+            --env MISTRAL__KEY \
+            --env CODESTRAL__KEY \
+            --env CONFIG__MODEL \
+            --env CONFIG__FALLBACK_MODELS \
+            --env CONFIG__RESTRICTED_MODE \
+            pragent/pr-agent@sha256:cae31b51b65b5c978a3b2a978d96e89e6a4c5bcd81cb2553fd8dad0251c3a23e \
+            --pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/${REVIEW_PULL_REQUEST_NUMBER}" \
+            review
+
+  finalize:
+    needs: [review, pr-agent]
+    if: needs.review.outputs.adapter-request != '' && always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      checks: write
+    steps:
+      - name: Build the PR-Agent acknowledgment
+        id: acknowledge
+        uses: platypeeps/sd-github-review@61a4492056cec240b785bdea5ebad574f389bb54
+        with:
+          github-token: ${{ github.token }}
+          operation: acknowledge
+          adapter-request: ${{ needs.review.outputs.adapter-request }}
+          adapter-outcome: ${{ needs.pr-agent.result }}
+
+      - name: Finalize the external receipt
+        uses: platypeeps/sd-github-review@61a4492056cec240b785bdea5ebad574f389bb54
+        with:
+          github-token: ${{ github.token }}
+          operation: finalize
+          review-request: ${{ inputs.review-request }}
+          adapter-acknowledgment: ${{ steps.acknowledge.outputs.adapter-acknowledgment }}

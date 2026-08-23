@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "integrationId": "sd-github-review",
+  "workflow": {
+    "name": "SD routed review",
+    "path": ".github/workflows/sd-review.yml",
+    "dispatchEvent": "workflow_dispatch"
+  },
+  "contractMajor": 1,
+  "supportedContractMajors": [1],
+  "supportedIntents": ["auto", "cheap", "deep", "copilot", "none"],
+  "supportedOperations": ["route", "finalize", "query"],
+  "durableReceipt": {
+    "supported": true,
+    "checkName": "sd-github-review/receipt"
+  },
+  "requiredPermissions": {
+    "contents": "read",
+    "pull-requests": "write",
+    "checks": "write"
+  },
+  "actionReference": "platypeeps/sd-github-review@61a4492056cec240b785bdea5ebad574f389bb54",
+  "noninteractive": true,
+  "checkoutRequired": false
+}
