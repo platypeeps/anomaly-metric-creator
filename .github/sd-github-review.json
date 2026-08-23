@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 5,
+  "tool": "sd-github-review",
+  "state": "active",
+  "repository": "platypeeps/anomaly-metric-creator",
+  "workflow": {
+    "path": ".github/workflows/ai-review-router.yml",
+    "sha256": "f4d01261cdb568560b1a7c8f4ddd5e3f60fc5896092081a7fb03d1200a3d3c11"
+  },
+  "source": {
+    "template": "examples/pr-agent-router.yml",
+    "sha256": "f4d01261cdb568560b1a7c8f4ddd5e3f60fc5896092081a7fb03d1200a3d3c11",
+    "commit": "0e58e76b68a42efc7c62e01077bf9392da7f91b6",
+    "tag": "v0.5.0",
+    "released": true
+  },
+  "descriptor": {
+    "path": "config/routed-review-setup-v1.json",
+    "source": "contract/routed-review-setup-v1.json",
+    "sha256": "ea6f34bbabf49c19237995bc88709d1a83ed9caec74b96ca5274f7d4d43cb4ac"
+  },
+  "durableWorkflow": {
+    "path": ".github/workflows/sd-review.yml",
+    "source": "examples/sd-review.yml",
+    "sha256": "0555754e530a33c734765f55032ce620536b5f8f136e30275711ef80e0e355ba"
+  },
+  "configuration": {
+    "provider": "openrouter",
+    "cheapModel": "openrouter/qwen/qwen3-coder-30b-a3b-instruct",
+    "deepModel": "openrouter/moonshotai/kimi-k2.6",
+    "routeMode": "copilot"
+  },
+  "resources": {
+    "variables": {
+      "PR_AGENT_MODEL_PROVIDER": {
+        "value": "openrouter",
+        "owned": true
+      },
+      "CHEAP_REVIEW_MODEL": {
+        "value": "openrouter/qwen/qwen3-coder-30b-a3b-instruct",
+        "owned": true
+      },
+      "DEEP_REVIEW_MODEL": {
+        "value": "openrouter/moonshotai/kimi-k2.6",
+        "owned": true
+      },
+      "REVIEW_ROUTE_MODE": {
+        "value": "copilot",
+        "owned": true
+      },
+      "SD_REVIEW_CHEAP_BACKEND_V1": {
+        "value": "{\"id\":\"pr-agent\",\"label\":\"PR-Agent\",\"kind\":\"external\",\"model\":\"openrouter/qwen/qwen3-coder-30b-a3b-instruct\",\"costTier\":\"low\",\"qualityTier\":\"standard\",\"capabilities\":[\"review\",\"conversation-comments\"],\"reviewAuthors\":[\"github-actions[bot]\"],\"checkNames\":[],\"findingChannels\":[\"conversation-comment\"],\"supportsRerequest\":true,\"limitations\":[\"Inline comments depend on adapter configuration\"]}",
+        "owned": true
+      },
+      "SD_REVIEW_DEEP_BACKEND_V1": {
+        "value": "{\"id\":\"pr-agent\",\"label\":\"PR-Agent\",\"kind\":\"external\",\"model\":\"openrouter/moonshotai/kimi-k2.6\",\"costTier\":\"medium\",\"qualityTier\":\"advanced\",\"capabilities\":[\"review\",\"conversation-comments\"],\"reviewAuthors\":[\"github-actions[bot]\"],\"checkNames\":[],\"findingChannels\":[\"conversation-comment\"],\"supportsRerequest\":true,\"limitations\":[\"Inline comments depend on adapter configuration\"]}",
+        "owned": true
+      }
+    },
+    "secret": {
+      "name": "PR_AGENT_MODEL_API_KEY",
+      "owned": true
+    },
+    "labels": [
+      {
+        "name": "review:cheap",
+        "owned": true
+      },
+      {
+        "name": "review:deep",
+        "owned": true
+      },
+      {
+        "name": "review:copilot",
+        "owned": true
+      },
+      {
+        "name": "review:none",
+        "owned": true
+      },
+      {
+        "name": "review:auto",
+        "owned": true
+      }
+    ]
+  }
+}
