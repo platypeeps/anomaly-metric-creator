@@ -19,7 +19,7 @@
     "pull-requests": "write",
     "checks": "write"
   },
-  "actionReference": "platypeeps/sd-github-review@98eebf6d1526265daf8e36d9e98d9759c6181bb3",
+  "actionReference": "platypeeps/sd-github-review@6ba1eff049962faded1c289f666ef56b58c61b4d",
   "noninteractive": true,
   "checkoutRequired": false
 }

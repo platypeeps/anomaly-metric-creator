@@ -5,24 +5,24 @@
   "repository": "platypeeps/anomaly-metric-creator",
   "workflow": {
     "path": ".github/workflows/ai-review-router.yml",
-    "sha256": "6943d577beb86057ee1129aff891aa448f16cfcdd08d4bc135eab5b22882340d"
+    "sha256": "8d174b9df2059c4c6ba05819501a3a050e9f43cd341943be3df1c062c4e18027"
   },
   "source": {
     "template": "examples/pr-agent-router.yml",
-    "sha256": "6943d577beb86057ee1129aff891aa448f16cfcdd08d4bc135eab5b22882340d",
-    "commit": "0d298aa6a7e12fab34e565bd6afce4f127af1589",
-    "tag": "v0.6.0",
+    "sha256": "8d174b9df2059c4c6ba05819501a3a050e9f43cd341943be3df1c062c4e18027",
+    "commit": "ee1a1628ab4402595a045b67ebe2f00a314e586a",
+    "tag": "v0.6.1",
     "released": true
   },
   "descriptor": {
     "path": "config/routed-review-setup-v1.json",
     "source": "contract/routed-review-setup-v1.json",
-    "sha256": "854504864fb1ef3fdf9137ca63245b31be51795e5b5d4419bd92614bc7b57da1"
+    "sha256": "db7f76cebfdcdefc3deb0ab871217093d9b107b9518d3ddfd188b323f6e1791b"
   },
   "durableWorkflow": {
     "path": ".github/workflows/sd-review.yml",
     "source": "examples/sd-review.yml",
-    "sha256": "5cbb26e5939cf79d3544cc96ad098b758fb56106537d824b7fbbde280f9fd80b"
+    "sha256": "3b2f1397cd4602d6226c87b25fe9dd1ba200f331e73814b981bbeee4c08e7693"
   },
   "configuration": {
     "provider": "openrouter",
