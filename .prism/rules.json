@@ -1,6 +1,6 @@
 {
   "$schema": "rules.schema.json",
-  "description": "Configuration for the Prism code review tool, defining issue categories, severities, and required checks. The project-local schema file is distributed next to this file as rules.schema.json. The Prism config format keeps focus and severityOverrides separate; keep their category names in sync.",
+  "description": "Configuration for the Prism code review tool, defining issue categories and required checks. The project-local schema file is distributed next to this file as rules.schema.json. Severity is the reviewer's per-finding judgement; do not add a severityOverrides block, which prism applies after the model answers and which replaces that judgement with a category lookup.",
   "focus": [
     "bug",
     "correctness",
@@ -11,16 +11,6 @@
     "style",
     "testing"
   ],
-  "severityOverrides": {
-    "bug": "high",
-    "correctness": "high",
-    "docs": "medium",
-    "maintainability": "medium",
-    "performance": "medium",
-    "security": "high",
-    "style": "low",
-    "testing": "medium"
-  },
   "required": [
     {
       "id": "trellis-task-scope",
