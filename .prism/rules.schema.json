@@ -19,12 +19,6 @@
       },
       "uniqueItems": true
     },
-    "severityOverrides": {
-      "type": "object",
-      "additionalProperties": {
-        "enum": ["low", "medium", "high"]
-      }
-    },
     "required": {
       "type": "array",
       "items": {
