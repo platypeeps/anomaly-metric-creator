@@ -1,6 +1,6 @@
 {
   "pack": "sd-ai-command-pack",
-  "version": "0.71.45",
+  "version": "0.71.48",
   "mode": "thin",
   "platforms": [
     "claude",
@@ -51,7 +51,7 @@
     ".github/prompts/sd-update-spec.prompt.md": "sha256:c341ac096ce1d4826a3dc315a178f3bbfa02afe7f08eb4c4d1092d4a5c4cfda4",
     ".github/prompts/sd-work-backlog.prompt.md": "sha256:0ab17470537142e4115fc8ebbd508325646f078381ff9c1a1bdca88b43b6734a",
     ".gito/sd-ai-command-pack.env": "sha256:9033b06c66ad3473605775b6feba4ab512db6c2ecc67102b60d5f0e9a0a5d897",
-    ".prism/rules.schema.json": "sha256:5b082936cc38420b48850a8a357c7d2e791dbd3bd40caa65d2cb922087bd5b2a",
+    ".prism/rules.schema.json": "sha256:2fe367eda37d3abf81c16fa41396bb81884c3cc375c3a4b05974500a0cca0750",
     ".sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py": "sha256:2576ab2005f232b9baabf6c261a9e4a87faccfe9b475fbc5e23789c460b92eac"
   }
 }
