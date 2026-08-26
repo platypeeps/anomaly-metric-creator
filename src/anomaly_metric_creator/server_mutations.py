@@ -492,15 +492,15 @@ class SimulationMutations:
             self._commit_locked()
 
 
+# Marker every persisted-overlay refusal carries. `serve_main` converts these
+# into an operator-facing `SystemExit` and must let every other `ValueError`
+# through unchanged, so it matches on this rather than assuming the loader is
+# the only thing under `build_state()` that can raise. Named here, next to the
+# function that writes it, so the producer and the matcher cannot drift. A
+# comment, not a bare string literal below the assignment: that form is an
+# attribute-docstring convention some tools read and others treat as a useless
+# expression, which is ambiguity this constant does not need.
 PERSIST_ERROR_PREFIX = "--persist-mutations "
-"""Marker every persisted-overlay refusal carries.
-
-`serve_main` converts these into an operator-facing `SystemExit` and must let
-every other `ValueError` through unchanged, so it matches on this rather than
-assuming the loader is the only thing under `build_state()` that can raise.
-Named here, next to the function that writes it, so the producer and the
-matcher cannot drift.
-"""
 
 
 def _persist_error(path: Path, detail: str) -> ValueError:
