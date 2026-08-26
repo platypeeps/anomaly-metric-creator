@@ -704,6 +704,19 @@ def load_persisted_mutations(
         raise _persist_error(path, f"file could not be read ({exc})") from exc
 
     payload = _require_mapping(path, payload, "persisted state")
+    # Both envelope keys must be *present*, not merely not-unexpected. The
+    # unknown-key check below is one-directional, so a truncated or
+    # hand-edited file missing `mutations` would otherwise default to `{}`
+    # and restore an empty overlay in silence -- the operator would see a
+    # server that started clean and conclude the mutations were never made.
+    # Checked before `schema_version`, whose own `.get()` would report a
+    # missing envelope as `schema_version None`, naming the wrong problem.
+    missing_envelope = _PERSISTED_ENVELOPE_KEYS - set(payload)
+    if missing_envelope:
+        raise _persist_error(
+            path,
+            f"persisted state is missing key(s) {', '.join(sorted(missing_envelope))}",
+        )
     version = payload.get("schema_version")
     if version != MUTATION_STATE_SCHEMA_VERSION:
         raise _persist_error(
@@ -725,7 +738,7 @@ def load_persisted_mutations(
             path,
             f"persisted state has unknown key(s) {', '.join(sorted(unknown_envelope))}",
         )
-    state = _require_mapping(path, payload.get("mutations", {}), "mutations")
+    state = _require_mapping(path, payload["mutations"], "mutations")
     unknown = set(state) - _PERSISTED_MUTATION_FIELDS
     if unknown:
         raise _persist_error(

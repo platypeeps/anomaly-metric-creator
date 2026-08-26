@@ -768,12 +768,13 @@ does not declare (in the envelope or in the overlay), a field whose JSON type
 is wrong (an object or string where an array belongs, a non-string entry
 inside one, a non-integer `version`, a workload or release field whose type
 its record cannot hold), or a target that cannot be written at all stops the
-server rather than half-restoring an overlay. If you narrow `--components` between runs,
-entries for components this run does not have are dropped with a stderr
-`WARNING` naming each one, and the trimmed overlay is written back.
+server rather than half-restoring an overlay. If you narrow `--components`
+between runs, entries for components this run does not have are dropped with a
+stderr `WARNING` naming each one, and the trimmed overlay is written back.
 
 Point the flag **outside `--output-dir`**. The pre-clean registry does not know
 the file, and `amc validate` reports it as an unknown artifact.
+
 For offline analysis outside a running server, save the export payload and use
 one of:
 

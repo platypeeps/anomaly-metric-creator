@@ -727,3 +727,46 @@ def test_event_recording_mutators_write_more_than_once(tmp_path, monkeypatch, mu
 
     assert len(writes) > 1
     assert json.loads(path.read_text(encoding="utf-8"))["mutations"]["extra_events"]
+
+
+# The unknown-key check is one-directional: a truncated or hand-edited file
+# missing `mutations` would default to `{}` and restore an empty overlay in
+# silence, so the operator sees a server that started clean and concludes the
+# mutations were never made.
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"schema_version": MUTATION_STATE_SCHEMA_VERSION}, "mutations"),
+        ({"mutations": {}}, "schema_version"),
+        ({}, "mutations, schema_version"),
+    ],
+    ids=["no-mutations", "no-schema-version", "empty-envelope"],
+)
+def test_a_missing_envelope_key_is_refused(tmp_path, payload, expected):
+    path = tmp_path / "mutations.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"missing key(s) {expected}" in message
+
+
+def test_an_extra_event_that_is_not_an_object_is_refused(tmp_path):
+    """The array check covers the container; each entry is a record too.
+
+    `record_event` reads every entry with `event.get(...)` and `_serialized`
+    round-trips it, so a bare string would surface as an `AttributeError`
+    mid-request rather than as the refusal naming the file.
+    """
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, {"extra_events": ["Killing"]})
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "mutations.extra_events[] must be a JSON object, got str" in message

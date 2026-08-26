@@ -397,10 +397,11 @@ Three properties carry the design:
 and writes in the same locked block, so there is no flush-on-shutdown
 assumption and a `SIGKILL` loses at most the mutation in flight. Writes go
 through `_atomic_write_text`, so a concurrent reader or a restart never sees a
-torn file. `put_resource` and `delete_resource` write twice per logical
-mutation — they commit state under the lock and record their event just
-outside it, re-entering the `RLock` — and both writes are atomic, so the
-intermediate file is valid state merely missing an event.
+torn file. A mutator that records an event after its own commit writes more
+than once per logical mutation — `record_event` re-enters the `RLock` and
+persists again, which `put_resource`, `delete_resource`, and `delete_pod` all
+do. That is the rule; the list of mutators is what drifts. Every write is
+atomic, so the intermediate file is valid state merely missing an event.
 
 *Load refuses rather than half-hydrates.* Corrupt JSON, an unsupported
 `schema_version`, a key this build does not declare, or a value whose JSON
@@ -413,9 +414,18 @@ There are **two** key surfaces and each is checked: the envelope's top level
 against `_PERSISTED_ENVELOPE_KEYS`, and the overlay against
 `_PERSISTED_MUTATION_FIELDS`. Guarding only the second leaves a newer build's
 envelope field silently dropped on downgrade — the exact failure the overlay
-check exists to prevent, one level up. `schema_version` is validated first, so
-a file from a future build reports the version mismatch, which tells the
-operator what to do about it, instead of leading with an unknown key.
+check exists to prevent, one level up. `schema_version` is validated before
+the unknown-key sweep, so a file from a future build reports the version
+mismatch, which tells the operator what to do about it, instead of leading
+with an unknown key.
+
+Both envelope keys must also be **present**, checked before `schema_version`.
+The unknown-key sweep is one-directional, so a truncated or hand-edited file
+missing `mutations` would otherwise fall back to `{}` and restore an empty
+overlay in silence — the operator would see a server that started clean and
+conclude the mutations were never made. Presence is checked first because
+`schema_version`'s own lookup would report a missing envelope as
+`schema_version None`, naming the wrong problem.
 
 The type checks are not decoration: the file is an untrusted read-back
 boundary, and every wrong type it can carry is *iterable* or *coercible*,
