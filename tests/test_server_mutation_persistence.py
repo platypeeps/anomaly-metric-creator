@@ -417,6 +417,84 @@ def test_field_partition_matches_the_live_dataclass():
     assert declared == classified
 
 
+def _is_self_version(target: ast.expr) -> bool:
+    return (
+        isinstance(target, ast.Attribute)
+        and target.attr == "version"
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    )
+
+
+def _version_bump_functions(source: str) -> list[str]:
+    """Names of functions in ``source`` that assign ``self.version``.
+
+    Every assignment form counts. Matching only ``+=`` would let
+    ``self.version = self.version + 1`` -- the same hand-rolled bump, written
+    the long way -- walk straight past a guard whose whole purpose is to catch
+    it. Shared with the meta-test below so the guard's own blind spots are
+    testable rather than assumed.
+    """
+    tree = ast.parse(source)
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.AugAssign) and _is_self_version(inner.target):
+                found.append(node.name)
+            elif isinstance(inner, ast.Assign) and any(
+                # Walk into the target rather than testing it directly:
+                # `self.version, other = ...` presents one `ast.Tuple`, so a
+                # direct test sees the tuple and never the element inside it.
+                _is_self_version(sub)
+                for target in inner.targets
+                for sub in ast.walk(target)
+            ):
+                found.append(node.name)
+            elif (
+                isinstance(inner, ast.AnnAssign)
+                and inner.value is not None
+                and _is_self_version(inner.target)
+            ):
+                found.append(node.name)
+    return found
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "self.version += 1",
+        "self.version = self.version + 1",
+        "self.version: int = self.version + 1",
+        "self.version, other = self.version + 1, 2",
+    ],
+)
+def test_the_commit_guard_sees_every_bump_form(statement):
+    """The guard must not be evadable by rewriting the bump.
+
+    `+=` was once the only form it matched, so the long-hand equivalent went
+    unseen -- a guard with a blind spot reads exactly like a guard without
+    one.
+    """
+    source = f"class Fake:\n    def sneaky(self):\n        {statement}\n"
+
+    assert _version_bump_functions(source) == ["sneaky"]
+
+
+def test_the_commit_guard_ignores_unrelated_assignments():
+    """It must stay specific, or it would flag every nearby write."""
+    source = (
+        "class Fake:\n"
+        "    def innocent(self):\n"
+        "        self.other = 1\n"
+        "        other.version = 2\n"
+        "        version = 3\n"
+    )
+
+    assert _version_bump_functions(source) == []
+
+
 def test_every_commit_routes_through_the_hook():
     """No mutator may bump `version` by hand and skip the disk write.
 
@@ -424,20 +502,7 @@ def test_every_commit_routes_through_the_hook():
     would not fail any of the tests above, because none of them know the new
     mutator exists.
     """
-    tree = ast.parse(inspect.getsource(SimulationMutations))
-    bumps = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        for inner in ast.walk(node):
-            if (
-                isinstance(inner, ast.AugAssign)
-                and isinstance(inner.target, ast.Attribute)
-                and inner.target.attr == "version"
-                and isinstance(inner.target.value, ast.Name)
-                and inner.target.value.id == "self"
-            ):
-                bumps.append(node.name)
+    bumps = _version_bump_functions(inspect.getsource(SimulationMutations))
     assert bumps == ["_commit_locked"], (
         "every overlay commit must go through _commit_locked so the version "
         f"bump and the persistence write stay together; found bumps in {bumps}"
