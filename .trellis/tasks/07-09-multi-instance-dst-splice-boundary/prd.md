@@ -59,8 +59,9 @@ implemented with a safe non-monotonic timestamp model.
 
 ## Acceptance Criteria
 
-- [ ] The supported-vs-unsupported decision is recorded with rationale in the
+- [x] The supported-vs-unsupported decision is recorded with rationale in the
       PRD or a follow-on design note before implementation starts.
+      (See ## Decision (2026-08-26, sdelmas).)
 - [ ] If kept unsupported, user-facing and agent-facing docs name the
       `--inject-dst-artifact-day` plus multi-instance incompatibility as an
       intentional design boundary.
@@ -70,6 +71,38 @@ implemented with a safe non-monotonic timestamp model.
 - [ ] Error messages for rejected combinations remain clear and point to the
       supported alternative (`--inject-dst-artifact-day 0`) when unsupported.
 - [ ] No duplicate Trellis task is created for the same boundary.
+
+## Decision (2026-08-26, sdelmas)
+
+**Chosen posture: keep unsupported.** The `--inject-dst-artifact-day > 0`
+plus multi-instance combination (`--instances-per-component > 1` or
+`--instance-config`) stays rejected at parse time. It is an **intentional
+design boundary**, not a gap awaiting implementation, and the docs say so in
+those words.
+
+Rationale: the DST splice duplicates the 02:00-02:59 wall-clock hour, so the
+per-component CSV is deliberately non-monotonic. The multi-instance row
+builder emits one block per instance, which is *already* non-monotonic across
+block boundaries. Supporting both at once means defining a total order over a
+timestamp column that is non-monotonic along two independent axes, and every
+downstream consumer that currently relies on monotonicity would need its own
+resolution rule -- the long-form writers, `gauges.csv`, the schema validator,
+combine, the OTEL gauge streamer's chronological merge, and the MCP
+`_layout_allows_break` fast path. That is a non-monotonic *timestamp model*,
+not a flag fix, and no workshop or incident workflow requires it.
+
+The guards and their coverage already exist and are unchanged by this
+decision: parse-time rejection at `cli_args.py` (both multi-instance flag
+paths, via the shared `_multi_instance` predicate), the separate gauge-path
+gate, defense-in-depth for direct callers in `generation.py`, and tests in
+`tests/test_instances_per_component.py` and `tests/test_args.py`. The work
+this task carries is therefore a documentation sweep only, with no production
+change.
+
+Revisit trigger: a concrete workshop or incident workflow that needs DST
+artifacts *and* multi-instance fan-out in the same run. Per `implement.md`,
+an override turns this into a full non-monotonic-model design effort that
+needs its own `design.md` before any implementation.
 
 ## Notes
 

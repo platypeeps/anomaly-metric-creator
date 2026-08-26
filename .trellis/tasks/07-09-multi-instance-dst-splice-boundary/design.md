@@ -19,8 +19,12 @@ task-start gate). The grounds are structural, not effort-shy:
   is already exclusive with the gauge paths even at N=1. Supporting the
   combo means a new non-monotonic batching model across six artifact
   families (wide CSV, long-form, gauges, combine, schema/validate, OTEL
-  gauge streaming) — CLAUDE.md already documents this as the boundary's
-  design basis.
+  gauge streaming). *(Corrected 2026-08-26: this bullet originally cited
+  CLAUDE.md as already documenting the design basis. It does not — see
+  step 1. The nearest existing statement is `api-cli-server.md` on
+  `_layout_allows_break`, which records that DST-injected runs and
+  dim-aware per-instance-block runs are each non-monotonic — the two
+  axes this decision refuses to combine.)*
 - Demand is zero: the DST splice is a niche artifact-realism feature;
   no workshop/eval flow has asked for it under fan-out.
 
@@ -28,9 +32,29 @@ task-start gate). The grounds are structural, not effort-shy:
 
 1. **Settle the language** (PRD notes both "intentional boundary" and
    "only remaining gate" appear): standardize on **"intentional design
-   boundary"** everywhere — README flag docs, CLAUDE.md (two sites:
-   the gauges section + the multi-instance section), and the relevant
-   `.trellis/spec/amc/backend/` file.
+   boundary"**.
+
+   *Corrected 2026-08-26 — the edit-site inventory this step originally
+   carried (README flag docs, "CLAUDE.md (two sites: the gauges section
+   + the multi-instance section)", and "the relevant
+   `.trellis/spec/amc/backend/` file") was written against the
+   pre-slimming tree and is wrong at HEAD.* The sweep is **substitutive
+   in `README.md` only** and **additive everywhere else**:
+   - `README.md` — three sites carry the old mixed language: the
+     `--instances-per-component` row ("The only remaining gate is the
+     intentional ... boundary"), the `--instance-config` row ("only the
+     intentional ... boundary remains rejected"), and the gauge-streaming
+     bullet ("intentionally incompatible").
+   - `CLAUDE.md` — **no DST text exists** (`grep -in "dst" CLAUDE.md`
+     returns nothing); CLAUDE.md is now a slim adapter. There is no
+     "gauges section" and no "multi-instance section" paragraph to edit.
+     The posture must be *added*, and per CLAUDE.md's own routing rule
+     ("update the focused Trellis spec first") it lands there only as a
+     short adapter line.
+   - `.trellis/spec/amc/backend/` — **no file carries the posture**
+     (`grep -rn "inject.dst" .trellis/spec/` returns nothing). The home
+     is `api-cli-server.md` § CLI Surface, which owns flag-interaction
+     and parse-time validation rules per CLAUDE.md's routing table.
 2. **Verify guard coverage** and top up only if thin: parse-time
    rejection for BOTH flag paths (`--instances-per-component N>1` and
    `--instance-config`) each × DST, message naming the active flag and
@@ -53,15 +77,25 @@ family (PRD hard rule).
 
 ## Affected Files
 
-README.md, CLAUDE.md (two sites), one spec file, possibly
-`tests/test_args.py`/`tests/test_instances_per_component.py` (only if
-coverage gaps found), PRD (decision record).
+`README.md` (three sites, substitutive),
+`.trellis/spec/amc/backend/api-cli-server.md` (§ CLI Surface, additive —
+the posture has no spec home today), `CLAUDE.md` (additive adapter line),
+PRD (decision record). **Not**
+`tests/test_args.py`/`tests/test_instances_per_component.py`: the
+coverage grep run 2026-08-26 found both parse paths and the
+`generate_component` guard already covered, so no test edit is needed.
+No production file changes.
 
 ## Risks And Edge Cases
 
-- The doc sweep must not disturb the load-bearing CLAUDE.md paragraphs
-  that other tasks cite (gauges exclusivity, `_splice_dst_artifact`
-  history) — wording-only edits, grep-verified.
+- *(Corrected 2026-08-26.)* This risk originally named load-bearing
+  CLAUDE.md paragraphs; those paragraphs do not exist at HEAD, so there
+  is nothing there to disturb. The live risk moved to `README.md`, whose
+  three sites sit inside dense single-cell flag-table rows — the
+  substitution must not reflow, truncate, or break the surrounding cell.
+  `src/anomaly_metric_creator.egg-info/PKG-INFO` carries a stale
+  build-artifact copy of the README wording; it is generated and must not
+  be hand-edited.
 
 ## Validation
 

@@ -8,10 +8,16 @@
    effort; stop and re-plan.
 2. Branch from `main`. Coverage grep: list existing tests for the two
    parse-time rejection paths × DST and the `generate_component`
-   ValueError; add only the missing cases.
-3. Language sweep: standardize "intentional design boundary" across
-   README, both CLAUDE.md sites, and the spec file; verify error
-   messages point at `--inject-dst-artifact-day 0`.
+   ValueError; add only the missing cases. *(Run 2026-08-26: all three
+   are covered — `tests/test_instances_per_component.py` for N>1 × DST
+   and N=1 × DST, `tests/test_args.py` for the flag-shape errors. No
+   cases missing, so this step is a no-op.)*
+3. Language sweep: standardize "intentional design boundary". Per
+   design.md step 1 (corrected 2026-08-26) this is **substitutive in
+   `README.md`** (three sites) and **additive** in
+   `.trellis/spec/amc/backend/api-cli-server.md` § CLI Surface and
+   `CLAUDE.md`, neither of which carries any DST text today. Verify
+   error messages still point at `--inject-dst-artifact-day 0`.
 4. Record the decision + rationale in the PRD.
 5. Draft PR → checklist (doc-sync heading) → ready → merge.
 

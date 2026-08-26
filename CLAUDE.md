@@ -203,6 +203,13 @@ still pins its own cell.
   probe-parsing the config-derived argv through the real generate parser —
   never add a hand-maintained second list of generate keys, it drifts on every
   new flag.
+- **`--inject-dst-artifact-day > 0` with multi-instance (or with gauge
+  streaming) is an intentional design boundary**, not a gap — the DST splice
+  and per-instance row blocks are non-monotonic along two independent axes.
+  Keep the parse-time rejection and the `generate_component` defense-in-depth
+  guard; never make it partially work in one artifact family. Full rationale
+  in [api-cli-server.md](.trellis/spec/amc/backend/api-cli-server.md) § CLI
+  Surface.
 - Add a new `Instance` field by adding its name to
   `_INSTANCE_DIMENSION_COLUMNS`; the config validator and constructor both
   derive from it. The remaining lockstep sites are the README key list and
