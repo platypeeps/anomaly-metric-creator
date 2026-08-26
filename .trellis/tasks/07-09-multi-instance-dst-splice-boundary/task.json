@@ -1,6 +1,6 @@
 {
-  "id": "07-09-multi-instance-dst-splice-boundary",
-  "name": "07-09-multi-instance-dst-splice-boundary",
+  "id": "multi-instance-dst-splice-boundary",
+  "name": "multi-instance-dst-splice-boundary",
   "title": "Decide or support multi-instance DST splice behavior",
   "description": "Decide whether the intentional --inject-dst-artifact-day boundary for multi-instance generation should stay documented as unsupported or be implemented with a safe non-monotonic timestamp model.",
   "status": "in_progress",
