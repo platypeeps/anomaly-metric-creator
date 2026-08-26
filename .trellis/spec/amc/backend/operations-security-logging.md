@@ -423,7 +423,12 @@ so the unguarded form would accept the file and quietly change its meaning
 rather than fail. A dict where an array belongs (`deleted_pods`,
 `extra_events`, a `deleted_resources` value) would be read as its keys and a
 string as its characters, so `_require_sequence` names the offending type
-instead. `version` goes through `_require_version` rather than `int()`, which
+instead. `_require_string_sequence` carries that one level further for the
+string arrays: the container check alone leaves `["pod-a", 1]` — valid JSON —
+reaching `sorted()`, where comparing an `int` to a `str` raises `TypeError`
+and escapes the path-naming `ValueError` that is the whole operator contract.
+Validate the elements before sorting, not after. `version` goes through
+`_require_version` rather than `int()`, which
 coerces rather than validates — `True` would load as 1 and `3.9` as 3, and
 `bool` is an `int` subclass, so the check has to exclude it explicitly.
 
@@ -431,13 +436,21 @@ Arming persistence is itself a write, and it fails for reasons that have
 nothing to do with the file's contents — an unwritable directory, a missing
 parent, a failed fsync. `_arm_persistence` converts that `OSError` into the
 same path-naming `ValueError` at **both** load routes, because `serve_main`
-refuses on `ValueError` alone and an escaping `OSError` would reach the
-operator as a traceback. The missing-file first run needs this as much as the
+converts only that marked `ValueError` into a refusal and an escaping
+`OSError` would reach the operator as a traceback. The missing-file first run needs this as much as the
 hydrated one, and is the likelier operator error of the two:
 `--persist-mutations /no/such/dir/mutations.json` reaches it with nothing to
 hydrate and fails on the very first write. A write that fails *later*, mid
 serve, is deliberately left as the `OSError` it is rather than disguised as a
 malformed file.
+
+The refusal is matched on `PERSIST_ERROR_PREFIX`, the marker
+`_persist_error` writes into every message, not on `--persist-mutations`
+being set. Gating on the flag alone would convert *every* `ValueError` raised
+anywhere under `build_state()` into an operator-facing startup refusal, so an
+unrelated regression would surface as a polished message naming a file that
+is perfectly fine. The producer and the matcher live next to each other in
+`server_mutations` so they cannot drift.
 
 *Stale components are dropped, not refused.* An entry keyed by a component
 this run does not have — the operator narrowed `--components` — is dropped

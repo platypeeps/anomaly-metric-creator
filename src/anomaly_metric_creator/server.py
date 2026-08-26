@@ -28,6 +28,7 @@ from typing import Any, Callable
 from . import server_mcp
 from .server_debug_ui import DEBUG_HTML
 from .server_mutations import (
+    PERSIST_ERROR_PREFIX,
     HelmReleaseMutation as HelmReleaseMutation,  # noqa: F401
     SimulationMutations as SimulationMutations,  # noqa: F401
     WorkloadMutation as WorkloadMutation,  # noqa: F401
@@ -1729,11 +1730,16 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
             eval_mode=serve_args.mcp_eval_mode,
         )
     except ValueError as exc:
-        # Only the persisted-overlay loader raises ValueError out of
-        # build_state, and only when the flag is set; an unreadable overlay
-        # is an operator-facing startup refusal, not a traceback. Any other
+        # An unreadable persisted overlay is an operator-facing startup
+        # refusal, not a traceback. Match the loader's own marker rather than
+        # assuming it is the only thing under build_state() that can raise
+        # ValueError: gating on the flag alone would convert *every*
+        # ValueError into a refusal whenever the flag is set, hiding an
+        # unrelated regression behind an operator message. Any other
         # ValueError re-raises unchanged so a real bug stays a real bug.
-        if serve_args.persist_mutations is None:
+        if serve_args.persist_mutations is None or not str(exc).startswith(
+            PERSIST_ERROR_PREFIX
+        ):
             raise
         raise SystemExit(f"amc serve: {exc}") from exc
     # Build the structured-log sink before the background threads start and

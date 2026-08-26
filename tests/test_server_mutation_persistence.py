@@ -328,9 +328,9 @@ def test_unwritable_target_refuses_naming_the_file_rather_than_tracing(
 ):
     """Arming persistence writes immediately, and that write can fail.
 
-    `serve_main` refuses on ValueError alone, so an OSError escaping the
-    loader would reach the operator as a traceback instead of the documented
-    refusal naming the path.
+    `serve_main` converts only the loader's own marked `ValueError` into the
+    refusal, so an OSError escaping the loader would reach the operator as a
+    traceback instead of the documented refusal naming the path.
     """
     path = tmp_path / "mutations.json"
     if existing:
@@ -539,3 +539,76 @@ def test_persist_mutations_defaults_to_off():
         ["--no-generate"], server._build_serve_parser()
     )
     assert serve_args.persist_mutations is None
+
+
+# Checking the container alone stops one level short: a mixed-type array is
+# valid JSON, so it reaches `sorted()` and raises `TypeError` comparing an int
+# to a str -- escaping the ValueError refusal that names the file, which is the
+# whole operator-facing contract.
+@pytest.mark.parametrize(
+    ("mutations", "expected"),
+    [
+        ({"deleted_pods": ["apiserver-7d9f-abcde", 1]}, "mutations.deleted_pods[1]"),
+        (
+            {"deleted_resources": {"configmap": ["legacy-flags", None]}},
+            "mutations.deleted_resources['configmap'][1]",
+        ),
+    ],
+    ids=["deleted_pods", "deleted_resources"],
+)
+def test_string_arrays_refuse_a_non_string_element(tmp_path, mutations, expected):
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, mutations)
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert expected in message
+    assert "must be a string" in message
+
+
+class _StubLegacy:
+    """The generation half of `serve_main`, reduced to what the refusal path needs."""
+
+    @staticmethod
+    def parse_args(_argv):
+        return object()
+
+
+def _serve_argv(path: Path) -> list[str]:
+    return ["--no-generate", "--persist-mutations", str(path)]
+
+
+def test_serve_refuses_an_unreadable_overlay_instead_of_tracing(tmp_path, monkeypatch):
+    path = tmp_path / "mutations.json"
+
+    def _refuse(*_args, **_kwargs):
+        raise server_mutations._persist_error(path, "corrupt JSON")
+
+    monkeypatch.setattr(server, "build_state", _refuse)
+
+    with pytest.raises(SystemExit) as excinfo:
+        server.serve_main(_serve_argv(path), legacy_module=_StubLegacy)
+
+    assert "amc serve: " in str(excinfo.value)
+    assert str(path) in str(excinfo.value)
+
+
+def test_serve_lets_an_unrelated_value_error_through(tmp_path, monkeypatch):
+    """The flag being set must not turn every bug into an operator refusal.
+
+    Gating the conversion on `--persist-mutations` alone would swallow any
+    `ValueError` raised anywhere under `build_state()` -- a real regression
+    would surface as a polished startup message naming a file that is fine.
+    """
+    path = tmp_path / "mutations.json"
+
+    def _boom(*_args, **_kwargs):
+        raise ValueError("unrelated regression")
+
+    monkeypatch.setattr(server, "build_state", _boom)
+
+    with pytest.raises(ValueError, match="unrelated regression"):
+        server.serve_main(_serve_argv(path), legacy_module=_StubLegacy)

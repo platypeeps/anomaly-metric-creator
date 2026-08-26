@@ -484,9 +484,20 @@ class SimulationMutations:
             self._commit_locked()
 
 
+PERSIST_ERROR_PREFIX = "--persist-mutations "
+"""Marker every persisted-overlay refusal carries.
+
+`serve_main` converts these into an operator-facing `SystemExit` and must let
+every other `ValueError` through unchanged, so it matches on this rather than
+assuming the loader is the only thing under `build_state()` that can raise.
+Named here, next to the function that writes it, so the producer and the
+matcher cannot drift.
+"""
+
+
 def _persist_error(path: Path, detail: str) -> ValueError:
     """Build the shared --persist-mutations diagnostic, always naming the file."""
-    return ValueError(f"--persist-mutations {path}: {detail}")
+    return ValueError(f"{PERSIST_ERROR_PREFIX}{path}: {detail}")
 
 
 def _require_mapping(path: Path, value: Any, what: str) -> dict[str, Any]:
@@ -506,6 +517,25 @@ def _require_sequence(path: Path, value: Any, what: str) -> list[Any]:
     if not isinstance(value, list):
         raise _persist_error(path, f"{what} must be a JSON array, got {type(value).__name__}")
     return value
+
+
+def _require_string_sequence(path: Path, value: Any, what: str) -> list[str]:
+    """Require a JSON array whose elements are all strings.
+
+    ``_require_sequence`` alone stops one level short. The container is
+    checked but its elements are not, so a mixed-type array -- valid JSON,
+    like ``["pod-a", 1]`` -- reaches ``sorted()`` and raises ``TypeError``
+    comparing an ``int`` to a ``str``. That escapes the ``ValueError``
+    refusal that names the file, which is the entire operator-facing
+    contract. Validate before sorting, not after.
+    """
+    items = _require_sequence(path, value, what)
+    for index, item in enumerate(items):
+        if not isinstance(item, str):
+            raise _persist_error(
+                path, f"{what}[{index}] must be a string, got {type(item).__name__}"
+            )
+    return items
 
 
 def _require_version(path: Path, value: Any) -> int:
@@ -645,17 +675,23 @@ def load_persisted_mutations(
         path, state.get("workloads", {}), known_components, dropped
     )
     for pod_name in sorted(
-        _require_sequence(path, state.get("deleted_pods", []), "mutations.deleted_pods")
+        _require_string_sequence(
+            path, state.get("deleted_pods", []), "mutations.deleted_pods"
+        )
     ):
-        if _component_from_pod_name(str(pod_name)) not in known_components:
+        if _component_from_pod_name(pod_name) not in known_components:
             dropped.append(f"deleted pod '{pod_name}' of unknown component")
             continue
-        mutations.deleted_pods.add(str(pod_name))
+        mutations.deleted_pods.add(pod_name)
     for kind, names in sorted(
         _require_mapping(path, state.get("deleted_resources", {}), "mutations.deleted_resources").items()
     ):
+        # `deleted_resources` is declared `dict[str, set[str]]`; a non-string
+        # element would satisfy the annotation nowhere and surface later as a
+        # crash while sorting or serializing, far from the file that caused
+        # it. Refuse at the boundary instead.
         mutations.deleted_resources[kind] = set(
-            _require_sequence(path, names, f"mutations.deleted_resources['{kind}']")
+            _require_string_sequence(path, names, f"mutations.deleted_resources['{kind}']")
         )
     for kind, entries in sorted(
         _require_mapping(path, state.get("created_resources", {}), "mutations.created_resources").items()

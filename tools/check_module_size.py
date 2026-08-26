@@ -117,14 +117,16 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        2090,
+        2096,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
-        "imports; +12 from 06-29-persisted-server-mutation-state for the "
+        "imports; +18 from 06-29-persisted-server-mutation-state for the "
         "--persist-mutations flag, its config-allowlist key, and the startup "
-        "refusal around the existing build_state() call -- three edits inside "
-        "existing blocks, nothing separable",
+        "refusal around the existing build_state() call, later narrowed to "
+        "match PERSIST_ERROR_PREFIX (one import plus the widened condition "
+        "and its rationale) -- edits inside existing blocks, nothing "
+        "separable",
     ),
     "server_mcp.py": (
         1453,
