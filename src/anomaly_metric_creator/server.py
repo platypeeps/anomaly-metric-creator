@@ -1467,9 +1467,13 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
         raise ValueError("--config must contain a JSON/YAML object")
     unknown_top = set(raw) - {"server", "generate"}
     if unknown_top:
+        # str() every key before sorting: YAML admits non-string keys, and a
+        # mixed set raises TypeError comparing an int to a str -- which would
+        # escape the ValueError that names the file, the whole point of
+        # validating here.
         raise ValueError(
             "--config only accepts top-level 'server' and 'generate' keys; "
-            f"got {', '.join(sorted(unknown_top))}"
+            f"got {', '.join(sorted(str(key) for key in unknown_top))}"
         )
     server = raw.get("server", {})
     generate = raw.get("generate", {})
@@ -1477,6 +1481,19 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
         raise ValueError("--config server must be an object")
     if not isinstance(generate, dict):
         raise ValueError("--config generate must be an object")
+    # YAML admits non-string keys (`1:`, `true:`), which JSON cannot produce.
+    # Left alone they reach `key.replace("_", "-")` and raise AttributeError,
+    # escaping the ValueError refusal that names the file -- and they cannot be
+    # sorted alongside string keys either. `--config` is an untrusted read-back
+    # boundary: check the shape here, on the reader side.
+    for section_name, mapping in (("server", server), ("generate", generate)):
+        non_string = [key for key in mapping if not isinstance(key, str)]
+        if non_string:
+            raise _config_error(
+                path,
+                f"{section_name} keys must be strings; got "
+                + ", ".join(repr(key) for key in non_string),
+            )
     unknown_server = set(server) - _SERVE_CONFIG_SERVER_KEYS
     if unknown_server:
         # Routed through _config_error like the generate arm: a bad key in
@@ -1643,6 +1660,17 @@ def _vouch_no_flag_generate_keys(
                 parse_args([flag])
         except SystemExit as exc:
             shape = "null" if value is None else "false"
+            if exc.code == 0:
+                # `--help` and `--version` are recognized, so saying the parser
+                # does not accept the flag would be false. They exit instead of
+                # configuring anything, which no value can make meaningful.
+                raise _config_error(
+                    config_path,
+                    f"generate key '{key}' has a {shape} value, and '{flag}' "
+                    "makes the parser print output and exit rather than "
+                    "configure a run, so no value for it is meaningful. "
+                    "Remove the key.",
+                ) from exc
             raise _config_error(
                 config_path,
                 f"generate key '{key}' has a {shape} value, so it produces no "

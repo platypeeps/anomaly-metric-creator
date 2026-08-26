@@ -117,7 +117,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        2228,
+        2256,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -140,7 +140,12 @@ RATCHET: dict[str, tuple[int, str]] = {
         "config cluster and moves with it when that cluster is extracted, not "
         "a separable unit on its own. The rest is the exit-code-0 arm in the "
         "existing probe and the unknown-server-key refusal routed through "
-        "_config_error so both sections name the config file",
+        "_config_error so both sections name the config file; +28 from the "
+        "next review round, rejecting the YAML-only non-string key shape on "
+        "the reader side (unguarded it escapes as an AttributeError from "
+        "key.replace, past the refusal that names the file) and splitting the "
+        "vouch refusal so a recognized exit-zero flag is not called "
+        "unrecognized -- all inside that same cluster",
     ),
     "server_mcp.py": (
         1453,

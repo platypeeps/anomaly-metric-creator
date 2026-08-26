@@ -17,16 +17,15 @@ or mismapped.
 
 ## Problem (concrete failure scenario)
 
-`_load_serve_config` at
-[server.py:1432](src/anomaly_metric_creator/server.py:1432) validates the config
-file well: suffix check, `safe_load`, dict type-check, and an **allowlist** for
-top-level (`server`/`generate`) and for `server` keys
-(`unknown_server` at [server.py:1478](src/anomaly_metric_creator/server.py:1478)).
-But the `generate` map is only type-checked as a dict
-([server.py:1476](src/anomaly_metric_creator/server.py:1476)) and then handed to
-`_config_mapping_to_argv` ([server.py:1522](src/anomaly_metric_creator/server.py:1522))
-for flag conversion. *(Line refs re-anchored 2026-08-26 against the post-fix
-tree; the 2026-07-06 refs had drifted by roughly +140.)*
+`_load_serve_config` in `src/anomaly_metric_creator/server.py` validates the
+config file well: suffix check, `safe_load`, dict type-check, and an
+**allowlist** for top-level (`server`/`generate`) and for `server` keys (its
+`unknown_server` check). But the `generate` map is only type-checked as a dict
+and then handed to `_config_mapping_to_argv` for flag conversion.
+*(Cited by symbol rather than by line since 2026-08-26: these refs were
+re-anchored once and drifted again within the same branch, because they
+describe code this task is changing. Symbols survive the edit; line numbers
+do not.)*
 
 **When** a user writes `generate: { componentss: [...] }` (typo) or any key that
 does not map to a real generate flag, **the mistake is not rejected at config
@@ -43,7 +42,7 @@ key that collides with nothing) is silently dropped.
   repo's single-source-of-truth rule).
 - Raise a `ValueError` naming the offending key(s) and the file, matching the
   existing `unknown_server` message shape
-  ([server.py:1479](src/anomaly_metric_creator/server.py:1479)). *(Note
+  (its `unknown_server` check). *(Note
   2026-08-26: the `unknown_server` message does **not** name the file, unlike
   every other `_load_serve_config` diagnostic. The implementation names the
   file, per this bullet's own "and the file" requirement, via the shared

@@ -2,8 +2,8 @@
 
 ## Overview
 
-`_load_serve_config` allowlists `server` keys (`unknown_server`,
-server.py:1339) but only dict-type-checks the `generate` map before
+`_load_serve_config` allowlists `server` keys (its `unknown_server`
+check) but only dict-type-checks the `generate` map before
 `_config_mapping_to_argv` converts it to flags — a typo'd generate key
 either fails later in `parse_args` with a message that never names the
 config file, or is silently dropped. The PRD's design constraint: derive
@@ -20,11 +20,11 @@ No parser extraction, no hand-list, zero drift:
 1. *(Placement corrected 2026-08-26.)* The probe cannot live in
    `_load_serve_config`: that function returns two dicts and never calls
    `_config_mapping_to_argv` — the conversion happens one frame up, in
-   `_parse_serve_args` (`server.py:1597`). The probe therefore runs in
+   `_parse_serve_args`. The probe therefore runs in
    `_parse_serve_args`, inside the same `try` whose `except ValueError`
    already routes config errors to `parser.error`. The `ValueError` stays
    observable at a unit seam because the probe is its own function,
-   `_probe_config_generate_argv` (`server.py:1563`); the CLI path still
+   `_probe_config_generate_argv`; the CLI path still
    surfaces it as `SystemExit(2)`. Run a **probe parse**: call `legacy.parse_args(argv)`
    inside a trap that captures `SystemExit` + intercepted stderr.
    On failure, raise `ValueError` shaped like the existing
@@ -33,7 +33,7 @@ No parser extraction, no hand-list, zero drift:
    giving per-key attribution). The probe is exactly the parse
    `serve_main` would run later, moved earlier with file attribution —
    no behavior it could reject survives today anyway.
-2. Audit `_config_mapping_to_argv` (server.py:1377) for silent-drop
+2. Audit `_config_mapping_to_argv` for silent-drop
    arms (the PRD's "collides with nothing" case): any key shape it
    cannot convert to a flag must be checked, not skipped.
    *(Resolved 2026-08-26 as a vouch rather than a refusal, because `null`
@@ -76,10 +76,11 @@ different grounds than stated.*)
 `src/anomaly_metric_creator/server.py` (`_config_mapping_to_argv`,
 `_parse_serve_args`, plus the new `_config_error`,
 `_probe_config_generate_argv`, `_resolve_generate_parse_args`),
-`tools/check_module_size.py` (`server.py` ceiling 2096 → 2228 — the
+`tools/check_module_size.py` (`server.py` ceiling 2096 → 2256 — the
 branch was planned against a 2078-line `server.py` and rebased onto a
-`main` that had grown to 2096; +78 for the probe and +54 for the review's
-`_vouch_no_flag_generate_keys` and the exit-code-0 arm — the
+`main` that had grown to 2096; +78 for the probe, +54 for the review's
+`_vouch_no_flag_generate_keys` and exit-code-0 arm, +28 for the
+non-string-key guard the review round after that found — the
 addition joins the existing config cluster rather than forming a
 separable unit; extracting that whole cluster to a `server_config.py`
 leaf is the real remedy, left to the `server.py` decomposition

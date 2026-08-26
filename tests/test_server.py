@@ -2863,6 +2863,51 @@ def test_a_successful_parser_exit_is_not_reported_as_a_rejection(tmp_path):
     assert "help" in message
 
 
+@pytest.mark.parametrize("section", ["server", "generate"])
+def test_a_non_string_config_key_is_refused_not_crashed_on(section, tmp_path, capsys):
+    """YAML admits non-string keys; they must not escape as an AttributeError.
+
+    `1: apigateway` reaches `key.replace("_", "-")` unguarded and raises
+    AttributeError, which escapes the ValueError refusal that names the file --
+    the entire operator-facing contract. JSON cannot produce this shape, so
+    only the YAML reader can.
+    """
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text(f"{section}:\n  1: apigateway\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "must be strings" in stderr
+
+
+def test_a_non_string_top_level_config_key_is_refused(tmp_path, capsys):
+    """The unknown-top-key report sorts its keys, so it must str() them first."""
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text("1: x\nother: y\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    assert "top-level" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("key", ["help", "version"])
+def test_an_exit_zero_flag_is_not_called_unrecognized(key, tmp_path):
+    """`--help` is recognized; refusing it as "not a switch" would be false."""
+    with pytest.raises(ValueError) as excinfo:
+        server._vouch_no_flag_generate_keys(
+            {key: False}, tmp_path / "c.json", server._resolve_generate_parse_args()
+        )
+    message = str(excinfo.value)
+    assert "is not a switch" not in message
+    assert "exit" in message
+
+
 def test_false_server_config_value_still_means_use_the_default(tmp_path):
     """Server keys are name-checked already, so `false` there stays a skip."""
     argv = server._config_mapping_to_argv({"structured_log": False})

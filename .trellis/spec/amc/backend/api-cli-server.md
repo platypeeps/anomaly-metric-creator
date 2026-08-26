@@ -247,7 +247,16 @@ switch names. Under `server`, both shapes still mean "use the default", since
 those key names are already allowlisted and cannot hide a typo. Both sections'
 key refusals route through `_config_error`, so either one names the config
 file. `_config_mapping_to_argv` stays a pure conversion -- all validation
-lives in the probe layer. Precedence is unchanged: config flags are
+lives in the probe layer.
+
+`--config` is an untrusted read-back boundary, and the YAML reader admits
+shapes JSON cannot: a non-string key (`1:`, `true:`) reaches
+`key.replace("_", "-")` and raises `AttributeError`, escaping the `ValueError`
+refusal that names the file, and cannot be sorted alongside string keys for a
+diagnostic either. Both sections' keys are checked for `str` on the reader
+side, and any key set that gets sorted into a message is `str()`-mapped first.
+Sources: `src/anomaly_metric_creator/server.py`; `README.md`;
+`tests/test_server.py`. Precedence is unchanged: config flags are
 placed ahead of user flags so explicit CLI flags still win. Sources:
 `src/anomaly_metric_creator/server.py`; `README.md`; `tests/test_server.py`.
 
