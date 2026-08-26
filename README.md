@@ -762,9 +762,12 @@ amc serve --persist-mutations ./simulator-mutations.json
 Every mutation writes as it commits, so a crash loses at most the mutation in
 flight. `POST /v1/mutations/reset` (and the debug UI Reset button) truncates
 the file along with the in-memory overlay — reset means baseline in both
-places. On startup the file is either restored or refused with the path named:
-corrupt JSON or a `schema_version` this build does not support stops the
-server rather than half-restoring an overlay. If you narrow `--components`
+places. On startup the file is either restored or refused with the path named.
+Corrupt JSON, a `schema_version` this build does not support, a key this build
+does not declare, a field whose JSON type is wrong (an object or string where
+an array belongs, a non-integer `version`), or a target that cannot be written
+at all stops the server rather than half-restoring an overlay. If you narrow
+`--components`
 between runs, entries for components this run does not have are dropped with a
 stderr `WARNING` naming each one, and the trimmed overlay is written back.
 

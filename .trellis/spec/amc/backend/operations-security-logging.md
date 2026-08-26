@@ -403,10 +403,33 @@ outside it, re-entering the `RLock` — and both writes are atomic, so the
 intermediate file is valid state merely missing an event.
 
 *Load refuses rather than half-hydrates.* Corrupt JSON, an unsupported
-`schema_version`, or a key this build does not declare raises at startup with
-the file named. A partially restored overlay would render a snapshot that
-never existed, which is worse than not starting. The envelope is
-`{"schema_version": 1, "mutations": {…}}`; a field change bumps the version.
+`schema_version`, a key this build does not declare, or a value whose JSON
+type is wrong raises at startup with the file named. A partially restored
+overlay would render a snapshot that never existed, which is worse than not
+starting. The envelope is `{"schema_version": 1, "mutations": {…}}`; a field
+change bumps the version.
+
+The type checks are not decoration: the file is an untrusted read-back
+boundary, and every wrong type it can carry is *iterable* or *coercible*,
+so the unguarded form would accept the file and quietly change its meaning
+rather than fail. A dict where an array belongs (`deleted_pods`,
+`extra_events`, a `deleted_resources` value) would be read as its keys and a
+string as its characters, so `_require_sequence` names the offending type
+instead. `version` goes through `_require_version` rather than `int()`, which
+coerces rather than validates — `True` would load as 1 and `3.9` as 3, and
+`bool` is an `int` subclass, so the check has to exclude it explicitly.
+
+Arming persistence is itself a write, and it fails for reasons that have
+nothing to do with the file's contents — an unwritable directory, a missing
+parent, a failed fsync. `_arm_persistence` converts that `OSError` into the
+same path-naming `ValueError` at **both** load routes, because `serve_main`
+refuses on `ValueError` alone and an escaping `OSError` would reach the
+operator as a traceback. The missing-file first run needs this as much as the
+hydrated one, and is the likelier operator error of the two:
+`--persist-mutations /no/such/dir/mutations.json` reaches it with nothing to
+hydrate and fails on the very first write. A write that fails *later*, mid
+serve, is deliberately left as the `OSError` it is rather than disguised as a
+malformed file.
 
 *Stale components are dropped, not refused.* An entry keyed by a component
 this run does not have — the operator narrowed `--components` — is dropped
