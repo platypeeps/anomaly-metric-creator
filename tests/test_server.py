@@ -3151,6 +3151,85 @@ def test_a_drift_report_names_flags_without_their_values(tmp_path, monkeypatch, 
     assert "s3cret-value" not in stderr
 
 
+def test_a_config_derived_help_is_refused_before_the_serve_parser_sees_it(
+    tmp_path, capsys
+):
+    """The serve parser owns `--help` too, and would exit 0 on serve usage.
+
+    The combined parse runs before the generate probe, so the exit-zero check
+    has to happen earlier or the config is never judged at all.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"generate": {"help": True}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    assert "exit" in capsys.readouterr().err
+
+
+def test_a_parser_diagnostic_does_not_echo_config_values(tmp_path, capsys):
+    """Values are attached to flags, so argparse quotes them back verbatim.
+
+    A typo'd key is by definition on no sensitive-key list, so every value is
+    masked and the flag name -- what identifies the mistake -- is kept.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"otel_auth_tokenn": "s3cret"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert "--otel-auth-tokenn" in stderr
+    assert "s3cret" not in stderr
+
+
+def test_a_failure_the_config_did_not_cause_is_not_blamed_on_it(tmp_path):
+    """Both parses failing is not enough; they must fail for the same reason.
+
+    Here the config section alone trips the cross-flag cell cap, and the merged
+    argv fails on the user's own typo. Naming the config file would send the
+    operator to the wrong place, so the real parse reports its own error later.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"interval_seconds": 1}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    _, generate_argv = server._parse_serve_args(
+        ["--config", str(config_path), "--componentss", "x"], parser
+    )
+    assert "--componentss" in generate_argv
+
+
+def test_the_config_is_still_blamed_for_a_failure_that_is_its_own(tmp_path, capsys):
+    """The quiet path must not swallow a config error the run really hits."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": "apigateway"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--duration-days", "1"], parser
+        )
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_value_redaction_leaves_flag_only_diagnostics_alone():
+    """`invalid int value: 'abc'` names no `--flag=value`, so it is untouched."""
+    plain = "argument --port: invalid int value: 'not-a-number'"
+    assert server_config._redact_config_values(plain) == plain
+    assert (
+        server_config._redact_config_values("unrecognized arguments: --a=b --c=d")
+        == "unrecognized arguments: --a=*** --c=***"
+    )
+
+
 def test_config_stripping_stops_at_the_end_of_options_marker():
     """`--` makes argparse read the rest as positionals, so the scan stops too.
 

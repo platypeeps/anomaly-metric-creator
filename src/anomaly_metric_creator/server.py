@@ -1423,6 +1423,7 @@ from .server_config import (  # noqa: E402
     _load_serve_config as _load_serve_config,
     _parse_serve_args as _parse_serve_args,
     _probe_config_generate_argv as _probe_config_generate_argv,
+    _refuse_exiting_config_argv as _refuse_exiting_config_argv,
     _probe_config_server_argv as _probe_config_server_argv,
     _resolve_generate_parse_args as _resolve_generate_parse_args,
     _strip_serve_config_arg as _strip_serve_config_arg,

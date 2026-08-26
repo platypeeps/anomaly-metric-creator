@@ -21,6 +21,7 @@ import argparse
 import contextlib
 import io
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -210,19 +211,74 @@ def _resolve_generate_parse_args(legacy_module: Any | None = None) -> Callable[.
     return legacy_module.parse_args
 
 
+_CONFIG_ARGV_VALUE = re.compile(r"(--[A-Za-z0-9][A-Za-z0-9-]*)=\S+")
+
+
+def _redact_config_values(diagnostic: str) -> str:
+    """Mask the value half of any `--flag=value` token echoed by a parser.
+
+    Config values are attached to their flags, so argparse quotes them back
+    verbatim -- `unrecognized arguments: --otel-auth-tokenn=s3cret` prints a
+    credential into a startup error. Which keys hold secrets is not knowable
+    here (a typo'd key is by definition not on any list), so every value is
+    masked and the flag name, which is what identifies the mistake, is kept.
+    Diagnostics that name a flag without an `=` are untouched.
+    """
+    return _CONFIG_ARGV_VALUE.sub(r"\1=***", diagnostic)
+
+
+def _argv_diagnostic(stderr: str, exc: SystemExit, parser_name: str) -> str:
+    """Last stderr line, redacted -- or a fallback naming the exit status."""
+    lines = [line for line in stderr.strip().splitlines() if line]
+    if not lines:
+        return f"{parser_name} exited with status {exc.code}"
+    return _redact_config_values(lines[-1])
+
+
 def _generate_argv_parses(
     argv: list[str],
     parse_args: Callable[..., Any],
-) -> SystemExit | None:
-    """Parse `argv` with both streams captured; return the exit, or None if it parsed."""
+) -> tuple[SystemExit, str] | None:
+    """Parse `argv` with both streams captured.
+
+    Returns None if it parsed, otherwise the exit and the parser's stderr --
+    the stderr is what lets two failures be compared, so a config is only
+    blamed for a failure that is actually its own.
+    """
+    stderr = io.StringIO()
     try:
-        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(
             io.StringIO()
         ):
             parse_args(list(argv))
     except SystemExit as exc:
-        return exc
+        return exc, stderr.getvalue()
     return None
+
+
+def _refuse_exiting_config_argv(
+    generate_argv: list[str],
+    config_path: Path | None,
+    parse_args: Callable[..., Any],
+) -> None:
+    """Refuse a config whose generate section makes a parser print and exit.
+
+    `help: true` and `version: true` are recognized flags that stop the program
+    instead of configuring it, so no config can mean them. This must run before
+    the combined parse: the serve parser owns `--help` too and would exit `0`
+    on serve usage first, leaving the config unexamined.
+    """
+    if not generate_argv:
+        return
+    outcome = _generate_argv_parses(generate_argv, parse_args)
+    if outcome is None or outcome[0].code != 0:
+        return
+    raise _config_error(
+        config_path,
+        "generate section made the parser print output and exit successfully "
+        "instead of producing a configuration -- a key like 'help' or "
+        "'version' does this. Remove it.",
+    ) from outcome[0]
 
 
 def _probe_config_generate_argv(
@@ -246,41 +302,46 @@ def _probe_config_generate_argv(
     """
     if not generate_argv:
         return
-    if _generate_argv_parses(generate_argv, parse_args) is None:
+    own = _generate_argv_parses(generate_argv, parse_args)
+    if own is None:
         return
-    if merged_argv is not None and _generate_argv_parses(merged_argv, parse_args) is None:
-        # The config section alone is not what the run will parse. Several
-        # generate gates are cross-flag -- the preflight cell cap multiplies
-        # interval, duration, metric count, components, and instances -- so
-        # `interval_seconds: 1` overflows it against the defaults while the
-        # real argv, narrowed by explicit CLI flags, is fine. Refusing on the
-        # section alone would reject a working configuration, which the probe
-        # is explicitly not allowed to do. Only the config's own failure is
-        # reported, and only when the actual argv fails too.
-        return
-    stderr = io.StringIO()
-    stdout = io.StringIO()
-    try:
-        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
-            parse_args(list(generate_argv))
-    except SystemExit as exc:
-        if exc.code == 0:
-            # A successful exit is not a rejection: `help: true` makes argparse
-            # print usage and stop. Reporting that as "rejected by the parser"
-            # names the wrong problem, and the captured stderr is empty, so the
-            # generic arm below would surface a bare "exited with status 0".
-            raise _config_error(
-                config_path,
-                "generate section made the parser print output and exit "
-                "successfully instead of producing a configuration -- a key "
-                "like 'help' or 'version' does this. Remove it.",
-            ) from exc
-        lines = [line for line in stderr.getvalue().strip().splitlines() if line]
-        diagnostic = lines[-1] if lines else f"generate parser exited with status {exc.code}"
+    own_exit, own_stderr = own
+    if own_exit.code == 0:
+        # A successful exit is not a rejection: `help: true` makes argparse
+        # print usage and stop. Reporting that as "rejected by the parser"
+        # names the wrong problem, and the stderr is empty, so the arm below
+        # would surface a bare "exited with status 0".
         raise _config_error(
             config_path,
-            "generate section was rejected by the generate parser: " + diagnostic,
-        ) from exc
+            "generate section made the parser print output and exit "
+            "successfully instead of producing a configuration -- a key like "
+            "'help' or 'version' does this. Remove it.",
+        ) from own_exit
+    own_diagnostic = _argv_diagnostic(own_stderr, own_exit, "generate parser")
+    if merged_argv is not None:
+        merged = _generate_argv_parses(merged_argv, parse_args)
+        if merged is None:
+            # The config section alone is not what the run will parse. Several
+            # generate gates are cross-flag -- the preflight cell cap
+            # multiplies interval, duration, metric count, components, and
+            # instances -- so `interval_seconds: 1` overflows it against the
+            # defaults while the real argv, narrowed by explicit CLI flags, is
+            # fine. Refusing on the section alone would reject a working
+            # configuration, which the probe is not allowed to do.
+            return
+        merged_exit, merged_stderr = merged
+        if _argv_diagnostic(merged_stderr, merged_exit, "generate parser") != own_diagnostic:
+            # Both fail, but not for the same reason: the run is breaking on
+            # something the config did not cause -- a typo in the user's own
+            # flags, say. Blaming the config file would send the operator to
+            # the wrong place, so this stays quiet and lets the real parse
+            # report its own error unattributed. The config is named only for
+            # the failure that is verifiably its own.
+            return
+    raise _config_error(
+        config_path,
+        "generate section was rejected by the generate parser: " + own_diagnostic,
+    ) from own_exit
 
 
 def _vouch_no_flag_generate_keys(
@@ -379,11 +440,10 @@ def _probe_config_server_argv(
                 "drifted from the parser.",
             )
     except SystemExit as exc:
-        lines = [line for line in stderr.getvalue().strip().splitlines() if line]
-        diagnostic = lines[-1] if lines else f"serve parser exited with status {exc.code}"
         raise _config_error(
             config_path,
-            "server section was rejected by the serve parser: " + diagnostic,
+            "server section was rejected by the serve parser: "
+            + _argv_diagnostic(stderr.getvalue(), exc, "serve parser"),
         ) from exc
 
 
@@ -406,6 +466,13 @@ def _parse_serve_args(
             generate_parse_args = _resolve_generate_parse_args(legacy_module)
             _vouch_no_flag_generate_keys(
                 config["generate"], config_path, generate_parse_args
+            )
+            # Runs here, not with the rest of the generate probe below: the
+            # combined parse comes first now, and the *serve* parser would
+            # consume a config-derived `--help` and exit 0 printing serve
+            # usage, so the config would never be judged at all.
+            _refuse_exiting_config_argv(
+                config_generate_argv, config_path, generate_parse_args
             )
         except ValueError as exc:
             parser.error(str(exc))

@@ -220,9 +220,12 @@ paths never trip it because they stream one handle per component. Sources:
 
 ## Serve Mode
 
-`--config` accepts a JSON/YAML file with `server` and `generate` sections, and
-both are validated at load time -- keys *and* values -- so a mistake names the
-config file rather than surfacing later as an unattributed parser error.
+`--config` accepts a JSON/YAML file with `server` and `generate` sections. The
+contract is **the config must not be the reason the run fails, and when it is,
+the error names the file** -- not "everything in the file is checked". Keys are
+always checked. Values are checked as far as they affect the run: a value the
+CLI overrides is never used, so it is not separately validated, and a section
+that only fails in isolation is not a failure at all.
 Config values are emitted as `--flag=value`, one token each: as a separate
 token a value starting with `-` is read as an option, so `namespace: "-weird"`
 failed as an unrecognized flag. `server` keys check against the
@@ -252,10 +255,18 @@ fail while the real run is fine -- `interval_seconds: 1` against the defaults.
 The probe therefore runs after the combined parse and refuses only when the
 merged `generate_argv`, the argv the run will actually parse, fails too. Report
 the config's own diagnostic, since that is the attributable one; decide on the
-merged argv. The consequence, deliberately: a config value the CLI overrides is
-no longer separately validated, because the run never uses it. Validation
-follows what will run -- an earlier draft of this rule said the opposite, and it
-made the probe refuse working configurations. Validation that is genuinely cross-flag and lives *outside* the
+merged argv. Two rules follow, and both are load-bearing. A
+merged failure counts only if it is the *same* failure the config section
+produced on its own -- otherwise the run is breaking on something the config
+did not cause, and naming the file sends the operator to the wrong place, so
+the real parse reports it later instead. And the exit-`0` check has to run
+*before* the combined parse, because the serve parser owns `--help` too and
+would print serve usage and exit before the config was ever judged.
+
+Every diagnostic embedded in a config error passes through
+`_redact_config_values` first. Values are attached to their flags, so argparse
+quotes them back verbatim; a typo'd key is by definition on no sensitive-key
+list, so every value is masked and the flag name kept. Validation that is genuinely cross-flag and lives *outside* the
 parsers -- `--cors-allow-origin '*'` requiring `--auth-token`, for one -- stays
 in `serve_main` on the merged arguments; neither probe can see it, and neither
 should try. An exit-`0`

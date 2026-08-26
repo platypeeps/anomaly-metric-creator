@@ -75,6 +75,13 @@ different grounds than stated.*)
 - No parse_args refactor (decomp step 8 owns that move; this design
   works identically before and after it — the probe calls the same
   public entrypoint).
+- Scope grew during review, and deliberately: three fixes here are not
+  about generate-key validation as such but were found by reviewing this
+  code and would have been dishonest to leave (`_strip_serve_config_arg`
+  scanning past `--`, config values emitted as separate argv tokens so a
+  leading `-` was read as an option, and parser diagnostics echoing config
+  values including secrets). All three predate this task; all three sit in
+  the cluster it moved.
 - No new config schema features. *(The `server` section was expected to
   be untouched; review found its refusals unattributed and its values
   unvalidated at all, so it gained `_config_error` routing and

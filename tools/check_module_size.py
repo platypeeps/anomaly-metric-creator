@@ -117,7 +117,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        1976,
+        1977,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -133,7 +133,8 @@ RATCHET: dict[str, tuple[int, str]] = {
         "to live and grow. What stayed behind is the re-import block that "
         "keeps the historic server.<name> surface working, and a note on it "
         "that a stub must patch server_config, since these bindings do not "
-        "intercept the cluster's calls to itself",
+        "intercept the cluster's calls to itself, one re-import line per "
+        "helper review has added there since",
     ),
     "server_mcp.py": (
         1453,
