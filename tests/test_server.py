@@ -5,6 +5,7 @@ import gzip
 import importlib
 import json
 import os
+import pathlib
 import shutil
 import sqlite3
 import subprocess
@@ -2906,6 +2907,68 @@ def test_an_exit_zero_flag_is_not_called_unrecognized(key, tmp_path):
     message = str(excinfo.value)
     assert "is not a switch" not in message
     assert "exit" in message
+
+
+@pytest.mark.parametrize("shape", ['nargs="?"', "nargs='?'", 'nargs="*"', "nargs='*'"])
+def test_no_generate_option_can_parse_without_its_value(shape):
+    """The vouch reads "the bare flag parses" as "this key is a switch".
+
+    That inference holds only while every value-taking generate option
+    *requires* its value. `nargs="?"` and `nargs="*"` are the two shapes that
+    break it: the bare flag would parse, so a `null` or `false` written for a
+    value-taking key would be vouched and dropped in silence -- the exact hole
+    the vouch exists to close. `nargs="+"` is safe (it still requires one).
+    Neither dangerous shape is used today; this fails the moment one appears,
+    so `_vouch_no_flag_generate_keys` gets revisited with it.
+    """
+    from anomaly_metric_creator import cli_args
+
+    source = pathlib.Path(cli_args.__file__).read_text(encoding="utf-8")
+    assert shape not in source
+
+
+def test_the_two_generate_switches_are_the_only_bare_parsing_flags(tmp_path):
+    """Empirical companion to the source check above.
+
+    Pins both directions of the vouch's inference on real flags: the switches
+    parse bare and are vouched, and a representative value-taking flag does
+    not, so it is refused.
+    """
+    parse_args = server._resolve_generate_parse_args()
+    config_path = tmp_path / "c.json"
+    for key in ("otel_verbose", "allow_huge_output"):
+        server._vouch_no_flag_generate_keys({key: None}, config_path, parse_args)
+    for key in ("components", "seed", "output_dir"):
+        with pytest.raises(ValueError):
+            server._vouch_no_flag_generate_keys({key: None}, config_path, parse_args)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "not json",
+        "[]",
+        '{"nope": 1}',
+        '{"server": 3}',
+        '{"generate": 3}',
+    ],
+)
+def test_every_config_load_refusal_names_the_file(body, tmp_path):
+    """`_config_error` exists so no arm can drift back to a bare message."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(body, encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        server._load_serve_config(config_path)
+    assert str(excinfo.value).startswith(f"--config {config_path}: ")
+
+
+def test_a_wrong_suffix_refusal_names_the_file(tmp_path):
+    """The suffix arm refuses before reading, and still names the file."""
+    config_path = tmp_path / "serve-config.txt"
+    config_path.write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        server._load_serve_config(config_path)
+    assert str(excinfo.value).startswith(f"--config {config_path}: ")
 
 
 def test_false_server_config_value_still_means_use_the_default(tmp_path):

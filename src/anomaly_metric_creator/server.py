@@ -1435,17 +1435,16 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
     suffix = path.suffix.lower()
     is_yaml = suffix in {".yaml", ".yml"}
     if suffix not in {".json", ".yaml", ".yml"}:
-        raise ValueError(
-            f"--config must be a .json, .yaml, or .yml file; got {path}"
-        )
+        raise _config_error(path, "must be a .json, .yaml, or .yml file")
     if is_yaml:
         try:
             import yaml
         except ImportError as exc:
-            raise ValueError(
-                f"--config {path}: PyYAML is required to parse YAML files "
-                "but is not installed. Install it with 'pip install pyyaml' "
-                "or use a .json file instead."
+            raise _config_error(
+                path,
+                "PyYAML is required to parse YAML files but is not installed. "
+                "Install it with 'pip install pyyaml' or use a .json file "
+                "instead.",
             ) from exc
         parse_exc_types: tuple[type[Exception], ...] = (
             yaml.YAMLError,
@@ -1457,30 +1456,31 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
         with path.open(encoding="utf-8") as f:
             raw = yaml.safe_load(f) if is_yaml else json.load(f)
     except OSError as exc:
-        raise ValueError(f"--config {path}: failed to read file: {exc}") from exc
+        raise _config_error(path, f"failed to read file: {exc}") from exc
     except parse_exc_types as exc:
         label = "YAML" if is_yaml else "JSON"
-        raise ValueError(f"--config {path}: failed to parse {label}: {exc}") from exc
+        raise _config_error(path, f"failed to parse {label}: {exc}") from exc
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
-        raise ValueError("--config must contain a JSON/YAML object")
+        raise _config_error(path, "must contain a JSON/YAML object")
     unknown_top = set(raw) - {"server", "generate"}
     if unknown_top:
         # str() every key before sorting: YAML admits non-string keys, and a
         # mixed set raises TypeError comparing an int to a str -- which would
         # escape the ValueError that names the file, the whole point of
         # validating here.
-        raise ValueError(
-            "--config only accepts top-level 'server' and 'generate' keys; "
-            f"got {', '.join(sorted(str(key) for key in unknown_top))}"
+        raise _config_error(
+            path,
+            "only accepts top-level 'server' and 'generate' keys; got "
+            + ", ".join(sorted(str(key) for key in unknown_top)),
         )
     server = raw.get("server", {})
     generate = raw.get("generate", {})
     if not isinstance(server, dict):
-        raise ValueError("--config server must be an object")
+        raise _config_error(path, "server must be an object")
     if not isinstance(generate, dict):
-        raise ValueError("--config generate must be an object")
+        raise _config_error(path, "generate must be an object")
     # YAML admits non-string keys (`1:`, `true:`), which JSON cannot produce.
     # Left alone they reach `key.replace("_", "-")` and raise AttributeError,
     # escaping the ValueError refusal that names the file -- and they cannot be

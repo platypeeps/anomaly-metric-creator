@@ -243,10 +243,15 @@ asks the same real parser about the bare flag instead: a flag that parses on
 its own is a switch, so dropping the key keeps its documented meaning of "use
 the default", while a typo or a value-taking flag is refused naming the file.
 Keep this a parser question; never answer it from a hand-maintained list of
-switch names. Under `server`, both shapes still mean "use the default", since
-those key names are already allowlisted and cannot hide a typo. Both sections'
-key refusals route through `_config_error`, so either one names the config
-file. `_config_mapping_to_argv` stays a pure conversion -- all validation
+switch names. Reading "the bare flag parses" as "this key is a switch" holds
+only while every value-taking generate option requires its value: `nargs="?"`
+and `nargs="*"` would make a value-taking flag parse bare and be vouched
+silently. Neither is used, and a test fails if one appears. Under `server`, both shapes still mean "use the default", since
+those key names are already allowlisted and cannot hide a typo. *Every*
+`_load_serve_config` refusal routes through `_config_error` -- suffix, read,
+parse, shape, and key arms alike -- so none can drift back to a bare message
+the way the unknown-`server`-key arm did while the generate arm was
+attributed. `_config_mapping_to_argv` stays a pure conversion -- all validation
 lives in the probe layer.
 
 `--config` is an untrusted read-back boundary, and the YAML reader admits

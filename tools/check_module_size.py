@@ -117,7 +117,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        2256,
+            2256,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -145,7 +145,10 @@ RATCHET: dict[str, tuple[int, str]] = {
         "the reader side (unguarded it escapes as an AttributeError from "
         "key.replace, past the refusal that names the file) and splitting the "
         "vouch refusal so a recognized exit-zero flag is not called "
-        "unrecognized -- all inside that same cluster",
+        "unrecognized -- all inside that same cluster; the round after that "
+        "routed the remaining _load_serve_config arms through _config_error "
+        "so no refusal can drift back to a bare message, which is net-neutral "
+        "on lines",
     ),
     "server_mcp.py": (
         1453,
