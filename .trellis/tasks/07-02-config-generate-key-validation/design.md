@@ -76,15 +76,15 @@ different grounds than stated.*)
 `src/anomaly_metric_creator/server.py` (`_config_mapping_to_argv`,
 `_parse_serve_args`, plus the new `_config_error`,
 `_probe_config_generate_argv`, `_resolve_generate_parse_args`),
-`tools/check_module_size.py` (`server.py` ceiling 2096 → 2256 — the
-branch was planned against a 2078-line `server.py` and rebased onto a
-`main` that had grown to 2096; +78 for the probe, +54 for the review's
-`_vouch_no_flag_generate_keys` and exit-code-0 arm, +28 for the
-non-string-key guard the review round after that found — the
-addition joins the existing config cluster rather than forming a
-separable unit; extracting that whole cluster to a `server_config.py`
-leaf is the real remedy, left to the `server.py` decomposition
-follow-up), `tests/test_server.py`, `README.md` (`--config` row),
+`src/anomaly_metric_creator/server_config.py` (new leaf),
+`tools/check_module_size.py` (`server.py` ceiling 2096 → 1970).
+*(Revised 2026-08-26: the plan was to bump the ceiling and defer extraction
+to the `server.py` decomposition follow-up. Review rounds pushed the cluster
+from +78 to +160 across four ceiling bumps, which is the growth the ratchet
+exists to stop, so the deferred remedy was taken instead: the whole 283-line
+cluster moved verbatim to `server_config.py`, a leaf importing nothing from
+`server.py`, which re-imports every name. `server.py` now ends below where
+this task found it.)*, `tests/test_server.py`, `README.md` (`--config` row),
 `.trellis/spec/amc/backend/api-cli-server.md` § Serve Mode, `CLAUDE.md`.
 *(Corrected 2026-08-26: neither CLAUDE.md nor the spec carried any
 `--config` text, so both are additive, not an amended paragraph.

@@ -5,7 +5,6 @@ import gzip
 import importlib
 import json
 import os
-import pathlib
 import shutil
 import sqlite3
 import subprocess
@@ -2909,8 +2908,32 @@ def test_an_exit_zero_flag_is_not_called_unrecognized(key, tmp_path):
     assert "exit" in message
 
 
-@pytest.mark.parametrize("shape", ['nargs="?"', "nargs='?'", 'nargs="*"', "nargs='*'"])
-def test_no_generate_option_can_parse_without_its_value(shape):
+def _capture_generate_parser(monkeypatch):
+    """Return the real generate `ArgumentParser`, which `parse_args` builds inline.
+
+    `_reconcile_cli_surface(p, args)` is handed the parser mid-parse, so spying
+    on it yields the actual object rather than a reconstruction. Introspecting
+    it beats matching the source text: `nargs = "?"`, a spelling with single
+    quotes, or an option declared in some other module would all slip past a
+    string search, and none slip past this.
+    """
+    from anomaly_metric_creator import cli_args
+
+    parse_args = server._resolve_generate_parse_args()
+    captured = []
+    original = cli_args._reconcile_cli_surface
+
+    def spy(parser, args):
+        captured.append(parser)
+        return original(parser, args)
+
+    monkeypatch.setattr(cli_args, "_reconcile_cli_surface", spy)
+    parse_args(["--otel-verbose"])
+    assert captured, "the parser was never handed to _reconcile_cli_surface"
+    return captured[0]
+
+
+def test_no_generate_option_can_parse_without_its_value(monkeypatch):
     """The vouch reads "the bare flag parses" as "this key is a switch".
 
     That inference holds only while every value-taking generate option
@@ -2921,10 +2944,39 @@ def test_no_generate_option_can_parse_without_its_value(shape):
     Neither dangerous shape is used today; this fails the moment one appears,
     so `_vouch_no_flag_generate_keys` gets revisited with it.
     """
-    from anomaly_metric_creator import cli_args
+    parser = _capture_generate_parser(monkeypatch)
+    optional_value = [
+        action.option_strings for action in parser._actions if action.nargs in ("?", "*")
+    ]
+    assert optional_value == []
 
-    source = pathlib.Path(cli_args.__file__).read_text(encoding="utf-8")
-    assert shape not in source
+
+def test_the_parser_switches_are_exactly_what_vouches(monkeypatch):
+    """The vouch's two categories must match the parser's own.
+
+    Every zero-argument action is a switch the vouch will accept; anything else
+    must be refused. Derived from the parser rather than a written list, so a
+    new switch cannot silently fall outside what this pins.
+    """
+    parser = _capture_generate_parser(monkeypatch)
+    switches = {
+        option
+        for action in parser._actions
+        if action.nargs == 0
+        for option in action.option_strings
+        if option.startswith("--")
+    }
+    # `--help` and `--version` are switches that exit rather than configure, so
+    # the vouch refuses them with their own diagnostic; see the test below.
+    # `--help-all` is deliberately absent: it is intercepted before argparse
+    # (`_flag_in_argv`) and is not an action at all.
+    assert switches == {
+        "--allow-huge-output",
+        "--otel-verbose",
+        "--no-otel-verbose",
+        "--help",
+        "--version",
+    }
 
 
 def test_the_two_generate_switches_are_the_only_bare_parsing_flags(tmp_path):

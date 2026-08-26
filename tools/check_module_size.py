@@ -117,38 +117,19 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-            2256,
+        1970,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
         "imports; +18 from 06-29-persisted-server-mutation-state for the "
         "--persist-mutations flag, its config-allowlist key, and the startup "
         "refusal around the existing build_state() call, later narrowed to "
-        "match PERSIST_ERROR_PREFIX (one import plus the widened condition "
-        "and its rationale) -- edits inside existing blocks, nothing "
-        "separable; +78 from 07-02-config-generate-key-validation for the "
-        "--config generate-key probe parse, which joins the existing config "
-        "cluster (_load_serve_config / _extract_serve_config_path / "
-        "_config_mapping_to_argv) rather than forming a separable unit of its "
-        "own -- extracting that whole cluster to a server_config.py leaf is "
-        "the real remedy and is left to the server.py decomposition "
-        "follow-up; +54 from that task's review, which added "
-        "_vouch_no_flag_generate_keys -- the null/false keys emit no flag, so "
-        "the argv probe cannot see them, and asking the real parser whether "
-        "the bare flag is a switch is what separates a typo from an operator "
-        "legitimately turning otel_verbose off. It is a member of the same "
-        "config cluster and moves with it when that cluster is extracted, not "
-        "a separable unit on its own. The rest is the exit-code-0 arm in the "
-        "existing probe and the unknown-server-key refusal routed through "
-        "_config_error so both sections name the config file; +28 from the "
-        "next review round, rejecting the YAML-only non-string key shape on "
-        "the reader side (unguarded it escapes as an AttributeError from "
-        "key.replace, past the refusal that names the file) and splitting the "
-        "vouch refusal so a recognized exit-zero flag is not called "
-        "unrecognized -- all inside that same cluster; the round after that "
-        "routed the remaining _load_serve_config arms through _config_error "
-        "so no refusal can drift back to a bare message, which is net-neutral "
-        "on lines",
+        "match PERSIST_ERROR_PREFIX; -283 from 07-02-config-generate-key-"
+        "validation, which grew the --config cluster past the point where "
+        "every review round needed a ceiling bump and so extracted the whole "
+        "cluster to the server_config.py leaf -- the remedy this entry had "
+        "been deferring to the server.py decomposition follow-up. server.py "
+        "now sits below where that task found it",
     ),
     "server_mcp.py": (
         1453,

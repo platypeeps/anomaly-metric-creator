@@ -231,9 +231,10 @@ argparse's own diagnostic is embedded in a `ValueError` naming the config path.
 Do not hand-maintain a second list of generate keys; it would drift from the
 parser on every new flag. The probe is the same parse `serve_main` runs later,
 so it rejects nothing that would have survived anyway -- but a valid key with
-an invalid *value* now also fails at load, which is intended. A successful
-parser exit is not a rejection and must not be reported as one: `help: true`
-makes argparse print usage and exit `0`, which is its own diagnostic.
+an invalid *value* now also fails at load, which is intended. An exit-`0`
+parse is still refused -- `help: true` would print usage and exit instead of
+configuring a run -- but it must not be *described* as a rejection by the
+parser, because the parser accepted the flag. It gets its own diagnostic.
 
 `null` and `false` are the two shapes that emit no flag at all, so the argv
 probe cannot see those keys and a typo would vanish silently. They are not
@@ -246,7 +247,10 @@ Keep this a parser question; never answer it from a hand-maintained list of
 switch names. Reading "the bare flag parses" as "this key is a switch" holds
 only while every value-taking generate option requires its value: `nargs="?"`
 and `nargs="*"` would make a value-taking flag parse bare and be vouched
-silently. Neither is used, and a test fails if one appears. Under `server`, both shapes still mean "use the default", since
+silently. Neither is used. A test pins this by *introspecting the real
+parser* -- captured by spying on `_reconcile_cli_surface`, which is handed it
+mid-parse -- not by searching the source text, which any respelling or an
+option declared elsewhere would defeat. Under `server`, both shapes still mean "use the default", since
 those key names are already allowlisted and cannot hide a typo. *Every*
 `_load_serve_config` refusal routes through `_config_error` -- suffix, read,
 parse, shape, and key arms alike -- so none can drift back to a bare message
@@ -262,7 +266,10 @@ diagnostic either. Both sections' keys are checked for `str` on the reader
 side, and any key set that gets sorted into a message is `str()`-mapped first.
 Sources: `src/anomaly_metric_creator/server.py`; `README.md`;
 `tests/test_server.py`. Precedence is unchanged: config flags are
-placed ahead of user flags so explicit CLI flags still win. Sources:
+placed ahead of user flags so explicit CLI flags still win. This whole cluster lives in `src/anomaly_metric_creator/server_config.py`, a
+leaf that reads nothing from `server.py`; `server.py` re-imports every name, so
+the historic `server.<name>` surface is unchanged. Sources:
+`src/anomaly_metric_creator/server_config.py`;
 `src/anomaly_metric_creator/server.py`; `README.md`; `tests/test_server.py`.
 
 `amc serve` must generate once before listening unless `--no-generate` is set,
