@@ -18,15 +18,15 @@ or mismapped.
 ## Problem (concrete failure scenario)
 
 `_load_serve_config` at
-[server.py:1293](src/anomaly_metric_creator/server.py:1293) validates the config
+[server.py:1432](src/anomaly_metric_creator/server.py:1432) validates the config
 file well: suffix check, `safe_load`, dict type-check, and an **allowlist** for
 top-level (`server`/`generate`) and for `server` keys
-(`unknown_server` at [server.py:1339](src/anomaly_metric_creator/server.py:1339)).
+(`unknown_server` at [server.py:1478](src/anomaly_metric_creator/server.py:1478)).
 But the `generate` map is only type-checked as a dict
-([server.py:1337](src/anomaly_metric_creator/server.py:1337)) and then handed to
-`_config_mapping_to_argv` ([server.py:1377](src/anomaly_metric_creator/server.py:1377))
-for flag conversion. *(Line refs re-verified 2026-07-06 — the gap is still
-present.)*
+([server.py:1476](src/anomaly_metric_creator/server.py:1476)) and then handed to
+`_config_mapping_to_argv` ([server.py:1522](src/anomaly_metric_creator/server.py:1522))
+for flag conversion. *(Line refs re-anchored 2026-08-26 against the post-fix
+tree; the 2026-07-06 refs had drifted by roughly +140.)*
 
 **When** a user writes `generate: { componentss: [...] }` (typo) or any key that
 does not map to a real generate flag, **the mistake is not rejected at config
@@ -43,7 +43,11 @@ key that collides with nothing) is silently dropped.
   repo's single-source-of-truth rule).
 - Raise a `ValueError` naming the offending key(s) and the file, matching the
   existing `unknown_server` message shape
-  ([server.py:1340](src/anomaly_metric_creator/server.py:1340)).
+  ([server.py:1479](src/anomaly_metric_creator/server.py:1479)). *(Note
+  2026-08-26: the `unknown_server` message does **not** name the file, unlike
+  every other `_load_serve_config` diagnostic. The implementation names the
+  file, per this bullet's own "and the file" requirement, via the shared
+  `_config_error` helper.)*
 - Preserve the existing precedence: explicit CLI flags still win over config
   values.
 - Do not reject valid generate keys (verify against the real

@@ -187,6 +187,11 @@ still pins its own cell.
   N=1 path exactly.
 - **`--instance-config` and `schema.json` are untrusted read-back
   boundaries** — validate shape and type on the reader side.
+- **`serve --config` validates both sections at load.** `server` keys use the
+  `_SERVE_CONFIG_SERVER_KEYS` allowlist; `generate` keys are validated by
+  probe-parsing the config-derived argv through the real generate parser —
+  never add a hand-maintained second list of generate keys, it drifts on every
+  new flag.
 - Add a new `Instance` field by adding its name to
   `_INSTANCE_DIMENSION_COLUMNS`; the config validator and constructor both
   derive from it. The remaining lockstep sites are the README key list and

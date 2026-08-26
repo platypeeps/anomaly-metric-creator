@@ -220,6 +220,25 @@ paths never trip it because they stream one handle per component. Sources:
 
 ## Serve Mode
 
+`--config` accepts a JSON/YAML file with `server` and `generate` sections, and
+both are validated at load time so a mistake names the config file rather than
+surfacing later as an unattributed parser error. `server` keys check against
+the `_SERVE_CONFIG_SERVER_KEYS` allowlist. `generate` keys have no
+introspectable allowlist -- `parse_args` builds its parser inline -- so **the
+real parser is the allowlist**: the config-derived generate argv is parsed on
+its own in a probe that traps `SystemExit` and captures both streams, and
+argparse's own diagnostic is embedded in a `ValueError` naming the config path.
+Do not hand-maintain a second list of generate keys; it would drift from the
+parser on every new flag. The probe is the same parse `serve_main` runs later,
+so it rejects nothing that would have survived anyway -- but a valid key with
+an invalid *value* now also fails at load, which is intended. A `generate` key
+whose value is `null` is rejected outright, because it produces no flag for the
+probe to see and a typo would otherwise vanish silently; a `null` under
+`server` still means "use the default", since those key names are already
+allowlisted and cannot hide a typo. Precedence is unchanged: config flags are
+placed ahead of user flags so explicit CLI flags still win. Sources:
+`src/anomaly_metric_creator/server.py`; `README.md`; `tests/test_server.py`.
+
 `amc serve` must generate once before listening unless `--no-generate` is set,
 must append `--otel-send none` to startup generation so the listener is not
 blocked by OTEL, and must serialize continuous regeneration with OTEL replay

@@ -17,8 +17,15 @@ introspection is impractical.
 **Validation-by-dry-run-parse — the real parser IS the allowlist.**
 No parser extraction, no hand-list, zero drift:
 
-1. In `_load_serve_config`, after `_config_mapping_to_argv` produces the
-   generate argv, run a **probe parse**: call `legacy.parse_args(argv)`
+1. *(Placement corrected 2026-08-26.)* The probe cannot live in
+   `_load_serve_config`: that function returns two dicts and never calls
+   `_config_mapping_to_argv` — the conversion happens one frame up, in
+   `_parse_serve_args` (`server.py:1597`). The probe therefore runs in
+   `_parse_serve_args`, inside the same `try` whose `except ValueError`
+   already routes config errors to `parser.error`. The `ValueError` stays
+   observable at a unit seam because the probe is its own function,
+   `_probe_config_generate_argv` (`server.py:1563`); the CLI path still
+   surfaces it as `SystemExit(2)`. Run a **probe parse**: call `legacy.parse_args(argv)`
    inside a trap that captures `SystemExit` + intercepted stderr.
    On failure, raise `ValueError` shaped like the existing
    `unknown_server` message — naming the config path and embedding the
@@ -41,6 +48,16 @@ validation gates include file-existence checks (`--instance-config`),
 which is correct probe behavior (the later real parse would fail
 identically; earlier + attributed is the improvement).
 
+*(Audit completed 2026-08-26, and it found one thing this paragraph
+missed.* `parse_args` is **not** limited to `set_defaults` env reads: it
+opens with `_refresh_cli_runtime(runtime_key)` (`cli_args.py:292`), which
+mutates module globals — `COMPONENTS`, `SCENARIOS`,
+`DEFAULT_METRICS_PER_COMPONENT`. That is safe for a double parse because
+the call is idempotent: it re-reads the live registries through the
+runtime getters and overwrites the globals with the same values rather
+than accumulating (`cli_args.py:62-71`). The conclusion holds, but on
+different grounds than stated.*)
+
 ## Boundaries And Non-Goals
 
 - No parse_args refactor (decomp step 8 owns that move; this design
@@ -50,9 +67,18 @@ identically; earlier + attributed is the improvement).
 
 ## Affected Files
 
-`src/anomaly_metric_creator/server.py` (`_load_serve_config`,
-`_config_mapping_to_argv`), `tests/test_server.py` (config-load
-coverage), CLAUDE.md serve `--config` paragraph.
+`src/anomaly_metric_creator/server.py` (`_config_mapping_to_argv`,
+`_parse_serve_args`, plus the new `_config_error`,
+`_probe_config_generate_argv`, `_resolve_generate_parse_args`),
+`tools/check_module_size.py` (`server.py` ceiling 2078 → 2156 — the
+addition joins the existing config cluster rather than forming a
+separable unit; extracting that whole cluster to a `server_config.py`
+leaf is the real remedy, left to the `server.py` decomposition
+follow-up), `tests/test_server.py`, `README.md` (`--config` row),
+`.trellis/spec/amc/backend/api-cli-server.md` § Serve Mode, `CLAUDE.md`.
+*(Corrected 2026-08-26: neither CLAUDE.md nor the spec carried any
+`--config` text, so both are additive, not an amended paragraph.
+`_load_serve_config` itself is unchanged.)*
 
 ## Risks And Edge Cases
 

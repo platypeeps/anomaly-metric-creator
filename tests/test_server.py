@@ -2672,6 +2672,154 @@ def test_serve_cli_flags_override_config_file_values(tmp_path):
     assert generate_argv[scenario_index + 1] == "db_disk_exhaustion"
 
 
+# --------------------------------------------------------------------------
+# --config generate-key validation (07-02-config-generate-key-validation)
+#
+# The generate surface has no introspectable allowlist, so the real parser is
+# the allowlist: a probe parse of the config-derived argv runs at load time and
+# argparse's exit becomes a ValueError naming the config file. These tests pin
+# both halves -- that a bad key is rejected with attribution, and that the
+# probe does not reject keys the parser really accepts.
+# --------------------------------------------------------------------------
+
+# Spot-covers common and advanced generate flags. Asserted non-empty below so
+# the parametrized test cannot go vacuously green if this list is ever emptied.
+_VALID_GENERATE_CONFIG_KEYS = {
+    "duration_days": 2,
+    "scenarios": "cache_leak_restart",
+    "components": "apigateway,cacheservice",
+    "otel_send": "none",
+    "seed": 7,
+    "interval_seconds": 60.0,
+    "anomaly_count": 3,
+    "metrics_per_component": 4,
+    "instances_per_component": 2,
+    "emit": "metrics",
+    "drop_rate": 0.0,
+}
+
+
+def test_valid_generate_config_key_sample_is_not_empty():
+    """Guard: the parametrized valid-key test must not go vacuously green."""
+    assert _VALID_GENERATE_CONFIG_KEYS
+
+
+@pytest.mark.parametrize("key", sorted(_VALID_GENERATE_CONFIG_KEYS))
+def test_valid_generate_config_keys_survive_the_probe(key, tmp_path):
+    """Every sampled real generate flag must load without error."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({
+            "generate": {
+                key: _VALID_GENERATE_CONFIG_KEYS[key],
+                "output_dir": str(tmp_path / "out"),
+            }
+        }),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    serve_args, generate_argv = server._parse_serve_args(
+        ["--config", str(config_path)], parser
+    )
+    assert serve_args.config == config_path
+    assert "--" + key.replace("_", "-") in generate_argv
+
+
+def test_unknown_generate_config_key_is_rejected_naming_the_file(tmp_path, capsys):
+    """A typo'd generate key fails at load, not deep in a later parse."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": "apigateway"}}),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_unknown_generate_config_key_raises_value_error_at_the_unit_seam(tmp_path):
+    """The probe itself raises ValueError; _parse_serve_args converts it."""
+    config_path = tmp_path / "serve-config.yaml"
+    with pytest.raises(ValueError) as excinfo:
+        server._probe_config_generate_argv(
+            ["--componentss", "apigateway"],
+            config_path,
+            server._resolve_generate_parse_args(),
+        )
+    message = str(excinfo.value)
+    assert str(config_path) in message
+    assert "componentss" in message
+
+
+def test_null_generate_config_value_is_loud_not_silently_dropped(tmp_path):
+    """A null value produces no flag, so the probe cannot see it -- reject it.
+
+    This is the PRD's "collides with nothing" case: the typo would otherwise
+    vanish entirely rather than becoming a bogus flag.
+    """
+    config_path = tmp_path / "serve-config.json"
+    with pytest.raises(ValueError) as excinfo:
+        server._config_mapping_to_argv(
+            {"componentss": None}, section="generate", config_path=config_path
+        )
+    message = str(excinfo.value)
+    assert str(config_path) in message
+    assert "componentss" in message
+
+
+def test_null_server_config_value_still_means_use_the_default(tmp_path):
+    """Server keys are name-checked already, so a null there stays a skip."""
+    argv = server._config_mapping_to_argv(
+        {"namespace": None}, section="server", config_path=tmp_path / "c.json"
+    )
+    assert argv == []
+
+
+def test_unknown_generate_config_key_is_rejected_in_yaml_form(tmp_path, capsys):
+    """YAML and JSON config forms take the same validation path."""
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text("generate:\n  componentss: apigateway\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_invalid_generate_config_value_also_fails_at_load_with_attribution(tmp_path, capsys):
+    """A valid key with an out-of-range value now fails early, with the file named."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"instances_per_component": 999}}),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    assert str(config_path) in capsys.readouterr().err
+
+
+def test_probe_does_not_leak_parser_output_to_the_console(tmp_path, capsys):
+    """The probe captures argparse's streams; only the raised error surfaces."""
+    with pytest.raises(ValueError):
+        server._probe_config_generate_argv(
+            ["--componentss", "x"],
+            tmp_path / "c.json",
+            server._resolve_generate_parse_args(),
+        )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 def test_structured_request_logger_writes_request_and_error_jsonl(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
     log_path = tmp_path / "server-requests.jsonl"

@@ -11,6 +11,7 @@ import argparse
 import contextlib
 import datetime as _dt
 import hmac
+import io
 import ipaddress
 import json
 import sys
@@ -1514,10 +1515,33 @@ def _strip_serve_config_arg(argv: list[str]) -> list[str]:
     return result
 
 
-def _config_mapping_to_argv(config: dict[str, Any]) -> list[str]:
+def _config_error(config_path: Path | None, detail: str) -> ValueError:
+    """Build the shared ``--config`` diagnostic so every arm names the file."""
+    prefix = f"--config {config_path}: " if config_path is not None else "--config: "
+    return ValueError(prefix + detail)
+
+
+def _config_mapping_to_argv(
+    config: dict[str, Any],
+    *,
+    section: str = "server",
+    config_path: Path | None = None,
+) -> list[str]:
     argv: list[str] = []
     for key, value in config.items():
         if value is None:
+            if section == "generate":
+                # A null generate value produces no flag, so the probe parse
+                # below never sees the key and a typo would vanish silently --
+                # the PRD's "collides with nothing" case. Server keys are
+                # already name-checked against _SERVE_CONFIG_SERVER_KEYS, so a
+                # null there cannot hide a typo and keeps meaning "use default".
+                raise _config_error(
+                    config_path,
+                    f"generate key '{key}' has a null value, so it cannot be "
+                    "checked against the generate flag surface. Remove the key "
+                    "to use its default, or give it a value.",
+                )
             continue
         flag = "--" + key.replace("_", "-")
         if isinstance(value, bool):
@@ -1531,9 +1555,52 @@ def _config_mapping_to_argv(config: dict[str, Any]) -> list[str]:
     return argv
 
 
+def _resolve_generate_parse_args(legacy_module: Any | None = None) -> Callable[..., Any]:
+    """Return the generate parser entrypoint, importing legacy lazily."""
+    if legacy_module is None:
+        from . import legacy as legacy_module
+    return legacy_module.parse_args
+
+
+def _probe_config_generate_argv(
+    generate_argv: list[str],
+    config_path: Path | None,
+    parse_args: Callable[..., Any],
+) -> None:
+    """Reject config-derived generate flags the real parser would not accept.
+
+    The generate surface has no introspectable allowlist -- ``parse_args``
+    builds its parser inline -- so rather than hand-maintaining a second list
+    that would drift, the real parser *is* the allowlist: parse the
+    config-derived argv on its own and convert argparse's exit into a
+    ``ValueError`` naming the config file. This is exactly the parse
+    ``serve_main`` runs later, moved earlier and given file attribution, so it
+    rejects nothing that would have survived anyway.
+
+    Both streams are captured: argparse writes diagnostics to stderr, and a
+    ``help: true`` config would otherwise dump usage to stdout.
+    """
+    if not generate_argv:
+        return
+    stderr = io.StringIO()
+    stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            parse_args(list(generate_argv))
+    except SystemExit as exc:
+        lines = [line for line in stderr.getvalue().strip().splitlines() if line]
+        diagnostic = lines[-1] if lines else f"generate parser exited with status {exc.code}"
+        raise _config_error(
+            config_path,
+            "generate section was rejected by the generate parser: " + diagnostic,
+        ) from exc
+
+
 def _parse_serve_args(
     argv: list[str],
     parser: argparse.ArgumentParser,
+    *,
+    legacy_module: Any | None = None,
 ) -> tuple[argparse.Namespace, list[str]]:
     raw_argv = list(argv)
     config_path = _extract_serve_config_path(raw_argv, parser)
@@ -1542,10 +1609,19 @@ def _parse_serve_args(
     if config_path is not None:
         try:
             config = _load_serve_config(config_path)
+            config_server_argv = _config_mapping_to_argv(
+                config["server"], section="server", config_path=config_path
+            )
+            config_generate_argv = _config_mapping_to_argv(
+                config["generate"], section="generate", config_path=config_path
+            )
+            _probe_config_generate_argv(
+                config_generate_argv,
+                config_path,
+                _resolve_generate_parse_args(legacy_module),
+            )
         except ValueError as exc:
             parser.error(str(exc))
-        config_server_argv = _config_mapping_to_argv(config["server"])
-        config_generate_argv = _config_mapping_to_argv(config["generate"])
     user_argv = _strip_serve_config_arg(raw_argv)
     serve_args, generate_argv = parser.parse_known_args(
         [*config_server_argv, *config_generate_argv, *user_argv]
@@ -1674,7 +1750,9 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         from . import legacy as legacy_module
 
     parser = _build_serve_parser()
-    serve_args, generate_argv = _parse_serve_args(list(argv or []), parser)
+    serve_args, generate_argv = _parse_serve_args(
+        list(argv or []), parser, legacy_module=legacy_module
+    )
     if serve_args.debug_ring_size < 1:
         parser.error("--debug-ring-size must be >= 1")
     if serve_args.port < 0 or serve_args.port > 65535:

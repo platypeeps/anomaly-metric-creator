@@ -117,7 +117,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        2096,
+        2174,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -126,7 +126,12 @@ RATCHET: dict[str, tuple[int, str]] = {
         "refusal around the existing build_state() call, later narrowed to "
         "match PERSIST_ERROR_PREFIX (one import plus the widened condition "
         "and its rationale) -- edits inside existing blocks, nothing "
-        "separable",
+        "separable; +78 from 07-02-config-generate-key-validation for the "
+        "--config generate-key probe parse, which joins the existing config "
+        "cluster (_load_serve_config / _extract_serve_config_path / "
+        "_config_mapping_to_argv) rather than forming a separable unit of its "
+        "own -- extracting that whole cluster to a server_config.py leaf is "
+        "the real remedy and is left to the server.py decomposition follow-up",
     ),
     "server_mcp.py": (
         1453,
