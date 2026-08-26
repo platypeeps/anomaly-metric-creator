@@ -482,6 +482,57 @@ def _require_mapping(path: Path, value: Any, what: str) -> dict[str, Any]:
     return value
 
 
+def _require_sequence(path: Path, value: Any, what: str) -> list[Any]:
+    """Require a JSON array, so a wrong type refuses instead of half-reading.
+
+    Every wrong type here is *iterable*, which is what makes the unguarded
+    form dangerous rather than merely wrong: a dict iterates its keys and a
+    string iterates its characters, so a malformed file would be accepted
+    and silently mean something else. Name the offending type instead.
+    """
+    if not isinstance(value, list):
+        raise _persist_error(path, f"{what} must be a JSON array, got {type(value).__name__}")
+    return value
+
+
+def _require_version(path: Path, value: Any) -> int:
+    """Require a plain non-negative integer version.
+
+    ``int()`` would coerce rather than validate -- ``True`` to 1, ``3.9`` to
+    3, ``"5"`` to 5 -- and ``bool`` is a subclass of ``int``, so the isinstance
+    check has to exclude it explicitly. The overlay file is an untrusted
+    read-back boundary, so take the value only when it already is one.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _persist_error(
+            path, f"mutations.version must be an integer, got {type(value).__name__}"
+        )
+    if value < 0:
+        raise _persist_error(path, f"mutations.version must not be negative, got {value}")
+    return value
+
+
+def _arm_persistence(mutations: SimulationMutations, path: Path) -> None:
+    """Arm persistence, converting a failed first write into the refusal.
+
+    Arming writes immediately, and that write can fail for reasons that have
+    nothing to do with the file's contents -- an unwritable directory, a
+    missing parent, a failed fsync. ``serve_main`` refuses on ``ValueError``
+    alone, so convert here rather than widen that catch: it keeps "the loader
+    raises ValueError naming the file" true for every startup failure, while
+    a write that fails later, mid serve, still surfaces as the ``OSError`` it
+    is instead of being mistaken for a malformed file.
+
+    Both load paths need this. The missing-file first run is if anything the
+    likelier failure -- ``--persist-mutations /no/such/dir/mutations.json``
+    reaches it with nothing to hydrate and fails on the very first write.
+    """
+    try:
+        mutations.attach_persistence(path)
+    except OSError as exc:
+        raise _persist_error(path, f"overlay could not be written ({exc})") from exc
+
+
 def _hydrate_workloads(
     path: Path, raw: Any, known_components: frozenset[str], dropped: list[str]
 ) -> dict[str, WorkloadMutation]:
@@ -537,7 +588,7 @@ def load_persisted_mutations(
     """
     mutations = SimulationMutations(extra_event_limit=extra_event_limit)
     if not path.exists():
-        mutations.attach_persistence(path)
+        _arm_persistence(mutations, path)
         return mutations
 
     try:
@@ -567,7 +618,9 @@ def load_persisted_mutations(
     mutations.workloads = _hydrate_workloads(
         path, state.get("workloads", {}), known_components, dropped
     )
-    for pod_name in sorted(state.get("deleted_pods", [])):
+    for pod_name in sorted(
+        _require_sequence(path, state.get("deleted_pods", []), "mutations.deleted_pods")
+    ):
         if _component_from_pod_name(str(pod_name)) not in known_components:
             dropped.append(f"deleted pod '{pod_name}' of unknown component")
             continue
@@ -575,7 +628,9 @@ def load_persisted_mutations(
     for kind, names in sorted(
         _require_mapping(path, state.get("deleted_resources", {}), "mutations.deleted_resources").items()
     ):
-        mutations.deleted_resources[kind] = set(names)
+        mutations.deleted_resources[kind] = set(
+            _require_sequence(path, names, f"mutations.deleted_resources['{kind}']")
+        )
     for kind, entries in sorted(
         _require_mapping(path, state.get("created_resources", {}), "mutations.created_resources").items()
     ):
@@ -585,15 +640,17 @@ def load_persisted_mutations(
         }
     mutations.extra_events = [
         dict(_require_mapping(path, event, "mutations.extra_events[]"))
-        for event in state.get("extra_events", [])
+        for event in _require_sequence(
+            path, state.get("extra_events", []), "mutations.extra_events"
+        )
     ]
     mutations.release = _hydrate_release(path, state.get("release", {}))
-    mutations.version = int(state.get("version", 0))
+    mutations.version = _require_version(path, state.get("version", 0))
 
     for note in dropped:
         print(f"WARNING: --persist-mutations {path}: dropped {note}", file=sys.stderr)
 
     # Arm persistence last, so the immediate write records the post-drop
     # overlay -- the dropped entries do not survive a second restart.
-    mutations.attach_persistence(path)
+    _arm_persistence(mutations, path)
     return mutations

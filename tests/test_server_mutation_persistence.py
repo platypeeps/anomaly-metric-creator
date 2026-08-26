@@ -12,6 +12,7 @@ import datetime as _dt
 import inspect
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -113,13 +114,31 @@ def test_reset_truncates_the_file_as_well_as_memory(tmp_path):
     assert load_persisted_mutations(path, known_components=KNOWN).summary() == overlay.summary()
 
 
-def test_flag_off_writes_nothing_and_behaves_identically(tmp_path):
-    """The default path must not acquire a filesystem dependency."""
+def test_flag_off_writes_nothing_and_behaves_identically(tmp_path, monkeypatch):
+    """The default path must not acquire a filesystem dependency.
+
+    Asserting only that ``tmp_path`` stayed empty would pass vacuously: the
+    flag-off overlay never names that directory, so a regression writing
+    anywhere else would go unseen. Watch the writer itself, and run from
+    ``tmp_path`` so a relative write has somewhere observable to land.
+    """
+    monkeypatch.chdir(tmp_path)
+    writes: list[Path] = []
+    monkeypatch.setattr(
+        server_mutations,
+        "_atomic_write_text",
+        lambda path, text: writes.append(Path(path)),
+    )
+
     overlay = SimulationMutations()
     assert overlay.persist_path is None
 
     _mutate(overlay)
 
+    # Two independent observations, so neither alone has to be trusted: the
+    # shared writer is never reached, and nothing appeared on disk by any
+    # other route either.
+    assert writes == []
     assert list(tmp_path.iterdir()) == []
 
 
@@ -176,6 +195,107 @@ def test_unknown_workload_field_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match="nope"):
         load_persisted_mutations(path, known_components=KNOWN)
+
+
+def _write_overlay(path: Path, mutations: dict) -> None:
+    path.write_text(
+        json.dumps({"schema_version": MUTATION_STATE_SCHEMA_VERSION, "mutations": mutations}),
+        encoding="utf-8",
+    )
+
+
+# Each wrong type here is iterable, which is the whole hazard: unguarded, a
+# dict would be read as its keys and a string as its characters, so the file
+# would load and quietly mean something else.
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("deleted_pods", {"apiserver-7d9f-abcde": True}),
+        ("deleted_pods", "apiserver-7d9f-abcde"),
+        ("extra_events", {"a": 1}),
+    ],
+)
+def test_array_fields_refuse_a_non_array(tmp_path, field, value):
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, {field: value})
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"mutations.{field}" in message
+    assert "JSON array" in message
+
+
+def test_deleted_resource_names_refuse_a_non_array(tmp_path):
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, {"deleted_resources": {"configmap": {"legacy-flags": True}}})
+
+    with pytest.raises(ValueError, match="JSON array"):
+        load_persisted_mutations(path, known_components=KNOWN)
+
+
+# `int()` coerces rather than validates, and `bool` is a subclass of `int`,
+# so `True` would have loaded as version 1 and `3.9` as version 3.
+@pytest.mark.parametrize("value", [True, 3.9, "5", None, [1]])
+def test_version_refuses_anything_but_a_plain_integer(tmp_path, value):
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, {"version": value})
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "mutations.version must be an integer" in message
+
+
+def test_version_refuses_a_negative_integer(tmp_path):
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, {"version": -1})
+
+    with pytest.raises(ValueError, match="must not be negative"):
+        load_persisted_mutations(path, known_components=KNOWN)
+
+
+def test_version_accepts_a_plain_integer(tmp_path):
+    """The guard must not reject the value it exists to protect."""
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, {"version": 7})
+
+    assert load_persisted_mutations(path, known_components=KNOWN).version == 7
+
+
+# The loader arms persistence on both routes, and each writes immediately.
+# The missing-file first run is the likelier operator error of the two --
+# `--persist-mutations /no/such/dir/mutations.json` -- so neither is enough
+# on its own.
+@pytest.mark.parametrize("existing", [False, True], ids=["first-run", "after-hydration"])
+def test_unwritable_target_refuses_naming_the_file_rather_than_tracing(
+    tmp_path, monkeypatch, existing
+):
+    """Arming persistence writes immediately, and that write can fail.
+
+    `serve_main` refuses on ValueError alone, so an OSError escaping the
+    loader would reach the operator as a traceback instead of the documented
+    refusal naming the path.
+    """
+    path = tmp_path / "mutations.json"
+    if existing:
+        _write_overlay(path, {"version": 3})
+
+    def _refuse(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(server_mutations, "_atomic_write_text", _refuse)
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "could not be written" in message
 
 
 def test_stale_component_is_dropped_with_a_warning_naming_it(tmp_path, capsys):
