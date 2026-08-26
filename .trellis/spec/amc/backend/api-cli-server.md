@@ -231,17 +231,23 @@ argparse's own diagnostic is embedded in a `ValueError` naming the config path.
 Do not hand-maintain a second list of generate keys; it would drift from the
 parser on every new flag. The probe is the same parse `serve_main` runs later,
 so it rejects nothing that would have survived anyway -- but a valid key with
-an invalid *value* now also fails at load, which is intended. `null` and
-`false` are the two shapes that produce no flag at all, so a `generate` key
-holding either is rejected outright: the probe never sees the key and a typo
-would otherwise vanish silently. Widen this pair, never narrow it -- `false`
-is the same hole as `null`, and it reaches the conversion as an ordinary bool
-where a `if value:` arm drops it. Refusing it costs no capability: omit the key
-to take the default, or set the `no_`-prefixed key to `true` for a flag with a
-negated form. Under `server`, both shapes still mean "use the default", since
+an invalid *value* now also fails at load, which is intended. A successful
+parser exit is not a rejection and must not be reported as one: `help: true`
+makes argparse print usage and exit `0`, which is its own diagnostic.
+
+`null` and `false` are the two shapes that emit no flag at all, so the argv
+probe cannot see those keys and a typo would vanish silently. They are not
+refused outright -- that would refuse `otel_verbose: false`, a real switch
+whose off state is exactly what the operator wrote. `_vouch_no_flag_generate_keys`
+asks the same real parser about the bare flag instead: a flag that parses on
+its own is a switch, so dropping the key keeps its documented meaning of "use
+the default", while a typo or a value-taking flag is refused naming the file.
+Keep this a parser question; never answer it from a hand-maintained list of
+switch names. Under `server`, both shapes still mean "use the default", since
 those key names are already allowlisted and cannot hide a typo. Both sections'
 key refusals route through `_config_error`, so either one names the config
-file. Precedence is unchanged: config flags are
+file. `_config_mapping_to_argv` stays a pure conversion -- all validation
+lives in the probe layer. Precedence is unchanged: config flags are
 placed ahead of user flags so explicit CLI flags still win. Sources:
 `src/anomaly_metric_creator/server.py`; `README.md`; `tests/test_server.py`.
 

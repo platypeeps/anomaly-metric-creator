@@ -2756,25 +2756,43 @@ def test_unknown_generate_config_key_raises_value_error_at_the_unit_seam(tmp_pat
 
 
 @pytest.mark.parametrize("value", [None, False])
-def test_no_flag_generate_config_values_are_loud_not_silently_dropped(value, tmp_path):
-    """Both no-flag shapes are refused, so neither can hide a typo.
+@pytest.mark.parametrize("key", ["componentss", "components"])
+def test_unvouchable_no_flag_generate_keys_are_loud_not_silently_dropped(
+    key, value, tmp_path
+):
+    """A no-flag value is refused unless the real parser vouches for the key.
 
-    `null` and `false` are the only two values that produce no flag at all, so
-    the probe parse never sees the key -- the PRD's "collides with nothing"
-    case. `false` is the same hole as `null`, not a milder one.
+    `null` and `false` emit nothing, so the argv probe never sees them -- the
+    PRD's "collides with nothing" case. Two kinds fail to vouch: a typo
+    (`componentss`), and a real key that takes a value (`components`), for
+    which neither shape means anything.
     """
     config_path = tmp_path / "serve-config.json"
     with pytest.raises(ValueError) as excinfo:
-        server._config_mapping_to_argv(
-            {"componentss": value}, section="generate", config_path=config_path
+        server._vouch_no_flag_generate_keys(
+            {key: value}, config_path, server._resolve_generate_parse_args()
         )
     message = str(excinfo.value)
     assert str(config_path) in message
-    assert "componentss" in message
+    assert key in message
     assert ("null" if value is None else "false") in message
 
 
-def test_false_generate_config_value_is_rejected_end_to_end(tmp_path, capsys):
+@pytest.mark.parametrize("value", [None, False])
+@pytest.mark.parametrize("key", ["otel_verbose", "allow_huge_output"])
+def test_a_real_switch_may_still_be_turned_off_by_a_no_flag_value(key, value, tmp_path):
+    """Refusing unvouchable keys must not regress a config that works today.
+
+    Both generate switches parse on their own, so the parser vouches for them
+    and the key keeps its documented meaning of "use the default".
+    """
+    server._vouch_no_flag_generate_keys(
+        {key: value}, tmp_path / "c.json", server._resolve_generate_parse_args()
+    )
+    assert server._config_mapping_to_argv({key: value}) == []
+
+
+def test_false_generate_config_typo_is_rejected_end_to_end(tmp_path, capsys):
     """The refusal reaches the CLI, not just the unit seam."""
     config_path = tmp_path / "serve-config.json"
     config_path.write_text(
@@ -2789,17 +2807,23 @@ def test_false_generate_config_value_is_rejected_end_to_end(tmp_path, capsys):
     assert "componentss" in stderr
 
 
-def test_a_negated_generate_flag_is_still_reachable_from_config(tmp_path):
-    """Refusing `false` costs no capability: the `no_`-prefixed key still works.
-
-    `--otel-verbose` is the one BooleanOptionalAction on the generate surface,
-    so `no_otel_verbose: true` is how a config turns it off explicitly. The
-    other boolean, `--allow-huge-output`, is a bare store_true whose off state
-    is its default -- omitting the key.
-    """
-    argv = server._config_mapping_to_argv(
-        {"no_otel_verbose": True}, section="generate", config_path=tmp_path / "c.json"
+def test_a_vouched_switch_loads_end_to_end(tmp_path):
+    """`otel_verbose: false` still loads, producing no flag."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"otel_verbose": False}}), encoding="utf-8"
     )
+    parser = server._build_serve_parser()
+    serve_args, generate_argv = server._parse_serve_args(
+        ["--config", str(config_path)], parser
+    )
+    assert generate_argv == []
+    assert serve_args.config == config_path
+
+
+def test_a_negated_generate_flag_is_still_reachable_from_config(tmp_path):
+    """`--otel-verbose` is the one BooleanOptionalAction on the generate surface."""
+    argv = server._config_mapping_to_argv({"no_otel_verbose": True})
     assert argv == ["--no-otel-verbose"]
     server._probe_config_generate_argv(
         argv, tmp_path / "c.json", server._resolve_generate_parse_args()
@@ -2807,10 +2831,8 @@ def test_a_negated_generate_flag_is_still_reachable_from_config(tmp_path):
 
 
 def test_empty_list_generate_config_value_still_reaches_the_probe(tmp_path):
-    """An empty list produces a flag, so it is checked -- not a silent-drop shape."""
-    argv = server._config_mapping_to_argv(
-        {"componentss": []}, section="generate", config_path=tmp_path / "c.json"
-    )
+    """An empty list produces a flag, so it is checked -- not a no-flag shape."""
+    argv = server._config_mapping_to_argv({"componentss": []})
     assert argv == ["--componentss", ""]
     with pytest.raises(ValueError):
         server._probe_config_generate_argv(
@@ -2818,11 +2840,32 @@ def test_empty_list_generate_config_value_still_reaches_the_probe(tmp_path):
         )
 
 
+def test_an_abbreviated_generate_key_is_refused_like_the_real_parse(tmp_path):
+    """Prefix matching is off, so the probe and the later real parse agree."""
+    parse_args = server._resolve_generate_parse_args()
+    with pytest.raises(ValueError):
+        server._probe_config_generate_argv(
+            ["--comp", "apigateway"], tmp_path / "c.json", parse_args
+        )
+    with pytest.raises(SystemExit):
+        parse_args(["--comp", "apigateway"])
+
+
+def test_a_successful_parser_exit_is_not_reported_as_a_rejection(tmp_path):
+    """`help: true` exits 0; calling that "rejected" names the wrong problem."""
+    with pytest.raises(ValueError) as excinfo:
+        server._probe_config_generate_argv(
+            ["--help"], tmp_path / "c.json", server._resolve_generate_parse_args()
+        )
+    message = str(excinfo.value)
+    assert "rejected by the generate parser" not in message
+    assert "exit" in message
+    assert "help" in message
+
+
 def test_false_server_config_value_still_means_use_the_default(tmp_path):
     """Server keys are name-checked already, so `false` there stays a skip."""
-    argv = server._config_mapping_to_argv(
-        {"structured_log": False}, section="server", config_path=tmp_path / "c.json"
-    )
+    argv = server._config_mapping_to_argv({"structured_log": False})
     assert argv == []
 
 
@@ -2843,9 +2886,7 @@ def test_unknown_server_config_key_is_rejected_naming_the_file(tmp_path, capsys)
 
 def test_null_server_config_value_still_means_use_the_default(tmp_path):
     """Server keys are name-checked already, so a null there stays a skip."""
-    argv = server._config_mapping_to_argv(
-        {"namespace": None}, section="server", config_path=tmp_path / "c.json"
-    )
+    argv = server._config_mapping_to_argv({"namespace": None})
     assert argv == []
 
 

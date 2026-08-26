@@ -35,8 +35,12 @@ No parser extraction, no hand-list, zero drift:
    no behavior it could reject survives today anyway.
 2. Audit `_config_mapping_to_argv` (server.py:1377) for silent-drop
    arms (the PRD's "collides with nothing" case): any key shape it
-   cannot convert to a flag must raise the same `ValueError` naming the
-   key, not skip it.
+   cannot convert to a flag must be checked, not skipped.
+   *(Resolved 2026-08-26 as a vouch rather than a refusal, because `null`
+   and `false` are both real ways to write "leave this switch alone":
+   `_vouch_no_flag_generate_keys` asks the parser whether the bare flag
+   is a switch, so a typo is refused and `otel_verbose: false` still
+   loads. `_config_mapping_to_argv` stays a pure conversion.)*
 3. Precedence untouched: explicit CLI flags are appended after config
    flags and still win; the probe validates the config-derived argv
    alone (a config value the CLI overrides must still be *valid* — same
@@ -72,10 +76,10 @@ different grounds than stated.*)
 `src/anomaly_metric_creator/server.py` (`_config_mapping_to_argv`,
 `_parse_serve_args`, plus the new `_config_error`,
 `_probe_config_generate_argv`, `_resolve_generate_parse_args`),
-`tools/check_module_size.py` (`server.py` ceiling 2096 → 2184 — the
+`tools/check_module_size.py` (`server.py` ceiling 2096 → 2228 — the
 branch was planned against a 2078-line `server.py` and rebased onto a
-`main` that had grown to 2096; the +78 the probe adds and the +10 its
-review adds are unchanged, only the base moved — the
+`main` that had grown to 2096; +78 for the probe and +54 for the review's
+`_vouch_no_flag_generate_keys` and the exit-code-0 arm — the
 addition joins the existing config cluster rather than forming a
 separable unit; extracting that whole cluster to a `server_config.py`
 leaf is the real remedy, left to the `server.py` decomposition

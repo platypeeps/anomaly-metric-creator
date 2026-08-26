@@ -1526,36 +1526,26 @@ def _config_error(config_path: Path | None, detail: str) -> ValueError:
     return ValueError(prefix + detail)
 
 
-def _config_mapping_to_argv(
-    config: dict[str, Any],
-    *,
-    section: str = "server",
-    config_path: Path | None = None,
-) -> list[str]:
+def _config_mapping_to_argv(config: dict[str, Any]) -> list[str]:
+    """Convert one config section to argv. Pure conversion, no validation.
+
+    Both sections are validated elsewhere -- `server` names against
+    `_SERVE_CONFIG_SERVER_KEYS`, `generate` against the real parser -- so this
+    function neither needs the section it is converting nor the file it came
+    from.
+    """
     argv: list[str] = []
     for key, value in config.items():
-        # `null` and `false` are the two shapes that produce no flag at all, so
-        # the probe parse below never sees the key and a typo would vanish
-        # silently -- the PRD's "collides with nothing" case. `false` is the
-        # same hole as `null`, not a milder one: it reaches this loop as an
-        # ordinary bool and would be dropped by the `if value:` arm below.
-        # Server keys are already name-checked against
-        # _SERVE_CONFIG_SERVER_KEYS, so neither shape can hide a typo there and
-        # both keep meaning "use the default".
+        # `null` and `false` are the two shapes that emit nothing, so the argv
+        # probe never sees these keys. Conversion stays a pure conversion and
+        # _vouch_no_flag_generate_keys checks them separately, against the same
+        # real parser -- validating here would need this function to hold the
+        # parser too.
         if value is None or value is False:
-            if section == "generate":
-                shape = "null" if value is None else "false"
-                raise _config_error(
-                    config_path,
-                    f"generate key '{key}' has a {shape} value, so it produces "
-                    "no flag and cannot be checked against the generate flag "
-                    "surface. Remove the key to use its default; to pass a "
-                    "negated flag, use its 'no_'-prefixed key with true.",
-                )
             continue
         flag = "--" + key.replace("_", "-")
         if isinstance(value, bool):
-            # Only `True` survives the guard above, so this needs no test.
+            # Only `True` reaches here; `False` was skipped above.
             argv.append(flag)
             continue
         if isinstance(value, (list, tuple)):
@@ -1598,12 +1588,68 @@ def _probe_config_generate_argv(
         with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
             parse_args(list(generate_argv))
     except SystemExit as exc:
+        if exc.code == 0:
+            # A successful exit is not a rejection: `help: true` makes argparse
+            # print usage and stop. Reporting that as "rejected by the parser"
+            # names the wrong problem, and the captured stderr is empty, so the
+            # generic arm below would surface a bare "exited with status 0".
+            raise _config_error(
+                config_path,
+                "generate section made the parser print output and exit "
+                "successfully instead of producing a configuration -- a key "
+                "like 'help' or 'version' does this. Remove it.",
+            ) from exc
         lines = [line for line in stderr.getvalue().strip().splitlines() if line]
         diagnostic = lines[-1] if lines else f"generate parser exited with status {exc.code}"
         raise _config_error(
             config_path,
             "generate section was rejected by the generate parser: " + diagnostic,
         ) from exc
+
+
+def _vouch_no_flag_generate_keys(
+    config: dict[str, Any],
+    config_path: Path | None,
+    parse_args: Callable[..., Any],
+) -> None:
+    """Check the generate keys whose value produces no flag at all.
+
+    ``null`` and ``false`` emit nothing, so the argv probe never sees them and
+    a typo would vanish entirely rather than becoming a bogus flag -- the PRD's
+    "collides with nothing" case. Refusing both outright would be wrong in the
+    other direction: ``otel_verbose: false`` is a real key whose off state is
+    exactly what the operator wrote, and refusing it would regress a config
+    that works today.
+
+    So each such key is vouched for the same way every other key is -- by
+    asking the real parser, never a second hand-maintained list. A key whose
+    flag parses *on its own* is a real switch, and dropping it keeps its
+    documented meaning of "use the default". Everything else is refused naming
+    the file: a typo (``--componentss``), or a value-taking flag where these
+    values are meaningless anyway (``--components`` alone is an error, and
+    ``components: null`` cannot mean anything else).
+
+    ``server`` keys never come here: they are already name-checked against
+    ``_SERVE_CONFIG_SERVER_KEYS``, so neither shape can hide a typo there.
+    """
+    for key, value in config.items():
+        if value is not None and value is not False:
+            continue
+        flag = "--" + key.replace("_", "-")
+        try:
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(
+                io.StringIO()
+            ):
+                parse_args([flag])
+        except SystemExit as exc:
+            shape = "null" if value is None else "false"
+            raise _config_error(
+                config_path,
+                f"generate key '{key}' has a {shape} value, so it produces no "
+                f"flag for the parser to check, and '{flag}' on its own is not "
+                "a switch the generate parser accepts. Remove the key to use "
+                "its default, or give it a value.",
+            ) from exc
 
 
 def _parse_serve_args(
@@ -1619,16 +1665,14 @@ def _parse_serve_args(
     if config_path is not None:
         try:
             config = _load_serve_config(config_path)
-            config_server_argv = _config_mapping_to_argv(
-                config["server"], section="server", config_path=config_path
-            )
-            config_generate_argv = _config_mapping_to_argv(
-                config["generate"], section="generate", config_path=config_path
-            )
+            config_server_argv = _config_mapping_to_argv(config["server"])
+            config_generate_argv = _config_mapping_to_argv(config["generate"])
+            generate_parse_args = _resolve_generate_parse_args(legacy_module)
             _probe_config_generate_argv(
-                config_generate_argv,
-                config_path,
-                _resolve_generate_parse_args(legacy_module),
+                config_generate_argv, config_path, generate_parse_args
+            )
+            _vouch_no_flag_generate_keys(
+                config["generate"], config_path, generate_parse_args
             )
         except ValueError as exc:
             parser.error(str(exc))

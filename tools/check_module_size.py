@@ -117,7 +117,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        2184,
+        2228,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -132,11 +132,15 @@ RATCHET: dict[str, tuple[int, str]] = {
         "_config_mapping_to_argv) rather than forming a separable unit of its "
         "own -- extracting that whole cluster to a server_config.py leaf is "
         "the real remedy and is left to the server.py decomposition "
-        "follow-up; +10 from that task's review, closing the false-valued "
-        "generate-key hole (the null guard widened to cover the other "
-        "no-flag-at-all shape) and routing the unknown-server-key refusal "
-        "through _config_error so both sections name the config file -- both "
-        "edits sit inside existing branches of that same cluster",
+        "follow-up; +54 from that task's review, which added "
+        "_vouch_no_flag_generate_keys -- the null/false keys emit no flag, so "
+        "the argv probe cannot see them, and asking the real parser whether "
+        "the bare flag is a switch is what separates a typo from an operator "
+        "legitimately turning otel_verbose off. It is a member of the same "
+        "config cluster and moves with it when that cluster is extracted, not "
+        "a separable unit on its own. The rest is the exit-code-0 arm in the "
+        "existing probe and the unknown-server-key refusal routed through "
+        "_config_error so both sections name the config file",
     ),
     "server_mcp.py": (
         1453,
