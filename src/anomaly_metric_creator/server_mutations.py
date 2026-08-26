@@ -618,8 +618,8 @@ def _is_int(value: Any) -> bool:
 # annotation's *source text* -- `from __future__ import annotations` makes
 # every annotation a string, so this derives from the declaration rather than
 # duplicating it. A new field is checked the moment it is declared, and an
-# annotation form this table does not know refuses instead of passing the
-# value through: an unchecked boundary field is the failure this prevents.
+# annotation missing from this table refuses instead of passing the value
+# through: an unchecked boundary field is the failure this prevents.
 _FIELD_TYPE_CHECKS: dict[str, tuple[Callable[[Any], bool], str]] = {
     "int": (_is_int, "an integer"),
     "str": (lambda value: isinstance(value, str), "a string"),

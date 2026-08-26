@@ -691,7 +691,7 @@ def test_every_hydrated_field_annotation_has_a_check(cls):
 def test_an_unvalidatable_annotation_refuses_rather_than_passing_through(
     tmp_path, monkeypatch
 ):
-    """Fail closed: an unknown annotation form must not become an open gate."""
+    """Fail closed: an annotation missing from the table is not an open gate."""
     path = tmp_path / "mutations.json"
     _write_overlay(path, {"workloads": {"apiserver": {"replicas": 3}}})
     monkeypatch.setattr(server_mutations, "_FIELD_TYPE_CHECKS", {})

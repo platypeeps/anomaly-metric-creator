@@ -455,8 +455,8 @@ rather than the path-naming refusal the boundary promises.
 `_require_field_types` closes that, keyed on the annotation's *source text*:
 `from __future__ import annotations` makes every annotation a string, so
 `_FIELD_TYPE_CHECKS` derives from the declaration instead of duplicating it,
-and a new field is checked the moment it is declared. An annotation form the
-table does not carry **refuses** rather than passing the value through, and
+and a new field is checked the moment it is declared. An annotation missing
+from the table **refuses** rather than passing the value through, and
 `test_every_hydrated_field_annotation_has_a_check` fails at authoring time so
 the author sees it before an operator does.
 
