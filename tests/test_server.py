@@ -2625,10 +2625,9 @@ def test_serve_config_file_supplies_server_and_generation_defaults(tmp_path):
     assert serve_args.structured_log is True
     assert serve_args.structured_log_file == tmp_path / "requests.jsonl"
     assert serve_args.continuous_generate_interval_seconds == 3.5
-    assert "--duration-days" in generate_argv
-    assert "2" in generate_argv
-    assert "--output-dir" in generate_argv
-    assert str(tmp_path / "configured-output") in generate_argv
+    # `--flag=value`, so a value starting with `-` cannot be read as an option.
+    assert "--duration-days=2" in generate_argv
+    assert f"--output-dir={tmp_path / 'configured-output'}" in generate_argv
 
 
 def test_serve_cli_flags_override_config_file_values(tmp_path):
@@ -2722,7 +2721,9 @@ def test_valid_generate_config_keys_survive_the_probe(key, tmp_path):
         ["--config", str(config_path)], parser
     )
     assert serve_args.config == config_path
-    assert "--" + key.replace("_", "-") in generate_argv
+    assert any(
+        item.startswith("--" + key.replace("_", "-") + "=") for item in generate_argv
+    )
 
 
 def test_unknown_generate_config_key_is_rejected_naming_the_file(tmp_path, capsys):
@@ -2833,7 +2834,7 @@ def test_a_negated_generate_flag_is_still_reachable_from_config(tmp_path):
 def test_empty_list_generate_config_value_still_reaches_the_probe(tmp_path):
     """An empty list produces a flag, so it is checked -- not a no-flag shape."""
     argv = server._config_mapping_to_argv({"componentss": []})
-    assert argv == ["--componentss", ""]
+    assert argv == ["--componentss="]
     with pytest.raises(ValueError):
         server._probe_config_generate_argv(
             argv, tmp_path / "c.json", server._resolve_generate_parse_args()
@@ -3090,7 +3091,7 @@ def test_the_generate_probe_does_not_reject_a_config_the_run_would_accept(tmp_pa
         ],
         parser,
     )
-    assert "--interval-seconds" in generate_argv
+    assert "--interval-seconds=1" in generate_argv
     assert serve_args.config == config_path
 
 
@@ -3109,6 +3110,45 @@ def test_a_generate_typo_is_rejected_even_when_the_cli_narrows_the_run(tmp_path)
         server._parse_serve_args(
             ["--config", str(config_path), "--duration-days", "1"], parser
         )
+
+
+def test_a_config_value_starting_with_a_dash_is_not_read_as_an_option(tmp_path):
+    """`["--flag", "-x"]` makes argparse read `-x` as an option, not a value."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"namespace": "-weird"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    serve_args, _ = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert serve_args.namespace == "-weird"
+
+
+def test_config_argv_attaches_every_value_to_its_flag():
+    """One token per key, so no value can be mistaken for the next option."""
+    argv = server._config_mapping_to_argv(
+        {"components": ["apigateway", "cacheservice"], "seed": 7, "otel_verbose": True}
+    )
+    assert argv == ["--components=apigateway,cacheservice", "--seed=7", "--otel-verbose"]
+
+
+def test_a_drift_report_names_flags_without_their_values(tmp_path, monkeypatch, capsys):
+    """`--auth-token` is an allowlisted server key; its value must not print."""
+    monkeypatch.setattr(
+        server_config,
+        "_SERVE_CONFIG_SERVER_KEYS",
+        server_config._SERVE_CONFIG_SERVER_KEYS | {"not_a_serve_flag"},
+    )
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"not_a_serve_flag": "s3cret-value"}}), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit):
+        server_config._parse_serve_args(
+            ["--config", str(config_path)], server._build_serve_parser()
+        )
+    stderr = capsys.readouterr().err
+    assert "--not-a-serve-flag" in stderr
+    assert "s3cret-value" not in stderr
 
 
 def test_config_stripping_stops_at_the_end_of_options_marker():

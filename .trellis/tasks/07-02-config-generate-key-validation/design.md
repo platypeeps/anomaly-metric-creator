@@ -42,9 +42,15 @@ No parser extraction, no hand-list, zero drift:
    is a switch, so a typo is refused and `otel_verbose: false` still
    loads. `_config_mapping_to_argv` stays a pure conversion.)*
 3. Precedence untouched: explicit CLI flags are appended after config
-   flags and still win; the probe validates the config-derived argv
-   alone (a config value the CLI overrides must still be *valid* — same
-   rule `server` keys already live under).
+   flags and still win.
+   *(Revised 2026-08-26. The probe was to validate the config-derived
+   argv alone, so a config value the CLI overrides must still be valid.
+   Review found that refuses working configurations: several generate
+   gates are cross-flag, so `interval_seconds: 1` overflows the preflight
+   cell cap against the defaults while the real narrowed run is fine. The
+   probe now decides on the merged argv and reports the config's own
+   diagnostic; the cost is that an overridden config value is no longer
+   separately validated, since the run never uses it.)*
 
 Probe-safety audit (record results in the PR): parsing twice must be
 safe. `parse_args` is **not** side-effect-free — see the audit result
@@ -85,7 +91,7 @@ work landed: the pre-existing `_load_serve_config`,
 `_vouch_no_flag_generate_keys` were added there.
 `src/anomaly_metric_creator/server.py` keeps only the re-import block for the
 historic `server.<name>` surface.
-`tools/check_module_size.py` (`server.py` ceiling 2096 → 1970).
+`tools/check_module_size.py` (`server.py` ceiling 2096 → 1976, a net -120).
 *(Revised 2026-08-26: the plan was to bump the ceiling and defer extraction
 to the `server.py` decomposition follow-up. Review rounds pushed the cluster
 from +78 to +160 across four ceiling bumps, which is the growth the ratchet

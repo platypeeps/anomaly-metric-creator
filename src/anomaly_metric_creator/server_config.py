@@ -191,10 +191,15 @@ def _config_mapping_to_argv(config: dict[str, Any]) -> list[str]:
             # Only `True` reaches here; `False` was skipped above.
             argv.append(flag)
             continue
+        # `--flag=value`, never `["--flag", value]`: as a separate token a
+        # value starting with `-` is read as an option, so `seed: -1` and
+        # `namespace: "-weird"` were rejected as unrecognized flags. The
+        # attached form is unambiguous for every value, and argparse accepts it
+        # for any optional argument.
         if isinstance(value, (list, tuple)):
-            argv.extend([flag, ",".join(str(item) for item in value)])
+            argv.append(f"{flag}={','.join(str(item) for item in value)}")
             continue
-        argv.extend([flag, str(value)])
+        argv.append(f"{flag}={value}")
     return argv
 
 
@@ -363,10 +368,14 @@ def _probe_config_server_argv(
             # from the parser -- a key nobody can act on. `parse_known_args`
             # would drop it in silence; the real parse below would too, because
             # it must tolerate generate flags in the same argv.
+            # Names only, never values: `--auth-token` is an allowlisted server
+            # key, so echoing the leftovers verbatim would print a secret into
+            # a startup error.
+            names = sorted({token.split("=", 1)[0] for token in extra})
             raise _config_error(
                 config_path,
                 "server section produced flag(s) the serve parser does not "
-                f"consume: {' '.join(extra)}. _SERVE_CONFIG_SERVER_KEYS has "
+                f"consume: {', '.join(names)}. _SERVE_CONFIG_SERVER_KEYS has "
                 "drifted from the parser.",
             )
     except SystemExit as exc:

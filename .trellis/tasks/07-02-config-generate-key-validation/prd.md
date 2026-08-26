@@ -17,7 +17,7 @@ or mismapped.
 
 ## Problem (concrete failure scenario)
 
-`_load_serve_config` in `src/anomaly_metric_creator/server.py` validates the
+`_load_serve_config` validates the
 config file well: suffix check, `safe_load`, dict type-check, and an
 **allowlist** for top-level (`server`/`generate`) and for `server` keys (its
 `unknown_server` check). But the `generate` map is only type-checked as a dict
@@ -25,7 +25,9 @@ and then handed to `_config_mapping_to_argv` for flag conversion.
 *(Cited by symbol rather than by line since 2026-08-26: these refs were
 re-anchored once and drifted again within the same branch, because they
 describe code this task is changing. Symbols survive the edit; line numbers
-do not.)*
+do not. The module moved too -- this cluster now lives in
+`src/anomaly_metric_creator/server_config.py`, which is the second reason
+not to pin prose to a location.)*
 
 **When** a user writes `generate: { componentss: [...] }` (typo) or any key that
 does not map to a real generate flag, **the mistake is not rejected at config

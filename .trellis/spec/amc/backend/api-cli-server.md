@@ -223,7 +223,10 @@ paths never trip it because they stream one handle per component. Sources:
 `--config` accepts a JSON/YAML file with `server` and `generate` sections, and
 both are validated at load time -- keys *and* values -- so a mistake names the
 config file rather than surfacing later as an unattributed parser error.
-`server` keys check against the `_SERVE_CONFIG_SERVER_KEYS` allowlist; `server`
+Config values are emitted as `--flag=value`, one token each: as a separate
+token a value starting with `-` is read as an option, so `namespace: "-weird"`
+failed as an unrecognized flag. `server` keys check against the
+`_SERVE_CONFIG_SERVER_KEYS` allowlist; `server`
 values are checked by `_probe_config_server_argv`, which parses the
 config-derived server argv through the real serve parser on its own, the
 counterpart of the `generate` probe below. It also refuses what the parser
@@ -249,7 +252,10 @@ fail while the real run is fine -- `interval_seconds: 1` against the defaults.
 The probe therefore runs after the combined parse and refuses only when the
 merged `generate_argv`, the argv the run will actually parse, fails too. Report
 the config's own diagnostic, since that is the attributable one; decide on the
-merged argv. Validation that is genuinely cross-flag and lives *outside* the
+merged argv. The consequence, deliberately: a config value the CLI overrides is
+no longer separately validated, because the run never uses it. Validation
+follows what will run -- an earlier draft of this rule said the opposite, and it
+made the probe refuse working configurations. Validation that is genuinely cross-flag and lives *outside* the
 parsers -- `--cors-allow-origin '*'` requiring `--auth-token`, for one -- stays
 in `serve_main` on the merged arguments; neither probe can see it, and neither
 should try. An exit-`0`
