@@ -221,9 +221,14 @@ paths never trip it because they stream one handle per component. Sources:
 ## Serve Mode
 
 `--config` accepts a JSON/YAML file with `server` and `generate` sections, and
-both are validated at load time so a mistake names the config file rather than
-surfacing later as an unattributed parser error. `server` keys check against
-the `_SERVE_CONFIG_SERVER_KEYS` allowlist. `generate` keys have no
+both are validated at load time -- keys *and* values -- so a mistake names the
+config file rather than surfacing later as an unattributed parser error.
+`server` keys check against the `_SERVE_CONFIG_SERVER_KEYS` allowlist; `server`
+values are checked by `_probe_config_server_argv`, which parses the
+config-derived server argv through the real serve parser on its own, the
+counterpart of the `generate` probe below. Without it a bad value fell through
+to the combined parse and failed as a bare `argument --port: invalid int
+value`, naming no file. `generate` keys have no
 introspectable allowlist -- `parse_args` builds its parser inline -- so **the
 real parser is the allowlist**: the config-derived generate argv is parsed on
 its own in a probe that traps `SystemExit` and captures both streams, and

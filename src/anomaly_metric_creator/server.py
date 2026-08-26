@@ -1410,6 +1410,11 @@ def _json_safe_sort_key(value: Any) -> str:
 # here so the historic `server.<name>` surface -- tests, and `serve_main`'s own
 # `_parse_serve_args` call below -- resolves unchanged. The dependency is
 # one-way: server_config imports nothing from this module.
+#
+# These are re-import bindings, not definitions: calls *between* the cluster's
+# own functions resolve in server_config's namespace, so a test that stubs one
+# must patch `anomaly_metric_creator.server_config.<name>`. Patching it here
+# rebinds only this module's name and the intra-cluster call is unaffected.
 from .server_config import (  # noqa: E402
     _SERVE_CONFIG_SERVER_KEYS as _SERVE_CONFIG_SERVER_KEYS,
     _config_error as _config_error,

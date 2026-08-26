@@ -117,7 +117,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        1970,
+        1975,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -129,7 +129,10 @@ RATCHET: dict[str, tuple[int, str]] = {
         "every review round needed a ceiling bump and so extracted the whole "
         "cluster to the server_config.py leaf -- the remedy this entry had "
         "been deferring to the server.py decomposition follow-up. server.py "
-        "now sits below where that task found it",
+        "now sits below where that task found it (1975: the extraction left "
+        "1970, plus a 5-line comment on the re-import block saying a stub must "
+        "patch server_config, since these bindings do not intercept the "
+        "cluster's calls to itself)",
     ),
     "server_mcp.py": (
         1453,

@@ -73,10 +73,15 @@ different grounds than stated.*)
 
 ## Affected Files
 
-`src/anomaly_metric_creator/server.py` (`_config_mapping_to_argv`,
-`_parse_serve_args`, plus the new `_config_error`,
-`_probe_config_generate_argv`, `_resolve_generate_parse_args`),
-`src/anomaly_metric_creator/server_config.py` (new leaf),
+`src/anomaly_metric_creator/server_config.py` — the new leaf, and where the
+work landed: the pre-existing `_load_serve_config`,
+`_extract_serve_config_path`, `_strip_serve_config_arg`,
+`_config_mapping_to_argv`, and `_parse_serve_args` moved there, and the new
+`_config_error`, `_probe_config_generate_argv`,
+`_probe_config_server_argv`, `_resolve_generate_parse_args`, and
+`_vouch_no_flag_generate_keys` were added there.
+`src/anomaly_metric_creator/server.py` keeps only the re-import block for the
+historic `server.<name>` surface.
 `tools/check_module_size.py` (`server.py` ceiling 2096 → 1970).
 *(Revised 2026-08-26: the plan was to bump the ceiling and defer extraction
 to the `server.py` decomposition follow-up. Review rounds pushed the cluster
@@ -87,8 +92,12 @@ cluster moved verbatim to `server_config.py`, a leaf importing nothing from
 this task found it.)*, `tests/test_server.py`, `README.md` (`--config` row),
 `.trellis/spec/amc/backend/api-cli-server.md` § Serve Mode, `CLAUDE.md`.
 *(Corrected 2026-08-26: neither CLAUDE.md nor the spec carried any
-`--config` text, so both are additive, not an amended paragraph.
-`_load_serve_config` itself is unchanged.)*
+`--config` text, so both are additive, not an amended paragraph. A second
+correction the same day: `_load_serve_config` was originally expected to be
+untouched, but review rounds gave it a non-string-key guard and routed all
+of its refusals through `_config_error`, and it then moved with the rest of
+the cluster. Both this list and that note described the pre-extraction
+layout for one round after the extraction landed.)*
 
 ## Risks And Edge Cases
 

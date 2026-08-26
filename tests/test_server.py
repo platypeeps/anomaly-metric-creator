@@ -2951,48 +2951,32 @@ def test_no_generate_option_can_parse_without_its_value(monkeypatch):
     assert optional_value == []
 
 
-def test_the_parser_switches_are_exactly_what_vouches(monkeypatch):
-    """The vouch's two categories must match the parser's own.
+def test_the_vouch_agrees_with_the_parser_about_every_option(monkeypatch):
+    """The vouch's two categories must match the parser's own, for every option.
 
-    Every zero-argument action is a switch the vouch will accept; anything else
-    must be refused. Derived from the parser rather than a written list, so a
-    new switch cannot silently fall outside what this pins.
+    Derived from the parser, not from a written switch list -- a list here
+    would be the same hand-maintained allowlist the design refuses to keep in
+    production, with the same drift. Every zero-argument action is vouched;
+    every option that takes a value is refused. `--help`/`--version` are
+    switches that exit rather than configure, so the vouch refuses them too,
+    with their own diagnostic.
     """
     parser = _capture_generate_parser(monkeypatch)
-    switches = {
-        option
-        for action in parser._actions
-        if action.nargs == 0
-        for option in action.option_strings
-        if option.startswith("--")
-    }
-    # `--help` and `--version` are switches that exit rather than configure, so
-    # the vouch refuses them with their own diagnostic; see the test below.
-    # `--help-all` is deliberately absent: it is intercepted before argparse
-    # (`_flag_in_argv`) and is not an action at all.
-    assert switches == {
-        "--allow-huge-output",
-        "--otel-verbose",
-        "--no-otel-verbose",
-        "--help",
-        "--version",
-    }
-
-
-def test_the_two_generate_switches_are_the_only_bare_parsing_flags(tmp_path):
-    """Empirical companion to the source check above.
-
-    Pins both directions of the vouch's inference on real flags: the switches
-    parse bare and are vouched, and a representative value-taking flag does
-    not, so it is refused.
-    """
     parse_args = server._resolve_generate_parse_args()
-    config_path = tmp_path / "c.json"
-    for key in ("otel_verbose", "allow_huge_output"):
-        server._vouch_no_flag_generate_keys({key: None}, config_path, parse_args)
-    for key in ("components", "seed", "output_dir"):
-        with pytest.raises(ValueError):
-            server._vouch_no_flag_generate_keys({key: None}, config_path, parse_args)
+    exiting = {"--help", "-h", "--version"}
+    checked = 0
+    for action in parser._actions:
+        for option in action.option_strings:
+            if not option.startswith("--") or option in exiting:
+                continue
+            key = option[2:].replace("-", "_")
+            checked += 1
+            if action.nargs == 0:
+                server._vouch_no_flag_generate_keys({key: None}, None, parse_args)
+            else:
+                with pytest.raises(ValueError):
+                    server._vouch_no_flag_generate_keys({key: None}, None, parse_args)
+    assert checked > 20, "the parser surface was not actually walked"
 
 
 @pytest.mark.parametrize(
@@ -3021,6 +3005,32 @@ def test_a_wrong_suffix_refusal_names_the_file(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         server._load_serve_config(config_path)
     assert str(excinfo.value).startswith(f"--config {config_path}: ")
+
+
+def test_a_bad_server_config_value_is_rejected_naming_the_file(tmp_path, capsys):
+    """`server` values are attributed too, not just `server` key names."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"port": "not-a-number"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "--port" in stderr
+
+
+def test_a_valid_server_section_survives_its_probe(tmp_path):
+    """Every serve flag has a default, so a good section parses on its own."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"port": 9000, "host": "0.0.0.0"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    serve_args, _ = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert (serve_args.port, serve_args.host) == (9000, "0.0.0.0")
 
 
 def test_false_server_config_value_still_means_use_the_default(tmp_path):

@@ -293,6 +293,38 @@ def _vouch_no_flag_generate_keys(
             ) from exc
 
 
+def _probe_config_server_argv(
+    server_argv: list[str],
+    config_path: Path | None,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Reject config-derived `server` flags the serve parser would not accept.
+
+    The `server` section had its key *names* allowlisted but not its values, so
+    `port: "not-a-number"` reached the combined parse and failed as a bare
+    ``argument --port: invalid int value`` -- no mention of the file it came
+    from, which is the one thing config-time validation exists to provide. This
+    is the `generate` probe's counterpart: same parse, run early on the
+    config-derived argv alone, with the diagnostic attributed.
+
+    Every serve flag has a default, so a valid section parses on its own.
+    """
+    if not server_argv:
+        return
+    stderr = io.StringIO()
+    stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            parser.parse_known_args(list(server_argv))
+    except SystemExit as exc:
+        lines = [line for line in stderr.getvalue().strip().splitlines() if line]
+        diagnostic = lines[-1] if lines else f"serve parser exited with status {exc.code}"
+        raise _config_error(
+            config_path,
+            "server section was rejected by the serve parser: " + diagnostic,
+        ) from exc
+
+
 def _parse_serve_args(
     argv: list[str],
     parser: argparse.ArgumentParser,
@@ -308,6 +340,7 @@ def _parse_serve_args(
             config = _load_serve_config(config_path)
             config_server_argv = _config_mapping_to_argv(config["server"])
             config_generate_argv = _config_mapping_to_argv(config["generate"])
+            _probe_config_server_argv(config_server_argv, config_path, parser)
             generate_parse_args = _resolve_generate_parse_args(legacy_module)
             _probe_config_generate_argv(
                 config_generate_argv, config_path, generate_parse_args
