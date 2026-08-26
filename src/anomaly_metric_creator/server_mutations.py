@@ -379,22 +379,28 @@ class SimulationMutations:
 
     def delete_pod(self, pod_name: str, *, now: _dt.datetime) -> None:
         component = _component_from_pod_name(pod_name)
+        # One logical mutation, so hold the RLock across all three parts and
+        # commit the set itself. Uncommitted, it reached disk only via
+        # whatever ran next: a failed write in `set_workload` left the
+        # deletion in memory alone, resurrecting the pod on restart, and a
+        # reader in the gap saw a deleted pod at an unbumped `version`.
         with self.lock:
             self.deleted_pods.add(pod_name)
-        self.set_workload(
-            component,
-            now=now,
-            deployment_status="Restarting",
-            pod_status="Running",
-            restarts_delta=1,
-        )
-        self.record_event(
-            "Normal",
-            "Killing",
-            f"pod/{pod_name}",
-            f"pod {pod_name} deleted; controller recreated replacement pod",
-            now,
-        )
+            self._commit_locked()
+            self.set_workload(
+                component,
+                now=now,
+                deployment_status="Restarting",
+                pod_status="Running",
+                restarts_delta=1,
+            )
+            self.record_event(
+                "Normal",
+                "Killing",
+                f"pod/{pod_name}",
+                f"pod {pod_name} deleted; controller recreated replacement pod",
+                now,
+            )
 
     def put_resource(
         self,

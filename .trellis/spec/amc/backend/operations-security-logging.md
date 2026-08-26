@@ -397,7 +397,11 @@ Three properties carry the design:
 and writes in the same locked block, so there is no flush-on-shutdown
 assumption and a `SIGKILL` loses at most the mutation in flight. Writes go
 through `_atomic_write_text`, so a concurrent reader or a restart never sees a
-torn file. A mutator that records an event after its own commit writes more
+torn file. Every mutator commits its own state change rather than relying on
+whatever runs next to persist it — `delete_pod` used to add to `deleted_pods`
+in an uncommitted block, so a failed write in the `set_workload` that followed
+left the deletion in memory alone and the pod came back on restart. A mutator
+that records an event after its own commit writes more
 than once per logical mutation — `record_event` re-enters the `RLock` and
 persists again, which `put_resource`, `delete_resource`, and `delete_pod` all
 do. That is the rule; the list of mutators is what drifts. Every write is

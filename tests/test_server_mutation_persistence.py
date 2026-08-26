@@ -770,3 +770,27 @@ def test_an_extra_event_that_is_not_an_object_is_refused(tmp_path):
     message = str(excinfo.value)
     assert str(path) in message
     assert "mutations.extra_events[] must be a JSON object, got str" in message
+
+
+def test_a_deleted_pod_reaches_disk_on_its_own_commit(tmp_path, monkeypatch):
+    """The set must not depend on whatever runs next to persist it.
+
+    `delete_pod` used to add to `deleted_pods` in an uncommitted lock block,
+    so the deletion reached disk only because `set_workload` happened to
+    write afterwards. A failed write there left the deletion in memory alone
+    -- the pod would come back on restart.
+    """
+    path = tmp_path / "mutations.json"
+    overlay = load_persisted_mutations(path, known_components=KNOWN)
+
+    payloads = []
+    real = server_mutations._atomic_write_text
+
+    def _spy(target, text):
+        payloads.append(json.loads(text))
+        return real(target, text)
+
+    monkeypatch.setattr(server_mutations, "_atomic_write_text", _spy)
+    overlay.delete_pod("apiserver-7d9f-abcde", now=NOW)
+
+    assert payloads[0]["mutations"]["deleted_pods"] == ["apiserver-7d9f-abcde"]
