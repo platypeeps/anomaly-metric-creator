@@ -1479,9 +1479,14 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
         raise ValueError("--config generate must be an object")
     unknown_server = set(server) - _SERVE_CONFIG_SERVER_KEYS
     if unknown_server:
-        raise ValueError(
-            "--config server contains unknown key(s): "
-            + ", ".join(sorted(unknown_server))
+        # Routed through _config_error like the generate arm: a bad key in
+        # either section names the file it came from, which is what the
+        # README's `--config` row promises. Attribution is the whole point of
+        # validating at load rather than letting a later parse fail bare.
+        raise _config_error(
+            path,
+            "server contains unknown key(s): "
+            + ", ".join(sorted(unknown_server)),
         )
     return {"server": dict(server), "generate": dict(generate)}
 
@@ -1529,24 +1534,29 @@ def _config_mapping_to_argv(
 ) -> list[str]:
     argv: list[str] = []
     for key, value in config.items():
-        if value is None:
+        # `null` and `false` are the two shapes that produce no flag at all, so
+        # the probe parse below never sees the key and a typo would vanish
+        # silently -- the PRD's "collides with nothing" case. `false` is the
+        # same hole as `null`, not a milder one: it reaches this loop as an
+        # ordinary bool and would be dropped by the `if value:` arm below.
+        # Server keys are already name-checked against
+        # _SERVE_CONFIG_SERVER_KEYS, so neither shape can hide a typo there and
+        # both keep meaning "use the default".
+        if value is None or value is False:
             if section == "generate":
-                # A null generate value produces no flag, so the probe parse
-                # below never sees the key and a typo would vanish silently --
-                # the PRD's "collides with nothing" case. Server keys are
-                # already name-checked against _SERVE_CONFIG_SERVER_KEYS, so a
-                # null there cannot hide a typo and keeps meaning "use default".
+                shape = "null" if value is None else "false"
                 raise _config_error(
                     config_path,
-                    f"generate key '{key}' has a null value, so it cannot be "
-                    "checked against the generate flag surface. Remove the key "
-                    "to use its default, or give it a value.",
+                    f"generate key '{key}' has a {shape} value, so it produces "
+                    "no flag and cannot be checked against the generate flag "
+                    "surface. Remove the key to use its default; to pass a "
+                    "negated flag, use its 'no_'-prefixed key with true.",
                 )
             continue
         flag = "--" + key.replace("_", "-")
         if isinstance(value, bool):
-            if value:
-                argv.append(flag)
+            # Only `True` survives the guard above, so this needs no test.
+            argv.append(flag)
             continue
         if isinstance(value, (list, tuple)):
             argv.extend([flag, ",".join(str(item) for item in value)])

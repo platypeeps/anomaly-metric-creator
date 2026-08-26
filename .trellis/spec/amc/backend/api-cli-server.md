@@ -231,11 +231,17 @@ argparse's own diagnostic is embedded in a `ValueError` naming the config path.
 Do not hand-maintain a second list of generate keys; it would drift from the
 parser on every new flag. The probe is the same parse `serve_main` runs later,
 so it rejects nothing that would have survived anyway -- but a valid key with
-an invalid *value* now also fails at load, which is intended. A `generate` key
-whose value is `null` is rejected outright, because it produces no flag for the
-probe to see and a typo would otherwise vanish silently; a `null` under
-`server` still means "use the default", since those key names are already
-allowlisted and cannot hide a typo. Precedence is unchanged: config flags are
+an invalid *value* now also fails at load, which is intended. `null` and
+`false` are the two shapes that produce no flag at all, so a `generate` key
+holding either is rejected outright: the probe never sees the key and a typo
+would otherwise vanish silently. Widen this pair, never narrow it -- `false`
+is the same hole as `null`, and it reaches the conversion as an ordinary bool
+where a `if value:` arm drops it. Refusing it costs no capability: omit the key
+to take the default, or set the `no_`-prefixed key to `true` for a flag with a
+negated form. Under `server`, both shapes still mean "use the default", since
+those key names are already allowlisted and cannot hide a typo. Both sections'
+key refusals route through `_config_error`, so either one names the config
+file. Precedence is unchanged: config flags are
 placed ahead of user flags so explicit CLI flags still win. Sources:
 `src/anomaly_metric_creator/server.py`; `README.md`; `tests/test_server.py`.
 

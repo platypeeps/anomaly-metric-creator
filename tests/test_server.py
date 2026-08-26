@@ -2755,20 +2755,90 @@ def test_unknown_generate_config_key_raises_value_error_at_the_unit_seam(tmp_pat
     assert "componentss" in message
 
 
-def test_null_generate_config_value_is_loud_not_silently_dropped(tmp_path):
-    """A null value produces no flag, so the probe cannot see it -- reject it.
+@pytest.mark.parametrize("value", [None, False])
+def test_no_flag_generate_config_values_are_loud_not_silently_dropped(value, tmp_path):
+    """Both no-flag shapes are refused, so neither can hide a typo.
 
-    This is the PRD's "collides with nothing" case: the typo would otherwise
-    vanish entirely rather than becoming a bogus flag.
+    `null` and `false` are the only two values that produce no flag at all, so
+    the probe parse never sees the key -- the PRD's "collides with nothing"
+    case. `false` is the same hole as `null`, not a milder one.
     """
     config_path = tmp_path / "serve-config.json"
     with pytest.raises(ValueError) as excinfo:
         server._config_mapping_to_argv(
-            {"componentss": None}, section="generate", config_path=config_path
+            {"componentss": value}, section="generate", config_path=config_path
         )
     message = str(excinfo.value)
     assert str(config_path) in message
     assert "componentss" in message
+    assert ("null" if value is None else "false") in message
+
+
+def test_false_generate_config_value_is_rejected_end_to_end(tmp_path, capsys):
+    """The refusal reaches the CLI, not just the unit seam."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": False}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_a_negated_generate_flag_is_still_reachable_from_config(tmp_path):
+    """Refusing `false` costs no capability: the `no_`-prefixed key still works.
+
+    `--otel-verbose` is the one BooleanOptionalAction on the generate surface,
+    so `no_otel_verbose: true` is how a config turns it off explicitly. The
+    other boolean, `--allow-huge-output`, is a bare store_true whose off state
+    is its default -- omitting the key.
+    """
+    argv = server._config_mapping_to_argv(
+        {"no_otel_verbose": True}, section="generate", config_path=tmp_path / "c.json"
+    )
+    assert argv == ["--no-otel-verbose"]
+    server._probe_config_generate_argv(
+        argv, tmp_path / "c.json", server._resolve_generate_parse_args()
+    )
+
+
+def test_empty_list_generate_config_value_still_reaches_the_probe(tmp_path):
+    """An empty list produces a flag, so it is checked -- not a silent-drop shape."""
+    argv = server._config_mapping_to_argv(
+        {"componentss": []}, section="generate", config_path=tmp_path / "c.json"
+    )
+    assert argv == ["--componentss", ""]
+    with pytest.raises(ValueError):
+        server._probe_config_generate_argv(
+            argv, tmp_path / "c.json", server._resolve_generate_parse_args()
+        )
+
+
+def test_false_server_config_value_still_means_use_the_default(tmp_path):
+    """Server keys are name-checked already, so `false` there stays a skip."""
+    argv = server._config_mapping_to_argv(
+        {"structured_log": False}, section="server", config_path=tmp_path / "c.json"
+    )
+    assert argv == []
+
+
+def test_unknown_server_config_key_is_rejected_naming_the_file(tmp_path, capsys):
+    """Both sections name the config file, which is what the README promises."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"hostt": "127.0.0.1"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "hostt" in stderr
 
 
 def test_null_server_config_value_still_means_use_the_default(tmp_path):

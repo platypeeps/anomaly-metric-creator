@@ -42,15 +42,17 @@ No parser extraction, no hand-list, zero drift:
    alone (a config value the CLI overrides must still be *valid* — same
    rule `server` keys already live under).
 
-Probe-safety audit (record results in the PR): `parse_args` is
-side-effect-free apart from `set_defaults` env reads — but its
+Probe-safety audit (record results in the PR): parsing twice must be
+safe. `parse_args` is **not** side-effect-free — see the audit result
+below for what it touches and why the double parse is safe anyway. Its
 validation gates include file-existence checks (`--instance-config`),
 which is correct probe behavior (the later real parse would fail
 identically; earlier + attributed is the improvement).
 
-*(Audit completed 2026-08-26, and it found one thing this paragraph
-missed.* `parse_args` is **not** limited to `set_defaults` env reads: it
-opens with `_refresh_cli_runtime(runtime_key)` (`cli_args.py:292`), which
+*(Audit completed 2026-08-26. The pre-audit draft of the paragraph above
+claimed `parse_args` was side-effect-free apart from `set_defaults` env
+reads; it is not, and that claim has been corrected in place rather than
+left standing beside its own refutation.* `parse_args` opens with `_refresh_cli_runtime(runtime_key)` (`cli_args.py:292`), which
 mutates module globals — `COMPONENTS`, `SCENARIOS`,
 `DEFAULT_METRICS_PER_COMPONENT`. That is safe for a double parse because
 the call is idempotent: it re-reads the live registries through the
@@ -70,7 +72,10 @@ different grounds than stated.*)
 `src/anomaly_metric_creator/server.py` (`_config_mapping_to_argv`,
 `_parse_serve_args`, plus the new `_config_error`,
 `_probe_config_generate_argv`, `_resolve_generate_parse_args`),
-`tools/check_module_size.py` (`server.py` ceiling 2078 → 2156 — the
+`tools/check_module_size.py` (`server.py` ceiling 2096 → 2184 — the
+branch was planned against a 2078-line `server.py` and rebased onto a
+`main` that had grown to 2096; the +78 the probe adds and the +10 its
+review adds are unchanged, only the base moved — the
 addition joins the existing config cluster rather than forming a
 separable unit; extracting that whole cluster to a `server_config.py`
 leaf is the real remedy, left to the `server.py` decomposition
