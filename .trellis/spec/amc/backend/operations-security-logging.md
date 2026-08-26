@@ -409,6 +409,14 @@ overlay would render a snapshot that never existed, which is worse than not
 starting. The envelope is `{"schema_version": 1, "mutations": {…}}`; a field
 change bumps the version.
 
+There are **two** key surfaces and each is checked: the envelope's top level
+against `_PERSISTED_ENVELOPE_KEYS`, and the overlay against
+`_PERSISTED_MUTATION_FIELDS`. Guarding only the second leaves a newer build's
+envelope field silently dropped on downgrade — the exact failure the overlay
+check exists to prevent, one level up. `schema_version` is validated first, so
+a file from a future build reports the version mismatch, which tells the
+operator what to do about it, instead of leading with an unknown key.
+
 The type checks are not decoration: the file is an untrusted read-back
 boundary, and every wrong type it can carry is *iterable* or *coercible*,
 so the unguarded form would accept the file and quietly change its meaning

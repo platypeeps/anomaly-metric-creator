@@ -164,8 +164,14 @@ def test_corrupt_json_is_refused_rather_than_half_hydrated(tmp_path):
     assert str(path) in str(excinfo.value)
 
 
-def test_unknown_top_level_key_is_refused(tmp_path):
-    """A newer build's field must not be silently dropped on downgrade."""
+def test_unknown_mutations_key_is_refused(tmp_path):
+    """A newer build's overlay field must not be silently dropped on downgrade.
+
+    Named for where the key actually sits. This one is inside ``mutations``;
+    the envelope's own top level is a separate surface with its own check,
+    covered below -- conflating them once left that second surface untested
+    while reading as though it were covered.
+    """
     path = tmp_path / "mutations.json"
     path.write_text(
         json.dumps(
@@ -179,6 +185,51 @@ def test_unknown_top_level_key_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match="future_field"):
         load_persisted_mutations(path, known_components=KNOWN)
+
+
+def test_unknown_envelope_key_is_refused(tmp_path):
+    """The envelope's top level must refuse too, not only ``mutations``."""
+    path = tmp_path / "mutations.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": MUTATION_STATE_SCHEMA_VERSION,
+                "mutations": {},
+                "future_envelope_field": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "future_envelope_field" in message
+
+
+def test_unsupported_version_wins_over_an_unknown_envelope_key(tmp_path):
+    """A future file trips both checks; the version message is the useful one.
+
+    It names what to do about the file. Leading with whichever unknown key
+    sorted first would bury that.
+    """
+    path = tmp_path / "mutations.json"
+    path.write_text(
+        json.dumps({"schema_version": 99, "mutations": {}, "future_envelope_field": 1}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="schema_version"):
+        load_persisted_mutations(path, known_components=KNOWN)
+
+
+def test_envelope_keys_match_the_declared_set():
+    """The writer and the downgrade check must not drift apart."""
+    overlay = SimulationMutations()
+
+    assert set(overlay.envelope()) == server_mutations._PERSISTED_ENVELOPE_KEYS
 
 
 def test_unknown_workload_field_is_refused(tmp_path):
@@ -396,7 +447,12 @@ def test_every_commit_routes_through_the_hook():
 def test_persistence_uses_the_shared_atomic_writer():
     """CLAUDE.md forbids open(final_path, 'w') for any published artifact."""
     source = inspect.getsource(server_mutations)
-    assert "_atomic_write_text(self.persist_path" in source
+    # Tolerate line breaks between the call and its first argument. The fact
+    # under guard is that the shared writer is what receives `persist_path`,
+    # not how the call happens to be wrapped -- a formatter moving the
+    # argument to the next line is not a violation, and a guard that treats
+    # it as one gets edited away the first time it cries wolf.
+    assert re.search(r"_atomic_write_text\(\s*self\.persist_path", source)
     assert not re.search(r"open\(\s*self\.persist_path", source)
 
 

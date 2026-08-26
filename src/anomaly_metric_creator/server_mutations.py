@@ -25,6 +25,11 @@ MUTATION_STATE_SCHEMA_VERSION = 1
 # do not. The union is checked against the live dataclass every time an
 # envelope is built, so adding a field without classifying it fails loudly
 # instead of silently dropping out of the persisted overlay.
+# The envelope wrapping the overlay. Named once, so the writer and the
+# downgrade check cannot disagree about what a valid file's top level holds;
+# `test_envelope_keys_match_the_declared_set` pins the two together.
+_PERSISTED_ENVELOPE_KEYS = frozenset({"schema_version", "mutations"})
+
 _PERSISTED_MUTATION_FIELDS = frozenset({
     "workloads",
     "deleted_pods",
@@ -175,10 +180,20 @@ class SimulationMutations:
     def envelope(self) -> dict[str, Any]:
         """Return the versioned on-disk envelope for this overlay."""
         with self.lock:
-            return {
-                "schema_version": MUTATION_STATE_SCHEMA_VERSION,
-                "mutations": self._serialized_locked(),
-            }
+            return self._envelope_locked()
+
+    def _envelope_locked(self) -> dict[str, Any]:
+        """Build the on-disk envelope. Caller must hold ``self.lock``.
+
+        The one place the envelope's shape is written. ``envelope()`` takes
+        the lock and ``_persist_locked()`` already holds it, so both need the
+        shape but only one may acquire -- hence the locked-context split
+        rather than one calling the other.
+        """
+        return {
+            "schema_version": MUTATION_STATE_SCHEMA_VERSION,
+            "mutations": self._serialized_locked(),
+        }
 
     def _persist_locked(self) -> None:
         """Write the overlay to disk. Caller must hold ``self.lock``.
@@ -192,13 +207,11 @@ class SimulationMutations:
         """
         if self.persist_path is None:
             return
-        envelope = {
-            "schema_version": MUTATION_STATE_SCHEMA_VERSION,
-            "mutations": self._serialized_locked(),
-        }
         # Publish through the shared atomic writer, not open(path, "w"), so a
         # concurrent reader or a restart never sees a partial file.
-        _atomic_write_text(self.persist_path, json.dumps(envelope, indent=2) + "\n")
+        _atomic_write_text(
+            self.persist_path, json.dumps(self._envelope_locked(), indent=2) + "\n"
+        )
 
     def _commit_locked(self) -> None:
         """Mark one overlay commit. Caller must hold ``self.lock``.
@@ -606,6 +619,19 @@ def load_persisted_mutations(
             f"schema_version {version!r} is not supported by this build "
             f"(expected {MUTATION_STATE_SCHEMA_VERSION}). Delete the file to "
             "start from a clean overlay.",
+        )
+    # Refuse an unknown *envelope* key for the same reason an unknown
+    # `mutations` key is refused: a newer build's field would otherwise be
+    # dropped in silence on downgrade, and the operator would see a restored
+    # overlay that quietly means less than the file says. Checked after
+    # `schema_version`, so a file from a future build reports the version
+    # mismatch -- which tells the operator what to do -- rather than leading
+    # with whichever new key happens to sort first.
+    unknown_envelope = set(payload) - _PERSISTED_ENVELOPE_KEYS
+    if unknown_envelope:
+        raise _persist_error(
+            path,
+            f"persisted state has unknown key(s) {', '.join(sorted(unknown_envelope))}",
         )
     state = _require_mapping(path, payload.get("mutations", {}), "mutations")
     unknown = set(state) - _PERSISTED_MUTATION_FIELDS
