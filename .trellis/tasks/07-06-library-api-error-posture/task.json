@@ -2,7 +2,7 @@
   "id": "library-api-error-posture",
   "name": "library-api-error-posture",
   "title": "Decide the library-API error and output posture for facade exports",
-  "description": "",
+  "description": "Decide and document whether the package facade exports are a supported programmatic API or a CLI-internal surface, given that they raise SystemExit on missing inputs and print to stdout unconditionally.",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
