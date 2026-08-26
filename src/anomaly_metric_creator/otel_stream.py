@@ -373,6 +373,13 @@ def stream_otel_gauges(
     ``max_events`` caps the total number of OTLP requests sent (not data
     points), mirroring ``--otel-stream-max-events`` semantics for the
     counter stream.
+
+    **CLI-internal surface.** This function is part of a CLI-internal
+    surface, not a supported programmatic API: a per-component CSV that
+    does not exist on disk is skipped silently rather than raising. That
+    is documented semantics, not a defect. See
+    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    Posture.
     """
     if not component_csv_paths:
         return 0

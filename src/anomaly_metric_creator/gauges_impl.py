@@ -71,6 +71,15 @@ def write_gauges_csv(
     behavior on dropped rows).
 
     Returns the number of data rows written (header excluded).
+
+    **CLI-internal surface.** This function is part of a CLI-internal
+    surface, not a supported programmatic API: a per-component CSV that
+    does not exist on disk is skipped silently rather than raising --
+    ``_scan_component_csv_headers`` records a per-component ``exists``
+    flag from ``Path.exists()`` and the component list is filtered on it
+    before any row is read. That is documented semantics, not a defect. See
+    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    Posture.
     """
     any_dimensioned, layout = _scan_component_csv_headers(component_csv_paths)
 

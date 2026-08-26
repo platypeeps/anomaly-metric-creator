@@ -39,6 +39,16 @@ and import-stability surfaces only. `python anomaly-metric-creator.py …`, the
 installed `amc` / `anomaly-metric-creator` console scripts, and the test suite
 all drive the same code.
 
+The facade exports are a **CLI-internal surface, not a supported programmatic
+API.** `SystemExit` raised from an importable module, unconditional
+combine-path stdout, and silently skipping a missing per-component CSV are
+documented semantics — do not rework them into library-grade error handling,
+and give a new facade export the same note. The single revisit trigger is a
+real embedder requirement, which belongs inside the typed-boundaries audit
+work. Full posture in
+[api-cli-server.md](.trellis/spec/amc/backend/api-cli-server.md) §
+Library-API Error Posture.
+
 | Surface | Owner |
 | --- | --- |
 | Run orchestration, artifact lifecycle, output hygiene | `run_pipeline.py` (`main()`), `run_defaults.py` |

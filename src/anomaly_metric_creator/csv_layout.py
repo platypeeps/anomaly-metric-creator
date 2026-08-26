@@ -3,11 +3,18 @@
 Extracted verbatim from ``legacy.py`` (decomposition step 3; see
 ``.trellis/tasks/07-02-legacy-monolith-decomposition/design.md``).
 These header-scan and row-iteration helpers are shared by the gauge
-writer (``gauges_impl.py``), the combine long-form writer, and the OTEL
-gauge streamer (both still in ``legacy.py`` today), plus ``server_mcp``
-via ``state.legacy``. They live in this leaf so every consumer imports
+writer (``gauges_impl.py``), the combine long-form writer
+(``combine_impl.py``), and the OTEL gauge streamer
+(``otel_stream.py``), plus ``server_mcp`` via ``state.legacy``. They live in this leaf so every consumer imports
 one copy; ``legacy.py`` re-imports each name so the historic
 ``legacy.<name>`` surface is unchanged.
+
+**CLI-internal surface.** The file-descriptor preflight raises
+``SystemExit`` rather than returning an error to the caller, because
+this module is a CLI-internal surface rather than a supported
+programmatic API. That is documented semantics, not a defect. See
+``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+Posture.
 """
 
 from __future__ import annotations
