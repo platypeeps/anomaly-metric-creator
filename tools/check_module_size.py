@@ -110,15 +110,23 @@ RATCHET: dict[str, tuple[int, str]] = {
         "orchestration (see architecture.md)",
     ),
     "server_ops.py": (
-        4414,
-        "debt: 07-06-server-ops-decomposition, extracting leaves until under cap",
+        4424,
+        "debt: 07-06-server-ops-decomposition, extracting leaves until under cap; "
+        "+10 from 06-29-persisted-server-mutation-state for the "
+        "--persist-mutations kwarg and the conditional overlay construction "
+        "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        2078,
+        2096,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
-        "imports",
+        "imports; +18 from 06-29-persisted-server-mutation-state for the "
+        "--persist-mutations flag, its config-allowlist key, and the startup "
+        "refusal around the existing build_state() call, later narrowed to "
+        "match PERSIST_ERROR_PREFIX (one import plus the widened condition "
+        "and its rationale) -- edits inside existing blocks, nothing "
+        "separable",
     ),
     "server_mcp.py": (
         1453,

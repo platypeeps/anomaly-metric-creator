@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 81
-- **Last Active**: 2026-08-21
+- **Total Sessions**: 82
+- **Last Active**: 2026-08-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1473 | Active |
+| `journal-2.md` | ~1512 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 82 | 2026-08-26 | Opt-in restart continuity for the simulator mutation overlay | `90c37e4`, `9b4e1a9`, `1665ce8`, `30a29d4`, `0bea427`, `97d7eb7`, `1e67870`, `c8a9a6a`, `6ad7d4b` | `feat/persisted-server-mutation-state` |
 | 81 | 2026-08-21 | Refresh sd-ai-command-pack to 0.71.45 | `dd98b0d1b379429a65274f4a124cbc15d4d0b56d` | `chore/pack-refresh-0.71.45` |
 | 80 | 2026-08-20 | Refresh sd-ai-command-pack to 0.71.38 | `0081f4686a6a609b0789cee8ae0b5e2846d0ff67` | `chore/pack-refresh-0.71.38` |
 | 79 | 2026-08-19 | Refresh sd-ai-command-pack to 0.71.33 | `87c0c4dff76e5d2bdab8c5e5ab885c4f64967849`, `1372079` | `chore/pack-refresh-0.71.33` |

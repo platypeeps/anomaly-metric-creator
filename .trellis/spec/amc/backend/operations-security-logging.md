@@ -357,6 +357,13 @@ clock, is held constant. Renders that embed `state.clock.now()` (e.g.
 clock in normal interactive use; the byte-equality note below covers how the
 contract tests freeze the clock to isolate the overlay.
 
+When `--persist-mutations PATH` is in effect, reset also truncates that file
+to the empty envelope. Reset means baseline in memory *and* on disk: leaving
+the file populated would resurrect the discarded overlay at the next restart,
+which is the one outcome an operator pressing Reset cannot have intended. The
+truncation is not a second code path — reset is an ordinary overlay commit,
+and every commit writes.
+
 Reset intentionally **does not** touch: generated artifacts (they are the
 baseline the overlay sits on — regeneration is `--continuous-generate` or a
 restart), recorded command traces (debug history and eval-harness scoring
@@ -371,4 +378,124 @@ the baseline — with `now()` frozen, only the overlay can move a render. Static
 age columns (`7d`, `0s`) are constants and need no freezing. Sources:
 `README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
-`tests/test_server_reset.py`; `tests/test_server.py`.
+`tests/test_server_reset.py`; `tests/test_server.py`;
+`tests/test_server_mutation_persistence.py`.
+
+## Mutation Overlay Persistence
+
+`--persist-mutations PATH` (serve-only, default off) gives the mutation
+overlay restart continuity through a JSON file. It persists **only the modeled
+overlay** — workload scale/restart/delete state, deleted pods, created and
+deleted generic resources, extra events, and the Helm release overlay. It is
+not a second Kubernetes state model, and it does not persist traces, the
+simulated clock, or generation counters; those have their own stores or are
+deliberately per-run.
+
+Three properties carry the design:
+
+*Every commit writes.* `SimulationMutations._commit_locked()` bumps `version`
+and writes in the same locked block, so there is no flush-on-shutdown
+assumption and a `SIGKILL` loses at most the mutation in flight. Writes go
+through `_atomic_write_text`, so a concurrent reader or a restart never sees a
+torn file. Every mutator commits its own state change rather than relying on
+whatever runs next to persist it — `delete_pod` used to add to `deleted_pods`
+in an uncommitted block, so a failed write in the `set_workload` that followed
+left the deletion in memory alone and the pod came back on restart. A mutator
+that records an event after its own commit writes more
+than once per logical mutation — `record_event` re-enters the `RLock` and
+persists again, which `put_resource`, `delete_resource`, and `delete_pod` all
+do. That is the rule; the list of mutators is what drifts. Every write is
+atomic, so the intermediate file is valid state merely missing an event.
+
+*Load refuses rather than half-hydrates.* Corrupt JSON, an unsupported
+`schema_version`, a key this build does not declare, or a value whose JSON
+type is wrong raises at startup with the file named. A partially restored
+overlay would render a snapshot that never existed, which is worse than not
+starting. The envelope is `{"schema_version": 1, "mutations": {…}}`; a field
+change bumps the version.
+
+There are **two** key surfaces and each is checked: the envelope's top level
+against `_PERSISTED_ENVELOPE_KEYS`, and the overlay against
+`_PERSISTED_MUTATION_FIELDS`. Guarding only the second leaves a newer build's
+envelope field silently dropped on downgrade — the exact failure the overlay
+check exists to prevent, one level up. `schema_version` is validated before
+the unknown-key sweep, so a file from a future build reports the version
+mismatch, which tells the operator what to do about it, instead of leading
+with an unknown key.
+
+Both envelope keys must also be **present**, checked before `schema_version`.
+The unknown-key sweep is one-directional, so a truncated or hand-edited file
+missing `mutations` would otherwise fall back to `{}` and restore an empty
+overlay in silence — the operator would see a server that started clean and
+conclude the mutations were never made. Presence is checked first because
+`schema_version`'s own lookup would report a missing envelope as
+`schema_version None`, naming the wrong problem.
+
+The type checks are not decoration: the file is an untrusted read-back
+boundary, and every wrong type it can carry is *iterable* or *coercible*,
+so the unguarded form would accept the file and quietly change its meaning
+rather than fail. A dict where an array belongs (`deleted_pods`,
+`extra_events`, a `deleted_resources` value) would be read as its keys and a
+string as its characters, so `_require_sequence` names the offending type
+instead. `_require_string_sequence` carries that one level further for the
+string arrays: the container check alone leaves `["pod-a", 1]` — valid JSON —
+reaching `sorted()`, where comparing an `int` to a `str` raises `TypeError`
+and escapes the path-naming `ValueError` that is the whole operator contract.
+Validate the elements before sorting, not after. `version` goes through
+`_require_version` rather than `int()`, which
+coerces rather than validates — `True` would load as 1 and `3.9` as 3, and
+`bool` is an `int` subclass, so the check has to exclude it explicitly.
+
+Rejecting unknown field *names* stops one level short for the two
+`**body`-constructed records. `WorkloadMutation(**body)` accepts
+`{"replicas": "3"}` and `HelmReleaseMutation(**body)` accepts
+`{"values": []}`; the crash then lands in `server_ops` -- `min(replicas,
+...)`, `values.items()` -- far from the file that caused it, as a traceback
+rather than the path-naming refusal the boundary promises.
+`_require_field_types` closes that, keyed on the annotation's *source text*:
+`from __future__ import annotations` makes every annotation a string, so
+`_FIELD_TYPE_CHECKS` derives from the declaration instead of duplicating it,
+and a new field is checked the moment it is declared. An annotation missing
+from the table **refuses** rather than passing the value through, and
+`test_every_hydrated_field_annotation_has_a_check` fails at authoring time so
+the author sees it before an operator does.
+
+Arming persistence is itself a write, and it fails for reasons that have
+nothing to do with the file's contents — an unwritable directory, a missing
+parent, a failed fsync. `_arm_persistence` converts that `OSError` into the
+same path-naming `ValueError` at **both** load routes, because `serve_main`
+converts only that marked `ValueError` into a refusal and an escaping
+`OSError` would reach the operator as a traceback. The missing-file first run needs this as much as the
+hydrated one, and is the likelier operator error of the two:
+`--persist-mutations /no/such/dir/mutations.json` reaches it with nothing to
+hydrate and fails on the very first write. A write that fails *later*, mid
+serve, is deliberately left as the `OSError` it is rather than disguised as a
+malformed file.
+
+The refusal is matched on `PERSIST_ERROR_PREFIX`, the marker
+`_persist_error` writes into every message, not on `--persist-mutations`
+being set. Gating on the flag alone would convert *every* `ValueError` raised
+anywhere under `build_state()` into an operator-facing startup refusal, so an
+unrelated regression would surface as a polished message naming a file that
+is perfectly fine. The producer and the matcher live next to each other in
+`server_mutations` so they cannot drift.
+
+*Stale components are dropped, not refused.* An entry keyed by a component
+this run does not have — the operator narrowed `--components` — is dropped
+with a stderr `WARNING` naming it, and the post-drop overlay is written back
+so the ghost does not reappear. Keeping it would put the Kubernetes facade out
+of parity with the generated data; refusing outright would strand an operator
+over a compatible narrowing.
+
+Serialization is driven by an explicit `_PERSISTED_MUTATION_FIELDS` /
+`_UNPERSISTED_MUTATION_FIELDS` partition rather than `dataclasses.asdict`
+(which cannot serialize the overlay's `RLock`). A new `SimulationMutations`
+field that appears in neither set raises at serialization time, so it cannot
+be silently omitted from the file.
+
+Point the flag **outside `--output-dir`**: the pre-clean registry does not
+know the file, and `amc validate`'s unknown-file check would flag it. Sources:
+`README.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_mutations.py`;
+`tests/test_server_mutation_persistence.py`.

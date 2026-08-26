@@ -1471,3 +1471,52 @@ Fleet rollout lane: reinstalled the thin sd-ai-command-pack payload at 0.71.45, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 82: Opt-in restart continuity for the simulator mutation overlay
+<!-- trellis-session: v=2 fp=f556e8bccf69e39f -->
+
+**Date**: 2026-08-26
+**Task**: Opt-in restart continuity for the simulator mutation overlay
+**Package**: amc
+**Branch**: `feat/persisted-server-mutation-state`
+
+### Summary
+
+Added --persist-mutations, an opt-in JSON overlay file that survives a simulator restart, then hardened its read-back boundary across four review rounds until local and routed review both closed clean.
+
+### Main Changes
+
+- `--persist-mutations PATH` round-trips the mutation overlay through an atomically published JSON file; every commit writes as it commits, and `POST /v1/mutations/reset` truncates the file with the overlay. Off by default, and the flag-off path is byte-identical to the in-memory one.
+- Treated the file as an untrusted read-back boundary rather than trusting our own writer: envelope and overlay key sets are both checked, both envelope keys must be present (a missing `mutations` used to default to `{}` and restore an empty overlay in silence), arrays are checked element-by-element before `sorted()`, `version` goes through a plain-integer check rather than `int()`, and the two `**body`-constructed dataclasses validate field types keyed on their own annotation source text, so a new field cannot be added unchecked.
+- Narrowed the startup refusal in `serve_main` to match `PERSIST_ERROR_PREFIX` instead of the flag being set, which had been converting any `ValueError` under `build_state()` into an operator-facing message that named an innocent file.
+- Corrected `_persist_locked`'s docstring and the ops spec, which both named only some of the mutators that write twice per logical mutation; stated as the rule (a mutator recording an event after its own commit re-enters the RLock) rather than as a list, and pinned by a test.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `90c37e4` | feat(serve): opt-in restart continuity for the mutation overlay |
+| `9b4e1a9` | chore(trellis): mark 06-29-persisted-server-mutation-state in_progress |
+| `1665ce8` | fix(serve): validate the persisted overlay's arrays, version, and first write |
+| `30a29d4` | docs(serve): enumerate the persisted-overlay refusals the validation added |
+| `0bea427` | fix(serve): guard the persisted envelope's own keys, and dedupe its shape |
+| `97d7eb7` | fix(tests): close the commit guard's blind spot, and unbreak two README spans |
+| `1e67870` | fix(server): validate overlay element types and narrow the startup refusal |
+| `c8a9a6a` | fix(server): validate hydrated overlay field types at the read-back boundary |
+| `6ad7d4b` | fix(server): require both overlay envelope keys; unrun README paragraphs |
+
+### Testing
+
+- [OK] .venv/bin/pytest: 2118 passed, 2 skipped
+- [OK] .venv/bin/pre-commit run --all-files: exit 0
+- [OK] sd-review scope=pr: status ready, exactHeadReady true, 0 outstanding findings (gito + prism clean, Copilot clean at 6ad7d4b)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
