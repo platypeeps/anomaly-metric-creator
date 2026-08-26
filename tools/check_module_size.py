@@ -124,16 +124,16 @@ RATCHET: dict[str, tuple[int, str]] = {
         "imports; +18 from 06-29-persisted-server-mutation-state for the "
         "--persist-mutations flag, its config-allowlist key, and the startup "
         "refusal around the existing build_state() call, later narrowed to "
-        "match PERSIST_ERROR_PREFIX; -283 from 07-02-config-generate-key-"
-        "validation, which grew the --config cluster past the point where "
-        "every review round needed a ceiling bump and so extracted the whole "
-        "cluster to the server_config.py leaf -- the remedy this entry had "
-        "been deferring to the server.py decomposition follow-up. server.py "
-        "now sits below where that task found it (1975: the extraction left "
-        "1970, plus a 5-line comment on the re-import block saying a stub must "
-        "patch server_config, since these bindings do not intercept the "
-        "cluster's calls to itself, and one more re-import line for "
-        "_probe_config_server_argv)",
+        "match PERSIST_ERROR_PREFIX; net -120 from "
+        "07-02-config-generate-key-validation, which found this module at 2096 "
+        "and left it here. That task grew the --config cluster until every "
+        "review round needed a ceiling bump, then took the remedy this entry "
+        "had been deferring to the server.py decomposition follow-up: the "
+        "whole cluster moved to the server_config.py leaf, where it continues "
+        "to live and grow. What stayed behind is the re-import block that "
+        "keeps the historic server.<name> surface working, and a note on it "
+        "that a stub must patch server_config, since these bindings do not "
+        "intercept the cluster's calls to itself",
     ),
     "server_mcp.py": (
         1453,

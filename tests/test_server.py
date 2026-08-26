@@ -3059,6 +3059,79 @@ def test_a_server_key_the_parser_cannot_consume_is_refused(
     assert "--not-a-serve-flag" in stderr
 
 
+def test_the_generate_probe_does_not_reject_a_config_the_run_would_accept(tmp_path):
+    """The probe must reject nothing that would have survived the real parse.
+
+    Several generate gates are cross-flag: the preflight cell cap multiplies
+    interval, duration, metric count, components, and instances. So
+    `interval_seconds: 1` overflows it against the defaults but is fine once
+    explicit CLI flags narrow the run. Judging the config section in isolation
+    would reject a working configuration.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"interval_seconds": 1}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+
+    serve_args, generate_argv = server._parse_serve_args(
+        [
+            "--config",
+            str(config_path),
+            "--components",
+            "apigateway",
+            "--metrics-per-component",
+            "1",
+            "--duration-days",
+            "1",
+        ],
+        parser,
+    )
+    assert "--interval-seconds" in generate_argv
+    assert serve_args.config == config_path
+
+
+def test_a_generate_typo_is_rejected_even_when_the_cli_narrows_the_run(tmp_path):
+    """Confirming against the real argv must not weaken the typo check.
+
+    An unknown flag fails both parses, so it is still refused -- only a config
+    that the actual argv makes valid is let through.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": "apigateway"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--duration-days", "1"], parser
+        )
+
+
+def test_config_stripping_stops_at_the_end_of_options_marker():
+    """`--` makes argparse read the rest as positionals, so the scan stops too.
+
+    `_extract_serve_config_path` parses rather than scans, so it never reads a
+    `--config` after `--` as a flag. Stripping one would make the two disagree.
+    """
+    assert server._strip_serve_config_arg(["--config", "x", "--port", "1"]) == [
+        "--port",
+        "1",
+    ]
+    assert server._strip_serve_config_arg(["--config", "x", "--", "--config", "y"]) == [
+        "--",
+        "--config",
+        "y",
+    ]
+    assert server._strip_serve_config_arg(["--config=x", "--", "--config=y"]) == [
+        "--",
+        "--config=y",
+    ]
+
+
 def test_a_bad_server_config_value_is_rejected_naming_the_file(tmp_path, capsys):
     """`server` values are attributed too, not just `server` key names."""
     config_path = tmp_path / "serve-config.json"

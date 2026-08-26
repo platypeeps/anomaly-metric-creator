@@ -1,10 +1,13 @@
 """``amc serve --config`` loading, validation, and argv conversion.
 
-Extracted verbatim from ``server.py`` under the decomposition epic: the config
-cluster was the only thing in that module still growing, and it had reached the
-point where every addition needed a ratchet bump. It is a leaf -- it reads
-nothing from ``server.py`` -- so the dependency runs one way and ``server.py``
-re-imports every name to keep the historic ``server.<name>`` surface intact.
+Extracted from ``server.py`` under the decomposition epic: the config cluster
+was the only thing in that module still growing, and it had reached the point
+where every addition needed a ratchet bump. The move itself was verbatim; the
+module has taken new code since (``_probe_config_server_argv`` among it), so
+this is where the cluster lives now rather than a frozen copy of what left. It
+is a leaf -- it reads nothing from ``server.py`` -- so the dependency runs one
+way and ``server.py`` re-imports every name to keep the historic
+``server.<name>`` surface intact.
 
 The generate parser is reached through ``_resolve_generate_parse_args``, which
 imports ``legacy`` lazily inside the call. That stays a *call-time* import: at
@@ -135,16 +138,26 @@ def _extract_serve_config_path(
 
 
 def _strip_serve_config_arg(argv: list[str]) -> list[str]:
+    """Remove `--config` and its value; everything else passes through.
+
+    Stops at `--`. Argparse treats every token after it as a positional, so
+    `_extract_serve_config_path` -- which parses rather than scans -- does not
+    see a `--config` there either. Scanning past it would make the two
+    disagree: one would strip a token the other never read as a flag.
+    """
     result: list[str] = []
     skip_next = False
+    stripping = True
     for token in argv:
         if skip_next:
             skip_next = False
             continue
-        if token == "--config":
+        if stripping and token == "--":
+            stripping = False
+        elif stripping and token == "--config":
             skip_next = True
             continue
-        if token.startswith("--config="):
+        elif stripping and token.startswith("--config="):
             continue
         result.append(token)
     return result
@@ -192,10 +205,26 @@ def _resolve_generate_parse_args(legacy_module: Any | None = None) -> Callable[.
     return legacy_module.parse_args
 
 
+def _generate_argv_parses(
+    argv: list[str],
+    parse_args: Callable[..., Any],
+) -> SystemExit | None:
+    """Parse `argv` with both streams captured; return the exit, or None if it parsed."""
+    try:
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(
+            io.StringIO()
+        ):
+            parse_args(list(argv))
+    except SystemExit as exc:
+        return exc
+    return None
+
+
 def _probe_config_generate_argv(
     generate_argv: list[str],
     config_path: Path | None,
     parse_args: Callable[..., Any],
+    merged_argv: list[str] | None = None,
 ) -> None:
     """Reject config-derived generate flags the real parser would not accept.
 
@@ -211,6 +240,18 @@ def _probe_config_generate_argv(
     ``help: true`` config would otherwise dump usage to stdout.
     """
     if not generate_argv:
+        return
+    if _generate_argv_parses(generate_argv, parse_args) is None:
+        return
+    if merged_argv is not None and _generate_argv_parses(merged_argv, parse_args) is None:
+        # The config section alone is not what the run will parse. Several
+        # generate gates are cross-flag -- the preflight cell cap multiplies
+        # interval, duration, metric count, components, and instances -- so
+        # `interval_seconds: 1` overflows it against the defaults while the
+        # real argv, narrowed by explicit CLI flags, is fine. Refusing on the
+        # section alone would reject a working configuration, which the probe
+        # is explicitly not allowed to do. Only the config's own failure is
+        # reported, and only when the actual argv fails too.
         return
     stderr = io.StringIO()
     stdout = io.StringIO()
@@ -354,9 +395,6 @@ def _parse_serve_args(
             config_generate_argv = _config_mapping_to_argv(config["generate"])
             _probe_config_server_argv(config_server_argv, config_path, parser)
             generate_parse_args = _resolve_generate_parse_args(legacy_module)
-            _probe_config_generate_argv(
-                config_generate_argv, config_path, generate_parse_args
-            )
             _vouch_no_flag_generate_keys(
                 config["generate"], config_path, generate_parse_args
             )
@@ -366,5 +404,16 @@ def _parse_serve_args(
     serve_args, generate_argv = parser.parse_known_args(
         [*config_server_argv, *config_generate_argv, *user_argv]
     )
+    if config_path is not None:
+        # Runs after the combined parse, not before it: `generate_argv` is the
+        # argv the run will actually hand the generate parser, and the probe
+        # needs it to tell a config that is wrong from one that merely looks
+        # wrong in isolation.
+        try:
+            _probe_config_generate_argv(
+                config_generate_argv, config_path, generate_parse_args, generate_argv
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
     serve_args.config = config_path
     return serve_args, generate_argv

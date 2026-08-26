@@ -239,8 +239,20 @@ its own in a probe that traps `SystemExit` and captures both streams, and
 argparse's own diagnostic is embedded in a `ValueError` naming the config path.
 Do not hand-maintain a second list of generate keys; it would drift from the
 parser on every new flag. The probe is the same parse `serve_main` runs later,
-so it rejects nothing that would have survived anyway -- but a valid key with
-an invalid *value* now also fails at load, which is intended. An exit-`0`
+so it must reject nothing that would have survived anyway -- but a valid key
+with an invalid *value* does fail at load, which is intended.
+
+Holding both of those at once takes two parses. Several generate gates are
+cross-flag (the preflight cell cap multiplies interval, duration, metric count,
+components, and instances), so the config section judged *in isolation* can
+fail while the real run is fine -- `interval_seconds: 1` against the defaults.
+The probe therefore runs after the combined parse and refuses only when the
+merged `generate_argv`, the argv the run will actually parse, fails too. Report
+the config's own diagnostic, since that is the attributable one; decide on the
+merged argv. Validation that is genuinely cross-flag and lives *outside* the
+parsers -- `--cors-allow-origin '*'` requiring `--auth-token`, for one -- stays
+in `serve_main` on the merged arguments; neither probe can see it, and neither
+should try. An exit-`0`
 parse is still refused -- `help: true` would print usage and exit instead of
 configuring a run -- but it must not be *described* as a rejection by the
 parser, because the parser accepted the flag. It gets its own diagnostic.
