@@ -434,6 +434,7 @@ Server flags:
 | `--persist-command-log` | _off_ | Optional JSONL file for command traces. |
 | `--persist-command-db` | _off_ | Optional SQLite file for durable command traces and search. |
 | `--persist-command-retention` | `0` | Maximum SQLite command traces to retain; `0` keeps all persisted traces. |
+| `--persist-mutations` | _off_ | Optional JSON file giving the simulator mutation overlay restart continuity. Keep it outside `--output-dir`. |
 | `--config` | _off_ | Optional JSON/YAML file containing `server` and `generate` defaults for `amc serve`. Explicit CLI flags override config values. |
 | `--auth-token` | _off_ | Optional bearer token required for HTTP API, debug data, command, and Kubernetes API requests. Embedded into `GET /v1/kubeconfig` when enabled. |
 | `--max-request-body-bytes` | `1048576` | Maximum accepted HTTP request body size. Oversized app requests return `413`; oversized Kubernetes API requests return a Kubernetes `Status`. |
@@ -748,6 +749,27 @@ statuses, families, and active scenarios.
 Use `--persist-command-retention N` to bound the durable SQLite history, and
 use the command export/import endpoints to move trace histories between runs
 for offline debugging.
+
+Command traces and simulator mutations persist separately. `--persist-mutations
+PATH` gives the *mutation overlay* — scaled workloads, deleted pods, created
+and deleted resources, extra events, and the Helm release state — restart
+continuity through a JSON file:
+
+```bash
+amc serve --persist-mutations ./simulator-mutations.json
+```
+
+Every mutation writes as it commits, so a crash loses at most the mutation in
+flight. `POST /v1/mutations/reset` (and the debug UI Reset button) truncates
+the file along with the in-memory overlay — reset means baseline in both
+places. On startup the file is either restored or refused with the path named:
+corrupt JSON or a `schema_version` this build does not support stops the
+server rather than half-restoring an overlay. If you narrow `--components`
+between runs, entries for components this run does not have are dropped with a
+stderr `WARNING` naming each one, and the trimmed overlay is written back.
+
+Point the flag **outside `--output-dir`**. The pre-clean registry does not know
+the file, and `amc validate` reports it as an unknown artifact.
 For offline analysis outside a running server, save the export payload and use
 one of:
 

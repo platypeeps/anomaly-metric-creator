@@ -29,6 +29,7 @@ from .server_mutations import (
     WorkloadMutation as WorkloadMutation,
     _mutation_resource_key,
     _resource_prefix,
+    load_persisted_mutations,
 )
 from .server_traces import (
     DEFAULT_TRACE_LIMIT,
@@ -494,6 +495,7 @@ def build_state(
     persist_command_log: Path | None = None,
     persist_command_db: Path | None = None,
     persist_command_retention: int | None = None,
+    persist_mutations: Path | None = None,
     eval_mode: bool = False,
 ) -> SimulationState:
     validate_ops_profiles(legacy_module)
@@ -519,7 +521,15 @@ def build_state(
             sqlite_path=persist_command_db,
             sqlite_retention=persist_command_retention,
         ),
-        mutations=SimulationMutations(extra_event_limit=trace_limit),
+        mutations=(
+            load_persisted_mutations(
+                persist_mutations,
+                known_components=frozenset(components),
+                extra_event_limit=trace_limit,
+            )
+            if persist_mutations is not None
+            else SimulationMutations(extra_event_limit=trace_limit)
+        ),
         # Convention (not a safety mechanism): every key the background OTEL /
         # continuous-generation writers ever set is pre-seeded here so the
         # schema is stable and /v1/state always reports the full field set.

@@ -3,14 +3,48 @@
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
 from typing import Any
 
+from .artifacts import _atomic_write_text
 from .server_traces import DEFAULT_TRACE_LIMIT
 
 
 DEFAULT_NAMESPACE = "saas-prod"
+
+# Bump when the persisted overlay's shape changes. A file written by a newer
+# version is refused at load rather than half-hydrated, matching the command
+# trace store's posture.
+MUTATION_STATE_SCHEMA_VERSION = 1
+
+# Which SimulationMutations fields round-trip to disk, and which deliberately
+# do not. The union is checked against the live dataclass every time an
+# envelope is built, so adding a field without classifying it fails loudly
+# instead of silently dropping out of the persisted overlay.
+_PERSISTED_MUTATION_FIELDS = frozenset({
+    "workloads",
+    "deleted_pods",
+    "deleted_resources",
+    "created_resources",
+    "extra_events",
+    "release",
+    "version",
+})
+_UNPERSISTED_MUTATION_FIELDS = frozenset({
+    # threading.RLock is unserializable by construction.
+    "lock",
+    # Runtime config for *this* run (from --debug-ring-size), not overlay
+    # state -- restoring a previous run's cap would silently override the
+    # operator's current flag.
+    "extra_event_limit",
+    # Where the overlay is being persisted is a property of this process's
+    # flags, not of the overlay contents.
+    "persist_path",
+})
 
 
 def _format_dt(value: _dt.datetime) -> str:
@@ -90,6 +124,99 @@ class SimulationMutations:
     release: HelmReleaseMutation = field(default_factory=HelmReleaseMutation)
     version: int = 0
     lock: threading.RLock = field(default_factory=threading.RLock)
+    persist_path: Path | None = None
+
+    # -- persistence ------------------------------------------------------
+    #
+    # Opt-in restart continuity (--persist-mutations). Off by default: with
+    # persist_path None every hook below is a no-op, so the in-memory path is
+    # unchanged.
+
+    def _serialized_locked(self) -> dict[str, Any]:
+        """Serialize the overlay. Caller must hold ``self.lock``."""
+        declared = {f.name for f in fields(self)}
+        classified = _PERSISTED_MUTATION_FIELDS | _UNPERSISTED_MUTATION_FIELDS
+        unclassified = declared - classified
+        if unclassified:
+            raise RuntimeError(
+                "SimulationMutations field(s) "
+                f"{', '.join(sorted(unclassified))} are not classified as "
+                "persisted or unpersisted. Add them to "
+                "_PERSISTED_MUTATION_FIELDS or _UNPERSISTED_MUTATION_FIELDS "
+                "in server_mutations.py and bump "
+                "MUTATION_STATE_SCHEMA_VERSION if the on-disk shape changed."
+            )
+        stale = classified - declared
+        if stale:
+            raise RuntimeError(
+                "server_mutations.py classifies field(s) "
+                f"{', '.join(sorted(stale))} that SimulationMutations no "
+                "longer declares."
+            )
+        return {
+            "workloads": {
+                name: asdict(mutation)
+                for name, mutation in sorted(self.workloads.items())
+            },
+            "deleted_pods": sorted(self.deleted_pods),
+            "deleted_resources": {
+                kind: sorted(names)
+                for kind, names in sorted(self.deleted_resources.items())
+            },
+            "created_resources": {
+                kind: {key: dict(body) for key, body in sorted(entries.items())}
+                for kind, entries in sorted(self.created_resources.items())
+            },
+            "extra_events": [dict(event) for event in self.extra_events],
+            "release": asdict(self.release),
+            "version": self.version,
+        }
+
+    def envelope(self) -> dict[str, Any]:
+        """Return the versioned on-disk envelope for this overlay."""
+        with self.lock:
+            return {
+                "schema_version": MUTATION_STATE_SCHEMA_VERSION,
+                "mutations": self._serialized_locked(),
+            }
+
+    def _persist_locked(self) -> None:
+        """Write the overlay to disk. Caller must hold ``self.lock``.
+
+        Called at the end of every mutator's locked block. ``delete_resource``
+        writes twice per logical mutation because it commits its state change
+        under the lock and then records its event outside it (the event
+        re-enters the RLock and persists again). Both writes are atomic, so a
+        crash between them leaves a valid file that is merely missing the
+        event -- never a torn one.
+        """
+        if self.persist_path is None:
+            return
+        envelope = {
+            "schema_version": MUTATION_STATE_SCHEMA_VERSION,
+            "mutations": self._serialized_locked(),
+        }
+        # Publish through the shared atomic writer, not open(path, "w"), so a
+        # concurrent reader or a restart never sees a partial file.
+        _atomic_write_text(self.persist_path, json.dumps(envelope, indent=2) + "\n")
+
+    def _commit_locked(self) -> None:
+        """Mark one overlay commit. Caller must hold ``self.lock``.
+
+        Every mutator ends its locked block here rather than bumping
+        ``version`` inline, so the version bump and the persistence write
+        cannot drift apart. ``tests/test_server_mutation_persistence.py``
+        pins that: a new mutator that bumps ``version`` by hand fails the
+        source guard.
+        """
+        self.version += 1
+        self._persist_locked()
+
+    def attach_persistence(self, path: Path | None) -> None:
+        """Enable persistence and write the current overlay immediately."""
+        with self.lock:
+            self.persist_path = path
+            self._persist_locked()
 
     def summary(self) -> dict[str, Any]:
         with self.lock:
@@ -170,7 +297,7 @@ class SimulationMutations:
                 ):
                     event["last_seen"] = timestamp
                     event["count"] = int(event.get("count", 1)) + 1
-                    self.version += 1
+                    self._commit_locked()
                     return
             self.extra_events.append({
                 "first_seen": timestamp,
@@ -189,7 +316,7 @@ class SimulationMutations:
                     del self.extra_events[:overflow]
             else:
                 self.extra_events.clear()
-            self.version += 1
+            self._commit_locked()
 
     def set_workload(
         self,
@@ -226,8 +353,13 @@ class SimulationMutations:
                 mutation.generation += 1
             mutation.observed_generation = mutation.generation
             mutation.updated_at = _format_dt(now)
-            self.version += 1
-            mutation.resource_version = max(mutation.resource_version + 1, self.version + 1)
+            # `self.version + 2` is the post-commit version plus one -- the
+            # same value the pre-persistence code computed as
+            # `self.version + 1` after bumping. Ordered this way so the
+            # commit (and its disk write) is the last thing in the locked
+            # block and cannot publish a stale `resource_version`.
+            mutation.resource_version = max(mutation.resource_version + 1, self.version + 2)
+            self._commit_locked()
             return mutation
 
     def delete_pod(self, pod_name: str, *, now: _dt.datetime) -> None:
@@ -269,7 +401,7 @@ class SimulationMutations:
             key = _mutation_resource_key(namespace, name)
             self.created_resources.setdefault(kind, {})[key] = stored
             self.deleted_resources.setdefault(kind, set()).discard(key)
-            self.version += 1
+            self._commit_locked()
         self.record_event(
             "Normal",
             "Configured",
@@ -291,7 +423,7 @@ class SimulationMutations:
             key = _mutation_resource_key(namespace, name)
             self.created_resources.setdefault(kind, {}).pop(key, None)
             self.deleted_resources.setdefault(kind, set()).add(key)
-            self.version += 1
+            self._commit_locked()
         self.record_event(
             "Normal",
             "Deleted",
@@ -309,7 +441,7 @@ class SimulationMutations:
             self.created_resources.clear()
             self.extra_events.clear()
             self.release = HelmReleaseMutation()
-            self.version += 1
+            self._commit_locked()
 
     def current_revisions(self, base: list[dict[str, Any]]) -> list[dict[str, Any]]:
         with self.lock:
@@ -324,16 +456,144 @@ class SimulationMutations:
             if uninstalled:
                 self.release.values.clear()
             self.release.updated_at = _format_dt(now)
-            self.version += 1
+            self._commit_locked()
 
     def set_release_values(self, values: dict[str, str], *, now: _dt.datetime) -> None:
         with self.lock:
             self.release.values.update(values)
             self.release.updated_at = _format_dt(now)
-            self.version += 1
+            self._commit_locked()
 
     def replace_release_values(self, values: dict[str, str], *, now: _dt.datetime) -> None:
         with self.lock:
             self.release.values = dict(values)
             self.release.updated_at = _format_dt(now)
-            self.version += 1
+            self._commit_locked()
+
+
+def _persist_error(path: Path, detail: str) -> ValueError:
+    """Build the shared --persist-mutations diagnostic, always naming the file."""
+    return ValueError(f"--persist-mutations {path}: {detail}")
+
+
+def _require_mapping(path: Path, value: Any, what: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise _persist_error(path, f"{what} must be a JSON object, got {type(value).__name__}")
+    return value
+
+
+def _hydrate_workloads(
+    path: Path, raw: Any, known_components: frozenset[str], dropped: list[str]
+) -> dict[str, WorkloadMutation]:
+    mapping = _require_mapping(path, raw, "mutations.workloads")
+    allowed = {f.name for f in fields(WorkloadMutation)}
+    workloads: dict[str, WorkloadMutation] = {}
+    for component, body in sorted(mapping.items()):
+        if component not in known_components:
+            dropped.append(f"workload overlay for unknown component '{component}'")
+            continue
+        body = _require_mapping(path, body, f"mutations.workloads['{component}']")
+        unknown = set(body) - allowed
+        if unknown:
+            raise _persist_error(
+                path,
+                f"mutations.workloads['{component}'] has unknown field(s) "
+                f"{', '.join(sorted(unknown))}",
+            )
+        workloads[component] = WorkloadMutation(**body)
+    return workloads
+
+
+def _hydrate_release(path: Path, raw: Any) -> HelmReleaseMutation:
+    body = _require_mapping(path, raw, "mutations.release")
+    allowed = {f.name for f in fields(HelmReleaseMutation)}
+    unknown = set(body) - allowed
+    if unknown:
+        raise _persist_error(
+            path, f"mutations.release has unknown field(s) {', '.join(sorted(unknown))}"
+        )
+    return HelmReleaseMutation(**body)
+
+
+def load_persisted_mutations(
+    path: Path,
+    *,
+    known_components: frozenset[str],
+    extra_event_limit: int = DEFAULT_TRACE_LIMIT,
+) -> SimulationMutations:
+    """Rebuild the overlay from ``path`` and arm it to keep persisting there.
+
+    A missing file is the normal first-run case and yields an empty overlay.
+    Anything present but unreadable -- corrupt JSON, an unknown
+    ``schema_version``, a field this build does not declare -- raises
+    ``ValueError`` naming the file rather than half-hydrating: a partially
+    restored overlay would render a snapshot that never existed.
+
+    Entries keyed by a component this run does not have are *dropped* with a
+    stderr WARNING naming each one, not refused. Restart continuity assumes a
+    compatible run; a ghost component would put the Kubernetes facade out of
+    parity with the generated data, and a hard failure would strand an
+    operator who merely narrowed ``--components``.
+    """
+    mutations = SimulationMutations(extra_event_limit=extra_event_limit)
+    if not path.exists():
+        mutations.attach_persistence(path)
+        return mutations
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise _persist_error(path, f"file is not valid JSON ({exc})") from exc
+    except OSError as exc:
+        raise _persist_error(path, f"file could not be read ({exc})") from exc
+
+    payload = _require_mapping(path, payload, "persisted state")
+    version = payload.get("schema_version")
+    if version != MUTATION_STATE_SCHEMA_VERSION:
+        raise _persist_error(
+            path,
+            f"schema_version {version!r} is not supported by this build "
+            f"(expected {MUTATION_STATE_SCHEMA_VERSION}). Delete the file to "
+            "start from a clean overlay.",
+        )
+    state = _require_mapping(path, payload.get("mutations", {}), "mutations")
+    unknown = set(state) - _PERSISTED_MUTATION_FIELDS
+    if unknown:
+        raise _persist_error(
+            path, f"mutations has unknown key(s) {', '.join(sorted(unknown))}"
+        )
+
+    dropped: list[str] = []
+    mutations.workloads = _hydrate_workloads(
+        path, state.get("workloads", {}), known_components, dropped
+    )
+    for pod_name in sorted(state.get("deleted_pods", [])):
+        if _component_from_pod_name(str(pod_name)) not in known_components:
+            dropped.append(f"deleted pod '{pod_name}' of unknown component")
+            continue
+        mutations.deleted_pods.add(str(pod_name))
+    for kind, names in sorted(
+        _require_mapping(path, state.get("deleted_resources", {}), "mutations.deleted_resources").items()
+    ):
+        mutations.deleted_resources[kind] = set(names)
+    for kind, entries in sorted(
+        _require_mapping(path, state.get("created_resources", {}), "mutations.created_resources").items()
+    ):
+        mutations.created_resources[kind] = {
+            key: dict(_require_mapping(path, body, f"mutations.created_resources['{kind}']['{key}']"))
+            for key, body in sorted(_require_mapping(path, entries, f"mutations.created_resources['{kind}']").items())
+        }
+    mutations.extra_events = [
+        dict(_require_mapping(path, event, "mutations.extra_events[]"))
+        for event in state.get("extra_events", [])
+    ]
+    mutations.release = _hydrate_release(path, state.get("release", {}))
+    mutations.version = int(state.get("version", 0))
+
+    for note in dropped:
+        print(f"WARNING: --persist-mutations {path}: dropped {note}", file=sys.stderr)
+
+    # Arm persistence last, so the immediate write records the post-drop
+    # overlay -- the dropped entries do not survive a second restart.
+    mutations.attach_persistence(path)
+    return mutations

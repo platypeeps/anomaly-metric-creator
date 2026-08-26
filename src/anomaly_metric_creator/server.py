@@ -1415,6 +1415,7 @@ _SERVE_CONFIG_SERVER_KEYS = {
     "persist_command_log",
     "persist_command_db",
     "persist_command_retention",
+    "persist_mutations",
     "auth_token",
     "max_request_body_bytes",
     "allow_remote_without_auth",
@@ -1570,6 +1571,7 @@ def _build_serve_parser() -> argparse.ArgumentParser:
     parser.add_argument("--persist-command-log", type=Path, default=None, help="Optional JSONL path for command traces.")
     parser.add_argument("--persist-command-db", type=Path, default=None, help="Optional SQLite path for durable command traces and search.")
     parser.add_argument("--persist-command-retention", type=int, default=0, help="Maximum SQLite command traces to retain (default: 0, unlimited).")
+    parser.add_argument("--persist-mutations", type=Path, default=None, help="Optional JSON path giving the simulator mutation overlay restart continuity. Keep it outside --output-dir.")
     parser.add_argument("--config", type=Path, default=None, help="Optional JSON/YAML file with serve-mode server and generate defaults.")
     parser.add_argument("--auth-token", default="", help="Optional bearer token required for simulator HTTP and Kubernetes API requests.")
     parser.add_argument("--max-request-body-bytes", type=int, default=DEFAULT_MAX_BODY_BYTES, help=f"Maximum accepted HTTP request body size (default: {DEFAULT_MAX_BODY_BYTES}).")
@@ -1714,16 +1716,26 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         legacy_module.main(run_argv)
         args = legacy_module.parse_args(generate_argv)
 
-    state = build_state(
-        legacy_module,
-        args,
-        namespace=serve_args.namespace,
-        trace_limit=serve_args.debug_ring_size,
-        persist_command_log=serve_args.persist_command_log,
-        persist_command_db=serve_args.persist_command_db,
-        persist_command_retention=serve_args.persist_command_retention,
-        eval_mode=serve_args.mcp_eval_mode,
-    )
+    try:
+        state = build_state(
+            legacy_module,
+            args,
+            namespace=serve_args.namespace,
+            trace_limit=serve_args.debug_ring_size,
+            persist_command_log=serve_args.persist_command_log,
+            persist_command_db=serve_args.persist_command_db,
+            persist_command_retention=serve_args.persist_command_retention,
+            persist_mutations=serve_args.persist_mutations,
+            eval_mode=serve_args.mcp_eval_mode,
+        )
+    except ValueError as exc:
+        # Only the persisted-overlay loader raises ValueError out of
+        # build_state, and only when the flag is set; an unreadable overlay
+        # is an operator-facing startup refusal, not a traceback. Any other
+        # ValueError re-raises unchanged so a real bug stays a real bug.
+        if serve_args.persist_mutations is None:
+            raise
+        raise SystemExit(f"amc serve: {exc}") from exc
     # Build the structured-log sink before the background threads start and
     # attach it to the state, so a continuous-generation / OTEL failure in the
     # first interval routes through _record_server_error to the configured

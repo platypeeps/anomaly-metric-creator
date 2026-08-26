@@ -357,6 +357,13 @@ clock, is held constant. Renders that embed `state.clock.now()` (e.g.
 clock in normal interactive use; the byte-equality note below covers how the
 contract tests freeze the clock to isolate the overlay.
 
+When `--persist-mutations PATH` is in effect, reset also truncates that file
+to the empty envelope. Reset means baseline in memory *and* on disk: leaving
+the file populated would resurrect the discarded overlay at the next restart,
+which is the one outcome an operator pressing Reset cannot have intended. The
+truncation is not a second code path — reset is an ordinary overlay commit,
+and every commit writes.
+
 Reset intentionally **does not** touch: generated artifacts (they are the
 baseline the overlay sits on — regeneration is `--continuous-generate` or a
 restart), recorded command traces (debug history and eval-harness scoring
@@ -371,4 +378,52 @@ the baseline — with `now()` frozen, only the overlay can move a render. Static
 age columns (`7d`, `0s`) are constants and need no freezing. Sources:
 `README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
-`tests/test_server_reset.py`; `tests/test_server.py`.
+`tests/test_server_reset.py`; `tests/test_server.py`;
+`tests/test_server_mutation_persistence.py`.
+
+## Mutation Overlay Persistence
+
+`--persist-mutations PATH` (serve-only, default off) gives the mutation
+overlay restart continuity through a JSON file. It persists **only the modeled
+overlay** — workload scale/restart/delete state, deleted pods, created and
+deleted generic resources, extra events, and the Helm release overlay. It is
+not a second Kubernetes state model, and it does not persist traces, the
+simulated clock, or generation counters; those have their own stores or are
+deliberately per-run.
+
+Three properties carry the design:
+
+*Every commit writes.* `SimulationMutations._commit_locked()` bumps `version`
+and writes in the same locked block, so there is no flush-on-shutdown
+assumption and a `SIGKILL` loses at most the mutation in flight. Writes go
+through `_atomic_write_text`, so a concurrent reader or a restart never sees a
+torn file. `put_resource` and `delete_resource` write twice per logical
+mutation — they commit state under the lock and record their event just
+outside it, re-entering the `RLock` — and both writes are atomic, so the
+intermediate file is valid state merely missing an event.
+
+*Load refuses rather than half-hydrates.* Corrupt JSON, an unsupported
+`schema_version`, or a key this build does not declare raises at startup with
+the file named. A partially restored overlay would render a snapshot that
+never existed, which is worse than not starting. The envelope is
+`{"schema_version": 1, "mutations": {…}}`; a field change bumps the version.
+
+*Stale components are dropped, not refused.* An entry keyed by a component
+this run does not have — the operator narrowed `--components` — is dropped
+with a stderr `WARNING` naming it, and the post-drop overlay is written back
+so the ghost does not reappear. Keeping it would put the Kubernetes facade out
+of parity with the generated data; refusing outright would strand an operator
+over a compatible narrowing.
+
+Serialization is driven by an explicit `_PERSISTED_MUTATION_FIELDS` /
+`_UNPERSISTED_MUTATION_FIELDS` partition rather than `dataclasses.asdict`
+(which cannot serialize the overlay's `RLock`). A new `SimulationMutations`
+field that appears in neither set raises at serialization time, so it cannot
+be silently omitted from the file.
+
+Point the flag **outside `--output-dir`**: the pre-clean registry does not
+know the file, and `amc validate`'s unknown-file check would flag it. Sources:
+`README.md`; `src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_ops.py`;
+`src/anomaly_metric_creator/server_mutations.py`;
+`tests/test_server_mutation_persistence.py`.
