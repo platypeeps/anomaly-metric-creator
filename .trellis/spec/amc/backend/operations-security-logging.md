@@ -432,6 +432,20 @@ Validate the elements before sorting, not after. `version` goes through
 coerces rather than validates — `True` would load as 1 and `3.9` as 3, and
 `bool` is an `int` subclass, so the check has to exclude it explicitly.
 
+Rejecting unknown field *names* stops one level short for the two
+`**body`-constructed records. `WorkloadMutation(**body)` accepts
+`{"replicas": "3"}` and `HelmReleaseMutation(**body)` accepts
+`{"values": []}`; the crash then lands in `server_ops` -- `min(replicas,
+...)`, `values.items()` -- far from the file that caused it, as a traceback
+rather than the path-naming refusal the boundary promises.
+`_require_field_types` closes that, keyed on the annotation's *source text*:
+`from __future__ import annotations` makes every annotation a string, so
+`_FIELD_TYPE_CHECKS` derives from the declaration instead of duplicating it,
+and a new field is checked the moment it is declared. An annotation form the
+table does not carry **refuses** rather than passing the value through, and
+`test_every_hydrated_field_annotation_has_a_check` fails at authoring time so
+the author sees it before an operator does.
+
 Arming persistence is itself a write, and it fails for reasons that have
 nothing to do with the file's contents — an unwritable directory, a missing
 parent, a failed fsync. `_arm_persistence` converts that `OSError` into the

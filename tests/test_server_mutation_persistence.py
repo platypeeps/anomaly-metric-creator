@@ -612,3 +612,118 @@ def test_serve_lets_an_unrelated_value_error_through(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="unrelated regression"):
         server.serve_main(_serve_argv(path), legacy_module=_StubLegacy)
+
+
+# Refusing unknown field *names* stops one level short: `**body` construction
+# accepts any value type, so the crash lands in `server_ops` -- far from the
+# file that caused it -- as a traceback rather than the path-naming refusal.
+@pytest.mark.parametrize(
+    ("mutations", "expected"),
+    [
+        (
+            {"workloads": {"apiserver": {"replicas": "3"}}},
+            "mutations.workloads['apiserver'].replicas must be an integer or null",
+        ),
+        (
+            {"workloads": {"apiserver": {"generation": True}}},
+            "mutations.workloads['apiserver'].generation must be an integer",
+        ),
+        (
+            {"workloads": {"apiserver": {"deleted": "yes"}}},
+            "mutations.workloads['apiserver'].deleted must be a boolean",
+        ),
+        (
+            {"workloads": {"apiserver": {"pod_status": 3}}},
+            "mutations.workloads['apiserver'].pod_status must be a string",
+        ),
+        (
+            {"release": {"values": []}},
+            "mutations.release.values must be an object with string keys",
+        ),
+        (
+            {"release": {"values": {"replicaCount": 5}}},
+            "mutations.release.values must be an object with string keys",
+        ),
+        (
+            {"release": {"revisions": {}}},
+            "mutations.release.revisions must be an array of JSON objects or null",
+        ),
+        (
+            {"release": {"revisions": [2]}},
+            "mutations.release.revisions must be an array of JSON objects or null",
+        ),
+    ],
+)
+def test_hydrated_field_types_are_refused_when_wrong(tmp_path, mutations, expected):
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, mutations)
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert expected in message
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [server_mutations.WorkloadMutation, server_mutations.HelmReleaseMutation],
+    ids=lambda cls: cls.__name__,
+)
+def test_every_hydrated_field_annotation_has_a_check(cls):
+    """A new field must not reach `**body` construction unvalidated.
+
+    The checks are keyed on annotation source text, so a field declared with
+    a form the table does not carry would refuse at load time -- correct, but
+    only once an operator hits it. Fail here instead, where the author of the
+    new field sees it.
+    """
+    missing = [
+        f"{spec.name}: {spec.type}"
+        for spec in dataclasses.fields(cls)
+        if spec.type not in server_mutations._FIELD_TYPE_CHECKS
+    ]
+
+    assert not missing, f"{cls.__name__} field(s) with no type check: {missing}"
+
+
+def test_an_unvalidatable_annotation_refuses_rather_than_passing_through(
+    tmp_path, monkeypatch
+):
+    """Fail closed: an unknown annotation form must not become an open gate."""
+    path = tmp_path / "mutations.json"
+    _write_overlay(path, {"workloads": {"apiserver": {"replicas": 3}}})
+    monkeypatch.setattr(server_mutations, "_FIELD_TYPE_CHECKS", {})
+
+    with pytest.raises(ValueError, match="which this loader cannot validate"):
+        load_persisted_mutations(path, known_components=KNOWN)
+
+
+# `record_event` re-enters the RLock and commits again, so these write more
+# than once per logical mutation. The docstring on `_persist_locked` used to
+# name only `delete_resource`; pin the rule so the prose cannot drift again.
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda o: o.delete_pod("apiserver-7d9f-abcde", now=NOW),
+        lambda o: o.put_resource("configmap", "flags", {"data": "on"}, now=NOW),
+        lambda o: o.delete_resource("configmap", "legacy-flags", now=NOW),
+    ],
+    ids=["delete_pod", "put_resource", "delete_resource"],
+)
+def test_event_recording_mutators_write_more_than_once(tmp_path, monkeypatch, mutate):
+    path = tmp_path / "mutations.json"
+    overlay = load_persisted_mutations(path, known_components=KNOWN)
+
+    writes = []
+    real = server_mutations._atomic_write_text
+    monkeypatch.setattr(
+        server_mutations,
+        "_atomic_write_text",
+        lambda target, text: (writes.append(target), real(target, text))[1],
+    )
+    mutate(overlay)
+
+    assert len(writes) > 1
+    assert json.loads(path.read_text(encoding="utf-8"))["mutations"]["extra_events"]

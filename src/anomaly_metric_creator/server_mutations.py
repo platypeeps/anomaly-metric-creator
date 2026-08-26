@@ -6,6 +6,7 @@ import datetime as _dt
 import json
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -198,12 +199,13 @@ class SimulationMutations:
     def _persist_locked(self) -> None:
         """Write the overlay to disk. Caller must hold ``self.lock``.
 
-        Called at the end of every mutator's locked block. ``delete_resource``
-        writes twice per logical mutation because it commits its state change
-        under the lock and then records its event outside it (the event
-        re-enters the RLock and persists again). Both writes are atomic, so a
-        crash between them leaves a valid file that is merely missing the
-        event -- never a torn one.
+        Called at the end of every mutator's locked block, so a mutator that
+        records an event after its own commit writes more than once per
+        logical mutation: ``record_event`` re-enters the RLock and persists
+        again. ``put_resource``, ``delete_resource``, and ``delete_pod`` all
+        do this -- stated as the rule rather than as a list, because the list
+        is what drifts. Every write is atomic, so a crash between them leaves
+        a valid file that is merely missing the event -- never a torn one.
         """
         if self.persist_path is None:
             return
@@ -594,8 +596,67 @@ def _hydrate_workloads(
                 f"mutations.workloads['{component}'] has unknown field(s) "
                 f"{', '.join(sorted(unknown))}",
             )
+        _require_field_types(
+            path, f"mutations.workloads['{component}']", WorkloadMutation, body
+        )
         workloads[component] = WorkloadMutation(**body)
     return workloads
+
+
+def _is_int(value: Any) -> bool:
+    """`bool` is an `int` subclass, so `True` would otherwise pass as 1."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+# Field-type checks for the two `**body`-constructed dataclasses, keyed on the
+# annotation's *source text* -- `from __future__ import annotations` makes
+# every annotation a string, so this derives from the declaration rather than
+# duplicating it. A new field is checked the moment it is declared, and an
+# annotation form this table does not know refuses instead of passing the
+# value through: an unchecked boundary field is the failure this prevents.
+_FIELD_TYPE_CHECKS: dict[str, tuple[Callable[[Any], bool], str]] = {
+    "int": (_is_int, "an integer"),
+    "str": (lambda value: isinstance(value, str), "a string"),
+    "bool": (lambda value: isinstance(value, bool), "a boolean"),
+    "int | None": (lambda value: value is None or _is_int(value), "an integer or null"),
+    "list[dict[str, Any]] | None": (
+        lambda value: value is None
+        or (isinstance(value, list) and all(isinstance(item, dict) for item in value)),
+        "an array of JSON objects or null",
+    ),
+    "dict[str, str]": (
+        lambda value: isinstance(value, dict)
+        and all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()),
+        "an object with string keys and string values",
+    ),
+}
+
+
+def _require_field_types(path: Path, what: str, cls: type, body: dict[str, Any]) -> None:
+    """Refuse a persisted field whose JSON type its dataclass cannot hold.
+
+    Rejecting unknown field *names* stops one level short: `**body`
+    construction happily accepts `{"replicas": "3"}` or `{"values": []}`, and
+    the crash then lands in `server_ops` -- `min(replicas, ...)`,
+    `values.items()` -- far from the file that caused it, as a traceback
+    rather than the path-naming refusal the overlay boundary promises.
+    """
+    for spec in fields(cls):
+        if spec.name not in body:
+            continue
+        if spec.type not in _FIELD_TYPE_CHECKS:
+            raise _persist_error(
+                path,
+                f"{what}.{spec.name} is declared {spec.type!r}, which this "
+                "loader cannot validate",
+            )
+        predicate, description = _FIELD_TYPE_CHECKS[spec.type]
+        value = body[spec.name]
+        if not predicate(value):
+            raise _persist_error(
+                path,
+                f"{what}.{spec.name} must be {description}, got {type(value).__name__}",
+            )
 
 
 def _hydrate_release(path: Path, raw: Any) -> HelmReleaseMutation:
@@ -606,6 +667,7 @@ def _hydrate_release(path: Path, raw: Any) -> HelmReleaseMutation:
         raise _persist_error(
             path, f"mutations.release has unknown field(s) {', '.join(sorted(unknown))}"
         )
+    _require_field_types(path, "mutations.release", HelmReleaseMutation, body)
     return HelmReleaseMutation(**body)
 
 
