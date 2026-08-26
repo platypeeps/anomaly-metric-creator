@@ -69,7 +69,10 @@ different grounds than stated.*)
 - No parse_args refactor (decomp step 8 owns that move; this design
   works identically before and after it — the probe calls the same
   public entrypoint).
-- No new config schema features; `server`-key validation untouched.
+- No new config schema features. *(The `server` section was expected to
+  be untouched; review found its refusals unattributed and its values
+  unvalidated at all, so it gained `_config_error` routing and
+  `_probe_config_server_argv`. The allowlist itself is unchanged.)*
 
 ## Affected Files
 

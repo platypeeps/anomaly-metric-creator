@@ -315,7 +315,19 @@ def _probe_config_server_argv(
     stdout = io.StringIO()
     try:
         with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
-            parser.parse_known_args(list(server_argv))
+            _, extra = parser.parse_known_args(list(server_argv))
+        if extra:
+            # Every argv token here came from an allowlisted key, so the parser
+            # consuming none of it means `_SERVE_CONFIG_SERVER_KEYS` has drifted
+            # from the parser -- a key nobody can act on. `parse_known_args`
+            # would drop it in silence; the real parse below would too, because
+            # it must tolerate generate flags in the same argv.
+            raise _config_error(
+                config_path,
+                "server section produced flag(s) the serve parser does not "
+                f"consume: {' '.join(extra)}. _SERVE_CONFIG_SERVER_KEYS has "
+                "drifted from the parser.",
+            )
     except SystemExit as exc:
         lines = [line for line in stderr.getvalue().strip().splitlines() if line]
         diagnostic = lines[-1] if lines else f"serve parser exited with status {exc.code}"

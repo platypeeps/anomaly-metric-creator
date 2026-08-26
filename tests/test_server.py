@@ -17,7 +17,7 @@ import urllib.request
 
 import pytest
 
-from anomaly_metric_creator import server, server_traces
+from anomaly_metric_creator import server, server_config, server_traces
 
 REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
@@ -3005,6 +3005,58 @@ def test_a_wrong_suffix_refusal_names_the_file(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         server._load_serve_config(config_path)
     assert str(excinfo.value).startswith(f"--config {config_path}: ")
+
+
+def test_the_config_cluster_is_patched_at_its_own_module(tmp_path, monkeypatch):
+    """`server.<name>` is a re-import binding, not the definition.
+
+    The cluster's functions call each other in `server_config`'s namespace, so
+    patching the name on `server` rebinds only `server`'s copy and the real
+    call is unaffected. This pins which module a stub must target, so the
+    re-import block is not mistaken for an interception point.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"server": {"port": 9001}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+
+    def boom(*args, **kwargs):
+        raise AssertionError("patched copy should not be reached")
+
+    monkeypatch.setattr(server, "_load_serve_config", boom)
+    serve_args, _ = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert serve_args.port == 9001
+
+    monkeypatch.setattr(server_config, "_load_serve_config", boom)
+    with pytest.raises(AssertionError):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+
+
+def test_a_server_key_the_parser_cannot_consume_is_refused(
+    tmp_path, monkeypatch, capsys
+):
+    """An allowlist that drifts from the parser must not fail silently.
+
+    `parse_known_args` drops what it cannot consume, and the real parse must
+    keep doing so -- generate flags travel in the same argv. So the probe
+    checks the leftovers itself.
+    """
+    monkeypatch.setattr(
+        server_config,
+        "_SERVE_CONFIG_SERVER_KEYS",
+        server_config._SERVE_CONFIG_SERVER_KEYS | {"not_a_serve_flag"},
+    )
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"not_a_serve_flag": "x"}}), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        server_config._parse_serve_args(
+            ["--config", str(config_path)], server._build_serve_parser()
+        )
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "drifted" in stderr
+    assert "--not-a-serve-flag" in stderr
 
 
 def test_a_bad_server_config_value_is_rejected_naming_the_file(tmp_path, capsys):

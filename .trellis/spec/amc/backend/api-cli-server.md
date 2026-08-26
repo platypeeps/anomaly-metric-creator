@@ -226,7 +226,11 @@ config file rather than surfacing later as an unattributed parser error.
 `server` keys check against the `_SERVE_CONFIG_SERVER_KEYS` allowlist; `server`
 values are checked by `_probe_config_server_argv`, which parses the
 config-derived server argv through the real serve parser on its own, the
-counterpart of the `generate` probe below. Without it a bad value fell through
+counterpart of the `generate` probe below. It also refuses what the parser
+does not *consume*: every token there came from an allowlisted key, so a
+leftover means `_SERVE_CONFIG_SERVER_KEYS` has drifted from the parser. Nothing
+else can catch that -- the real parse must keep tolerating unconsumed tokens,
+since generate flags travel in the same argv. Without it a bad value fell through
 to the combined parse and failed as a bare `argument --port: invalid int
 value`, naming no file. `generate` keys have no
 introspectable allowlist -- `parse_args` builds its parser inline -- so **the
