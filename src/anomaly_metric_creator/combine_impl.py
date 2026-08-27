@@ -99,6 +99,13 @@ def combine_logs_unified(
     ``layout[c]["exists"]`` flags so direct callers get a consistent
     user-facing error instead of an unhandled ``FileNotFoundError``
     later in the loop.
+
+    **CLI-internal surface.** This function is part of a CLI-internal
+    surface, not a supported programmatic API: it raises ``SystemExit``
+    on missing inputs and prints progress to stdout unconditionally.
+    Both are documented semantics, not defects. See
+    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    Posture.
     """
     input_dir = Path(input_dir)
     if output_file is None:
@@ -429,6 +436,13 @@ def combine_logs(input_dir, components=None, *, assume_monotonic_wide_components
       (``timestamp, component, id, host, pod, az, region, tenant,
       metric, value``), so the order argument has no column-layout
       effect in the long form.
+
+    **CLI-internal surface.** This function is part of a CLI-internal
+    surface, not a supported programmatic API: it raises ``SystemExit``
+    on missing inputs and prints progress to stdout unconditionally.
+    Both are documented semantics, not defects. See
+    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    Posture.
     """
     input_dir = Path(input_dir)
     if components is None:

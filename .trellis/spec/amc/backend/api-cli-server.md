@@ -117,6 +117,43 @@ Sources: `pyproject.toml`; `uv.lock`;
 `src/anomaly_metric_creator/server_mcp.py`; `tests/test_cli.py`;
 `tests/test_version.py`.
 
+## Library-API Error Posture
+
+The functions re-exported by the package facades (`combine.py`, `otel.py`,
+`schema.py`) are a **CLI-internal surface, not a supported programmatic API**.
+Three behaviors follow from that and are documented semantics rather than
+defects: importable modules raise `SystemExit` deep in the call stack
+(`otlp.py`'s protobuf-ImportError sites, `csv_layout.py`'s file-descriptor
+preflight, `combine_impl.py`'s missing-input guards); the combine path prints
+progress to stdout unconditionally; and the gauge writer and OTEL gauge
+streamer skip a per-component CSV that is missing from disk instead of
+raising. Do not "fix" these into library-grade error handling, and do not
+hedge the wording into "may change later" -- state the posture.
+
+The grounds are that this is a CLI-first tool (`Private :: Do Not Upload`,
+git-only install, `main()` is the only real entry point) with no known
+programmatic embedder, so library-grade error handling is unjustified work at
+LOW severity. New facade exports inherit this posture and should carry the
+same note -- but the note names the behaviors *that module* actually has, not
+all three. A uniform copy of the full list was tried first and review caught
+it as inaccurate: `combine.py` does not skip inputs silently, `otel.py` warns
+on stderr rather than stdout, and `schema.py` raises ordinary exceptions and
+enumerates nothing. Inheriting the posture is not inheriting the symptom
+list.
+
+There is exactly one revisit trigger: a supported `import`-and-call API
+becoming a real requirement. If that happens, the rework belongs inside the
+typed-boundaries audit work (ledger A-008/A-009/A-010), not as a separate
+pass, because that task is already reshaping the same signatures. Sources:
+`src/anomaly_metric_creator/combine_impl.py`;
+`src/anomaly_metric_creator/otel_stream.py`;
+`src/anomaly_metric_creator/gauges_impl.py`;
+`src/anomaly_metric_creator/otlp.py`;
+`src/anomaly_metric_creator/csv_layout.py`;
+`src/anomaly_metric_creator/combine.py`; `src/anomaly_metric_creator/otel.py`;
+`src/anomaly_metric_creator/schema.py`;
+`.trellis/tasks/07-06-library-api-error-posture/prd.md`.
+
 ## Output Contracts
 
 Generated artifacts live under `--output-dir`; cleanup must remove stale files

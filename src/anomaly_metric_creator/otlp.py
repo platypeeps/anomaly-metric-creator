@@ -6,6 +6,13 @@ Extracted verbatim from ``legacy.py`` (decomposition step 2; see
 surface is unchanged; new code should import from here. The protobuf
 variants import ``opentelemetry.proto`` lazily inside each function so
 the JSON path works without the optional protobuf dependency installed.
+
+**CLI-internal surface.** The protobuf builders raise ``SystemExit`` --
+not ``ImportError`` -- when ``opentelemetry.proto`` is absent, because
+this module is a CLI-internal surface rather than a supported
+programmatic API. That is documented semantics, not a defect. See
+``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+Posture.
 """
 
 from __future__ import annotations
