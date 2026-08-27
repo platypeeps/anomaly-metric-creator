@@ -1747,3 +1747,51 @@ Archiving 07-06 and 07-09 in PRs #413 and #412 left four spec cross-references p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 90: File the doc-drift lint and the serve-flag typo hole as tracked tasks
+<!-- trellis-session: v=2 fp=c555b89d0bad3f1f -->
+
+**Date**: 2026-08-26
+**Task**: File the doc-drift lint and the serve-flag typo hole as tracked tasks
+**Package**: amc
+**Branch**: `chore/track-doc-drift-lint-and-config-abbrev`
+
+### Summary
+
+The review-learnings pass over PRs #412, #413, and #414 clustered every finding in those three PRs as contract-documentation-drift. This session files the two follow-ups that came out of it, both P2 and both still in planning: a mechanical lint for the drift the prose rule in CLAUDE.md is not preventing, and a decision task for serve-level flag typos, where 'amc serve --conf f.json' starts a server with none of the file's settings applied and says nothing. Six review rounds hardened both PRDs; the unrelated spec-reference fix in the original diff was split out and landed as PR #418.
+
+### Main Changes
+
+- 08-26-doc-drift-lint: PRD sorting eleven findings into three mechanically-checkable groups and one out-of-scope group, with the scope decision itself as the first deliverable
+- 08-26-config-flag-typo-refusal: PRD with three candidate rules, probe evidence, and the requirement that the rule cover --por 9999 as well as --conf
+- Review round 1: the doc-drift lint must never execute a command string quoted in documentation -- doc text is attacker-controllable and CI would run it with the job's credentials. Rewritten to parse operands and search in-process
+- Review rounds 2-6: named the BRE/ERE/Python-re dialect gap that not-executing-grep creates, rewrote the CI-registration requirement from check_guard_ci_coverage.py's own docstring after two incomplete restatements, and added the check_ci_review_contract.py lockstep as a fifth registration site
+- Fixed a leak in the config PRD's own text: 'name the offending token' contradicted the no-values rule one bullet later, since argparse takes a flag and its value joined by = as a single argv element
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de26475` | chore(trellis): track the doc-drift lint and the serve-flag typo hole |
+| `d820092` | docs(trellis): close five review findings on the two filed PRDs |
+| `07425d1` | docs(trellis): close the second review round on the two filed PRDs |
+| `d609a5f` | docs(trellis): close the third review round on the two filed PRDs |
+| `1f0f689` | docs(trellis): source the CI-registration requirement from the guard itself |
+| `55a528b` | docs(trellis): add the review-tooling lockstep and unmangle one bullet |
+
+### Testing
+
+- [OK] sd-ai-command-pack-review-preflight.mjs: 0 failure(s), 1 warning(s) -- the two-task-directory confirmation, answered in the PR body
+- [OK] pre-commit run --files on both PRDs and task.json: role-name leaks, Trellis artifact hygiene, acceptance-criteria commands, repomix map freshness all pass
+- [OK] sd-review --scope pr --pr 417: converged to 2 findings, dispositioned rebutted and accepted
+- [OK] Classifier name verified against both consuming guards before rebutting: check_guard_ci_coverage.py:149 and check_ci_review_contract.py:37 both assign Path("scripts/classify-ci-changes.sh")
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
