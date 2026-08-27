@@ -62,15 +62,29 @@ implemented with a safe non-monotonic timestamp model.
 - [x] The supported-vs-unsupported decision is recorded with rationale in the
       PRD or a follow-on design note before implementation starts.
       (See ## Decision (2026-08-26, sdelmas).)
-- [ ] If kept unsupported, user-facing and agent-facing docs name the
-      `--inject-dst-artifact-day` plus multi-instance incompatibility as an
-      intentional design boundary.
-- [ ] If implemented, tests cover the affected artifact families:
+- [x] The obligation the chosen outcome carries is met. Kept unsupported was
+      chosen, so its obligation applies: user-facing and agent-facing docs name
+      the `--inject-dst-artifact-day` plus multi-instance incompatibility as an
+      intentional design boundary — `README.md` (the
+      `--instances-per-component` and `--instance-config` rows, and the gauge
+      streaming section), `CLAUDE.md` working rules, and `api-cli-server.md`
+      § CLI Surface.
+
+      The two outcomes were mutually exclusive, so this is one criterion, not
+      two. Implementing it would have obliged the opposite work — tests across
       per-component CSVs, long-form/gauges, schema/validate, combine, and OTEL
-      gauge streaming.
-- [ ] Error messages for rejected combinations remain clear and point to the
-      supported alternative (`--inject-dst-artifact-day 0`) when unsupported.
-- [ ] No duplicate Trellis task is created for the same boundary.
+      gauge streaming — and none of it was done, because it was the rejected
+      option. It is recorded as rejected in the Decision section below rather
+      than carried here as a criterion no outcome of this task could satisfy.
+- [x] Error messages for rejected combinations remain clear and point to the
+      supported alternative. Verified against the real parser:
+      `--inject-dst-artifact-day 1 --instances-per-component 2` exits with
+      "…by design (per-instance DST splicing produces non-monotonic timestamps
+      inside each long-form row block, which downstream long-form merges in
+      gauges.csv / combined_metrics_unified.csv cannot resolve); pass
+      --inject-dst-artifact-day 0 or use the default single-instance mode".
+- [x] No duplicate Trellis task is created for the same boundary.
+      (`ls .trellis/tasks/ | grep -i 'dst\|splice'` returns only this one.)
 
 ## Decision (2026-08-26, sdelmas)
 
