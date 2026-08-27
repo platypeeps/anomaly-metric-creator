@@ -67,26 +67,48 @@ mentions and reads them as ownership; they are not.
   extraction, which would delete its entry outright rather than assign it an
   owner. Check that before writing a PRD for it.
 - A deleted entry takes its rationale with it, so record every disposition —
-  including "clears the cap, entry removed" — in this task's own archived
-  record, not only in the `RATCHET` reason. The reason field is the *live*
+  including "clears the cap, entry removed" — in this task's `design.md`, not
+  only in the `RATCHET` reason. `design.md` is the technical decision record
+  and is archived with the task, so a per-module table there survives the
+  entry's deletion. The reason field is the *live*
   statement of who owns a module today; it cannot also be the history of why a
   module stopped being enrolled, because the guard's stale-entry rule requires
   deleting it. Anyone later asking why `cli_args.py` is not in the table needs
   somewhere to read the answer.
 - Make the class mechanically impossible to recreate: `analyse()` must
-  validate the reason, not just carry it, with the same `0` / `1` / `2` exit
-  contract.
+  validate the reason, not just carry it.
+- A malformed or orphaned reason exits `1`, not `2`. `2` is reserved for
+  `StructuralError` — the repository is not shaped the way the lint can read,
+  as when the package directory is missing. `RATCHET` is source inside the lint
+  itself, its remedy is a one-line edit by whoever is already in the diff, and
+  it is the same family as the existing stale-entry rule, which is also a
+  violation rather than a structural error. Keep `2` meaning "cannot check"
+  rather than "checked, and the table is wrong".
 - Specify the marker grammar and anchor it, or the check passes on text that
   merely looks right. "Starts with `permanent:` or mentions a task" is not a
   rule — `debt:` with no slug after it, a slug that matches an existing
   directory only as a substring, two slugs where one is archived, or the word
   `permanent` appearing mid-sentence would all slip through. Require an
   anchored prefix, exactly one owner token for `debt:`, and resolution by exact
-  directory name rather than substring search. Both existing well-formed
-  entries already fit that shape — `permanent: one ordered data-only registry…`
-  and `debt: 07-06-server-ops-decomposition, extracting leaves…` — so the
-  grammar is being written down, not invented. Test each malformed shape
-  above.
+  directory name rather than substring search. Concretely, the grammar to
+  implement:
+
+  - The reason begins at index `0` with `permanent: ` or `debt: `. Not
+    contains, not after leading whitespace — at index `0`.
+  - After `permanent: `, the remainder is free prose saying why the file is not
+    behavior. Nothing further is validated.
+  - After `debt: `, the owner token is the run of non-whitespace characters up
+    to the first `,`, `;`, or end of string. Exactly one such token; whitespace
+    inside it is a violation, not a second owner.
+  - That token must equal, by exact string comparison, the name of a directory
+    directly under `.trellis/tasks/`. Not a path, not a prefix, not a match
+    against the archive.
+  - Everything after the terminator is free prose.
+
+  Both existing well-formed entries already fit — `permanent: one ordered
+  data-only registry…` and `debt: 07-06-server-ops-decomposition, extracting
+  leaves…` — so this is being written down, not invented. Test each malformed
+  shape above.
 - Resolve the coupling question that guard creates, and record the answer.
   `check_module_size.py` is stdlib-only and reads nothing but
   `src/anomaly_metric_creator/`. Validating a task reference makes a source
