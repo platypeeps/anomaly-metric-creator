@@ -94,7 +94,8 @@ Candidate rules, to be decided rather than assumed:
 - [ ] The chosen rule is recorded with rationale, including why the rejected
       candidates were rejected.
 - [ ] `amc serve --conf f.json` no longer starts a server with the file
-      unapplied, covered by a test asserting the refusal names the token.
+      unapplied, covered by a test asserting the refusal names the flag —
+      `--conf`, not the whole token — and carries no value.
 - [ ] `amc serve --por 9999` is handled per the recorded decision, covered by
       a test — whether that is a refusal or an explicitly-reasoned exemption.
 - [ ] A legitimate generate flag forwarded through `amc serve` still reaches

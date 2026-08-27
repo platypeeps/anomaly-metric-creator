@@ -78,6 +78,19 @@ have:**
 - False positives are the failure mode that kills a lint. Prefer refusing to
   judge over judging wrong: a construct the check cannot resolve is not a
   violation.
+- Not executing `grep` means reimplementing it, and the two do not share a
+  regex dialect. `grep` is POSIX BRE by default, `grep -E` is ERE, `grep -F` is
+  literal, and none of the three is Python's `re`: `[[:alpha:]]` is a class in
+  BRE and a character set in Python, `\|` is alternation in BRE and a literal
+  pipe in Python, and `-i` changes both. Getting this silently wrong turns the
+  lint from a check into a source of the exact drift it exists to catch. So
+  define the accepted dialect subset explicitly, translate it to `re` in one
+  named function, and refuse any pattern carrying a construct outside the
+  subset — the rule above, applied to the pattern instead of the command.
+  `inject.dst`, the pattern from #412 that motivates this check, sits inside
+  any reasonable subset; that is the bar, not full BRE. Pin the translation
+  with a test per accepted construct, asserting the translated `re` and `grep`
+  agree on the same input.
 - Follow the repo's guard conventions: full contract in the module docstring,
   `0` clean / `1` violation / `2` structural error, and a companion test file.
 - Registration is two sites, not one, and only the second is enforced.
