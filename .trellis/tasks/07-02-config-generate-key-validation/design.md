@@ -28,9 +28,16 @@ No parser extraction, no hand-list, zero drift:
    surfaces it as `SystemExit(2)`. Run a **probe parse**: call `legacy.parse_args(argv)`
    inside a trap that captures `SystemExit` + intercepted stderr.
    On failure, raise `ValueError` shaped like the existing
-   `unknown_server` message — naming the config path and embedding the
-   parser's own diagnostic (which names the bogus `--componentss` flag,
-   giving per-key attribution). The probe is exactly the parse
+   `unknown_server` message — naming the config path and the flags the
+   section produced, which gives per-key attribution.
+   *(Revised 2026-08-26. This originally said "embedding the parser's own
+   diagnostic". Rounds 10–13 showed that diagnostic cannot be sanitized:
+   argparse echoes a value in more forms than it was written in, and a
+   YAML or JSON parse error quotes the file's own text. No config error
+   carries anything derived from a config value now; the parser's streams
+   are captured and compared, never reported, and the operator is pointed
+   at the command to run for themselves.)*
+   The probe is exactly the parse
    `serve_main` would run later, moved earlier with file attribution —
    no behavior it could reject survives today anyway.
 2. Audit `_config_mapping_to_argv` for silent-drop
@@ -81,7 +88,14 @@ different grounds than stated.*)
   scanning past `--`, config values emitted as separate argv tokens so a
   leading `-` was read as an option, and parser diagnostics echoing config
   values including secrets). All three predate this task; all three sit in
-  the cluster it moved.
+  the cluster it moved. Review kept finding more of the same shape; the
+  full landed list, and the reasoning for taking each one rather than
+  deferring it, is in `prd.md` § Scope As Landed. One found this way was
+  *not* taken: a mistyped `--conf` is unrecognized by the serve parser,
+  so the config is silently ignored and its `auth_token` never applied.
+  That is serve-flag typo handling in general (`--por 9999` fails the
+  same way), not `--config` validation, and a guard for the one flag
+  would be arbitrary. Left outstanding for its own task.
 - No new config schema features. *(The `server` section was expected to
   be untouched; review found its refusals unattributed and its values
   unvalidated at all, so it gained `_config_error` routing and

@@ -3231,6 +3231,28 @@ def test_a_config_error_reports_flag_names_and_no_values():
     assert server_config._config_flag_names([]) == "(none)"
 
 
+@pytest.mark.parametrize("section", ["server", "generate"])
+def test_two_keys_naming_the_same_flag_are_refused(tmp_path, capsys, section):
+    """`otel_verbose` and `otel-verbose` are distinct keys, one flag.
+
+    Conversion emits it twice and argparse keeps the last, so one of the two
+    settings vanishes -- the exact silent-drop this validation exists to
+    remove. Both sections normalize the same way, so both are checked.
+    """
+    key = "otel_verbose" if section == "generate" else "auth_token"
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({section: {key: True, key.replace("_", "-"): True}}),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert f"all name --{key.replace('_', '-')}" in stderr
+
+
 def test_a_yaml_error_reports_a_position_not_the_files_own_words(tmp_path, capsys):
     """PyYAML's `problem` interpolates the document; argparse's `msg` does not.
 
@@ -3239,6 +3261,7 @@ def test_a_yaml_error_reports_a_position_not_the_files_own_words(tmp_path, capsy
     `msg` comes from a fixed vocabulary and is safe to keep, which is why the
     two arms differ.
     """
+    pytest.importorskip("yaml")
     config_path = tmp_path / "serve-config.yaml"
     config_path.write_text("server:\n  port: *s3cret\n", encoding="utf-8")
     parser = server._build_serve_parser()
@@ -3255,6 +3278,7 @@ def test_a_yaml_constructor_error_still_names_the_file(tmp_path, capsys):
     It escaped the refusal entirely -- unattributed, and carrying the value.
     Anything the loader raises on an untrusted file belongs to that file.
     """
+    pytest.importorskip("yaml")
     config_path = tmp_path / "serve-config.yaml"
     config_path.write_text('server:\n  port: !!int "s3cret"\n', encoding="utf-8")
     parser = server._build_serve_parser()

@@ -118,6 +118,26 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
                 f"{section_name} keys must be strings; got "
                 + ", ".join(repr(key) for key in non_string),
             )
+    # `otel_verbose` and `otel-verbose` are distinct mapping keys that both
+    # become `--otel-verbose`. Conversion emits the flag twice and argparse
+    # keeps the last, so one of the two settings vanishes silently -- exactly
+    # the failure mode this validation exists to remove. Refuse the collision
+    # rather than pick a winner.
+    for section_name, mapping in (("server", server), ("generate", generate)):
+        seen: dict[str, list[str]] = {}
+        for key in mapping:
+            seen.setdefault("--" + key.replace("_", "-"), []).append(key)
+        collisions = {flag: keys for flag, keys in seen.items() if len(keys) > 1}
+        if collisions:
+            raise _config_error(
+                path,
+                f"{section_name} keys "
+                + "; ".join(
+                    f"{', '.join(sorted(keys))} all name {flag}"
+                    for flag, keys in sorted(collisions.items())
+                )
+                + ". Keep one.",
+            )
     unknown_server = set(server) - _SERVE_CONFIG_SERVER_KEYS
     if unknown_server:
         # Routed through _config_error like the generate arm: a bad key in
@@ -266,7 +286,7 @@ def _config_flag_names(argv: list[str]) -> str:
 def _rerun_hint(command: str) -> str:
     """Point the operator at the parser's own message without repeating it."""
     return (
-        f" Run the {command} command directly with those flags to see the "
+        f" Run the {command} command with that section's settings to see the "
         "parser's own message; it is not repeated here, because a parser "
         "diagnostic quotes config values back and any of them may be a secret."
     )

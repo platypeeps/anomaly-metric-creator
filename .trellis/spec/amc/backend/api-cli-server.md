@@ -246,8 +246,10 @@ to the combined parse and failed as a bare `argument --port: invalid int
 value`, naming no file. `generate` keys have no
 introspectable allowlist -- `parse_args` builds its parser inline -- so **the
 real parser is the allowlist**: the config-derived generate argv is parsed on
-its own in a probe that traps `SystemExit` and captures both streams, and
-argparse's own diagnostic is embedded in a `ValueError` naming the config path.
+its own in a probe that traps `SystemExit` and captures both streams, and a
+failure becomes a `ValueError` naming the config path and the flags involved.
+The captured streams are compared, never reported -- see the no-values rule
+below.
 Do not hand-maintain a second list of generate keys; it would drift from the
 parser on every new flag. The probe is the same parse `serve_main` runs later,
 so it must reject nothing that would have survived anyway -- but a valid key

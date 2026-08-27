@@ -46,13 +46,28 @@ predates the task:
 - `server` keys were name-checked but their values never were.
 - Config values were emitted as separate argv tokens, so a value starting
   with `-` was read as an option (`namespace: "-weird"` failed).
-- Parser diagnostics echoed config values back, including secrets.
-- A `generate` key naming a serve flag silently configured the server.
-- A YAML non-string key escaped as `AttributeError` past the refusal.
+- Parser diagnostics echoed config values back, including secrets. Masking
+  them failed four review rounds running -- argparse echoes a value in more
+  forms than it was written in, whitespace and newlines defeat a per-line
+  pass, and YAML and JSON parse errors quote the file's own text. Landed
+  instead as a structural rule: no config error carries anything derived
+  from a config value, only the file, the section, and the flag names.
+- A `generate` key naming a serve flag silently configured the server, and
+  one arriving bare (`host: true`) died in the combined parse naming no file.
+- A YAML non-string key escaped as `AttributeError` past the refusal, and a
+  YAML constructor error (`port: !!int "abc"`) escaped as a bare `ValueError`.
+- Two config keys differing only in `_` vs `-` both became the same flag, so
+  one setting vanished silently.
 - `_strip_serve_config_arg` scanned past `--`.
 
 The acceptance criteria below cover the original scope; these are recorded
 so the difference is deliberate and reviewable, not silent.
+
+Found and **not** taken: a mistyped `--conf` is unrecognized by the serve
+parser, so the config is silently ignored and its `auth_token` never applied.
+That is serve-flag typo handling in general -- `--por 9999` fails the same
+way -- rather than `--config` validation, and a guard for this one flag would
+be arbitrary. Left outstanding for its own task.
 
 ## Requirements
 
