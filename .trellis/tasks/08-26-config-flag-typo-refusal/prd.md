@@ -81,8 +81,10 @@ Candidate rules, to be decided rather than assumed:
 - A refusal must name the **flag** and say what to do, matching the
   attribution posture `--config` errors now hold. The flag is the portion
   before the first `=`, never the whole token: argparse accepts
-  `--auth-token=s3cret` as a single argv element, so echoing "the offending
-  token" is how the value leaks. `server_config._config_flag_names` already
+  `--auth-token=<the token itself>` as a single argv element, so echoing "the
+  offending token" is how the value leaks. (Spelling that example with a
+  realistic-looking literal is its own small hazard — the review toolchain
+  masks it, and a reader gets a requirement with a hole in it.) `server_config._config_flag_names` already
   does exactly this split and is the function to reuse.
 - Do not print any flag's *value*, whether it arrived as a separate argv
   element or after an `=`. `--auth-token` is a serve flag, and a typo'd key is

@@ -93,15 +93,21 @@ have:**
   agree on the same input.
 - Follow the repo's guard conventions: full contract in the module docstring,
   `0` clean / `1` violation / `2` structural error, and a companion test file.
-- Registration is two sites, not one, and only the second is enforced.
-  `tools/check_guard_ci_coverage.py` checks that the lint runs in every lane
-  its watched files can select — but "can select" is decided upstream by
-  `scripts/classify_ci_changes.sh`, which maps a changed path to LIGHT / QUICK
-  / FULL. A lint watching a path the classifier does not route to any lane is
-  consistent by that guard's arithmetic and still never runs on the change that
-  matters. Confirm the classifier routes the new lint's watched paths, and
-  extend it in the same diff if it does not.
-- Add the lint to the `CLAUDE.md` repository-lints table in the same diff.
+- Registration is four sites, and only some of them are enforced. Derive the
+  set from the last lint the repo added rather than from this list — the commit
+  that introduced `tools/check_scope_heading_mirrors.py` touched
+  `.pre-commit-config.yaml` (the hook, its `files:` pattern, and whether it is
+  `always_run`), `.github/workflows/ci.yml` (the lane that invokes it),
+  `CLAUDE.md` (the repository-lints table row), and a companion test file,
+  alongside the lint itself. All four in the same diff.
+- One of those four has a trap worth naming. `tools/check_guard_ci_coverage.py`
+  checks that the lint runs in every lane its watched files *can* select — but
+  "can select" is decided upstream by `scripts/classify_ci_changes.sh`, which
+  maps a changed path to LIGHT / QUICK / FULL. A lint whose `files:` pattern
+  watches a path the classifier does not route to any lane is consistent by
+  that guard's arithmetic and still never runs on the change that matters.
+  Confirm the classifier routes the new lint's watched paths, and extend it in
+  the same diff if it does not.
 
 ## Acceptance Criteria
 
