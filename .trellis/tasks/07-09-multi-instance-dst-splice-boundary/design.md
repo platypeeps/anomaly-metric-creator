@@ -45,14 +45,16 @@ task-start gate). The grounds are structural, not effort-shy:
      intentional ... boundary"), the `--instance-config` row ("only the
      intentional ... boundary remains rejected"), and the gauge-streaming
      bullet ("intentionally incompatible").
-   - `CLAUDE.md` — **no DST text exists** (`grep -in "dst" CLAUDE.md`
-     returns nothing); CLAUDE.md is now a slim adapter. There is no
+   - `CLAUDE.md` — **no DST text exists** (at the time this was written,
+     `grep -in "dst" CLAUDE.md` returned nothing; this task adds the
+     bullet); CLAUDE.md is now a slim adapter. There is no
      "gauges section" and no "multi-instance section" paragraph to edit.
      The posture must be *added*, and per CLAUDE.md's own routing rule
      ("update the focused Trellis spec first") it lands there only as a
      short adapter line.
    - `.trellis/spec/amc/backend/` — **no file carries the posture**
-     (`grep -rn "inject.dst" .trellis/spec/` returns nothing). The home
+     (at the time this was written, `grep -rn "inject.dst" .trellis/spec/`
+     returned nothing; this task's own sweep is what changes that). The home
      is `api-cli-server.md` § CLI Surface, which owns flag-interaction
      and parse-time validation rules per CLAUDE.md's routing table.
 2. **Verify guard coverage** and top up only if thin: parse-time
