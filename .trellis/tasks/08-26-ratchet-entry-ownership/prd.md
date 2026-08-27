@@ -1,0 +1,112 @@
+# Give every ratchet entry an owner or an exemption
+
+## Goal
+
+`tools/check_module_size.py` already states the rule, in its own docstring:
+
+> Reasons in `RATCHET` are required and are printed by `--list`. Keep them
+> pointing at the owning epic, so an enrolled module is traceable to the work
+> that will remove it.
+
+Five of the seven entries do not. They say "not yet decomposed" and name no
+task, so the guard enforces debt that nobody owns and that no epic will ever
+retire. The rule is prose, `reason` is never read by `analyse()` — only printed
+by `--list` — and the drift is total in the direction that matters.
+
+This is the same shape as `08-26-doc-drift-lint` and the same remedy
+`CLAUDE.md` prescribes: prefer a mechanical `tools/check_*.py` lint over a
+prose rule whenever the pattern is greppable.
+
+## The evidence
+
+The enrolled table as of this filing, by whether the reason names an owner:
+
+**Owned — one entry:**
+
+- `server_ops.py` 4424, `debt: 07-06-server-ops-decomposition`. That epic
+  exists, is active, and says explicitly that it "stays open until the file is
+  under the cap." This is the shape the docstring asks for.
+
+**Permanently exempt — one entry:**
+
+- `scenario_catalog.py` 2030, `permanent: one ordered data-only registry`. Not
+  debt, and correctly not pointed at a task.
+
+**Orphaned — five entries, all reading "not yet decomposed":**
+
+- `server.py` 1978 — HTTP serve facade. Its reason is the longest in the table
+  and narrates three prior ceiling changes, but the "server.py decomposition
+  follow-up" it twice defers work to does not exist as a task.
+- `server_mcp.py` 1453 — MCP surface.
+- `server_debug_ui.py` 1194 — debug UI, most of it an embedded HTML/JS
+  template.
+- `server_traces.py` 1086 — trace and overlay state.
+- `cli_args.py` 960 — CLI parser, 160 lines over the cap and the closest to
+  clearing it.
+
+`07-06-server-ops-decomposition` names four of those five, but as constraints
+its extractions must not break — "facades, `server.py`'s alias block, and
+`server_mcp.py`'s imports must all keep resolving" — not as scope. Its goal
+sentence is `server_ops.py` alone. A grep for the module name finds those
+mentions and reads them as ownership; they are not.
+
+## Requirements
+
+- Decide a disposition for each of the five, and record it in that entry's
+  reason. Two dispositions exist today and the decision is which one applies:
+  `debt: <active-task>` or `permanent: <why this file is not behavior>`.
+  Inventing a third is in scope only if neither fits and the reason why is
+  recorded.
+- File a follow-up task for every module that gets a `debt:` verdict, before
+  the reason cites it. A reason pointing at a task that does not exist is the
+  defect this task closes, not a form of it.
+- `server_debug_ui.py` is the one plausible `permanent:` candidate on the
+  `scenario_catalog.py` precedent — a mostly-declarative embedded template
+  rather than behavior. Evaluate it; do not assume it.
+- `cli_args.py` at 960 is 160 over the cap and may clear it with one
+  extraction, which would delete its entry outright rather than assign it an
+  owner. Check that before writing a PRD for it.
+- Make the class mechanically impossible to recreate: `analyse()` must
+  validate the reason, not just carry it. A reason that neither starts with
+  `permanent:` nor names a task directory that exists and is active is a
+  violation, with the same `0` / `1` / `2` exit contract.
+- Resolve the coupling question that guard creates, and record the answer.
+  `check_module_size.py` is stdlib-only and reads nothing but
+  `src/anomaly_metric_creator/`. Validating a task reference makes a source
+  lint depend on `.trellis/` layout. Either accept that and say why, or find a
+  form that does not — a `# noqa`-style marker, a sibling registry, an
+  `--check-owners` mode that only CI runs.
+- An owning task that archives while its module is still over the cap must
+  fail the guard. That is the intended signal, not a false positive: the epic
+  convention is that a decomposition task stays open until its module clears
+  the cap, so an archived owner plus an enrolled module means the entry was
+  orphaned again. Say so in the docstring so a future reader does not "fix" it
+  by pointing the check at the archive.
+
+## Acceptance Criteria
+
+- [ ] Each of the five orphaned entries carries a recorded disposition, and the
+      rationale for each is written down — including any module whose verdict
+      is that it clears the cap instead.
+- [ ] Every `debt:` reason names a task directory that exists and is active.
+- [ ] `analyse()` rejects an orphaned reason, covered by a test for each
+      rejection case: no marker, a `debt:` naming a nonexistent task, and a
+      `debt:` naming an archived one.
+- [ ] The guard passes on the live tree, and a live-tree test pins that.
+- [ ] The coupling decision is recorded in the module docstring, with the
+      archived-owner rule stated so it is not later mistaken for a bug.
+- [ ] `tools/check_guard_ci_coverage.py` passes; the lint's watched files still
+      select the lanes it runs in after any `files:` change.
+
+## Notes
+
+- Source: backlog survey, 2026-08-26. Found while answering which enrolled
+  modules had no owning task, after `07-06-server-ops-decomposition` was
+  observed at 9/9 children done with `server_ops.py` still 5.5× the cap.
+- Sibling in shape to `08-26-doc-drift-lint`: a prose rule stated in the right
+  place, violated by the majority of the cases it governs, with nothing running
+  it. Coordinate the two if both are in flight — neither should invent a second
+  convention for how a guard reports an unowned reference.
+- Priority P2 rather than P3 because the cost is a handful of decisions plus a
+  small guard, and the entries silently re-authorize between 960 and 1978 lines
+  each with no path to ever being removed.
