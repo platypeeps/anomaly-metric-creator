@@ -93,21 +93,36 @@ have:**
   agree on the same input.
 - Follow the repo's guard conventions: full contract in the module docstring,
   `0` clean / `1` violation / `2` structural error, and a companion test file.
-- Registration is four sites, and only some of them are enforced. Derive the
-  set from the last lint the repo added rather than from this list — the commit
-  that introduced `tools/check_scope_heading_mirrors.py` touched
-  `.pre-commit-config.yaml` (the hook, its `files:` pattern, and whether it is
-  `always_run`), `.github/workflows/ci.yml` (the lane that invokes it),
-  `CLAUDE.md` (the repository-lints table row), and a companion test file,
-  alongside the lint itself. All four in the same diff.
-- One of those four has a trap worth naming. `tools/check_guard_ci_coverage.py`
-  checks that the lint runs in every lane its watched files *can* select — but
-  "can select" is decided upstream by `scripts/classify_ci_changes.sh`, which
-  maps a changed path to LIGHT / QUICK / FULL. A lint whose `files:` pattern
-  watches a path the classifier does not route to any lane is consistent by
-  that guard's arithmetic and still never runs on the change that matters.
-  Confirm the classifier routes the new lint's watched paths, and extend it in
-  the same diff if it does not.
+- Registration is four sites, and a pre-commit hook is not one of the ones
+  that make CI run the lint. Read
+  `tools/check_guard_ci_coverage.py`'s module docstring for the current
+  contract rather than working from a restatement of it; the shape as of this
+  filing is:
+  - `.pre-commit-config.yaml` — the hook, its `files:` pattern, and whether it
+    is `always_run`. This governs local runs and, through the `files:` pattern,
+    which lanes the guard will *demand* coverage in. **CI never runs
+    `pre-commit`,** so on a pull request the hook alone buys nothing.
+  - `.github/workflows/ci.yml` — an explicit CI step, and/or the `quick_check`
+    job's hand-written test-file list. QUICK and FULL are required of every
+    lint, because adding any application source file to a PR forces
+    `app_required` regardless of what else it touches. FULL partitions the
+    whole suite, so a live-tree test covers it automatically; QUICK runs only
+    the named files, so the companion test file must be added to that list by
+    hand or QUICK is uncovered.
+  - `CLAUDE.md` — the repository-lints table row.
+  - `tests/test_<lint>_lint.py` — the companion test file, including a
+    live-tree test if that is how the lint earns its lane coverage. The guard
+    finds these structurally, not by name: a zero-argument `def test_*` in a
+    file that assigns the lint's path from `REPO_ROOT`. A test taking
+    `tmp_path` builds a synthetic tree and counts for nothing.
+- The LIGHT lane has the trap that motivated the guard's existence. A lint
+  reaches LIGHT only if its own watched files, alone, classify as
+  `lightweight_only` under `scripts/classify-ci-changes.sh` — and LIGHT runs no
+  test job at all, so a lint in that position needs an explicit CI step or it
+  is enforced in appearance only. This lint watches `.trellis/`, `docs/`, and
+  spec Markdown; a PR touching only those is exactly the `lightweight_only`
+  shape, and exactly the shape the lint exists to police. Expect to need the CI
+  step, and confirm the classifier routes the watched paths at all.
 
 ## Acceptance Criteria
 
@@ -118,7 +133,11 @@ have:**
 - [ ] Each shipped check passes on current `HEAD` with zero findings, and the
       dated-claim form #412 landed is not flagged.
 - [ ] `tools/check_guard_ci_coverage.py` passes with the new lint registered.
-- [ ] The lint has its own test file, running in the QUICK lane.
+- [ ] The lint has its own test file, and that file is named in the
+      `quick_check` job's test list so the QUICK lane actually runs it.
+- [ ] A PR touching only the lint's watched paths — the `lightweight_only`
+      shape — runs the lint. Verified against the real classifier, not by
+      reading the `files:` pattern.
 - [ ] `CLAUDE.md`'s repository-lints table lists it.
 
 ## Notes
