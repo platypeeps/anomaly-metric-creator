@@ -130,11 +130,10 @@ RATCHET: dict[str, tuple[int, str]] = {
         "review round needed a ceiling bump, then took the remedy this entry "
         "had been deferring to the server.py decomposition follow-up: the "
         "whole cluster moved to the server_config.py leaf, where it continues "
-        "to live and grow. What stayed behind is the re-import block that "
-        "keeps the historic server.<name> surface working, and a note on it "
-        "that a stub must patch server_config, since these bindings do not "
-        "intercept the cluster's calls to itself, one re-import line per "
-        "helper review has added there since",
+        "to live and grow. What stayed behind is one re-import line per helper, "
+        "keeping the historic server.<name> surface working, plus a note that a "
+        "stub must patch server_config, since those bindings do not intercept "
+        "the cluster's calls to itself",
     ),
     "server_mcp.py": (
         1453,

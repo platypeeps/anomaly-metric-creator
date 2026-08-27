@@ -278,10 +278,29 @@ holding a newline survives any per-line pass, and a YAML or JSON parse error
 quotes the offending region of the file straight back. Each fix was another
 case in a pattern, and the next shape leaked again. Reporting names only closes
 the class by construction, and the flag name is what identifies the mistake
-anyway. The same rule governs load failures: `_parse_failure_detail` reports the
-parser's generic complaint plus a line and column, never the file's bytes. This
-matters because `auth_token` is an allowlisted server key and a typo'd key is by
-definition on no allowlist, so no config value can be assumed safe to print.
+anyway. The same rule governs load failures: `_parse_failure_detail` reports a
+position, never the file's bytes -- and the JSON and YAML arms differ for a
+reason. `JSONDecodeError.msg` comes from a fixed vocabulary in the decoder and
+never interpolates the document, so it is kept; PyYAML's `problem` is not that
+kind of field (`found undefined alias 's3cret'`), so a YAML failure reports its
+error class and mark and nothing else. The YAML arm also catches `ValueError`
+and `TypeError`, not just `YAMLError`: a resolver runs on the file's own text,
+so `port: !!int "abc"` raises a bare `ValueError` from `int()` that would
+otherwise escape the refusal entirely -- unattributed, and carrying the value.
+All of this matters because `auth_token` is an allowlisted server key and a
+typo'd key is by definition on no allowlist, so no config value can be assumed
+safe to print.
+
+A `generate` key that names a *serve* flag is refused before the combined
+parse, because the serve parser takes what it recognizes first and
+`generate: {port: 9999}` would silently configure the server from the wrong
+section. `parse_known_args` sets aside a flag it does not recognize and errors
+only on one it owns, so **both** of its outcomes belong to this check: a
+consumed token, and a `SystemExit`. Letting the error arm fall through left
+`host: true` to die in the combined parse -- which runs first -- as a bare
+`argument --host: expected one argument` naming no config file, and a
+value-taking serve flag arriving bare swallows the operator's own next token
+on the way.
 Validation that is genuinely cross-flag and lives *outside* the
 parsers -- `--cors-allow-origin '*'` requiring `--auth-token`, for one -- stays
 in `serve_main` on the merged arguments; neither probe can see it, and neither

@@ -2,7 +2,7 @@
   "id": "config-generate-key-validation",
   "name": "config-generate-key-validation",
   "title": "Validate --config generate keys symmetric with server keys",
-  "description": "_load_serve_config rejects unknown top-level 'server' keys but passes the 'generate' map through with only a type check, so a typo'd generate key is silently ignored or mismapped instead of failing loud like a server-key typo. Add a symmetric allowlist/validation for generate keys.",
+  "description": "_load_serve_config rejected unknown top-level 'server' keys but passed the 'generate' map through with only a type check, so a typo'd generate key was silently ignored or mismapped instead of failing loud like a server-key typo. Landed as parser-backed validation of both sections rather than a second hand-maintained allowlist, plus the defects review surfaced along the way: null/false keys vouched against the real parser, non-string YAML keys, dash-prefixed values, generate keys that name serve flags, unattributed load refusals, and a no-config-values-in-errors rule for every refusal. The --config cluster moved to the server_config.py leaf to pay for the growth. See prd.md 'Scope As Landed'.",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,

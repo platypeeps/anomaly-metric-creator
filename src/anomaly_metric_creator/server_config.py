@@ -62,9 +62,15 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
                 "Install it with 'pip install pyyaml' or use a .json file "
                 "instead.",
             ) from exc
+        # ValueError and TypeError, not just YAMLError: a resolver runs on the
+        # file's own text, so `port: !!int "abc"` raises a bare ValueError from
+        # int() and would escape the refusal that names the file -- carrying
+        # the value in its message. `--config` is an untrusted read-back
+        # boundary; anything the loader raises belongs to the file.
         parse_exc_types: tuple[type[Exception], ...] = (
             yaml.YAMLError,
-            UnicodeDecodeError,
+            ValueError,
+            TypeError,
         )
     else:
         parse_exc_types = (json.JSONDecodeError, UnicodeDecodeError)
@@ -175,19 +181,22 @@ def _parse_failure_detail(exc: Exception) -> str:
     and the file's bytes do not. The operator has the file; a line and column
     is what they need from us.
     """
-    mark = getattr(exc, "problem_mark", None)
-    problem = getattr(exc, "problem", None)
-    if mark is not None:
-        where = f"line {mark.line + 1}, column {mark.column + 1}"
-        return f"{problem or 'invalid syntax'} at {where}"
+    # JSON only. `JSONDecodeError.msg` comes from a fixed vocabulary in the
+    # decoder -- "Expecting ',' delimiter", "Unterminated string starting at" --
+    # and never interpolates the document. PyYAML's `problem` is not the same
+    # kind of field: "found undefined alias 's3cret'" puts the file's own text
+    # in it, so YAML reports its position and the error class, nothing more.
     lineno = getattr(exc, "lineno", None)
-    if lineno is not None:
+    msg = getattr(exc, "msg", None)
+    if lineno is not None and isinstance(msg, str):
         colno = getattr(exc, "colno", None)
         where = f"line {lineno}" + (f", column {colno}" if colno is not None else "")
-        return f"{getattr(exc, 'msg', None) or 'invalid syntax'} at {where}"
-    # UnicodeDecodeError, and any YAML error carrying no mark. Its str() is
-    # about the encoding or the parser state, not the file's content, but it
-    # is not worth a special case: the class name says enough.
+        return f"{msg} at {where}"
+    mark = getattr(exc, "problem_mark", None)
+    if mark is not None:
+        return f"{type(exc).__name__} at line {mark.line + 1}, column {mark.column + 1}"
+    # A YAML error with no mark, a constructor's bare ValueError, a decoding
+    # failure. The class name is all that can be said without quoting the file.
     return type(exc).__name__
 
 
@@ -308,10 +317,21 @@ def _refuse_generate_keys_the_serve_parser_owns(
     ):
         try:
             _, extra = parser.parse_known_args(list(generate_argv))
-        except SystemExit:
-            # A parse error here is the generate probe's to report, with its
-            # own diagnostic. This arm only cares about what was *consumed*.
-            return
+        except SystemExit as exc:
+            # `parse_known_args` sets a flag it does not recognize aside; it
+            # errors only on one it *owns*. So an error here is this check's
+            # own case, not the generate probe's, and it must not fall through:
+            # the combined parse runs before the probe, so `host: true` in the
+            # generate section would die there as a bare "argument --host:
+            # expected one argument" with the config file never named -- and a
+            # value-taking serve flag arriving bare would swallow the first of
+            # the operator's own CLI tokens on the way.
+            raise _config_error(
+                config_path,
+                f"generate key(s) {_config_flag_names(generate_argv)} name "
+                "serve flags, not generate flags, and the serve parser "
+                "rejected them. Move them to the 'server' section." + _rerun_hint("serve"),
+            ) from exc
     consumed = [token for token in generate_argv if token not in extra]
     if not consumed:
         return

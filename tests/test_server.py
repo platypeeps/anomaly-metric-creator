@@ -3231,6 +3231,64 @@ def test_a_config_error_reports_flag_names_and_no_values():
     assert server_config._config_flag_names([]) == "(none)"
 
 
+def test_a_yaml_error_reports_a_position_not_the_files_own_words(tmp_path, capsys):
+    """PyYAML's `problem` interpolates the document; argparse's `msg` does not.
+
+    `found undefined alias 's3cret'` is the parser's own field carrying the
+    file's text, so YAML reports its error class and position instead. JSON's
+    `msg` comes from a fixed vocabulary and is safe to keep, which is why the
+    two arms differ.
+    """
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text("server:\n  port: *s3cret\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert "failed to parse YAML: ComposerError at line 2" in stderr
+    assert "s3cret" not in stderr
+
+
+def test_a_yaml_constructor_error_still_names_the_file(tmp_path, capsys):
+    """`!!int "abc"` raises a bare ValueError, which is not a YAMLError.
+
+    It escaped the refusal entirely -- unattributed, and carrying the value.
+    Anything the loader raises on an untrusted file belongs to that file.
+    """
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text('server:\n  port: !!int "s3cret"\n', encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "failed to parse YAML: ValueError" in stderr
+    assert "s3cret" not in stderr
+
+
+def test_a_serve_flag_arriving_bare_from_generate_is_attributed(tmp_path, capsys):
+    """`host: true` in the generate section made the *combined* parse fail.
+
+    `parse_known_args` sets aside a flag it does not recognize and errors only
+    on one it owns, so an error there is this check's own case. Falling through
+    left it to the combined parse -- which runs first -- where it surfaced as a
+    bare `argument --host: expected one argument` naming no config file, and a
+    value-taking serve flag arriving bare would have swallowed the operator's
+    own next token on the way.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"generate": {"host": True}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--namespace", "prod"], parser
+        )
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "--host" in stderr
+    assert "'server' section" in stderr
+
+
 def test_a_generate_key_naming_a_serve_flag_is_refused(tmp_path, capsys):
     """`generate: {port: 9999}` silently set the *server's* port.
 
