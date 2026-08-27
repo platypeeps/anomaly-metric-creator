@@ -72,13 +72,19 @@ through the package facades (`combine.py`, `otel.py`, `schema.py`):
 - [x] The posture decision is recorded (spec + CLAUDE.md), with rationale.
       (`api-cli-server.md` § Library-API Error Posture; CLAUDE.md module
       ownership section.)
-- [ ] If library-grade: no facade-exported function raises `SystemExit`;
-      tests cover the new domain error and the unchanged CLI exit paths.
-      **N/A** -- CLI-internal was chosen.
-- [x] If CLI-internal: docstrings on the exported functions state the
-      process-oriented semantics explicitly. (All eight modules carry the
-      note; `grep -rl "CLI-internal surface" src/anomaly_metric_creator/`
-      returns 8 files.)
+- [x] The obligation the chosen posture carries is met. CLI-internal was
+      chosen, so its obligation applies: docstrings on the exported functions
+      state the process-oriented semantics explicitly. All eight modules carry
+      the note — `grep -rl "CLI-internal surface" src/anomaly_metric_creator/`
+      returns 8 files.
+
+      The two postures were mutually exclusive, so this is one criterion, not
+      two. Library-grade would have obliged the opposite work — no
+      facade-exported function raising `SystemExit`, plus tests for a new
+      domain error and the unchanged CLI exit paths — and none of it was done,
+      because it was the rejected option. It is recorded as rejected in the
+      Decision section below rather than carried here as a criterion no
+      outcome of this task could ever satisfy.
 
 ## Notes
 
