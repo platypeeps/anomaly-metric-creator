@@ -1,4 +1,2 @@
-{"file": "README.md", "reason": "Verify the final user-facing posture for DST splice plus multi-instance generation matches the implemented or intentionally unsupported behavior."}
-{"file": "CLAUDE.md", "reason": "Verify the historical/source guide does not preserve stale planning language after the decision is made."}
 {"file": ".trellis/spec/amc/backend/scenarios-and-data.md", "reason": "Verify any data-shape or schema/read-back contract changes are reflected in canonical specs."}
 {"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Use testing guidance to choose coverage across artifact families if support is implemented."}

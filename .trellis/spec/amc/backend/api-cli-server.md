@@ -61,6 +61,29 @@ flags and subcommands. Sources: `README.md`;
 `src/anomaly_metric_creator/legacy.py`; `tests/test_cli_surface.py`;
 `tests/test_args.py`.
 
+`--inject-dst-artifact-day > 0` is mutually exclusive with multi-instance
+generation (`--instances-per-component > 1` or `--instance-config`), and with
+gauge streaming. This is an **intentional design boundary**, not an
+unimplemented feature: the DST splice duplicates the 02:00-02:59 wall-clock
+hour, so the timestamp column is deliberately non-monotonic, and the
+multi-instance long-form writer emits one row block per instance, which is
+already non-monotonic across block boundaries. Supporting both at once means
+defining a total order over a column that is non-monotonic along two
+independent axes, and every consumer that relies on monotonicity would need
+its own resolution rule -- the `heapq.merge` long-form writers
+(`gauges.csv`, `combined_metrics_unified.csv`), schema/validate, combine, the
+OTEL gauge streamer's chronological merge, and the MCP `_layout_allows_break`
+fast path. Reject the combination at parse time with a message naming the
+active flag and pointing at `--inject-dst-artifact-day 0`; keep the
+`generate_component` `ValueError` as defense-in-depth for callers that bypass
+the CLI. Do not make the combination partially work in one artifact family.
+Revisiting requires its own design for the non-monotonic timestamp model.
+Sources: `src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/generation.py`;
+`src/anomaly_metric_creator/server_mcp.py`; `README.md`;
+`tests/test_args.py`; `tests/test_instances_per_component.py`;
+`.trellis/tasks/07-09-multi-instance-dst-splice-boundary/prd.md`.
+
 ### Scenario: Installed version discovery
 
 #### 1. Scope / Trigger
