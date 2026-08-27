@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 90
+- **Total Sessions**: 91
 - **Last Active**: 2026-08-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1786 | Active |
+| `journal-2.md` | ~1835 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 91 | 2026-08-26 | File the ratchet entries that name no owner | `74a4ddd`, `f57196f`, `830903e`, `2331ddf`, `6c7a7b7`, `090ac41`, `a295957` | `chore/ratchet-entry-ownership` |
 | 90 | 2026-08-26 | File the doc-drift lint and the serve-flag typo hole as tracked tasks | `de26475`, `d820092`, `07425d1`, `d609a5f`, `1f0f689`, `55a528b` | `chore/track-doc-drift-lint-and-config-abbrev` |
 | 89 | 2026-08-26 | Repoint four dangling spec references at the archived tasks | `599709d` | `fix/dangling-spec-task-references` |
 | 88 | 2026-08-26 | Decide or support multi-instance DST splice behavior | `d1f8f08b3540c133ad03d8ed3a9fc2c6e6b1df92`, `b899c6e0f1d42bdf93723410834588ceb9b376d6`, `8f341990fb68582b379c275d907fafde8e193115`, `c491ec9acd0a034d6feeef7bc570d4e63c06278c`, `39d03898edec64442f190ddbb985521148317837` | `docs/dst-multi-instance-boundary-posture` |
