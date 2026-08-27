@@ -113,7 +113,10 @@ Execution now reduces to the CLI-internal arm of the requirements:
   docstrings of the affected facade exports (`combine_logs_unified`,
   `stream_otel_gauges`/`write_gauges_csv`, the `otlp`/`csv_layout`/
   `combine_impl` SystemExit sites).
-- Fill the `.trellis/spec/amc/backend/error-handling.md` stub with this
-  posture + rationale so the next surface follows the same rule.
+- Record the posture + rationale in
+  `.trellis/spec/amc/backend/api-cli-server.md` so the next surface follows
+  the same rule. *(Corrected 2026-08-26, same correction as the
+  Requirements bullet above: this said `error-handling.md`, which is a
+  compatibility pointer forbidding new conventions and stays untouched.)*
 - No code change; no golden-hash impact. The library-grade acceptance
   bullet is now N/A.

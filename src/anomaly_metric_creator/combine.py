@@ -5,8 +5,9 @@ rather than ``legacy``; ``legacy`` also re-imports these names for its own
 surface, so both import paths resolve to the same objects.
 
 These exports are a CLI-internal surface, not a supported programmatic
-API: they may raise ``SystemExit``, print to stdout, or skip missing
-inputs silently. See ``.trellis/spec/amc/backend/api-cli-server.md``
+API: a missing per-component CSV raises ``SystemExit`` rather than an
+exception the caller can catch, and progress is printed to stdout
+unconditionally. See ``.trellis/spec/amc/backend/api-cli-server.md``
 § Library-API Error Posture.
 """
 

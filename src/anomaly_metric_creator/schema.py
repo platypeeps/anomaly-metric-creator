@@ -1,8 +1,11 @@
 """Schema writer and validator helpers exposed as a package-level module.
 
 These exports are a CLI-internal surface, not a supported programmatic
-API: they may raise ``SystemExit``, print to stdout, or skip missing
-inputs silently. See ``.trellis/spec/amc/backend/api-cli-server.md``
+API. This facade happens to raise ordinary exceptions rather than exiting
+-- ``validate_output`` raises ``ValueError`` for a missing or unreadable
+schema -- so it enumerates no process-oriented behavior; that is a fact
+about these two functions, not a stronger guarantee than the other
+facades give. See ``.trellis/spec/amc/backend/api-cli-server.md``
 § Library-API Error Posture.
 """
 

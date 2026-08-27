@@ -5,9 +5,9 @@ Extracted verbatim from ``legacy.py`` (decomposition step 3; see
 These header-scan and row-iteration helpers are shared by the gauge
 writer (``gauges_impl.py``), the combine long-form writer
 (``combine_impl.py``), and the OTEL gauge streamer
-(``otel_stream.py``), plus ``server_mcp`` via ``state.legacy``. They live in this leaf so every consumer imports
-one copy; ``legacy.py`` re-imports each name so the historic
-``legacy.<name>`` surface is unchanged.
+(``otel_stream.py``), plus ``server_mcp`` via ``state.legacy``. They live
+in this leaf so every consumer imports one copy; ``legacy.py`` re-imports
+each name so the historic ``legacy.<name>`` surface is unchanged.
 
 **CLI-internal surface.** The file-descriptor preflight raises
 ``SystemExit`` rather than returning an error to the caller, because

@@ -134,7 +134,12 @@ The grounds are that this is a CLI-first tool (`Private :: Do Not Upload`,
 git-only install, `main()` is the only real entry point) with no known
 programmatic embedder, so library-grade error handling is unjustified work at
 LOW severity. New facade exports inherit this posture and should carry the
-same note.
+same note -- but the note names the behaviors *that module* actually has, not
+all three. A uniform copy of the full list was tried first and review caught
+it as inaccurate: `combine.py` does not skip inputs silently, `otel.py` warns
+on stderr rather than stdout, and `schema.py` raises ordinary exceptions and
+enumerates nothing. Inheriting the posture is not inheriting the symptom
+list.
 
 There is exactly one revisit trigger: a supported `import`-and-call API
 becoming a real requirement. If that happens, the rework belongs inside the
