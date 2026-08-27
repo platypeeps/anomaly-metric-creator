@@ -38,9 +38,10 @@ times is worse than its own reviewed diff.
   update the importers instead. There are only three:
   `server_ops.py` (`load_persisted_mutations`), `server.py`
   (`PERSIST_ERROR_PREFIX`), and `tests/test_server_mutation_persistence.py`.
-- `schema_version` must be a plain integer. `version != 1` accepts `True` and
-  `1.0` because Python compares them equal; reuse the existing `_is_int`
-  helper, which already excludes `bool`.
+- `schema_version` must be a plain integer. The current
+  `schema_version != 1` guard accepts `True` and `1.0`, because Python
+  compares both equal to `1`; reuse the existing `_is_int` helper, which
+  already excludes `bool`.
 - Every key in `_PERSISTED_MUTATION_FIELDS` must be **present** in the overlay,
   the same one-directional gap already closed one level up for the envelope in
   #415. The writer emits all of them, so a file missing one was truncated or
@@ -64,4 +65,7 @@ times is worse than its own reviewed diff.
   #415 and track the remainder here.
 - Six of that round's nine findings were rebutted or were provider churn —
   one asked to undo the `delete_pod` commit an earlier round had asked for.
-  Only the four listed above (three defects plus the cap) are carried forward.
+  Four are carried forward, one per Requirements bullet above: the extraction
+  itself, which is what brings both modules under the 800-line cap, plus three
+  loader defects — the `schema_version` guard, the missing-key gap, and the
+  untrimmed `extra_events`.
