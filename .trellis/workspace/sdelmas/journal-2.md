@@ -1795,3 +1795,52 @@ The review-learnings pass over PRs #412, #413, and #414 clustered every finding 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 91: File the ratchet entries that name no owner
+<!-- trellis-session: v=2 fp=c9e0c5ef1f101df2 -->
+
+**Date**: 2026-08-26
+**Task**: File the ratchet entries that name no owner
+**Package**: amc
+**Branch**: `chore/ratchet-entry-ownership`
+
+### Summary
+
+tools/check_module_size.py's docstring asks that RATCHET reasons point at the owning epic so an enrolled module is traceable to the work that will remove it. Five of the seven entries say 'not yet decomposed' and name nothing, and analyse() discards the reason entirely -- a prose rule over an unread field, violated by the majority. Filed one P2 task whose deliverable is a disposition per module plus a guard that validates the reason, rather than five speculative decomposition PRDs.
+
+### Main Changes
+
+- 08-26-ratchet-entry-ownership: PRD covering the five orphaned entries (server.py 1978, server_mcp.py 1453, server_debug_ui.py 1194, server_traces.py 1086, cli_args.py 960) against the one owned and one permanently exempt entry
+- Specified the marker grammar concretely: anchored at index 0, permanent: with a rationale non-empty after stripping, debt: followed by exactly one owner token terminated by comma, semicolon, or end of string, resolved by exact directory-name comparison
+- Pinned malformed reasons to exit 1, keeping 2 for StructuralError -- the same family as the existing stale-entry rule
+- Kept free-prose task mentions non-binding, because server.py's live reason names three archived tasks as ceiling history and a slug-scanning guard would read it as owned by all three
+- Recorded that a disposition must live in design.md, since the stale-entry rule deletes the RATCHET entry once a module clears the cap and takes its rationale with it
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `74a4ddd` | chore(trellis): track the ratchet entries that name no owner |
+| `f57196f` | docs(trellis): close the first review round on the ratchet-ownership PRD |
+| `830903e` | docs(trellis): specify the reason grammar, its exit code, and where a disposition lives |
+| `2331ddf` | docs(trellis): require a non-empty rationale after permanent: |
+| `6c7a7b7` | docs(trellis): keep prose slugs non-binding and assert the exit codes |
+| `090ac41` | docs(trellis): strip whitespace before the permanent-rationale check |
+| `a295957` | docs(trellis): cover every accepted owner-token terminator |
+
+### Testing
+
+- [OK] sd-ai-command-pack-review-preflight.mjs: 0 failure(s), 0 warning(s)
+- [OK] pre-commit run --files on the PRD and task.json: role-name leaks, Trellis artifact hygiene, acceptance-criteria commands, repomix map freshness all pass
+- [OK] Every factual claim re-verified before filing: docstring quote verbatim at check_module_size.py:79-81, analyse() discards the reason at line 218, all seven sizes and ceilings match --list, and the 07-06 constraint sentence quoted exactly
+- [OK] sd-review --scope pr --pr 419: seven rounds, converged to one finding dispositioned rebutted after verifying all 20 active tasks carry dev_type and scope null
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
