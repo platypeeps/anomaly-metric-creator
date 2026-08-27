@@ -1708,3 +1708,42 @@ Closed an open question that had been read as a gap: --inject-dst-artifact-day >
 ### Next Steps
 
 - None - task complete
+
+
+## Session 89: Repoint four dangling spec references at the archived tasks
+<!-- trellis-session: v=2 fp=7aceadb265edabf4 -->
+
+**Date**: 2026-08-26
+**Task**: Repoint four dangling spec references at the archived tasks
+**Package**: amc
+**Branch**: `fix/dangling-spec-task-references`
+
+### Summary
+
+Archiving 07-06 and 07-09 in PRs #413 and #412 left four spec cross-references pointing at task directories that no longer exist on main. The review preflight detects exactly this and was not run on either PR. This branch repoints all four at .trellis/tasks/archive/2026-08/ and leaves the surrounding prose unchanged.
+
+### Main Changes
+
+- api-cli-server.md lines 85 and 178: repointed the 07-09 and 07-06 prd.md citations at their archive paths
+- documentation-review.md lines 106 and 115: repointed two more 07-09 citations the same way
+- Swept the repository for the same shape; the remaining hits are frozen journal and review-learnings history, which records paths as they were and is deliberately left alone
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `599709d` | docs(spec): repoint four references at the tasks I archived |
+
+### Testing
+
+- [OK] sd-ai-command-pack-review-preflight.mjs: 0 failure(s), 0 warning(s), including the documentation-path-reference check that fails on main
+- [OK] sd-review --scope pr --pr 418: 0 local findings
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
