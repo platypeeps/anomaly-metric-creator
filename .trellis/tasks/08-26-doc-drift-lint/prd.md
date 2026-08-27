@@ -110,6 +110,13 @@ have:**
     the named files, so the companion test file must be added to that list by
     hand or QUICK is uncovered.
   - `CLAUDE.md` — the repository-lints table row.
+  - Whatever `tools/check_ci_review_contract.py` demands once `ci.yml` or the
+    classifier is touched. That guard holds the cadence contract's named
+    anchors in lockstep across `docs/DEVELOPMENT_CYCLE.md`,
+    `.trellis/spec/amc/backend/testing-quality.md`, and
+    `.github/instructions/anomaly-metric-creator.instructions.md` as well as
+    the workflow files, so a CI edit made for this lint is not self-contained:
+    run the guard and satisfy what it names, in the same diff.
   - `tests/test_<lint>_lint.py` — the companion test file, including a
     live-tree test if that is how the lint earns its lane coverage. The guard
     finds these structurally, not by name: a zero-argument `def test_*` in a

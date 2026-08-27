@@ -80,12 +80,11 @@ Candidate rules, to be decided rather than assumed:
   hand-maintained list, per the repo's one-registry-per-fact rule.
 - A refusal must name the **flag** and say what to do, matching the
   attribution posture `--config` errors now hold. The flag is the portion
-  before the first `=`, never the whole token: argparse accepts
-  `--auth-token=<the token itself>` as a single argv element, so echoing "the
-  offending token" is how the value leaks. (Spelling that example with a
-  realistic-looking literal is its own small hazard — the review toolchain
-  masks it, and a reader gets a requirement with a hole in it.) `server_config._config_flag_names` already
-  does exactly this split and is the function to reuse.
+  before the first `=`, never the whole token. Argparse accepts a flag and its
+  value joined by `=` as a single argv element, so echoing "the offending
+  token" is how the value leaks. `server_config._config_flag_names` already
+  splits on the first `=` and keeps the left side; reuse it rather than writing
+  a second one.
 - Do not print any flag's *value*, whether it arrived as a separate argv
   element or after an `=`. `--auth-token` is a serve flag, and a typo'd key is
   on no allowlist. The no-config-values rule established in 07-02 applies to
