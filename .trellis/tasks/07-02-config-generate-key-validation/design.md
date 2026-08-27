@@ -131,8 +131,11 @@ layout for one round after the extraction landed.)*
 
 ## Risks And Edge Cases
 
-- The probe must capture argparse's stderr (contextlib.redirect_stderr)
-  so failure detail lands in the ValueError, not the console twice.
+- The probe must capture argparse's stderr (contextlib.redirect_stderr) so
+  the parser's diagnostic does not reach the console twice. It is captured to
+  be *compared* — the config is blamed only for a failure that reproduces on
+  the merged argv — and never to be reported: the `ValueError` carries the
+  file, the section, and the flag names, nothing derived from a value.
 - The parametrized valid-keys test derives from the real surface (e.g.
   a curated list asserted non-empty, spot-covering common + advanced
   `--help-all` flags) — with the non-empty guard so it cannot go

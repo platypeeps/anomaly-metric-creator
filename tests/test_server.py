@@ -3371,7 +3371,8 @@ def test_no_config_refusal_ever_prints_a_config_value(tmp_path, capsys, name, bo
     parser = server._build_serve_parser()
     with pytest.raises((SystemExit, ValueError)) as excinfo:
         server._parse_serve_args(["--config", str(config_path)], parser)
-    reported = capsys.readouterr().err + str(excinfo.value)
+    captured = capsys.readouterr()
+    reported = captured.err + captured.out + str(excinfo.value)
     assert str(config_path) in reported
     assert "s3cret" not in reported
 
