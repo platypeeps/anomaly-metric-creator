@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 84
+- **Total Sessions**: 86
 - **Last Active**: 2026-08-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1609 | Active |
+| `journal-2.md` | ~1653 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 86 | 2026-08-26 | Decide the library-API error and output posture for facade exports | `f3ff61b2312bd8b947a094717a23d68db88b4fe9`, `11e42f020fae29f50fd5b2a68b6c78f2c3836ccb`, `276381433d23183e119943ff40f718fa94203cfa`, `3391f7c9ebba192e134f67846e75f6a15af9901a`, `912c1554242d2cb152eb75a8d2a89788de76a979` | `docs/library-api-error-posture` |
 | 84 | 2026-08-26 | Track the persisted-overlay loader extraction | `a8992fefe4b9ce812734e43f15dcb7d9dfe6ed3b` | `chore/track-persisted-overlay-loader-extraction` |
 | 83 | 2026-08-26 | Validate --config generate keys symmetric with server keys | `373b7f46a3312f56691db6c05dd618fbe9ffc562`, `ae9053db7e77a0df5330b4311d3cc9f9ab656cf3`, `5120270fe03bc4418a0fa1a79b8c6eb557ea8210`, `b415ba92924ae5f741ada5b20023042c1b98598b`, `c734065b4395570cd4893647e20a71ee35a998e7`, `dedbbad1965824d28cbb5d64639a71507274aa68`, `6cca55e1f14dce8a6c2c3172d3cae1039389a5d0`, `03ddfd6fcbbacb37b99404f947221e4f9fe4dc30`, `9b03dfececa59172e0b538d688094fd78fb76145`, `c24a5966719f0d8571f1229d4f85e83549a42aae`, `6665773542e8d563fbb211c0b95c627e370e3afd`, `ef2c401c12e840658a8852880c6609728ba10634`, `3bbf6e7b7437bd6eb7fc0d26548f4e1d94d4abbc`, `4d11e73ce4999f646b82b163e9386e2605454198`, `4d5c36a0ffd90d0f37ad70154ffbfb2f6c50bc0f`, `d420741162815fa252b92e1aa27b6768c8a18164`, `682500fa9ccdd2a15392ab2f9a6ac5526bac3c6d`, `e0847de3b38e60cd9ac01ddd98a1a4d446275822` | `feat/config-generate-key-validation` |
 | 82 | 2026-08-26 | Opt-in restart continuity for the simulator mutation overlay | `90c37e4`, `9b4e1a9`, `1665ce8`, `30a29d4`, `0bea427`, `97d7eb7`, `1e67870`, `c8a9a6a`, `6ad7d4b` | `feat/persisted-server-mutation-state` |

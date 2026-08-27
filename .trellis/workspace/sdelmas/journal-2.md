@@ -1616,3 +1616,49 @@ Recorded the deferred remainder of PR #415 review round 6 as a planned Trellis t
 ### Next Steps
 
 - None - task complete
+
+
+## Session 86: Decide the library-API error and output posture for facade exports
+<!-- trellis-session: v=2 fp=38856e803a5f0254 -->
+
+**Date**: 2026-08-26
+**Task**: Decide the library-API error and output posture for facade exports
+**Package**: amc
+**Branch**: `docs/library-api-error-posture`
+
+### Summary
+
+Settled a long-open question rather than leaving it implicit: the facade-exported functions are a CLI-internal surface, not a supported programmatic API. SystemExit inside importable modules, unconditional combine-path stdout, and silent missing-CSV skips are acceptable there, and are now documented at each export -- each naming the behavior that module actually has.
+
+### Main Changes
+
+- Recorded the decision and its rationale in api-cli-server.md (new Library-API Error Posture section) and CLAUDE.md
+- Added the posture note to all eight facade-exported modules: combine, combine_impl, csv_layout, gauges_impl, otel, otel_stream, otlp, schema
+- Review caught the note as a uniform three-way claim that was wrong at three modules; each now names its own behavior, and the spec records that inheriting the posture is not inheriting the symptom list
+- Restructured the acceptance criteria so the two mutually exclusive postures are one criterion resolved by the decision, and dropped a prd execution bullet still pointing at error-handling.md
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f3ff61b2312bd8b947a094717a23d68db88b4fe9` | chore(task): archive 07-06-library-api-error-posture |
+| `11e42f020fae29f50fd5b2a68b6c78f2c3836ccb` | docs(api): make each facade note name that module's own behavior |
+| `276381433d23183e119943ff40f718fa94203cfa` | docs(task): make the posture obligation one criterion, not two branches |
+| `3391f7c9ebba192e134f67846e75f6a15af9901a` | chore(trellis): give 07-06 the description its task.json was missing |
+| `912c1554242d2cb152eb75a8d2a89788de76a979` | docs(api): document the facade exports as a CLI-internal error posture |
+
+### Testing
+
+- [OK] .venv/bin/pytest -- 2194 passed, 2 skipped
+- [OK] .venv/bin/pre-commit run --all-files -- exit 0
+- [OK] grep -rl 'CLI-internal surface' src/anomaly_metric_creator/ -- 8 files
+- [OK] git diff --check -- clean
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
