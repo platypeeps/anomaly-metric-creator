@@ -66,10 +66,27 @@ mentions and reads them as ownership; they are not.
 - `cli_args.py` at 960 is 160 over the cap and may clear it with one
   extraction, which would delete its entry outright rather than assign it an
   owner. Check that before writing a PRD for it.
+- A deleted entry takes its rationale with it, so record every disposition —
+  including "clears the cap, entry removed" — in this task's own archived
+  record, not only in the `RATCHET` reason. The reason field is the *live*
+  statement of who owns a module today; it cannot also be the history of why a
+  module stopped being enrolled, because the guard's stale-entry rule requires
+  deleting it. Anyone later asking why `cli_args.py` is not in the table needs
+  somewhere to read the answer.
 - Make the class mechanically impossible to recreate: `analyse()` must
-  validate the reason, not just carry it. A reason that neither starts with
-  `permanent:` nor names a task directory that exists and is active is a
-  violation, with the same `0` / `1` / `2` exit contract.
+  validate the reason, not just carry it, with the same `0` / `1` / `2` exit
+  contract.
+- Specify the marker grammar and anchor it, or the check passes on text that
+  merely looks right. "Starts with `permanent:` or mentions a task" is not a
+  rule — `debt:` with no slug after it, a slug that matches an existing
+  directory only as a substring, two slugs where one is archived, or the word
+  `permanent` appearing mid-sentence would all slip through. Require an
+  anchored prefix, exactly one owner token for `debt:`, and resolution by exact
+  directory name rather than substring search. Both existing well-formed
+  entries already fit that shape — `permanent: one ordered data-only registry…`
+  and `debt: 07-06-server-ops-decomposition, extracting leaves…` — so the
+  grammar is being written down, not invented. Test each malformed shape
+  above.
 - Resolve the coupling question that guard creates, and record the answer.
   `check_module_size.py` is stdlib-only and reads nothing but
   `src/anomaly_metric_creator/`. Validating a task reference makes a source
@@ -90,8 +107,12 @@ mentions and reads them as ownership; they are not.
       is that it clears the cap instead.
 - [ ] Every `debt:` reason names a task directory that exists and is active.
 - [ ] `analyse()` rejects an orphaned reason, covered by a test for each
-      rejection case: no marker, a `debt:` naming a nonexistent task, and a
-      `debt:` naming an archived one.
+      rejection case: no marker, a bare `debt:` with no owner token, a `debt:`
+      naming a nonexistent task, a `debt:` naming an archived one, a slug that
+      matches an existing directory only as a substring, and `permanent`
+      appearing mid-sentence rather than as the anchored prefix.
+- [ ] Every disposition is recorded in this task's archived record, including
+      any module whose entry was deleted rather than assigned an owner.
 - [ ] The guard passes on the live tree, and a live-tree test pins that.
 - [ ] The coupling decision is recorded in the module docstring, with the
       archived-owner rule stated so it is not later mistaken for a bug.
